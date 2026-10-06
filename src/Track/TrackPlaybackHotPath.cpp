@@ -649,6 +649,18 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   // A Stop can arrive while an internal-clock interval is already walking its
   // due cursor. Recheck the volatile barrier directly before the physical send.
   if (playbackEmitMidiOutput_ && !transportStopOutputBarrier_) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+    // 3.7a (I4): the send sink records the pair this line hands the handler -- the same value, at the
+    // same point, after this function's own gates and remap. Native-only (see Track.h); when the
+    // capacity is outrun the drop is counted rather than the stream silently shortened.
+    if (sentPlaybackMidiCountForTest_ < kSentPlaybackMidiCapacityForTest) {
+      sentPlaybackMidiForTest_[sentPlaybackMidiCountForTest_].event = evtCopy;
+      sentPlaybackMidiForTest_[sentPlaybackMidiCountForTest_].slotIndex = playbackSlotIndex;
+      ++sentPlaybackMidiCountForTest_;
+    } else {
+      ++sentPlaybackMidiDroppedForTest_;
+    }
+#endif
     midiHandler.sendRealtimePlaybackEvent(evtCopy);
 #if RUNTIME_TIMING_ENABLED
     if (evt.isNoteOn() || evt.isNoteOff()) {
@@ -664,6 +676,24 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   RUNTIME_TIMING_ADD_TRACK_PATH_SEND(micros() - sendStartUs);
 #endif
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+// 3.7a (I4): the MIDI edge's own record. Native-only, so the firmware keeps the hot path unchanged
+// (no call, no buffer, and the post-link RAM1 line is byte-identical).
+size_t Track::sentPlaybackMidiCountForTest() const { return sentPlaybackMidiCountForTest_; }
+
+const Track::SentPlaybackMidiForTest& Track::sentPlaybackMidiAtForTest(size_t index) const {
+  static const SentPlaybackMidiForTest kEmpty{};
+  return index < sentPlaybackMidiCountForTest_ ? sentPlaybackMidiForTest_[index] : kEmpty;
+}
+
+size_t Track::sentPlaybackMidiDroppedForTest() const { return sentPlaybackMidiDroppedForTest_; }
+
+void Track::clearSentPlaybackMidiForTest() {
+  sentPlaybackMidiCountForTest_ = 0;
+  sentPlaybackMidiDroppedForTest_ = 0;
+}
+#endif
 
 TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceTrackMidiOutput() {
   if ((midiChannel >= MidiConfig::LED_CHANNEL_MIN &&

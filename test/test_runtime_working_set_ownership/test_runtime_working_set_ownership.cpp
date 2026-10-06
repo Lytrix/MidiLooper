@@ -11044,38 +11044,81 @@ void test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name() {
 ///     change;
 ///   - and the delivery's own state reports `Unproven`, so nothing may be selected yet.
 ///
-/// **Not proven here, and named rather than implied:** the *emitting* half of the production path -- the boundary judged
-/// by a real wrap and the ring consumed by real ticks. Driving it needs the slot's own **playing** state (the
-/// `LayeredSlot` route refuses a slot the slot state machine does not consider playing), which this suite's accessors do
-/// not provide: that is **I4/4.3's** harness, where the differential-parity oracle lives. The measurements that
-/// substitute until then are the walk-level fixtures above (both passes exact) and the seam's own red-proof
-/// (**MR-V**, red by abort: an unbound stream selected on the clock path crashes).
+/// **The emitting half, and the bisection closed: the refusing return is named.** Two changes, both measured:
+///
+///   - **The refusal.** A temporary probe (a file-writing marker at each of the five returns between this function's
+///     entry and `loop.lastTickInLoop = tickInLoop`, withdrawn before the commit) ran this whole suite: **24/24** of the
+///     fixture's ticks stop at the **zero-content gate** (`eventCount == 0 && fixedBridge == nullptr &&
+///     runtime.rolling.phase == Idle`), and **not one hit** was recorded at any of the other four returns
+///     (`runtime == nullptr`, `!runtime.reset(true)`, the bridge-stream refusal, the `UINT32_MAX` catch-up guard). The
+///     pair section does not apply to this loop by its own gate (`shouldAvoidFullVisualRebuild`, over the rebuild
+///     threshold); the rolling section **excludes** the slot (`rolling.phase == Idle`, so
+///     `resolveRollingPlaybackWindow` answers `Excluded`), which is what keeps the gate reachable instead of letting an
+///     empty stream be walked; and the merged fallback is empty because its build gathers only a **published** window,
+///     which this rootless demoted slot does not have. The silence is the gate's own content test -- exactly the
+///     condition paging exists to change -- and no longer "somewhere before the tick record".
+///   - **The oracle.** `Track::sendMidiEvent`'s own record now exists (the next fixture drives it), so this fixture's
+///     silence is asserted **at the MIDI edge** as well as at the tick record -- and the drive's output is *enabled*
+///     here, so the silence is a refusal rather than a muted walk.
+///
+/// The six facts below are asserted because the conclusion depends on them: with all six held, the zero-content gate is
+/// the only return this drive can take.
 void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary() {
   constexpr uint32_t kAdvance = 64;
   OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
   driveGatherUntilPagedSwitch(fixture);
   TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
   Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
   LoopPlaybackRuntime* runtime = fixture.runtime;
   track.startPlaying(0);
   track.reanchorPlaybackCycle(0);
+  // (1) The value the tick record would overwrite is a real phase, not the fresh-transport `UINT32_MAX`: the catch-up
+  // guard cannot be the refusal.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.lastTickInLoop,
+                                   "a real previous phase, not the fresh-transport UINT32_MAX");
+  // (2) The pair section is out of scope for this loop by its own gate.
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                           "the slot is over the rebuild threshold: the pair path is not applied to it at all");
+  // (3) The rolling section excludes the slot -- and this is the gate's third clause.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                            static_cast<int>(runtime->rolling.phase),
+                            "no rolling frame is bound for this slot: the rolling section answers Excluded");
+  // (4) No fixed view and no bridge can be selected for it.
+  const RuntimePlaybackViewSet* viewSet = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(viewSet);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(RuntimePlaybackBridgeLifecycle::kNoBridge),
+                            static_cast<int>(viewSet->bridgeLifecycle.selected),
+                            "no bridge was ever built for this slot: the bridge clause holds by state, not by reading");
+  PlaybackWindowIdentity publishedWindow{};
+  TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, publishedWindow),
+                            "and no window is published for it either");
+  // (5) The merged fallback the walk would use holds no content.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "the merged fallback holds nothing before the drive");
+  // (6) The paged delivery is not admissible, so the paged section cannot be selected either.
+  TEST_ASSERT_FALSE(runtime->pagedEmission.admittedForEmission());
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
   const uint32_t intervalTicks = fixture.coverage.lengthTicks;
   for (uint32_t tick = kAdvance; tick <= intervalTicks; tick += kAdvance) {
     track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
-    track.playMidiEvents(tick, false);
+    track.playMidiEvents(tick, true);
   }
-  // What the clock path does *not* do for a slot whose delivery is not yet admitted: it builds no heavy merged
-  // fallback (that build is refused on the clock path by design -- a rootless dense slot is **silent** here, which is
-  // exactly the condition the paged delivery exists to change), and it consumes nothing from the ring.
-  // Probe: is the delivery still bound after the first ticks? `LoopPlaybackRuntime::reset` *drops* the paged ring
-  // (its own comment says so), and the tick path calls it when the runtime is stale -- so a stale first tick would
-  // destroy exactly the delivery this path exists to serve, and that is what "records no tick" looks like from here.
-  // **Falsified candidate (measured):** the paged delivery survives the clock path's ticks, so
-  // `LoopPlaybackRuntime::reset` -- and therefore the stale-runtime path IS10 named as its nearest candidate -- did
-  // *not* run: a reset drops the ring by its own comment. The tick path's silence comes from somewhere else, and the
-  // next step of that bisection is the pair/merge section between its entry and the tick record. (A probe that called
-  // `isStale(...)` directly crashed the run -- one case, none succeeded -- and was removed; the staleness must be read
-  // through a production-safe route, which is part of what the harness needs.)
+  // **The refusal, at the tick record and at the MIDI edge:**
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.lastTickInLoop,
+                                   "no tick was recorded through a whole pass: the zero-content gate refused every one "
+                                   "(measured 24/24 with the probe; none of the other four returns fired)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "and the MIDI edge committed nothing -- with the output enabled, so this is the "
+                                   "production refusal, not a disabled output");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the wire boundary agrees: nothing was sent");
+  // What the clock path does *not* do for a slot whose delivery is not yet admitted: it builds no heavy merged fallback
+  // (that build is refused on the clock path by design -- a rootless dense slot is **silent** there, which is exactly
+  // the condition the paged delivery exists to change), and it consumes nothing from the ring. `pagedActive` surviving
+  // the pass also settles the earlier falsification: `LoopPlaybackRuntime::reset` drops the ring, so the stale-runtime
+  // path did not run -- and the probe above now says so directly (that return fired zero times).
   TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive,
                            "the paged delivery survived the clock path's own runtime reset (the reset did not run)");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
@@ -11084,16 +11127,85 @@ void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary()
                                    "and nothing is consumed from the ring: it is not selected before a boundary");
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
                     static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
-  (void)intervalTicks;
-  // **Measured prerequisite, narrowed to a line:** the *emitting* half of this drive does not happen in this suite.
-  // The entry gates are all satisfied (`startPlaying` clears `transportStopOutputBarrier_`, no pending overdub stop,
-  // not stopped-recording, an audible source, a present runtime), and `loop.lastTickInLoop` stayed 0 through a whole
-  // pass -- so the refusal is inside `playCommittedLoopMidi` before it records the tick. The nearest candidate is its
-  // stale-runtime path (`runtime.isStale(...)` -> `if (!runtime.reset(true)) return;`, a **silent** return, exactly what
-  // a fresh fixture slot trips on its first tick because this suite never performs the production boot/load admission).
-  // Candidate, not verified: confirming it needs the transport/load harness that the *emitting* half needs anyway --
-  // I4/4.3's differential-parity work, where an emitted-stream oracle (a MIDI sink) also has to exist. Until then the
-  // walk-level fixtures and this pre-admission assertion are what stands.
+}
+
+/// 3.7a (I4): **the emitted stream is observable through the production path.** `Track::sendMidiEvent` records the pair
+/// it hands the handler -- after its own gates (`playbackEmitMidiOutput_`, the transport-stop barrier, the slot range)
+/// and after the playback channel remap -- so a host fixture reads what the device would have sent instead of a
+/// stand-in. The record is checked against the slot's own committed content **and** against the wire boundary that
+/// already existed (`MidiSendCapture`, which this route reaches because `MidiHandler::sendRealtimePlaybackEvent`
+/// funnels into `MidiHandler::sendMidiEvent`): the two records must agree element-wise, which is what makes the new
+/// sink the production edge rather than a parallel one.
+///
+/// **Teeth in both directions, on the same pass of one slot:** the control walks the whole pass with the output
+/// disabled (events are due, the tick record advances, and *neither* edge records anything -- so a sink that recorded
+/// regardless of the production gate would fail), and the measured drive re-anchors and walks the same pass with the
+/// output enabled (exactly the pass's four events, in tick order, once each -- so a sink that missed emissions would
+/// fail too).
+void test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits() {
+  constexpr uint32_t kAdvance = 64;
+  constexpr uint32_t kBar = 768;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  // A two-bar slot -- under the rebuild threshold, so the merged fallback is the serving path -- with one
+  // NoteOn/NoteOff pair per bar, and a **current published root**: the only source the merged build's gather reads.
+  commitBarSpacedPassIntoTrackSlot(track, 0, 2);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  publishBarSpacedRootForSlot(loop, 2);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the published root must still be current after prewarm, or the gather has no source");
+  TEST_ASSERT_EQUAL_UINT32(2u * kBar, loop.loopLengthTicks);
+  track.startPlaying(0);
+
+  // (A) The control: the whole pass, walked with the output **disabled**.
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  for (uint32_t tick = kAdvance; tick < 2u * kBar; tick += kAdvance) {
+    track.playMidiEvents(tick, false);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * kBar - kAdvance, loop.lastTickInLoop,
+                                   "the clock path walked the pass: the tick record advanced");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "nothing reached the MIDI edge with the output disabled, though events were due");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the wire boundary agrees: the sink cannot claim an emission the device did not make");
+
+  // (B) The same pass, with the output **enabled** -- re-anchored first, which is the shape a transport start leaves.
+  track.reanchorPlaybackProjection(0, false);
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  for (uint32_t tick = kAdvance; tick < 2u * kBar; tick += kAdvance) {
+    track.playMidiEvents(tick, true);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * kBar - kAdvance, loop.lastTickInLoop,
+                                   "the same pass, driven over the same frames");
+  // The emitted stream element-wise: the pass's four events, in tick order, once each.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "the pass's four events reach the MIDI edge, once each");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiDroppedForTest()),
+                                   "and the sink's bound was never reached: nothing was dropped silently");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the wire boundary saw the same four");
+  const uint32_t expectedTicks[4] = {0u, 48u, kBar, kBar + 48u};
+  for (size_t i = 0; i < 4; ++i) {
+    const Track::SentPlaybackMidiForTest& sent = track.sentPlaybackMidiAtForTest(i);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, sent.slotIndex, "the walk named the slot it played");
+    TEST_ASSERT_EQUAL_UINT8(1, sent.event.channel);
+    TEST_ASSERT_EQUAL_UINT8(48, sent.event.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT32(expectedTicks[i], sent.event.tick);
+    TEST_ASSERT_EQUAL_MESSAGE(i % 2 == 0, sent.event.isNoteOn(), "the content alternates On/Off per bar");
+    TEST_ASSERT_EQUAL_UINT8(i % 2 == 0 ? 100 : 0, sent.event.data.noteData.velocity);
+    // The sink is the production edge, not a parallel one: the wire boundary recorded the same event.
+    const MidiEvent wire = MidiSendCapture::at(i);
+    TEST_ASSERT_EQUAL_UINT8(sent.event.type, wire.type);
+    TEST_ASSERT_EQUAL_UINT8(sent.event.channel, wire.channel);
+    TEST_ASSERT_EQUAL_UINT32(sent.event.tick, wire.tick);
+    TEST_ASSERT_EQUAL_UINT8(sent.event.data.noteData.note, wire.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(sent.event.data.noteData.velocity, wire.data.noteData.velocity);
+  }
 }
 
 /// 3.7a's **timing admission** clause, measured at the walk's own granularity: what service rate must the deferred lane
@@ -11354,6 +11466,7 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary);
+  RUN_TEST(test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits);
   RUN_TEST(test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the

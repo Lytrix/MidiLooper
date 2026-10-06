@@ -903,6 +903,25 @@ public:
   /// and output ports; cursor and ledger always run.
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
   void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// 3.7a (I4): **the MIDI edge's own record of what committed playback put on the wire.**
+  ///
+  /// `sendMidiEvent` appends here at the production send point -- after its own gates
+  /// (`playbackEmitMidiOutput_`, the transport-stop barrier, the slot range) and after the playback
+  /// channel remap -- so a host fixture reads the emitted stream *through the production path*
+  /// instead of beside it: the pair recorded is the pair the handler is handed on the next line.
+  /// Bounded: a drive that outruns the capacity is counted (`sentPlaybackMidiDroppedForTest()`),
+  /// never silently truncated. Native-only; the firmware carries neither the buffer nor the call.
+  struct SentPlaybackMidiForTest {
+    MidiEvent event;        ///< As handed to `MidiHandler`: the playback channel is already remapped.
+    uint8_t slotIndex = 0;  ///< The slot the playback walk named.
+  };
+  static constexpr size_t kSentPlaybackMidiCapacityForTest = 8192;
+  size_t sentPlaybackMidiCountForTest() const;
+  const SentPlaybackMidiForTest& sentPlaybackMidiAtForTest(size_t index) const;
+  size_t sentPlaybackMidiDroppedForTest() const;
+  void clearSentPlaybackMidiForTest();
+#endif
   /// True when this slot has an audible playback source: committed passes, or a
   /// deferred Record interval whose bindable bar-1 return window a pending job owns
   /// (S4f.19). It is the admission predicate for both playback entry points; an
@@ -1195,6 +1214,14 @@ private:
   // interval may still be executing. This volatile barrier is checked at the
   // final Track MIDI emission point, so no due NoteOn can pass that fan-out.
   volatile bool transportStopOutputBarrier_ = false;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// 3.7a (I4): the native-only send sink behind `sentPlaybackMidiCountForTest()`. By value, so the
+  /// eight-way `Track` array pays it eight times -- which is why it exists only in the host build
+  /// (`placementPins()`'s `sizeof(Track) == 384` is a firmware-configuration pin and cannot see it).
+  SentPlaybackMidiForTest sentPlaybackMidiForTest_[kSentPlaybackMidiCapacityForTest];
+  size_t sentPlaybackMidiCountForTest_ = 0;
+  size_t sentPlaybackMidiDroppedForTest_ = 0;
+#endif
   bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void catchUpCommittedPlaybackLedgerToPhase(uint32_t occupyPhase);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);

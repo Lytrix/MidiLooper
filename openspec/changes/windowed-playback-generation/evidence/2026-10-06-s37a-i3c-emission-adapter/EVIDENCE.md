@@ -336,3 +336,79 @@ staleness therefore needs a production-safe route, which is itself part of what 
 | A **MIDI sink** at the walk level | **exists**: the suite's `pagedEmissionSinkSend` captures the emitted stream, and the acceptance fixture compares it element-wise against the effective-content resolver |
 | A MIDI sink at the **production send path** (`applyPlaybackLedgerEvent` + `sendMidiEvent`) | **not implemented**: `playbackCursorAdvanceSend` is file-local to the hot-path TU, and this suite has no handler-level capture |
 | **Transport/load** state that lets the clock path run | **not implemented**: the drive is silent, the stale-reset candidate is now falsified, and the next bisection step is the pair/merge section |
+
+---
+
+## 13. The bisection closed: the refusing return is identified, and the MIDI edge now records what it emits (2026-10-06; firmware + tests, native-only seam)
+
+**The bisection (measured; the probe was withdrawn before the commit).** Sections 10-12 narrowed the tick path's silence
+to "somewhere inside `playCommittedLoopMidi` before it records the tick", with the stale-runtime path as the nearest
+candidate. A temporary probe -- a file-writing marker at each of the **five** returns between the function's entry and
+`loop.lastTickInLoop = tickInLoop`, written to a file rather than stdout because the test runner's output capture hides
+`printf` -- ran the whole focused suite. The probe's own output is kept beside this document
+([`bisect-probe.txt`](bisect-probe.txt): the tag distribution over the whole run, and the I4 drive's own tail):
+
+| Return in `playCommittedLoopMidi` before the tick record | Hits over the whole suite run |
+|---|---|
+| **the zero-content gate** (`eventCount == 0 && fixedBridge == nullptr && rolling.phase == Idle`) | **5,273, including 24/24 of the I4 fixture's ticks** |
+| `runtime == nullptr` | 0 |
+| `!runtime.reset(true)` (the stale-runtime path, section 12's candidate) | 0 |
+| the bridge-stream refusal (`bridgeStream == nullptr`) | 0 |
+| the `UINT32_MAX` catch-up guard | 0 |
+
+So the fixture's drive takes the **zero-content gate** on every tick, and the other four returns never fire anywhere in
+the suite. Why that gate on this shape: the **pair** path does not apply to the loop by its own gate
+(`shouldAvoidFullVisualRebuild`, 512 bars over the rebuild threshold); the **rolling** section *excludes* the slot
+(`rolling.phase == Idle` -> `resolveRollingPlaybackWindow` answers `Excluded`), which is also the gate's third clause --
+without it an empty stream would be walked and the tick *would* be recorded; and the **merged** fallback is empty
+because its build (for a long loop) gathers only a **published** window, and a rootless demoted slot has none. The
+silence is the gate's own content test -- exactly the condition paging exists to change -- not a reset, not a bridge,
+not the catch-up guard.
+
+**The door is asserted, not merely narrated.** The fixture now asserts the six facts this conclusion depends on
+(`lastTickInLoop` is a real phase, not the fresh-transport `UINT32_MAX`; the pair gate excludes the loop;
+`rolling.phase == Idle`; no bridge was ever selected and no window is published for the slot; the merged store is empty
+before the drive; the paged delivery is not admissible), then asserts the outcome at **both** edges: no tick recorded
+through the whole pass, **and nothing committed at the MIDI edge with the drive's output enabled** -- so the silence is
+a production refusal rather than a muted drive.
+
+**The sink, and the correction it carries.** `MidiSendCapture`'s own doc comment promises "every event that reaches the
+wire"; the playback route *does* reach it (`MidiHandler::sendRealtimePlaybackEvent` funnels into
+`MidiHandler::sendMidiEvent`, which records), so section 12's row -- "a MIDI sink at the production send path (...) not
+implemented: `playbackCursorAdvanceSend` is file-local to the hot-path TU, and this suite has no handler-level capture"
+-- was **wrong as stated**: the ownership suite already used `MidiSendCapture` elsewhere. What was genuinely missing is
+the **Track-level record with the slot pairing**, and `Track::sendMidiEvent` now has one: a native-only capture of the
+pair it hands the handler, at the point of the send, after its own gates and the playback channel remap, bounded at
+8,192 entries with a **counted** drop, read through `sentPlaybackMidiCountForTest()`, `sentPlaybackMidiAtForTest()`,
+`sentPlaybackMidiDroppedForTest()` and `clearSentPlaybackMidiForTest()`.
+
+**The new fixture (`test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits`), teeth in both directions on one pass
+of one slot.** A two-bar slot (under the rebuild threshold, so the merged fallback serves it) with a committed
+bar-spaced pass and a **current published root** -- the only source the merged gather reads. *Control:* the pass walked
+with the output disabled: events are due, the tick record advances, and **neither** edge records anything. *Measured
+drive:* the same pass, re-anchored and walked with the output enabled -- **exactly four** events (ticks 0/48/768/816,
+velocities 100/0, channel 1, slot 0), with the wire boundary's own record equal to the sink's **element-wise** (type,
+channel, tick, note, velocity), which is what makes the sink the production edge rather than a parallel one.
+
+**Red-proofs (both restored byte-identically).**
+
+| Mutation | Result |
+|---|---|
+| **RP-1**: the zero-content gate's `return` removed | **RED** -- the I4 fixture fails at *"Expected 0 Was 1536. no tick was recorded through a whole pass: the zero-content gate refused every one..."*, which is the proof that the identified return is what silences this drive. One unrelated fixture also failed (`test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits`, *Expected 0 Was 1*): the gate is load-bearing beyond this fixture, recorded rather than tidied away |
+| **RP-2**: the sink hoisted outside the emit gate (records unconditionally) | **RED** -- the new fixture's control fails at *"Expected 0 Was 4. nothing reached the MIDI edge with the output disabled, though events were due"*. The I4 fixture's own edge assertion still passes under RP-2, which is the honest distinction: that drive is refused *before* any send is attempted, so a sink that over-records cannot make it look like an emission |
+
+**Verified.**
+
+| Check | Result |
+|---|---|
+| Focused RWS | **160/160** (+1 fixture) |
+| Focused shared capture finalization | **64/64** |
+| Full native | **2,835 / 7 skipped / 2,828 succeeded / 0 failed** |
+| `teensy41-capture-serial` | **SUCCESS**; RAM1 **identical with and without the change** (`variables 96,192 / ITCM 393,216 (code 392,296 + padding 920) / locals 34,880`; guard 80 B above the floor) -- measured A/B by stashing the change and building both ways |
+| Strict validation / `git diff --check` | valid / clean |
+
+**Not claimed:** no selection change (this shape's delivery is still `Unproven`, so the paged path is not selected and
+the merged fallback stays the serving path by design), no timing claim, no `ExecutionBounds.md` row change, no device
+run, no fallback removal (3.7b). The *emitting half*'s remaining piece is now named precisely: this fixture's slot has
+**nothing to emit** until the delivery is admitted (a boundary must be straddled cleanly), which is the paged selection
+work itself rather than a harness gap.
