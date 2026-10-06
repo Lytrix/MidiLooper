@@ -1,3 +1,22 @@
+**2026-10-06 — `windowed-playback-generation` 3.7a I6: the version handoff's closures are **emitted, not dropped** — the
+slice task 4.5 and task 3.14 both named as the next step after I5 (firmware + tests; native verified, no device leg).**
+The full-loop handoff reconcile already computed the invalidated obligations (tagged open ledger entries whose committed
+NoteOn is absent from the incoming stream) and then dropped them **without a wire event**, so a note the replacement
+removed stayed **sounding** until a stop or a clear — and the replacement's own NoteOff could not close it either, because it
+carries the **new** identity and the ledger's identity-exact resolution refuses an unknown identity as an orphan. The
+predicate is now stated once as a bounded, allocation-free plan (`ActiveNoteLedger::MissingCommittedNoteOnPlan`) and the
+handoff **closes** each planned obligation on the MIDI wire (the same immediate-send owner the two existing closure paths
+use), at **the handoff's own tick**, and only then discharging it through the ledger's own event path by identity (the existing
+closure owner's order, so a discharge never precedes the wire); ordering is structural, since every caller reconciles ahead of the walk that
+serves the replacement's note-ons. The reconciliation's own interpretive rule now guards it: an **event-empty** whole-loop
+replacement closes nothing and drops nothing, so its obligations stay alive. Verified: focused **162/162**, full native
+**2,840 / 7 skipped / 2,833 succeeded / 0 failed**, capture build **SUCCESS** with the RAM1 line byte-identical to the
+pre-slice baseline (`code 392,248 + padding 968`; no ITCM cost, no re-base), three red-proofs RED with byte-identical
+restores, strict validation and `git diff --check` clean. **Not claimed:** the pitch-addressed re-issue case, a closure that
+slid behind the re-anchored cursor, the off-clock call sites on device, displayed provenance, the between-grains undo/redo
+matrix, retained-source release, preview-session undo/redo, no device leg, no timing claim, no row change, no fallback
+removal (3.7b). Evidence:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md).
 **2026-10-06 — `runtime-working-set-ownership` S4e.9 / DEC-115: the display-note projection family **refuses instead of
 parking** — exhaustion is now answered by the owner that asked, and the shared allocator is deliberately untouched
 (firmware + tests).** The pool-attribution episode resolved the parked device's refusal PC against a byte-identical

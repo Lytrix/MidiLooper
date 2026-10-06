@@ -67,11 +67,49 @@ class ActiveNoteLedger {
     return i >= 0 ? entries_[static_cast<size_t>(i)].noteId : kInvalidNoteId;
   }
 
-  /// Drop identified open notes whose NoteOn is absent from committed events.
-  /// Untagged Entries stay. Reuse eraseAt. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+  /// The handoff's **invalidation plan**: the open, identity-tagged Entries whose committed NoteOn is absent from the
+  /// incoming stream. A value, bounded by `kMaxOpenNotes` and allocation-free — and stated **once**, so the owner that
+  /// *drops* such an obligation (`eraseOpenNotesMissingFromCommittedNoteOns`) and the owner that *closes* it on the MIDI
+  /// wire (the Track's handoff reconcile) cannot disagree about which ones they are. Each Entry carries the ledger's own
+  /// `(channel, pitch, noteId)`, so a closure emitted from this plan closes exactly the sounding that Entry names.
+  struct MissingCommittedNoteOnPlan {
+    struct Entry {
+      uint8_t channel = 0;
+      uint8_t note = 0;
+      NoteId noteId = kInvalidNoteId;
+    };
+    std::array<Entry, kMaxOpenNotes> entries{};
+    size_t count = 0;
+  };
+
+  /// Plan the invalidation: tagged Entries whose `noteId` has no NoteOn **anywhere** in the stream (channel/pitch are
+  /// not consulted — the stream's own event carries the identity that decides). Untagged Entries are never planned:
+  /// their absence is not evidence. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
+                                                                     size_t eventCount) const {
+    return planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+  }
+#else
+  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
+                                                                     size_t eventCount) const;
+#endif
+
+  /// Drop exactly the planned obligations (by their own identity). Untagged Entries stay. Reuse eraseAt. Returns the
+  /// number actually dropped, which is what makes a plan-taken-twice or an already-gone entry observable rather than
+  /// silent. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  size_t erasePlannedOpenNotes(const MissingCommittedNoteOnPlan& plan) { return erasePlannedOpenNotesBody(plan); }
+#else
+  size_t erasePlannedOpenNotes(const MissingCommittedNoteOnPlan& plan);
+#endif
+
+  /// The plan and its drop as one call, for callers that owe **no** wire half (the ledger alone, and the paths whose
+  /// slot is not being served). The serving path uses the two halves separately so it can close each obligation before
+  /// dropping it — see the Track's handoff reconcile. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
 #if defined(PIO_UNIT_TEST_NATIVE)
   void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount) {
-    eraseOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+    (void)erasePlannedOpenNotesBody(planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount));
   }
 #else
   void eraseOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events, size_t eventCount);
@@ -195,30 +233,51 @@ class ActiveNoteLedger {
     return true;
   }
 
-  void eraseOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events, size_t eventCount) {
+  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events,
+                                                                         size_t eventCount) const {
+    MissingCommittedNoteOnPlan plan;
     if (eventCount > 0 && events == nullptr) {
-      return;
+      return plan;
     }
-    for (size_t i = count_; i > 0; --i) {
-      const NoteId id = entries_[i - 1].noteId;
-      if (id == kInvalidNoteId) {
+    for (size_t i = 0; i < count_; ++i) {
+      const Entry& entry = entries_[i];
+      if (entry.noteId == kInvalidNoteId) {
         continue;
       }
       bool found = false;
       for (size_t eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
         const MidiEvent& evt = events[eventIndex];
-        if (evt.isNoteOn() && evt.noteId == id) {
+        if (evt.isNoteOn() && evt.noteId == entry.noteId) {
           found = true;
           break;
         }
       }
-      if (!found) {
-        logOpenNoteErase(id);
-        eraseAt(i - 1);
+      if (found || plan.count >= kMaxOpenNotes) {
+        continue;
       }
+      plan.entries[plan.count].channel = entry.channel;
+      plan.entries[plan.count].note = entry.note;
+      plan.entries[plan.count].noteId = entry.noteId;
+      ++plan.count;
     }
+    return plan;
   }
 
+  size_t erasePlannedOpenNotesBody(const MissingCommittedNoteOnPlan& plan) {
+    size_t erased = 0;
+    for (size_t i = 0; i < plan.count; ++i) {
+      const MissingCommittedNoteOnPlan::Entry& planned = plan.entries[i];
+      const int index = findIndexByNoteId(planned.channel, planned.note, planned.noteId);
+      if (index < 0) {
+        // The obligation is already gone (a plan taken after its own discharge): nothing to drop, and nothing to log.
+        continue;
+      }
+      logOpenNoteErase(planned.noteId);
+      eraseAt(static_cast<size_t>(index));
+      ++erased;
+    }
+    return erased;
+  }
   static void logOpenNoteOverflow(uint8_t channel, uint8_t note, NoteId noteId) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     char line[160];

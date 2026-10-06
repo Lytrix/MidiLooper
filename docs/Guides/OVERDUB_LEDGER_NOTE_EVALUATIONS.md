@@ -194,14 +194,17 @@ Shipped clock invariant ([`overdub_occupy_clock_same_tick_off_before_on_bugfix.m
 
 ### 8. After a full-loop rebuild, which open Entries survive?
 
-`reconcilePlaybackLedgerAfterFullLoopRebuild`:
+`reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick)`, and its handoff result:
 
-| Evaluation | Owner | Keeps Entry | Drops Entry |
-|---|---|---|---|
-| Stream is full-loop | `isFullLoopMergedPlaybackWindow` | Yes — run erase | Windowed gather — skip erase |
-| On still in committed stream | `eraseOpenNotesMissingFromCommittedNoteOns` | Tagged Entry whose `noteId` has a NoteOn **anywhere** in merged events (`evt.isNoteOn() && evt.noteId == id`; channel/pitch not consulted); untagged Entries always stay | Tagged Entry whose On is gone (`DIAG,ledger,erase`) |
+| Evaluation | Owner | Keeps Entry | Closes + discharges | Drops Entry |
+|---|---|---|---|---|
+| Stream is full-loop | `isFullLoopMergedPlaybackWindow` | — | — | Windowed gather — skip the handoff entirely |
+| Replacement carries events at all | `handoffAbsenceMeansRemoval(true, empty)` | An **event-empty** whole-loop replacement keeps every Entry (its absence is not evidence, and nothing is dropped) | — | — |
+| On still in committed stream | `ActiveNoteLedger::planOpenNotesMissingFromCommittedNoteOns` | Tagged Entry whose `noteId` has a NoteOn **anywhere** in the merged events (`evt.isNoteOn() && evt.noteId == id`; channel/pitch not consulted); untagged Entries always stay | Tagged Entry whose On is gone: `closeHandoffInvalidatedNotes` sends its NoteOff (at the handoff's own tick) and `applyPlaybackEvent` discharges it by identity | `erasePlannedOpenNotes` is the drop path for callers that owe no wire half; the serving handoff closes instead of dropping (`DIAG,ledger,erase` still marks a drop) |
 
-**Reconciliation answers “does this `noteId` still have a NoteOn in the committed stream?”, not “should this identity currently be sounding?”** It is **not** the ledger Entry key `(channel, pitch, noteId)`. A NoteOn at any tick in the rebuilt stream keeps the currently open Entry for that `noteId`, even if channel/pitch on the stream event differ from the Entry. Untagged Entries are skipped and stay.
+**Reconciliation answers “does this `noteId` still have a NoteOn in the committed stream?”, not “should this identity currently be sounding?”** It is **not** the ledger Entry key `(channel, pitch, noteId)`. A NoteOn at any tick in the rebuilt stream keeps the currently open Entry for that `noteId`, even if channel/pitch on the stream event differ from the Entry. Untagged Entries are skipped and stay. The **plan** above states that predicate once, so the owner that drops an obligation and the owner that closes it on the wire cannot disagree about the set.
+
+**The handoff is audible (3.7 / 4.5 § 13(g)):** an invalidated Entry is closed on the MIDI wire **before** the replacement's note-ons (the reconcile runs ahead of the walk that serves them), because the replacement's own NoteOff carries the *new* identity and the identity-exact resolution refuses an unknown identity as an orphan — dropping the obligation silently left the old sounding on until a stop or a clear.
 
 ### 9. What are the open ledger identities at occupy?
 

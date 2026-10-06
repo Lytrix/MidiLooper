@@ -1,3 +1,34 @@
+**`windowed-playback-generation` 3.7a I6 — the handoff's closures are emitted, not dropped (2026-10-06; firmware + tests,
+native verified, no device leg).** I5 named the next slice as *"3.14's and 4.5's remaining clauses (written against the real
+handoff)"*, and both tasks name the **same** owed item: the emitted closure at the handoff. **The defect, in the owner's own
+vocabulary:** the full-loop handoff reconcile already computed the invalidated obligations — tagged open ledger entries whose
+committed NoteOn is absent from the incoming stream — and then dropped them **without a wire event**, so a note whose content
+the replacement removed stayed **sounding** until a stop or a clear, and the replacement's own NoteOff could not close it
+either (it carries the **new** identity, and the ledger's identity-exact resolution refuses an unknown identity as an orphan).
+**The fix:** the predicate is stated once as a bounded plan (`ActiveNoteLedger::MissingCommittedNoteOnPlan`, a bounded 1,024 B value on
+the stack -- 128 Entries x 8 B, nothing allocating; the shipped erase is now plan-then-drop), and the handoff **closes** each planned obligation on the
+MIDI wire through the same immediate-send owner the two existing closure paths use — at **the handoff's own tick** (a new
+`currentTick` parameter, threaded from all four call sites) — and **only then** discharging it through the ledger's **own** event path by identity
+-- the existing closure owner's order, so a discharge never precedes the wire (a LIFO pop could discharge a different entry
+of the same pitch), and the erase is what makes a second closure impossible. Ordering is **structural**: every caller runs the reconcile ahead of the walk that serves the replacement's
+note-ons. The reconciliation's own interpretive rule now guards it: an **event-empty** whole-loop replacement closes nothing
+**and drops nothing** (`handoffAbsenceMeansRemoval(true, true) == false`), so its obligations stay alive instead of being
+forgotten; a slice still returns early. **Measured:** the closure is the handoff turn's **first wire event**, ahead of the
+replacement's note-ons; the unchanged sounding gets no early NoteOff and no retrigger, its own note-off arriving once at its
+own tick; an untagged entry survives; an obsolete closure never re-fires. Verified: focused **162/162** (baseline 161), full
+native **2,840 / 7 skipped / 2,833 succeeded / 0 failed** (baseline 2,839/2,832), capture build **SUCCESS** with the RAM1 line
+**byte-identical to the pre-slice baseline** (`variables 96,192`; `code 392,248 + padding 968`; floor 840 — the reconcile is
+already FLASH-placed, so closing on the wire cost **no ITCM** and no re-base), strict validation and `git diff --check`
+clean, **three red-proofs** (the silent drop restored; emitted but not discharged; the empty-window rule dropped) each RED
+with a named assertion and a byte-identical restore that reproduces the slice's diff exactly. **Not claimed:** the
+pitch-addressed re-issue case (4.5b's `suppressedRetriggers`; closing an invalidated identity can cost one boundary before the
+replacement's own identity re-sounds), a closure that slid **behind** the re-anchored cursor, the off-clock call sites on
+device, displayed provenance, the between-grains undo/redo matrix, retained-source release, preview-session undo/redo, **no
+device leg** (no registered stimulus drives a sounding across a content-removing version handoff), no timing claim, no row
+change, no fallback removal (3.7b). Evidence:
+[`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37-handoff-closures/EXECUTION.md) and
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md);
+task **3.7a** increment I6 (closing the shared item of tasks **4.5** and **3.14**).
 **S4e.9 / DEC-115 — the display-note projection family refuses instead of parking (2026-10-06; firmware + tests, native
 verified, device leg owed).** The pool-attribution episode resolved the parked device's refusal PC against a
 byte-identical rebuild of the flashed image to a `DisplayNoteVec` reserve — a **24,576-note copy (384 KB)** — after which

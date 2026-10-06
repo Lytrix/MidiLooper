@@ -10,7 +10,18 @@ TRACK_COLD_MEM __attribute__((noinline)) bool ActiveNoteLedger::applyPlaybackEve
   return applyPlaybackEventBody(channel, evt);
 }
 
+TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::MissingCommittedNoteOnPlan
+ActiveNoteLedger::planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
+                                                           size_t eventCount) const {
+  return planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) size_t ActiveNoteLedger::erasePlannedOpenNotes(
+    const MissingCommittedNoteOnPlan& plan) {
+  return erasePlannedOpenNotesBody(plan);
+}
+
 TRACK_COLD_MEM __attribute__((noinline)) void ActiveNoteLedger::eraseOpenNotesMissingFromCommittedNoteOns(
     const MidiEvent* events, size_t eventCount) {
-  eraseOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
+  (void)erasePlannedOpenNotesBody(planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount));
 }

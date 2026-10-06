@@ -5999,6 +5999,184 @@ void test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 74));
 }
 
+/// The **published root** a restored slot has, built from an explicit note list with each event's `noteId` stamped the way
+/// the production publish path stamps it (`LoopSnapshotPublish.cpp` writes `next.value.noteId`). The handoff's ledger
+/// predicate is **identity** addressed, so a fixture that asserts "the incoming revision still carries this sounding" must
+/// install a root whose events carry identities: an event with `kInvalidNoteId` would make every tagged entry look
+/// invalidated, which is a fixture artifact rather than a version handoff.
+struct RootNoteForHandoff {
+  NoteId noteId;
+  uint8_t pitch;
+  uint32_t onTick;
+  uint32_t offTick;
+};
+
+void publishRootWithIdentitiesForSlot(Loop& loop, const RootNoteForHandoff* notes, size_t noteCount) {
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  for (size_t i = 0; i < noteCount; ++i) {
+    const RootNoteForHandoff& note = notes[i];
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = note.noteId;
+    add.next.pitch = note.pitch;
+    add.next.velocity = 100;
+    add.next.startTick = note.onTick;
+    add.next.endTick = note.offTick;
+    changes.notes.push_back(add);
+    SnapshotEventChange on{};
+    on.kind = SnapshotChangeKind::Add;
+    on.next.loopId = loop.loopId;
+    on.next.eventId = static_cast<EventId>(4000 + i * 2);
+    on.next.canonicalOrder = static_cast<uint32_t>(i * 2);
+    on.next.value = MidiEvent::NoteOn(note.onTick, 1, note.pitch, 100);
+    on.next.value.noteId = note.noteId;
+    changes.events.push_back(on);
+    SnapshotEventChange off{};
+    off.kind = SnapshotChangeKind::Add;
+    off.next.loopId = loop.loopId;
+    off.next.eventId = static_cast<EventId>(4001 + i * 2);
+    off.next.canonicalOrder = static_cast<uint32_t>(i * 2 + 1);
+    off.next.value = MidiEvent::NoteOff(note.offTick, 1, note.pitch, 0);
+    off.next.value.noteId = note.noteId;
+    changes.events.push_back(off);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture must install a *current* root, or the gather terms refuse it");
+}
+
+/// 3.7 (4.5 § 13(g), and the serving half task 3.14 owed): **the version handoff closes the soundings it used to drop.**
+///
+/// The handoff's reconciliation already computed them -- tagged ledger entries whose committed NoteOn is absent from the
+/// incoming full-loop stream -- and then dropped the obligation silently. Nothing reached the wire, and because the
+/// replacement's own note-ons carry *new* identities (which the ledger's identity-exact NoteOff resolution refuses as
+/// orphans), nothing could ever close the note that was still sounding: it stayed on until a stop or a clear.
+///
+/// The drive is the production clock entry (`Track::playMidiEvents` -> the merged-window rebuild -> the handoff
+/// reconcile), and the oracle is the wire plus the obligation set: the closure goes out **at the handoff's own tick** and
+/// **before** the replacement's note-ons; an unchanged sounding is neither closed nor retriggered; an untagged entry is
+/// never evidence of removal; and an **event-empty** incoming window closes nothing and drops nothing, so its obligations
+/// stay alive.
+void test_handoff_emits_the_closures_it_used_to_drop() {
+  constexpr NoteId kKeptId = 2000;
+  constexpr NoteId kRemovedId = 2001;
+  LoopEventStore::initPool();
+  MidiSendCapture::reset();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const RootNoteForHandoff r1[] = {{kKeptId, 48, 0, 700}, {kRemovedId, 55, 0, 700}};
+  publishRootWithIdentitiesForSlot(loop, r1, 2);
+  track.startPlaying(0);
+  for (uint32_t tick = 64; tick <= 128; tick += 64) {
+    track.playMidiEvents(tick, false);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the opening phase is silent: nothing the handoff asserts can come from here");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48),
+                           "R1's first sounding is open after the walk");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 55),
+                           "R1's second sounding is open after the walk");
+  NoteId openAt48 = kInvalidNoteId;
+  NoteId openAt55 = kInvalidNoteId;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t note, const ActiveNoteLedger::Entry& entry) {
+    if (note == 48) {
+      openAt48 = entry.noteId;
+    }
+    if (note == 55) {
+      openAt55 = entry.noteId;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kKeptId), static_cast<uint32_t>(openAt48),
+                                   "the open sounding carries R1's own identity, which is what the predicate reads");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(kRemovedId), static_cast<uint32_t>(openAt55));
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 67);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+  const RootNoteForHandoff r2[] = {{kKeptId, 48, 0, 300}, {2002, 62, 256, 400}};
+  publishRootWithIdentitiesForSlot(loop, r2, 2);
+  MidiSendCapture::reset();
+  track.playMidiEvents(256, true);
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                              "the handoff's closure is audible");
+  TEST_ASSERT_TRUE_MESSAGE(MidiSendCapture::at(0).isNoteOff(),
+                           "and it is the handoff's first wire event -- not the replacement's content");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(55, MidiSendCapture::at(0).data.noteData.note,
+                                  "the closure fires for the invalidated sounding's own pitch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, MidiSendCapture::at(0).channel,
+                                  "on the track's own playback channel -- the ledger's channel is already remapped");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(256u, MidiSendCapture::at(0).tick, "stamped with the handoff's own tick");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 55),
+                            "the invalidated obligation is discharged, not forgotten");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48),
+                           "an unchanged sounding is not closed at the handoff");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67),
+                           "an untagged entry survives it too");
+  for (uint32_t tick = 320; tick <= 384; tick += 64) {
+    track.playMidiEvents(tick, true);
+  }
+  const size_t wireCount = MidiSendCapture::count();
+  size_t closureIndex = wireCount;
+  size_t firstReplacementOn = wireCount;
+  size_t offCountAt55 = 0;
+  size_t offCountAt48 = 0;
+  for (size_t i = 0; i < wireCount; ++i) {
+    const MidiEvent event = MidiSendCapture::at(i);
+    if (event.isNoteOff()) {
+      if (event.data.noteData.note == 55) {
+        ++offCountAt55;
+        if (closureIndex == wireCount) {
+          closureIndex = i;
+        }
+      }
+      if (event.data.noteData.note == 48) {
+        ++offCountAt48;
+      }
+    } else if (event.isNoteOn() && firstReplacementOn == wireCount) {
+      firstReplacementOn = i;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(closureIndex != wireCount, "the closure is on the wire exactly once, after the handoff");
+  TEST_ASSERT_TRUE_MESSAGE(firstReplacementOn != wireCount, "the replacement's own note-on is emitted in this drive");
+  TEST_ASSERT_TRUE_MESSAGE(closureIndex < firstReplacementOn,
+                           "every closure precedes the replacement's note-ons (the spec's ordering clause)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1u, static_cast<uint32_t>(offCountAt55),
+      "one closure for the invalidated sounding, never a second (obsolete closures are suppressed)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offCountAt48),
+                                   "the preserved note's own note-off is emitted once, at its own tick");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48),
+                            "and it discharges that obligation -- the note is not left sounding");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+  runtime->ledger.noteOn(1, 71, 3000, 0, 100);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 71));
+  publishRootWithIdentitiesForSlot(loop, nullptr, 0);
+  MidiSendCapture::reset();
+  for (uint32_t tick = 448; tick <= 512; tick += 64) {
+    track.playMidiEvents(tick, true);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "an event-empty incoming window silences nothing");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 71),
+                           "and the obligation stays alive rather than being dropped silently");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture leaves the loop with a current (empty) root");
+}
+
 /// 3.14 (DEC-108 §13(g)): the **undo/redo audible handoff**. The blanket slot silence is gone: undoing an edit batch
 /// settles the batch's **own** identities against the ledger, so a sounding note the batch never touched receives neither
 /// an early NoteOff nor a retrigger, and only a note whose identity the batch removes is closed. Driven through the
@@ -11573,6 +11751,8 @@ int main() {
   RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
   // windowed-playback-generation slice 3.14: the undo/redo audible handoff (\u00a713g).
   RUN_TEST(test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot);
+  // windowed-playback-generation slice 3.7 / 4.5: the version handoff's closures are emitted, not dropped.
+  RUN_TEST(test_handoff_emits_the_closures_it_used_to_drop);
   // windowed-playback-generation slice 4.1: named checkpoint parity for undo (F-5).
   RUN_TEST(test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag);
   // windowed-playback-generation slice 4.3: content parity across a window boundary (F-7).

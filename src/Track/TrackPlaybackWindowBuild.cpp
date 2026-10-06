@@ -323,14 +323,57 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   return true;
 }
 
+/// The handoff's **wire half**, FLASH-placed with the reconcile that calls it, in the order the existing closure owner
+/// uses (`applyClosureSettlementForSlot`): the NoteOff goes to the immediate-send edge first (`midiHandler.sendMidiEvent`
+/// — the owner `silenceSlotMidiOutput` and `applyClosureSettlementForSlot` already close through), and only then is the
+/// obligation discharged through the ledger's **own** event path, the identity-exact resolution, so the obligation leaves
+/// the same way it would have on the emission path. Discharging first would lose the obligation before the wire had its
+/// chance; and because the discharge is what removes the Entry, a closure is never fired twice -- a later plan cannot
+/// contain it, and a later note-off carrying that erased identity is refused as an orphan
+/// ("closures that became obsolete SHALL be suppressed"). The ledger's channel is already the track's remapped playback
+/// channel, which is why the closure needs no remap of its own.
+TRACK_COLD_MEM size_t closeHandoffInvalidatedNotes(ActiveNoteLedger& ledger,
+                                                   const ActiveNoteLedger::MissingCommittedNoteOnPlan& plan,
+                                                   uint32_t tick) {
+  size_t emitted = 0;
+  for (size_t index = 0; index < plan.count; ++index) {
+    const ActiveNoteLedger::MissingCommittedNoteOnPlan::Entry& entry = plan.entries[index];
+    MidiEvent close = MidiEvent::NoteOff(tick, entry.channel, entry.note, 0);
+    close.noteId = entry.noteId;
+    midiHandler.sendMidiEvent(close);
+    ++emitted;
+    (void)ledger.applyPlaybackEvent(entry.channel, close);
+  }
+  return emitted;
+}
+
+/// The version handoff's ledger reconciliation, and the half of it that is audible. What this used to do was drop the
+/// invalidated obligations **silently** (`eraseOpenNotesMissingFromCommittedNoteOns`): a note whose content the incoming
+/// revision had removed stayed sounding on the wire, and the ledger no longer knew it, so nothing could ever close it.
+/// The replacement's own note-ons are not the repair -- their identities are the *new* ones, and the ledger's
+/// identity-exact NoteOff resolution refuses an unknown identity as an orphan.
+///
+/// Ordering is structural, not a promise: every caller runs this **before** the walk that serves the incoming revision's
+/// note-ons, so the required note-offs precede the replacement's note-ons by construction.
 TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFullLoopRebuild(
-    Loop& loop, LoopPlaybackRuntime& runtime) {
+    Loop& loop, LoopPlaybackRuntime& runtime, uint32_t currentTick) {
   loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
   if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
+    // A slice of the loop: its absence is not evidence, so nothing is closed and nothing is dropped.
     return;
   }
-  runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
-      runtime.mergedMidiEvents.mergedEvents.data(), runtime.mergedMidiEvents.mergedEvents.size());
+  const SessionMidiEventVec& incoming = runtime.mergedMidiEvents.mergedEvents;
+  // The reconciliation's own **interpretive** rule comes first, and it is the rule the settlement already owns: absence
+  // from the incoming content is evidence of removal only when that content is authoritative for the whole loop -- and an
+  // **event-empty** window says only "no new events", so it closes nothing and drops nothing. The obligations stay
+  // alive (the spec's "closure obligations SHALL stay alive"), and a boundary that does discharge them -- a stop, a
+  // clear, or a later handoff that carries content -- closes them then, rather than the handoff forgetting them here.
+  if (!handoffAbsenceMeansRemoval(/*incomingIsWholeLoop=*/true, /*incomingIsEmpty=*/incoming.empty())) {
+    return;
+  }
+  const ActiveNoteLedger::MissingCommittedNoteOnPlan plan =
+      runtime.ledger.planOpenNotesMissingFromCommittedNoteOns(incoming.data(), incoming.size());
+  (void)closeHandoffInvalidatedNotes(runtime.ledger, plan, currentTick);
 }
 TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
     Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
@@ -409,7 +452,7 @@ const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick);
   }
   return &runtime.mergedMidiEvents.mergedEvents;
 }
@@ -945,7 +988,7 @@ TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) 
     const bool rebuilt =
         ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick, prepareLaunch);
     if (rebuilt) {
-      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime);
+      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick);
     }
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
@@ -1066,7 +1109,7 @@ TRACK_COLD_MEM bool Track::servicePendingPreparedPlaybackPairSlot(uint8_t slotIn
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick);
   }
   if (loop.playbackOrderDirty || loop.getPlaybackOrder().size() !=
                                      runtime->mergedMidiEvents.mergedEvents.size()) {

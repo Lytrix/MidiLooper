@@ -118,7 +118,8 @@ TRACK_INTERNAL_MEM bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& 
                                                             bool prepareLaunch = false);
 
 TRACK_INTERNAL_MEM void reconcilePlaybackLedgerAfterFullLoopRebuild(Loop& loop,
-                                                                    LoopPlaybackRuntime& runtime);
+                                                                    LoopPlaybackRuntime& runtime,
+                                                                    uint32_t currentTick);
 
 TRACK_INTERNAL_MEM void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
                                              const ProjectionContext& playbackContext);
