@@ -1,3 +1,30 @@
+**`windowed-playback-generation` 3.13 / I11 -- the display-consumer item is reconciled with the runtime change's display
+rework, and stays **open** on an explicit cross-change dependency (2026-10-06; documentation only, no production or test line changed).**
+3.13's one remaining item -- *the display consumer of a preview window* -- now names a **producer** (this change's
+preview publication: `Track::requestPreviewWindow`, `origin == Preview` part of equality in both identities, and the
+served-window read `Track::playbackWindowEventAtForSlot`, whose own comment states *"Nothing in production consumes it
+yet"*), a **consumer** (the **display** -- `DisplayManager`, the piano-roll consumer attributed by
+`S4C0-PUBLICATION-INVENTORY.md:26` as *"the window the display resolves/visual-caches"* and owned as a consumer by
+`docs/Authority/Architecture/Display.md`), and an **integration owner** (`runtime-working-set-ownership` **S4e -- the
+visual tier**, the runtime change's display rework: its spec requirement `A compact visual envelope is retained for
+every slot, with a capped detail window` and `Display compose reuses owned frame storage`, plus `ARCHITECTURE-REVIEW.md`
+section P6, whose owner line is *"Loop envelope/cache validity, **DisplayManager consumption**, existing idle
+renderer"*). **No display path was wired, and none will be here:** S4e.4 requires the caller-less display read paths to
+be *"reused or deleted rather than leaving a third variant"*, and S4e.1/S4e.2 rewrite the compose/gather path a
+preview-window read would land on -- so a read added now would be exactly the variant the rework replaces. The item
+therefore **stays open on S4e** and is **not** deferred to 3.7b fallback removal; both requirements are cited (this
+change's `Preview content is a distinct source and is never committed currency`, `spec.md:86`, and `A published window
+is immutable and no consumer read straddles a replacement`, `spec.md:37`, whose `Consumers cannot mutate a window`
+names **display** among the four consumer kinds). The record is
+[`DISPLAY-CONSUMER-RECONCILIATION.md`](../openspec/changes/windowed-playback-generation/DISPLAY-CONSUMER-RECONCILIATION.md),
+with the **reciprocal note** in `runtime-working-set-ownership/tasks.md` section S4e, so the integration owner reads the
+dependency where the work sits. **One pre-existing doc defect is recorded rather than fixed** -- the comment
+interleaving in `include/Track.h` that lets `playbackWindowEventAtForSlot`'s final doc line read as if it documented
+`servicePreviewWindowForNoteEditSession` -- because this slice is documentation-only and reports an empty
+`git diff -- src include`. Verified: `git diff --stat -- src include test` **empty**, strict `openspec validate` for both
+changes, `git diff --check` clean; the task list's 3.13 entry, the change's `RECONCILIATION.md` (§3 table row, findings
+7 and 8) and the I10 entry all carry the same dependency. **NOT claimed:** no display consumer is wired, no fixture, no
+build, no device leg, no upload.
 **`windowed-playback-generation` 3.13 / I10 -- a served preview is never what a save writes: fixture 2.12's `then save`
 clause is measured in the storage harness (2026-10-06; test-only, no production line changed).** Fixture 2.12's last
 clause -- **a preview is never committed currency** -- is measured at the one consumer that *writes*. The structural

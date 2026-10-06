@@ -1,3 +1,25 @@
+**2026-10-06 — `windowed-playback-generation` 3.13 / I11: the display-consumer item is reconciled with the runtime
+change's display rework, and stays open on an explicit cross-change dependency (documentation only; no code, no build, no device).**
+3.13's one remaining item — *the display consumer of a preview window* — now has a **producer** (this change's preview
+publication: `Track::requestPreviewWindow`, the `origin == Preview` identity, the served-window read
+`playbackWindowEventAtForSlot`, which states *"Nothing in production consumes it yet"*), a **consumer** (the **display**,
+`DisplayManager` — the piano-roll consumer attributed by `S4C0-PUBLICATION-INVENTORY.md:26` and by
+`docs/Authority/Architecture/Display.md`) and an **integration owner** (`runtime-working-set-ownership` **S4e — the
+visual tier**, the runtime change's display rework), instead of an open-ended debt. **No display path is wired here**:
+S4e.4 forbids *"leaving a third variant"* of the display read paths, and S4e.1/S4e.2 rewrite the compose/gather path a
+preview-window read would land on, so the item **stays open on S4e** and is **not** deferred to 3.7b. Both requirements
+are cited (this change's `Preview content is a distinct source and is never committed currency` (`spec.md:86`) and
+`A published window is immutable and no consumer read straddles a replacement` (`spec.md:37`, whose `Consumers cannot
+mutate a window` names **display** among the four consumer kinds); the runtime change's `A compact visual envelope is
+retained for every slot, with a capped detail window` (`spec.md:219`) and `Display compose reuses owned frame storage`
+(`spec.md:751`), with `ARCHITECTURE-REVIEW.md` § P6's owner line *"Loop envelope/cache validity, **DisplayManager
+consumption**, existing idle renderer"*). Recorded as
+[`DISPLAY-CONSUMER-RECONCILIATION.md`](../openspec/changes/windowed-playback-generation/DISPLAY-CONSUMER-RECONCILIATION.md),
+with the **reciprocal note** in `runtime-working-set-ownership/tasks.md` § S4e. **One pre-existing doc defect is
+recorded rather than fixed** (a documentation slice keeps `git diff -- src include` empty): `include/Track.h`'s
+`playbackWindowEventAtForSlot` doc comment is split by `servicePreviewWindowForNoteEditSession`'s comment block, so its
+last line reads as if it documented the preview function. Verified: `git diff --stat -- src include test` **empty**,
+strict `openspec validate` for both changes, `git diff --check` clean; **NOT RUN**: no build, no suite, no device.
 **2026-10-06 — `windowed-playback-generation` 3.13 I10: fixture 2.12's `then save` clause is measured — a served preview
 is never what a save writes (test-only; no production line changed; the task stays open for the display consumer).**
 Fixture **2.12**'s last clause — **a preview is never committed currency** — is measured at the one consumer that
@@ -5467,6 +5489,36 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
 
+### 3.13 (I11) — the display-consumer item is reconciled with the runtime change's display rework, and stays **open** on an explicit cross-change dependency (2026-10-06; documentation only)
+
+**3.13 / I11 landed 2026-10-06 (documentation only; no `src/`/`include/`/`test/` line changed, no build, no device).** The
+task's one remaining item — *"the display consumer of a preview window"* — now carries a **producer**, a **consumer** and
+an **integration owner** instead of an open-ended debt, and it is **not** deferred to 3.7b. The **producer** is this
+change's preview publication (`Track::requestPreviewWindow` at `src/Track/TrackPlaybackWindowBuild.cpp:4271`;
+`PlaybackWindowOrigin::Preview` part of equality in both identities, `include/RuntimePlaybackView.h:157,170,204`; the
+cancellation/handoff lifecycle; and the served-window read `Track::playbackWindowEventAtForSlot`,
+`include/Track.h:881`, which states *"Nothing in production consumes it yet"*). The **consumer** is the **display**
+(`DisplayManager`, the piano-roll consumer attributed by `S4C0-PUBLICATION-INVENTORY.md:26` — *"the window the display
+resolves/visual-caches"* — and by [`docs/Authority/Architecture/Display.md`](../Authority/Architecture/Display.md);
+today its NOTE_EDIT representation comes from `EditManager::projectedNoteEditDisplayNotes` and the *playback* preview
+from the merged fallback, `src/Track/TrackPlaybackWindowBuild.cpp:221,274`, which is the contract's own gap row 5,
+`design.md:253`). The **integration owner** is `runtime-working-set-ownership` **S4e — the visual tier** (the runtime
+change's display rework: the envelope and capped detail window under its spec requirement `A compact visual envelope is
+retained for every slot, with a capped detail window`, plus `Display compose reuses owned frame storage`, and
+`ARCHITECTURE-REVIEW.md` § P6 whose owner line is *"Loop envelope/cache validity, **DisplayManager consumption**,
+existing idle renderer"*), and **S4e.4** — *"record the two caller-less display paths … as either reused or deleted
+rather than leaving a third variant"* — is the rule that decides this: a preview-window read wired here would be that
+third variant, on the exact display compose/gather path S4e.1/S4e.2/S4e.4 rewrite. The owned residual is already stated
+in the requester itself (`src/Track/TrackPlaybackWindowBuild.cpp:4360-4361`: *"would need the display consumer this
+slice does not wire"*). So **no display path was added**: both requirements are cited, the three roles are named, and the
+item **stays open on S4e**, recorded in the change as
+[`DISPLAY-CONSUMER-RECONCILIATION.md`](../openspec/changes/windowed-playback-generation/DISPLAY-CONSUMER-RECONCILIATION.md)
+with the **reciprocal note** in `runtime-working-set-ownership/tasks.md` § S4e. **Recorded, not fixed:** the pre-existing
+comment interleaving in `include/Track.h` (`playbackWindowEventAtForSlot`'s doc comment split by
+`servicePreviewWindowForNoteEditSession`'s, `:868-880`) is a reader-attribution defect, and a documentation-only slice
+keeps `git diff -- src include` empty. Verified: `git diff --stat -- src include test` **empty**,
+`openspec validate {windowed-playback-generation,runtime-working-set-ownership} --strict` valid, `git diff --check`
+clean; **NOT RUN**: no build, no suite, no device (nothing device-visible is claimed).
 ### 3.13 (I10) — a served preview is never what a save writes: fixture 2.12's `then save` clause, measured in the storage harness (2026-10-06; test-only)
 
 **3.13 increment I10 landed 2026-10-06 (test-only; the task stays open for the display consumer).** Fixture **2.12**'s

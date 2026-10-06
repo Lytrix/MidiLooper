@@ -2905,6 +2905,20 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 ## S4e — visual tier (envelope for all slots, capped window)
 
+> **Cross-change dependency, recorded by the sibling change (2026-10-06, documentation-only).** The window authority's
+> **preview** publication — `windowed-playback-generation` task **3.13**, its `PlaybackWindowOrigin::Preview` identity,
+> its cancellation/handoff lifecycle and its served-window read — has **no display consumer yet**, and that consumer is
+> this section's: this change owns the display's representation (S4e.1's envelope, S4e.2's rendered detail window) and
+> the display's read paths (**S4e.4**: *"record the two caller-less display paths (`resolveDisplayNotesCommitted`,
+> `resolveDisplayNotesLiveCapture`) as either reused or deleted rather than leaving a third variant"*), so a
+> preview-window read wired by the sibling would be the variant S4e.4 forbids and S4e.1/S4e.2 replace. The sibling's
+> item therefore **stays open on S4e** and is not deferred to its own 3.7b fallback removal. What the sibling supplies
+> and this section must honour: a window's origin is part of its **identity** (a preview is never equal to the committed
+> window at the same slot/generation/revision/interval), a window read is **read-only**, the preview lifecycle's
+> cancellation and exit handoff decide **what is served**, and the live mutable fallback is **not** the preview's serving
+> source under this rework. Producer/consumer/owner and both requirements:
+> [`../windowed-playback-generation/DISPLAY-CONSUMER-RECONCILIATION.md`](../windowed-playback-generation/DISPLAY-CONSUMER-RECONCILIATION.md).
+
 - [ ] S4e.1 Per-bar **visual envelope** for every slot as bounded metadata: a per-bar activity/density mask
       owned by `Loop` as a field (written through a `Loop` API, read by `DisplayManager` via a getter), sized so
       the whole library fits. **Not** `overviewCaptureBandMask_` (a DisplayManager, capture-only, single-instance
