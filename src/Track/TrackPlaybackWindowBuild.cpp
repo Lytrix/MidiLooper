@@ -674,6 +674,17 @@ TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliverySta
   }
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr || !runtime->pagedActive) {
+    // Task 3.12 / 5.5: the **named refusal** is an answer of this gate, not silence. A delivery the lane refused for its
+    // content's closure high-water has no ring and no interval, so the state above cannot carry it; the name is kept on
+    // the demand that is still owed, and it is reported only while that demand is the loop's own current revision (a
+    // revision the loop has left is nobody's answer: identity, not currency).
+    const Loop& current = loopForSlot(slotIndex);
+    if (runtime != nullptr &&
+        runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity &&
+        runtime->pendingViewRequest_.active &&
+        runtime->pendingViewRequest_.source.playbackRevision == current.playbackRevision) {
+      return PagedEmissionDeliveryState::ClosuresExceedDeclaredCapacity;
+    }
     return PagedEmissionDeliveryState::NoDelivery;
   }
   const Loop& loop = loopForSlot(slotIndex);
@@ -2120,7 +2131,12 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
       runtime->discardRetainedGather();
       return stepPagedPlaybackForSlot(slotIndex, clock);
     }
-    request.reason = PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
+    // Task 3.12 / 5.5: and this is the second place the switch can be **refused by name** -- the slice ceiling route
+    // measures the interval's closure high-water over the traversal this turn completed, which is a *prefix* of the
+    // interval, so a refusal here is never an over-refusal (a prefix's high-water can only under-report the whole's).
+    request.reason = runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity
+        ? PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity
+        : PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
     runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
     if (!runtime->pendingViewRequest_.active) {
       runtime->pendingViewRequest_ = request;
@@ -2172,6 +2188,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
       runtime->discardRetainedGather();
       return stepPagedPlaybackForSlot(slotIndex, clock);
     }
+    // Task 3.12 / 5.5: the switch can also be **refused by name** -- when the interval's own content exceeds the
+    // emission service's declared closure capacity, `beginPagedPlaybackForSlot` says so and no ring is established. The
+    // refusal is the demand's own reason from here (terminal for this lane's retry, exactly as the over-`L` refusal
+    // below), so the two refusals stay distinguishable to a reader instead of collapsing into one name.
+    const bool closuresRefused =
+        runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity;
+    // The gather's own refusal name is unchanged: what stopped the window lane is that the interval is over its
+    // capacity, and the closure refusal is additive (it names *why* the paged lane declined to take over).
     runtime->retainedGatherRefusal = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
         ? LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity
         : LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
@@ -2179,9 +2203,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
     // survives, and an admission that already retained its own record is left untouched): a window that could not be
     // admitted is still owed an answer, and dropping it here is what would make a refusal indistinguishable from a
     // fulfilled promise.
-    request.reason = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
-        ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
-        : PlaybackViewPendingReason::SourceNotCurrent;
+    request.reason = closuresRefused ? PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity
+        : (admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
+               ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
+               : PlaybackViewPendingReason::SourceNotCurrent);
     if (!runtime->pendingViewRequest_.active) {
       runtime->pendingViewRequest_ = request;
     }
@@ -2199,12 +2224,52 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
   return PlaybackViewTurnResult::GrainServed;
 }
 
+/// Task 3.12 / 5.5: **the interval's own closure profile** — how many ledger identities its content holds open at once,
+/// in the order the delivery presents it, and whether that content owes closures at all (`out` is appended by the same
+/// budgeted window traversal the pages are produced from, so no second pass and no ordering assumption is introduced
+/// here). One increment per event, bounded by the content the gather already traversed, allocation-free, and off-clock.
+///
+/// **What the two figures are, and what they are not.** A note-on opens one identity and a note-off closes one, so
+/// `highWaterOut` is the ledger's occupancy trajectory for content whose every note-off closes one of its own note-ons
+/// (which is what the stored representation holds: a pair is a pair). Three consequences are deliberate:
+///
+///   - it is a **prefix-safe** figure: a prefix's maximum can only be ≤ the whole traversal's, so a refusal decided on
+///     a partially gathered interval (the slice-ceiling route) can never refuse content the whole would have carried;
+///   - the criterion is `owesClosures` **and** over-capacity, not the peak alone: content that is nothing but
+///     note-ons exceeds the capacity while losing **nothing**, because a table-full note-on is still emitted and there
+///     is no closure it could orphan (the I3b/I5 fixtures' shape, and the reason the peak by itself would over-refuse);
+///   - a note-off the ledger would refuse as an *orphan* is counted here as closing, so content that mis-pairs is
+///     **not** detected by this preflight. The emission service's own refusal report is the backstop owed for that
+///     shape, and it is named as an open case rather than invented here.
+TRACK_COLD_MEM void closureProfileOfEvents(const MidiEvent* events, size_t count, uint32_t& highWaterOut,
+                                           bool& owesClosuresOut) {
+  highWaterOut = 0;
+  owesClosuresOut = false;
+  if (events == nullptr) {
+    return;
+  }
+  uint32_t open = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (events[i].isNoteOn()) {
+      ++open;
+      if (open > highWaterOut) {
+        highWaterOut = open;
+      }
+    } else if (events[i].isNoteOff()) {
+      if (open > 0) {
+        --open;
+      }
+      owesClosuresOut = true;
+    }
+  }
+}
+///
 /// Task 3.7a (I3b) / DEC-108 §14(c): **prepare the interval that cannot fit one window as pages.** The source is the
 /// same retained revision and, through `collectPinnedCaptureLists`, the same pinned bodies the gather reads -- one
 /// enumeration, so the two readers cannot serve different content for one revision. The demand is not discharged here:
 /// the frozen request stays the promise, and the ring becomes its destination (this is the switch, not the delivery).
 ///
-/// Idempotent for an interval whose pages are already held: a re-demand must **not** re-prepare, because `reset` would
+/// **Idempotent for an interval whose pages are already held:** a re-demand must **not** re-prepare, because `reset` would
 /// clear pages a consumer has not walked yet (`WindowPageCursor` carries the revision only, so a re-prepared interval
 /// would hand an old position to new content -- the preparation therefore resets the cursor, and the slot keeps
 /// **one walker**).
@@ -2242,6 +2307,28 @@ TRACK_COLD_MEM bool Track::beginPagedPlaybackForSlot(uint8_t slotIndex) {
     // No reachable body to page: the interval cannot be prepared from this revision at all, so it stays owed to a
     // source rather than being delivered as silence.
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
+    return false;
+  }
+  // Task 3.12 / 5.5 (the 3.12e falsification's repair): **the emission service's declared closure capacity, consulted
+  // before the ring exists.** The 3.12e drive measured that this path served an over-`L` paired interval whose content
+  // holds ~157 ledger identities open at once while the declared capacity is `ActiveNoteLedger::kMaxOpenNotes` (128):
+  // the ledger stopped recording note-ons (its table-full policy emits the On and refuses the identity) and then
+  // refused every later note-off for an unrecorded identity as an orphan, so the slot emitted note-ons it could never
+  // close -- 370 wrong rows, stuck notes -- and the walk's own per-frame `consumed == due` shows neither the walk nor
+  // the producer's page rate was ever the constraint. Serving a density the declared service cannot carry is worse
+  // than not serving from pages (I3c-b's lesson), so the delivery is **refused by name** and the ring is never
+  // established: nothing is produced, nothing is emitted, and the demand stays owed (`pendingViewRequest_`), never
+  // dropped. The criterion is the interval's own content, read from the traversal the gather already performed for
+  // this interval -- the completing route's reading is exact, and the slice-ceiling route's prefix can only
+  // under-report -- and it is the peak **and** that the content owes closures at all: note-on-only content exceeds the
+  // capacity while losing nothing (a table-full note-on is still emitted, and there is no closure for it to orphan),
+  // so the peak alone would refuse content the service demonstrably carries.
+  uint32_t closureHighWater = 0;
+  bool owesClosures = false;
+  closureProfileOfEvents(runtime->retainedGatherEvents.data(), runtime->retainedGatherEvents.size(),
+                         closureHighWater, owesClosures);
+  if (owesClosures && closureHighWater > ActiveNoteLedger::kMaxOpenNotes) {
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity;
     return false;
   }
   // The switch: the demand's own window lane states *why* it stopped being a window lane (`WindowExceedsCapacity` is
@@ -3520,6 +3607,7 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
       request->positionInvalidated || (!launch && (request->clockEpoch == 0 || clock.epoch != request->clockEpoch ||
       clock.tick < request->work.admittedTick || clock.tick >= request->deadlineTick)) ||
       request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
+      request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity ||
       request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
       !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(slotIndex) != 0) return false;
   const auto& loop = loopForSlot(slotIndex);

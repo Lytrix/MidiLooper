@@ -401,12 +401,35 @@ boundaries; pages SHALL be prepared **off-clock** from bounded, preallocated sto
 later musical ticks, rebuild content inline, restore whole-take reservations or truncate content. Capacity exceeding one
 page is a **supported compatibility case and is not itself a deadline fault**; genuine preparation or playback deadline
 failures SHALL still follow the approved fault-containment policy, because a storage bound is **not** a throughput proof.
+Serving it SHALL stay inside the emission service's **declared closure capacity** — the same declared limit the capture
+and stop admissions already enforce — so where an interval's own content holds more identities open at once than that
+capacity carries while it also owes closures, the emission selection SHALL refuse **by name** rather than serve it:
+serving it would emit note-ons whose closures the service must refuse, which is wrong content rather than late content,
+and emitting wrong content is worse than not emitting from pages. Such a refusal SHALL name itself, SHALL NOT drop the
+demand (which is still owed, not discarded), SHALL NOT truncate or reorder anything, and SHALL NOT be reported as a
+deadline fault; where the interval does fit the declared capacity, the complete, ordered, exactly-once claim below holds
+unchanged.
 
 #### Scenario: A long restored loop plays completely after the fallback is withdrawn
 
 - **WHEN** a restored loop's requested interval exceeds the window's capacity and the live mutable fallback is withdrawn
 - **THEN** the interval is served through bounded pages with complete, ordered, exactly-once output
 - **AND** no event is delayed to a later tick, truncated or rebuilt inline
+
+#### Scenario: Beyond the declared closure capacity the emission selection refuses by name
+
+- **WHEN** a restored interval's own content holds more identities open at once than the emission service's declared
+  closure capacity carries, and the content owes closures
+- **THEN** the emission selection refuses **by name**, no page is produced and no event is emitted for it
+- **AND** the demand is still owed rather than dropped, nothing is truncated or reordered, and the condition is not
+  reported as a deadline fault
+
+#### Scenario: Inside the declared closure capacity the same shape is served completely
+
+- **WHEN** an interval over the window's capacity owes closures but stays inside the emission service's declared closure
+  capacity
+- **THEN** it is served through bounded pages with complete, ordered, exactly-once output at its own ticks
+- **AND** every note-on the service emits is one it can close
 
 #### Scenario: Over-capacity content is not a deadline fault by itself
 

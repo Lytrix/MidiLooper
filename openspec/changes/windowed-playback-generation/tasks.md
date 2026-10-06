@@ -116,8 +116,14 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   was accepted, and that stop/switch/undo are never refused. *(G2 pass 2, row 8; G2 pass 3, rows 1–2 → DEC-108 §14)*
   *Covered today:* below/at/above the limit, the closure at capacity, refusal by name (`window_admission`), a stop never
   refused, accumulation across passes, and — since 2026-10-06 — the **SD-restored over-`L` loop served through bounded
-  pages with cross-page closures** on the production clock entry (see § 5.5's record: it is measured there, and it is
-  the measurement that falsified the completeness clause). **Still open, not faked:** *an edit that moves events into a
+  pages with cross-page closures** on the production clock entry, in **both** of the shapes the declared service
+  distinguishes: served **complete, ordered and exactly-once** inside its closure capacity, and **refused by name**
+  beyond it (see § 5.5's record, which is also where the completeness clause was falsified and then repaired). **Still
+  open, not faked:** *an edit that moves events into a full interval* — reading it literally against this owner, an edit's
+  rows do not pass the capture-edge gate (`Track::recordMidiEvents`) that 3.12c wired, so the clause needs the
+  edit/interval-projection owner's terms (or a decision that it is already covered by
+  `…_the_capture_admission_counts_committed_windows_only`), and the rest of 2.11's list is covered by the existing
+  fixtures (below/at/above `L`, the closure at capacity, refusal by name, stop never refused, accumulation across passes).
   full interval* — read literally against this owner, an edit's rows never pass the capture-edge gate
   (`Track::recordMidiEvents`) that slice 3.12c wired, so the clause needs the edit / interval-projection owner's terms
   or an explicit decision that the committed-window accounting fixture already answers it.
@@ -773,6 +779,35 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **DEC-114 sequencing:** the remaining production-consumer clause in 3.12 is delivered by 3.7a with the fallback retained; fixture 5.5's timing measurement remains a separate 3.12 gate.
   *Increment 2026-10-06 (3.7a I3b) — the **production paging consumer entry** this task owed, plus the production trigger.* `Track::consumePagedPlaybackWindowForSlot` is the consumer entry the ring's own fixtures could not provide: it walks the prepared interval exactly once through the runtime's cursor, answers `NeedsPage` (the caller produces; never a wait), releases the page storage at the end of the walk, and refuses `StaleRevision` once the loop's revision has moved. The production trigger is now real too: an interval that cannot fit one window — reached either by the retained lane's own slice ceiling or by the window admission's `WindowExceedsRetainedCapacity` — is prepared as pages for the same revision, one bounded page per turn, from the same pinned bodies the window gather reads. **Verified** in 3.7a's record (focused 154/154, full native 2,829 / 7 skipped / 2,822 succeeded, capture build SUCCESS, five red-proofs with byte-identical restores). **Still owed in this task:** fixture 5.5's timing envelope over the production paging path, and the hot-path emission integration (3.7a I3c) — the pages are prepared and walkable, but nothing emits from them on the clock path yet. Detail: [`evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md`](evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md).
   *Increment 2026-10-06 (the paged path's serving envelope; test-only, no `src/`/`include/` change) — **fixture 5.5's timing gate turns into a measurement, and its emission clause is falsified.*** The drive is the production per-track clock entry on a **retained-source (restored-library) shape** with an interval **over `L`** (2,100 events of note **pairs** inside the two-bar span the window path accepts), the oracle is the interval's own effective content read **per frame** (the due set from independent phase arithmetic), and the run spans **two whole passes** so the loop wrap is crossed. **Holds:** the switch to pages comes from the admission's **capacity** refusal (17 of 18 slices, so not a spent budget); no row is emitted outside its own due window; the emitted stream is an **order-preserving subsequence** of the interval over both passes; the ring's published-page high-water stayed **≤ 3** while the interval is **5.5× the ring's capacity** -- segmentation is a **storage** bound, exactly as the task's last sentence asks, and no duration is claimed (the end-to-end thresholds are **S7.5a — envelope/timing oracle**); no inline rebuild (the detector unchanged, the merged store empty, the paged delivery emitting); every wrap arrived straddled. **Falsified, with the numbers:** over two passes the walk consumed **4,200** ordinals (the interval twice, exactly) and the MIDI edge emitted **3,830** -- **370 events (8.8 %)** were consumed and then **skipped** as behind their frame (20 short frames; the dry-turn count in the final pass is 263, and that counter is per pass -- the boundary resets it), so the interval is **not** served complete, and the loss is a drop rather than a late delivery or a refusal by name. **Deliberately not attributed:** a plain per-turn page deficit -- doubling the lane's turns per frame in a withdrawn probe changed none of the numbers, so the binding constraint is the next slice's to find, with this fixture as its reproducer and acceptance test (its candidate repairs: a producer turn that publishes more than one page while the ring has room, or a **named refusal** of the emission selection at densities the declared service cannot carry, per the I3c-b lesson). Verified: focused **163/163** (baseline 162), full native **2,841 / 7 skipped / 2,834 succeeded / 0 failed** (baseline 2,840/2,833), capture build **SUCCESS** with the RAM1 line **byte-identical** (`code 392,248 + padding 968`; a test-only slice cannot move the image, and the diff confirms it), strict validation and `git diff --check` clean, red-proofs **RP-A** (a drained page never released) and **RP-C** (the emitting pass's content bound dropped) RED with byte-identical restores, and **RP-B** recorded as a **non-red-proof by equivalence** with its mechanism named. **Not claimed:** no repair, no `ExecutionBounds.md` row change, no device leg, no fallback removal (3.7b). Detail: [`evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md`](evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md) with its [`EXECUTION.md`](evidence/2026-10-06-s312e-paged-serving-envelope/EXECUTION.md).
+  *Increment 2026-10-06 (the falsified clause's **repair**; firmware + tests) — **the emission selection refuses by name at
+  the declared closure capacity, and 5.5's clause is asserted inside it.*** The mechanism is now measured, not guessed:
+  over the 3.12e drive the walk consumed **exactly its own due set every frame** (so the producer's page rate was never the
+  constraint, which is also why 3.12e's withdrawn doubling probe changed nothing) while the active-note ledger sat pinned
+  at **128 = `ActiveNoteLedger::kMaxOpenNotes`** with `overflowed == 1`, so **every missing row was a `NoteOff` whose own
+  `NoteOn` had already been sent** — a note-on nothing can close, i.e. wrong content rather than a late delivery or a
+  refusal. `Track::beginPagedPlaybackForSlot` now reads the interval's own **closure profile** over the content the
+  retained gather has already traversed (prefix-safe) and **refuses the switch by name** when the content **owes closures**
+  and its peak exceeds the declared capacity: `PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity`,
+  `PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity` and
+  `Track::PagedEmissionDeliveryState::ClosuresExceedDeclaredCapacity`, with `committedPlaybackRetryCanProgress` refusing to
+  re-attempt it exactly as for `WindowExceedsRetainedCapacity`. The ring is **never established** (no page, nothing bound,
+  `admittedForEmission()` false) and the demand stays owed. The `owesClosures` term is load-bearing: note-on-only content
+  exceeds the capacity while losing nothing, and dropping the term fails **ten** existing paged fixtures (RP-E). Fixtures:
+  the 3.12e reproducer (1,050 pairs, 200-tick span, high-water 164) now asserts the refusal with **zero rows at the MIDI
+  edge, zero pages, and `ledger.overflowed() == false`** — the harm class cannot arise from a path that served nothing —
+  and the acceptance half (`…_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick`, 1,060 pairs = 2,120
+  events > `L`, 132-tick span, high-water 109) asserts 5.5's clause strictly per frame: **`skipped == 0`,
+  `shortFrames == 0`**, exactly twice the interval emitted, both edges agreeing, `ledger.overflowed() == false`.
+  **Verified:** focused **164/164** (baseline 163), ring **3/3**, full native **2,842 / 7 skipped / 2,835 succeeded / 0
+  failed** (baseline 2,841/2,834), capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+  `code 392,248 + padding 968`), `git diff --check` and **strict** validation clean, red-proofs **RP-D** (preflight
+  disabled) and **RP-E** (`owesClosures` dropped, ten fixtures red) with byte-identical restores. **Not claimed:** the
+  balance is not a ledger (mis-paired orphan-off content inside the capacity is not detected here); over-refusal of
+  unpaired-excess wrap-crossing content is deliberate; channel remapping is not modelled; the refused interval is not
+  served at all on this shape (silence by decision — the reason **3.7b** stays open for it); no **6.3** sweep, no duration,
+  no device leg, no `ExecutionBounds.md` row change, and `kMaxOpenNotes` itself unchanged (that call is 6.3's). Detail:
+  [`evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md`](evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md)
+  with its [`EXECUTION.md`](evidence/2026-10-06-s312f-closure-capacity-refusal/EXECUTION.md).
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content
@@ -955,10 +990,24 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   emission half does **not** — **370 of 4,200 events (8.8 %)** were consumed and then skipped as behind their frame
   (20 short frames), so output is neither complete nor exactly-once at this density, and the events are **dropped**
   rather than served late or refused by name. No duration is claimed (S7.5a owns the end-to-end thresholds).
-  **5.5 stays OPEN** on the repair: either a producer turn that publishes more than one page while the ring has room,
-  or a **named refusal** of the emission selection at densities the declared service cannot carry; the fixture is that
-  slice's reproducer and acceptance test. Detail:
-  [`evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md`](evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md).
+  **Repaired 2026-10-06 (firmware + tests) — the task's clause now holds *inside* the declared closure capacity, and
+  what exceeds it is refused by name.** The mechanism the 3.12e measurement deliberately left unattributed is now
+  measured (the walk consumed its due set every frame; the active-note ledger sat pinned at its declared **128** and the
+  missing rows were all `NoteOff`s whose `NoteOn` had already been sent — a note-on nothing could close), so the first
+  candidate repair is **falsified**: no producer turn can move a per-frame ledger occupancy the content's own musical
+  concurrency fixes. The second is implemented: `Track::beginPagedPlaybackForSlot` reads the interval's own closure
+  profile over the content the retained gather already traversed and **refuses the switch by name** beyond the declared
+  capacity (a new `ClosuresExceedDeclaredCapacity` name on the lane's outcome, the demand's reason and the selection
+  gate), never establishing the ring. Two fixtures now split the 3.12e drive: the **reproducer** (unchanged content)
+  asserts the refusal with zero rows, zero pages and `ledger.overflowed() == false`; the **acceptance** half
+  (2,120 events > `L` at a 132-tick note span, high-water 109 ≤ 128) asserts *complete, ordered, exactly-once output with
+  no tick delay* per frame (`skipped == 0`, `shortFrames == 0`), with no inline rebuild and no truncation, and the
+  storage-bound half unchanged (page high-water ≤ 3 against 5.5× the ring's capacity). No duration is claimed (**S7.5a**
+  owns the end-to-end thresholds). Detail:
+  [`evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md`](evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md).
+  **5.5 stays open** on: the **6.3** sweeps that may move the declared capacity itself, a device leg, and the named
+  residuals of the repair's criterion (a mis-paired orphan-off content inside the capacity is not detected; unpaired-excess
+  wrap-crossing content is over-refused deliberately). Earlier record: [`evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md`](evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md).
 
 ## 6. Gates, sweeps and closeout
 

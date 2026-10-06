@@ -484,6 +484,13 @@ public:
     Unproven,
     /// A pass completed with the producer ahead of the playhead throughout: the delivery may be selected.
     Admissible,
+    /// The interval's own content holds more ledger identities open at once than the emission service's declared
+    /// closure capacity (`ActiveNoteLedger::kMaxOpenNotes`) can carry, so the emission is **refused by name** rather
+    /// than half-served, and the ring is never established for it. Serving it would emit note-ons the ledger must
+    /// refuse to close (its documented table-full policy: the On is emitted, the identity is not recorded), and the
+    /// note-off that cannot resolve is an orphan the ledger refuses -- a stuck note, which is *wrong content*. That is
+    /// the I3c-b lesson applied at the density the declared service cannot carry; task 3.12's repair of 5.5's clause.
+    ClosuresExceedDeclaredCapacity,
   };
   PagedEmissionDeliveryState pagedEmissionDeliveryStateForSlot(uint8_t slotIndex) const;
   /// Task 3.7a (I3c): **the pass boundary, serviced in flash.** The clock path only decides *that* a paged delivery is

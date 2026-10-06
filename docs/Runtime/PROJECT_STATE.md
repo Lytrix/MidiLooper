@@ -1,3 +1,31 @@
+**`windowed-playback-generation` 3.12 / 5.5 — the falsified emission clause is REPAIRED: the emission selection refuses
+BY NAME at the declared closure capacity (2026-10-06; firmware + tests).** The mechanism 3.12e left unattributed is now
+measured: the walk **consumed exactly its own due set every frame** (the producer's page rate was never the constraint),
+the **active-note ledger** sat pinned at its declared **`kMaxOpenNotes` = 128** with `overflowed == 1`, and **every
+missing row was a `NoteOff` whose own `NoteOn` had already been sent** — a note-on nothing can close, which is *wrong
+content*, not a late delivery. Candidate A (a producer turn publishing more than one page) is therefore **falsified as a
+repair**; candidate B is implemented. **`Track::beginPagedPlaybackForSlot`** now reads the interval's own **closure
+profile** — the note-on/note-off balance of the content the retained gather has already traversed, prefix-safe, plus
+whether the content owes closures — and **refuses the switch by name** when the content owes closures and its peak
+exceeds the declared capacity: `PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity`,
+`PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity` and
+`Track::PagedEmissionDeliveryState::ClosuresExceedDeclaredCapacity`, with `committedPlaybackRetryCanProgress` declining
+to re-attempt it as it does for `WindowExceedsRetainedCapacity`. The ring is **never established**, `admittedForEmission()`
+stays false, nothing is emitted, and the demand stays **owed**. The `owesClosures` term is load-bearing: note-on-only
+content exceeds the capacity while losing nothing, and dropping the term fails **ten** existing paged fixtures (**RP-E**);
+disabling the preflight fails the new refusal fixture (**RP-D**), both with byte-identical restores. **Fixtures:** the
+3.12e **reproducer** (1,050 pairs, 200-tick span, high-water 164) now asserts the refusal with **zero rows, zero pages and
+`ledger.overflowed() == false`**; the **acceptance half** (1,060 pairs = 2,120 events over `L`, 132-tick span,
+high-water 109 of 128) asserts 5.5's clause strictly per frame — **`skipped == 0`, `shortFrames == 0`**, exactly twice the
+interval emitted, both edges agreeing — with the storage-bound half unchanged (page high-water ≤ 3 against 5.5× the
+ring's capacity; no duration claimed). Verified: focused **164/164**, ring **3/3**, full native **2,842 / 7 skipped /
+2,835 succeeded / 0 failed**, capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+`code 392,248 + padding 968`), strict validation and `git diff --check` clean. **Not claimed:** the criterion is a
+balance, not a ledger (mis-paired orphan-off content inside the capacity is not detected here); over-refusal of
+unpaired-excess wrap-crossing content is deliberate; channel remapping is not modelled; the refused interval is not
+served at all on this shape (silence by decision — the reason **3.7b** stays open for it); no **6.3** sweep, no duration,
+no device leg, no `ExecutionBounds.md` row change, no fallback removal, `kMaxOpenNotes` unchanged. Detail:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md).
 **`windowed-playback-generation` 3.12 — the paged path's serving envelope is measured, and its emission clause is
 falsified (2026-10-06; test-only, no `src/`/`include/` change).** Fixture 5.5's timing gate — and 2.11's
 restored-over-`L` dimension — became a measurement on the **production per-track clock entry**: a **retained-source

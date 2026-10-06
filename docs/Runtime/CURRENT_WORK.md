@@ -1,3 +1,39 @@
+**2026-10-06 — `windowed-playback-generation` 3.12/5.5: the falsified emission clause is **repaired** — the emission
+selection refuses **by name** at the declared closure capacity (firmware + tests).** The 3.12e falsification's mechanism
+is now measured, and it settles the two candidates that record named: over that same drive the walk **consumed exactly
+its own due set every frame** (so the producer's page rate was never the constraint -- which is also why 3.12e's
+withdrawn doubling probe changed nothing) while the **active-note ledger** sat pinned at its declared
+**`kMaxOpenNotes` = 128** with `overflowed == 1`, and **every missing row was a `NoteOff` whose own `NoteOn` had already
+been sent on the wire** -- a note-on nothing can close, i.e. *wrong content* rather than a late delivery or a refusal.
+So **candidate A is falsified as a repair** (no producer turn can move a per-frame ledger occupancy that the interval's
+own musical concurrency fixes) and **candidate B is implemented**: `Track::beginPagedPlaybackForSlot` reads the
+interval's own **closure profile** over the content the retained gather has already traversed -- prefix-safe, so a
+partially gathered (slice-ceiling route) interval can never refuse more than the whole would have carried -- and refuses
+the switch when the content **owes closures and** its peak exceeds the declared capacity. The refusal is named in the
+three places a reader needs it (`PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity`,
+`PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity`,
+`Track::PagedEmissionDeliveryState::ClosuresExceedDeclaredCapacity`), the ring is **never established** (no page, nothing
+bound, `admittedForEmission()` false), the demand stays **owed** (coalesced back, with
+`committedPlaybackRetryCanProgress` refusing to re-attempt it exactly as for `WindowExceedsRetainedCapacity`), and the
+`owesClosures` term is load-bearing: note-on-only content exceeds the capacity while losing **nothing**, and dropping
+the term fails **ten** existing paged fixtures. **The fixture splits in two, sharing one content builder:** the 3.12e
+**reproducer** (1,050 pairs, 200-tick span, high-water 164) now asserts the refusal with **zero rows at the MIDI edge,
+zero pages produced, and `ledger.overflowed() == false`** -- the harm class cannot arise from a path that served
+nothing -- and the **acceptance half** (1,060 pairs = 2,120 events over `L`, 132-tick span, high-water 109 of 128)
+asserts 5.5's clause strictly per frame: **`skipped == 0`, `shortFrames == 0`**, exactly twice the interval emitted,
+sink and wire agreeing, ledger un-overflowed, with the storage-bound half unchanged (page high-water <= 3 against 5.5x
+the ring's capacity; no duration claimed). Verified: focused **164/164** (baseline 163), ring **3/3**, full native
+**2,842 / 7 skipped / 2,835 succeeded / 0 failed** (baseline 2,841/2,834), capture build **SUCCESS** with the RAM1 line
+**byte-identical** (`variables 96,192`; `code 392,248 + padding 968` -- the refusal costs no RAM1 and no ITCM), strict
+validation and `git diff --check` clean, red-proofs **RP-D** (preflight disabled, the refusal fixture fails) and **RP-E**
+(`owesClosures` dropped, ten note-on-only fixtures fail) with byte-identical restores. **Not claimed:** the criterion is
+a balance and not a ledger (mis-paired orphan-off content inside the capacity is not detected here -- the service's own
+refusal report is the backstop owed); over-refusal of unpaired-excess wrap-crossing content is deliberate and named;
+channel remapping is not modelled; on this shape the refused interval is not served at all (**silence by decision**, the
+I3c-b trade, and the reason **3.7b** stays open for it); no **6.3** sweep and so no move of `kMaxOpenNotes` itself, no
+duration, no device leg, no `ExecutionBounds.md` row change, no fallback removal. Evidence:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312f-closure-capacity-refusal/EVIDENCE.md)
+with its [`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312f-closure-capacity-refusal/EXECUTION.md).
 **2026-10-06 — `windowed-playback-generation` 3.12: the paged path's serving envelope is measured on the production
 clock path, and fixture 5.5's emission clause is **falsified** (test-only; no `src/`/`include/` change).** A
 retained-source (restored-library) slot with an interval **over `L`** — 2,100 events of note pairs inside the two-bar

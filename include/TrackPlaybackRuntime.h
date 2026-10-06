@@ -321,6 +321,11 @@ enum class PlaybackViewPendingReason : uint8_t {
   SourceNotCurrent,
   WindowExceedsRetainedCapacity,
   DeadlineExpired,
+  /// Task 3.12 / 5.5: the demand survives, and the reason it is still owed is that the interval's own content exceeds
+  /// the emission service's declared closure capacity -- the paged compatibility lane refused it **by name** rather
+  /// than half-serving it. Terminal for the lane's retry (`committedPlaybackRetryCanProgress`), exactly as an
+  /// over-capacity window is: a refusal with a name is an answer, not a demand to re-gather every turn.
+  ClosuresExceedDeclaredCapacity,
 };
 
 /// DEC-108 §13(c) / task 3.10 (increment 24): **the retained pending preparation request** -- the demand a refused
@@ -626,6 +631,11 @@ struct LoopPlaybackRuntime {
     Cancelled,
     /// The consumer walked the interval to its end.
     Drained,
+    /// Task 3.12 / 5.5: the interval's own content holds more ledger identities open at once than the emission
+    /// service's declared closure capacity carries (`ActiveNoteLedger::kMaxOpenNotes`), so the ring is **not
+    /// established** for it: serving it would emit note-ons whose closures the ledger must refuse, which is wrong
+    /// content rather than a late or missing one. Named, never silent: the demand stays owed.
+    ClosuresExceedDeclaredCapacity,
   };
   PagedPlaybackOutcome pagedOutcome = PagedPlaybackOutcome::None;
   uint32_t pagedPagesProduced = 0;
