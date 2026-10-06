@@ -1,3 +1,21 @@
+**2026-10-06 — `windowed-playback-generation` 3.12: the paged path's serving envelope is measured on the production
+clock path, and fixture 5.5's emission clause is **falsified** (test-only; no `src/`/`include/` change).** A
+retained-source (restored-library) slot with an interval **over `L`** — 2,100 events of note pairs inside the two-bar
+span, driven over two whole passes, one lane turn per 64-tick frame — measured against the interval's own effective
+content read per frame. **Holds:** the pages are chosen by the admission's capacity refusal (17 of 18 slices), no row
+is emitted outside its due window, the stream is an order-preserving subsequence of the interval across the wrap, the
+ring's published-page high-water stayed ≤ 3 against 5.5× its capacity (**a storage bound, not throughput** — no
+duration claimed), no inline rebuild, every wrap straddled. **Falsified:** the walk consumed 4,200 ordinals (the
+interval twice) and the MIDI edge emitted 3,830 — **370 events (8.8 %) were consumed and skipped as behind their
+frame** (20 short frames), so the output is neither complete nor exactly-once at this density and the events are
+dropped rather than served late or refused by name. Doubling the lane's turns per frame changed none of the numbers
+(probe withdrawn), so a per-turn page deficit is *not* the mechanism. Verified: focused 163/163, full native 2,841 /
+7 skipped / 2,834 succeeded / 0 failed, capture build SUCCESS with the RAM1 line byte-identical, two red-proofs RED
+with byte-identical restores and one recorded as a non-red-proof by equivalence. **Open:** the repair (a producer turn
+publishing more than one page while the ring has room, or a named refusal of the emission selection at densities the
+declared service cannot carry) — 3.12/5.5 stay open with this fixture as the acceptance test; 2.11's
+edit-into-a-full-interval dimension stays open alone. Evidence:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md).
 **2026-10-06 — `windowed-playback-generation` 3.7a I6: the version handoff's closures are **emitted, not dropped** — the
 slice task 4.5 and task 3.14 both named as the next step after I5 (firmware + tests; native verified, no device leg).**
 The full-loop handoff reconcile already computed the invalidated obligations (tagged open ledger entries whose committed

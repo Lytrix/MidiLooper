@@ -1,3 +1,28 @@
+**`windowed-playback-generation` 3.12 — the paged path's serving envelope is measured, and its emission clause is
+falsified (2026-10-06; test-only, no `src/`/`include/` change).** Fixture 5.5's timing gate — and 2.11's
+restored-over-`L` dimension — became a measurement on the **production per-track clock entry**: a **retained-source
+(restored-library)** slot with an interval **over `L`** (**2,100 events of note pairs** inside the two-bar span the
+window path accepts), driven over **two whole passes** with one deferred-lane turn per 64-tick frame, against the
+interval's own effective content read **per frame**. **The half that holds:** the switch to pages comes from the
+admission's **capacity** refusal (17 of 18 slices — not a spent budget); no row is emitted outside its own due window;
+the emitted stream is an **order-preserving subsequence** of the interval across the wrap; the ring's published-page
+high-water stayed **≤ 3** while the interval is **5.5× the ring's capacity** (segmentation is a **storage** bound, as
+the task's own sentence asks, and no duration is claimed — **S7.5a** owns the thresholds); no inline rebuild (detector
+unchanged, merged store empty, the paged delivery emitting); every wrap straddled. **The half that does not:** over two
+passes the walk consumed **4,200** ordinals (the interval twice, exactly) and the MIDI edge emitted **3,830** —
+**370 events (8.8 %)** were consumed and then **skipped** as behind their frame (20 short frames; the final pass's
+dry-turn count is 263 and that counter is per pass), so output is **not** complete or exactly-once at this density, and
+the events are **dropped** rather than served late or refused by name. **Not attributed:** a plain per-turn page deficit
+— doubling the lane's turns per frame in a withdrawn probe changed none of the numbers, so the binding constraint is
+the next slice's to find. Verified: focused **163/163**, full native **2,841 / 7 skipped / 2,834 succeeded / 0 failed**,
+capture build **SUCCESS** with the RAM1 line byte-identical (`code 392,248 + padding 968`), strict validation and
+`git diff --check` clean, red-proofs **RP-A** (a drained page never released) and **RP-C** (the pass-content bound
+dropped) RED with byte-identical restores, **RP-B** a recorded **non-red-proof by equivalence**. **3.12 and 5.5 stay
+open** on the repair (a producer turn that publishes more than one page while the ring has room, or a **named refusal**
+of the emission selection at densities the declared service cannot carry) with this fixture as its acceptance test;
+2.11 stays open on its edit-into-a-full-interval dimension alone. Evidence:
+[`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312e-paged-serving-envelope/EXECUTION.md)
+and [`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312e-paged-serving-envelope/EVIDENCE.md).
 **`windowed-playback-generation` 3.7a I6 — the handoff's closures are emitted, not dropped (2026-10-06; firmware + tests,
 native verified, no device leg).** I5 named the next slice as *"3.14's and 4.5's remaining clauses (written against the real
 handoff)"*, and both tasks name the **same** owed item: the emitted closure at the handoff. **The defect, in the owner's own

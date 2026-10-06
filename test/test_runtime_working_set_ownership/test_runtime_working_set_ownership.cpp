@@ -11293,6 +11293,273 @@ void test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn() {
                     static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
 }
 
+/// The **over-`L` interval of note pairs** on the retained-source (restored-library) shape: content that predates `L`
+/// inside the two-bar span the window path accepts, pinned bodies retained for the current revision, and **no
+/// whole-loop root**. Every pair stays inside the interval (`onTick` in `[0, intervalTicks - 200]`, its Off 200 ticks
+/// later), so the closures here are the interval's own; the cross-*interval* closure is the reserve's case, not this
+/// fixture's. The tick schedule is a single arithmetic progression whose Offs land on **other notes' On ticks**, so
+/// same-tick ties -- and therefore the Off-before-On rule at equal ticks -- are exercised by construction rather than
+/// hoped for, and no two events share a `(channel, pitch, tick)` key (the store refuses that as a duplicate).
+OverCapacityPagedFixture prepareDensePairedInterval(uint32_t notes, uint32_t loopBars) {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kIntervalTicks = 2 * kBar;
+  constexpr uint32_t kOffSpan = 200;
+  constexpr uint32_t kOnSpan = kIntervalTicks - kOffSpan;
+  OverCapacityPagedFixture fixture{};
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getActiveLoop();
+  const uint32_t length = loopBars * kBar;
+  loop.loopLengthTicks = length;
+  loop.beginCapture(CapturePhase::Record);
+  uint32_t appended = 0;
+  for (uint32_t i = 0; i < notes; ++i) {
+    const uint32_t onTick = (11u * i) % kOnSpan;
+    const uint8_t pitch = static_cast<uint8_t>(48 + (i % 60));
+    if (!loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, pitch, 100))) {
+      break;
+    }
+    if (!loop.appendCaptureEvent(MidiEvent::NoteOff(onTick + kOffSpan, 1, pitch, 0))) {
+      break;
+    }
+    appended += 2;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * notes, appended, "the fixture's dense pairs must land whole in one pass");
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(length, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a rootless demoted slot");
+  fixture.track = &track;
+  fixture.loop = &loop;
+  fixture.coverage = PlaybackCoverageInterval{0, kIntervalTicks, length};
+  fixture.denseEvents = appended;
+  fixture.runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(fixture.runtime);
+  nativePlaybackDeadlineClock = {1000, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(
+          0, fixture.coverage, length / 4, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision, 3)));
+  TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(0));
+  return fixture;
+}
+
+/// 3.12 with fixtures 5.5 / 2.11: **the paged path serves an over-`L` interval at every due tick.** The drive is the
+/// production per-track clock entry (`Track::playMidiEvents`, one deferred-lane turn per frame), the content is an
+/// interval of **note pairs** larger than `L` on the retained-source (restored-library) shape, and the oracle is the
+/// interval's own effective content from the project's resolver -- read **per frame**, which is what turns five
+/// separate clauses into one measurement: nothing is withheld to a later tick and nothing arrives early, nothing is
+/// dropped or duplicated at a page boundary, the order holds (Off before On at equal ticks), and the whole interval is
+/// emitted exactly once per pass, twice over, across the loop wrap.
+///
+/// The numbers it reads are the path's **declared** ones -- one page (`kWindowPageCapacity`) per deferred turn, the
+/// ring's `kWindowPageCount` depth, `L` -- and it claims **no duration**: the end-to-end thresholds belong to the
+/// runtime change's S7.5a, and this fixture's figures are per-frame *sets*. That is the task's own sentence read
+/// literally: segmentation proves a **storage** bound, not throughput.
+void test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick() {
+  constexpr uint32_t kAdvance = 64;
+  constexpr uint32_t kLoopBars = 24;
+  constexpr uint32_t kNotes = 1050;
+  OverCapacityPagedFixture fixture = prepareDensePairedInterval(kNotes, kLoopBars);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  TEST_ASSERT_EQUAL_UINT32(2u * kNotes, fixture.denseEvents);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(RuntimePlaybackViewConfig::kWindowAdmissionLimit, fixture.denseEvents,
+                                          "the interval is over `L`: no window can hold it whole");
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                           "and the slot is demoted -- the shape the paged path exists for");
+
+  // (P) The demand leaves the window lane because of the **admission's capacity**, not the gather's ceiling: the
+  // traversal completes inside the ceiling, so this is the over-`L` case and not a spent slice budget.
+  const uint32_t gatherTurns = driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive, "the over-`L` demand reached the paged path");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(17u, gatherTurns,
+                                   "the traversal completed inside the ceiling: the admission is what refused");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kRetainedGatherMaxSlices, runtime->retainedGatherUnits,
+                                       "and it refused on the interval's own size, not on the lane's slice budget");
+
+  // The oracle, and the two structures that keep the claims non-vacuous: a same-tick tie, and a pair whose On and its
+  // Off are more than a page apart (so its closure is carried across a page boundary the ring may already have retired).
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase, fixture.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(fixture.denseEvents, static_cast<uint32_t>(oracle.size()),
+                                   "the interval holds its whole over-`L` content: nothing was truncated at acceptance");
+  uint32_t tieTicks = 0;
+  for (size_t i = 1; i < oracle.size(); ++i) {
+    if (oracle[i].tick == oracle[i - 1].tick) {
+      ++tieTicks;
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, tieTicks,
+                                          "same-tick ties exist: the order claim is not vacuous");
+  size_t widestPair = 0;
+  NoteId straddleId = kInvalidNoteId;
+  for (size_t on = 0; on < oracle.size(); ++on) {
+    if (!oracle[on].isNoteOn()) {
+      continue;
+    }
+    for (size_t off = on + 1; off < oracle.size(); ++off) {
+      if (oracle[off].isNoteOff() && oracle[off].noteId == oracle[on].noteId) {
+        if (off - on > widestPair) {
+          widestPair = off - on;
+          straddleId = oracle[on].noteId;
+        }
+        break;
+      }
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kWindowPageCapacity, static_cast<uint32_t>(widestPair),
+                                          "a closure straddles pages: its On and its Off are over a page apart");
+
+  // (D) The drive: two whole passes, one deferred-lane turn and one clock frame each.
+  track.startPlaying(0);
+  const uint32_t loopLength = loop.loopLengthTicks;
+  // Exactly two passes: the drive stops one frame short of the second pass's end, so the boundary frame that would
+  // enter a **third** pass (and emit its head) is not part of the measured stream. The interval's content lies in the
+  // first two bars of each pass, so nothing of it is left undriven.
+  const uint32_t frames = (2u * loopLength) / kAdvance - 1u;
+  const uint32_t hotRebuildsBefore = track.playbackOrderHotRebuildCount();
+  size_t pageHighWater = 0;
+  size_t firstPassRows = 0;
+  size_t sinkCursor = 0;
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  uint32_t shortFrames = 0;
+  size_t shortEvents = 0;
+  const uint32_t consumedAtDriveStart = runtime->pagedEmission.consumedOrdinal;
+  for (uint32_t frame = 1; frame <= frames; ++frame) {
+    const uint32_t tick = frame * kAdvance;
+    const uint32_t cur = tick % loopLength;
+    const uint32_t prev = (tick - kAdvance) % loopLength;
+    const bool freshStart = (frame == 1);
+    const uint32_t pagesBefore = runtime->pagedPagesProduced;
+    const uint32_t passesBefore = runtime->pagedEmission.passCount;
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(1u, runtime->pagedPagesProduced - pagesBefore,
+                                             "one bounded page per deferred turn -- the declared cap");
+    if (runtime->pagedWindow.pagesPublished() > pageHighWater) {
+      pageHighWater = runtime->pagedWindow.pagesPublished();
+    }
+    const size_t rowsBefore = track.sentPlaybackMidiCountForTest();
+    track.playMidiEvents(tick, true);
+    const size_t rowsNow = track.sentPlaybackMidiCountForTest();
+    if (passesBefore < 2u && runtime->pagedEmission.passCount >= 2u) {
+      firstPassRows = rowsBefore;
+    }
+    // (i) Every row this frame emitted is **due in this frame**, at its own tick: no tick delay, no early arrival.
+    for (size_t i = rowsBefore; i < rowsNow; ++i) {
+      const MidiEvent row = track.sentPlaybackMidiAtForTest(i).event;
+      const bool due = freshStart ? (row.tick <= cur)
+                                  : (prev < cur ? (row.tick > prev && row.tick <= cur)
+                                                : (row.tick > prev || row.tick <= cur));
+      TEST_ASSERT_TRUE_MESSAGE(due, "an event was emitted outside its own due window");
+    }
+    // (ii) Count the frames whose emissions fall short of their due set. The claim this accumulates is checked after
+    // the drive, where it can be stated with the measured numbers instead of aborting on the first short frame.
+    if (!freshStart) {
+      size_t dueCount = 0;
+      for (size_t i = 0; i < oracle.size(); ++i) {
+        const uint32_t rowTick = oracle[i].tick;
+        const bool due = prev < cur ? (rowTick > prev && rowTick <= cur) : (rowTick > prev || rowTick <= cur);
+        if (due) {
+          ++dueCount;
+        }
+      }
+      if (dueCount != rowsNow - rowsBefore) {
+        ++shortFrames;
+        shortEvents += dueCount - (rowsNow - rowsBefore);
+      }
+    }
+    sinkCursor = rowsNow;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, static_cast<uint32_t>(firstPassRows),
+                                          "the drive crossed the loop wrap (the pass boundary was judged)");
+
+  // (O3) The emitted stream is an **order-preserving subsequence** of the interval, twice over: nothing reordered,
+  // nothing duplicated, nothing invented. Completeness is what the next lines measure -- and it does **not** hold.
+  size_t sequenceCursor = 0;
+  for (size_t i = 0; i < sinkCursor; ++i) {
+    const MidiEvent row = track.sentPlaybackMidiAtForTest(i).event;
+    bool matched = false;
+    while (sequenceCursor < 2u * oracle.size()) {
+      const MidiEvent& want = oracle[sequenceCursor % oracle.size()];
+      if (want.tick == row.tick && want.type == row.type &&
+          want.data.noteData.note == row.data.noteData.note) {
+        matched = true;
+        ++sequenceCursor;
+        break;
+      }
+      ++sequenceCursor;
+    }
+    if (!matched) {
+      char order[256];
+      snprintf(order, sizeof(order),
+               "the emitted stream follows the interval's own order [row=%lu tick=%lu type=%u note=%u cursor=%lu "
+               "oracle=%lu]",
+               static_cast<unsigned long>(i), static_cast<unsigned long>(row.tick), row.type,
+               row.data.noteData.note, static_cast<unsigned long>(sequenceCursor),
+               static_cast<unsigned long>(oracle.size()));
+      TEST_ASSERT_TRUE_MESSAGE(false, order);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(sinkCursor),
+                                   static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "the sink's record is what the wire received");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiDroppedForTest()),
+                                   "and the sink's own bound was never reached");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(sinkCursor), static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the wire boundary recorded the same stream");
+
+  // (O4) **5.5's emission clause, measured and falsified at this density.** The walk consumes the ring's ordinals and
+  // the adapter's own catch-up rule expresses a late event as "what the frame already passed" -- consumed, then
+  // skipped. So the interval is **not** served complete for this shape: it is over `L` (2,100 events in the two-bar
+  // span, ~101 events per 64-tick frame) and the serving lane does not carry that density, while the adapter's reads do
+  // find the ring empty (the dry-turn count in the message is per pass -- the boundary resets it). What is measured and
+  // deliberately **not** attributed: doubling the lane's turns per frame in a withdrawn probe changed none of these
+  // numbers, so a plain per-turn page deficit is not the mechanism; the binding constraint is the next slice's to find,
+  // with this fixture as its reproducer and acceptance test. Its candidate repairs are a producer turn that publishes
+  // more than one page while the ring has room, or a **named refusal** of the emission selection at densities the
+  // declared service cannot carry (the I3c-b lesson: emitting wrong content is worse than not emitting from pages).
+  const size_t consumedDuringDrive = runtime->pagedEmission.consumedOrdinal - consumedAtDriveStart;
+  const size_t skippedOrdinals = consumedDuringDrive - sinkCursor;
+  char outcome[256];
+  snprintf(outcome, sizeof(outcome),
+           "the declared rate lost events at this density: consumed %lu ordinals, emitted %lu, skipped %lu, over %lu "
+           "interval events x 2 passes, %lu short frames (%lu events), dry turns %lu",
+           static_cast<unsigned long>(consumedDuringDrive), static_cast<unsigned long>(sinkCursor),
+           static_cast<unsigned long>(skippedOrdinals), static_cast<unsigned long>(oracle.size()),
+           static_cast<unsigned long>(shortFrames), static_cast<unsigned long>(shortEvents),
+           static_cast<unsigned long>(runtime->pagedEmission.dryTurns));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(sinkCursor + skippedOrdinals),
+                                   static_cast<uint32_t>(consumedDuringDrive),
+                                   "every ordinal the walk consumed was either emitted or skipped -- nothing vanished");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, static_cast<uint32_t>(skippedOrdinals), outcome);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(static_cast<uint32_t>(2u * oracle.size()), static_cast<uint32_t>(sinkCursor),
+                                       outcome);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, static_cast<uint32_t>(shortFrames),
+                                          "the short frames are the loss's own signature, not one bad tick");
+
+  // (O5/O6/O7) The bounds that **do** hold over the whole drive: one page per turn, a bounded ring, no inline rebuild,
+  // and the paged delivery as the serving branch.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kWindowPageCount), static_cast<uint32_t>(pageHighWater),
+                                           "the ring never held more than its three declared pages");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(static_cast<uint32_t>(3u * kWindowPageCapacity), fixture.denseEvents,
+                                          "while the interval is far larger than the ring: a storage bound, not a "
+                                          "throughput claim (and no duration is measured here)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(hotRebuildsBefore, track.playbackOrderHotRebuildCount(),
+                                   "no inline rebuild: the legacy builder was never taken for this slot");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->mergedMidiEvents.mergedEvents.empty(),
+                           "the merged store stayed empty: the ring served the interval, not a window build");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedEmission.emitting, "the paged delivery is what emitted");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesUnstraddled,
+                                   "every wrap arrived with the next pass's head already published");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(2u, runtime->pagedEmission.boundaries,
+                                              "and the loop wrap was judged at its boundary");
+}
+
 /// 3.7a (I4): **the emitted stream is observable through the production path.** `Track::sendMidiEvent` records the pair
 /// it hands the handler -- after its own gates (`playbackEmitMidiOutput_`, the transport-stop barrier, the slot range)
 /// and after the playback channel remap -- so a host fixture reads what the device would have sent instead of a
@@ -11737,6 +12004,9 @@ int main() {
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);
   RUN_TEST(test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits);
   RUN_TEST(test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate);
+  // windowed-playback-generation slice 3.12 with fixtures 5.5 / 2.11: the paged path's serving envelope, measured per
+  // due window over an over-`L` interval of note pairs (cross-page closures) across the loop wrap.
+  RUN_TEST(test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).
