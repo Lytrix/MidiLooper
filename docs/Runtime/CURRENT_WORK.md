@@ -1,3 +1,28 @@
+**2026-10-06 — `windowed-playback-generation` 3.13 I10: fixture 2.12's `then save` clause is measured — a served preview
+is never what a save writes (test-only; no production line changed; the task stays open for the display consumer).**
+Fixture **2.12**'s last clause — **a preview is never committed currency** — is measured at the one consumer that
+*writes*: the save. The structural halves were already shipped (both window identities carry
+`PlaybackWindowOrigin::Preview`; the capture admission counts committed windows only, 3.7a/I3); what never existed is a
+harness holding **both halves at once** — the window lane and the storage entry points.
+`test_windowed_preview_integration` now links `StorageLoopIo.cpp` + `StorageLoopIoBodyFormatV1.cpp` (measured before the
+fixture: **no** additional stub needed — `off_path_deps.h` already covers the SD and display routes the save touches —
+and the suite's nine fixtures still passed). The fixture opens the session **before** publishing any root (a
+root-current session has no preview content), mutates and serves it, publishes the slot's checkpoint, **settles** the
+loop's queued publications (`hasSettledPublishedSnapshotForSave`, DEC-073 RC2) as the storage harness does before a
+save, and saves through `StorageLoopIo::writeLoopPersisted` into memory: the body reads back `ok` and **not** `legacy`,
+its embedded snapshot equals the **checkpoint's** content (the publisher's own root — measured **20** events, against the
+**8** the synthetic root carried) and differs from the **projection's**, while `committedPlaybackWindowServesSlot` is
+false and `committedPlaybackWindowEventCountForSlot` is 0; after the save the preview is still served at its own
+revision with `origin == Preview`. The save's source selection has **no preview input at all**
+(`loop.publishedSnapshot()` plus the pass set), so the clause holds **by construction** there — the two rules whose
+failure *would* let a preview reach a save are what is red-proved. Verified: focused **10/10** (baseline 9/9), full
+native **2,852 / 7 skipped / 2,845 succeeded / 0 failed** (baseline 2,851/2,844), capture build **SUCCESS** with the RAM1
+line byte-identical, strict validation and `git diff --check` clean; **two red-proofs RED with byte-identical restores**
+(**RP-I10-origin** — the window's origin ignored — and **RP-I10-route** — the V1 body-format selection disabled).
+**Not claimed:** no device leg, no timing claim, no format/admission/identity change, no `ExecutionBounds.md` row change,
+no fallback removal (3.7b); the reader's snapshot is not released here (recorded); and 3.13's remaining owed item is the
+**display consumer** of a preview window. Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s313-212-save-clause/EVIDENCE.md).
 **2026-10-06 — `windowed-playback-generation` 3.12 I9: fixture 2.11's last dimension is measured, and the fixtures found
 and fixed a **defect in the retained lane** (firmware + tests).** Fixture 2.11's one remaining dimension — *"an edit that
 moves events into a full interval"* — is measured, and the shape it needs exposed a real defect: a slot may hold a
@@ -5441,6 +5466,44 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 58 % untagged residency), the family's other content-proportional reserves, and the copy-elimination half (**S4e.8**).
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
+
+### 3.13 (I10) — a served preview is never what a save writes: fixture 2.12's `then save` clause, measured in the storage harness (2026-10-06; test-only)
+
+**3.13 increment I10 landed 2026-10-06 (test-only; the task stays open for the display consumer).** Fixture **2.12**'s
+last clause -- **a preview is never committed currency** -- is measured where it would be written: at the save. The
+structural halves were shipped earlier (both window identities carry `PlaybackWindowOrigin::Preview`, and the capture
+admission counts **committed** windows only, 3.7a/I3); what never existed is a harness holding **both halves at once** --
+the window lane (so a preview is really served) and the storage entry points (so a save is really driven).
+`test_windowed_preview_integration` now links `StorageLoopIo.cpp` + `StorageLoopIoBodyFormatV1.cpp` -- measured
+**before** the fixture as needing **no** additional stub (`off_path_deps.h` already stubs the SD path and the display
+routes the save touches), with the suite's nine fixtures still passing. **Fixture W-2.12-save:** the session is opened
+**before** any root is published (a root-current session rematerializes with an empty store and would have no preview
+content at all), mutated and served through the lane; the slot's checkpoint is then published and the loop's queued
+publications are **settled** (`Loop::hasSettledPublishedSnapshotForSave()`, DEC-073 RC2) exactly as the storage harness
+does before a save -- which is why the fixture reads the checkpoint **after** the settle rather than assuming which root
+survived (the publisher's own root carries **20** events, against the **8** the synthetic root carried and the session's
+projection). The save goes through the production entry for a slot body (`StorageLoopIo::writeLoopPersisted`) into
+memory: the body reads back `ok`, **not** `legacy`, its embedded snapshot equal to the **checkpoint's** content and
+different from the **projection's**, while `committedPlaybackWindowServesSlot == false` and
+`committedPlaybackWindowEventCountForSlot == 0` say the preview is not committed currency; and after the save the
+preview is still the served window, at its own revision, with `origin == Preview` (the save cancels and adopts nothing).
+**Stated rather than implied:** the save's source selection is `loop.publishedSnapshot()` plus the pass set, so it has
+**no preview input at all** and "a preview is never saved" holds **by construction** at that layer; what is red-proved
+is the pair of rules whose failure *would* let a preview reach a save. Verified: focused **10/10** (baseline 9/9), full
+native **2,852 / 7 skipped / 2,845 succeeded / 0 failed** (baseline 2,851/2,844), capture build **SUCCESS** with the RAM1
+line **byte-identical** (`variables 96,192`; `ITCM 393,216 (code 392,248 + padding 968)`; floor 840), strict validation
+and `git diff --check` clean, `git diff --stat -- src include` **empty**, and **two red-proofs RED with byte-identical
+restores**: **RP-I10-origin** (`committedServedPlaybackWindowView` ignores the origin: *"a preview window is not
+committed content"*) and **RP-I10-route** (`loopUsesLoopSnapshotBodyFormatV1ForSave` returns false: *"the written body
+reads back"*). A mutation making the save *read the preview* is **not expressible** (there is no preview input) and is
+named rather than faked. **Not claimed:** no device leg, no timing claim, no format, admission or identity change, no
+`ExecutionBounds.md` row change, no fallback removal (3.7b); the fixture does not release the snapshot the reader
+returns (the storage suite's `releasePersistedLoopSnapshotChunks` is not linked here -- a native leak, recorded); and
+3.13's **other** owed item -- the display consumer of a preview window -- is untouched, so the task stays open. The
+packet records one deviation rather than smoothing it (the harness probe and the first fixture draft preceded it).
+Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s313-212-save-clause/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s313-212-save-clause/EXECUTION.md).
 
 ### 3.12 (I9) — fixture 2.11's last dimension is measured, and the fixtures found and fixed a defect in the retained lane (2026-10-06; firmware + tests)
 

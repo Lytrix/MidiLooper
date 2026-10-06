@@ -156,6 +156,12 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 // The real undo owner: the session's undo/redo entries reach it (`NoteEditSessionUndo.cpp`), and this
 // suite has no button route, so the button TU is omitted exactly as `track_harness.inc` documents.
 #include "../../src/TrackUndo.cpp"
+// Task 3.13 / fixture 2.12's `then save` clause: the **storage harness**'s own entry points, linked here because the
+// clause needs both halves at once -- the window lane (the preview being served) and the production save. Measured
+// before the edit: these two TUs link with **no** additional stub in this suite (`off_path_deps.h` already stubs the
+// SD path and the display routes the save touches), and the suite's nine fixtures kept passing.
+#include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageLoopIoBodyFormatV1.cpp"
 
 namespace {
 
@@ -825,6 +831,111 @@ static void test_3_7a_i3_a_refocus_yields_the_preview_without_owing_a_handoff() 
                             "a re-focus is not an exit: nothing is owed");
 }
 
+
+/// The (tick, pitch, on/off) multiset of a resolved event vector, for the storage harness's own container type (the
+/// resolver fills a `SessionMidiEventVec`, whose allocator differs from this suite's `MidiEventVec`).
+std::vector<EventKey> resolvedEventKeys(const SessionMidiEventVec& events) {
+  std::vector<EventKey> keys;
+  for (const MidiEvent& event : events) {
+    if (!event.isNoteOn() && !event.isNoteOff()) {
+      continue;
+    }
+    EventKey key{};
+    key.tick = event.tick;
+    key.pitch = event.data.noteData.note;
+    key.on = event.isNoteOn();
+    keys.push_back(key);
+  }
+  return keys;
+}
+
+/// Task 3.13 / fixture 2.12's **`then save`** clause, in the storage harness (the window lane and the real edit stack
+/// linked in one TU): **a served preview window is never the save's source**. The slot's published checkpoint is a root
+/// whose content is deliberately unlike both the live committed pass and the session's projection, so "which content
+/// the save wrote" is decidable; the preview stays served across the save (the save cancels and adopts nothing), and
+/// the preview never counts as committed currency while it serves.
+static void test_the_save_serializes_the_committed_checkpoint_and_never_the_served_preview() {
+  constexpr uint32_t kRootBars = 4;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+
+  // The session's projection is established **first** (a root-current session rematerializes with an empty store and
+  // would have no preview content at all), and the lane serves it.
+  editManager.openNoteEditSession(track);
+  const uint32_t previewRevision = mutateSessionAndFlush(track, 3000, 72);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(previewRevision, publishSessionPreview(track, 0),
+                                   "the served window is the session's own preview revision");
+  assertServedWindowIsSessionProjection(track, 0, "the lane serves the session's preview");
+  const std::vector<EventKey> previewKeys = projectionEventKeys(sessionProjection());
+  TEST_ASSERT_FALSE_MESSAGE(previewKeys.empty(), "the session's projection has content");
+
+  // The **checkpoint** the save must serialise: a published root, and the save's own admission requires it to be
+  // **settled** -- coverage-current with no publication in flight (`Loop::hasSettledPublishedSnapshotForSave`, DEC-073
+  // RC2). The session's mutations queue publications, so the fixture settles them exactly as the storage harness does
+  // before a save, and then reads the root that survives as the comparison target (the content the save must embed).
+  publishCommittedRootForSlot(loop, kRootBars);
+  for (size_t step = 0; step < 10000 && loop.hasPendingSnapshotPublish(); ++step) {
+    loop.stepPendingSnapshotPublish(1);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "the checkpoint settles before the save");
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasSettledPublishedSnapshotForSave(),
+                           "so the body may embed the checkpoint rather than the passes");
+  SessionMidiEventVec checkpointEvents;
+  LoopContentResolution::resolveWindow(*loop.publishedSnapshot(), 0, loop.loopLengthTicks, checkpointEvents);
+  // The settle replaces the synthetic root above with the loop's own published root -- the checkpoint a save sees is
+  // the **publisher's**, and the fixture reads it here rather than assuming which root survived. (Measured: 20 events,
+  // against the 8 the synthetic root carried and the session's own projection.)
+  TEST_ASSERT_FALSE_MESSAGE(checkpointEvents.empty(), "the checkpoint has content to serialise");
+  TEST_ASSERT_FALSE_MESSAGE(sameKeys(resolvedEventKeys(checkpointEvents), previewKeys),
+                            "the checkpoint and the preview are different content by construction");
+
+  // The preview is **not** committed currency while it serves: the save-relevant half of the clause, read before the
+  // save (task 3.7a/I3's rule, `committedPlaybackWindowServesSlot`).
+  TEST_ASSERT_FALSE_MESSAGE(track.committedPlaybackWindowServesSlot(0),
+                            "a preview window is not committed content");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)));
+
+  // The save, through the **production entry for a slot body** (`StorageLoopIo::writeLoopPersisted`, the function the
+  // workspace save calls per slot).
+  std::vector<uint8_t> buffer;
+  StorageIo io{
+      [&buffer](const void* data, size_t size) -> bool {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        buffer.insert(buffer.end(), bytes, bytes + size);
+        return true;
+      },
+      nullptr};
+  TEST_ASSERT_TRUE_MESSAGE(writeLoopPersisted(io, loop), "the production save writes the slot's body");
+
+  LoopSnapshotBodyFormatV1ReadResult read{};
+  TEST_ASSERT_TRUE_MESSAGE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), read),
+                           "the written body reads back");
+  TEST_ASSERT_TRUE(read.ok);
+  TEST_ASSERT_FALSE_MESSAGE(read.legacy, "the slot's checkpoint takes the snapshot body format");
+  TEST_ASSERT_NOT_NULL(read.loopSnapshot.get());
+  SessionMidiEventVec savedEvents;
+  LoopContentResolution::resolveWindow(*read.loopSnapshot, 0, read.loopSnapshot->loopLengthTicks(), savedEvents);
+  const std::vector<EventKey> savedKeys = resolvedEventKeys(savedEvents);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(checkpointEvents.size()),
+                                   static_cast<uint32_t>(savedEvents.size()),
+                                   "the body carries the checkpoint's events");
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(savedKeys, resolvedEventKeys(checkpointEvents)),
+                           "and element-wise the checkpoint's own content");
+  TEST_ASSERT_FALSE_MESSAGE(sameKeys(savedKeys, previewKeys),
+                            "the saved body is the checkpoint, never the preview the lane was serving");
+
+  // The save cancels and adopts nothing: the preview is still the served window, at its own revision.
+  assertServedWindowIsSessionProjection(track, 0, "the save does not disturb the served preview");
+  WindowIdentity servedAfter{};   // = PlaybackWindowIdentity
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedAfter));
+  TEST_ASSERT_EQUAL_UINT32(previewRevision, servedAfter.playbackRevision);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(servedAfter.origin),
+                            "and it is still a preview, not committed currency");
+}
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -838,5 +949,8 @@ int main(int, char**) {
   RUN_TEST(test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn);
   RUN_TEST(test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_preview);
   RUN_TEST(test_3_7a_i3_a_refocus_yields_the_preview_without_owing_a_handoff);
+  // Task 3.13 / fixture 2.12's `then save` clause: the storage harness linked into this suite, and a served preview
+  // that the save must never serialise.
+  RUN_TEST(test_the_save_serializes_the_committed_checkpoint_and_never_the_served_preview);
   return UNITY_END();
 }

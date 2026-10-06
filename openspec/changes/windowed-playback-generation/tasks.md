@@ -523,6 +523,42 @@ returned false in this fixture's hand-started transport state, recorded unattrib
 term is the **track's** `pendingNotes`, measured and named, not fixed; the declared caps stay 6.3's; and
 `retainPlaybackSourceForSlot` still has **no production caller** (the readers are what this increment fixed). Evidence:
 `evidence/2026-10-06-s312-211-edit-into-full-interval/`.
+
+**3.13 increment I10 (fixture 2.12's `then save` clause) landed 2026-10-06 (test-only; the task stays open for the
+display consumer):** fixture **2.12**'s last clause -- *a preview is never committed currency* -- is measured at the one
+consumer that **writes**: the save. The structural halves were already shipped (both identities carry
+`PlaybackWindowOrigin::Preview`, and the capture admission counts **committed** windows only, 3.7a/I3); what never
+existed is a harness holding **both halves at once** -- the window lane (so a preview is really served) and the
+storage entry points (so a save is really driven). `test_windowed_preview_integration` now links `StorageLoopIo.cpp` +
+`StorageLoopIoBodyFormatV1.cpp` -- the increment's one enabling change -- **measured before the fixture** as needing
+**no** additional stub (`off_path_deps.h` already stubs the SD path and the display routes the save touches), with the
+suite's nine fixtures still passing. **Fixture W-2.12-save:** the session is opened **before** any root is published (a
+root-current session rematerializes with an empty store and would have no preview content at all), mutated and served
+through the lane; the slot's checkpoint is then published and the loop's queued publications are **settled**
+(`Loop::hasSettledPublishedSnapshotForSave()`, DEC-073 RC2) exactly as the storage harness does before a save -- which
+is why the fixture reads the checkpoint **after** the settle instead of assuming which root survived (measured: the
+publisher's own root carries **20** events, against the **8** the synthetic root carried and the session's projection).
+It asserts: the served window is the session's projection, element-wise; `committedPlaybackWindowServesSlot == false`
+and `committedPlaybackWindowEventCountForSlot == 0` while the preview serves; `writeLoopPersisted` returns true, the
+body reads back `ok` and **not** `legacy`, its embedded snapshot's content equal to the **checkpoint's** and different
+from the **projection's**; and after the save the preview is still the served window, at its own revision, with
+`origin == Preview`. **The rule's nature, stated rather than implied:** the save's source selection is
+`loop.publishedSnapshot()` plus the pass set -- it has **no preview input at all** -- so "a preview is never saved"
+holds **by construction** at that layer, and the two rules whose failure *would* let a preview reach a save (the
+committed-currency predicate and the body-format/source selection) are what this increment red-proves. Verified:
+focused **10/10** (baseline 9/9), full native **2,852 / 7 skipped / 2,845 succeeded / 0 failed** (baseline 2,851/2,844),
+capture build **SUCCESS** with the RAM1 line **byte-identical** (test-only) -- strict validation and `git diff --check`
+clean, `git diff --stat -- src include` **empty** -- and **two red-proofs RED with byte-identical restores**:
+**RP-I10-origin** (`committedServedPlaybackWindowView` ignores the window's origin: *"a preview window is not committed
+content"*) and **RP-I10-route** (`loopUsesLoopSnapshotBodyFormatV1ForSave` returns false: *"the written body reads
+back"*); a mutation making the save *read the preview* is **not expressible** (no preview input) and is named rather
+than faked. **Not claimed:** no device leg, no timing claim, no format, admission or identity change, no
+`ExecutionBounds.md` row change, no fallback removal (3.7b); the fixture does not release the snapshot the reader
+returns (the storage suite's `releasePersistedLoopSnapshotChunks` is not linked here -- a native leak, recorded rather
+than hidden); and 3.13's **other** owed item -- the display consumer of a preview window -- is untouched. The packet
+records one deviation rather than smoothing it: the harness probe and the first fixture draft preceded it. Evidence:
+`evidence/2026-10-06-s313-212-save-clause/` with its `EXECUTION.md`.
+
   **Closeout of I3c-a's owed red-proofs (2026-10-06, docs-only commit).** The packet's MR set was written against the
   staging design this slice replaced with the ring's ordinal view, so it was re-expressed and run against the final
   revision, with byte-identical restores verified on all three touched files: **MR-R-baserebase** (the pass base not
@@ -912,7 +948,7 @@ term is the **track's** `pendingNotes`, measured and named, not fixed; the decla
   committed successor is owed, and the obligation is discharged at the **adoption** boundary, with a repeated exit
   answering `AlreadyHandedOff`. *Verification:* focused **61/61**, full native **2692 / 2685 succeeded / 7 skipped / 0 failed**, capture build SUCCESS with RAM1 variables 96,192 unchanged / code 392,328 + padding 888 (48 B above the floor); target size pin measured/rebased 6,512 → 6,624 (+112 B), host 6,544. Five mutations red-proved with byte-identical restores.
   **OWED in this task:** fixture 2.12's integration half and production callers — preview requester at the revision-advance seam and `EditManager` mutation/re-focus/exit hooks — through the serving path in 3.7a with fallback retained. The `then save` clause belongs to the storage harness. Evidence: [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
-  *Increment 3.13 integration half landed 2026-10-05 — test-only + host tooling; no production line changed; task remains open for production callers and the save clause.* `test/test_windowed_preview_integration/` links the real note-edit owner and window lane. Five fixtures cover session source ownership, mutation between build grains, in-session undo/redo, selected-track cancellation and committed handoff on exit. Verified: focused 5/5; full native 2,815 / 2,808 succeeded / 7 skipped / 0 failed; capture build SUCCESS with RAM1 unchanged; three mutations red-proved and restored byte-identically. **Production callers DELIVERED by 3.7a I3 (2026-10-06):** the requester runs at the revision-advance seam and the three lifecycle hooks (supersession/mutation, exit, re-focus) are the `EditManager`'s own, each with its own fixture and its own red-proof (`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`). **Still owed:** fixture 2.12's **save** clause in the storage harness (why this task stays open) and the display consumer of a preview window. Evidence: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
+  *Increment 3.13 integration half landed 2026-10-05 — test-only + host tooling; no production line changed; task remains open for production callers and the save clause.* `test/test_windowed_preview_integration/` links the real note-edit owner and window lane. Five fixtures cover session source ownership, mutation between build grains, in-session undo/redo, selected-track cancellation and committed handoff on exit. Verified: focused 5/5; full native 2,815 / 2,808 succeeded / 7 skipped / 0 failed; capture build SUCCESS with RAM1 unchanged; three mutations red-proved and restored byte-identically. **Production callers DELIVERED by 3.7a I3 (2026-10-06):** the requester runs at the revision-advance seam and the three lifecycle hooks (supersession/mutation, exit, re-focus) are the `EditManager`'s own, each with its own fixture and its own red-proof (`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`). **Fixture 2.12's `then save` clause DELIVERED by 3.13 / I10 (2026-10-06):** the window lane and the storage harness are linked in one TU, and the save is measured to serialise the slot's **checkpoint** and **never** the served preview (which keeps serving afterwards, at its own revision, `origin == Preview`) — `evidence/2026-10-06-s313-212-save-clause/`. **Still owed:** the display consumer of a preview window — 3.13's only remaining item. Evidence: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
   `refreshPlaybackAfterCapturePassStateChange` and its capture/overdub undo/redo callers. Extend the existing
