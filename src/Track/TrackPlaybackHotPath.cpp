@@ -316,7 +316,15 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // The legacy in-place builder is now reachable only as (a) the STOPPED/off-clock
   // oracle, (b) the long-loop windowed path, and (c) the cold first audible turn of a
   // slot with no pair yet. The detector counts it, so case (c) cannot grow silently.
-  const bool useMergedFallback = fixedView == nullptr && livePair == nullptr;
+  // Task 3.7a (I3c-b): **the paged delivery's selection.** A slot with no served window, no bridge and no prepared pair
+  // is exactly the shape that falls back to the merged store today; when the deferred lane has **admitted** a paged
+  // delivery for this slot -- one cached boolean it maintains off-clock, so this path loads and tests and judges
+  // nothing -- the ring serves the tick instead, and the unbounded merged build is not made at all. Nothing is
+  // produced, allocated or waited for here: a ring with nothing ahead of the walk ends the turn, and the deferred lane
+  // is what continues it.
+  const bool pagedEmission =
+      fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr && runtime.pagedEmission.admittedForEmission();
+  const bool useMergedFallback = fixedView == nullptr && livePair == nullptr && !pagedEmission;
   const SessionMidiEventVec* mergedEvents = nullptr;
   if (useMergedFallback) {
     mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
@@ -400,6 +408,18 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
   const bool atLoopStart =
       IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
+  if (pagedEmission) {
+    // The **pass boundary**, which only the projection knows: the interval's own start phase is crossed (or the loop
+    // wrapped, when the interval starts at the loop's start). The delivery's straddle is judged there, and a pass it
+    // straddled cleanly is what lets it keep serving -- probation per pass, re-earned.
+    const uint32_t intervalStart = runtime.pagedInterval.startPhase;
+    const bool passBoundary = intervalStart == 0
+        ? (wrappedBackward || atLoopStart)
+        : IntervalProjection::didPlaybackEventCross(false, prevTickInLoop, intervalStart, tickInLoop);
+    if (passBoundary) {
+      runtime.pagedEmission.notePassBoundary(runtime.pagedWindow.producedOrdinal());
+    }
+  }
 
   if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
     loop.nextEventIndex = 0;
@@ -452,8 +472,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       : fixedView != nullptr ? &fixedView->storage
       : livePair != nullptr ? livePair->storage
                             : nullptr};
+  PagedEmissionStreamCtx pagedCtx{this, &runtime, slotIndex};
   const PlaybackEventStream committedStream =
-      emissionWindow ? makeFixedPlaybackStream(fixedCtx)
+      pagedEmission ? makePagedEmissionStream(pagedCtx)
+      : emissionWindow ? makeFixedPlaybackStream(fixedCtx)
       : bridgeStream != nullptr ? bridgeStream->stream()
                               : (fixedView != nullptr || livePair != nullptr
                                      ? makeFixedPlaybackStream(fixedCtx)

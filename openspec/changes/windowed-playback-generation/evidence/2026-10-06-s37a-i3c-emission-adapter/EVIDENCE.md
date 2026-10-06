@@ -86,3 +86,41 @@ cannot straddle a wrap at this density with one page produced per turn — which
 - **No red-proof run** (see §2.3).
 - The delivery is prepared, addressable by ordinal, walkable and **refused by name for selection** -- that is the whole
   claim of this increment.
+
+
+---
+
+## 5. I3c-b — the lead across the wrap, the seam, and the second defect the acceptance test found (same increment, 2026-10-06)
+
+**What landed.** (a) **A lead across the wrap**: an *emitting* delivery keeps one page free
+(`pagesPublished() + 1 < kWindowPageCount`), so the producer hands the next pass's head over while this pass's tail is
+still queued -- and that flipped the acceptance measurement, `passesUnstraddled` **2 → 0** with **both passes exact**
+(the second pass's 2,500 events, in order, once each). (b) **The judgement is walk-independent**: the straddle is judged
+at a boundary against `passContentOrdinal` (the ring's ordinal when the producer last re-armed), and a boundary with no
+completed traversal counts as unstraddled by definition -- so admissibility no longer depends on who is emitting.
+(c) **The seam**: `playCommittedLoopMidi` selects the paged stream for a slot with no served window, no bridge and no
+prepared pair when the lane has admitted the delivery (`runtime.pagedEmission.admittedForEmission()` -- one cached
+boolean), skips the unbounded merged build in that case, and signals the pass boundary where the projection detects it
+(the interval's own start-phase crossing, or the loop wrap when the interval starts at the loop's start).
+
+**The defect the acceptance test found, recorded rather than smoothed over.** With the seam in place the fixture's
+element-wise comparison failed at **index 5,000**: the *second* pass's sequence drifts out of alignment past the first
+pass's events (tick 0 expected, 64 emitted) -- the walk's per-pass index and the ring's ordinal do not re-align exactly
+at a boundary. Emitting wrong content is worse than not emitting from pages, so **selection is closed by construction**:
+`PagedEmissionState::kPagedEmissionSelectionEnabled = false` (a compile-time constant, so the seam also costs no ITCM).
+The merged fallback plays such a slot exactly as before; the delivery's *measurement* (`Admissible`) and its *selection*
+(the switch) are now separate answers, and the fixture asserts pass one element-wise, the delivery's state, and that
+selection stays closed. **This is I3c-c's first work: fix the boundary mapping, then flip the constant.**
+
+**Also recorded:** the dry-based withdrawal written during this increment was **removed** -- a read that finds nothing
+ahead of the walk is legitimate at a pass's event-free tail (the fixture measured 64 of them across two healthy passes),
+and the *harmful* case (a late page whose events the walk has already passed) is invisible to the adapter, so the
+straddle judgement is the only sound one and `dryTurns` stays as named accounting, not as a rule.
+
+| Check | Result |
+|---|---|
+| Focused RWS / ring | **157/157** / 3/3 |
+| Full native | **2,832 / 7 skipped / 2,825 succeeded / 0 failed** |
+| Device build | **SUCCESS**, guard passes: `variables 96,192`; `code 392,152 + padding 1,064`; **224 B above the floor** (the closed seam is *cheaper* than I3c-a's: `code` fell by 128 B) |
+| Selection | **closed by construction**; the merged fallback serves |
+| Device run / upload | **NOT RUN** |

@@ -548,8 +548,10 @@ TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliverySta
   if (runtime->pagedInterval.lengthTicks >= loop.loopLengthTicks) {
     return PagedEmissionDeliveryState::CannotStraddleTheWrap;
   }
+  // The **measurement** the delivery reports is separate from the **selection** switch: this predicate answers what
+  // the emission has observed (a bound delivery whose last boundary was straddled cleanly), while
+  // `admittedForEmission()` carries the closed selection switch and is what the hot path may test.
   if (!runtime->pagedEmission.bound || runtime->pagedEmission.passCount == 0 ||
-      runtime->pagedEmission.passesWithDrys != 0 ||
       runtime->pagedEmission.passesUnstraddled != 0) {
     return PagedEmissionDeliveryState::Unproven;
   }
@@ -2196,6 +2198,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     runtime->discardPagedWindow();
     return PlaybackViewTurnResult::GrainDenied;
   }
+  if (runtime->pagedEmission.emitting &&
+      runtime->pagedWindow.pagesPublished() + 1u >= kWindowPageCount) {
+    // Task 3.7a (I3c-b): an **emitting** delivery keeps one page free. That is what lets the producer hand over the
+    // next pass's head while this pass's tail is still queued -- the lead across the wrap the I3c-a measurement showed
+    // a fully-occupied ring cannot provide (`passesUnstraddled`). A delivery nobody emits keeps I3b's full occupancy.
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::ProducerWaiting;
+    return PlaybackViewTurnResult::GrainDenied;
+  }
   std::vector<const CommittedChunkIdList*> lists;
   uint32_t missing = 0;
   collectPinnedCaptureLists(loop, *source, lists, missing);
@@ -2237,6 +2247,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     // which is what its own fixtures walk.
     if (runtime->pagedEmission.emitting) {
       runtime->pagedWindow.rearmForNextPass();
+      // The pass's content ends here: the straddle at the next boundary is judged against this ordinal, and the pages
+      // the walk has not reached stay published (that *is* the head-to-hand-over the wrap needs).
+      runtime->pagedEmission.notePassContent(runtime->pagedWindow.producedOrdinal());
       runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::None;
       return PlaybackViewTurnResult::GrainServed;
     }

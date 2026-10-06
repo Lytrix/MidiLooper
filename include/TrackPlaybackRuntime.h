@@ -672,6 +672,13 @@ struct LoopPlaybackRuntime {
     /// needs and that this ring's depth does not always provide (measured: see the I3c-a evidence). A pass whose wrap
     /// was not straddled is never proof, so the gate refuses on it.
     uint32_t passesUnstraddled = 0;
+    /// The ring's `producedOrdinal()` when the producer last **re-armed** -- i.e. the ordinal that ends this pass's
+    /// content. The straddle is judged against it (walk-independent): at a pass boundary the ring must already hold a
+    /// page *beyond* this pass's content, or the next pass's head is not there when the playhead arrives.
+    uint32_t passContentOrdinal = 0;
+    /// True while the delivery may be **selected**: a bound delivery whose last pass boundary was straddled and which
+    /// has not withdrawn a read. One cached boolean, because the clock path may only read one: it never judges.
+    bool admissible = false;
     bool bound = false;
     /// True once the **emission** is what this delivery serves: the producer then re-arms a pass instead of completing
     /// once, because a delivery nobody emits keeps I3b's one-shot completion (and its `Prepared` discharge).
@@ -682,6 +689,8 @@ struct LoopPlaybackRuntime {
       passCount = 0;
       passesWithDrys = 0;
       passesUnstraddled = 0;
+      passContentOrdinal = 0;
+      admissible = false;
       dryTurns = 0;
       reads = 0;
       boundaries = 0;
@@ -691,16 +700,30 @@ struct LoopPlaybackRuntime {
     void unbind() {
       bound = false;
       emitting = false;
+      admissible = false;
     }
+    /// Task 3.7a (I3c-b): **may the clock path take this slot's emission from the ring?** One cached boolean the
+    /// deferred lane maintains; the hot path loads it and tests it, and judges nothing itself.
+    ///
+    /// **Deliberately closed at the last step, and named rather than smoothed over.** The seam, the lead cap and the
+    /// boundary judgement all landed, and the acceptance fixture proves **pass one exact**; but the same fixture found
+    /// the second pass's sequence **offset past its first 5,000 events**, i.e. the walk's per-pass index and the ring's
+    /// ordinal do not re-align exactly at a boundary. Until that mapping is fixed, selecting a delivery would emit
+    /// wrong content, so selection is refused by construction (a constant `false`, so the seam costs no ITCM either):
+    /// the merged fallback keeps playing the slot exactly as before, and the fixture records the measurement.
+    static constexpr bool kPagedEmissionSelectionEnabled = false;
+    bool admittedForEmission() const { return kPagedEmissionSelectionEnabled && bound && admissible; }
     /// The playback projection wrapped: the **next** pass begins where the walk's position is now (the producer
     /// re-traverses the same interval into the same ordinal space, so the walk's index restarts while the ring's
     /// ordinal continues), and this pass's dry record is **closed, not erased**: a pass that ran dry stays visible to
     /// the gate through `passesWithDrys`.
     void notePassBoundary(uint32_t publishedOrdinal) {
-      // The boundary is taken at the walk's position, and it is **judged**, not just recorded: a wrap that arrives
-      // with nothing published beyond that position (`publishedOrdinal <= consumedOrdinal`) had no next-pass head to
-      // hand over, so the events of the new pass that the very next frame crosses are behind it by construction.
-      if (publishedOrdinal <= consumedOrdinal) {
+      // The boundary is taken at the walk's position and it is **judged**, not just recorded. A boundary that arrives
+      // with nothing published beyond *this pass's content* had no next-pass head to hand over, so the events of the
+      // new pass that the very next frame crosses are behind it by construction.
+      if (publishedOrdinal <= passContentOrdinal || passContentOrdinal == 0) {
+        // `passContentOrdinal == 0` means the producer never completed a traversal, so there is no next-pass head to
+        // hand over **by definition** -- a boundary is not straddled merely because the ring happens to hold a page.
         ++passesUnstraddled;
       }
       passBaseOrdinal = consumedOrdinal;
@@ -710,7 +733,17 @@ struct LoopPlaybackRuntime {
       dryTurns = 0;
       ++passCount;
       ++boundaries;
+      // **Selection, re-earned per pass** (probation, not optimism): a delivery may be served only after a boundary it
+      // straddled cleanly. A withdrawal (a read that found the ring empty while emitting) clears the flag immediately,
+      // and the next tick takes the resident fallback -- the same content, a different source, no gap and no outage.
+      admissible = bound && passesUnstraddled == 0;
     }
+    /// The producer re-armed: this pass's content ends at the ring's current ordinal.
+    void notePassContent(uint32_t producedOrdinal) { passContentOrdinal = producedOrdinal; }
+    /// Named accounting only, and deliberately **not** part of the admission rule: a read that finds nothing ahead of
+    /// the walk is legitimate at a pass's event-free tail, and the *harmful* case -- pages arriving so late that the
+    /// walk crosses past their events -- is invisible here (a skip, not a dry). What the adapter can judge soundly is
+    /// the straddle at a boundary, which is where the measured loss came from.
   };
   PagedEmissionState pagedEmission;
   enum class LaunchPreparation : uint8_t { None, Requested, Building, Ready, Bound, Fallback, FallbackBound };
