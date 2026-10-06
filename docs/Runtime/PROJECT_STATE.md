@@ -1,3 +1,24 @@
+**S4e.9 / DEC-115 — the display-note projection family refuses instead of parking (2026-10-06; firmware + tests, native
+verified, device leg owed).** The pool-attribution episode resolved the parked device's refusal PC against a
+byte-identical rebuild of the flashed image to a `DisplayNoteVec` reserve — a **24,576-note copy (384 KB)** — after which
+`ExternalMemoryFirstAllocator::abort()` parked the device. The repair lands **at the owner that asked**: a point-of-use
+admission with the **exact** byte count immediately before each gated reserve (DEC-065's amendment: the probe is the
+authority), a **countable** refusal so a derived cache keeps its previous content and retries instead of adopting an
+empty projection, and window filters that return an explicitly refused frame. Gated: `dedupeProjectedDisplayNoteVec`
+(both copies), `CachedNoteList::getNotes` (both overloads), `filterDisplayNotesToWindow{,ByWindowInclusion}`,
+`Loop::rebuildVisualCacheIdleSlice`. **The allocator is untouched, with a measured reason:** the device has no exception
+channel (0 of all target objects carry `.gcc_except_table`; the only `catch (bad_alloc)` is host-only), so "throw" is
+inexpressible and "return `nullptr`" would hand `std::vector` a non-zero capacity with a null `data()`. Verified: focused
+**126/126**, full native **2,839 / 7 skipped / 2,832 succeeded / 0 failed**, capture build **SUCCESS** with
+`variables 96,192` / `locals 34,880` unchanged and `code 392,248 + padding 968` (**112 B more ITCM headroom** than
+`392,360 + 856`; no re-base); three mutations red-proved byte-identically and one recorded as a **non-red-proof by
+redundancy**. Recorded, not smoothed: a **weak** native stub (`test/test_support/ProjectionGateWeakStub.cpp`, wired once
+in `scripts/native_test_link.py`) replaced per-suite wiring in the 27 suites that compile a projection TU without the
+gate; and the first red-proof harness's `git checkout --` reverted uncommitted edits before switching to sha256-checked
+copies. **Not claimed:** no device leg, the family's other content-proportional reserves are **not** gated (follow-ups),
+the retention question (58 % untagged residency) stays open, the copy-elimination half is **S4e.8**, and there is no
+allocator/`ExecutionBounds.md`/timing claim. Evidence:
+[`EVIDENCE.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/EVIDENCE.md).
 **Pool attribution measured (2026-10-06; measurement only — no firmware change, no SD delete): the park's requesting owner
 is a display-projection copy, and the pool does not ratchet down at a leg boundary.** The parked image was reconstructed
 **byte-identically** (rebuild at `147f90d5` = hex `9697b7acacb262d2…`, matching the run's own `metadata.json`), so the

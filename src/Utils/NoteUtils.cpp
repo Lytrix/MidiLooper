@@ -5,6 +5,7 @@
 #include "MidiEvent.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MidiEventVecFnvHash.h"
+#include "Utils/MemoryMonitor.h"
 #include "Logger.h"
 #include <algorithm>
 #include <cstdlib>
@@ -497,7 +498,7 @@ NOTE_EDIT_MEM uint32_t NoteUtils::CachedNoteList::computeMidiHash(const SessionM
     return midiEventVecFnv1aHash(midiEvents);
 }
 
-const NoteUtils::DisplayNoteVec&
+NOTE_EDIT_MEM const NoteUtils::DisplayNoteVec&
 NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loopLength) {
     uint32_t currentHash = computeMidiHash(midiEvents);
     
@@ -505,8 +506,15 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
         return cachedNotes; // Return cached result
     }
     
-    // Cache miss - rebuild notes
-    cachedNotes = reconstructDisplayNotes(midiEvents, loopLength, false);
+    // Cache miss - rebuild notes. DEC-115: a **refused** projection is never adopted -- the previously
+    // served content stays and the cache key is not advanced, so the rebuild is re-attempted on the next
+    // call (the refusal itself is named by the gate's `#MEM_DENIED` row).
+    const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+    DisplayNoteVec rebuilt = reconstructDisplayNotes(midiEvents, loopLength, false);
+    if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+        return cachedNotes;
+    }
+    cachedNotes.swap(rebuilt);
     lastMidiHash = currentHash;
     lastLoopLength = loopLength;
     isValid = true;
@@ -514,7 +522,7 @@ NoteUtils::CachedNoteList::getNotes(const MidiEventVec& midiEvents, uint32_t loo
     return cachedNotes;
 }
 
-const NoteUtils::DisplayNoteVec&
+NOTE_EDIT_MEM const NoteUtils::DisplayNoteVec&
 NoteUtils::CachedNoteList::getNotes(const SessionMidiEventVec& midiEvents, uint32_t loopLength) {
     uint32_t currentHash = computeMidiHash(midiEvents);
 
@@ -522,7 +530,14 @@ NoteUtils::CachedNoteList::getNotes(const SessionMidiEventVec& midiEvents, uint3
         return cachedNotes;
     }
 
-    cachedNotes = reconstructDisplayNotes(midiEvents, loopLength, false);
+    // DEC-115: same refusal contract as the `MidiEventVec` overload -- keep the previous content and
+    // retry, never adopt a refused projection.
+    const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+    DisplayNoteVec rebuilt = reconstructDisplayNotes(midiEvents, loopLength, false);
+    if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+        return cachedNotes;
+    }
+    cachedNotes.swap(rebuilt);
     lastMidiHash = currentHash;
     lastLoopLength = loopLength;
     isValid = true;
@@ -882,6 +897,11 @@ NOTE_EDIT_MEM NoteVector dedupeProjectedDisplayNoteVec(const NoteUtils::DisplayN
     const size_t originalCount = projected.size();
     using RankedNoteVec = std::vector<RankedNote, ExternalMemoryFirstAllocator<RankedNote>>;
     RankedNoteVec ranked;
+    // DEC-115: the exact byte count, immediately before the reserve. A refusal builds nothing: an empty
+    // `finalNotes` is the explicit refusal, and the refusal count tells a cache owner not to adopt it.
+    if (!MemoryMonitor::admitDisplayProjectionReserve(sizeof(RankedNote) * projected.size())) {
+        return finalNotes;
+    }
     ranked.reserve(projected.size());
     for (uint32_t i = 0; i < static_cast<uint32_t>(projected.size()); ++i) {
         const DisplayNote& note = projected[i];
@@ -901,6 +921,10 @@ NOTE_EDIT_MEM NoteVector dedupeProjectedDisplayNoteVec(const NoteUtils::DisplayN
     ranked.resize(uniqueCount);
     if (!ranked.empty()) {
         qsort(ranked.data(), ranked.size(), sizeof(RankedNote), compareRankedNoteIndex);
+    }
+    // DEC-115: the second copy, again with its own exact count and again immediately before the reserve.
+    if (!MemoryMonitor::admitDisplayProjectionReserve(sizeof(DisplayNote) * ranked.size())) {
+        return finalNotes;
     }
     finalNotes.reserve(ranked.size());
     for (const RankedNote& row : ranked) {

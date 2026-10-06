@@ -13,6 +13,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/SnapshotNoteConversion.h"
@@ -428,12 +429,24 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #endif
   if (!lastVisualCacheIdleCopiedSnapshotNotes_) {
     if (usedSnapshot || usedPrepared) {
-      sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+      // DEC-115: the projection is built aside and adopted only when it was not refused -- the cache
+      // keeps its previous content and this slice is re-attempted on the next idle turn.
+      const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+      NoteUtils::DisplayNoteVec rebuilt =
+          NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+      if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+        return;
+      }
+      sliceNotes.swap(rebuilt);
     } else if (isPlaybackSessionExitPublicationGap()) {
       sliceNotes.clear();
     } else {
       NoteUtils::DisplayNoteVec paired;
       LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
+      if (!MemoryMonitor::admitDisplayProjectionReserve(
+              sizeof(NoteUtils::DisplayNote) * paired.size())) {
+        return;
+      }
       sliceNotes.reserve(paired.size());
       for (const NoteUtils::DisplayNote& note : paired) {
         if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,

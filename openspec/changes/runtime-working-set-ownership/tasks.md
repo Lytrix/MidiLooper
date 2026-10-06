@@ -2925,6 +2925,31 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `visualCacheDirty == false`.
 - [ ] S4e.7 **Cap and eviction owner (T9, S2.8).** Declare the envelope and window byte caps, their eviction
       point, and fixed external capacities; no existing cap constant exists to reuse.
+- [ ] S4e.8 **Display-note dedupe peak-memory reduction.** After the windowed-playback capacity/retention gates establish the relevant memory envelope, characterize `dedupeProjectedDisplayNoteVec`'s production callers and peak allocation. Pin current duplicate-selection, ordering, and output semantics with production-path fixtures; measure a representative dense projection. Evaluate reuse or in-place compaction to avoid the full-size `finalNotes` copy, but change the implementation only if differential tests prove identical output and measurement demonstrates lower peak memory without exceeding the S4e visual cap. Do not remove deduplication or weaken its semantics. If no safe, useful optimization is demonstrated, retain the current implementation and record the evidence and reason; this task does not substitute for allocation-failure containment or close the pool-retention investigation.
+- [x] S4e.9 **Allocation-failure containment for the display/note projection family (DEC-115).** The 2026-10-06
+      pool-attribution episode resolved the parked device's refusal PC against a byte-identical rebuild of the flashed
+      image to `std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<DisplayNote>>::reserve` — a
+      **24,576-note copy (384 KB)** — after which the allocator printed its FATAL line and called `abort()`. This slice
+      replaces the park **at the owner that asked**: a point-of-use admission
+      (`MemoryMonitor::admitDisplayProjectionReserve` over `OperationKind::DisplayProjectionReserve`) with the **exact**
+      byte count taken immediately before each gated reserve (DEC-065's amendment: the probe is the authority, and a
+      gate that denies a succeeding reserve violates its contract), a **countable** refusal
+      (`displayProjectionRefusalCount`, `DMAMEM`) so a derived cache keeps its previous content and retries instead of
+      adopting an empty projection, and the window filters returning an explicitly refused frame. Applied at
+      `dedupeProjectedDisplayNoteVec` (both copies), `CachedNoteList::getNotes` (both overloads),
+      `DisplayWindowUtils::filterDisplayNotesToWindow{,ByWindowInclusion}` and `Loop::rebuildVisualCacheIdleSlice`. **The
+      allocator is unchanged**: the device has no exception channel (0 of all target objects carry `.gcc_except_table`,
+      and the tree's only `catch (bad_alloc)` is `#if !defined(ARDUINO)`), so neither "throw" nor "return nullptr" is a
+      safe repair. **Verified:** focused **126/126**, full native **2,839 / 7 skipped / 2,832 succeeded / 0 failed**
+      (baseline 2,836), capture build **SUCCESS** with `variables 96,192` / `locals 34,880` unchanged and
+      `code 392,248 + padding 968` (**112 B more ITCM headroom** than `392,360 + 856`, no re-base), `git diff --check`
+      clean; **three mutations red-proved with byte-identical restores**, one recorded as a **non-red-proof by
+      redundancy**. **Not claimed:** the family's other content-proportional reserves (`LoopContentResolution`,
+      `LoopMaterialization`, `LoopPendingNoteChange`, `EditManager/*`, `IntervalProjection`) are **not** gated and are
+      follow-ups; no device leg; the retention question (58 % untagged residency) stays open; the copy-elimination half
+      is S4e.8; no allocator or `ExecutionBounds.md` change. Packet and evidence:
+      [`evidence/2026-10-06-s4e9-projection-containment/`](../evidence/2026-10-06-s4e9-projection-containment/), decision
+      **DEC-115**.
 - [ ] S4e.5 Native fixtures: switch shows the new slot immediately from the envelope; detail resolves through
       the existing renderer; mutation invalidates; cap and eviction hold under library growth.
 - [ ] S4e gates: envelope and window appear as budget terms; no new renderer or validity counter introduced.

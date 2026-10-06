@@ -1,3 +1,41 @@
+**2026-10-06 — `runtime-working-set-ownership` S4e.9 / DEC-115: the display-note projection family **refuses instead of
+parking** — exhaustion is now answered by the owner that asked, and the shared allocator is deliberately untouched
+(firmware + tests).** The pool-attribution episode resolved the parked device's refusal PC against a byte-identical
+rebuild of the flashed image to `std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<DisplayNote>>::reserve`
+(a **24,576-note copy, 384 KB**) and the allocator's `abort()`. The repair lands at the **owner**: a **point-of-use**
+admission (`MemoryMonitor::admitDisplayProjectionReserve` over the new `OperationKind::DisplayProjectionReserve`) taken
+with the **exact** byte count immediately before each gated reserve — DEC-065's amendment, where the probe is the
+authority and a gate that denies a succeeding reserve violates its contract — plus a **countable** refusal
+(`displayProjectionRefusalCount()`) so a derived cache can tell "refused" from "content that projects to nothing".
+**The failure contract, which is the substance of the slice:** derived display/visual caches (`CachedNoteList::getNotes`
+both overloads, `Loop::rebuildVisualCacheIdleSlice`) keep the **previously served** content and do not advance their key
+or clear `dirtyBars`, re-attempting on the next call/idle slice; the pure window filters
+(`DisplayWindowUtils::filterDisplayNotesToWindow{,ByWindowInclusion}`) return an **explicitly refused** frame; on every
+path the refusal allocates nothing, blocks on nothing and drops no edit. `dedupeProjectedDisplayNoteVec`'s two copies are
+gated too (both with their own exact count). **Why the allocator is not changed:** the device has **no**
+allocation-failure channel — verified, **0 of all target objects carry `.gcc_except_table`/`.eh_frame`** and the tree's
+only `catch (const std::bad_alloc&)` sits inside `#if !defined(ARDUINO)` (`src/Loop/LoopSnapshot.cpp:272`) — so "make it
+throw" is not expressible and "return `nullptr`" is worse (`std::vector` would hold a non-zero capacity with a null
+`data()` and write into it, the fault class already recorded on this bench on 2026-10-01). DEC-075's scope boundary
+therefore stands. **Verified:** focused `test_display_window_utils` **126/126** (three new fixtures), full native
+**2,839 / 7 skipped / 2,832 succeeded / 0 failed** (baseline 2,836; no suite ERRORED/FAILED), capture build **SUCCESS**
+with `variables 96,192` and `locals 34,880` **unchanged** and `code 392,248 + padding 968` — **112 B more ITCM headroom**
+than the baseline `392,360 + 856`, so no budget re-base —, `git diff --check` clean; **three mutations red-proved with
+byte-identical restores** (both dedupe probes removed; the cache adoption guard removed; the window-filter probe
+removed) and **one recorded as a non-red-proof by redundancy** (removing only the `ranked` probe leaves the sibling
+`finalNotes` probe refusing). **Two things recorded rather than smoothed over:** the native link needed a **weak** default
+for the gate symbol (`test/test_support/ProjectionGateWeakStub.cpp`, wired once in `scripts/native_test_link.py`) because
+27 suites that compile a projection TU do not link the gate — with that stub no suite needed per-file wiring; and the
+first red-proof harness restored mutations with `git checkout --`, which reverted **uncommitted** slice edits in
+`NoteUtils.cpp`/`DisplayWindowUtils.cpp` to `HEAD` — both files were re-applied from the recorded text, the whole slice
+re-verified, and the harness now restores a sha256-checked copy instead. **Not claimed:** no device leg (a long/dense leg
+that no longer parks is owed, read from `#MEM_DENIED,op=display_projection,…`), the family's other content-proportional
+reserves (`LoopContentResolution`, `LoopMaterialization`, `LoopPendingNoteChange`, `EditManager/*`,
+`IntervalProjection`) are **not** gated and are follow-ups, the retention question (58 % untagged residency) stays open,
+the copy-elimination half is **S4e.8**, and there is no allocator, `ExecutionBounds.md` or timing claim. Evidence:
+[`EXECUTION.md`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/EXECUTION.md)
+and [`EVIDENCE.md`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/EVIDENCE.md);
+decision **DEC-115**, task **S4e.9**.
 **2026-10-06 — pool attribution (measurement only; no firmware change, no SD delete): the park's requesting owner is a
 display-projection copy, and the pool does not ratchet down at a leg boundary.** The parked image was identified and its
 ELF reconstructed **byte-identically** (rebuild at `147f90d5` = hex `9697b7acacb262d2…`, the hex recorded by the run's
@@ -5213,6 +5251,20 @@ bridge's verify path) are unrelated and unchanged. See
 ## Now implementing
 
 **DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
+
+**DEC-115 — in scope (2026-10-06): allocation-failure containment for the display/note projection family.** The pool
+attribution's park (a 24,576-note display copy, 384 KB, refused → `ExternalMemoryFirstAllocator::abort()`) is repaired
+**at the owner that asked**, not at the allocator: a **point-of-use** admission with the exact byte count immediately
+before each gated reserve, a **countable** refusal so a derived cache keeps its previous content and retries instead of
+adopting an empty projection, and the window filters returning an explicitly refused frame. Owner-level in
+`MemoryMonitor::admitDisplayProjectionReserve`; applied by `NoteUtils::dedupeProjectedDisplayNoteVec` (both copies),
+`NoteUtils::CachedNoteList::getNotes` (both overloads),
+`DisplayWindowUtils::filterDisplayNotesToWindow{,ByWindowInclusion}` and `Loop::rebuildVisualCacheIdleSlice`.
+**Deliberately out of scope:** the shared allocator's failure semantics (the device has no exception channel: no target
+object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is host-only), the retention question (the
+58 % untagged residency), the family's other content-proportional reserves, and the copy-elimination half (**S4e.8**).
+Task **S4e.9**; packet and evidence under
+[`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
 
 ### 3.7a (I5) — the paged lane's production serving was a closed cycle: measured, fixed, red-proved, and landed by an ITCM budget slice (2026-10-06; firmware + tests)
 

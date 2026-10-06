@@ -4,6 +4,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Globals.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/MemoryMonitor.h"
 
 #include <cstdio>
 #include <algorithm>
@@ -130,10 +131,16 @@ bool noteIntersectsWindow(uint32_t startTick, uint32_t endTick, uint32_t windowS
          tickInHalfOpenWindow(endTick, windowStart, windowLength, loopLength);
 }
 
-DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, const TickInterval& viewport,
+DWU_COLD DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, const TickInterval& viewport,
                                           uint32_t loopLength) {
   DisplayNoteVec filtered;
   if (loopLength == 0 || viewport.length() <= 0) {
+    return filtered;
+  }
+  // DEC-115: the exact copy size, immediately before the reserve. On refusal the frame is explicitly
+  // refused (an empty window result) instead of reaching `ExternalMemoryFirstAllocator::abort()`; the
+  // work is re-attempted on the next projection.
+  if (!MemoryMonitor::admitDisplayProjectionReserve(sizeof(NoteUtils::DisplayNote) * notes.size())) {
     return filtered;
   }
   filtered.reserve(notes.size());
@@ -176,11 +183,15 @@ DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, uint32_t 
                                   loopLength);
 }
 
-DisplayNoteVec filterDisplayNotesByWindowInclusion(const DisplayNoteVec& notes,
+DWU_COLD DisplayNoteVec filterDisplayNotesByWindowInclusion(const DisplayNoteVec& notes,
                                                    const TickInterval& viewport,
                                                    uint32_t loopLength) {
   DisplayNoteVec filtered;
   if (loopLength == 0 || viewport.length() <= 0) {
+    return filtered;
+  }
+  // DEC-115: same contract as the window filter above -- exact size, refusal instead of a fatal park.
+  if (!MemoryMonitor::admitDisplayProjectionReserve(sizeof(NoteUtils::DisplayNote) * notes.size())) {
     return filtered;
   }
   filtered.reserve(notes.size());

@@ -139,6 +139,14 @@ enum class OperationKind : uint8_t {
   /// S4b.7: provisioning a *switch's* inbound occupancy was refused. Its own kind, because the repair the
   /// operator needs differs from a record start's -- the switch stays pending rather than being dropped.
   SlotSwitch = 6,
+  /// DEC-115 (pool containment): a **display / note projection** copy sized from loop content is about to
+  /// reserve. A point-of-use kind: the caller hands the *exact* byte count its reserve will request, taken
+  /// immediately before it, so the probe is the authority (DEC-065's rule -- an estimate would deny a
+  /// reserve that could have succeeded, and a gate that denies a succeeding reserve violates its contract).
+  /// A refusal means the projection is not built: the caller keeps its previous content and retries, and no
+  /// allocation is attempted. This is the family that reached `ExternalMemoryFirstAllocator::abort()`
+  /// measured 2026-10-06 (a 24,576-note display copy, 384 KB).
+  DisplayProjectionReserve = 7,
 };
 
 /**
@@ -166,6 +174,46 @@ enum class OperationKind : uint8_t {
  * @return true when the operation may proceed.
  */
 bool admitOperationMemory(OperationKind operation, uint32_t marginBytes);
+
+/**
+ * @brief DEC-115 (pool containment): the display/note projection family's point-of-use admission.
+ *
+ * `bytes` must be the **exact** size the caller is about to reserve, taken immediately before that
+ * reserve (nothing allocates in between). On false the caller must not attempt the allocation: it
+ * keeps its previous content (a cache owner) or refuses the projection (a pure helper) and the work
+ * is re-attempted later. Never allocates, never blocks, never reaches the allocator's fatal path.
+ *
+ * The refusal is also **countable**, so a cache owner can tell "this projection was refused" from
+ * "this content projects to nothing" without threading a flag through every projection entry point:
+ * capture `displayProjectionRefusalCount()` before the projection and compare after.
+ *
+ * Defined **out-of-line in `MemoryMonitor.cpp`** on the device -- one flash-resident copy, which the
+ * RAM1 measurement prefers over inlining the probe at every call site -- and **inline for the native
+ * builds**, so a suite that compiles a projection translation unit needs no extra wiring.
+ */
+#if defined(__IMXRT1062__)
+bool admitDisplayProjectionReserve(size_t bytes);
+/// Monotonic count of refused display/note projection reserves (`DMAMEM`, so no DTCM growth).
+uint32_t displayProjectionRefusalCount();
+#else
+/// The refusal counter's storage: one instance for every translation unit (inline function-local static).
+inline uint32_t& displayProjectionRefusalCounter() {
+  static uint32_t refusals = 0;
+  return refusals;
+}
+inline uint32_t displayProjectionRefusalCount() { return displayProjectionRefusalCounter(); }
+inline bool admitDisplayProjectionReserve(size_t bytes) {
+  if (bytes == 0) {
+    return true;
+  }
+  if (admitOperationMemory(OperationKind::DisplayProjectionReserve,
+                           static_cast<uint32_t>(bytes))) {
+    return true;
+  }
+  ++displayProjectionRefusalCounter();
+  return false;
+}
+#endif
 
 /**
  * @brief Report that an operation was denied because a required prewarm failed.

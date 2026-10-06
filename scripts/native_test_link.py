@@ -1,4 +1,5 @@
 """Compile the production-route fixture against native hardware boundaries."""
+import os
 import sys
 Import("env")
 # Suites that link production code pulling in the Arduino/SD hardware boundaries.
@@ -35,3 +36,17 @@ if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
     env.Append(LINKFLAGS=["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"])
+
+# DEC-115 (pool containment): a **weak** native default for the projection gate's host symbol.
+# Suites that compile a projection translation unit (`Utils/NoteUtils.cpp`, `Utils/DisplayWindowUtils.cpp`,
+# `Loop/LoopVisualCache.cpp`) odr-use `MemoryMonitor::admitOperationMemory` through the inline projection
+# admission helper in `include/Utils/MemoryMonitor.h`. A suite that includes
+# `test_support/MemoryMonitorNativeDeps.cpp` links the real gate, which wins over a weak definition; every
+# other suite takes this stub, so no suite needs per-file wiring and no include order matters. Native test
+# builds only -- the device's gate is the real one in `src/Utils/MemoryMonitor.cpp`.
+if env.get("PIOTEST_RUNNING_NAME"):
+    env.BuildSources(
+        os.path.join("$BUILD_DIR", "projection_gate_weak"),
+        os.path.join("$PROJECT_DIR", "test", "test_support"),
+        src_filter=["+<ProjectionGateWeakStub.cpp>"],
+    )

@@ -6,6 +6,7 @@
 #include "MidiEvent.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 #include "VisualCache.h"
 
@@ -13,6 +14,9 @@
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"
+// DEC-115: the **real** admission gate (with its point-of-use probe and the native forced-denial seam),
+// so the refusal contract below is asserted against production policy rather than a stub.
+#include "../test_support/MemoryMonitorNativeDeps.cpp"
 
 static size_t composeAllocations = 0;
 static size_t composeLiveElements = 0, composePeakElements = 0;
@@ -2323,6 +2327,99 @@ void test_display_frame_invalidate_while_transfer_deferred_coalesces() {
   TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Idle), static_cast<int>(done.pending));
 }
 
+// -------------------------------------------------------------------------------------------
+// DEC-115 (pool containment): the display/note projection admission and its refusal contract.
+//
+// The measured park (2026-10-06) was a 24,576-note display copy (384 KB) that could not be served;
+// `ExternalMemoryFirstAllocator` printed its FATAL line and called `abort()`, leaving the device
+// parked until a power cycle. These fixtures pin the replacement contract: the reserve is probed with
+// its **exact** byte count immediately before it, a refusal builds nothing, the refusal is countable so
+// a cache owner can keep its previous content, and the work is re-attempted once admission recovers.
+// -------------------------------------------------------------------------------------------
+
+MidiEventVec denseDisplayFixtureEvents(size_t notePairs, uint32_t loopLength) {
+  MidiEventVec events;
+  const uint32_t step = loopLength / static_cast<uint32_t>(notePairs + 1);
+  for (size_t i = 0; i < notePairs; ++i) {
+    const uint32_t start = static_cast<uint32_t>(i) * step;
+    const uint8_t note = static_cast<uint8_t>(60 + (i % 12));
+    events.push_back(MidiEvent::NoteOn(start, note, 100, static_cast<NoteId>(i + 1)));
+    events.push_back(MidiEvent::NoteOff(start + step - 1, note, static_cast<NoteId>(i + 1)));
+  }
+  return events;
+}
+
+void test_display_projection_reserve_is_admitted_when_healthy_and_names_a_refusal() {
+  const MidiEventVec events = denseDisplayFixtureEvents(3, 1536);
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  const uint32_t before = MemoryMonitor::displayProjectionRefusalCount();
+  const auto healthy = NoteUtils::reconstructDisplayNotes(events, 1536, false);
+  TEST_ASSERT_TRUE_MESSAGE(healthy.size() > 0, "a healthy pool projects the notes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(before, MemoryMonitor::displayProjectionRefusalCount(),
+                                   "an admitted projection records no refusal");
+
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  const auto refused = NoteUtils::reconstructDisplayNotes(events, 1536, false);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, refused.size(), "a denied reserve projects nothing");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(before + 1, MemoryMonitor::displayProjectionRefusalCount(),
+                                   "the refusal is countable so a cache owner can keep its content");
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  const auto retried = NoteUtils::reconstructDisplayNotes(events, 1536, false);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(healthy.size(), retried.size(),
+                                   "the refused projection is re-attempted once admission recovers");
+}
+
+void test_cached_note_list_keeps_the_previous_projection_and_retries_after_a_refusal() {
+  const MidiEventVec firstEvents = denseDisplayFixtureEvents(1, 1536);
+  const MidiEventVec secondEvents = denseDisplayFixtureEvents(3, 1536);
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  NoteUtils::CachedNoteList cache;
+  const auto& first = cache.getNotes(firstEvents, 1536);
+  const size_t firstCount = first.size();
+  TEST_ASSERT_TRUE_MESSAGE(firstCount > 0, "the first projection is cached");
+
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+  const auto& kept = cache.getNotes(secondEvents, 1536);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(firstCount, kept.size(),
+                                   "a refused projection keeps the previously served content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(refusalsBefore + 1, MemoryMonitor::displayProjectionRefusalCount(),
+                                   "the refusal is recorded");
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  const auto& retried = cache.getNotes(secondEvents, 1536);
+  TEST_ASSERT_TRUE_MESSAGE(retried.size() != firstCount,
+                           "the cache key was not advanced, so the retry serves the new content");
+}
+
+void test_window_filter_refuses_the_frame_instead_of_allocating_when_denied() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote first;
+  first.note = 60; first.velocity = 100; first.startTick = 0; first.endTick = 100;
+  NoteUtils::DisplayNote second;
+  second.note = 64; second.velocity = 100; second.startTick = 200; second.endTick = 300;
+  notes.push_back(first);
+  notes.push_back(second);
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  const auto healthy =
+      DisplayWindowUtils::filterDisplayNotesToWindow(notes, static_cast<uint32_t>(0), 1536u, 1536u);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, healthy.size(), "a healthy pool filters the window");
+
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+  const auto refused =
+      DisplayWindowUtils::filterDisplayNotesToWindow(notes, static_cast<uint32_t>(0), 1536u, 1536u);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, refused.size(), "the window filter refuses the frame");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(refusalsBefore + 1, MemoryMonitor::displayProjectionRefusalCount(),
+                                   "the refusal is recorded");
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_draw_source_reuses_two_buffers_without_paint_mutating_compose);
@@ -2448,5 +2545,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_display_frame_invalidate_during_draw_coalesces);
   RUN_TEST(test_display_frame_transfer_deferred_keeps_the_frame_pending);
   RUN_TEST(test_display_frame_invalidate_while_transfer_deferred_coalesces);
+  RUN_TEST(test_display_projection_reserve_is_admitted_when_healthy_and_names_a_refusal);
+  RUN_TEST(test_cached_note_list_keeps_the_previous_projection_and_retries_after_a_refusal);
+  RUN_TEST(test_window_filter_refuses_the_frame_instead_of_allocating_when_denied);
   return UNITY_END();
 }

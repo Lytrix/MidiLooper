@@ -219,6 +219,12 @@ FLASHMEM bool probeBlockAvailable(size_t bytes) {
 }  // namespace
 
 FLASHMEM const char* operationName(OperationKind operation) {
+  // DEC-115: kept out of the switch below on purpose -- extending that switch would grow its jump
+  // table in `.rodata` (DTCM in this script), which the RAM1 guard books as `variables`. A literal
+  // wrapped in `PSTR` lands in `.progmem` (FLASH), and this function is already FLASH-resident.
+  if (operation == OperationKind::DisplayProjectionReserve) {
+    return PSTR("display_projection");
+  }
   switch (operation) {
     case OperationKind::RecordStart:
       return PSTR("record_start");
@@ -276,7 +282,8 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   // only kind that uses one. Everything else keeps the heap-floor / pool-refusal checks
   // that were verified on the overdub boundary.
   const bool pointOfUseReserve =
-      operation == OperationKind::CompanionHistoryReserve && requiredBytes != 0;
+      (operation == OperationKind::CompanionHistoryReserve ||
+       operation == OperationKind::DisplayProjectionReserve) && requiredBytes != 0;
   // For that kind the probe is the *authority*, not an extra veto: its caller will hand
   // the same byte count to an allocator that falls back from malloc to extmem, so a
   // request the pool can serve is not a heap depletion. 2026-09-17 device evidence
@@ -725,4 +732,41 @@ void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 }  // namespace MemoryMonitor
 
+#endif
+
+#if defined(__IMXRT1062__)
+// ---------------------------------------------------------------------------------------------
+// DEC-115 (pool containment): the display/note projection family's point-of-use admission.
+//
+// Device-side (out-of-line) definition: one flash-resident copy of the probe, which the RAM1
+// measurement prefers over inlining it at every projection call site. The native builds take the
+// header-inline definition instead (`include/Utils/MemoryMonitor.h`), so a test suite that compiles a
+// projection translation unit needs no extra wiring; the two forms share the gate in
+// `admitOperationMemory`, which is where the policy lives.
+// ---------------------------------------------------------------------------------------------
+namespace MemoryMonitor {
+namespace {
+/// Monotonic: incremented exactly when a projection reserve is refused. Mutable telemetry, so it sits
+/// in RAM2 (`DMAMEM`) rather than DTCM -- the RAM1 budget books DTCM as `variables`.
+DMAMEM volatile uint32_t sDisplayProjectionRefusals = 0;
+}  // namespace
+
+FLASHMEM bool admitDisplayProjectionReserve(size_t bytes) {
+  if (bytes == 0) {
+    return true;
+  }
+  // The point-of-use rule (DEC-065 amendment): the probe tests exactly the pair the allocator will use,
+  // and it is taken immediately before the reserve, so its verdict is predictive. `bytes` is the exact
+  // request -- an estimate here would refuse work that could have been served.
+  if (admitOperationMemory(OperationKind::DisplayProjectionReserve,
+                           static_cast<uint32_t>(bytes))) {
+    return true;
+  }
+  ++sDisplayProjectionRefusals;
+  return false;
+}
+
+FLASHMEM uint32_t displayProjectionRefusalCount() { return sDisplayProjectionRefusals; }
+
+}  // namespace MemoryMonitor
 #endif
