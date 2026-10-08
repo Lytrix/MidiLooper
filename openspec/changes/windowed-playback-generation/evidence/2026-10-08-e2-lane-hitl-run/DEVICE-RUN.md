@@ -100,10 +100,57 @@ durable once a stopping drain has run.
 content-review verdict: INCONCLUSIVE_CAPTURE — no unique effective event recurs in the playback window (effective_rows_all=1147)
 ```
 
-The committed slot is present (`18432` ticks, `1147` record rows) but its playback never reaches the wire: the captured
-output carries `note_on` on channels **0,1,2,6,7,14,15** and **none on channel 8**, i.e. the other tracks' restored
-content sounds while the loop under test does not. So exact playback/content acceptance for the windowed lane is
-**NOT established** in this run.
+**Correction (2026-10-08, same session).** The loop **does** reach the wire: the device's own `MO` log for that capture
+carries `417` note-on rows on channel **8** *1-based* = mido channel **7** *0-based*, and the host capture's channel list
+was read with mido's 0-based numbering — so "channel 8" was absent only from the host list, not from the device. The
+`INCONCLUSIVE_CAPTURE` therefore means the verifier could not **align** a cycle (its anchor is a unique effective event),
+not that the loop is silent. Treat the verdict as unestablished alignment, and re-run with an explicit cycle window
+before drawing any content conclusion.
+
+## 5b. The real symptom: after a Record stop the track can go completely silent
+
+Reading the same three runs by *what the device emitted after the Record stop* separates them sharply (the `MO` row is
+`MO,<type>,<ch>,<d1>,<d2>` with `ch` **1-based**; `LED` rows are the MIDI-LED feedback):
+
+| run | committed loop | rows after the stop | MIDI out after the stop | LED after the stop |
+|---|---|---|---|---|
+| run2 | 17664 (23 bars, `al=0`) | 699 | **none on any channel** | **0** |
+| run3 | 19200 (25 bars, `al=0`) | 1051 | **none on any channel** | **0** |
+| run4 | 18432 (24 bars, `al=1`) | 11581 | ch8 = 1107 rows (the loop), 1 row per other channel | 1021 |
+
+In run2 the transport then ran a further **94 s** (90.7 s → 185.2 s) and in run3 **110 s** (92.9 s → 203.3 s) with the
+track at `pl=1` and only `DIAG,win_gate` / `DIAG,snap_gate` rows arriving — no playback, no LED. `captures/s64-demand-01`
+(the 2026-10-07 lane run) shows the same shape: no channel-8 note-on during the leg, and only 20 in the whole drain.
+
+The one device-side difference these captures show is what the target slot's Snapshot owner is doing: in the silent runs
+it is engaged continuously for the target and its root revision never leaves **0**
+
+```
+run2: 45 snap_gate rows after the stop, max cu=212, last rv=0
+run3: 48 snap_gate rows after the stop, max cu=218, last rv=0
+run4:  0 snap_gate rows for the target after the stop, playback present
+```
+
+which is the same "given turns, publishes nothing" shape the S7.5b.5 packet recorded. That is a **correlation in three
+captures, not an isolated cause** — run4 is the counterexample in which playback works and the owner never appears.
+
+## 5c. The gate that can produce the silence (code reading, not a device measurement)
+
+`Track::playMidiEvents` (`src/Track/TrackPlaybackHotPath.cpp`) returns before emitting on any of three terms:
+
+1. `transportStopOutputBarrier_`, or a pending deferred overdub stop whose job admission does not
+   `permitsPlaybackEmission()` — the latter is `!pending || destination == Playing`, so a Record stop **returning to
+   play** is permitted and this term is not the silent case;
+2. `isStoppedRecording()` — a track left in `STOPPED_RECORDING` emits nothing;
+3. `!hasAudiblePlaybackSource(activeLoopIndex)` — audible iff `loop.hasCommittedPasses()`, **or** the slot's runtime has a
+   servable deferred record view (`hasServableDeferredRecordView()`, the S4f.19 retained bar-1 return window "while a
+   pending deferred job owns that window").
+
+So a Record stop whose pass/root is not yet **committed** has no audible source of its own: it leans entirely on the
+retained return window. The silent captures are consistent with that (owner engaged, `rv` stuck at `0`, no emission), and
+`hasAudiblePlaybackSource`'s own comment names the failure mode: *"Without it the interval has no source yet and must stay
+silent rather than fabricate one."* Whether the *cause* is (2), (3) or the Snapshot never committing is **not** isolated
+by these captures — that needs a run that prints the track state and the audible-source predicate at the stop.
 
 ## 6. Device wedge observed once (recovered)
 
