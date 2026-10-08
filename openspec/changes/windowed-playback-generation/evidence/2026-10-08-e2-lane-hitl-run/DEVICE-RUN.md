@@ -172,3 +172,47 @@ No manual SD operation.
   session-exit root for `t=7 s=3` on this image — it is the standing blocker under both the lane's `sv`/`od`/`rw`
   terms and the content-parity `INCONCLUSIVE`; (c) keep the graceful-drain step in the recipe so a failing scenario
   does not lose its take before content verification.
+
+## 8. Controlled rerun — 24-bar record on track 8 slot 4, transport held running (2026-10-08, later)
+
+Reproducing the exact gesture the owner asked for: record 24 bars on track 8 **slot 4** and then **keep playing**
+(no switch leg, no immediate stop — the transport is held for a further 70 s by a session-scratch driver that reuses the
+leg's own record sequence; no new MIDI bytes, no firmware change). Capture:
+`captures/e2-slot4-record-play`.
+
+| measured | value |
+|---|---|
+| committed take | `18432` ticks = **24 bars** (`raw=18885`, truncation rewind applied) |
+| first channel-8 note-on after the Record stop | **+0.103 s** |
+| channel-8 note-ons before the transport stop | **795** (the loop plays continuously) |
+| max channel-8 inter-onset gap | **0.135 s** |
+| LED rows after the stop | 3423 |
+| post-stop window measured | ~119 s (1547.9 s -> 1666.6 s transport stop) |
+| leg's own display oracle | `ok=True` (warnings only) |
+| persistence | graceful drain `status=complete`, take persisted |
+
+Follow-up dump of that take (`captures/e2-slot4-record-play-playback`): `length=18432`, `rows,record,0,1147`,
+`rows,effective,0,1147`, and the dump session's own `MO` log again carries **418** note-ons on device channel 8. So the
+loop is present and audible both live and after a reboot/restore, while `verify_playback_content.py` still returns
+`INCONCLUSIVE_CAPTURE` — that verdict is a **cycle-alignment limitation of the verifier**, not silence and not content
+loss. It deserves its own bounded fix (or an explicit cycle window).
+
+### 8b. Correlation found, mechanism still open
+
+Every comparable run now sorts by the committed loop's length:
+
+| run | committed | bars | `% 1536` | post-stop playback |
+|---|---|---|---|---|
+| run2 | 17664 | 23 | 768 | **none** (94 s: no MIDI, no LED) |
+| run3 | 19200 | 25 | 768 | **none** (110 s: no MIDI, no LED) |
+| run4 | 18432 | 24 | 0 | present |
+| slot4-play (this run) | 18432 | 24 | 0 | present, gap <= 0.135 s |
+
+That is a clean separation over four comparable runs, but it is a **correlation without a located mechanism**:
+`RuntimePlaybackView::bindRawCoverage`, `LoopPlaybackRuntime::bindFirstRecordingBar` and `hasServableDeferredRecordView`
+show **no span/alignment requirement** — the bind needs only `rawCoveragePrepared && complete` and
+`lengthTicks <= loopLengthTicks - startPhase`, both satisfied for 17664/19200. The record-stop bind-failure warning
+(`First-record bar-1 playback binding unavailable`) is **absent** from run2/run3, so their return window was bound too.
+Neither the `hasAudiblePlaybackSource` term (`hasCommittedPasses`, which run2/run3 lack while `rv` stays 0) nor the
+emission gate explains why their LED feedback also stops. Do not treat "odd bar count" as the cause; treat it as the
+discriminator to explain.
