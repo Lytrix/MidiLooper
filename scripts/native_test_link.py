@@ -31,6 +31,10 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # **real** (`src/EditManager*.cpp`) alongside the window lane, so the suite needs the same
     # Arduino/SD hardware boundaries as the continuous-capture harness it builds on.
     "test_windowed_preview_integration",
+    # runtime-working-set-ownership S7.5b.8a: the entry/focus/feedback boundary oracle links the real
+    # button action, the real session/feedback seam and the real note-edit owner, so it needs the same
+    # Arduino/SD hardware boundaries as the windowed-preview and continuous-capture harnesses.
+    "test_note_edit_entry_boundary",
 }
 if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
