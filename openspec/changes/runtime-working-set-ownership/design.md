@@ -845,6 +845,12 @@ contention. Neither a passing content inventory nor a completed windowed change 
 Existing role-transfer/readiness continuity statements are interpreted through this acceptance contract; fault
 injection is a separate safety test, never permission to pass an in-envelope silence or involuntary stop.
 
+**S7.5b — playback continuity under persistence and NOTE_EDIT overlays (owner-approved runtime regression scope, 2026-10-07).** The `s64-37c-01` capture records a ~30.3 ms workspace `payload_slice` and a 31.7 ms `persist_save` maximum while playback is active. DEC-081 remains authoritative: persistence continues during playback. The existing StorageManager writer will be extended to keep capture-pass chunk data and byte offset in its existing continuation, issue bounded writes, advance CRC only for acknowledged bytes, and return to the existing main-loop service between units; failures retain the existing explicit persistence outcome. This does not claim that the SD backend's indivisible write latency is bounded until a device measurement proves the chosen quantum.
+
+The NOTE_EDIT capture reports a current root and `session_events=0`; that is intentional under DEC-055, because current state/store are an overlay delta, not a second committed timeline. Playback composition must therefore start with the committed requested interval and apply the session's identity-qualified changes/removals over it. It must preserve unaffected note identities and timing, and stay interval-sized; rebuilding a whole-loop MIDI vector is explicitly rejected. Owner remains Track's playback representation plus EditManager/NoteEditCurrentState; no owner transfer, queue or persistence format is introduced.
+
+These are local prerequisites for **S7.5b — continuity dependency closure**, not a claim that S7.5a's timing envelope or S7.5's hardware acceptance has passed. Exact native MIDI/content traces establish transition correctness; device evidence is still needed for real SD blocking and output deadlines.
+
 ### 4. New invariants (32–36, binding)
 
 | # | Invariant | Enforced by |
@@ -1416,3 +1422,110 @@ so a positional reader that stops at `outcome` is unaffected), `0xFF` meaning no
 admission sites and both human refusal rows pass `resolveTrackIndexForPersistence(*this)`. Verified in use:
 `…,canonical_output_busy,track=4` and `…,accepted_stop_finalizer_wait,track=4`. RAM1 is byte-identical.
 
+### S7.5b regression implementation packets
+
+The runtime-owned regressions are tracked in `tasks.md` S7.5b.1–6. Each slice has a G2 packet and separate fixture/native/build/device status. Persistence uses byte/CRC parity; NOTE_EDIT uses exact interval MIDI parity; S7.5b.5 uses a pre-boundary ready-window and exact-once MIDI oracle; S7.5b.6 uses the production draw-source frame/visible-interval oracle. These local regressions do not establish the S7.5a timing envelope or close combined S7.5.
+### S7.5b.5–6 — next-bar playback readiness and display continuity (2026-10-07)
+
+The `s64-37c-04` trace has a 21.31 s Record stop-to-Snapshot-publication interval. The current first-bar/onward path retains the frozen source, but `Track::playCommittedLoopMidi` requests the onward bar only after its current fixed view no longer covers the playhead. The follow-up therefore extends the existing `Track::stepPlaybackViewMaintenance` owner to prepare the next one-bar derived view ahead of the handoff, using the existing three-view lifecycle and one immutable ready successor. The current view stays selected until the successor is complete; the clock path consumes only completed views. The Record range remains the temporary source while the single `LoopSnapshot` is stale, then the existing current-root path takes over after a complete successor handoff. No per-bar `LoopSnapshot` root, alternate publisher, scheduler, or content authority is introduced.
+
+**Record-return missing-first-view continuation:** A failed first-bar bind is not permission to retire the job's frozen CaptureRange while the session-exit Snapshot is stale. The existing playback holder uses its free build role to prepare the *current* bar from that range, then resumes next-bar lookahead after the complete view is adopted. A completed current-bar candidate remains ready until the MIDI edge adopts it. No new owner, queue, per-bar Snapshot, or synchronous MIDI build is introduced; an unavailable view role remains an explicit refusal, not a fabricated ready state. This local repair does not prove the one-bar hardware deadline.
+
+The device bind refusal is a narrower handoff defect than an exhausted playback role: `bindFirstRecordingBar` already installs a complete long-loop return view into `current`, which the deferred closure's `bindDeferredRecordReturnWindow` failed to recognize because it only accepts raw `retained`. The existing runtime may acknowledge that already-bound view without projecting it again or writing to a published reader; a sub-bar take still projects its raw retained view in the deferred owner. The missing-first-view fallback stays for real refusal, rather than being used as the normal long-loop route.
+
+The handoff acknowledgement is limited to a **current** first bar proven fresh at the stop edge. The existing runtime construction marker (`recordingWindowGeneration` from `Loop::captureDisplayRevision`) survives the reset only with its complete preserved raw candidate. `bindFirstRecordingBar` compares that marker against the live Capture revision; stale unpublished first bars are made incomplete with constant metadata work and recover through the frozen-range owner. No published current view is reprojected or rewritten at deferred closure. A later-bar append may conservatively force the same fallback; proving the one-bar service deadline on hardware remains open.
+
+At a Record-return wrap, a frozen successor for bar one can be redundant with the bound first-bar `current`. Merely clearing that successor's metadata leaves its `ready` role occupied and makes the next complete build unpublishable. The existing three-view lifecycle now returns only such a complete, unborrowed superseded ready view to `idle`, and the holder may select this cleanup after the bound current first bar has already served the phase. The condition still preserves a genuinely awaiting successor at the clock boundary. No new view capacity is reserved. The device gap narrowed but remained nonzero on the default image; this is not a deadline qualification.
+
+The display remains an independent consumer. `DisplayManager::resolveDisplayNotesByDrawSource` owns the composed frame; `Loop` owns `visualCache` and whole-root publication. During the publication gap, the last complete display frame remains available while the existing draw-source owner resolves its active detail interval. A candidate is never treated as a complete frame until the owner can prove its source/coverage; frame adoption remains atomic. Playback readiness and display refresh use separate representations and budgets. Persistence stays eligible under DEC-081. Device timing, the maximum denied-turn gap, and display refresh limits remain S7.5a/S7.5 evidence, not assumptions in these local logic tasks.
+
+**Execution packets:** S7.5b.5 [`next-bar readiness`](evidence/2026-10-07-s75b-next-bar-readiness/EXECUTION.md); S7.5b.6 [`display frame continuity`](evidence/2026-10-07-s75b-display-frame-continuity/EXECUTION.md).
+
+### DEC-116 — active-role leases and continuity for the single rolling playback path (2026-10-07)
+
+The user-selected final state is **one Track-owned rolling playback driver/reader per sounding slot**, for short and long loops including NOTE_EDIT. The windowed sibling owns source-adapter/build/emission migration (tasks 3.15a–f and 3.7b); this runtime change owns the per-sounding-role lease budget and combined transport/content acceptance. The earlier S7.5b.5 first-bar/frozen-range branches above are transitional repair evidence, **not** permission to keep a second Record-return playback driver after cutover. Record bar one is the same immutable `current` role before and after stop. Source-specific ownership remains with `Loop` for complete `LoopSnapshot`/Capture, `EditManager` for NOTE_EDIT session delta, `StorageManager` for persistence and `TrackUndo` for undo semantics; Track owns only the derived window and its bounded publication.
+
+Each simultaneously sounding role holds its own generation-qualified current/ready/build window lease from the shared pool; there is **no one global current buffer**, no per-recorded-slot full-take reservation and no second active-slot authority. Lease counting must include readers, provisional source retention, inbound switch preparation, finishing predecessor, preview overlap and closures, then show release under slot/track switch, undo, transport stop and late completion. A single common emission path for live overdub and layered/jam soundings must preserve active-note ledger ownership and exact MIDI; short loops may span their loop within the tunable window cap and dense legacy content may page behind the same reader without truncation. Persist and Snapshot publication continue independently. S7.5a fixes the supported memory/service envelope, S7.5b.7 checks the cross-change source/lease/handoff matrix and S7.5 still requires pinned native **and** hardware deadline/content proof. No numeric capacity, deadline or ship claim is inferred from this design record.
+
+<a id="s75b8-note-edit-midi-boundaries"></a>
+
+### S7.5b.8 — MIDI-separated NOTE_EDIT entry and focus preparation (planned, 2026-10-09)
+
+**Scope/status:** owner-approved OpenSpec work item, not implemented or timing-qualified. It extends
+the existing MIDI-boundary and continuity requirements; it does not introduce an owner, scheduler,
+queue, content authority or feedback policy. See [S7.5b.8 — NOTE_EDIT boundary work](tasks.md#s75b8-note-edit-midi-boundaries)
+and the spec's *NOTE_EDIT entry and focus work preserve MIDI service boundaries* requirement.
+
+**Evidence, not causal proof:** the same edit-button entry in the pinned qualification image
+`d3da8bae…` coincides with the largest eligible-predecessor window-lane gap in both captures:
+51 ticks in `captures/e2-lane-rows-20261009-run2/session_20261009_135359.log` and 69 versus a permitted
+64 in `captures/e2-lane-rows-20261009-run3/session_20261009_135843.log`. Run three's diagnostic reports
+at device time 444.711283 s, after the action at 444.544182 s and session/feedback activity through
+approximately 444.690 s. Its block has zero clock discontinuities/saturation and a window-worker maximum
+of 365 us. The nearby NOTE_EDIT playback build records 541 us; its embedded-start-to-row interval is
+delayed telemetry emission, not a 143-ms builder duration (`RuntimeTimingTelemetry::recordPlaybackRebuild`
+queues a sample for `emitPendingDeadlineOneShots`). Gap endpoints and the exact causal unit remain
+UNKNOWN. Do not call this scheduler, display, persistence or Snapshot attribution; the observed 51/69
+figures neither set a new permitted limit nor prove continuously pending work.
+
+**Existing owners and integration anchors:** MIDI gesture dispatch reaches
+`MidiButtonActions::handleCycleEditMode` -> `ControlSurfaceManager::cycleEditSession` ->
+`EditManager::cycleEditSession` / `sendEditSessionChange` -> `reopenNoteEditSession` /
+`openNoteEditSession`. `EditManager` retains session/selection/focus mutation authority and the
+`NoteEditSession` working state. Relevant source is `src/EditManager/NoteEditSessionLifecycle.cpp`,
+`EditSessionDepart.cpp`, `NoteEditSelection.cpp` and the selected edit-state entry helpers.
+`ControlSurfaceManager` retains feedback preparation, motor-echo and outbound continuation ownership
+(`src/ControlSurface/EditEventFeedback.cpp`, `FaderOutbound.cpp`); `MidiHandler` retains input/output,
+and `main.cpp::loop()` integrates existing cooperative stepping. `Loop` owns source publication;
+`Track` owns playback-window preparation and the reader. Do not route edit-focus mutation into Track's
+playback builder or create a second display/selection projection authority.
+
+**Boundary contract:** the gesture accepts the interaction using bounded metadata work; content-sized
+entry, selection/focus and feedback preparation resumes through the existing owners and returns to
+`handleMidiInput()` between admitted units. "Within MIDI boundaries" means bounded interval-path
+work between successive input-service calls, not doing the whole operation in a clock ISR or recursively
+polling around an indivisible unbounded operation. Declare/verify each unit's quantum, pending/completed/
+superseded outcomes and cost, including nested preparation and sends. If a unit lacks an active bound,
+retain the accepted operation and coherent audible source pending; do not invent an admission constant,
+silence the slot, force STOPPED, drop input or change a feedback deadline to make the run pass.
+
+**Identity/lifetime and cancellation:** qualification includes the existing session lifecycle, track/slot,
+selected `NoteId` and source/preview revision terms. Across yields, private partial focus is not ready;
+only the existing owner publishes a complete qualified result. Exit/reopen, note/track/slot change,
+source mutation/undo, clear/load and late completion invalidate/revalidate only affected work; obsolete
+feedback must not reach a departed target. Before firmware, close the exact continuation/borrow lifetime,
+replacement and release predicates in the slice's G0–G2 execution packet against production code.
+This planning capture does not select a new lifecycle model or assert that all those predicates exist today.
+
+**Preserved behavior/dependencies:** current-root opening without edits keeps committed soundings;
+stale/rootless preparation cannot synchronously flatten the whole loop to bypass a pending source.
+Selection geometry/identity, empty-selection handling, input echo guards, coalescing/preemption and motor
+stage order remain governed by the existing [NOTE_EDIT fader spec](../../specs/note-edit-fader-feedback/spec.md).
+Its action-to-feedback limits are separate from input-service/output deadlines. Reuse S4e — visual tier
+for display/selection projection residency, S7.5b.2 — committed playback preservation for content,
+and windowed 3.15d — NOTE_EDIT interval reader for playback; none substitutes for this entry-time gate.
+The feedback-telemetry work in `resumable-midi-boundary-playback-maintenance` 4.1 — feedback observability
+is a reusable dependency, not another outbound coordinator. S7.5a — continuity envelope supplies the
+timing limits; this task supplies evidence to windowed 3.10 — bounded service and S7.5 — combined continuity.
+Logical fixture/boundary work may proceed before all-route reader cutover; final qualification must use
+the exact deployed route and cannot credit fallback output as a window deadline pass.
+
+**Verification and staged delivery:** use the actual button -> session -> selection/focus -> outbound
+path, with controlled ticks, owner grants, unavailable sources, mid-unit exit/refocus/source change and
+recorded input-service boundaries. RED controls suppress the necessary yield or identity rejection and
+must fail the corresponding boundary/stale-completion oracle without weakening musical expectations.
+Native establishes transition/ordering and exact MIDI/ledger parity; a pinned registered hardware leg
+establishes individual unit durations, composed input gaps, capture timestamp accuracy, per-route
+output deadlines, window/source-owner opportunity gaps, feedback completion and RAM1/PSRAM/LoopPool
+headroom under short/long/dense and multi-track persistence/display contention, internal/external clock.
+Capture duration endpoints inside the measured operation; report-emission timestamps are not substitutes.
+Each implementation slice has its own execution packet and focused/full native, capture-build/RAM1 and
+required hardware evidence before checkoff. No stimulus, serial marker, instrumentation or firmware is
+added by this document; future HITL authoring follows the registered stimulus/recipe rules.
+
+**Risks/rollback/non-goals:** splitting entry can expose partial focus or stale motor feedback -> pin
+complete-ready publication and identity-qualified cancellation before code. Extra cooperative work can
+starve other owners -> verify composed gaps and preserve their opportunities, not blanket edit priority.
+No new UI latency policy, SD format, global buffer, relaxed 64-tick declaration, forced transport stop or
+legacy-emitter retirement. Make separate reviewable fixture/entry/feedback/qualification commits on the
+working branch; preserve unrelated dirty work and existing fallback protection until its own cutover gates.

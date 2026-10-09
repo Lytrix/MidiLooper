@@ -68,6 +68,94 @@ from it SHALL NOT convert that run into a pass. This requirement does not remove
 - **AND** capture/finalization, undo/redo, output routing and windowed-publication dependencies are all verified;
   content parity, overflow-free logs or a passing windowed change alone are insufficient
 
+#### Scenario: Every sounding role is served through one window contract
+
+- **WHEN** short and long loops, Record return, overdub, NOTE_EDIT preview, layered/jam playback, undo/redo or inbound slot preparation overlap with other sounding roles and deferred persistence/display work
+- **THEN** every scheduled loop playback event is emitted through the same source-qualified immutable window reader per sounding slot, with no old pair/fixed/merged/paged clock-edge route remaining after migration
+- **AND** `current`, `ready` and private `build` are role/epoch-qualified, window-sized leases; bytes scale with simultaneous sounding and admitted transfer roles, not library slot count or loop length
+- **AND** the last valid source and unaffected sustained notes remain audible across source, slot, edit-session and checkpoint handoffs while each next affected interval meets its playhead deadline
+- **AND** no claim of continuity, supported sounding count or memory headroom follows from a native-only or an unpinned/qualification-incomplete device run
+
+#### Scenario: Deferred persistence yields between bounded payload writes
+  - **WHEN** a committed capture-pass payload is persisted while any track continues playing
+  - **THEN** serialization advances through resumable bounded writes and returns to the existing MIDI/clock service between write units
+  - **AND** the save continues making progress during playback, preserves exact persisted bytes and CRC, and does not wait for transport stop
+  - **AND** an I/O failure leaves the save state explicit and retryable/failable under the existing persistence policy
+
+#### Scenario: NOTE_EDIT is an overlay on committed playback
+  - **WHEN** a current-root NOTE_EDIT session opens with no edits, or changes only a subset of committed notes
+  - **THEN** the committed playback interval remains the base, unedited note identities continue at their scheduled ticks, and only the session's edited identities replace/remove that base
+  - **AND** opening the session does not emit blanket NoteOffs or replace the stream with an empty/partial delta
+  - **AND** the result is built from the requested interval and existing NoteEditCurrentState/LoopSnapshot owners without whole-loop rematerialization
+  - **AND** NOTE_EDIT preview for both short and long loops uses the same interval window owner/reader as committed playback, with `EditManager` retaining ownership of session deltas and their lifecycle; a separate mutable whole-loop preview is not an accepted end state
+
+#### Scenario: Playback remains audible through stop publication and save
+  - **WHEN** a recording is stopped while transport continues, its pass is finalized/published and the resulting deferred workspace save writes the pass payload
+  - **THEN** playback resumes from the retained first-bar/onward handoff without waiting for persistence to finish
+  - **AND** each indivisible persistence write returns to MIDI/clock servicing at a bounded payload quantum, preserving exact event order and content
+  - **AND** persistence continues making progress during playback; pausing full saves until transport stops is not an acceptable substitute
+
+#### Scenario: The next Record-return bar is ready before the playhead reaches it
+- **WHEN** a Record pass is committed, its session-exit `LoopSnapshot` is still pending, and transport continues across successive bars
+- **THEN** the currently served immutable bar remains unchanged while the existing playback-window owner prepares a complete one-bar successor from the retained Record source
+- **AND** the successor is ready before the playhead enters that bar and is adopted atomically; expected MIDI events are emitted exactly once and in order
+- **AND** Snapshot publication and persistence continue concurrently, and the frozen Record source is released only after the current-root handoff has no remaining reader or builder
+- **AND** the implementation uses derived playback windows over the single complete `LoopSnapshot`/existing retained source; it does not publish partial per-bar `LoopSnapshot` roots or add a publisher/scheduler
+- **AND** if the prepared first return view cannot bind, the pending Record job retains its frozen source while the Snapshot is stale; the same selected off-clock playback holder prepares the playhead's current bar before advancing to successive bars, reports an unservable resource refusal rather than silently retiring its only source, and never builds on the MIDI edge
+- **AND** when the stop edge has already bound a complete first-bar view to the final geometry, deferred Record closure acknowledges that same immutable view without mutating it or requiring a `retained` raw view; a genuinely unbound sub-bar view still uses deferred projection and its explicit refusal semantics
+- **AND** a first-bar view from an older Capture revision MUST NOT become the stop-edge playback authority: a late accepted note after its last build leaves that unpublished view unservable, and the existing frozen-range owner prepares the complete current bar instead of acknowledging stale content
+- **AND** a complete ready successor that the already-bound current first bar makes redundant SHALL return its view role to the existing idle pool before building the following bar; a successor that is still needed at the clock boundary SHALL remain immutable and eligible for adoption
+
+
+#### Scenario: NOTE_EDIT preview preserves the committed playback base
+  - **WHEN** NOTE_EDIT opens on a current LoopSnapshot and the session has no edits, or contains edits to only a subset of notes
+  - **THEN** playback continues the committed interval unchanged for unedited notes, with no blanket NoteOff or empty-stream replacement
+  - **AND** edited notes use the session's projected state, and intentional removals close only their own sounding identities
+  - **AND** the implementation uses bounded interval content and the existing NOTE_EDIT state/preview owners; it does not flatten a second whole-loop representation
+
+### Requirement: NOTE_EDIT entry and focus work preserve MIDI service boundaries
+
+Within the declared continuity envelope, NOTE_EDIT opening/reopening, note selection and focus
+preparation, and outbound feedback preparation/execution SHALL preserve MIDI input service,
+capture timestamp accuracy, scheduled playback deadlines and bounded playback-owner opportunities.
+The runtime SHALL execute this work as bounded, resumable units separated by MIDI input service;
+each indivisible unit SHALL have a declared work quantum and a verified active-transport bound.
+Adding polls around an unbounded scan, projection, sort, allocation or send burst SHALL NOT establish
+this property. Remaining work SHALL stay pending when a unit cannot be admitted, without forcing
+transport stop, dropping accepted input, requiring another press or presenting partial state as ready.
+
+Preparation and feedback SHALL remain qualified by their session, track/slot, source and selected-note
+identities across yields. Session exit, selection/source supersession and clear/load SHALL cancel or
+revalidate affected pending work before it can publish stale focus or send feedback for a departed target.
+Unchanged committed soundings and their closures SHALL remain valid while preparation is pending.
+Existing note-selection semantics, motor-echo guards, feedback stage order and session-entry feedback
+latency requirements SHALL be preserved. Interaction acceptance, focus readiness, feedback completion,
+MIDI input gaps and audible deadlines SHALL be measured separately; fast motor completion alone SHALL
+NOT establish MIDI-boundary safety. Numeric timing limits SHALL be fixed before qualification under the
+existing continuity-envelope requirement, not fitted to a recorded overrun.
+
+#### Scenario: Opening NOTE_EDIT while musical work continues
+- **WHEN** NOTE_EDIT opens or reopens during simultaneous playback and capture/finalization with the declared persistence/display contention
+- **THEN** each admitted preparation unit returns to MIDI input service before the next unit executes
+- **AND** input gaps, capture timestamp error, output deadlines and playback-owner opportunity gaps stay within their declared limits
+- **AND** the current audible source and unchanged sustained notes continue without blanket closure or a partial-preview handoff
+
+#### Scenario: Selection or focus preparation needs more than one unit
+- **WHEN** a short or long loop's selection/focus preparation exceeds one admitted work quantum, or its source is not yet ready
+- **THEN** preparation retains a resumable pending continuation and MIDI input/clock service continues between units
+- **AND** only complete identity-qualified focus becomes ready, with existing selection semantics and no whole-loop blocking workaround
+
+#### Scenario: Target changes between preparation units
+- **WHEN** the selected note, track/slot or source changes, the session exits/reopens, or clear/load invalidates pending NOTE_EDIT work between units
+- **THEN** late completion cannot overwrite the new focus or send obsolete feedback to the departed target
+- **AND** only affected work is cancelled or revalidated while accepted musical input and unaffected playback obligations remain intact
+
+#### Scenario: Feedback completes without delaying musical deadlines
+- **WHEN** session-open or selection feedback runs while MIDI traffic and playback-window work are pending
+- **THEN** feedback preparation and send stages execute in bounded units separated by MIDI input service
+- **AND** motor-echo protection, dependent-stage sequencing and existing feedback latency limits remain satisfied
+- **AND** native production-path interleavings and pinned hardware timing independently verify musical deadlines and feedback completion
+
 ### Requirement: Inactive recorded slots retain only canonical descriptors and bounded metadata
 A recorded slot that is not in an active role SHALL retain only canonical pass identities/descriptors
 sufficient to locate or rehydrate its persisted content, loop and pass summary, persistence identity and
@@ -759,6 +847,15 @@ Draw-source composition SHALL reuse the existing pending-paint backing for synch
 - **WHEN** a gather is not adopted because the existing handoff frame remains authoritative
 - **THEN** that live frame remains unchanged and scratch storage returns to the paint owner
 
+#### Scenario: Display stays responsive during session-exit publication
+- **WHEN** a Record stop invalidates the display revision while its session-exit `LoopSnapshot` remains pending and transport continues
+- **THEN** the DisplayManager keeps presenting the last complete draw-source frame while refreshing the active detail interval through its existing draw-source owner
+- **AND** any replacement is adopted atomically from complete source/coverage; the display never exposes a blank, torn, or mixed-revision frame
+- **AND** display work does not wait for whole-loop `visualCache` reconstruction or block playback, Snapshot publication, or persistence
+
+
+
+
 #### Scenario: Pending paint needs larger backing
 - **WHEN** the composed frame exceeds pending-paint capacity
 - **THEN** obsolete paint backing is retired before allocating its replacement, while the composed source remains intact
@@ -840,6 +937,14 @@ record-pass undo and overdub-session undo semantics SHALL be preserved.
 - **THEN** its prepared first-bar view matches the frozen interval's final length and normalized content
 - **AND** later playback coverage is supplied before its deadlines from valid owned sources
 - **AND** stale generations, held-note closure, short takes and wrap boundaries cause no missing or duplicate notes
+
+#### Scenario: Deferred record source survives delayed snapshot publication
+- **WHEN** the first-bar return window is serving a stopped Record interval, its pass is committed, and the published `LoopSnapshot` is still behind the playback revision
+- **THEN** retirement retains the interval's existing frozen `CaptureRange` owner
+- **AND** onward playback coverage is built from that range and supplies each due interval until the committed `LoopSnapshot` becomes current
+- **AND** the current committed source takes over without a playback gap while derived windows rebuild
+- **AND** retirement releases the range exactly once only after that source handoff
+- **AND** persistence continues concurrently and does not gate playback (DEC-081 — audible playback never gates persistence)
 
 #### Scenario: A record stop waits for resources
 - **WHEN** record-stop cannot bind because finalization capacity or valid playback preparation is unavailable
