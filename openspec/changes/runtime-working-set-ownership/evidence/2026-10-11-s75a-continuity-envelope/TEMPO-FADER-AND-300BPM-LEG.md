@@ -473,3 +473,39 @@ setup/confirm handshake (a clock preamble evaluated against a device that may be
 confirmation window that can miss the row, a second-overdub confirmation that can fail) plus the 3-bar stop edge
 -- all pre-existing, all on the *pacing* side. The bounded next step is unchanged: anchor the base record
 stream's start on the clock grid (section 14 owed-1), with these four legs as the "before" baseline.
+
+## 16. Boot-reset leg: a clean boot does not complete it either, and the image on the board is newer than the recorded legs'
+
+Owner-requested follow-up ("one more leg with `--boot-reset` + a fresh 300 BPM pin"). **Soft** reboot only
+(`--boot-reset` asks the device for `!REBOOT`; no upload, no flash, no SD operation), device clock, same
+invocation otherwise:
+
+`base-300bpm-bootreset-t8s4-05` -- the boot reset is confirmed by the device itself
+(`#CAP,2163003,DIAG,boot_reset,crash=0` + the full `BOOT,scan/t0..t7/load` sequence). It still ends
+`INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` with **`second overdub transition not confirmed`**, but it gets
+further than any leg in section 15: `ST,Track,STOPPED,ARMED` -> `ARMED,RECORDING` (a clean `Recording started @
+tick 0`), a 3-bar take (`Recording stopped @ tick 379 (recStart=0 length=2304)`, report `2304/1536`, raw 2683),
+one overdub admitted (`OVERDUBBING: 1`) with no note rows, and the record first note at **37 clocks**
+(`offset 37`, `intent 0`, `intent_source=run_default`; warning `record_first_note_too_late`). Shutdown
+`complete/2`, no latch.
+
+**The tempo question is settled, and no extra pin was needed.** The device's own bar cadence in that leg shows
+it was at **300 BPM during the record phase** (`BAR` deltas 0.80 s = 768 ticks at 300 BPM) after a slow first
+bar (2.39 s = ~100 BPM) while the boot loaded -- i.e. the tempo my probe pinned is **persisted** and a soft
+reboot restores it. There is no host-side tempo pin in a managed run (the only pitchbend sender in the tree is
+`hitl_tempo_fader_probe.py`), so `--tempo-bpm 300` is the host's expectation, never the device's setting.
+
+**A confound this run exposes, named rather than smoothed:** the board's image carries `DIAG,env_dist` and
+`DIAG,late_route` (18 and 6 rows here) and `DIAG,envelope_instr` (20), i.e. it is built from the S7.5a
+increment-3/4 firmware (`888d2188`, 2026-10-11) -- **newer than the image the recorded 300 BPM legs of sections
+2/11/12 ran on** (2026-10-10, before those firmware commits). So this session's "300 BPM performance"
+(the second-overdub refusal; a 33-37-clock record first note against the recorded device-clock leg's 14) is a
+comparison across *different device images*, and neither this evidence nor section 15 attributes it to the
+host-side intent change -- which those reports record as inert (`intent_source=run_default`, empty
+`per_track_stats`). Any future before/after at 300 BPM must pin the image as well as the tempo.
+**Left as is:** shutdown `complete/2` and no latch, and a read-only attach afterwards
+(`hitl_boot_census.py --no-reset --settle-s 6 --heap-stats`, `captures/state-after-300bpm-06`, no reset, no SD
+write) refines the state: the device's heap inspection is **refused with `track_work`**, i.e. the aborted
+overdub's obligations are still held even though the transport is stopped and persistence drained (the last
+display frame before the run's Stops reads `OVERDUBBING`). Nothing further was pressed into it: the next leg must
+carry its own `--boot-reset`, exactly as the run's own flow expects.
