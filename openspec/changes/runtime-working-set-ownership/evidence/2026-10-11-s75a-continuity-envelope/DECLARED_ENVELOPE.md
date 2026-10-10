@@ -65,7 +65,7 @@ association.
 
 | Proposal | Derivation | @300 BPM | @20 BPM | Caveat |
 |---|---|---|---|---|
-| Worst declared deferred-owner **denial** for one eligible lane | `H x Delta-max` = 7 x 64 = **448 ticks** of phase advance | 155.6 ms | 2333 ms | The sibling records that a *blocked* run of lost turns can exceed this; the seconds-scale starvation episodes (2,138 / 4,355 / 8,520 ticks) are exactly that and no per-turn constant can hold them (`EXECUTION.md`, increment 17) |
+| Worst declared deferred-owner **denial** for one eligible lane | `H x Delta-max` = 7 x 64 = **448 ticks** of phase advance | 466.7 ms | 7000 ms | The sibling records that a *blocked* run of lost turns can exceed this; the seconds-scale starvation episodes (2,138 / 4,355 / 8,520 ticks) are exactly that and no per-turn constant can hold them (`EXECUTION.md`, increment 17). **Correction 2026-10-11:** this row's ms values were first written 155.6 / 2333 (÷576 instead of ÷192, i.e. 3x low); the tick figure was right and only the conversion was wrong. The increment-5 packet's arithmetic was checked against a script, not by hand |
 | Musical-deadline candidates for the envelope's input/output limits | `DEC-108` item 7: expect the limits to sit in the 1/32–1/16-beat band, i.e. one of the first two rows of §2 | 6.25–12.5 ms | 93.75–187.5 ms | Which band each *metric* takes is a musical decision, not arithmetic, and is owed (§6) |
 | Action-to-audible for a slot switch / undo handoff | not derivable from Table A: the only recorded action-to-audible number is the NOTE_EDIT feedback one | — | — | **Parked 2026-10-11 — kept out of this envelope's limit table (owner decision).** The instrument measures *acceptance → first emission row* positionally, and the increment-4 device legs show what that endpoint really is (control-surface feedback, not the awaited note: `MO,224,16,…` 3.24 s after the accept, against the device's own `GS` accept row at +642 µs and `LED` feedback rows arriving earlier still), so the ≤3200/1600 ms NOTE_EDIT limit must not be attached to it. Still to be derived from musical intent (a switch that lands one bar late is a musical failure, not a numeric one) **if** it is reinstated as an identity-paired, class-split pair |
 
@@ -136,6 +136,13 @@ silently shrinking concurrency.
    which qualification run exercises it.
 6. **A `DEC-###` entry** (`ARCHITECTURE_RULES.md`: new architecture decisions must be recorded in
    `DECISION_LOG.md`). Not appended here: the numbers it would carry are not yet owner-approved.
+
+   → **Items 3–5 are produced as a proposal (increment 5):** [`LIMITS-AND-ORACLE-PROPOSAL.md`](LIMITS-AND-ORACLE-PROPOSAL.md) —
+   candidate limits expressed in **ticks** (converted at the tempo a run actually advances, never a nominal tempo),
+   the per-row measurement plan with each row's clock and uncertainty, the verdict oracle including its
+   `indeterminate` rule for bucket-bounded quantiles and its fail-class list, and the named-unproven set. It declares
+   nothing: §8 item 1 (owner sign-off) and item 6 (the `DEC-###`) remain owed, and three metrics (L1.12–L1.14) carry
+   no limit at all.
 
 **Not claimed by this increment:** no numeric limit is declared, no qualification run was made, no firmware,
 test, bound-class, task-checkbox or device claim; no `windowed` sibling number is restated as a runtime
