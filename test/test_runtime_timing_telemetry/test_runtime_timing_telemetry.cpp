@@ -696,6 +696,93 @@ void test_replenish_work_records_the_maximum_call_cost() {
   TEST_ASSERT_EQUAL_UINT32(340, snap.replenishWorkMaxUs);
 }
 
+// --- S7.5a distribution instrument: the companded histogram, its quantiles and the per-route split -------------
+
+void test_envelope_dist_buckets_are_contiguous_and_cover_the_whole_range() {
+  using namespace RuntimeTimingTelemetry;
+  uint32_t lo = 0;
+  uint32_t hi = 0;
+  uint32_t previousHi = 0;
+  for (uint16_t bucket = 0; bucket < kEnvelopeDistBuckets; ++bucket) {
+    envelopeDistBucketBounds(bucket, lo, hi);
+    TEST_ASSERT_EQUAL_UINT32(previousHi == 0 ? 0 : previousHi + 1, lo);
+    TEST_ASSERT_TRUE(hi >= lo);
+    previousHi = hi;
+  }
+  envelopeDistBucketBounds(kEnvelopeDistBuckets - 1, lo, hi);
+  TEST_ASSERT_EQUAL_UINT32(2147483648u, lo);
+  TEST_ASSERT_EQUAL_UINT32(4294967295u, hi);
+
+  // 256 µs wide below 65,536 µs, then one power-of-two bucket per bit.
+  TEST_ASSERT_EQUAL_UINT32(0, envelopeDistBucket(0));
+  TEST_ASSERT_EQUAL_UINT32(255, envelopeDistBucket(65535));
+  TEST_ASSERT_EQUAL_UINT32(256, envelopeDistBucket(65536));
+  TEST_ASSERT_EQUAL_UINT32(256, envelopeDistBucket(131071));
+  TEST_ASSERT_EQUAL_UINT32(257, envelopeDistBucket(131072));
+}
+
+void test_envelope_dist_quantiles_report_the_interval_the_sample_lies_in() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  DistQuantiles quantiles;
+  TEST_ASSERT_FALSE(distQuantiles(DistChannel::LateOn, quantiles));  // no sample: no row is claimed
+  TEST_ASSERT_EQUAL_UINT32(0, quantiles.samples);
+
+  // Three MIDI-input gaps (100, 200, 300 µs): the first `enter` has no prior exit to measure from.
+  noteMidiInputEnter(1000);
+  noteMidiInputExit(1000);
+  noteMidiInputEnter(1100);
+  noteMidiInputExit(1100);
+  noteMidiInputEnter(1300);
+  noteMidiInputExit(1300);
+  noteMidiInputEnter(1600);
+
+  TEST_ASSERT_TRUE(distQuantiles(DistChannel::MidiGap, quantiles));
+  TEST_ASSERT_EQUAL_UINT32(3, quantiles.samples);
+  TEST_ASSERT_EQUAL_UINT32(0, quantiles.p50LoUs);    // the median (200 µs) is in bucket 0: [0, 255]
+  TEST_ASSERT_EQUAL_UINT32(255, quantiles.p50HiUs);
+  TEST_ASSERT_EQUAL_UINT32(256, quantiles.p99LoUs);  // and the 99th (300 µs) in bucket 1: [256, 511]
+  TEST_ASSERT_EQUAL_UINT32(511, quantiles.p99HiUs);
+  TEST_ASSERT_FALSE(distQuantiles(DistChannel::LateOn, quantiles));
+}
+
+void test_envelope_route_split_holds_one_row_per_route_and_counts_the_spill() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  notePlaybackServiceEnter(1000, 200);  // deadline 1200: a send at 1300 is 100 µs late
+  for (uint8_t channel = 1; channel <= 9; ++channel) {
+    recordNoteSendLateness(true, 1300, 96, 0, 0, channel, 60);
+  }
+
+  TEST_ASSERT_EQUAL_UINT32(8, lateRouteSlotCount());   // the ninth route finds no slot...
+  TEST_ASSERT_EQUAL_UINT32(1, lateRouteSpillCount());  // ...and is counted rather than dropped silently
+  LateRouteEntry entry;
+  TEST_ASSERT_TRUE(lateRouteSlotAt(0, entry));
+  TEST_ASSERT_EQUAL_UINT32(144, entry.type);  // the emitted status byte the `MO` row carries
+  TEST_ASSERT_EQUAL_UINT32(1, entry.ch);
+  TEST_ASSERT_EQUAL_UINT32(100, entry.maxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, entry.overCount);
+  TEST_ASSERT_EQUAL_UINT32(1, entry.samples);
+  TEST_ASSERT_TRUE(lateRouteSlotAt(7, entry));
+  TEST_ASSERT_EQUAL_UINT32(8, entry.ch);
+  TEST_ASSERT_FALSE(lateRouteSlotAt(8, entry));
+}
+
+void test_envelope_distribution_state_is_cleared_at_the_window_boundary() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  (void)maybeEmit(1000);  // arms the window
+  noteMidiInputEnter(1000);
+  noteMidiInputExit(1000);
+  noteMidiInputEnter(1200);  // one 200 µs MIDI-input gap in the current window
+  DistQuantiles quantiles;
+  TEST_ASSERT_TRUE(distQuantiles(DistChannel::MidiGap, quantiles));
+
+  TEST_ASSERT_TRUE(maybeEmit(1000 + kEmitIntervalUs));  // the boundary emits, then clears
+  TEST_ASSERT_FALSE(distQuantiles(DistChannel::MidiGap, quantiles));
+  TEST_ASSERT_EQUAL_UINT32(0, quantiles.samples);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -741,5 +828,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_replenish_refusal_then_completion_records_the_exact_wait);
   RUN_TEST(test_replenish_completion_without_a_refusal_records_nothing);
   RUN_TEST(test_replenish_work_records_the_maximum_call_cost);
+  RUN_TEST(test_envelope_dist_buckets_are_contiguous_and_cover_the_whole_range);
+  RUN_TEST(test_envelope_dist_quantiles_report_the_interval_the_sample_lies_in);
+  RUN_TEST(test_envelope_route_split_holds_one_row_per_route_and_counts_the_spill);
+  RUN_TEST(test_envelope_distribution_state_is_cleared_at_the_window_boundary);
   return UNITY_END();
 }

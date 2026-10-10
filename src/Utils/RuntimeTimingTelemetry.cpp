@@ -33,6 +33,31 @@ struct Accumulator {
   uint32_t overCount = 0;
 };
 
+// S7.5a distribution instrument: a **companded** sample histogram (see `kEnvelopeDistBuckets`). 256 buckets of
+// 256 µs cover 0..65,535 µs — the range the lateness family actually lives in — and 16 power-of-two buckets bound
+// the long tail, so a distribution costs 544 B instead of a sample buffer. It lives in `State` (PSRAM on target).
+constexpr uint16_t kDistFineBuckets = 256;
+constexpr uint16_t kDistCoarseBuckets = 16;
+constexpr uint32_t kDistFineBucketUs = 256;
+static_assert(kDistFineBuckets + kDistCoarseBuckets == kEnvelopeDistBuckets,
+              "bucket count must match the header's kEnvelopeDistBuckets");
+
+struct Histogram {
+  uint16_t counts[kEnvelopeDistBuckets] = {};
+  uint32_t samples = 0;
+};
+
+// S7.5a per-route output-lateness split: a bounded, first-come table. A route that finds no free slot is counted in
+// `lateRouteSpill` (carried on every route row), so a truncated split is visible rather than silent.
+constexpr uint8_t kLateRouteSlots = 8;
+
+struct LateRouteSlot {
+  uint16_t key = 0;  // (type << 8) | channel; 0 means free (an emitted status byte is never 0)
+  uint32_t maxUs = 0;
+  uint32_t overCount = 0;
+  uint32_t samples = 0;
+};
+
 constexpr uint8_t kStopTraceRecordCount = 128;
 
 enum class StopTraceKind : uint8_t {
@@ -194,6 +219,14 @@ struct State {
   uint32_t usbNestedNotePairUs = 0;
   bool usbNestedActive = false;
   uint32_t clockPulses = 0;
+  // S7.5a envelope instruments — window-scoped distribution state: the four channel histograms behind the
+  // `DIAG,env_dist` rows and the bounded per-route lateness table behind the `DIAG,late_route` rows.
+  Histogram midiGapDist;
+  Histogram midiInputDist;
+  Histogram lateOnDist;
+  Histogram lateOffDist;
+  LateRouteSlot lateRoutes[kLateRouteSlots];
+  uint32_t lateRouteSpill = 0;
   uint32_t lastInputExitUs = 0;
   uint32_t inputEnterUs = 0;
   bool inputActive = false;
@@ -402,6 +435,15 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.replenishPairs = 0;
   s.replenishRefusedSinceUs = 0;
   s.clockPulses = 0;
+  // ...and the distribution instrument's window-scoped state: the four channel histograms and the per-route split.
+  s.midiGapDist = Histogram{};
+  s.midiInputDist = Histogram{};
+  s.lateOnDist = Histogram{};
+  s.lateOffDist = Histogram{};
+  for (uint8_t index = 0; index < kLateRouteSlots; ++index) {
+    s.lateRoutes[index] = LateRouteSlot{};
+  }
+  s.lateRouteSpill = 0;
 }
 
 RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
@@ -413,6 +455,28 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   // accounting. Deliberately not one row per captured event, and deliberately not four new `DIAG` tag literals.
   DebugSessionCapture::envelopeInstrRow(s.captureStampMaxTicks, s.captureStampSamples, s.replenishWait.maxUs,
                                         s.replenishWork.maxUs, s.replenishRefused, s.replenishPairs);
+  // S7.5a distribution rows: each channel's own p50/p99 **interval** for this window (a bucket bound, never a
+  // fabricated exact microsecond — the exact maxima stay on the `late_*`/`midi_*` rows) and the per-route lateness
+  // split, one row per route the window held. A channel with no sample emits no row at all, and every route row
+  // carries the split's spill count so a truncation at the slot bound is visible rather than silent.
+  for (uint8_t channel = 0; channel <= static_cast<uint8_t>(DistChannel::LateOff); ++channel) {
+    DistQuantiles quantiles;
+    if (distQuantiles(static_cast<DistChannel>(channel), quantiles)) {
+      DebugSessionCapture::envelopeDistRow(channel, quantiles.p50LoUs, quantiles.p50HiUs, quantiles.p99LoUs,
+                                           quantiles.p99HiUs, quantiles.samples);
+    }
+  }
+  {
+    const uint8_t routeCount = lateRouteSlotCount();
+    const uint32_t routeSpill = lateRouteSpillCount();
+    for (uint8_t index = 0; index < routeCount; ++index) {
+      LateRouteEntry entry;
+      if (lateRouteSlotAt(index, entry)) {
+        DebugSessionCapture::envelopeRouteLatenessRow(entry.type, entry.ch, entry.maxUs, entry.overCount,
+                                                      entry.samples, routeSpill);
+      }
+    }
+  }
   DebugSessionCapture::runtimeTimingTelemetry("clk", s.clk.maxUs, s.clk.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("tracks", s.tracks.maxUs, s.tracks.overCount);
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
@@ -476,6 +540,84 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
 #endif
 }
 
+
+// S7.5a distribution instrument — internal helpers. The histograms and the route table live in `State`, which is
+// internal to this translation unit, so only the bucket/quantile entry points and the route accessors are public.
+RT_FLASHMEM_FN Histogram& histogramFor(State& s, DistChannel channel) {
+  switch (channel) {
+    case DistChannel::MidiInput:
+      return s.midiInputDist;
+    case DistChannel::LateOn:
+      return s.lateOnDist;
+    case DistChannel::LateOff:
+      return s.lateOffDist;
+    case DistChannel::MidiGap:
+    default:
+      return s.midiGapDist;
+  }
+}
+
+// The bucket the `percentile`-th sample falls in, reported as that bucket's own µs interval. The rank is a ceiling,
+// so the 99th percentile of a one-sample window is that sample rather than an empty answer.
+RT_FLASHMEM_FN void quantileBucket(const Histogram& hist, uint32_t percentile, uint32_t& loUs, uint32_t& hiUs) {
+  const uint32_t rank =
+      static_cast<uint32_t>((static_cast<uint64_t>(hist.samples) * percentile + 99u) / 100u);
+  uint32_t cumulative = 0;
+  for (uint16_t bucket = 0; bucket < kEnvelopeDistBuckets; ++bucket) {
+    cumulative += hist.counts[bucket];
+    if (cumulative >= rank) {
+      envelopeDistBucketBounds(bucket, loUs, hiUs);
+      return;
+    }
+  }
+  envelopeDistBucketBounds(kEnvelopeDistBuckets - 1, loUs, hiUs);
+}
+
+RT_FLASHMEM_FN void recordDistSample(Histogram& hist, uint32_t valueUs) {
+  ++hist.counts[envelopeDistBucket(valueUs)];
+  ++hist.samples;
+}
+
+// Window-scoped lateness accounting for one emitted output event's route. Slots are first-come: a route that finds
+// no free slot is counted in the spill instead, which every route row carries.
+RT_FLASHMEM_FN void recordRouteLateness(State& s, uint8_t type, uint8_t channel, uint32_t latenessUs) {
+  const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(type) << 8) | channel);
+  if (key == 0) {
+    return;
+  }
+  LateRouteSlot* freeSlot = nullptr;
+  for (uint8_t index = 0; index < kLateRouteSlots; ++index) {
+    LateRouteSlot& slot = s.lateRoutes[index];
+    if (slot.key == key) {
+      if (latenessUs > slot.maxUs) {
+        slot.maxUs = latenessUs;
+      }
+      if (latenessUs > 0) {
+        ++slot.overCount;
+      }
+      ++slot.samples;
+      return;
+    }
+    if (freeSlot == nullptr && slot.key == 0) {
+      freeSlot = &slot;
+    }
+  }
+  if (freeSlot == nullptr) {
+    ++s.lateRouteSpill;
+    return;
+  }
+  freeSlot->key = key;
+  freeSlot->maxUs = latenessUs;
+  freeSlot->overCount = latenessUs > 0 ? 1u : 0u;
+  freeSlot->samples = 1;
+}
+// One emitted event's lateness into both distribution surfaces: its family's histogram and the window's route split.
+// A single entry point on purpose — this is reached from the note-emission path, which stays in ITCM, so what that
+// path pays for the instrument is one call rather than two feeds (RAM1 `padding` is the guard on that).
+RT_FLASHMEM_FN void recordLatenessSample(State& s, bool isNoteOn, uint8_t channel, uint32_t latenessUs) {
+  recordDistSample(isNoteOn ? s.lateOnDist : s.lateOffDist, latenessUs);
+  recordRouteLateness(s, static_cast<uint8_t>(isNoteOn ? 0x90u : 0x80u), channel, latenessUs);
+}
 }  // namespace
 
 void resetForTest() {
@@ -484,13 +626,15 @@ void resetForTest() {
   resetTrackUpdates();
 }
 
-void noteMidiInputEnter(uint32_t nowUs) {
+RT_FLASHMEM_FN void noteMidiInputEnter(uint32_t nowUs) {
   State& s = state();
   if (s.windowStartUs == 0) {
     s.windowStartUs = nowUs;
   }
   if (s.lastInputExitUs != 0) {
-    recordSample(s.midiGap, nowUs - s.lastInputExitUs);
+    const uint32_t gapUs = nowUs - s.lastInputExitUs;
+    recordSample(s.midiGap, gapUs);
+    recordDistSample(s.midiGapDist, gapUs);
   }
   s.inputEnterUs = nowUs;
   s.inputActive = true;
@@ -499,10 +643,12 @@ void noteMidiInputEnter(uint32_t nowUs) {
 #endif
 }
 
-void noteMidiInputExit(uint32_t nowUs) {
+RT_FLASHMEM_FN void noteMidiInputExit(uint32_t nowUs) {
   State& s = state();
   if (s.inputActive) {
-    recordSample(s.midiInput, nowUs - s.inputEnterUs);
+    const uint32_t inputUs = nowUs - s.inputEnterUs;
+    recordSample(s.midiInput, inputUs);
+    recordDistSample(s.midiInputDist, inputUs);
     s.inputActive = false;
   }
   s.lastInputExitUs = nowUs;
@@ -556,6 +702,82 @@ RT_FLASHMEM_FN void noteReplenishCompletion(uint32_t nowUs) {
   recordSample(s.replenishWait, nowUs - s.replenishRefusedSinceUs);
   ++s.replenishPairs;
   s.replenishRefusedSinceUs = 0;
+}
+
+// S7.5a distribution instrument — the companded bucket scheme. 256 buckets of 256 µs below 65,536 µs, then one
+// power-of-two bucket per bit up to 2^32-1, so the quantile a window reports is an interval (the bucket's bounds)
+// and never an invented exact microsecond.
+RT_FLASHMEM_FN uint16_t envelopeDistBucket(uint32_t valueUs) {
+  if (valueUs < (kDistFineBuckets * kDistFineBucketUs)) {
+    return static_cast<uint16_t>(valueUs / kDistFineBucketUs);
+  }
+  uint32_t shifted = valueUs >> 16;
+  uint16_t bit = 0;
+  while (shifted > 1u && bit < (kDistCoarseBuckets - 1u)) {
+    shifted >>= 1;
+    ++bit;
+  }
+  return static_cast<uint16_t>(kDistFineBuckets + bit);
+}
+
+RT_FLASHMEM_FN void envelopeDistBucketBounds(uint16_t bucket, uint32_t& loUs, uint32_t& hiUs) {
+  if (bucket < kDistFineBuckets) {
+    loUs = static_cast<uint32_t>(bucket) * kDistFineBucketUs;
+    hiUs = loUs + kDistFineBucketUs - 1u;
+    return;
+  }
+  const uint16_t bit = static_cast<uint16_t>(bucket - kDistFineBuckets);
+  loUs = 1u << (16u + bit);
+  hiUs = (bit + 1u >= kDistCoarseBuckets) ? 0xFFFFFFFFu : ((1u << (17u + bit)) - 1u);
+}
+
+RT_FLASHMEM_FN bool distQuantiles(DistChannel channel, DistQuantiles& out) {
+  const Histogram& hist = histogramFor(state(), channel);
+  out = DistQuantiles{};
+  out.samples = hist.samples;
+  if (hist.samples == 0) {
+    return false;  // no sample this window: the row is not emitted at all, never emitted as a zero
+  }
+  quantileBucket(hist, 50u, out.p50LoUs, out.p50HiUs);
+  quantileBucket(hist, 99u, out.p99LoUs, out.p99HiUs);
+  return true;
+}
+
+RT_FLASHMEM_FN uint8_t lateRouteSlotCount() {
+  const State& s = state();
+  uint8_t count = 0;
+  for (uint8_t index = 0; index < kLateRouteSlots; ++index) {
+    if (s.lateRoutes[index].key != 0) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+RT_FLASHMEM_FN bool lateRouteSlotAt(uint8_t index, LateRouteEntry& out) {
+  // A dense index over the non-empty slots, so callers loop 0..lateRouteSlotCount()-1.
+  const State& s = state();
+  uint8_t seen = 0;
+  for (uint8_t slot = 0; slot < kLateRouteSlots; ++slot) {
+    const LateRouteSlot& entry = s.lateRoutes[slot];
+    if (entry.key == 0) {
+      continue;
+    }
+    if (seen == index) {
+      out.type = static_cast<uint8_t>(entry.key >> 8);
+      out.ch = static_cast<uint8_t>(entry.key & 0xFFu);
+      out.maxUs = entry.maxUs;
+      out.overCount = entry.overCount;
+      out.samples = entry.samples;
+      return true;
+    }
+    ++seen;
+  }
+  return false;
+}
+
+RT_FLASHMEM_FN uint32_t lateRouteSpillCount() {
+  return state().lateRouteSpill;
 }
 
 RT_FLASHMEM_FN void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs) {
@@ -892,6 +1114,10 @@ void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick,
   const uint32_t latenessUs =
       latenessAfterDeadline(nowUs, s.serviceDueUs, s.servicePeriodUs);
   recordLateness(isNoteOn ? s.lateOn : s.lateOff, latenessUs);
+  // S7.5a distribution instrument: the same sample lands in its family's histogram and in the window's per-route
+  // S7.5a distribution instrument: the same sample lands in its family's histogram and in the window's per-route
+  // split, keyed by the emitted status byte and channel — the key the `MO` emission row carries.
+  recordLatenessSample(s, isNoteOn, channel, latenessUs);
   queueStopTraceRecord(s, StopTraceRecord{StopTraceKind::NoteEmission, s.serviceSequence,
       nowUs, s.serviceDueUs, s.serviceDueUs + s.servicePeriodUs, s.servicePeriodUs, tick,
       latenessUs, isNoteOn, track, slot, 255, 255, channel, note});

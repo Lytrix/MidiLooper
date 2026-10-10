@@ -228,6 +228,52 @@ void noteReplenishRefused(uint32_t nowUs);
  */
 void noteReplenishCompletion(uint32_t nowUs);
 
+// --- S7.5a distribution instrument: the window's own sample distribution, not just its maximum -----------------
+// A window that reported only a maximum could not say whether the worst sample was typical or one outlier. The
+// histogram behind these is **companded**: 256 buckets of 256 µs cover 0..65,535 µs and 16 power-of-two buckets
+// cover 65,536 µs..2^32-1. A reported quantile is therefore the **interval** it is known to lie in, never a
+// fabricated exact microsecond (DEC-108 §13b); the exact maximum is what `DIAG,late_on`/`late_off` already carry.
+
+/// Bucket count of the companded distribution histogram.
+constexpr uint16_t kEnvelopeDistBuckets = 272;
+
+/// Histogram bucket index for `valueUs`; its µs interval is `envelopeDistBucketBounds`.
+uint16_t envelopeDistBucket(uint32_t valueUs);
+
+/// The inclusive µs interval `[loUs, hiUs]` that bucket `bucket` covers.
+void envelopeDistBucketBounds(uint16_t bucket, uint32_t& loUs, uint32_t& hiUs);
+
+/// The four channel metrics whose per-window sample distribution is recorded, in row-code order.
+enum class DistChannel : uint8_t { MidiGap = 0, MidiInput = 1, LateOn = 2, LateOff = 3 };
+
+/// One channel's window-scoped quantiles, µs — each the interval it is known to lie in.
+struct DistQuantiles {
+  uint32_t p50LoUs = 0;
+  uint32_t p50HiUs = 0;
+  uint32_t p99LoUs = 0;
+  uint32_t p99HiUs = 0;
+  uint32_t samples = 0;
+};
+
+/// Quantiles of the samples recorded for `channel` in the current window. False when it recorded no sample.
+bool distQuantiles(DistChannel channel, DistQuantiles& out);
+
+/// S7.5a per-route output-lateness split — one route's window-scoped lateness accounting. `type` is the emitted
+/// MIDI status byte (144 note-on, 128 note-off) and `ch` the MIDI channel: the key `MO` emission rows carry.
+struct LateRouteEntry {
+  uint8_t type = 0;
+  uint8_t ch = 0;
+  uint32_t maxUs = 0;
+  uint32_t overCount = 0;
+  uint32_t samples = 0;
+};
+
+/// Route slots this window held (dense index). `lateRouteSpillCount` counts the samples of routes that found no
+/// slot, so a split truncated by the bound is visible in the row rather than silently short.
+uint8_t lateRouteSlotCount();
+bool lateRouteSlotAt(uint8_t index, LateRouteEntry& out);
+uint32_t lateRouteSpillCount();
+
 /** Record duration of ClockManager::onMidiClockPulse (includes nested updateAllTracks). */
 void noteClockDispatch(uint32_t durationUs);
 

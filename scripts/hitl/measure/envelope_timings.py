@@ -57,6 +57,108 @@ _STORED_TICK_RE = re.compile(r"#CAP,(\d+),REVT,[^,]*,(-?\d+)")
 #: `#CAP,<us>,MO,<type>,<ch>,<d1>,<d2>,<tick>` — the S7.5a instrument that put the **scheduled tick** on the
 #: emission row. Captures predating it carry six fields, so the tick group is simply absent for them.
 _MO_TICK_RE = re.compile(r"#CAP,(\d+),MO,(\d+),(\d+),(-?\d+),(-?\d+),(\d+)")
+
+
+def _ticked_emissions(lines: Iterable[str]) -> list[tuple[int, int, int, int]]:
+    """`(us, tick, type, ch)` for emission rows that carry a **stamped** scheduled tick.
+
+    `MidiEvent::tick` defaults to 0, so every outgoing row built without one reads `tick=0`; in a capture most rows
+    are exactly that. Tick 0 is therefore treated as *unstamped* and excluded — which also excludes an emission
+    genuinely scheduled at loop tick 0 (a stated under-count, not a silent one).
+    """
+    out: list[tuple[int, int, int, int]] = []
+    for line in lines:
+        match = _MO_TICK_RE.search(line)
+        if match is None:
+            continue
+        tick = int(match.group(6))
+        if tick == 0:
+            continue
+        out.append((int(match.group(1)), tick, int(match.group(2)), int(match.group(3))))
+    return out
+
+
+def _loop_segments(rows: Sequence[tuple[int, int, int, int]]) -> list[list[tuple[int, int]]]:
+    """Split one route's `(tick, us)` pairs into **loop traversals**: a run of increasing ticks is one traversal.
+
+    The tick column is the *loop* tick, so it saw-tooths at every wrap; a fit or a burst count taken across the
+    whole capture would mix traversals (and would read a wrap as an enormous lateness).
+    """
+    segments: list[list[tuple[int, int]]] = []
+    current: list[tuple[int, int]] = []
+    last_tick = -1
+    for us, tick, _type, _ch in rows:
+        # A strictly *decreasing* tick is a loop wrap and ends the traversal; a repeated tick is the burst this
+        # capture is being asked about, so it stays in the same traversal.
+        if current and tick < last_tick:
+            segments.append(current)
+            current = []
+        current.append((tick, us))
+        last_tick = tick
+    if current:
+        segments.append(current)
+    return segments
+
+
+#: `#CAP,<us>,DIAG,env_dist,<channel>,<p50LoUs>,<p50HiUs>,<p99LoUs>,<p99HiUs>,<samples>` — the S7.5a distribution
+#: instrument: one row per channel that recorded a sample in the telemetry window (channels `midi_gap`,
+#: `midi_input`, `late_on`, `late_off`). Each quantile is the **bucket interval** it lies in (256 µs wide below
+#: 65,536 µs, then power-of-two buckets) — never an exact microsecond.
+_ENV_DIST_RE = re.compile(r"#CAP,(\d+),DIAG,env_dist,([a-z_]+),(\d+),(\d+),(\d+),(\d+),(\d+)")
+#: `#CAP,<us>,DIAG,late_route,<type>,<ch>,<maxUs>,<overCount>,<samples>,<spill>` — the S7.5a per-route lateness
+#: split: one row per route (emitted status byte + MIDI channel) the window held. `spill` counts the samples whose
+#: route found no slot in the device's bounded table, so a split truncated at that bound is visible in the row.
+_LATE_ROUTE_RE = re.compile(r"#CAP,(\d+),DIAG,late_route,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)")
+
+
+def _dist_intervals(lines: Iterable[str]) -> dict[str, dict[str, int]]:
+    """Per channel (`DIAG,env_dist`): the worst window's p50/p99 intervals in µs, plus sample/window totals.
+
+    "Worst" is the largest bucket upper bound, so a metric's distribution is the one its worst window reported
+    rather than an average across windows. A capture without the rows yields nothing, so nothing is invented.
+    """
+    per_channel: dict[str, dict[str, int]] = {}
+    for line in lines:
+        match = _ENV_DIST_RE.search(line)
+        if match is None:
+            continue
+        p50_lo, p50_hi, p99_lo, p99_hi, samples = (int(match.group(index)) for index in range(3, 8))
+        if samples <= 0:
+            continue
+        entry = per_channel.setdefault(
+            match.group(2),
+            {"p50_lo_us": 0, "p50_hi_us": 0, "p99_lo_us": 0, "p99_hi_us": 0, "samples": 0, "windows": 0},
+        )
+        if p50_hi >= entry["p50_hi_us"]:
+            entry["p50_lo_us"], entry["p50_hi_us"] = p50_lo, p50_hi
+        if p99_hi >= entry["p99_hi_us"]:
+            entry["p99_lo_us"], entry["p99_hi_us"] = p99_lo, p99_hi
+        entry["samples"] += samples
+        entry["windows"] += 1
+    return per_channel
+
+
+def _add_distribution(detail: dict, per_channel: dict[str, dict[str, int]], channels: Sequence[str]) -> None:
+    """Attach the named channels' p50/p99 **intervals** to a metric's `detail`.
+
+    A capture without the rows gains nothing — a legacy capture must not appear to carry a distribution it never
+    had — and the interval's basis is stated beside it, because the device reports bucket bounds, not microseconds.
+    """
+    added = False
+    for channel in channels:
+        entry = per_channel.get(channel)
+        if entry is None or entry["windows"] == 0:
+            continue
+        detail[f"{channel}_p50_us_interval"] = [entry["p50_lo_us"], entry["p50_hi_us"]]
+        detail[f"{channel}_p99_us_interval"] = [entry["p99_lo_us"], entry["p99_hi_us"]]
+        detail[f"{channel}_distribution_samples"] = entry["samples"]
+        detail[f"{channel}_distribution_windows"] = entry["windows"]
+        added = True
+    if added:
+        detail["distribution_basis"] = (
+            "device DIAG,env_dist bucket bounds: each quantile is the interval of the bucket it fell in "
+            "(256 µs wide below 65,536 µs, then power-of-two buckets), not an exact microsecond"
+        )
 #: `#CAP,<us>,DIAG,envelope_instr,capstamp_max=<ticks>,capstamp_n=<n>,repl_wait_us=<us>,repl_work_us=<us>,`
 #: `repl_refused=<n>,repl_pairs=<n>` — one aggregated row per telemetry window, from
 #: `DebugSessionCapture::envelopeInstrRow` (fields verified against the emitter).
@@ -129,10 +231,10 @@ def _win_gap_rows(lines: Iterable[str]) -> list[list[str]]:
 
 
 def measure_midi_input_service_gap(lines: Sequence[str]) -> Measurement:
-    """Maximum MIDI input-service gap, µs — `DIAG,midi_gap,<maxUs>,<overCount>`.
+    """Maximum MIDI input-service gap, µs — `DIAG,midi_gap,<maxUs>,<overCount>`, with `DIAG,env_dist` for shape.
 
-    The row is a **maximum** plus a count of samples over the telemetry's own limiter, so this measures the
-    worst gap seen; the distribution (p50/p99) is not in the row and is named as owed.
+    The maximum is the device's own limiter reading; the distribution arrives as the bucket intervals of the
+    metric's own window row and is absent (never fabricated) in a capture that predates the row.
     """
     rows = _telemetry(lines, "midi_gap")
     if not rows:
@@ -143,18 +245,20 @@ def measure_midi_input_service_gap(lines: Sequence[str]) -> Measurement:
             reason="no DIAG,midi_gap row in this capture (instrument exists: RuntimeTimingTelemetry)",
         )
     worst = max(rows, key=lambda item: item[1])
+    detail: dict = {
+        "over_count_sum": sum(row[2] for row in rows),
+        "row_emitter": "src/Utils/RuntimeTimingTelemetry.cpp (midi_gap)",
+    }
+    _add_distribution(detail, _dist_intervals(lines), ("midi_gap",))
+    if "midi_gap_p99_us_interval" not in detail:
+        detail["distribution_owed"] = "no DIAG,env_dist row for midi_gap in this capture (legacy image)"
     return Measurement(
         "max_midi_input_service_gap",
         "us",
         MEASURED,
         value=float(worst[1]),
         source_rows=len(rows),
-        detail={
-            "over_count_sum": sum(row[2] for row in rows),
-            "distribution_available": False,
-            "distribution_owed": "p50/p99 need a per-sample row; the family carries a maximum only",
-            "row_emitter": "src/Utils/RuntimeTimingTelemetry.cpp (midi_gap)",
-        },
+        detail=detail,
     )
 
 
@@ -169,13 +273,17 @@ def measure_midi_input_service_duration(lines: Sequence[str]) -> Measurement:
             reason="no DIAG,midi_input row in this capture",
         )
     worst = max(rows, key=lambda item: item[1])
+    detail: dict = {"over_count_sum": sum(row[2] for row in rows)}
+    _add_distribution(detail, _dist_intervals(lines), ("midi_input",))
+    if "midi_input_p99_us_interval" not in detail:
+        detail["distribution_owed"] = "no DIAG,env_dist row for midi_input in this capture (legacy image)"
     return Measurement(
         "max_midi_input_service_duration",
         "us",
         MEASURED,
         value=float(worst[1]),
         source_rows=len(rows),
-        detail={"over_count_sum": sum(row[2] for row in rows)},
+        detail=detail,
     )
 
 
@@ -265,12 +373,61 @@ def measure_capture_timestamp_error(lines: Sequence[str]) -> Measurement:
 
 
 def measure_per_route_output_lateness(lines: Sequence[str]) -> Measurement:
-    """Per-route output lateness, µs — `DIAG,late_on` / `DIAG,late_off` maxima.
+    """Per-route output lateness, µs — the device's **per-route split** (`DIAG,late_route`) when it is there.
 
-    An all-zero reading with a zero over-count is **unproven**, not zero lateness: the same shape would
-    appear if the producer were never fed, and nothing in the row distinguishes the two. Fault injection or
-    a non-zero sample is required before this metric can carry a number.
+    The split is what the metric's name asks for: one row per route (emitted status byte + MIDI channel) with that
+    route's window maximum, so the reading names the route that carries it instead of one aggregate maximum. A
+    capture predating the row falls back to the `DIAG,late_on` / `DIAG,late_off` maxima and says so in `detail`.
+
+    An all-zero reading with a zero over-count is **unproven**, not zero lateness: the same shape would appear if the
+    producer were never fed, and nothing in the row distinguishes the two.
     """
+    routes: dict[tuple[int, int], dict[str, int]] = {}
+    spill = 0
+    for line in lines:
+        match = _LATE_ROUTE_RE.search(line)
+        if match is None:
+            continue
+        key = (int(match.group(2)), int(match.group(3)))
+        max_us, over, samples, row_spill = (int(match.group(index)) for index in range(4, 8))
+        entry = routes.setdefault(key, {"max_us": 0, "over_count": 0, "samples": 0})
+        entry["max_us"] = max(entry["max_us"], max_us)
+        entry["over_count"] += over
+        entry["samples"] += samples
+        spill = max(spill, row_spill)
+
+    if routes:
+        worst_route = max(routes.items(), key=lambda item: item[1]["max_us"])
+        detail: dict = {
+            "basis": "device DIAG,late_route rows — one window maximum per route (type/channel)",
+            "routes": {f"{key[0]}/{key[1]}": entry["max_us"] for key, entry in sorted(routes.items())},
+            "route_count": len(routes),
+            "sample_count": sum(entry["samples"] for entry in routes.values()),
+            "spill_samples": spill,
+        }
+        _add_distribution(detail, _dist_intervals(lines), _LATENESS_FAMILIES)
+        if worst_route[1]["max_us"] == 0 and worst_route[1]["over_count"] == 0:
+            return Measurement(
+                "per_route_output_lateness",
+                "us",
+                UNPROVEN,
+                value=None,
+                source_rows=len(routes),
+                reason=(
+                    "every route's window maximum is 0 with a 0 over-count: 'no lateness' and 'producer never fed' "
+                    "are indistinguishable in this row, so no number can be claimed"
+                ),
+                detail=detail,
+            )
+        return Measurement(
+            "per_route_output_lateness",
+            "us",
+            MEASURED,
+            value=float(worst_route[1]["max_us"]),
+            source_rows=len(routes),
+            detail={**detail, "worst_route_(type/ch)": f"{worst_route[0][0]}/{worst_route[0][1]}"},
+        )
+
     rows: list[tuple[int, int, int]] = []
     for family in _LATENESS_FAMILIES:
         rows.extend(_telemetry(lines, family))
@@ -279,10 +436,16 @@ def measure_per_route_output_lateness(lines: Sequence[str]) -> Measurement:
             "per_route_output_lateness",
             "us",
             MISSING,
-            reason="no DIAG,late_on / DIAG,late_off row in this capture",
+            reason="no DIAG,late_route / DIAG,late_on / DIAG,late_off row in this capture",
         )
     worst = max(rows, key=lambda item: item[1])
     over = sum(row[2] for row in rows)
+    detail = {
+        "families": list(_LATENESS_FAMILIES),
+        "over_count_sum": over,
+        "split_owed": "no DIAG,late_route row in this capture: the maximum is aggregate, not per route",
+    }
+    _add_distribution(detail, _dist_intervals(lines), _LATENESS_FAMILIES)
     if worst[1] == 0 and over == 0:
         return Measurement(
             "per_route_output_lateness",
@@ -294,7 +457,7 @@ def measure_per_route_output_lateness(lines: Sequence[str]) -> Measurement:
                 "every sample is 0 with a 0 over-count: 'no lateness' and 'producer never fed' are "
                 "indistinguishable in this row, so no number can be claimed"
             ),
-            detail={"provenness_owed": "a non-zero sample or a named fault-injection control"},
+            detail=detail,
         )
     return Measurement(
         "per_route_output_lateness",
@@ -302,7 +465,7 @@ def measure_per_route_output_lateness(lines: Sequence[str]) -> Measurement:
         MEASURED,
         value=float(worst[1]),
         source_rows=len(rows),
-        detail={"families": list(_LATENESS_FAMILIES), "over_count_sum": over},
+        detail=detail,
     )
 
 
@@ -314,34 +477,49 @@ def measure_per_route_output_jitter(lines: Sequence[str]) -> Measurement:
     metric is the worst deviation of an emission instant from the instant its own scheduled tick implies. Captures
     without the tick column keep the onset-spacing proxy (dominated by musical rests) as `unproven`, in `detail`.
     """
-    per_route: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    for line in lines:
-        match = _MO_TICK_RE.search(line)
-        if match is None:
-            continue
-        route = (int(match.group(2)), int(match.group(3)))
-        per_route.setdefault(route, []).append((int(match.group(6)), int(match.group(1))))
+    per_route: dict[tuple[int, int], list[tuple[int, int, int, int]]] = {}
+    for row in _ticked_emissions(lines):
+        per_route.setdefault((row[2], row[3]), []).append(row)
     if per_route:
-        route, pairs = max(per_route.items(), key=lambda item: len(item[1]))
-        pairs.sort()
-        tick_span = pairs[-1][0] - pairs[0][0]
-        if len(pairs) >= 8 and tick_span > 0:
-            rate = (pairs[-1][1] - pairs[0][1]) / tick_span
-            base_tick, base_us = pairs[0]
-            residuals = sorted(abs(us - base_us - (tick - base_tick) * rate) for tick, us in pairs)
+        route, rows = max(per_route.items(), key=lambda item: len(item[1]))
+        segments = _loop_segments(rows)
+        worst_residual = 0.0
+        worst_rate = 0.0
+        fitted_segments = 0
+        worst_samples = 0
+        for segment in segments:
+            if len(segment) < 8:
+                continue
+            tick_span = segment[-1][0] - segment[0][0]
+            if tick_span <= 0:
+                continue
+            rate = (segment[-1][1] - segment[0][1]) / tick_span
+            base_tick, base_us = segment[0]
+            residual = max(abs(us - base_us - (tick - base_tick) * rate) for tick, us in segment)
+            fitted_segments += 1
+            if residual > worst_residual:
+                worst_residual = residual
+                worst_rate = rate
+                worst_samples = len(segment)
+        if fitted_segments:
             return Measurement(
                 "per_route_output_jitter",
                 "us",
                 MEASURED,
-                value=float(residuals[-1]),
-                source_rows=len(pairs),
+                value=worst_residual,
+                source_rows=worst_samples,
                 detail={
                     "route_key_(type,ch)": list(route),
-                    "basis": "deviation from the route's fitted (emission µs ↔ scheduled tick) line",
-                    "fitted_us_per_tick": round(rate, 3),
-                    "median_residual_us": round(residuals[len(residuals) // 2], 3),
-                    "samples": len(pairs),
-                    "caveat": "one clock rate is assumed inside the window; a tempo change inflates the residual",
+                    "basis": (
+                        "worst deviation from the route's fitted (emission µs ↔ scheduled tick) line, fitted "
+                        "per loop traversal (the tick column wraps every loop)"
+                    ),
+                    "fitted_us_per_tick": round(worst_rate, 3),
+                    "loop_traversals_fitted": fitted_segments,
+                    "loop_traversals_total": len(segments),
+                    "worst_segment_samples": worst_samples,
+                    "unstamped_rows_excluded": "rows whose tick field is 0 (no scheduled tick stamped)",
+                    "caveat": "one clock rate is assumed inside a traversal; a tempo change inflates the residual",
                 },
             )
         return Measurement(
@@ -349,11 +527,10 @@ def measure_per_route_output_jitter(lines: Sequence[str]) -> Measurement:
             "us",
             UNPROVEN,
             value=None,
-            source_rows=len(pairs),
+            source_rows=len(rows),
             reason=(
-                f"only {len(pairs)} emission(s) with a scheduled tick on this route"
-                + (" (no tick span)" if tick_span <= 0 else "")
-                + ": not enough to fit the route's clock line"
+                f"{len(rows)} stamped emission(s) on this route in {len(segments)} loop traversal(s): not "
+                "enough samples — no traversal reaches the 8 a clock line needs"
             ),
             detail={"route_key_(type,ch)": list(route)},
         )
@@ -468,24 +645,33 @@ def measure_same_tick_burst(lines: Sequence[str]) -> Measurement:
     S7.5a instrument). Captures predating it keep the device-microsecond-stamp burst as `unproven`, with that
     reading in `detail`.
     """
-    ticks: dict[int, int] = {}
-    for line in lines:
-        match = _MO_TICK_RE.search(line)
-        if match is not None:
-            tick = int(match.group(6))
-            ticks[tick] = ticks.get(tick, 0) + 1
-    if ticks:
-        worst_tick, worst = max(ticks.items(), key=lambda item: item[1])
+    per_segment: list[dict[int, int]] = []
+    for segment in _loop_segments(_ticked_emissions(lines)):
+        counts: dict[int, int] = {}
+        for tick, _us in segment:
+            counts[tick] = counts.get(tick, 0) + 1
+        per_segment.append(counts)
+    if per_segment:
+        worst_tick = -1
+        worst = 0
+        for counts in per_segment:
+            tick, count = max(counts.items(), key=lambda item: item[1])
+            if count > worst:
+                worst, worst_tick = count, tick
         return Measurement(
             "same_tick_burst",
             "events",
             MEASURED,
             value=float(worst),
-            source_rows=len(ticks),
+            source_rows=len(per_segment),
             detail={
-                "basis": "emissions sharing one scheduled tick (emission-row tick column)",
+                "basis": (
+                    "emissions sharing one scheduled tick, counted within a loop traversal (the tick column "
+                    "wraps every loop)"
+                ),
                 "worst_tick": worst_tick,
-                "distinct_ticks": len(ticks),
+                "loop_traversals": len(per_segment),
+                "unstamped_rows_excluded": "rows whose tick field is 0 (no scheduled tick stamped)",
             },
         )
     stamps: dict[int, int] = {}
@@ -651,6 +837,37 @@ def _preceding_cap_stamp(lines: Sequence[str], marker_line: str) -> Optional[int
             last = int(match.group(1))
     return None
 
+def clock_correlation(lines: Sequence[str]) -> Optional[dict[str, int]]:
+    """How far the host's `[<sec>.<ms>]` stamps sit above the device's own µs clock, in µs.
+
+    The log interleaves host-logged lines (stamped by the host tooling) with the device's `#CAP,<us>` rows (which no
+    host stamp wraps), so no single line carries both clocks and the relation has to be **bounded** rather than read:
+    for every host-stamped line, the gap to the nearest `#CAP` row at or before it is at least
+    `host_stamp − device_us(row)`, and the **smallest** such gap over the capture bounds the offset, because a
+    preceding row can never be later than the instant the host line was written. A small minimum therefore says the
+    two clocks agree to that many microseconds (the S7.5a test capture: 102 µs over 328 pairs); a large one says they
+    do not, and no host-stamped base may be used. `pairs` reports what the bound rests on.
+    """
+    last_device: Optional[int] = None
+    gaps: list[int] = []
+    for line in lines:
+        match = _CAP_RE.search(line)
+        if match is not None:
+            last_device = int(match.group(1))
+        host = LINE_TIMESTAMP_RE.search(line)
+        if host is None or last_device is None:
+            continue
+        host_us = int(host.group(1)) * 1_000_000 + int((host.group(2) + "000000")[:6])
+        gaps.append(host_us - last_device)
+    if not gaps:
+        return None
+    return {
+        "pairs": len(gaps),
+        "min_gap_us": min(gaps),
+        # The host logger prints milliseconds, so its stamp cannot resolve finer than this whatever the gap says.
+        "host_stamp_resolution_us": 1000,
+    }
+
 
 def measure_action_to_audible(lines: Sequence[str], *, accept_row: Optional[str] = None) -> Measurement:
     """Action-to-audible, µs — the first emission row *after* a named **acceptance** row.
@@ -706,7 +923,21 @@ def measure_action_to_audible(lines: Sequence[str], *, accept_row: Optional[str]
             reason="no MO row after the acceptance marker in this capture",
         )
     earliest = min(after)
-    if earliest < accept_stamp:
+    correlation = clock_correlation(lines)
+    base_us = accept_stamp
+    base_basis = (
+        "nearest #CAP row at or before the acceptance row: positional, so one row cadence bounds its resolution "
+        "(median ~0.3 s in the S7.5a test capture)"
+    )
+    if host_stamp is not None and correlation is not None and host_stamp <= earliest:
+        # The marker's own instant, read on the device time base: the two clocks agree to `min_gap_us`, which is
+        # finer than the nearest-row base — that is the correlation this metric owed.
+        base_us = host_stamp
+        base_basis = (
+            "the acceptance row's own host stamp read as device time: its offset from the device clock is bounded "
+            "by the smallest host-stamp-to-preceding-device-row gap over this capture (detail.clock_correlation)"
+        )
+    if earliest < base_us:
         return Measurement(
             "action_to_audible",
             "us",
@@ -719,24 +950,36 @@ def measure_action_to_audible(lines: Sequence[str], *, accept_row: Optional[str]
             ),
             detail={
                 "accept_row": accept_row,
-                "device_base_us": accept_stamp,
+                "device_base_us": base_us,
+                "base_basis": base_basis,
                 "earliest_emission_us": earliest,
                 "marker_host_time_us": host_stamp,
-                "owed": "host↔device clock correlation for a host-stamped marker, or a device-stamped marker",
+                "clock_correlation": correlation,
             },
         )
+    detail: dict = {
+        "accept_row": accept_row,
+        "basis": "earliest emission row after the acceptance row's position",
+        "device_base_us": base_us,
+        "base_basis": base_basis,
+        "marker_host_time_us": host_stamp,
+    }
+    if correlation is not None:
+        detail["clock_correlation"] = correlation
+    if base_us != accept_stamp:
+        # Both readings from the same rows, so a reader can see exactly what the correlation changed.
+        detail["positional_base_us"] = accept_stamp
+        detail["positional_base_interval_us"] = earliest - accept_stamp
+        detail["device_time_error_bound_us"] = (correlation or {}).get("min_gap_us", 0) + (
+            correlation or {}
+        ).get("host_stamp_resolution_us", 0)
     return Measurement(
         "action_to_audible",
         "us",
         MEASURED,
-        value=float(earliest - accept_stamp),
+        value=float(earliest - base_us),
         source_rows=len(after),
-        detail={
-            "accept_row": accept_row,
-            "basis": "earliest emission row after the acceptance row's position",
-            "device_base_us": accept_stamp,
-            "marker_host_time_us": host_stamp,
-        },
+        detail=detail,
     )
 
 

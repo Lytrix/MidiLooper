@@ -158,6 +158,32 @@ SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
                                  uint32_t replenishWaitUs, uint32_t replenishWorkUs,
                                  uint32_t replenishRefused, uint32_t replenishPairs);
+/**
+ * S7.5a distribution instrument: one row per channel (`0` midi_gap, `1` midi_input, `2` late_on, `3` late_off) that
+ * recorded a sample this window. The quantiles are the **bucket bounds** the quantile lies in, in µs.
+ */
+SC_MEM_ATTR void envelopeDistRow(uint8_t channel, uint32_t p50LoUs, uint32_t p50HiUs, uint32_t p99LoUs,
+                                 uint32_t p99HiUs, uint32_t samples);
+/**
+ * S7.5a per-route output-lateness split: one row per route (emitted status byte + MIDI channel) the window held.
+ * `spill` counts the samples whose route found no slot in the bounded table.
+ */
+SC_MEM_ATTR void envelopeRouteLatenessRow(uint8_t type, uint8_t ch, uint32_t maxUs, uint32_t overCount,
+                                          uint32_t samples, uint32_t spill);
+/**
+ * The capture sink's line hook for rows formatted in another translation unit: hands one already-formatted
+ * `#CAP,...\r\n` line to the ring under this unit's own shed rules. Declared because the envelope distribution
+ * rows live in `Utils/EnvelopeDistRows.cpp` (carved out of DTCM for their literals, so they never cross the RAM1
+ * align edge) while the ring belongs to this unit.
+ */
+/**
+ * The Tier-A prefixes of the two distribution rows. They are `extern` accessors rather than inline literals at the
+ * classifier because the classifier's own unit has its `.rodata.str*` in DTCM: two more ~30 B literals there crossed
+ * the RAM1 align edge. The definitions live with the rows (`Utils/EnvelopeDistRows.cpp`), which is carved into FLASH.
+ */
+SC_MEM_ATTR const char* envelopeDistTagPrefix();
+SC_MEM_ATTR const char* envelopeRouteTagPrefix();
+SC_MEM_ATTR void emitEnvelopeRowLine(const char* line);
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel);
 SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType);
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to);

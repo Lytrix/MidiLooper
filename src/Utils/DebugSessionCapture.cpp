@@ -314,7 +314,14 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          // S7.5a envelope instruments (capture stamp error in ticks, capture-replenishment wait/work/refusals).
          // One prefix literal, classified here rather than in `CaptureLineTier.h` for the reason above; the row
          // itself is aggregated and its format is flash-resident (`SC_FMT`).
-         CaptureLineTier::tagStartsWith(line, "DIAG,envelope_instr,");
+         CaptureLineTier::tagStartsWith(line, "DIAG,envelope_instr,") ||
+         // S7.5a distribution instrument (the window's per-channel p50/p99 intervals and its per-route lateness
+         // split). Classified here for the same reason as the row above -- it is emitted while a transport runs --
+         // but the prefixes themselves come from the rows' own unit: two more literals in *this* unit's `.rodata`
+         // crossed the DTCM align edge (`variables` 96,192 -> 100,288 with ITCM code unchanged), and that unit is
+         // carved into FLASH (`linker/imxrt1062_t41_lcr.ld`). See `Utils/EnvelopeDistRows.cpp`.
+         CaptureLineTier::tagStartsWith(line, envelopeDistTagPrefix()) ||
+         CaptureLineTier::tagStartsWith(line, envelopeRouteTagPrefix());
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
@@ -1296,6 +1303,12 @@ SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captur
                 static_cast<unsigned long>(replenishWorkUs),
                 static_cast<unsigned long>(replenishRefused),
                 static_cast<unsigned long>(replenishPairs));
+}
+
+// S7.5a distribution instrument — the line hook the header describes: the rows are formatted in
+// `Utils/EnvelopeDistRows.cpp` (DTCM-carved for its literals) and handed to this unit's ring here.
+SC_MEM_ATTR void emitEnvelopeRowLine(const char* line) {
+  emitCapLineOrSerial(line);
 }
 
 SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs,

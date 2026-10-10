@@ -125,6 +125,13 @@ SECTIONS
 		   "LoopEnd playback commit ..." evidence the host tooling greps for, and they
 		   travel with the new one; all of them are read-only. */
 		*TrackManagerTransportTick.cpp.o(.rodata.str* .rodata.*.str*)
+		/* S7.5a distribution instrument: the two rows that carry a window's own p50/p99 intervals and its per-route
+		   lateness split. Their format strings and channel names are ~130 B of new string literals, and adding them to
+		   `DebugSessionCapture.cpp` crossed this same align edge (`variables` 96,192 -> 100,288, locals 34,880 ->
+		   30,784, ITCM code unchanged: code 392,440 + padding 776, padding below the 840 floor). Rather than re-base
+		   the budget for a 4 KB align step, the rows moved into their own TU, which is carved out here: the literals
+		   stay in memory-mapped FLASH and the approved budget is untouched. Read-only. */
+		*EnvelopeDistRows.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

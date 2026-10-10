@@ -23,6 +23,9 @@ struct CaptureSerial {
 } captureSerial;
 #define Serial captureSerial
 #include "../../src/Utils/DebugSessionCapture.cpp"
+// S7.5a distribution instrument: the two sink rows (and the Tier-A prefixes the classifier above asks them for) live
+// in their own DTCM-carved translation unit, so the suite that includes the sink includes them too.
+#include "../../src/Utils/EnvelopeDistRows.cpp"
 #undef Serial
 #include "../../include/Utils/TelemetryCadence.h"
 #include "../../src/StorageManager/HitlLiveObservationCommands.h"
@@ -443,6 +446,17 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                       "repl_work_us=340,repl_refused=3,repl_pairs=2"),
       "the envelope-instrument row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,envelope_instrx,1"),
+                            "and a longer subtag is not swept in");
+  // ...and the S7.5a **distribution** rows with them, each pinned by its own boundary: the per-channel p50/p99
+  // intervals and the per-route lateness split are emitted from the same window emitter, while a transport runs.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,env_dist,late_on,0,255,256,511,17"),
+      "the envelope distribution row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,env_distx,1"),
+                            "and a longer subtag is not swept in");
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,late_route,144,8,6620,12,14,0"),
+                           "the per-route lateness split row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,late_routex,1"),
                             "and a longer subtag is not swept in");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,launch_gatex,1"),
                             "and a longer subtag is not swept in");

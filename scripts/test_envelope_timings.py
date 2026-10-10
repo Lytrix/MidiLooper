@@ -59,7 +59,10 @@ class TestMidiInputServiceGap(unittest.TestCase):
         self.assertEqual(result.value, 372702)
         self.assertEqual(result.source_rows, 2)
         self.assertEqual(result.detail["over_count_sum"], 114)
-        self.assertFalse(result.detail["distribution_available"])
+        # No DIAG,env_dist row in this capture, so it carries no distribution at all — and says what is owed
+        # rather than leaving a reader to assume one.
+        self.assertNotIn("midi_gap_p99_us_interval", result.detail)
+        self.assertIn("env_dist", result.detail["distribution_owed"])
 
     def test_absent_family_is_missing_not_zero(self) -> None:
         result = m.measure_midi_input_service_gap(["#CAP,1000,DIAG,midi_input,627,0"])
@@ -80,6 +83,111 @@ class TestMidiInputServiceDuration(unittest.TestCase):
         lines = ["#CAP,1000,DIAG,midi_input,627,0"]
         self.assertEqual(m.measure_midi_input_service_gap(lines).availability, m.MISSING)
         self.assertEqual(m.measure_midi_input_service_duration(lines).availability, m.MEASURED)
+
+class TestTheDistributionRows(unittest.TestCase):
+    """`DIAG,env_dist` (the window's p50/p99 **intervals**) and `DIAG,late_route` (the per-route lateness split)."""
+
+    def test_a_distribution_is_attached_as_the_interval_the_quantile_lies_in(self) -> None:
+        lines = [
+            "#CAP,1000,DIAG,midi_gap,372702,113",
+            "#CAP,1000,DIAG,env_dist,midi_gap,0,255,256,511,17",
+            "#CAP,2000,DIAG,env_dist,midi_gap,0,255,32768,65535,40",
+        ]
+        result = m.measure_midi_input_service_gap(lines)
+        self.assertEqual(result.detail["midi_gap_p50_us_interval"], [0, 255], "the worst window's median")
+        self.assertEqual(result.detail["midi_gap_p99_us_interval"], [32768, 65535], "its 99th percentile")
+        self.assertEqual(result.detail["midi_gap_distribution_samples"], 57)
+        self.assertEqual(result.detail["midi_gap_distribution_windows"], 2)
+        self.assertIn("bucket bounds", result.detail["distribution_basis"])
+        self.assertNotIn("distribution_owed", result.detail)
+
+    def test_a_channel_without_a_sample_contributes_no_interval(self) -> None:
+        # A zero-sample row is what the device does NOT emit, but a capture carrying one must still not invent an
+        # interval from it.
+        lines = ["#CAP,1000,DIAG,midi_input,627,2", "#CAP,1000,DIAG,env_dist,midi_input,0,0,0,0,0"]
+        result = m.measure_midi_input_service_duration(lines)
+        self.assertNotIn("midi_input_p99_us_interval", result.detail)
+        self.assertIn("env_dist", result.detail["distribution_owed"])
+
+    def test_the_lateness_split_names_each_route_and_the_worst_one(self) -> None:
+        lines = [
+            "#CAP,900,DIAG,late_route,144,8,6620,12,14,0",
+            "#CAP,1900,DIAG,late_route,128,8,1200,3,5,0",
+            "#CAP,2900,DIAG,late_route,144,8,7922,20,22,0",
+        ]
+        result = m.measure_per_route_output_lateness(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 7922, "the worst route's window maximum, not one aggregate maximum")
+        self.assertEqual(result.detail["routes"], {"128/8": 1200, "144/8": 7922})
+        self.assertEqual(result.detail["route_count"], 2)
+        self.assertEqual(result.detail["worst_route_(type/ch)"], "144/8")
+        self.assertEqual(result.detail["sample_count"], 41)
+        self.assertEqual(result.detail["spill_samples"], 0)
+
+    def test_a_truncated_split_carries_its_spill(self) -> None:
+        lines = ["#CAP,900,DIAG,late_route,144,8,6620,12,14,3"]
+        result = m.measure_per_route_output_lateness(lines)
+        self.assertEqual(result.value, 6620)
+        self.assertEqual(result.detail["spill_samples"], 3, "routes that found no slot are visible, not silent")
+
+    def test_an_all_zero_split_is_unproven_not_zero_lateness(self) -> None:
+        lines = ["#CAP,900,DIAG,late_route,144,8,0,0,14,0"]
+        result = m.measure_per_route_output_lateness(lines)
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertIsNone(result.value)
+        self.assertIn("indistinguishable", result.reason)
+
+    def test_a_capture_without_the_split_falls_back_to_the_aggregate_and_says_so(self) -> None:
+        lines = ["#CAP,900,DIAG,late_on,44234,20", "#CAP,1900,DIAG,late_off,6620,12"]
+        result = m.measure_per_route_output_lateness(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 44234)
+        self.assertIn("late_route", result.detail["split_owed"])
+
+
+class TestClockCorrelation(unittest.TestCase):
+    """The host-stamp ↔ device-µs correlation `action_to_audible` owed, and the base it buys."""
+
+    def _lines(self) -> list[str]:
+        # The host logs its own lines with a millisecond stamp; device rows carry only the device's µs. The smallest
+        # gap between a host stamp and the nearest preceding device row is the bound on the offset.
+        return [
+            "#CAP,1000000,MO,144,8,0,100,96",
+            "[1.001] [INFO] Button press: Record",
+            "#CAP,1200000,MO,144,8,0,100,192",
+            "[1.500] [INFO] something else",
+            "#CAP,2000000,MO,144,8,0,100,288",
+        ]
+
+    def test_the_bound_is_the_smallest_host_to_preceding_device_gap(self) -> None:
+        correlation = m.clock_correlation(self._lines())
+        self.assertIsNotNone(correlation)
+        self.assertEqual(correlation["pairs"], 2)
+        self.assertEqual(correlation["min_gap_us"], 1000, "1.001 s against the row stamped 1.000000 s")
+        self.assertEqual(correlation["host_stamp_resolution_us"], 1000)
+
+    def test_a_capture_without_host_stamps_has_no_correlation(self) -> None:
+        self.assertIsNone(m.clock_correlation(["#CAP,1000,MO,144,8,0,100,96"]))
+
+    def test_action_to_audible_uses_the_marker_instant_and_keeps_the_positional_reading(self) -> None:
+        lines = self._lines()
+        result = m.measure_action_to_audible(lines, accept_row="Button press: Record")
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 199000, "the first emission after the marker, from the marker's own instant")
+        self.assertEqual(result.detail["device_base_us"], 1001000, "the host stamp, read as device time")
+        self.assertEqual(result.detail["positional_base_us"], 1000000)
+        self.assertEqual(result.detail["positional_base_interval_us"], 200000)
+        self.assertEqual(result.detail["clock_correlation"]["min_gap_us"], 1000)
+        self.assertEqual(result.detail["device_time_error_bound_us"], 2000)
+        self.assertIn("host stamp", result.detail["base_basis"])
+
+    def test_without_a_host_stamp_the_positional_base_is_kept(self) -> None:
+        lines = ["#CAP,1000000,MO,144,8,0,100,96", "[INFO] Button press: Record", "#CAP,1002000,MO,144,8,0,100,192"]
+        result = m.measure_action_to_audible(lines, accept_row="Button press: Record")
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 2000, "no host stamp: the nearest preceding row's µs is the base")
+        self.assertEqual(result.detail["device_base_us"], 1000000)
+        self.assertNotIn("positional_base_us", result.detail)
 
 
 class TestCaptureTimestampError(unittest.TestCase):
@@ -323,21 +431,44 @@ class TestTheNewInstrumentRows(unittest.TestCase):
         self.assertEqual(result.detail["worst_tick"], 96)
 
     def test_jitter_is_the_deviation_from_the_routes_fitted_clock_line(self) -> None:
-        # A device clock of 1000 µs per tick, with one emission 700 µs late for its own scheduled tick.
-        lines = [f"#CAP,{1000 + tick * 1000},MO,144,8,0,100,{tick}" for tick in range(0, 8 * 48, 48)]
-        lines[5] = f"#CAP,{1000 + 5 * 48 * 1000 + 700},MO,144,8,0,100,{5 * 48}"
+        # A device clock of 1000 µs per tick, with one emission 700 µs late for its own scheduled tick. The fixture
+        # starts at tick 48 because tick 0 is reserved for "no scheduled tick stamped" (see below).
+        lines = [f"#CAP,{1000 + tick * 1000},MO,144,8,0,100,{tick}" for tick in range(48, 48 * 9, 48)]
+        lines[5] = f"#CAP,{1000 + 6 * 48 * 1000 + 700},MO,144,8,0,100,{6 * 48}"
         result = m.measure_per_route_output_jitter(lines)
         self.assertEqual(result.availability, m.MEASURED)
         self.assertEqual(result.value, 700)
         self.assertEqual(result.detail["fitted_us_per_tick"], 1000.0)
         self.assertEqual(result.detail["route_key_(type,ch)"], [144, 8])
+        self.assertEqual(result.detail["loop_traversals_fitted"], 1)
+
+    def test_unstamped_tick_zero_rows_stay_out_of_the_tick_readings(self) -> None:
+        # Every outgoing row built without a scheduled tick reads tick 0, and on the S7.5a test image that was 443 of
+        # the capture's MO rows. Counting them reported a burst nobody played.
+        lines = [f"#CAP,{2000 + index},MO,144,8,0,100,0" for index in range(400)]
+        lines += ["#CAP,9000,MO,144,8,0,100,96", "#CAP,9010,MO,144,8,0,100,96"]
+        burst = m.measure_same_tick_burst(lines)
+        self.assertEqual(burst.availability, m.MEASURED)
+        self.assertEqual(burst.value, 2, "only the two stamped emissions share tick 96")
+
+    def test_a_loop_wrap_does_not_inflate_the_jitter(self) -> None:
+        # Two traversals of one loop: the tick column returns to 48 while the device clock keeps running, so a line
+        # fitted across the wrap reports most of a loop as lateness — the artifact this segmentation replaced.
+        first = [f"#CAP,{1000 + tick * 100},MO,144,8,0,100,{tick}" for tick in range(48, 48 * 10, 48)]
+        start = 1000 + 48 * 9 * 100 + 1000
+        second = [f"#CAP,{start + tick * 100},MO,144,8,0,100,{tick}" for tick in range(48, 48 * 10, 48)]
+        result = m.measure_per_route_output_jitter(first + second)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.detail["loop_traversals_total"], 2)
+        self.assertEqual(result.detail["loop_traversals_fitted"], 2)
+        self.assertEqual(result.value, 0.0, "both traversals sit exactly on a 100 µs/tick line")
 
     def test_too_few_ticked_emissions_refuse_to_fit_the_line(self) -> None:
         lines = ["#CAP,1000,MO,144,8,0,100,0", "#CAP,2000,MO,144,8,0,100,48"]
         result = m.measure_per_route_output_jitter(lines)
         self.assertEqual(result.availability, m.UNPROVEN)
-        self.assertIsNone(result.value, "a clock line cannot be fitted from two emissions")
-        self.assertIn("not enough", result.reason)
+        self.assertIsNone(result.value, "a clock line cannot be fitted from one stamped emission")
+        self.assertIn("not enough samples", result.reason)
 
     def test_replenishment_reads_the_request_to_completion_wait(self) -> None:
         lines = [
