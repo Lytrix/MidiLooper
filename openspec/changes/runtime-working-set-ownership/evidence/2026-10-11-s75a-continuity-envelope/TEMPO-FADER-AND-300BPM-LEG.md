@@ -167,3 +167,30 @@ wall-clock wait.
 
 Evidence status: **no fixture change has been made.** This section corrects the candidate mechanism so the next attempt
 starts from the code rather than from the sleep I first suspected.
+
+## 10. The fixture already has a grid-scheduled record stream — this may be a *selection* problem
+
+Reading the module's stream shapes settles the shape of the fix:
+
+```
+  226  _stream_dense_chromatic
+  267  _stream_overdub_wrap_note_off_test
+  346  _stream_pattern_for_seconds            <- wall-clock ("for seconds") generator
+ 1087  _stream_fixture_record_wall_scheduled  <- wall-clock ("wall scheduled") record stream
+ 1184  _stream_fixture_record_serial_anchored <- anchored on *observing* serial, i.e. §9's delay
+ 1388  _stream_fixture_record_bars            <- bar/index based: the grid-scheduled one
+```
+
+So the base preset has (at least) three record-stream shapes and two of them are exactly the defect classes §8/§9
+measured: `_stream_fixture_record_wall_scheduled` is wall-clock by name, and `_stream_fixture_record_serial_anchored`
+anchors the stream on the *observation* of device serial — which is the reaction delay that inflates `offset_clocks`
+with tempo. **`_stream_fixture_record_bars` is the grid/bar-scheduled stream**, i.e. the tempo-following one the owner
+remembered.
+
+That reframes the work: the next step is not to write a tempo-following generator but to **find which stream the base
+preset selects and on what condition**, and make the qualifying run use the bar-scheduled shape (or convert the
+selected shape's start to a bar/pulse index). If the selection is already a flag, the 300 BPM leg may need no fixture
+code at all — only the right invocation.
+
+This is recorded as the next step rather than a conclusion: **no fixture change has been made** (nothing in
+`legacy_record_baseline.py` was edited), and the selection point has not yet been read.
