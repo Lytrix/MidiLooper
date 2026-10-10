@@ -870,13 +870,23 @@ def clock_correlation(lines: Sequence[str]) -> Optional[dict[str, int]]:
 
 
 def measure_action_to_audible(lines: Sequence[str], *, accept_row: Optional[str] = None) -> Measurement:
-    """Action-to-audible, µs — the first emission row *after* a named **acceptance** row.
+    """Acceptance-to-first-emission, µs — the first emission row *after* a named **acceptance** row.
 
-    Needs an acceptance marker; the caller names it (HITL host markers are not device rows). The interval is
-    positional (the marker's own line index) and its base is the marker's **device** time — the nearest
-    `#CAP` row at or before it — so a host-stamped marker is never mixed with device-stamped emissions
-    (that would subtract host microseconds from device microseconds). The marker's host time, when it has
-    one, is reported in `detail` for the host↔device clock correlation the envelope owes separately.
+    Needs an acceptance marker; the caller names it (HITL host markers are not device rows). The base is the
+    marker's own instant read on the **device** time base — its host stamp, justified by `clock_correlation` — and
+    falls back to the nearest preceding `#CAP` row (positional, so one row cadence bounds it) when the marker has no
+    host stamp.
+
+    **Parked: kept out of the envelope's limit table (owner decision, 2026-10-11).** As implemented it answers two
+    different questions with one position-based rule, and the S7.5a increment-4 device legs show exactly what that
+    endpoint is: on `captures/envdist-t8s4-01` the "audible" row it found was `MO,224,16,…` — **control-surface
+    pitch-bend feedback**, 3.24 s after the accept — while the device's own `GS,15,36,3` gesture row for the same
+    press sits 642 µs after the marker and the `LED` feedback rows that answer the action arrive at 17.770 s,
+    *before* the first `MO`. So the endpoint is positional rather than causal, the event class is unnamed (feedback
+    vs musical note), and the base need not be a host line at all. Consequence: **no limit may be attached to this
+    number**, including the pre-existing NOTE_EDIT ≤3200 ms / fader1 ≤1600 ms feedback limit. Reinstating it needs
+    an **identity-paired, class-split** pair — anchor on the device's own accept row (`GS`, or the action's
+    state-transition row) and score the answered feedback row separately from the answered musical note.
     """
     if not accept_row:
         return Measurement(
@@ -984,7 +994,12 @@ def measure_action_to_audible(lines: Sequence[str], *, accept_row: Optional[str]
 
 
 def metric_names() -> list[str]:
-    """Every metric this module measures, in Table B order."""
+    """Every metric this module measures, in the envelope's Table B order.
+
+    `action_to_audible` appears here because the measurement layer covers it, but it is **parked outside the
+    envelope's limit table** (see its own docstring): its endpoint is positional and its event class unnamed, so
+    nothing may be derived from the number it reports.
+    """
     return [
         "max_midi_input_service_gap",
         "max_midi_input_service_duration",

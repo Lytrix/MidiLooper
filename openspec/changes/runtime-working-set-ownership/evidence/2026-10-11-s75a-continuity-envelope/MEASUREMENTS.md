@@ -50,7 +50,7 @@ NOTE_EDIT-enter device run). Capture B = `captures/s39-hw-receipts-run1/session_
 | `deferred_owner_service_advance` | ticks | **112** vs declared `permitted=64` (78 rows) | **50** (625 rows) | measured — `DIAG,win_gap.maxDelta`; capture A shows the recorded overrun class, so it is **not** an in-envelope run |
 | `deferred_owner_denial` | turns | 0 (78 rows) | 1 (625 rows) | measured — `DIAG,win_gap.deniedTurns`, with eligible/progress turns in `detail` |
 | `capture_replenishment` | µs | `unproven` (46 rows) | `unproven` (17 rows) | **not measurable as a latency**: no request→completion row; inter-reclaim cadence is dominated by idle stretches |
-| `action_to_audible` | µs | `unproven` (1,889 candidates) | `missing` (no marker given) | needs a named acceptance marker; capture A's rows are **not device-time ordered** around a host-stamped marker, so no interval may be read — host↔device clock correlation is owed |
+| `action_to_audible` | µs | `unproven` (1,889 candidates) | `missing` (no marker given) | **parked outside the envelope's limit table (2026-10-11)**: it is measured (635 µs and 3,244,952 µs on two device legs — and those are *different event classes*), but the endpoint is positional and the class unnamed, so no limit may be attached |
 
 What these readings already establish, as measurements rather than claims:
 
@@ -72,7 +72,7 @@ What these readings already establish, as measurements rather than claims:
 | `same_tick_burst` | a tick column on the emission row (µs stamps are a lower bound only) |
 | `deferred_owner_service_advance` / denial | an in-envelope run (the held captures are outside it) |
 | `capture_replenishment` | a request→completion latency row for the replenishment owner |
-| `action_to_audible` | device-stamped acceptance markers, or host↔device clock correlation with its uncertainty |
+| `action_to_audible` | **nothing is owed to this envelope — it is parked.** Reinstating it needs an identity-paired, class-split pair: the device's own accept row (`GS`) as the anchor, with the answered feedback row and the answered musical note scored separately |
 
 ## 4. Reproduce
 

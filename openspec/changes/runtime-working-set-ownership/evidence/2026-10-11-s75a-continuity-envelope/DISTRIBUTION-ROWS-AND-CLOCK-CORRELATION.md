@@ -105,3 +105,34 @@ attributed. Settling it needs the previous image re-run under this same preset, 
 - `queue_residence` stays `missing` on this image (`SESSION_CAPTURE_DROID_QUEUE=0` in the default capture env).
 - `capture_replenishment` stays `unproven`: no refusal and no completed pair occurred, so the request→completion
   interval was never observed — that is a fact about the run, not about the instrument.
+
+## Owner decision, 2026-10-11: `action_to_audible` is kept out of the envelope
+
+The metric stays available for diagnostics, and it stays in `metric_names()` because the measurement layer does cover
+it — but **it is parked: no envelope row carries it and no limit may be attached to it**, including the pre-existing
+NOTE_EDIT ≤3200 ms / fader1 ≤1600 ms feedback limit that motivated it.
+
+What the leg above actually measured, checked after the fact rather than assumed:
+
+```
+marker:  [17.537] Button press: Record/Overdub (long)          host stamp 17,537,000
+first emission rows after it:
+  +3,244,952 us   #CAP,20781952,MO,224,16,111,27,0     <- MO type 224 = pitch bend, channel 16
+  +3,245,015 us   #CAP,20782015,MO,224,16,111,27,0
+device's own row for the same press:
+  #CAP,17537642,GS,15,36,3                              <- 642 us after the marker
+LED feedback rows answering the action: 17.770 s, 18.356 s, 20.245 s  <- before the first MO
+```
+
+So the "audible" endpoint is **control-surface pitch-bend feedback**, not sound; the base need not be a host line at
+all (the device's own `GS` row anchors the same press 642 µs after the marker, natively); and even "first emission"
+flips depending on which row family is counted (`LED` answers earlier than `MO`). Two different questions — *which
+operator action* and *which emission class* — are answered by one position-based rule, which is why the 635 µs reading
+on `captures/envelope-instr-t8s4-01` and the 3,244,952 µs here are not comparable: they are different event classes.
+
+Reinstating it (a future slice, **not** implemented here) means an identity-paired, class-split pair: anchor on the
+device's own accept row (`GS`, or the action's state-transition row) and score the answered feedback row separately
+from the answered musical note — with the ≤3200/1600 ms figure attached only to the feedback one.
+
+The instrument itself is unchanged by this decision: it still measures what it measures, still refuses
+(`unproven`) rather than reporting a negative interval, and still reports both bases in `detail`.
