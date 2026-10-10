@@ -59,7 +59,48 @@ Two consequences worth stating plainly, because they are properties of the propo
   1.04 ms tick at 300 BPM). Under the spec's separation rule that is *not* a firmware lateness failure; it is the
   route's physical share, and the honest report is "serialized over N ticks", named as such.
 
+## 2b. The tempo axis: what a 300 BPM leg covers, and what it does not
+
+**Decision recorded (owner, 2026-10-11): the qualifying envelope is exercised at the fastest reachable tempo.**
+`ClockManager` enforces **20–300 BPM** (§2), so 300 BPM is the bound, and it is simultaneously the worst case on both
+axes that matter: the **tightest musical deadline** (1 tick = 1,041.7 µs, so the 14-tick caps of §2 are at their
+smallest µs values) and the **highest sustained event rate** (960 ticks/s against 64 ticks/s at 20 BPM, so the same
+musical density loads the firmware ~15× harder). A leg at **180 BPM** is a useful *musical reference* — it is the
+tempo a demanding player actually reaches — but it is **coverage, not the bound**: 300 BPM is the number that
+decides.
+
+**What that buys.** For every **deadline-shaped** metric (gap, input-service duration, output lateness and its
+distribution, jitter, and the tick-counted capture timestamp error), a pass at 300 BPM implies a pass at any slower
+tempo: the declared caps are fixed at their 300 BPM values (§1), the musical requirement loosens as tempo falls, and
+the event rate falls with it. That is the sense in which "lower will always work" — and it is worth stating that it
+is an *implication*, not an assumption: it holds because every cap of §2 is fixed and read at the fast end.
+
+**What it does not buy — two named classes still need the slow end of the range:**
+
+1. **Batched external clock.** External pulses advance playback directly (`TICKS_PER_CLOCK` per pulse), and batched
+   pulses **compress the effective advance** (recorded in §2 and `DEC-108` item 7). A nominal 300 BPM leg does not
+   exercise that, so the proof must run against **actual clock advancement**, and the batched case stays a named
+   exception until a leg measures it.
+2. **Wall-clock contention.** Persistence, deferred save, display and load work keep their **own** arrival cadence
+   while the transport merely plays slower: a two-bar loop is **1.6 s at 300 BPM but 24 s at 20 BPM**, so a slow leg
+   accumulates many more chances for a stall to land *inside* a musical interval, and SD write latency is recorded as
+   unbounded until measured. A 300 BPM leg therefore does not bound the contention axis; the matrix keeps a slow leg
+   for it (the §3 rows name which is which).
+
+**Prerequisite, verified and named:** the managed HITL entry point has **no tempo or clock-source plumbing** today —
+`scripts/host_midi_hitl.py run` exposes no `--tempo`/`--bpm`, and the presets fix the pacing (checked 2026-10-11).
+So a 300 BPM qualifying leg needs a **pinned way to set tempo and clock source first** (a registered stimulus, or a
+declared temporary variant with its reason — never an edit to a canonical stimulus). Until that exists, the tempo
+axis cannot be exercised at all, and that is a prerequisite of the acceptance run, not a property of these limits.
+Content must also be *tempo-following* (the same musical density) for the rate comparison above to mean anything;
+a leg whose note density is fixed in wall-clock terms would not test the fast end.
+
 ## 3. L2 — the measurement plan, one row per metric (covers `DECLARED_ENVELOPE.md` §8 item 3)
+
+**Which leg each row needs (§2b):** every row below is exercised **first at the fastest reachable tempo (300 BPM)**,
+which is the bound for all *deadline-shaped* rows; the rows whose failure mode is *wall-clock contention* rather than
+deadline tightness — replenishment, and any overlap with persistence/display/load work — additionally need the **slow
+leg**, together with the batched-external-clock case, which no nominal-tempo leg covers.
 
 | Metric | Capture point (authoritative) | Clock / correlation | Uncertainty to record | Matrix axes to cover | Supplied by |
 |---|---|---|---|---|---|
@@ -143,7 +184,12 @@ so a pass is never read as covering something it did not measure.
 10. §4 oracle — confirm the fail-class list and that `indeterminate` is never rounded into a pass.
 11. §5 — `queue_residence` in or out; `capture_replenishment` fault-injection scope; confirm the `action_to_audible`
     parking.
-12. After 1–11: the `DEC-###` entry that records the envelope, and the owner's sign-off line itself.
+12. **Slow-tempo coverage (recorded decision, needs confirming):** the 300 BPM leg bounds every *deadline-shaped*
+    metric and, as an implication, every slower tempo; the **slow leg** is still required for the *contention* class
+    (replenishment, persistence/display/load overlap) and for **batched external clock**, which no nominal tempo
+    covers (§2b). Confirm that split, and confirm the prerequisite it exposes: the managed runner has no tempo or
+    clock-source plumbing today, so a pinned way to set both has to exist before any of this can be run.
+13. After 1–12: the `DEC-###` entry that records the envelope, and the owner's sign-off line itself.
 
 ## 7. What this increment does not claim
 
