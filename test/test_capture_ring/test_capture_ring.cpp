@@ -435,6 +435,15 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
   // the row and the capture delivered none.
   TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,launch_gate,t=7,s=4,x=launch_role_unavailable,len=18432"),
                            "the launch gate row survives the timing-critical flush");
+  // S7.5a envelope instruments: the capture stamp error (ticks) and the replenishment owner's request-to-completion
+  // row are raised while a transport runs, which is exactly the regime whose shed path drops non-Tier-A head
+  // records — so the row needs its own prefix, pinned here by its boundary (a longer subtag is not swept in).
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,envelope_instr,capstamp_max=4,capstamp_n=17,repl_wait_us=1200,"
+                      "repl_work_us=340,repl_refused=3,repl_pairs=2"),
+      "the envelope-instrument row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,envelope_instrx,1"),
+                            "and a longer subtag is not swept in");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,launch_gatex,1"),
                             "and a longer subtag is not swept in");
   // ...and the publication owner's gate row beside it: the refusal it names is taken in the same regime (the Snapshot

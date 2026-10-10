@@ -54,3 +54,14 @@ if env.get("PIOTEST_RUNNING_NAME"):
         os.path.join("$PROJECT_DIR", "test", "test_support"),
         src_filter=["+<ProjectionGateWeakStub.cpp>"],
     )
+
+# S7.5a envelope instruments: the same weak-default treatment for their telemetry entry points. A suite that
+# compiles an owner reporting them (e.g. `LoopPlaybackRuntime::replenishCanonicalCaptureChunk`) without linking
+# `src/Utils/RuntimeTimingTelemetry.cpp` takes the weak no-op; a suite that links the real module (or includes
+# the .cpp, as `test_runtime_timing_telemetry` does) keeps the real accounting.
+if env.get("PIOTEST_RUNNING_NAME"):
+    env.BuildSources(
+        os.path.join("$BUILD_DIR", "envelope_instr_weak"),
+        os.path.join("$PROJECT_DIR", "test", "test_support"),
+        src_filter=["+<EnvelopeInstrWeakStub.cpp>"],
+    )

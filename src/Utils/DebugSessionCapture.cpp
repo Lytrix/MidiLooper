@@ -310,7 +310,11 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,") ||
-         CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,");
+         CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,") ||
+         // S7.5a envelope instruments (capture stamp error in ticks, capture-replenishment wait/work/refusals).
+         // One prefix literal, classified here rather than in `CaptureLineTier.h` for the reason above; the row
+         // itself is aggregated and its format is flash-resident (`SC_FMT`).
+         CaptureLineTier::tagStartsWith(line, "DIAG,envelope_instr,");
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
@@ -952,11 +956,12 @@ SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t 
   emitCapPrintf("#CAP,%lu,MI,%c,%u,%u,%u,%u\r\n", (unsigned long)micros(), src, type, ch, d1, d2);
 }
 
-SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2) {
+SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2, uint32_t tick) {
   if (shouldSampleMidiOutCapture()) {
     return;
   }
-  emitCapPrintf("#CAP,%lu,MO,%u,%u,%u,%u", (unsigned long)micros(), type, ch, d1, d2);
+  emitCapPrintf("#CAP,%lu,MO,%u,%u,%u,%u,%lu", (unsigned long)micros(), type, ch, d1, d2,
+                (unsigned long)tick);
 }
 
 SC_MEM_ATTR void midiOutEvent(const MidiEvent& e) {
@@ -986,7 +991,7 @@ SC_MEM_ATTR void midiOutEvent(const MidiEvent& e) {
     default:
       break;
   }
-  midiOut((uint8_t)e.type, e.channel, d1, d2);
+  midiOut((uint8_t)e.type, e.channel, d1, d2, e.tick);
 }
 
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel) {
@@ -1259,6 +1264,38 @@ SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount) {
   emitCapPrintf("#CAP,%lu,DIAG,%s,%lu,%lu\r\n", (unsigned long)micros(), tag,
                 (unsigned long)maxUs, (unsigned long)overCount);
+}
+
+// S7.5a envelope instruments for the runtime continuity envelope, as **one aggregated row per telemetry window**
+// (never one row per captured event): the captured-event stamp error in **ticks** (max and how many appends were
+// sampled) and the capture-replenishment owner's own request-to-completion accounting (max wait and work in µs,
+// refused attempts, completed pairs). Emitted directly when USB has room with the ring as the fallback — the
+// same two rules as `readinessReceiptImmediate`, because these are raised while a transport runs, exactly the
+// regime whose shed path drops non-Tier-A head records.
+SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
+                                 uint32_t replenishWaitUs, uint32_t replenishWorkUs,
+                                 uint32_t replenishRefused, uint32_t replenishPairs) {
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,envelope_instr,capstamp_max=%lu,capstamp_n=%lu,repl_wait_us=%lu,"
+                         "repl_work_us=%lu,repl_refused=%lu,repl_pairs=%lu\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(captureStampMaxTicks),
+                  static_cast<unsigned long>(captureStampSamples),
+                  static_cast<unsigned long>(replenishWaitUs),
+                  static_cast<unsigned long>(replenishWorkUs),
+                  static_cast<unsigned long>(replenishRefused),
+                  static_cast<unsigned long>(replenishPairs));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,envelope_instr,capstamp_max=%lu,capstamp_n=%lu,repl_wait_us=%lu,"
+                       "repl_work_us=%lu,repl_refused=%lu,repl_pairs=%lu\r\n"),
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(captureStampMaxTicks),
+                static_cast<unsigned long>(captureStampSamples),
+                static_cast<unsigned long>(replenishWaitUs),
+                static_cast<unsigned long>(replenishWorkUs),
+                static_cast<unsigned long>(replenishRefused),
+                static_cast<unsigned long>(replenishPairs));
 }
 
 SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs,

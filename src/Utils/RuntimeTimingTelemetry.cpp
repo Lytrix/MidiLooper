@@ -197,6 +197,17 @@ struct State {
   uint32_t lastInputExitUs = 0;
   uint32_t inputEnterUs = 0;
   bool inputActive = false;
+  // S7.5a envelope instruments (declared in the header): the playback tick sampled at the entry to the MIDI input
+  // service, that service's capture stamp error in ticks, and the replenishment owner's accounting.
+  uint32_t inputServiceTick = 0;
+  bool inputServiceTickValid = false;
+  uint32_t captureStampMaxTicks = 0;
+  uint32_t captureStampSamples = 0;
+  Accumulator replenishWait;
+  Accumulator replenishWork;
+  uint32_t replenishRefused = 0;
+  uint32_t replenishPairs = 0;
+  uint32_t replenishRefusedSinceUs = 0;
   uint32_t windowStartUs = 0;
   uint32_t lastEmitUs = 0;
   uint32_t serviceDueUs = 0;
@@ -381,6 +392,15 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.trackSend = Accumulator{};
   s.trackSlot = Accumulator{};
   s.trackResid = Accumulator{};
+  // S7.5a envelope instruments: window-scoped maxima/counts. `inputServiceTick` is deliberately NOT cleared here —
+  // it belongs to one input service (`noteInputServiceTick`/`noteCaptureStampTick`), not to the telemetry window.
+  s.captureStampMaxTicks = 0;
+  s.captureStampSamples = 0;
+  s.replenishWait = Accumulator{};
+  s.replenishWork = Accumulator{};
+  s.replenishRefused = 0;
+  s.replenishPairs = 0;
+  s.replenishRefusedSinceUs = 0;
   s.clockPulses = 0;
 }
 
@@ -388,6 +408,11 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::runtimeTimingTelemetry("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
+  // S7.5a envelope instruments, as **one aggregated row** (the tag and its fields live in the sink, whose format
+  // is flash-resident): the captured-event stamp error in ticks and the replenishment owner's request-to-completion
+  // accounting. Deliberately not one row per captured event, and deliberately not four new `DIAG` tag literals.
+  DebugSessionCapture::envelopeInstrRow(s.captureStampMaxTicks, s.captureStampSamples, s.replenishWait.maxUs,
+                                        s.replenishWork.maxUs, s.replenishRefused, s.replenishPairs);
   DebugSessionCapture::runtimeTimingTelemetry("clk", s.clk.maxUs, s.clk.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("tracks", s.tracks.maxUs, s.tracks.overCount);
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
@@ -489,6 +514,48 @@ void noteClockDispatch(uint32_t durationUs) {
 
 void noteTracksUpdate(uint32_t durationUs) {
   recordSample(state().tracks, durationUs);
+}
+
+RT_FLASHMEM_FN void noteInputServiceTick(uint32_t tick) {
+  State& s = state();
+  s.inputServiceTick = tick;
+  s.inputServiceTickValid = true;
+}
+
+RT_FLASHMEM_FN void noteCaptureStampTick(uint32_t stampedTick) {
+  State& s = state();
+  if (!s.inputServiceTickValid) {
+    return;  // an append outside the input service (overdub path): no arrival tick to compare against
+  }
+  ++s.captureStampSamples;
+  if (stampedTick >= s.inputServiceTick) {
+    const uint32_t error = stampedTick - s.inputServiceTick;
+    if (error > s.captureStampMaxTicks) {
+      s.captureStampMaxTicks = error;
+    }
+  }
+}
+
+RT_FLASHMEM_FN void noteReplenishWork(uint32_t durationUs) {
+  recordSample(state().replenishWork, durationUs);
+}
+
+RT_FLASHMEM_FN void noteReplenishRefused(uint32_t nowUs) {
+  State& s = state();
+  ++s.replenishRefused;
+  if (s.replenishRefusedSinceUs == 0) {
+    s.replenishRefusedSinceUs = nowUs;
+  }
+}
+
+RT_FLASHMEM_FN void noteReplenishCompletion(uint32_t nowUs) {
+  State& s = state();
+  if (s.replenishRefusedSinceUs == 0) {
+    return;  // no refusal outstanding: this top-up resolved nothing
+  }
+  recordSample(s.replenishWait, nowUs - s.replenishRefusedSinceUs);
+  ++s.replenishPairs;
+  s.replenishRefusedSinceUs = 0;
 }
 
 RT_FLASHMEM_FN void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs) {
@@ -1209,6 +1276,12 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.midiGapOverCount = s.midiGap.overCount;
   out.midiInputMaxUs = s.midiInput.maxUs;
   out.midiInputOverCount = s.midiInput.overCount;
+  out.captureStampErrorMaxTicks = s.captureStampMaxTicks;
+  out.captureStampSamples = s.captureStampSamples;
+  out.replenishWaitMaxUs = s.replenishWait.maxUs;
+  out.replenishWorkMaxUs = s.replenishWork.maxUs;
+  out.replenishRefusedCount = s.replenishRefused;
+  out.replenishCompletionSamples = s.replenishPairs;
   out.clkMaxUs = s.clk.maxUs;
   out.clkOverCount = s.clk.overCount;
   out.tracksMaxUs = s.tracks.maxUs;

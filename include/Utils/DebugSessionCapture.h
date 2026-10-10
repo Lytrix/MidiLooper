@@ -152,8 +152,12 @@ void flushCaptureBuffer(size_t maxRecords = 64);
 
 SC_MEM_ATTR void sessionHeader();
 SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2);
-SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2);
+SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2, uint32_t tick);
 SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
+/** S7.5a envelope instruments: one aggregated row per telemetry window (see the definition for the fields). */
+SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
+                                 uint32_t replenishWaitUs, uint32_t replenishWorkUs,
+                                 uint32_t replenishRefused, uint32_t replenishPairs);
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel);
 SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType);
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to);

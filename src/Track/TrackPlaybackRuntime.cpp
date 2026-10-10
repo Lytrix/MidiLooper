@@ -11,6 +11,7 @@
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/IntervalProjection.h"
 
 #if defined(__IMXRT1062__)
@@ -2449,10 +2450,40 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canonicalCaptureOutput
       canonicalCaptureChunks.availableChunks() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;
 }
 
+/// S7.5a: this owner's own microsecond source. The device build reads `micros()`; a native build has no device
+/// clock at all, and neither a timestamp nor a wall-clock wait can be invented there — so the native value is 0,
+/// which the telemetry module reads as "no instant" (a refusal at 0 never completes, so nothing is recorded).
+/// The request-to-completion logic itself is exercised natively with injected timestamps
+/// (`test_runtime_timing_telemetry`); its real values are device measurements.
+static inline uint32_t replenishNowUs() {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  return 0;
+#else
+  return micros();
+#endif
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::replenishCanonicalCaptureChunk() {
+#if RUNTIME_TIMING_ENABLED
+  const uint32_t replenishStartUs = replenishNowUs();
+#endif
   const auto available = canonicalCaptureChunks.availableChunks();
-  return available < PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS &&
-      canonicalCaptureChunks.reserveChunks(available + 1);
+  const bool belowTarget = available < PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;
+  const bool reserved = belowTarget && canonicalCaptureChunks.reserveChunks(available + 1);
+#if RUNTIME_TIMING_ENABLED
+  // S7.5a envelope instrument — the replenishment owner's own accounting: one call's work, an attempt that could
+  // not top the reserve up although it was below target (a request that could not complete), and the pair that
+  // resolves it. The wait is computed by the telemetry module from its own refusal timestamp.
+  RUNTIME_TIMING_NOTE_REPLENISH_WORK(replenishNowUs() - replenishStartUs);
+  if (belowTarget) {
+    if (reserved) {
+      RUNTIME_TIMING_NOTE_REPLENISH_COMPLETION(replenishNowUs());
+    } else {
+      RUNTIME_TIMING_NOTE_REPLENISH_REFUSED(replenishNowUs());
+    }
+  }
+#endif
+  return reserved;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopEventStoreRewriteResult

@@ -219,6 +219,9 @@ FLASHMEM void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
   RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(inputEnterUs);
+  // S7.5a envelope instrument: the playback tick this input service started at. Each captured event compares its
+  // own stamped tick with this one (`noteCaptureStampTick`): the capture timestamp error, in ticks.
+  RUNTIME_TIMING_NOTE_INPUT_SERVICE_TICK(clockManager.getCurrentTick());
 #endif
 
   MidiInputMsg batch[kMidiInputBatchMax];

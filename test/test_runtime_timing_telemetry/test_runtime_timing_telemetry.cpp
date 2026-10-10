@@ -638,6 +638,64 @@ void test_grain_boundary_snapshot_survives_service_and_cadence_reset() {
   TEST_ASSERT_EQUAL_UINT32(0, captureStopGrainBoundary(startUs).periodUs);
 }
 
+// --- S7.5a envelope instruments: capture timestamp error (ticks) and capture replenishment (µs) -------------
+
+void test_capture_stamp_error_is_the_tick_delta_from_input_service_entry() {
+  RuntimeTimingTelemetry::noteInputServiceTick(100);
+  RuntimeTimingTelemetry::noteCaptureStampTick(103);
+  RuntimeTimingTelemetry::noteCaptureStampTick(101);  // a smaller error must not lower the maximum
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(3, snap.captureStampErrorMaxTicks);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.captureStampSamples);
+}
+
+void test_capture_stamp_error_ignores_appends_outside_an_input_service() {
+  RuntimeTimingTelemetry::noteCaptureStampTick(900);  // no input service sampled: nothing to compare against
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(0, snap.captureStampErrorMaxTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.captureStampSamples);
+}
+
+void test_capture_stamp_error_keeps_the_worst_across_input_services() {
+  RuntimeTimingTelemetry::noteInputServiceTick(100);
+  RuntimeTimingTelemetry::noteCaptureStampTick(104);
+  RuntimeTimingTelemetry::noteInputServiceTick(200);
+  RuntimeTimingTelemetry::noteCaptureStampTick(202);
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(4, snap.captureStampErrorMaxTicks);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.captureStampSamples);
+}
+
+void test_replenish_refusal_then_completion_records_the_exact_wait() {
+  RuntimeTimingTelemetry::noteReplenishRefused(1000);
+  RuntimeTimingTelemetry::noteReplenishRefused(4000);  // the first refusal's instant is the one that counts
+  RuntimeTimingTelemetry::noteReplenishCompletion(3500);
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(2, snap.replenishRefusedCount);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.replenishCompletionSamples);
+  TEST_ASSERT_EQUAL_UINT32(2500, snap.replenishWaitMaxUs);
+}
+
+void test_replenish_completion_without_a_refusal_records_nothing() {
+  RuntimeTimingTelemetry::noteReplenishCompletion(9000);  // no refusal outstanding
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(0, snap.replenishCompletionSamples);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.replenishWaitMaxUs);
+}
+
+void test_replenish_work_records_the_maximum_call_cost() {
+  RuntimeTimingTelemetry::noteReplenishWork(120);
+  RuntimeTimingTelemetry::noteReplenishWork(340);
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(340, snap.replenishWorkMaxUs);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -677,5 +735,11 @@ int main(int argc, char** argv) {
   RUN_TEST(test_usb_batch_composition_buckets_and_saturation);
   RUN_TEST(test_track_path_nested_spans_and_residual);
   RUN_TEST(test_track_path_exclusive_subtracts_nested_send);
+  RUN_TEST(test_capture_stamp_error_is_the_tick_delta_from_input_service_entry);
+  RUN_TEST(test_capture_stamp_error_ignores_appends_outside_an_input_service);
+  RUN_TEST(test_capture_stamp_error_keeps_the_worst_across_input_services);
+  RUN_TEST(test_replenish_refusal_then_completion_records_the_exact_wait);
+  RUN_TEST(test_replenish_completion_without_a_refusal_records_nothing);
+  RUN_TEST(test_replenish_work_records_the_maximum_call_cost);
   return UNITY_END();
 }

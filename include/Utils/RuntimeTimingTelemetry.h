@@ -178,6 +178,15 @@ struct Snapshot {
   uint8_t pendingRebuildTrack = 255;
   uint8_t pendingRebuildSlot = 255;
   PlaybackRebuildPath pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
+  /// S7.5a envelope instruments: the captured-event stamp error in **ticks** (max and how many appends were
+  /// sampled) and the capture-replenishment owner's request-to-completion accounting (max wait/work in µs,
+  /// refused attempts, completed pairs). Separate from midi_gap/midi_input, which are µs.
+  uint32_t captureStampErrorMaxTicks = 0;
+  uint32_t captureStampSamples = 0;
+  uint32_t replenishWaitMaxUs = 0;
+  uint32_t replenishWorkMaxUs = 0;
+  uint32_t replenishRefusedCount = 0;
+  uint32_t replenishCompletionSamples = 0;
 };
 
 void resetForTest();
@@ -187,6 +196,37 @@ void noteMidiInputEnter(uint32_t nowUs);
 
 /** Call on exit from MidiHandler::handleMidiInput — records handleMidiInput() duration. */
 void noteMidiInputExit(uint32_t nowUs);
+
+/**
+ * S7.5a envelope instrument — capture timestamp error, in ticks. Sample the playback tick at the entry to the
+ * MIDI input service; each captured event then compares its own stamped tick with that entry tick, so the metric
+ * is the musical time an event slipped between entering the service and being stamped (the firmware stamps note
+ * ticks from `getCurrentTick()` at process time, not at arrival).
+ */
+void noteInputServiceTick(uint32_t tick);
+
+/**
+ * S7.5a envelope instrument — one captured event's stamp, as ticks between the input service's entry tick and the
+ * tick the event was stored with. No-op when no input service is active (an overdub-path append).
+ */
+void noteCaptureStampTick(uint32_t stampedTick);
+
+/** S7.5a envelope instrument — duration of one replenish call, µs. */
+void noteReplenishWork(uint32_t durationUs);
+
+/**
+ * S7.5a envelope instrument — one replenish attempt that could not top the reserve up although it was below
+ * target (a request that could not complete). `nowUs` comes from the caller, so the instant is injectable and
+ * deterministic in native tests.
+ */
+void noteReplenishRefused(uint32_t nowUs);
+
+/**
+ * S7.5a envelope instrument — one successful top-up. When a refusal is outstanding, the wait from that refusal to
+ * `nowUs` is recorded as the replenishment owner's request-to-completion latency; a reclaim cadence is not it.
+ * No-op when no refusal is outstanding.
+ */
+void noteReplenishCompletion(uint32_t nowUs);
 
 /** Record duration of ClockManager::onMidiClockPulse (includes nested updateAllTracks). */
 void noteClockDispatch(uint32_t durationUs);
@@ -407,6 +447,14 @@ Snapshot peek(uint32_t nowUs = 0);
 #if RUNTIME_TIMING_ENABLED
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) RuntimeTimingTelemetry::noteMidiInputEnter(nowUs)
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) RuntimeTimingTelemetry::noteMidiInputExit(nowUs)
+/// S7.5a envelope instruments (declarations below): the playback tick at the entry to the MIDI input service,
+/// the tick one captured event was stamped with, and the capture-replenishment owner's request-to-completion
+/// accounting. Aggregated (max + count per telemetry window), never one row per event.
+#define RUNTIME_TIMING_NOTE_INPUT_SERVICE_TICK(tick) RuntimeTimingTelemetry::noteInputServiceTick(tick)
+#define RUNTIME_TIMING_NOTE_CAPTURE_STAMP_TICK(tick) RuntimeTimingTelemetry::noteCaptureStampTick(tick)
+#define RUNTIME_TIMING_NOTE_REPLENISH_WORK(durationUs) RuntimeTimingTelemetry::noteReplenishWork(durationUs)
+#define RUNTIME_TIMING_NOTE_REPLENISH_REFUSED(nowUs) RuntimeTimingTelemetry::noteReplenishRefused(nowUs)
+#define RUNTIME_TIMING_NOTE_REPLENISH_COMPLETION(nowUs) RuntimeTimingTelemetry::noteReplenishCompletion(nowUs)
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) RuntimeTimingTelemetry::noteClockDispatch(durationUs)
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) RuntimeTimingTelemetry::noteTracksUpdate(durationUs)
 #define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) \
@@ -479,6 +527,11 @@ Snapshot peek(uint32_t nowUs = 0);
 #else
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(nowUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_INPUT_SERVICE_TICK(tick) ((void)0)
+#define RUNTIME_TIMING_NOTE_CAPTURE_STAMP_TICK(tick) ((void)0)
+#define RUNTIME_TIMING_NOTE_REPLENISH_WORK(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_REPLENISH_REFUSED(nowUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_REPLENISH_COMPLETION(nowUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) ((void)0)

@@ -999,6 +999,10 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
     const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
 #if RUNTIME_TIMING_ENABLED
     RUNTIME_TIMING_ADD_NOTE_APPEND(micros() - appendStartUs);
+    // S7.5a envelope instrument: the tick this captured event was stored with, against the tick this input service
+    // entered at. The delta is the musical time the event slipped before being stamped (ticks come from
+    // `getCurrentTick()` at process time, not at arrival).
+    RUNTIME_TIMING_NOTE_CAPTURE_STAMP_TICK(newEvt.tick);
 #endif
     if (!appendResult.accepted) {
       if (type == midi::NoteOn && staging != nullptr && reservation != nullptr) {
