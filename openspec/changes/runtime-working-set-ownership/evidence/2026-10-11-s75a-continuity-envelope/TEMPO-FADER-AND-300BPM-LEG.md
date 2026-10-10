@@ -270,3 +270,42 @@ placement (its first `step` x `step_clocks`) as `phase_start_delay_clocks` for t
 overdub phases the same way, since od1's 40/16 may likewise carry its intended placement. That makes
 `capture_latency_clocks` mean what its name says and retires the advisory as a false positive rather than by raising a
 bound. **No change has been made yet**; this section records what the read established.
+
+## 13. Plan step 0 executed: the granularity pin (the 12-vs-13 question answered from the code)
+
+A second-opinion review of §12's plan flagged that `legacy_edit_baseline.py:1775` schedules fixture step 2 at phase
+clock **13** while the wall scheduler targets **12**, and asked for that to be decided and tested explicitly. Reading
+the emitter settles it:
+
+```python
+current_16th = (phase_clock + step_clocks - 1) // step_clocks - 1
+while next_emit_step <= current_16th and next_emit_step < target_bars * 16:
+    for entry in fixture_by_step.get(next_emit_step, []):
+        out_port.send(... note_on ...)
+        held.append((entry.pitch, phase_clock + entry.gate_steps * step_clocks))
+    next_emit_step += 1
+```
+
+With `step_clocks = 6`, step `s` is first emitted when `ceil(phase_clock/6) - 1 >= s`, i.e. at
+**`phase_clock >= 6s + 1`** — so step 2 goes out at clock **13**, exactly as the review measured. The musical placement
+is `2 x 6 = 12`; the extra clock is the emitter's own ceiling-minus-one granularity.
+
+**Decision (intent = musical placement):** the verifier's subtrahend is the note's **musical** clock (`first_step x
+step_clocks` = 12), and the emitter's +1 clock stays in `capture_latency_clocks`. Declaring 13 instead would fold the
+fixture's own emission granularity into "intent" — the failure mode the review explicitly warns against ("don't fold
+actual lateness into intent just to clear the warning"). The measured record residual (~2 clocks at 300 BPM, ~4 at 120)
+is therefore now fully explained: 1 clock of emitter granularity plus 1-3 clocks of real host/device latency.
+
+**Fixture inconsistency, now explained rather than assumed:** the wall-scheduled variant targets 12 and this one emits
+at 13, so the two pacing modes differ by that one clock *by construction*. The plan's first test asserts exactly this
+(`step 2, step_clocks 6` -> intent 12; an emission at 13 shows as 1 clock of latency), so the difference is pinned
+instead of being absorbed into whichever number a future edit finds convenient.
+
+The review's other two corrections are confirmed in the code as well and are in the plan: the overdub path really does
+use its own generator (`_stream_pattern_for_bars`, called at `:5026` with its own `phase_start_delay_bars/beats`), so
+the fix must have **every** generator declare its own intent and must retire the duplicated
+`_phase_start_delay_clocks(...)` calls at `:4399`/`:4593`.
+
+**Status: plan step 0 done; steps 1-4 (generators declare intent, single mapping threaded into
+`_build_serial_verification`, per-mode + delayed-overdub + genuine-lateness + no-inflation tests, then the device
+re-run and the content verdict) are not implemented.** No code was changed by this section.
