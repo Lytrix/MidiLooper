@@ -145,7 +145,9 @@ void ClockManager::setBpm(uint16_t newBpm) {
 }
 
 void ClockManager::setBpmFloat(float newBpm) {
-  if (newBpm < 20.0f) newBpm = 20.0f;
+  // 1–300 BPM is the enforced playback clock range (DEC-108 item 7, revised 2026-10-11 by owner decision): the tempo
+  // fader spans it through the 14-bit pitchbend, and 1 BPM is a legitimate slow end (26 ms per tick).
+  if (newBpm < 1.0f) newBpm = 1.0f;
   if (newBpm > 300.0f) newBpm = 300.0f;
   bpm = newBpm;
   microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
@@ -256,7 +258,8 @@ void ClockManager::onMidiClockPulse() {
     uint32_t elapsed = pulseTimestamps[pulseHead] - pulseTimestamps[tailIdx];
     if (elapsed > 0) {
       float computedBpm = 60000000.0f / (float)elapsed;
-      if (computedBpm >= 20.0f && computedBpm <= 300.0f) {
+      // Same enforced range as the setter: an external clock estimate outside it is not a tempo (DEC-108 item 7).
+      if (computedBpm >= 1.0f && computedBpm <= 300.0f) {
         [[maybe_unused]] const float windowBpm = computedBpm;
         if (bpmSmoothed > 0.0f && fabsf(computedBpm - bpmSmoothed) < 3.0f) {
           computedBpm = 0.02f * computedBpm + 0.98f * bpmSmoothed;

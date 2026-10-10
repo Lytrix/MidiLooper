@@ -69,7 +69,8 @@ bool STORAGE_PERSIST_MEM StorageManager::loadV5MonolithIntoRam(LooperState& stat
         file.close();
         return false;
     }
-    if (savedBpm >= 20.0f && savedBpm <= 300.0f) {
+    // Same enforced range as the current-set load path (DEC-108 item 7, revised 2026-10-11 to 1–300 BPM).
+    if (savedBpm >= 1.0f && savedBpm <= 300.0f) {
         bpm = savedBpm;
         Serial.print("[StorageManager] Restored BPM: ");
         Serial.println(savedBpm);

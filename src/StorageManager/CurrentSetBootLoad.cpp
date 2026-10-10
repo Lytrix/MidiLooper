@@ -395,7 +395,9 @@ bool readCurrentSetFilePreamble(File& file, LooperState& loadedLooperStateOut,
     if (!readRaw(file, &savedBpm, sizeof(savedBpm))) {
         return false;
     }
-    if (savedBpm >= 20.0f && savedBpm <= 300.0f) {
+    // 1–300 BPM is the enforced playback clock range (DEC-108 item 7, revised 2026-10-11): the tempo fader spans it
+    // through the 14-bit pitchbend, and a persisted tempo anywhere inside it must load.
+    if (savedBpm >= 1.0f && savedBpm <= 300.0f) {
         bpm = savedBpm;
     }
 
