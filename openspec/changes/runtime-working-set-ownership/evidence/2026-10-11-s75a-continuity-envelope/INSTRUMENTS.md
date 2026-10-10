@@ -72,3 +72,25 @@ host↔device clock correlation for `action_to_audible` — the last named in `M
 `S7.5a`/`S7.5b`/`S7.5` checkoff; the frames above are device *measurements* to be read by the qualification legs.
 The immediate follow-up is wiring the new rows into `scripts/hitl/measure/envelope_timings.py` (`envelope_instr`
 → `capture_timestamp_error` and `capture_replenishment`; the `MO` tick column → `same_tick_burst` and jitter).
+
+## Update — the rows are wired into the measurement layer (2026-10-11)
+
+`scripts/hitl/measure/envelope_timings.py` now reads the new rows, so the four metrics they were built for return a
+**value instead of a proxy** — and a capture that predates them says so:
+
+| Metric | With the row | Without it (legacy capture) |
+|---|---|---|
+| `capture_timestamp_error` | `envelope_instr.capstamp_max` in **ticks**, samples = `capstamp_n` (max across windows, counts summed) | `unproven` with the schedule-relative REVT proxy in `detail` (`proxy_worst_off_grid_ticks`) — the earlier treatment, now no longer reported as the metric |
+| `capture_replenishment` | `envelope_instr.repl_wait_us` (µs), with refusals, completed pairs and the max work in `detail` | `unproven` (reclaim cadence in `detail`) or `missing` when there is no interval at all |
+| `same_tick_burst` | events sharing one **scheduled tick** from the emission row's tick column | `unproven` with the µs-stamp burst in `detail` |
+| `per_route_output_jitter` | worst deviation from the route's own fitted (emission µs ↔ scheduled tick) line, with the fitted µs/tick, the median residual and the constant-tempo caveat | `unproven` with the onset-spacing proxy in `detail` |
+
+Two refusals are deliberate and tested: a malformed `envelope_instr` row **falls back** rather than reading a partial
+row, and a capture with refusals but no completed pair is `unproven` ("the request→completion interval was not
+observed") rather than reporting the work figure as the latency.
+
+Verified: `scripts/test_envelope_timings.py` **41/41 OK** (7 new cases: max-across-windows and summed sample counts,
+the legacy proxy demoted to `unproven`, tick-based burst, the fitted-line jitter with a known 700 µs deviation, the
+refusal-without-pair refusal, the malformed-row fallback); full host sweep **1375 tests** with the **identical
+pre-existing failure set minus one flaky clock-pacing case** (no new failures); both legacy captures still read as
+above.

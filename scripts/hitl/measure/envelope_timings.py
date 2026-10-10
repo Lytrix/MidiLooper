@@ -54,6 +54,14 @@ _MO_RE = re.compile(r"#CAP,(\d+),MO,(\d+),(\d+),(-?\d+),(-?\d+)")
 _DROID_QUEUE_RE = re.compile(r"#CAP,(\d+),DIAG,droid_queue,(\d+),(\d+),(\d+)")
 _RECLAIM_RE = re.compile(r"#CAP,(\d+),DIAG,reclaim,(\d+),(\d+),(\d+),(\d+),(\d+),(\w+),")
 _STORED_TICK_RE = re.compile(r"#CAP,(\d+),REVT,[^,]*,(-?\d+)")
+#: `#CAP,<us>,MO,<type>,<ch>,<d1>,<d2>,<tick>` — the S7.5a instrument that put the **scheduled tick** on the
+#: emission row. Captures predating it carry six fields, so the tick group is simply absent for them.
+_MO_TICK_RE = re.compile(r"#CAP,(\d+),MO,(\d+),(\d+),(-?\d+),(-?\d+),(\d+)")
+#: `#CAP,<us>,DIAG,envelope_instr,capstamp_max=<ticks>,capstamp_n=<n>,repl_wait_us=<us>,repl_work_us=<us>,`
+#: `repl_refused=<n>,repl_pairs=<n>` — one aggregated row per telemetry window, from
+#: `DebugSessionCapture::envelopeInstrRow` (fields verified against the emitter).
+_ENVELOPE_INSTR_RE = re.compile(r"#CAP,(\d+),DIAG,envelope_instr,(.*)$")
+_ENVELOPE_INSTR_FIELDS = ("capstamp_max", "capstamp_n", "repl_wait_us", "repl_work_us", "repl_refused", "repl_pairs")
 
 #: `DIAG,late_on` / `late_off` are the output-lateness surfaces (`RuntimeTimingTelemetry.cpp`). Their
 #: producer is not exercised by every route, and a capture whose samples are all zero with a zero over-count
@@ -171,13 +179,57 @@ def measure_midi_input_service_duration(lines: Sequence[str]) -> Measurement:
     )
 
 
-def measure_capture_timestamp_error(lines: Sequence[str]) -> Measurement:
-    """Capture timestamp error against the **streamed schedule**, in ticks.
+def _envelope_instr_totals(lines: Iterable[str]) -> Optional[dict[str, int]]:
+    """Aggregate `DIAG,envelope_instr` rows: **max** for the max-typed fields, **sum** for the counts.
 
-    The device's internal stamping error (event arrival vs tick boundary) has **no instrument at all**, so
-    this is the honest schedule-relative proxy the record legs already read: how far the stored note ticks
-    sit from the 16th-grid the host streamed. It is reported as a proxy, never as the internal error.
+    Returns None when no row is present or a row is malformed, so a legacy capture falls back to its proxy.
     """
+    totals: dict[str, int] = {}
+    seen = False
+    for line in lines:
+        match = _ENVELOPE_INSTR_RE.search(line)
+        if match is None:
+            continue
+        values: dict[str, int] = {}
+        for field in match.group(2).split(","):
+            name, sep, raw = field.partition("=")
+            if not sep:
+                continue
+            try:
+                values[name.strip()] = int(raw)
+            except ValueError:
+                return None
+        if any(name not in values for name in _ENVELOPE_INSTR_FIELDS):
+            return None
+        seen = True
+        for name in ("capstamp_max", "repl_wait_us", "repl_work_us"):
+            totals[name] = max(totals.get(name, 0), values[name])
+        for name in ("capstamp_n", "repl_refused", "repl_pairs"):
+            totals[name] = totals.get(name, 0) + values[name]
+    return totals if seen else None
+
+
+def measure_capture_timestamp_error(lines: Sequence[str]) -> Measurement:
+    """Capture timestamp error, in **ticks** — `DIAG,envelope_instr`'s `capstamp_max` when the capture carries it.
+
+    That row is the instrument built for this metric: the playback tick at the entry to the MIDI input service
+    against the tick the captured event was stamped with (the firmware stamps note ticks from `getCurrentTick()`
+    at *process* time, not at arrival). A capture predating the row keeps the schedule-relative proxy — stored note
+    ticks against the grid the host streamed — as `unproven` with its reading in `detail`, never as the metric.
+    """
+    totals = _envelope_instr_totals(lines)
+    if totals is not None:
+        return Measurement(
+            "capture_timestamp_error",
+            "ticks",
+            MEASURED,
+            value=float(totals["capstamp_max"]),
+            source_rows=totals["capstamp_n"],
+            detail={
+                "basis": "device row DIAG,envelope_instr.capstamp_max (input-service entry tick vs stored tick)",
+                "samples": totals["capstamp_n"],
+            },
+        )
     ticks = [int(match.group(2)) for line in lines if (match := _STORED_TICK_RE.search(line)) is not None]
     if not ticks:
         return Measurement(
@@ -185,25 +237,27 @@ def measure_capture_timestamp_error(lines: Sequence[str]) -> Measurement:
             "ticks",
             MISSING,
             reason=(
-                "no stored-note (REVT) row in this capture; the firmware-internal stamping error has no "
-                "instrument at all (no timestamp-error probe in src/ or include/)"
+                "no DIAG,envelope_instr row and no stored-note (REVT) row in this capture; the stamp instrument "
+                "is DebugSessionCapture::envelopeInstrRow on an image that carries it"
             ),
         )
     ticks.sort()
     errors = [(right - left) % FIXTURE_16TH_TICKS for left, right in zip(ticks, ticks[1:])]
-    worst = max(errors) if errors else 0
     return Measurement(
         "capture_timestamp_error",
         "ticks",
-        MEASURED,
-        value=float(worst),
+        UNPROVEN,
+        value=None,
         source_rows=len(ticks),
+        reason=(
+            "this capture predates the DIAG,envelope_instr row: the schedule-relative proxy below is not the "
+            "instrument's reading and must not be reported as the metric"
+        ),
         detail={
-            "basis": (
-                "schedule-relative proxy (consecutive stored note ticks against the 16th grid), not the "
-                "internal stamping error"
+            "proxy_worst_off_grid_ticks": max(errors) if errors else 0,
+            "proxy_basis": (
+                "consecutive stored note ticks against the 16th grid the host streamed"
             ),
-            "internal_error_instrument": "missing",
             "stored_tick_count": len(ticks),
             "stored_ticks_head": ticks[:32],
         },
@@ -253,13 +307,56 @@ def measure_per_route_output_lateness(lines: Sequence[str]) -> Measurement:
 
 
 def measure_per_route_output_jitter(lines: Sequence[str]) -> Measurement:
-    """Per-route output jitter, µs — **not measurable** from today's rows; the onset proxy stays in `detail`.
+    """Per-route output jitter, µs — deviation from the route's fitted (emission µs ↔ scheduled tick) line.
 
-    Jitter is scheduled-versus-actual, so it needs a scheduled tick per emitted event. The `MO` row carries
-    the emission timestamp only, and the spread of consecutive onsets across a capture is dominated by
-    musical rests (measured: tens of seconds in the legs this repo holds), which would be read as jitter.
-    The metric therefore carries **no value**; the proxy is recorded but never reported as the metric.
+    Jitter is scheduled-versus-actual, so it needs the scheduled tick per emitted event — which is what the S7.5a
+    instrument put on the emission row. Per route, the device clock is fitted from that route's own pairs, and the
+    metric is the worst deviation of an emission instant from the instant its own scheduled tick implies. Captures
+    without the tick column keep the onset-spacing proxy (dominated by musical rests) as `unproven`, in `detail`.
     """
+    per_route: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for line in lines:
+        match = _MO_TICK_RE.search(line)
+        if match is None:
+            continue
+        route = (int(match.group(2)), int(match.group(3)))
+        per_route.setdefault(route, []).append((int(match.group(6)), int(match.group(1))))
+    if per_route:
+        route, pairs = max(per_route.items(), key=lambda item: len(item[1]))
+        pairs.sort()
+        tick_span = pairs[-1][0] - pairs[0][0]
+        if len(pairs) >= 8 and tick_span > 0:
+            rate = (pairs[-1][1] - pairs[0][1]) / tick_span
+            base_tick, base_us = pairs[0]
+            residuals = sorted(abs(us - base_us - (tick - base_tick) * rate) for tick, us in pairs)
+            return Measurement(
+                "per_route_output_jitter",
+                "us",
+                MEASURED,
+                value=float(residuals[-1]),
+                source_rows=len(pairs),
+                detail={
+                    "route_key_(type,ch)": list(route),
+                    "basis": "deviation from the route's fitted (emission µs ↔ scheduled tick) line",
+                    "fitted_us_per_tick": round(rate, 3),
+                    "median_residual_us": round(residuals[len(residuals) // 2], 3),
+                    "samples": len(pairs),
+                    "caveat": "one clock rate is assumed inside the window; a tempo change inflates the residual",
+                },
+            )
+        return Measurement(
+            "per_route_output_jitter",
+            "us",
+            UNPROVEN,
+            value=None,
+            source_rows=len(pairs),
+            reason=(
+                f"only {len(pairs)} emission(s) with a scheduled tick on this route"
+                + (" (no tick span)" if tick_span <= 0 else "")
+                + ": not enough to fit the route's clock line"
+            ),
+            detail={"route_key_(type,ch)": list(route)},
+        )
     onsets = sorted(int(match.group(1)) for line in lines if (match := _MO_RE.search(line)) is not None)
     if len(onsets) < 3:
         return Measurement(
@@ -278,14 +375,13 @@ def measure_per_route_output_jitter(lines: Sequence[str]) -> Measurement:
         value=None,
         source_rows=len(onsets),
         reason=(
-            "no scheduled tick per emitted event: onset spacing across a capture includes musical rests, so "
-            "the spread is not a jitter and must not be read as one"
+            "this capture predates the emission-row tick column: onset spacing across a capture includes musical "
+            "rests, so the spread is not a jitter and must not be read as one"
         ),
         detail={
             "proxy_median_onset_delta_us": deltas[len(deltas) // 2],
             "proxy_onset_spread_us": deltas[-1] - deltas[0],
             "onset_samples": len(deltas),
-            "owed": "a scheduled-tick column on the emission row, or a per-event lateness row",
         },
     )
 
@@ -366,11 +462,32 @@ def measure_route_throughput(lines: Sequence[str]) -> Measurement:
 
 
 def measure_same_tick_burst(lines: Sequence[str]) -> Measurement:
-    """Same-tick burst — **not measurable** as a musical-tick quantity from today's rows.
+    """Same-tick burst, events — emissions sharing one **scheduled tick**, from the emission row's tick column.
 
-    The admission limit applies per musical tick, and the `MO` row carries no tick column; the µs-stamp
-    burst is a lower bound at best, so it is recorded in `detail` and the metric carries no value.
+    The admission limit applies per musical tick, which is what this counts when the tick column is present (the
+    S7.5a instrument). Captures predating it keep the device-microsecond-stamp burst as `unproven`, with that
+    reading in `detail`.
     """
+    ticks: dict[int, int] = {}
+    for line in lines:
+        match = _MO_TICK_RE.search(line)
+        if match is not None:
+            tick = int(match.group(6))
+            ticks[tick] = ticks.get(tick, 0) + 1
+    if ticks:
+        worst_tick, worst = max(ticks.items(), key=lambda item: item[1])
+        return Measurement(
+            "same_tick_burst",
+            "events",
+            MEASURED,
+            value=float(worst),
+            source_rows=len(ticks),
+            detail={
+                "basis": "emissions sharing one scheduled tick (emission-row tick column)",
+                "worst_tick": worst_tick,
+                "distinct_ticks": len(ticks),
+            },
+        )
     stamps: dict[int, int] = {}
     for line in lines:
         match = _MO_RE.search(line)
@@ -387,11 +504,10 @@ def measure_same_tick_burst(lines: Sequence[str]) -> Measurement:
         value=None,
         source_rows=len(stamps),
         reason=(
-            "measured on the emission microsecond stamp, not on the musical tick: the MO row carries no "
-            "tick column, and the admission limit applies per musical tick"
+            "this capture predates the emission-row tick column: measured on the emission microsecond stamp "
+            "instead, which is a lower bound, and the admission limit applies per musical tick"
         ),
-        detail={"proxy_worst_emission_stamp_us": worst_stamp, "proxy_burst_events": worst,
-                "owed": "tick column on the emission row"},
+        detail={"proxy_worst_emission_stamp_us": worst_stamp, "proxy_burst_events": worst},
     )
 
 
@@ -452,11 +568,42 @@ def measure_deferred_owner_denial(lines: Sequence[str]) -> Measurement:
 
 
 def measure_capture_replenishment(lines: Sequence[str]) -> Measurement:
-    """Capture replenishment — **not measurable** as a latency from today's rows.
+    """Capture replenishment request→completion, µs — `DIAG,envelope_instr` when the capture carries it.
 
-    A reclaim cadence is not a replenishment latency (the request→completion interval has no row), and the
-    inter-reclaim interval is dominated by idle stretches; it is recorded in `detail`, never as the metric.
+    The device row reports the replenishment owner's own pair: a **refused** attempt (below target but the reserve
+    could not be topped up — a request that could not complete) and the top-up that resolved it, whose wait is the
+    latency this metric wants. A capture with refusals but no completed pair has not observed the interval, so it is
+    `unproven` rather than reported as a number. Captures predating the row fall back to the inter-reclaim cadence,
+    which is a cadence and never the latency: that reading stays in `detail`.
     """
+    totals = _envelope_instr_totals(lines)
+    if totals is not None:
+        if totals["repl_pairs"] > 0:
+            return Measurement(
+                "capture_replenishment",
+                "us",
+                MEASURED,
+                value=float(totals["repl_wait_us"]),
+                source_rows=totals["repl_pairs"],
+                detail={
+                    "basis": "device row DIAG,envelope_instr (refused attempt → resolving top-up)",
+                    "refused_attempts": totals["repl_refused"],
+                    "completed_pairs": totals["repl_pairs"],
+                    "max_replenish_work_us": totals["repl_work_us"],
+                },
+            )
+        return Measurement(
+            "capture_replenishment",
+            "us",
+            UNPROVEN,
+            value=None,
+            source_rows=totals["repl_refused"],
+            reason=(
+                f"{totals['repl_refused']} refused replenish attempt(s) and no completed pair in this capture: "
+                "the request→completion interval was not observed"
+            ),
+            detail={"max_replenish_work_us": totals["repl_work_us"]},
+        )
     stamps = sorted(
         int(match.group(1)) for line in lines if (match := _RECLAIM_RE.search(line)) is not None
     )
@@ -465,7 +612,10 @@ def measure_capture_replenishment(lines: Sequence[str]) -> Measurement:
             "capture_replenishment",
             "us",
             MISSING,
-            reason=f"only {len(stamps)} DIAG,reclaim row(s): no interval to measure",
+            reason=(
+                f"no DIAG,envelope_instr row (this capture predates the instrument) and only {len(stamps)} "
+                "DIAG,reclaim row(s): no interval to measure"
+            ),
         )
     gaps = [right - left for left, right in zip(stamps, stamps[1:])]
     return Measurement(
@@ -475,13 +625,13 @@ def measure_capture_replenishment(lines: Sequence[str]) -> Measurement:
         value=None,
         source_rows=len(stamps),
         reason=(
-            "no request→completion row: the inter-reclaim interval is a cadence, not replenishment latency, "
-            "and it is dominated by idle stretches"
+            "no request→completion row in this capture: the inter-reclaim interval is a cadence, not "
+            "replenishment latency, and it is dominated by idle stretches"
         ),
         detail={
             "proxy_median_reclaim_interval_us": sorted(gaps)[len(gaps) // 2],
             "proxy_max_reclaim_interval_us": max(gaps),
-            "owed": "a request→completion latency row for the replenishment owner",
+            "owed": "the DIAG,envelope_instr row (built) on a capture that contains it",
         },
     )
 

@@ -83,27 +83,42 @@ class TestMidiInputServiceDuration(unittest.TestCase):
 
 
 class TestCaptureTimestampError(unittest.TestCase):
-    def test_measures_stored_ticks_against_the_sixteenth_grid(self) -> None:
+    def test_the_device_row_is_the_metric_and_its_max_is_kept_across_windows(self) -> None:
+        lines = [
+            "#CAP,900,DIAG,envelope_instr,capstamp_max=3,capstamp_n=4,repl_wait_us=0,repl_work_us=0,"
+            "repl_refused=0,repl_pairs=0",
+            "#CAP,1900,DIAG,envelope_instr,capstamp_max=7,capstamp_n=5,repl_wait_us=0,repl_work_us=0,"
+            "repl_refused=0,repl_pairs=0",
+        ]
+        result = m.measure_capture_timestamp_error(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.unit, "ticks")
+        self.assertEqual(result.value, 7)  # the max across the windows
+        self.assertEqual(result.source_rows, 9)  # and the samples summed
+        self.assertIn("envelope_instr", result.detail["basis"])
+
+    def test_a_capture_predating_the_row_keeps_its_proxy_as_unproven(self) -> None:
         lines = [
             "#CAP,900,REVT,1,0,60,0,100",
             "#CAP,910,REVT,1,192,62,0,100",
             "#CAP,920,REVT,1,384,64,0,100",
         ]
         result = m.measure_capture_timestamp_error(lines)
-        self.assertEqual(result.availability, m.MEASURED)
-        self.assertEqual(result.unit, "ticks")
-        self.assertEqual(result.value, 0)
-        self.assertEqual(result.detail["internal_error_instrument"], "missing")
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertIsNone(result.value, "a schedule-relative proxy must not be reported as the metric")
+        self.assertEqual(result.detail["proxy_worst_off_grid_ticks"], 0)
+        self.assertIn("predates", result.reason)
 
-    def test_reports_the_worst_off_grid_delta(self) -> None:
+    def test_the_off_grid_proxy_keeps_its_own_reading(self) -> None:
         lines = ["#CAP,900,REVT,1,0,60,0,100", "#CAP,910,REVT,1,232,62,0,100"]
         result = m.measure_capture_timestamp_error(lines)
-        self.assertEqual(result.value, 40)
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertEqual(result.detail["proxy_worst_off_grid_ticks"], 40)
 
-    def test_no_stored_rows_names_the_missing_instrument(self) -> None:
+    def test_no_row_and_no_stored_notes_names_the_instrument(self) -> None:
         result = m.measure_capture_timestamp_error(["#CAP,900,DIAG,midi_gap,10,0"])
         self.assertEqual(result.availability, m.MISSING)
-        self.assertIn("no instrument", result.reason)
+        self.assertIn("envelope_instr", result.reason)
 
 
 class TestPerRouteOutputLateness(unittest.TestCase):
@@ -132,7 +147,7 @@ class TestPerRouteOutputJitter(unittest.TestCase):
         self.assertEqual(result.availability, m.UNPROVEN)
         self.assertIsNone(result.value, "a proxy must not be reported as the metric")
         self.assertEqual(result.detail["proxy_onset_spread_us"], 1100)
-        self.assertIn("scheduled tick per emitted event", result.reason)
+        self.assertIn("predates the emission-row tick column", result.reason)
 
     def test_too_few_onsets_is_missing(self) -> None:
         result = m.measure_per_route_output_jitter(["#CAP,1000,MO,144,8,0,100"])
@@ -232,7 +247,7 @@ class TestCaptureReplenishment(unittest.TestCase):
         self.assertEqual(result.availability, m.UNPROVEN)
         self.assertIsNone(result.value, "an inter-reclaim cadence is not replenishment latency")
         self.assertEqual(result.detail["proxy_max_reclaim_interval_us"], 3000)
-        self.assertIn("request→completion", result.detail["owed"])
+        self.assertIn("envelope_instr", result.detail["owed"])
 
     def test_single_reclaim_row_has_no_interval(self) -> None:
         lines = ["#CAP,1000,DIAG,reclaim,479,479,0,0,233,Normal,0,1,0,1"]
@@ -290,6 +305,66 @@ class TestMeasureAllContract(unittest.TestCase):
                 self.assertTrue(item.reason, f"{item.metric} must name why it is not measured")
             if item.availability == m.MEASURED:
                 self.assertIsNotNone(item.value)
+
+
+class TestTheNewInstrumentRows(unittest.TestCase):
+    """The rows S7.5a increment 3 added: the emission tick column and `DIAG,envelope_instr`."""
+
+    def test_same_tick_burst_counts_emissions_sharing_one_scheduled_tick(self) -> None:
+        lines = [
+            "#CAP,1000,MO,144,8,0,100,96",
+            "#CAP,1010,MO,146,8,60,0,96",
+            "#CAP,1020,MO,144,8,0,100,96",
+            "#CAP,2000,MO,144,8,0,100,192",
+        ]
+        result = m.measure_same_tick_burst(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 3, "three emissions share scheduled tick 96")
+        self.assertEqual(result.detail["worst_tick"], 96)
+
+    def test_jitter_is_the_deviation_from_the_routes_fitted_clock_line(self) -> None:
+        # A device clock of 1000 µs per tick, with one emission 700 µs late for its own scheduled tick.
+        lines = [f"#CAP,{1000 + tick * 1000},MO,144,8,0,100,{tick}" for tick in range(0, 8 * 48, 48)]
+        lines[5] = f"#CAP,{1000 + 5 * 48 * 1000 + 700},MO,144,8,0,100,{5 * 48}"
+        result = m.measure_per_route_output_jitter(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 700)
+        self.assertEqual(result.detail["fitted_us_per_tick"], 1000.0)
+        self.assertEqual(result.detail["route_key_(type,ch)"], [144, 8])
+
+    def test_too_few_ticked_emissions_refuse_to_fit_the_line(self) -> None:
+        lines = ["#CAP,1000,MO,144,8,0,100,0", "#CAP,2000,MO,144,8,0,100,48"]
+        result = m.measure_per_route_output_jitter(lines)
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertIsNone(result.value, "a clock line cannot be fitted from two emissions")
+        self.assertIn("not enough", result.reason)
+
+    def test_replenishment_reads_the_request_to_completion_wait(self) -> None:
+        lines = [
+            "#CAP,5,DIAG,envelope_instr,capstamp_max=0,capstamp_n=0,repl_wait_us=2400,repl_work_us=180,"
+            "repl_refused=3,repl_pairs=2"
+        ]
+        result = m.measure_capture_replenishment(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 2400)
+        self.assertEqual(result.source_rows, 2)
+        self.assertEqual(result.detail["completed_pairs"], 2)
+        self.assertEqual(result.detail["max_replenish_work_us"], 180)
+
+    def test_refusals_without_a_completed_pair_are_unproven(self) -> None:
+        lines = [
+            "#CAP,5,DIAG,envelope_instr,capstamp_max=0,capstamp_n=0,repl_wait_us=0,repl_work_us=90,"
+            "repl_refused=4,repl_pairs=0"
+        ]
+        result = m.measure_capture_replenishment(lines)
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertIsNone(result.value)
+        self.assertIn("no completed pair", result.reason)
+
+    def test_a_malformed_row_falls_back_instead_of_reading_a_partial_row(self) -> None:
+        lines = ["#CAP,5,DIAG,envelope_instr,capstamp_max=9,capstamp_n=1", "#CAP,4000,DIAG,reclaim,4,4,0,0,2,Normal,0,1,0,1"]
+        self.assertEqual(m.measure_capture_timestamp_error(lines).availability, m.MISSING)
+        self.assertEqual(m.measure_capture_replenishment(lines).availability, m.MISSING)
 
 
 class TestAgainstRealCaptures(unittest.TestCase):
