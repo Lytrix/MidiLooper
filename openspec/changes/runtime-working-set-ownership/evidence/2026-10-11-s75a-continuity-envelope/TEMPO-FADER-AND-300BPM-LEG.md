@@ -419,3 +419,57 @@ the bar now describes that placement, and the verifier no longer guesses it from
 
 **Not changed:** no firmware line, no build, no upload, no SD or device action, no limit or envelope declared, no
 `DEC-###`, and S7.5a/S7.5b/S7.5 plus S7.5b.8c/d stay unchecked.
+
+## 15. Device re-run at 300 BPM on this tree: the fixture still does not complete a leg, and the change is inert here
+
+Owner-requested run ("run the hitl at 300bpm to see how it now performs"). **Host tooling as landed; no firmware
+change, no upload, no reset, no SD delete/rename.** Invocations are the canonical entry point
+(`host_midi_hitl.py run --preset base --track 8 --loop-slot 4 --midi-channel 8 --no-boot-reset
+--capture-boot-wait 30 --tempo-bpm 300`), differing only in `--clock-source` and the out-dir.
+
+Tempo: the device was at **132.3 BPM** on attach, pinned to **300.0 BPM** with the sanctioned probe
+(`hitl_tempo_fader_probe.py --set-tempo 300 --skip-full-travel`, `captures/tempo-pin-300b-before-leg`; its
+`PASS: pitchbend=8191 -> 300.0 BPM`, with the same mode-gate advisory as section 1 -- the device was already in
+`LOOP_EDIT`, so "outside `LOOP_EDIT` the pitchbend does nothing" is again not proved).
+
+| Leg | Clock | Abort | Record length (final/expected) | Record first note | Warnings | Shutdown |
+|---|---|---|---|---|---|---|
+| `base-300bpm-after-intent-t8s4-01` | device | `midi clock missing before record phase` | 3072/1536 (raw 3110) | none streamed | -- | complete/2 |
+| `base-300bpm-devclock-after-intent-t8s4-02` | device | `recording not confirmed before note stream` | 768/1536 (raw 607) | none streamed | -- | complete/2 |
+| `base-300bpm-hostclock-after-intent-t8s4-03` | host | `second overdub transition not confirmed` | **2304**/1536 (raw 2312) | **33 clocks** (offset 33, intent 0) | `record_first_note_too_late` | incomplete -> see below |
+| `base-300bpm-devclock-after-intent-t8s4-04` | device | `second overdub transition not confirmed` | 2304/1536 (raw 2394) | none streamed | -- | complete/2 |
+
+**Reading it.** Leg 1 is the recorded "leg A" failure reproduced exactly, and its cause is now named by the
+device's own rows: the previous session left the transport **running**, so the arm landed on a playing track
+(`Loop 4: Start Recording` -> `Recording started @ tick 22827`, i.e. no `ARMED` step and no `ARMED->RECORDING`
+row), the host never streamed a note, and the fixture then refused at its clock preamble. Leg 2 did reach
+`ST,Track,STOPPED,ARMED` -> `ARMED,RECORDING` (a 768-tick take, `Recording started @ tick 0`), but the host's
+confirmation window missed it and it aborted before streaming. Leg 3 reached record, overdub 1 and a second
+overdub attempt on the host clock: the take came out **2304 ticks (3 bars) against the 2-bar intent** -- the same
+shape section 3 recorded as tempo-independent -- and the record first note measured **33 clocks** against the
+12-clock bound (worse than the recorded host-clock leg's 26, and consistent with section 11's verdict that the
+device clock is the better base). Its stored overdub spans passed (`16/15`, `20/7`, `bars 2/2`, `span_ok`), so
+content storage is not what failed. Leg 4 reproduced the second-overdub refusal on the device clock.
+
+**The change is not implicated, and the reports say so in a new field.** Every leg aborted *before* its per-track
+row was appended (`per_track_stats` is empty in all four), so the verifier used the **run defaults** -- exactly
+the pre-change subtrahend -- and the new `intent_source` field records that provenance in each report
+(`run_default`, with `intent` 0 for record and 24 for the overdub phases). The arithmetic is identical to the
+recorded legs: leg 3's `record latency 33 = offset 33 - 0`, `od1 latency 7 = 31 - 24`. Nothing here measures the
+declaration path, which needs a leg that reaches its per-track row (the replay in section 14 covers it).
+
+**Device safety.** Leg 3's shutdown was `incomplete_timeout` (`drains 0`, "persistence never reached verified
+idle") because a `LoopPersist slot:7:4` workspace save was still slicing when the log ended; the latch was
+honoured (no reset attempted) and **discharged in the documented order**: a non-reset attach, two idempotent
+realtime MIDI Stop -> verified-persistence-idle cycles (`shutdown_device` -> `complete, drains 2, ok true`,
+`captures/drain-after-300bpm-hostclock-03/`), the latch payload preserved as `latch-before.json`, and only then
+`clear_latch()`. Leg 4 then drained cleanly on its own (`complete/2`). **Left as is:** the transport stopped,
+persistence drained, no latch, and track 8 / slot 4 **`ARMED`** with an empty capture (`DISP,3,ARMED`) -- an
+armed target consumes the next press, so the next leg must carry a fresh boot (`--boot-reset`, now unblocked) and
+re-pin the tempo after it; no further press was sent here.
+
+**What this changes about the plan:** nothing in sections 13-14. The blocker at 300 BPM is the fixture's
+setup/confirm handshake (a clock preamble evaluated against a device that may be running, a `RECORDING`
+confirmation window that can miss the row, a second-overdub confirmation that can fail) plus the 3-bar stop edge
+-- all pre-existing, all on the *pacing* side. The bounded next step is unchanged: anchor the base record
+stream's start on the clock grid (section 14 owed-1), with these four legs as the "before" baseline.
