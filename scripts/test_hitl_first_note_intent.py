@@ -28,7 +28,7 @@ from hitl.legacy_edit_baseline import (  # noqa: E402
     _emit_fixture_steps_for_clock,
 )
 from hitl.legacy_record_baseline import (  # noqa: E402
-    FIXTURE_STEP_CLOCKS,
+    FIRST_NOTE_INTENT_ROW_KEYS,
     _build_serial_verification,
     _fixture_first_note_intent_clocks,
     _first_note_intents,
@@ -165,11 +165,31 @@ class DeclaredIntentTests(unittest.TestCase):
         self.assertEqual(intent, 12)
 
     def test_serial_anchored_mode_declares_the_fixture_first_step(self) -> None:
+        # A non-zero first step is the discriminating input: a declaration hardcoded to the record
+        # phase's old constant (0) has to fail here.
         port = _FakePort()
         notes, _clocks, intent = _stream_fixture_record_serial_anchored(
             port,
             _StubCollector(),
-            fixture=(FixtureNote(0, 60), FixtureNote(4, 64)),
+            fixture=(FixtureNote(2, 60),),
+            target_bars=1,
+            midi_channel_1based=8,
+            reca_start_tick=0,
+            bpm=600.0,
+            abort=_FakeAbort(),
+        )
+        self.assertGreaterEqual(notes, 1)
+        self.assertEqual(_first_emitting_clock((FixtureNote(2, 60),), step_clocks=6), 13)
+        self.assertEqual(intent, 12)
+
+    def test_serial_anchored_mode_declares_the_edit_fixtures_downbeat(self) -> None:
+        # The real configuration the edit seed drives: EDIT_RECORD_FIXTURE starts at step 0, so this
+        # shape declares 0 and the measured offset stays latency.
+        port = _FakePort()
+        notes, _clocks, intent = _stream_fixture_record_serial_anchored(
+            port,
+            _StubCollector(),
+            fixture=EDIT_RECORD_FIXTURE,
             target_bars=1,
             midi_channel_1based=8,
             reca_start_tick=0,
@@ -197,12 +217,14 @@ class DeclaredIntentTests(unittest.TestCase):
         self.assertEqual(intent, 12)
 
     def test_grid_pattern_declares_the_downbeat_when_it_emits_the_first_step_immediately(self) -> None:
+        # The immediate step is the phase's downbeat, so the 16th-note grid step is not "intent":
+        # the clock the emitter lands on (1) stays latency, exactly as for the step-indexed shapes.
         timing = self._grid_timing(emit_immediate_first_step=True)
         self.assertEqual(timing["first_note_intent_clocks"], 0)
-        # The immediate step is the downbeat; the 16th-note grid step is not part of "intent".
-        self.assertNotEqual(timing["first_note_intent_clocks"], FIXTURE_STEP_CLOCKS)
 
     def test_grid_pattern_declares_its_grid_step_when_it_does_not_emit_immediately(self) -> None:
+        # Without the immediate step the grid's own first step is what the phase intends, and this
+        # emitter lands on it exactly (its `>=` on an integer counter has no ceiling artifact).
         timing = self._grid_timing(emit_immediate_first_step=False, step_clocks=6)
         self.assertEqual(timing["first_note_intent_clocks"], 6)
 
@@ -243,9 +265,9 @@ class IntentMappingTests(unittest.TestCase):
             args=args,
             per_track_stats=[
                 {
-                    "record_first_note_intent_clocks": 12,
-                    "overdub_first_note_intent_clocks": 24,
-                    "second_overdub_first_note_intent_clocks": 24,
+                    FIRST_NOTE_INTENT_ROW_KEYS["record"]: 12,
+                    FIRST_NOTE_INTENT_ROW_KEYS["overdub"]: 24,
+                    FIRST_NOTE_INTENT_ROW_KEYS["second_overdub"]: 24,
                 }
             ],
         )
@@ -262,7 +284,7 @@ class IntentMappingTests(unittest.TestCase):
             second_overdub_start_delay_beats=1,
         )
         intents = _first_note_intents(
-            args=args, per_track_stats=[{"record_first_note_intent_clocks": -1}]
+            args=args, per_track_stats=[{FIRST_NOTE_INTENT_ROW_KEYS["record"]: -1}]
         )
         self.assertEqual(
             {phase: (intent.clocks, intent.source) for phase, intent in intents.items()},
@@ -272,6 +294,31 @@ class IntentMappingTests(unittest.TestCase):
                 "second_overdub": (24, "run_default"),
             },
         )
+
+    def test_tracks_that_disagree_fall_back_to_the_run_declared_delay(self) -> None:
+        # The row that owns the verified phase window cannot be told from the rows alone (the
+        # layered verifier passes no phase window at all), so a disagreement must not subtract
+        # another track's placement.
+        args = _verifier_args(overdub_start_delay_bars=0, overdub_start_delay_beats=1)
+        intents = _first_note_intents(
+            args=args,
+            per_track_stats=[
+                {FIRST_NOTE_INTENT_ROW_KEYS["record"]: 0},
+                {FIRST_NOTE_INTENT_ROW_KEYS["record"]: 12},
+            ],
+        )
+        self.assertEqual((intents["record"].clocks, intents["record"].source), (0, "run_default"))
+
+    def test_a_row_that_declares_nothing_also_refuses_the_other_rows_declaration(self) -> None:
+        args = _verifier_args(overdub_start_delay_bars=0, overdub_start_delay_beats=1)
+        intents = _first_note_intents(
+            args=args,
+            per_track_stats=[
+                {FIRST_NOTE_INTENT_ROW_KEYS["record"]: 12},
+                {FIRST_NOTE_INTENT_ROW_KEYS["record"]: -1},
+            ],
+        )
+        self.assertEqual((intents["record"].clocks, intents["record"].source), (0, "run_default"))
 
 
 class VerifierIntentTests(unittest.TestCase):
@@ -415,22 +462,36 @@ def _verify(
                 "overdub_clock_pulses_seen": 192,
                 "second_overdub_notes_sent": 0,
                 "second_overdub_clock_pulses_seen": 0,
-                "record_first_note_intent_clocks": _value(declared_intent),
-                "overdub_first_note_intent_clocks": _value(overdub_declared),
-                "second_overdub_first_note_intent_clocks": -1,
+                FIRST_NOTE_INTENT_ROW_KEYS["record"]: _value(declared_intent),
+                FIRST_NOTE_INTENT_ROW_KEYS["overdub"]: _value(overdub_declared),
+                FIRST_NOTE_INTENT_ROW_KEYS["second_overdub"]: -1,
             }
         ],
         phase_after_index=0,
     )
 
 
-class FixtureIntentTests(unittest.TestCase):
-    """The registry's own fixtures declare the downbeat."""
+class VerifierShapeTests(unittest.TestCase):
+    """The declaration the edit fixture's own stream makes, through a real record shape."""
 
-    def test_edit_record_fixture_declares_the_downbeat(self) -> None:
-        self.assertEqual(
-            _fixture_first_note_intent_clocks(EDIT_RECORD_FIXTURE, step_clocks=FIXTURE_STEP_CLOCKS), 0
+    def test_the_edit_fixture_reaches_the_verifier_as_a_downbeat_declaration(self) -> None:
+        # The registry fixture is what the edit seed streams, and the run writes this value into the
+        # per-track row the verifier reads: a fixture whose first note is step 0 must declare 0, so
+        # the measured offset stays latency for the legs that use it.
+        port = _FakePort()
+        _notes, _clocks, intent = _stream_fixture_record_serial_anchored(
+            port,
+            _StubCollector(),
+            fixture=EDIT_RECORD_FIXTURE,
+            target_bars=1,
+            midi_channel_1based=8,
+            reca_start_tick=0,
+            bpm=600.0,
+            abort=_FakeAbort(),
         )
+        row = {FIRST_NOTE_INTENT_ROW_KEYS["record"]: intent}
+        intents = _first_note_intents(args=_verifier_args(), per_track_stats=[row])
+        self.assertEqual((intents["record"].clocks, intents["record"].source), (0, "streamer"))
 
 
 if __name__ == "__main__":

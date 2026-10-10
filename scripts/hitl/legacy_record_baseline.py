@@ -4313,6 +4313,16 @@ def _spawn_probe_press(
     except OSError as exc:  # noqa: BLE001 - a helper failure must degrade, not abort
         print(f"[warn] successor reentry press helper did not start: {exc}")
         return None
+#: The per-track row keys that carry each phase's streamer-declared first-note intent. One constant
+#: serves the writer (`run()`) and the reader (`_first_note_intents`) so a rename on either side
+#: cannot silently degrade every phase to `run_default`.
+#: cannot silently degrade every phase to `run_default`.
+FIRST_NOTE_INTENT_ROW_KEYS: dict[str, str] = {
+    "record": "record_first_note_intent_clocks",
+    "overdub": "overdub_first_note_intent_clocks",
+    "second_overdub": "second_overdub_first_note_intent_clocks",
+}
+
 
 @dataclass(frozen=True)
 class FirstNoteIntent:
@@ -4334,6 +4344,21 @@ def _declared_intent_clocks(value: Any) -> int:
         return -1
 
 
+def _agreed_declared_intent(per_track_stats: Optional[list[dict[str, object]]], key: str) -> int:
+    """One phase's declaration across the run's tracks, or ``-1`` when they do not agree.
+
+    All the tracks of a run normally stream the same shape, so they declare the same placement and
+    the value is unambiguous. When they disagree -- or any row declares nothing -- the row that
+    owns the verified phase window cannot be identified from the rows alone (the layered
+    `verify/capture.py` path passes no `phase_after_index` at all), so the answer falls back to the
+    run-declared delay instead of subtracting another track's placement.
+    """
+    declared = {_declared_intent_clocks(row.get(key)) for row in (per_track_stats or [])}
+    if len(declared) != 1:
+        return -1
+    return next(iter(declared))
+
+
 def _first_note_intents(
     *,
     args: argparse.Namespace,
@@ -4342,30 +4367,28 @@ def _first_note_intents(
     """The per-phase first-note intent the verification subtracts from the measured offset.
 
     The streamer that ran owns the declaration (`first_note_intent_clocks` in its own timing
-    evidence), which is the whole point: a generator that emits its first note a step into the bar
-    describes *that* placement instead of leaving the verifier to guess from the CLI. The verified
-    phase window is the last track's leg (``phase_after_index`` is that track's baseline), so the
-    last per-track row is the one that describes it.
+    evidence, carried into `per_track_stats` under `FIRST_NOTE_INTENT_ROW_KEYS`), which is the whole
+    point: a generator that emits its first note a step into the bar describes *that* placement
+    instead of leaving the verifier to guess from the CLI. A phase whose streamer declares nothing --
+    or whose tracks disagree -- keeps the run's own declared delay, which is what the verifier used
+    before the declaration existed.
     """
-    row: Mapping[str, Any] = per_track_stats[-1] if per_track_stats else {}
     keys = (
-        ("record", "record_first_note_intent_clocks", 0, 0),
+        ("record", 0, 0),
         (
             "overdub",
-            "overdub_first_note_intent_clocks",
             int(getattr(args, "overdub_start_delay_bars", 0) or 0),
             int(getattr(args, "overdub_start_delay_beats", 0) or 0),
         ),
         (
             "second_overdub",
-            "second_overdub_first_note_intent_clocks",
             int(getattr(args, "second_overdub_start_delay_bars", 0) or 0),
             int(getattr(args, "second_overdub_start_delay_beats", 0) or 0),
         ),
     )
     intents: dict[str, FirstNoteIntent] = {}
-    for phase, key, delay_bars, delay_beats in keys:
-        declared = _declared_intent_clocks(row.get(key))
+    for phase, delay_bars, delay_beats in keys:
+        declared = _agreed_declared_intent(per_track_stats, FIRST_NOTE_INTENT_ROW_KEYS[phase])
         if declared < 0:
             intents[phase] = FirstNoteIntent(
                 clocks=_phase_start_delay_clocks(delay_bars=delay_bars, delay_beats=delay_beats),
@@ -6813,14 +6836,11 @@ def run() -> int:
                             "track_index": idx,
                             "record_notes_sent": rec_notes,
                             "record_cc_sent": rec_cc,
-                            "record_clock_pulses_seen": rec_clock_count,
-                            "record_used_seconds_fallback": rec_fallback_seconds,
-                            "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
-                            "record_first_note_intent_clocks": _declared_intent_clocks(
+                            FIRST_NOTE_INTENT_ROW_KEYS["record"]: _declared_intent_clocks(
                                 rec_timing.get("first_note_intent_clocks")
                             ),
-                            "overdub_first_note_intent_clocks": -1,
-                            "second_overdub_first_note_intent_clocks": -1,
+                            FIRST_NOTE_INTENT_ROW_KEYS["overdub"]: -1,
+                            FIRST_NOTE_INTENT_ROW_KEYS["second_overdub"]: -1,
                         "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
                         "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
                         "record_device_bar_relative_bars": int(
@@ -7022,7 +7042,7 @@ def run() -> int:
                         "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
                         # Each streamer's own first-note intent (clocks), or -1 when it declared
                         # none so the verifier falls back to the run's declared phase delay.
-                        "record_first_note_intent_clocks": _declared_intent_clocks(
+                        FIRST_NOTE_INTENT_ROW_KEYS["record"]: _declared_intent_clocks(
                             rec_timing.get("first_note_intent_clocks")
                         ),
                         "overdub_notes_sent": od_notes,
@@ -7044,10 +7064,10 @@ def run() -> int:
                         "second_overdub_grid_steps_emitted": int(od2_timing["grid_steps_emitted"]),
                         "second_overdub_max_abs_grid_jitter_clocks": od2_timing["max_abs_grid_jitter_clocks"],
                         "second_overdub_mean_abs_grid_jitter_clocks": od2_timing["mean_abs_grid_jitter_clocks"],
-                        "overdub_first_note_intent_clocks": _declared_intent_clocks(
+                        FIRST_NOTE_INTENT_ROW_KEYS["overdub"]: _declared_intent_clocks(
                             od_timing.get("first_note_intent_clocks")
                         ),
-                        "second_overdub_first_note_intent_clocks": _declared_intent_clocks(
+                        FIRST_NOTE_INTENT_ROW_KEYS["second_overdub"]: _declared_intent_clocks(
                             od2_timing.get("first_note_intent_clocks")
                         ),
                     }

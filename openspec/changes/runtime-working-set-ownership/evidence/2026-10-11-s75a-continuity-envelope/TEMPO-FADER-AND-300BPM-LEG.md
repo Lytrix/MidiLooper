@@ -330,7 +330,10 @@ preset's record stream, so the record-phase advisory is not an intent problem an
 ### What landed
 
 * `scripts/hitl/transport_clock.py` -- `stream_pattern_for_bars` declares `first_note_intent_clocks` in its own
-  `timing` evidence: `phase_delay_clocks + (0 if emit_immediate_first_step else step_clocks)`.
+  `timing` evidence: `phase_delay_clocks + (0 if emit_immediate_first_step else step_clocks)`. The two branches
+  differ by construction and that is intended: the immediate step *is* the downbeat and lands on the phase's
+  first clock (so the +1 stays latency), while the non-immediate grid's first step is emitted exactly on its own
+  grid clock (its `>=` on an integer counter has no ceiling artifact).
 * `scripts/hitl/legacy_record_baseline.py`:
   * `FIXTURE_STEP_CLOCKS` (= `RECORD_GRID_STEP_CLOCKS`, one 16th at 24 PPQN) and
     `_fixture_first_note_intent_clocks(fixture, step_clocks)`: the fixture's first emitted step as a *musical*
@@ -339,21 +342,32 @@ preset's record stream, so the record-phase advisory is not an intent problem an
   * All three record stream shapes return their own declaration: `_stream_fixture_record_wall_scheduled`,
     `_stream_fixture_record_serial_anchored`, and `_stream_fixture_record_bars` (which passes its sub-shape's
     declaration through).
-  * `FirstNoteIntent` + `_declared_intent_clocks` + `_first_note_intents`: **one** per-phase mapping, threaded
-    into `_build_serial_verification(..., first_note_intent_clocks=...)` and used for the record, overdub and
-    second-overdub offsets. `source` says who declared it (`streamer`, from the timing evidence the run records
-    into `per_track_stats`, or `run_default`, the run's own `--*start-delay-bars/beats`). The duplicated
-    `_phase_start_delay_clocks(...)` calls in the verifier are retired; the fallback survives only for a
-    streamer that declares nothing (the occupy and wrap-note-off flows).
-* `scripts/test_hitl_first_note_intent.py` -- **17/17**: the granularity pin (step 2, `step_clocks 6` → intent
-  12, emission 13, so 1 clock stays latency), one declaration test per pacing mode (wall schedule, serial tick
-  anchor, bars mode, grid pattern with and without the immediate step), the delayed overdub's own placement,
-  genuine lateness still warning (`intent + bound + 1`), no intent inflation, and the mapping's ownership and
-  fallback. Five mutations red-proved with byte-identical restores (M1 grid intent folds the emitter clock,
-  M2 fixture intent folds it, M3 the mapping ignores the declaration, M4 the verifier drops the record intent,
-  M5 "declared nothing" reads as a declaration). Full host sweep **1,404 tests, 6F+1E** -- the same pre-existing
-  failure set as the pristine `a8d50522` worktree (which ran 1,387 tests: the difference is exactly this new
-  suite), with no new failure.
+  * `FirstNoteIntent` + `_declared_intent_clocks` + `_agreed_declared_intent` + `_first_note_intents`: **one**
+    per-phase mapping, threaded into `_build_serial_verification(..., first_note_intent_clocks=...)` and used for
+    the record, overdub and second-overdub offsets. `source` says who declared it (`streamer`, from the timing
+    evidence the run records into `per_track_stats`, or `run_default`, the run's own
+    `--*start-delay-bars/beats`). The duplicated `_phase_start_delay_clocks(...)` calls in the verifier are
+    retired; the fallback survives only for a streamer that declares nothing (the occupy and wrap-note-off
+    flows). The row keys live in one `FIRST_NOTE_INTENT_ROW_KEYS` constant shared by the writer and the reader,
+    so a rename cannot silently degrade every phase to `run_default`; and because the row that owns the verified
+    phase window is not identifiable from the rows alone (the layered `verify/capture.py` path passes no
+    `phase_after_index`), a phase is only taken from the streamer when the run's tracks *agree* -- a
+    disagreement falls back to the run-declared delay rather than subtracting another track's placement.
+* `scripts/test_hitl_first_note_intent.py` -- **20/20**: the granularity pin (step 2, `step_clocks 6` →
+  intent 12, emission 13, so 1 clock stays latency), one declaration test per pacing mode (wall schedule and the
+  serial tick anchor with a *non-zero* first step -- the discriminating input -- the bars mode, and the grid
+  pattern with and without the immediate step), the edit fixture's own downbeat through the shape that streams
+  it, the delayed overdub's own placement, genuine lateness still warning (`intent + bound + 1`), no intent
+  inflation, and the mapping's ownership, fallback and cross-track agreement. **Eight** mutations red-proved
+  with byte-identical restores: the grid intent folds the emitter clock; the fixture intent folds it; the
+  mapping ignores the declaration; the verifier drops the record intent; "declared nothing" reads as a
+  declaration; the serial-anchored declaration reverts to the old constant; the mapping trusts one row instead
+  of agreement; the reader stops sharing the writer's row key.
+* One independent review pass (adversarial, read-only) found no runtime defect and three test-level gaps; all
+  three are repaired above (the serial-anchored declaration's discriminating input, the two tautological
+  assertions, and the writer/reader key coupling), with the added cross-track agreement guard coming out of the
+  same finding. Full host sweep **1,404 tests, 6F+1E** -- the same pre-existing failure set as the pristine
+  `a8d50522` worktree (which ran 1,387 tests: the difference is exactly this new suite), with no new failure.
 
 ### The refutation: the base record phase intends the downbeat
 
