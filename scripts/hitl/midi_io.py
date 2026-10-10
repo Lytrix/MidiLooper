@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import time
+from typing import Optional
 
 try:
     import mido
@@ -114,9 +115,18 @@ def _send_multi_short_press(
             time.sleep(max(gap_ms, 1) / 1000.0)
 
 
-def _drain_input_messages(in_port: mido.ports.BaseInput) -> int:
+def _drain_input_messages(
+    in_port: mido.ports.BaseInput, *, max_messages: Optional[int] = None
+) -> int:
+    """Discard everything the port has already received; return how many were dropped.
+
+    ``max_messages`` bounds the loop for callers that must not spin on a port which keeps
+    producing messages while they drain -- `hitl.transport_clock._discard_buffered_input` asks
+    "has a clock arrived *since* I looked?", and an unbounded drain there never gets to the
+    question while a device is clocking. ``None`` keeps the original drain-everything behaviour.
+    """
     count = 0
-    while True:
+    while max_messages is None or count < max_messages:
         msg = in_port.poll()
         if msg is None:
             break

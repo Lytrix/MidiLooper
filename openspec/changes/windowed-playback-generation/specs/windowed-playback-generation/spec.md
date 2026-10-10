@@ -9,12 +9,14 @@ owner, and checkpoint parity preserved for undo and save.
 
 ### Requirement: Active playback is served from an immutable window
 
-When content is committed for a slot, the system SHALL serve active playback from an immutable **window** covering the
-interval a consumer is about to use, identified by `(slot, playbackGeneration, playbackRevision, interval)`. The system
-SHALL NOT require whole-loop publication in order to serve playback, and SHALL NOT assert whole-loop publication as the
-unit of authority. Existing immutable representations MAY be retained: the prepared pair and the fixed view remain the
-playback form for loops where they are admissible, immutable interval publication is how the demoted/windowed case is
-served, and a whole-loop view SHALL be treated as coverage that happens to span the whole loop.
+For every sounding slot, regardless of short/long loop length or playback mode, the system SHALL serve scheduled loop
+playback through **one logical rolling window request/build/adopt/emit path**, owned by `Track::stepPlaybackViewMaintenance`,
+using immutable completed coverage identified by `(slot, playbackGeneration, playbackRevision, interval)` and a source
+origin. Record return, ordinary play, overdub, NOTE_EDIT, layered/jam, slot launch, undo/redo and restored content SHALL
+NOT retain separate permanent pair, bridge, paged or mutable merged **emission** paths. The selected `LoopSnapshot` stays
+the complete checkpoint/effective-content authority, not the playback window, and playback SHALL NOT wait for its
+whole-loop publication when a valid generation-qualified retained source covers the requested interval. Legacy paths MAY
+remain temporarily behind differential verification until every supported route passes its own cutover/removal gate.
 
 #### Scenario: Playback is interval-backed
 
@@ -22,16 +24,73 @@ served, and a whole-loop view SHALL be treated as coverage that happens to span 
 - **THEN** the content served for that range comes from an immutable window covering that interval
 - **AND** the window carries the slot, the playback generation, the revision and the interval it was built for
 
-#### Scenario: An admissible slot keeps its existing representation
+#### Scenario: Short and long loops use the same playback path
 
-- **WHEN** a loop is admissible for the prepared pair or a fixed whole-loop view
-- **THEN** that representation remains authoritative for playback
-- **AND** it is treated as coverage spanning the loop, not as a second unit of authority
+- **WHEN** a sounding slot's loop fits inside the selected window span, or is longer than that span
+- **THEN** the same owner publishes and the same clock-edge reader consumes its completed immutable coverage
+- **AND** a short loop may have coverage spanning its whole loop without reserving a whole-take playback representation per recorded slot
+- **AND** restored content accepted before the per-window limit is served through bounded pages behind that same logical reader, never refused solely for exceeding one page; newly captured content may be refused only at its own admission, and no accepted event is truncated
+
+#### Scenario: All scheduled loop playback has one emission contract
+
+- **WHEN** ordinary playback, Record return, live overdub playback, NOTE_EDIT preview, layered/jam playback, an inbound slot, or undo/redo consumes loop events
+- **THEN** a source-qualified completed window reaches one ordered emission cursor and the existing active-note ledger through the same clock-edge contract
+- **AND** input passthrough, capture append, `LoopSnapshot` checkpoint publication, display rendering and persistence remain distinct owners rather than alternate playback emitters
+- **AND** any old prepared-pair, fixed/bridge, paged or mutable merged branch is a named temporary migration fallback with a removal trigger, not the final playback authority
+
+#### Scenario: Record prepares immutable intervals through the ordinary playback owner
+
+- **WHEN** accepted Record Capture content supplies an interval that playback will sound while recording or after stop
+- **THEN** the same Track window owner prepares a complete, Capture-generation-qualified window in a private role and publishes it only when that interval's source and event order are complete
+- **AND** further accepted Capture input supersedes a candidate whose covered content is stale without mutating a served `current` window or rejecting that input merely because window preparation is pending
+- **AND** initial bar preparation and later interval lookahead are source preparations for the same clock-edge reader, not distinct first-bar or Record-return emission drivers
+
+#### Scenario: Frozen Record source inspection is interval-qualified
+
+- **WHEN** a long accepted Capture range is frozen at Record stop and a one-bar successor is owed before the whole checkpoint publishes
+- **THEN** the existing Track window owner incrementally skips source blocks proven irrelevant to that interval by a generation-qualified Capture-owned index, charging each inspected block and matching row to bounded owner turns
+- **AND** out-of-order accepted input, stop projection, later source mutation or an unavailable index never silently omit an event: an unproven block is inspected, an invalid receipt refuses publication, and the job keeps its frozen source until its reader and future obligations end
+- **AND** the index never becomes a second content authority, a stop-edge scan, an extra view, or a replacement for the complete `LoopSnapshot` checkpoint
+
+#### Scenario: A late frozen Record window cannot mask its successor
+
+- **WHEN** a generation-qualified frozen Record interval completes after its eligible boundary on an unaligned loop while the complete whole-loop checkpoint remains private
+- **THEN** the missed interval is reported as late rather than credited as ready for its earlier boundary; it neither replaces an already serving `current` mid-traversal nor replays events behind the emission cursor
+- **AND** the same Track owner retains the frozen source and the next affected interval's preparation obligation, even if the late ready covers the playhead; a late ready is not mistaken for the next interval's successor
+- **AND** a complete next-interval ready may be adopted only on an eligible boundary with exact ordered MIDI and ledger closures; no silence, partial publication, stop-edge build, or whole-root dependency is accepted as a successful in-envelope handoff
+
+#### Scenario: Record stop transfers a matching served interval without rebuilding it
+
+- **WHEN** Record stops and the served complete window matches the frozen Capture generation, final loop geometry, covered content and closure obligations
+- **THEN** that same physical `current` window remains the reader across the source-hold transfer to the job-owned frozen range, retaining its emission cursor and sounding ledger without replay or a stop-edge copy
+- **AND** when any of those conditions does not match, the stale window is not relabeled current; the frozen source remains protected while the same off-clock owner prepares a corrected complete successor
+- **AND** Record stop never sorts, projects content-proportionally, or publishes a partial playback window on the timing-critical edge
+
+#### Scenario: A building LoopSnapshot is not a partial playback root
+
+- **WHEN** whole-loop `LoopSnapshot` construction progresses while Record Capture or its frozen stop range still supplies playback intervals
+- **THEN** those intervals may be prepared from their generation-qualified Capture source without waiting for whole-loop Snapshot publication
+- **AND** no consumer treats the unfinished Snapshot candidate as a published interval root; after complete atomic publication the selected Snapshot or pinned retained committed source becomes the next window source under the same reader
+- **AND** the frozen source and any still-serving window are released only after their reader and successor obligations end
+
+#### Scenario: An additional sounding slot is not bypassed by active-slot selection
+
+- **WHEN** an enabled non-active layered/jam slot sounds beside the active slot, or a prepared inbound slot becomes active
+- **THEN** each sounding slot's own source-qualified coverage is offered to the same bounded owner and consumed through the same completed-window reader and ordered MIDI/ledger contract
+- **AND** an active-slot switch does not invalidate another still-sounding slot solely because it is not `activeLoopIndex`; `TrackManager` retains sole authority for active-slot selection
+- **AND** stale completion or release for one slot cannot publish into or retire another slot's reader
+
+#### Scenario: A live overdub is not a second scheduled playback stream
+
+- **WHEN** committed content and live overdub Capture overlap, wrap, stop or hand off to a committed pass
+- **THEN** scheduled overdub events and their note closures are emitted and accounted exactly once through that slot's window reader and ledger, in the same ordering contract as the committed events
+- **AND** input passthrough and Capture append remain separate from scheduled playback, but no independent clock-edge Capture replay or sorting remains alongside the unified reader
+- **AND** a complete pre-handoff window is not torn or discarded before its valid traversal ends
 
 #### Scenario: The demoted case is served by interval publication
 
 - **WHEN** a loop is past the demotion bound and no whole-take representation is admissible
-- **THEN** playback is served by immutable interval publication
+- **THEN** playback uses the same immutable interval publication and emission path as a short loop
 - **AND** no whole-take reservation is required or restored for that slot
 
 ### Requirement: A published window is immutable and no consumer read straddles a replacement
@@ -85,14 +144,27 @@ overlay SHALL pin its actual source dependencies rather than relying on a null i
 
 ### Requirement: Preview content is a distinct source and is never committed currency
 
-Live note-edit preview content SHALL be served from a **preview source contract of its own**, published through the same
-**immutable deferred publication** discipline as committed content: versioned, retained and invalidated by the
-edit-session lifecycle, with an identity distinguishable from a committed window's at the same committed revision.
-Publication SHALL define **source freezing** (the preview revision a build works from),
-**cancellation** (what happens when the session mutates, re-focuses another track, undoes or exits between build grains)
-and **committed-content handoff** (how the preview source yields at session exit), and no mixed or stale preview content
-SHALL be published. Preview content SHALL NOT masquerade as committed currency — the committed playback revision remains
-the sole content-currency authority — and it SHALL NOT depend on a live mutable fallback for committed playback.
+Live NOTE_EDIT preview SHALL be a **distinct source** on the same rolling playback owner and reader used for committed
+content on both short and long loops. Its own source freeze, preview revision, cancellation, and committed-content handoff
+follow the same immutable deferred publication discipline, with an origin distinguishable from committed playback at the
+same committed revision. The committed `playbackRevision` remains the sole committed currency authority; the preview's
+session revision is its lifecycle token, never a second committed currency. The window owner resolves the selected
+committed interval with `EditManager`'s identity-qualified session delta rather than treating a whole-loop mutable
+`sessionMidiEvents` projection as a second playback engine. A preview cannot publish mixed or stale content or silence
+unaffected sounding notes; session undo/redo and exit change source identity without rebuilding inline on the clock edge.
+
+#### Scenario: An empty edit delta is not an empty effective interval
+
+- **WHEN** NOTE_EDIT opens without changes or the selected interval has no edited identities
+- **THEN** its completed preview window composes the committed interval unchanged, including its sounding notes
+- **AND** a genuinely event-free effective interval can still publish complete ready coverage and sound as silence
+- **AND** neither a whole-loop session projection nor a non-empty-preview predicate is needed to decide readiness
+
+#### Scenario: Preview supersession closes only removed identities
+
+- **WHEN** an edit, in-session undo/redo, selected-track change or session exit supersedes a preview source during playback
+- **THEN** the owner revalidates the frozen committed base and session identity before adopting the next interval, without publishing stale or mixed preview content
+- **AND** soundings unchanged by that transition continue while removed or replaced identities receive their required closures exactly once
 
 #### Scenario: Preview is identified as preview
 
@@ -106,11 +178,12 @@ the sole content-currency authority — and it SHALL NOT depend on a live mutabl
 - **THEN** the preview source is invalidated or re-versioned by that lifecycle
 - **AND** stale preview content is not served as current
 
-#### Scenario: Committed playback does not depend on the preview path
+#### Scenario: Short-loop NOTE_EDIT and committed playback share the reader
 
-- **WHEN** the live mutable fallback is withdrawn for committed playback
-- **THEN** preview content is still served through its own contract
-- **AND** the withdrawal is reported as applying to committed playback only
+- **WHEN** NOTE_EDIT is active on a short or long loop and preview content changes or the session exits
+- **THEN** preview and committed successors use the same interval window publication and clock-edge emission path
+- **AND** the previously serving immutable window remains authoritative until a valid successor is adopted; no separate whole-loop preview or mutable merged playback fallback is required by loop length
+- **AND** the old preview/committed fallback paths are removed only after their own exact MIDI, ledger, source-lifetime and timing gates pass
 
 ### Requirement: Readiness is owed per affected tick, before the playhead returns to it
 
@@ -118,6 +191,20 @@ After content changes at a tick, an updated window covering that tick SHALL be r
 The deadline SHALL be derived from tempo, quantisation, phase advance and service availability — not asserted as a
 constant and not expressed as a bar count. A whole-loop coverage interval SHALL remain an acceptable way to satisfy
 readiness, and preparation SHALL run ahead of the playhead rather than being centred on it.
+
+#### Scenario: A complete unchanged current window needs no new preparation margin
+
+- **WHEN** a sounding slot's complete immutable `current` covers the tick about to be consumed, holds its qualified source and its content/revision has not changed
+- **THEN** that window is servable immediately through the same reader, including on repeated short-loop wraps, without allocating another window or reserving a fixed bar of future build time
+- **AND** this structural servability does not claim that a different accepted revision is ready, reset the one-pass-late allowance, or forgive a missed successor deadline
+
+#### Scenario: Accepted late content is judged against its actual affected tick
+
+- **WHEN** a Record Capture append, edit or source/geometry transition changes an interval that will be heard again
+- **THEN** the owner retains the accepted source and measures remaining bounded work after that change against the earliest affected playback tick, including source inspection, order, closure, publication, competing holders and final stop geometry where applicable
+- **AND** an incrementally prepared successor MAY reuse useful prior work, but SHALL NOT publish a stale Capture generation or discard accepted content to make the deadline fit
+- **AND** the service proof derives any residual handoff margin from the actual request and supported workload; it does not impose `Config::TICKS_PER_BAR` as a universal extra lead or claim that a 64-tick service opportunity alone finishes a window
+- **AND** a refusal or missed deadline is reported by name and does not count a temporary legacy emission or one-pass-late traversal as a readiness pass
 
 #### Scenario: An edit is ready before the playhead returns
 
@@ -272,9 +359,11 @@ failed revalidation SHALL retain the request and continue the valid audible sour
 
 Window acquisition, replacement and publication SHALL happen on a **single named off-clock owner**, which SHALL declare
 and honour a bounded service contract: a fixed work quantum, a persistent build cursor, a bounded number of consecutive
-denied turns, and a demonstrated handoff margin. The MIDI input boundary, the transport tick and the clock path SHALL
-only read readiness, and SHALL NOT allocate, build or block for a window. The owner that requests a preparation SHALL
-not also publish in the steady state.
+denied turns, and any request-specific residual handoff margin demonstrated under the supported workload. A complete
+unchanged `current` requires no new build lead; a changed successor is admitted only against the earliest affected-tick
+deadline with all remaining source, closure, order, publication and competing-holder work charged. The MIDI input boundary,
+the transport tick and the clock path SHALL only read readiness, and SHALL NOT allocate, build or block for a window. The
+owner that requests a preparation SHALL not also publish in the steady state.
 
 #### Scenario: The timing-critical edge allocates nothing
 
@@ -395,12 +484,13 @@ stop, switch or undo requests, whose acceptance stays unconditional (DEC-078).
 
 Content restored from SD or undo that was accepted before the limit existed SHALL be served — never retroactively
 refused — and SHALL NOT be routed into the deadline-fault silence policy merely for exceeding the window's capacity. An
-interval whose content exceeds one page SHALL be served as **multiple fixed-capacity immutable event pages** through a
-**resumable cursor** that preserves the source revision, event ordering and **exactly-once** emission across page
-boundaries; pages SHALL be prepared **off-clock** from bounded, preallocated storage. Pagination SHALL NOT delay events to
-later musical ticks, rebuild content inline, restore whole-take reservations or truncate content. Capacity exceeding one
-page is a **supported compatibility case and is not itself a deadline fault**; genuine preparation or playback deadline
-failures SHALL still follow the approved fault-containment policy, because a storage bound is **not** a throughput proof.
+interval whose content exceeds one page SHALL be served as **multiple fixed-capacity immutable event pages behind the
+same logical playback window reader** through a resumable cursor that preserves the source revision, event ordering and
+**exactly-once** emission across page boundaries; pages SHALL be prepared **off-clock** from bounded, preallocated
+storage. Pagination SHALL NOT create a second clock-edge playback branch, delay events to later musical ticks, rebuild
+content inline, restore whole-take reservations or truncate content. Capacity exceeding one page is a **supported
+compatibility case and is not itself a deadline fault**; genuine preparation or playback deadline failures SHALL still
+follow the approved fault-containment policy, because a storage bound is **not** a throughput proof.
 Serving it SHALL stay inside the emission service's **declared closure capacity** — the same declared limit the capture
 and stop admissions already enforce — so where an interval's own content holds more identities open at once than that
 capacity carries while it also owes closures, the emission selection SHALL refuse **by name** rather than serve it:
@@ -410,10 +500,10 @@ demand (which is still owed, not discarded), SHALL NOT truncate or reorder anyth
 deadline fault; where the interval does fit the declared capacity, the complete, ordered, exactly-once claim below holds
 unchanged.
 
-#### Scenario: A long restored loop plays completely after the fallback is withdrawn
+#### Scenario: A short or long restored loop plays completely after the fallback is withdrawn
 
-- **WHEN** a restored loop's requested interval exceeds the window's capacity and the live mutable fallback is withdrawn
-- **THEN** the interval is served through bounded pages with complete, ordered, exactly-once output
+- **WHEN** a restored loop's requested interval exceeds the window page's capacity and the live mutable fallback is withdrawn
+- **THEN** the interval is served through bounded pages behind the same window reader with complete, ordered, exactly-once output
 - **AND** no event is delayed to a later tick, truncated or rebuilt inline
 
 #### Scenario: Beyond the declared closure capacity the emission selection refuses by name
@@ -556,6 +646,19 @@ permitted gap between service opportunities rather than asserted.
 - **WHEN** playback preparation and capture finalization or persistence all have outstanding work
 - **THEN** each of them retains its own service opportunity
 - **AND** no owner is starved indefinitely by another
+
+#### Scenario: A playback deadline also needs its source owner
+
+- **WHEN** the earliest affected playback tick depends on Record/overdub Capture, a frozen stop range or committed Snapshot progress that another existing deferred owner is still preparing
+- **THEN** service accounts for both the source owner's remaining bounded turns and the Track window owner's remaining bounded turns before claiming that tick ready
+- **AND** the existing deferred-owner arbitration supplies demonstrated opportunities to those owed owners without inventing another publisher/scheduler, building on the clock edge, or granting blanket priority to every RECORDING or OVERDUBBING track
+- **AND** when source readiness, window publication or edge adoption fails, the outcome names the actual refusing holder/transition and does not count legacy output as a passing deadline
+
+#### Scenario: Deadline service preserves other owners' bounded opportunities
+
+- **WHEN** an imminent playback/source obligation overlaps another sounding slot, capture finalization, Snapshot publication, persistence or display work
+- **THEN** any deadline-aware selection on the existing owner rotation preserves bounded non-starving service for each admitted obligation, while playback holders still rotate across tracks and select the earliest owing slot within a track
+- **AND** the measured composed service gap and charged work meet the earliest affected tick for each in-envelope sounding role; an unmeasured priority rule or a mode-wide priority flag is not a timing guarantee
 
 ### Requirement: Published views are read-only and ownership survives transitions
 

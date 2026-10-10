@@ -312,6 +312,7 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
 
 EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, EditPassVec rows,
                                                               bool applySessionOverlay) {
+    if (hasPendingCurrentRootNoteEditEntry()) return kInvalidEditPassId; // not an admitted geometry intent
     if (!editSession.active || rows.empty()) {
         return kInvalidEditPassId;
     }

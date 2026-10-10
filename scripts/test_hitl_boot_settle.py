@@ -133,35 +133,40 @@ class SettleEndReasonTests(unittest.TestCase):
 
 
 class ReadinessTransportStopTests(unittest.TestCase):
-    """`!STOP_STATUS` silence is resolved by one idempotent MIDI Stop, then refused by name."""
+    """Attach readiness proves a live device **without touching it**.
 
-    def _run(self, tmp: Path, *, replies_after_stop: bool):
+    The end goal is *always playing, never stopping*: the probe asks the one allowlisted query
+    with no transport gate (`!HEAP_STATS`, which also carries the device's own transport/track/
+    storage gates) and never presses. The old contract sent an idempotent realtime Stop and
+    demanded `state=STOPPED`, which is what left the composed preset's second leg measuring its
+    edit gestures on a stopped take (`captures/live-current-root-entry-t8s4-07/08/09`). The
+    stopped-state heap observation belongs to the run's own end, once the transport is stopped
+    there.
+    """
+
+    def _run(self, tmp: Path, *, replies: bool, transport_running: bool = False):
         log = tmp / "attach.log"
         log.write_text("\n".join(f"line {i}" for i in range(30)), encoding="utf-8")
-        state = {"stopped": False, "stop_calls": 0}
+        state = {"stop_calls": 0}
+        gate = "1" if transport_running else "0"
+        heap_row = f"#HEAP_STATS,transport={gate},tracks=1,storage=0"
 
         class FakeSession:
             session_log = log
 
             def send_command(self, command, *, nonce, end_nonce):
-                if not state["stopped"]:
-                    # Transport-gated command: a running transport produces no reply at all.
-                    return True, "accepted"
-                with log.open("a", encoding="utf-8") as fh:
-                    fh.write(f"#CAP,1,TRACE_FENCE,{nonce}\n")
-                    fh.write("#STOP_STATUS,us=9,state=STOPPED,pending=0,phase=0,queue=0/4\n")
-                    fh.write(f"#CAP,2,TRACE_FENCE,{end_nonce}\n")
+                if replies:
+                    with log.open("a", encoding="utf-8") as fh:
+                        fh.write(f"#CAP,1,TRACE_FENCE,{nonce}\n")
+                        fh.write(heap_row + "\n")
+                        fh.write(f"#CAP,2,TRACE_FENCE,{end_nonce}\n")
                 return True, "accepted"
 
             def fenced_response(self, nonce, end_nonce, *, timeout_s):
-                if not state["stopped"]:
-                    return None
-                return ["#STOP_STATUS,us=9,state=STOPPED,pending=0,phase=0,queue=0/4"]
+                return [heap_row] if replies else None
 
         def stop() -> None:
             state["stop_calls"] += 1
-            if replies_after_stop:
-                state["stopped"] = True
 
         fake = FakeSession()
         with patch.object(mc, "active_managed_capture", lambda: fake):
@@ -170,19 +175,27 @@ class ReadinessTransportStopTests(unittest.TestCase):
             )
         return ready, reason, state
 
-    def test_silent_probe_is_resolved_by_one_idempotent_stop(self) -> None:
+    def test_a_reply_is_readiness_and_no_stop_is_ever_sent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ready, reason, state = self._run(Path(tmp), replies_after_stop=True)
+            ready, reason, state = self._run(Path(tmp), replies=True)
         self.assertTrue(ready, reason)
-        self.assertEqual(1, state["stop_calls"], "the stop must be sent exactly once")
-        self.assertIn("idempotent MIDI Stop", reason)
+        self.assertIn("fresh heap observation", reason)
+        self.assertEqual(0, state["stop_calls"], "the probe must never stop the device")
+
+    def test_a_playing_device_is_ready(self) -> None:
+        """The end goal: a device whose transport runs is a device this run may join."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ready, reason, state = self._run(Path(tmp), replies=True, transport_running=True)
+        self.assertTrue(ready, reason)
+        self.assertIn("transport=1", reason)
+        self.assertEqual(0, state["stop_calls"])
 
     def test_a_device_that_stays_silent_is_refused_by_name_without_resetting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ready, reason, state = self._run(Path(tmp), replies_after_stop=False)
+            ready, reason, state = self._run(Path(tmp), replies=False)
         self.assertFalse(ready)
-        self.assertEqual(1, state["stop_calls"])
-        self.assertIn("not answering", reason)
+        self.assertIn("no fenced !HEAP_STATS reply", reason)
+        self.assertEqual(0, state["stop_calls"], "silence must not become a press")
 
     def test_readiness_without_a_stop_callback_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -201,7 +214,7 @@ class ReadinessTransportStopTests(unittest.TestCase):
             with patch.object(mc, "active_managed_capture", lambda: SilentSession()):
                 ready, reason = mc.establish_attach_readiness(timeout_s=0.3)
         self.assertFalse(ready)
-        self.assertIn("no fenced !STOP_STATUS reply", reason)
+        self.assertIn("no fenced !HEAP_STATS reply", reason)
 
 
 class BootBannerDetectionTests(unittest.TestCase):

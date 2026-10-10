@@ -235,6 +235,7 @@ LOOP_COLD_MEM size_t Loop::extractOpenCaptureNoteOns(SessionMidiEventVec& out) {
   if (out.empty()) {
     return 0;
   }
+  advanceCaptureContentGeneration();
   capture.store.clear();
   if (!kept.empty()) {
     capture.store.loadFromEvents(kept);
@@ -503,6 +504,7 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
     overdubSessionLiveUndoEvents_.clear();
     capture.store.copyEventsTo(overdubSessionLiveUndoEvents_);
+    advanceCaptureContentGeneration();
     capture.store.clear();
     captureEventsSortDirty = false;
     rebuildCapturePreviewFromStore(*this);
@@ -532,6 +534,7 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
     return ok;
   }
   if (capture.store.empty() && !overdubSessionLiveUndoEvents_.empty()) {
+    advanceCaptureContentGeneration();
     capture.store.loadFromEvents(overdubSessionLiveUndoEvents_);
     overdubSessionLiveUndoEvents_.clear();
     captureEventsSortDirty = false;

@@ -1,0 +1,45 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:956:
+test/test_note_edit_entry_boundary/live_current_root_entry.inc:488:64: error: no member named 'getCurrentEditMode' in 'EditManager'; did you mean 'getCurrentState'?
+  488 |     TEST_ASSERT_EQUAL(EditManager::EDIT_MODE_NONE, editManager.getCurrentEditMode());
+      |                                                                ^~~~~~~~~~~~~~~~~~
+      |                                                                getCurrentState
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^
+include/EditManager.h:326:20: note: 'getCurrentState' declared here
+  326 |     EditNoteState* getCurrentState() const { return currentState; }
+      |                    ^
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:956:
+test/test_note_edit_entry_boundary/live_current_root_entry.inc:518:65: error: no member named 'getCurrentEditMode' in 'EditManager'; did you mean 'getCurrentState'?
+  518 |     TEST_ASSERT_EQUAL(EditManager::EDIT_MODE_START, editManager.getCurrentEditMode());
+      |                                                                 ^~~~~~~~~~~~~~~~~~
+      |                                                                 getCurrentState
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^
+include/EditManager.h:326:20: note: 'getCurrentState' declared here
+  326 |     EditNoteState* getCurrentState() const { return currentState; }
+      |                    ^
+2 errors generated.
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.o] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 3.83 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:03.833
+================== 1 test cases: 0 succeeded in 00:00:03.833 ==================
+BASELINE_EXIT=1

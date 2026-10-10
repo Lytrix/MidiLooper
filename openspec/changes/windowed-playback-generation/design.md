@@ -95,12 +95,17 @@ lifetimes suffice **before** adding buffers. *Alternatives:* simply enabling the
 long loops (rejected — it is the reservation RC-MEM-2 removed, and `test_playback_prewarm` pins that a windowed-only slot
 reserves no whole-take representation).
 
-**D6 — Unify the consumption contract, not every representation.** Prepared-pair and fixed-view playback stay for
-admissible loops; immutable **interval** publication is introduced for demoted/windowed loops; a whole-loop view is
-treated as coverage that happens to span the whole loop. The live mutable merged-window build is removed **once its
-replacement is verified**, with a cold reference path retained for parity testing. *Alternatives:* replace all three
-representations at once (rejected — an unnecessary rewrite of working behaviour); leave the live build in place
-(rejected — it is the Unbounded row this change exists to close).
+**D6 — One rolling playback path per sounding slot (DEC-116 supersedes DEC-108 item 2 / the prior D6).** The earlier decision to
+keep prepared-pair/fixed-view as permanent playback forms for admissible loops is withdrawn. The final playback form is
+one immutable interval-window request/build/adopt/emission protocol under `Track::stepPlaybackViewMaintenance` for short
+and long loops, Record return, overdub, NOTE_EDIT, layered/jam, launch, undo and restored content. Different source
+freeze/pin adapters do **not** become different playback drivers. The existing prepared-pair, bridge, paged and merged
+emission branches are transitional parity fallbacks, each retired at its documented verification gate; no accepted
+content is lost to make them removable. DEC-108's remaining identity, service and source-retention rules still apply.
+**Frozen Record interval inspection (2026-10-08 extension to D6, not another publisher).** A one-bar frozen `CaptureRange` window currently makes `RuntimePlaybackViewFill` inspect every sealed row before completion: a 24-bar/16-pair-per-bar Record stop at phase 473 has 768 rows, at least 24 × 32-row Fill grants before Order, and fewer than five 64-tick opportunities before the next bar. Preserve the Track owner and Loop-owned Capture source; give the sealed range a generation-qualified, incrementally maintained block-to-bar membership summary (including out-of-order accepted append). One bounded owner grain charges a summary inspection or a candidate row; skip only blocks *proven* irrelevant after final stop projection, never infer sortedness. A stale/unknown summary conservatively inspects the block and cannot publish partial content. The source index belongs to the accepted Capture storage, transfers with its sealed chunks, and is invalidated or maintained on every tick-changing rewrite; it is not a new derived playback view or content authority. The source-body/index cost must be measured in PSRAM/LoopPool and never added to Track's 384-byte DTCM shape. A source above the indexable envelope uses safe full inspection with an explicitly named deadline consequence; no silent acceptance or lowered lead. Frozen-source release, complete Snapshot publication, immutable current/ready/build and legacy fallback keep their existing contracts.
+
+
+**Unaligned Record return / late-ready hypothesis (2026-10-09; not yet device-attributed).** The pinned indexed image committed 25 bars (`length=19200`, stop at local phase 18922, 278 ticks before wrap) and emitted no device channel-8 NoteOn until ~4.8 s later although persisted early bars contain notes. Ring integrity passed, but there is no captured view-role/adoption receipt; the `win_track_not_playing` gate names exclusion from the ordinary committed rolling requester while a Record job owns the return, *not* refusal of the separate frozen owner/reader. The frozen Track holder can prepare `ready` for bar zero near the wrap; `resolveQualificationPlaybackSourceForTurn` accepts a frozen ready only when `ready.coverage.startPhase == phase`, so a completed bar-zero ready after wrap cannot be adopted. Meanwhile `fillPlaybackHolders` can treat a complete ready covering the playhead as satisfying successor work, even though it covers the *current* bar and the next bar is owed. This is a code-grounded possible causal chain, not a proven state trace on the device. The 24-bar native oracle has a longer aligned setup and does not test that interleaving. The preferred existing-owner path is to classify a late ready by its own source/interval and missed boundary, retain the frozen job, and service the next owed interval rather than treating current-bar coverage as next-bar readiness. Any edge adoption at a crossed boundary must carry a cursor floor and preserve the active-note ledger; merely relaxing the `startPhase == phase` comparison or suppressing a stop CC123 would replay/strand notes. Freeze before-boundary and after-boundary 25-bar TrackManager-edge RED oracles before changing policy. No second scheduler, fourth view, stop-edge build, invented deadline, or whole-root gate.
 
 **D7 — The published root keeps its checkpoint authority; parity is judged against the current revision.** Undo parity
 and save parity are one requirement on two consumers, and neither consults the window's lag — the one-pass-late rule is a
@@ -379,6 +384,11 @@ inbound switch preparation and overlapping finalization — not merely eight sou
 invented here: the supported envelope is **derived** from grain costs and the worst permitted gap between service
 opportunities.
 
+**Main delivery direction — service the audible obligation and its source, not a transport mode.** Keep one immutable `current` per sounding slot and one Track-owned `build`/`ready` publication path. Record, overdub, preview and committed content change the *source adapter*, never the clock-edge reader. A complete unchanged `current` continues over wraps without requesting a new build; after an accepted change, source qualification, interval construction, closure and adoption form **one affected-tick obligation** with an earliest deadline. The current outer `MidiServiceDrain::selectDeferredIdleOwner` rotates seven owner kinds; Record first-bar refresh is reached on VisualCache turns, Record/overdub stop grains have local precedence when their track's deferred turn runs, and Snapshot backlog has an extra opportunity. The inner playback turn chooses one track round-robin and its most urgent owing slot. None of those local rules alone guarantees that both a needed source and its playback successor get enough turns before the affected tick. Extend the **existing** deferred-owner arbitration with a bounded deadline-aware service opportunity for this obligation, including its already-owned Snapshot/frozen-source/stop prerequisites; do not create a second scheduler, always prioritize all RECORDING/OVERDUBBING work, or starve persistence, display, finalization or another sounding role. Preserve the cross-track playback rotation and within-track earliest deadline; prove an upper bound on each owner's denied turns and the total composed service gap. Changing that outer timing policy is a formal timing-model review before firmware, not authorization from this paragraph alone.
+Only a source owner **actually required** for this interval is charged or promoted: the job-owned frozen Capture range can serve playback while the complete `LoopSnapshot` remains unpublished. A Snapshot turn becomes a playback prerequisite only when no already-qualified retained/Capture source can answer the owed interval. This preserves `Loop`'s atomic checkpoint authority without making whole-root publication the playback gate.
+
+**Migration sequence and decisive oracle.** (1) Freeze production entry → owner → edge MIDI/ledger and source-lifetime traces, including a Record whose last accepted event arrives late, stop geometry differs, the whole `LoopSnapshot` is still private, and other tracks plus persistence/display owe turns; a new-reader removal must turn the trace RED. (2) Move live Capture, frozen Record, committed/retained, overdub and NOTE_EDIT onto the same request/`current`/`ready`/`build` lifecycle, preserving accepted input and the last coherent view through a source change. (3) Qualify remaining work per affected tick together with bounded source-owner and playback turns, at one-, four- and 64-bar lengths and all supported sounding roles; count a missed tick or named refusal as failure, not as a fallback success. (4) Only after parity, RAM1/PSRAM and pinned-device continuity pass for every route, retire temporary pair/bridge/first-Record/merged/paged **emission** selections under task 3.7b; keep a cold reference oracle. The earlier default-image post-stop channel-8 gap (2.121 s in the pinned status entry) is unresolved: a missing service turn is a hypothesis to measure alongside stale source, blocked holder, role readiness and edge adoption, not an attributed scheduler defect.
+
 **3 — Clock revalidation.** Admission is revalidated before publication/handoff when tempo, clock source, projection or
 observed advancement invalidates the earlier assumptions: a changed clock does not invalidate the musical content, it may
 invalidate the **promise that preparation will finish in time**. On failure the accepted request is retained, the valid
@@ -499,9 +509,201 @@ Admission refusal and the approved affected-slot-silence last resort are preserv
 a passing outcome during normal in-envelope operation. This change does not disable the runtime's separate
 StopAdmissionContract recovery, nor certify that dependency merely by forbidding global stops in the window owner.
 
+## DEC-116 — single rolling playback contract (design target; no firmware checkoff)
+
+One **logical** driver is leased per sounding slot, not one shared mutable buffer for the whole device. The existing
+`Track` playback owner has `current` (immutable reader), `ready` (complete immutable successor) and `build` (private
+candidate), generation-qualified and released after every reader/source obligation ends. Its store remains window-sized
+for any loop length; a short loop fitting the selected tunable span has whole-loop *coverage*, not a separate whole-take
+publisher or a resident bundle on every recorded slot. A legacy dense/restored interval may use bounded pages behind
+the same reader, with admission/closure capacity and no truncation. The provisional 2,048-event limit and span comparison
+remain measurement inputs, not certified supported density or a mandate to widen every window to two bars.
+
+The source adapter freezes one of: live Capture during Record; a job-owned sealed range through Record stop; selected
+complete `LoopSnapshot` or retained revision with pinned bodies for committed content; live overdub delta; or
+`EditManager`'s identity-qualified NOTE_EDIT delta with `origin == Preview` and a session lifecycle token. `Loop` keeps
+canonical/whole-root publication, `EditManager` keeps its session, `TrackUndo` undo semantics, `StorageManager` SD and
+`TrackManager` slot selection. The Track window owner selects/resolves the interval, owns the build and publishes once;
+the one clock-edge reader adopts and emits through the existing cursor/ledger without a build, sort or source scan.
+Record bar one is the same `current` role before and after stop, with a source/lifetime handoff rather than a separate
+return-window publisher. Edits, undo, source loss, overdub wrap, transport seek/stop and slot changes preserve the
+last coherent traversal and cancel/revalidate stale candidates through their generation and deadline contracts.
+
+**Record is a source transition on the main window driver, not a first-bar playback mode.** From Record start, the existing Track window owner uses generation-qualified live Capture to prepare complete interval windows in private `build`/`ready` roles while `current` remains immutable. Accepted input can supersede an in-flight candidate; only a window whose frozen Capture generation includes the accepted rows for its covered interval may become audible. The next interval is requested and serviced ahead of use under the same role protocol as ordinary playback; neither a dedicated first-bar emitter nor a stop-only publisher supplies an alternative clock reader. The initial empty/raw first-bar reservation in today's implementation is a preparation resource, not evidence that later Capture rows are already in a complete audible window. Record input acceptance is not made contingent on a window build succeeding.
+
+At stop, freeze the Record source and determine final length, projection and closure obligations. If the already-serving complete `current` covers the return interval and matches the frozen Capture generation **and final geometry/content**, transfer its source hold to the job-owned frozen range without copying or re-emitting its content; keep its emission cursor and ledger obligations. If it does not match (late append, length change, missing closure or refused preparation), do not relabel it as current: retain only valid old coverage for its permitted traversal, preserve the frozen range, and have the same off-clock owner prepare a corrected `ready` successor. Release the range only when the selected committed source and its needed windows really take over. The clock edge only qualifies/adopts completed views and emits; stop performs no content-proportional projection, sort or rebuild to make this handoff pass.
+
+`Loop::stepPendingSnapshotPublish` may progress the whole `LoopSnapshot` while Record is active, but its candidate remains private until complete and atomic publication. The window owner may resolve a covered interval from the live or frozen Capture, and then from the selected complete Snapshot or a pinned retained committed revision; it must **not** read an unpublished partial Snapshot as an interval root. Source changes are not new drivers. Short-loop full coverage can be reused over wraps while unchanged; long-loop intervals are prepared ahead without scanning unrelated bars. Readiness under late input, Record stop and simultaneous holders remains a measured service/admission obligation, not a claim established by this source-handoff design; fallback output is not a passing deadline verdict.
+
+**Minimum served `current` versus successor deadline (DEC-116 refinement).** An already complete, immutable `current` with the sounding slot's generation, source hold, revision/origin and interval coverage is *servable* now: its identity and content are tested at the read, not by reserving an extra bar of future service. If its source and revision remain valid, a short loop reuses this same view across wraps at **zero new build grains**. A changed source is different: a private `ready` successor must contain every accepted event and closure affecting its next traversal; the old `current` remains readable but cannot be relabeled as that new content. Currency and the one-pass-late fault rule remain separate from structural completeness.
+
+For each accepted Record append, edit or source/geometry transition, compute the earliest affected playback tick from actual projection; the window owner charges the *remaining* work after that acceptance, including inspected source/index work, order, closures, publication, retained-source release and same-track sibling work. Preparation may advance incrementally while Capture grows; a new append may coalesce a superseded request but must not destroy useful progress toward an older deadline. The service contract to establish is `M + (G_remaining + K) × H × Δ ≤ D`, where `D` is the available tick distance to that affected tick, `H` includes all competing sounding tracks, `K` charges same-track work, `Δ` is a measured and enforced maximum advance between eligible service opportunities, and `M` is only a separately justified residual handoff margin. **No fixed one-bar margin applies to an already-served `current`, and 64 ticks alone is not the cost of a complete replacement.** Today's `leadTicks = Config::TICKS_PER_BAR` is a transitional admission policy, not the final product deadline or a certified Record bound. Even with `M = 0`, today's two-grain empty and three-grain two-event builds cost `2 × 8 × 64 = 1,024` and `3 × 8 × 64 = 1,536` ticks under the current worst-case owner allowance, both beyond a one-bar 768-tick return. The final protocol must prove smaller *remaining* work and/or stronger service under the supported simultaneous workload; do not merely delete the old guard. Stop-time final geometry and accepted closures are charged, not waived. If the bound cannot be met, name the refusal/miss and preserve only the prior valid traversal; neither dropping accepted input nor calling legacy fallback a readiness pass is allowed. Numeric envelope and hardware proof remain open.
+
+**Per-sounding-slot admission, not active-slot-only admission.** `TrackManager` continues to own `activeLoopIndex` and the enabled/layered-slot decisions; those decisions identify which slots actually sound, not a second active-slot selector. For each sounding slot, including a non-active layered/jam slot, the Track owner must offer, service and publish its own generation-qualified interval obligation and the clock edge must read that slot's own completed window/cursor/ledger effects. A track-global playback generation may guard an operation but cannot by itself substitute for slot identity or cancel another still-sounding slot merely because the active slot changed. An inbound slot may prepare before its switch; after a switch, its still-valid window may be adopted only against the newly selected slot and source identity. Merely removing the current `slot != activeLoopIndex` guard without making the per-slot request, service and release terms coherent is not the contract.
+
+**NOTE_EDIT is a source composition, not a second playback engine.** For either loop length, the window owner resolves the requested committed interval plus an identity-qualified frozen session delta. An empty *delta* leaves committed content sounding; an interval whose effective result has no events is still a complete, ready silent window, not a reason to retain an obsolete preview or reject the request. Opening, changing, undoing/redoing, re-focusing and exiting the session qualify preview source/committed-base dependencies and handoff; only soundings whose identities are removed or replaced close, while unaffected notes continue. The old whole-loop `sessionMidiEvents`/merged projection may serve during migration, but neither its materialization nor its emptiness predicate defines the final reader.
+
+**Overdub has one scheduled-loop emission owner.** While live Capture overlays committed content, accepted overdub events and their closures enter the same ordered window cursor and ledger contract exactly once, including at loop wrap, stop and the transition to a committed pass. MIDI input passthrough/capture append remain distinct from scheduled playback; a separate clock-edge replay of the live Capture store is not retained beside the window reader, and the edge does not sort that store. If a window for the pre-seal source is already in traversal, preserve its identity and closures through adoption of a complete successor, with no double soundings, missed Offs or inline rebuild. These are cutover invariants, not a choice of overlay data structure or fixture.
+
+**Migration order and release triggers:** pin every production route and independently expected MIDI/ledger trace
+(short/long, empty, Record, overdub, layered/jam, preview mutation/undo/exit, switch, restored legacy density);
+then move source adapters to one owner and one consumer behind a parity-controlled transition, keeping the old branch
+only until that route's exact output, selective closures, capacity/refusal and memory-lifetime assertions pass. Complete
+bounded service/tempo/clock-contention device measurement before enabling active admission or claiming continuity.
+Remove all separate pair/fixed/merged/paged **emission** branches and reclassify the unbounded fallback only after the
+last supported route passes; retain a cold oracle for tests. The sibling runtime change checks active-role residency,
+simultaneous holders and combined timing/content acceptance; neither change gets a checkoff from a decision document.
+
+**Pros/cons:** role-leased windows cost memory proportional to *sounding* roles and overlap but isolate each track and
+keep immutable handoffs; one global physical buffer saves nominal bytes but cannot serve simultaneous immutable readers
+without relocating the same bytes/cursors elsewhere and adding contention. A shared build scratch is a future measured
+optimization, not the serving authority. Widening every physical window alone increases fill/storage cost and does not
+fix missed adoption. See [DEC-116 — one rolling path per sounding slot](../../../docs/DECISION_LOG.md#dec-116--one-rolling-playback-path-per-sounding-slot)
+and the [reassessment addendum](ARCHITECTURE-REASSESSMENT.md#2026-10-07-addendum--one-path-for-all-scheduled-loop-playback).
+
 ## Open Questions (deferrable; they do not change the specs or the task order)
 
-- Whether the interval window and the loop's whole-loop window share one build entry point or two (a code-shape question;
-  both satisfy the same requirements, and the whole-loop case is now framed as coverage spanning the loop).
 - How the owner's turn is wired into the existing deferred owner enumeration (a turn kind versus a service point inside
   an existing turn) — the spec constrains the property (off-clock, named, bounded, reachable), not the enum value.
+
+<a id="s315-investigation-handoff"></a>
+
+**Capture note:** the report below describes the preceding read-only investigation; this appendix and
+its task/runtime links were subsequently saved with explicit owner approval. Its internal slice labels
+are local handoff labels, not new OpenSpec tasks or approved gate results.
+
+## 3.15a–f — one reader per sounding slot: investigation handoff (2026-10-09)
+
+**Status: revised investigation draft, saved with owner permission; not implementation approval.**
+One independent assessment returned `REVISE` with five concrete findings; the author incorporated the
+corrections below, but the revision was not reassessed. No firmware, tests, builds, device operations,
+task checkoffs or default-reader enablement were performed by this investigation. Source navigation
+reflects the investigated dirty worktree on `feature/unified-rolling-playback-path`; verify function
+anchors against live code before applying. Existing requirements and the preceding design contract
+take precedence over this handoff, especially matching-current preservation at Record stop, future
+source obligations, scheduled overdub migration and affected-tick service. A proposed fixture or
+transition below is not evidence that it has run or that its complete implementation contract is ready.
+Capture one execution packet per eventual implementation slice; keep blocked or unclaimed routes explicit.
+
+### Correction checklist (5 findings)
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | S2 lacked stopped-job lifetime/release transitions | **Fixed** — §S2 now carries a full state table grounded in `Track::stepDeferredRecordRetirement` (`src/Track/TrackOverdubLifecycle.cpp:1899-2050`), `LoopPlaybackRuntime::releaseFrozenRecordWindow` (`src/Track/TrackPlaybackRuntime.cpp:2142-2159`), `Track::retireJobCaptureSourceGrain` (`TrackOverdubLifecycle.cpp:426-445`), `hasBoundRecordReturnWindowForPendingJob` (`TrackPlaybackRuntime.cpp:2020-2031`), with one named release point and one acknowledgement surrogate. |
+| 2 | S4 promised empty effective coverage without naming changes | **Fixed** — §S4 names the two refusal predicates to replace (`TrackPlaybackWindowBuild.cpp:5496-5499`, `:5584-5589`), the demoted-only gate (`:5574-5579`), the interval-source adapter, the edge hook, and a stale-preview-retention RED control. |
+| 3 | S1a left epoch handling as a decision | **Fixed** — §S1a/S1b adopt option (a): **native epoch-0 only**; nonzero epoch is a registered expected-RED **non-claim**, and the production (device-epoch) live-Record gate is named as remaining and unclaimed. |
+| 4 | S5 did not separate paged source from second edge reader | **Fixed** — §S5 cites `beginPagedPlaybackForSlot` (`:2767`), `consumePagedPlaybackWindowForSlot` (`:2996`), the independent edge branch (`TrackPlaybackHotPath.cpp:321-347`) and the one-cursor/one-ledger contract (`:73-96`), with a transition oracle and a removal control. |
+| 5 | S3's “authority decision” | **Fixed** — **no policy expansion**: existing gesture semantics are the default (`MidiButtonActions::executeAction(OVERDUB_FOR_SLOT)` `src/MidiButtonActions.cpp:339-341` → `handleOverdubForSlot` `:362`, declared `include/MidiButtonActions.h:56`; the loop-row double press keeps the outgoing slot enabled). The two API-only `requestSlotSwitch`/CC123 fixtures are **out of scope, unchanged, expected-RED**; S3's executable part is the two-sounding-slot readiness gap. |
+
+**Correction to my own prior text:** `scripts/check_ram1_budget.py` has **no CLI** (`grep __main__|argparse|sys.argv` → no match; it ends with `Import("env")` + `AddPostAction("$BUILD_DIR/${PROGNAME}.elf", _run)`). It runs automatically because `platformio.ini:26` registers `extra_scripts = post:scripts/check_ram1_budget.py`. The only honest invocation is the build itself.
+
+### 1. Request
+
+Advance `windowed-playback-generation` **3.15a–f — one reader per sounding slot** by implementable, ordered slices. **Non-goals:** any firmware/test/build/flash/SD/MIDI action in this session; default rolling enablement; legacy-emitter/test removal; lowering `leadTicks`; counting fallback output as a pass; new Manager/scheduler/queue/fourth view/second active-slot authority/SD-format change; new switch/CC123 policy.
+
+### 2. G0: ownership, deferred work, source release, cancellation
+
+**Owners (each cited):** `Track` — per-slot `LoopPlaybackRuntime` (`playbackRuntime.slotIfAllocated`), the three-view set `current`/`ready`/`build` (`include/RuntimePlaybackView.h:28`), `rolling` frame, `pendingViewRequest_`/`frozenViewRequest`, `retainedSources`, `pagedEmission`; **`Loop`** — Capture store + `captureContentGeneration()`, `sealCaptureRangeForJob`, pass set, `publishedSnapshotIdentity()`; **`TrackManager`** — `activeLoopIndex`, enabled/layered slot set, deferred-owner rotation (`MidiServiceDrain::selectDeferredIdleOwner`); **`EditManager`** — `sessionPlaybackPreviewRevision_` (bump `src/EditManager.cpp:219`, reset `EditManager/NoteEditSelection.cpp:48`) + session projection; **`Loop::stepPendingSnapshotPublish`** — whole-root publication; **`StorageManager`** — persistence drain.
+
+**Deferred work:** `Track::stepPlaybackViewMaintenance` (one declared grain/turn; entry `src/Track/TrackPlaybackWindowBuild.cpp:4905`), `Track::stepDeferredRecordRetirement` (bounded, stall-escaped), `Track::serviceCaptureStopDescriptorReservations`, `Track::processSnapshotOwnerTurn`, `Track::stepDeferredOverdubStop`, one background construction unit in `src/main.cpp`. Edge entries: `TrackManager::updateAllTracks` → `Track::playMidiEvents`/`playMidiEventsForSlot` (`src/Track/TrackPlaybackHotPath.cpp:552-576`) → `playCommittedLoopMidi` (`:202`).
+
+**Source release points (exhaustive for this route):** `releaseFrozenRecordWindow` (`TrackPlaybackRuntime.cpp:2142`; refuses while launch preparation or a coverage-owned build is active/pending; clears `current`/`ready` metadata **except** `firstRecordReturnWindow`); `retireJobCaptureSourceGrain` (`TrackOverdubLifecycle.cpp:426`; one `rawRange.releaseGrain(1)` + `loop.releaseSealedCaptureRangeBorrow(&job.admission)` only while the job identity matches; `ownsRawRange=false`; `reserveTail()` re-arm, else `serviceCaptureStopDescriptorReservations` on later idle turns); `discardPagedWindow`, `discardCoverageBuild`, `retireCoverageSource`, `tryReleaseRetainedPlaybackSource`, `releaseEligiblePlaybackRuntimeSlots`.
+
+**Cancellation:** `applyPlaybackViewTransition(ClearOrLoad)` (candidate released, prepared successor retired, operation identity invalidated — `TrackPlaybackWindowBuild.cpp:3050+`), `ViewBuild::discard(preserveDestination)`, `cancelPreviewWindowForSlot` (`SourceMutated`/`SelectedTrackChanged`/`SessionExited`, `:5637+`), `retireSupersededReady`, epoch invalidation → `DeadlineInvalidatedEpoch`, `noLiveOwnerForSlot` (named owner list, `:3123`), `cancelRollingPlaybackWindow` (`:4050`).
+
+**Reader acknowledgement — the honest gap:** there is **no** reader-acknowledgement API. The only place a *served* window identity gates a release is inside `stepDeferredRecordRetirement` (`:1980-2006`): `currentRootWindowServed` (same committed revision **and** `snapshotIdentity == loop.publishedSnapshotIdentity()`) or `frozenCaptureServed` (origin `Capture` + exact `frozenCaptureContentGeneration`). Either returns `Pending`; otherwise `if (!currentRootWindowServed) runtime->releaseFrozenRecordWindow()`. **Consequence the plan must respect:** a *live* Capture `current` carries the pre-transfer token, so it satisfies **neither** predicate — publishing it without extending this acknowledgement would let `releaseFrozenRecordWindow` discard the frozen `ready` metadata that the stop handoff needs. That is the exact hazard S2 resolves.
+
+### 3. Slices
+
+#### S1a — **first executable slice** (test-only, native epoch-0)
+
+- **Files:** `test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp` (gated by `UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE`; harness `test/test_support/track_harness.inc`).
+- **Extend** `test_record_capture_initial_window_reaches_unified_reader` (currently RED at `owner progress=0 / raw=1 / loopLen=0`) with: (i) after the bounded owner turns, a **complete published** `Capture`-origin `current` with `PlaybackCoverageInterval{0, TICKS_PER_BAR, TICKS_PER_BAR}` and `captureContentGeneration` equal to `loop.captureContentGeneration()`; (ii) the **raw first-bar shell retired off-clock** — `set->views[current].rawCoveragePrepared == false` and no `firstRecordReturnWindow` on `current`; (iii) one stamped edge producing exact independently written ordered MIDI + `(channel,pitch)` ledger and duplicate-edge silence; (iv) **new** `test_live_capture_current_survives_accepted_input_and_is_superseded_by_the_frozen_ready` (accepted NoteOn after publication cancels only the private candidate; a real `Track::stopRecording` then supersedes the live `current` with the frozen bar-2 `ready`, which the retirement predicate acknowledges).
+- **Non-claim, explicitly registered:** `test_live_capture_current_at_nonzero_clock_epoch_is_not_claimed` — expects RED at the epoch-0 guard and is documented as *not* a defect. S1b does **not** touch `clock.epoch == 0`.
+- **Controls (restored byte-identically):** (C1) withhold the Track owner grant → readiness RED; (C2) suppress the rolling/Capture selection in `resolveQualificationPlaybackSourceForTurn` (`:849-931`) → adoption RED; (C3) suppress the supersession call → the new case RED.
+- **Commands:** `PLATFORMIO_BUILD_FLAGS='-DUNIFIED_RECORD_CAPTURE_INITIAL_ORACLE' pio test -e native -f test_runtime_working_set_ownership`; then `pio test -e native -f test_runtime_working_set_ownership`.
+- **Done when:** (i)–(iv) GREEN, (C1)–(C3) RED-then-restored, the non-claim case documented RED, unflagged focused + full native green.
+
+#### S1b — firmware: live Capture `current` published (epoch-0 branch only)
+
+- **Anchor:** `Track::stepPlaybackViewMaintenance` live-Capture branch, `TrackPlaybackWindowBuild.cpp:4929-4976` (guard `slot == activeLoopIndex && isRecording() && clock.epoch == 0 && !hasPendingDeferredOverdubStop() && !hasQueuedPlaybackStart() && rolling.phase == Idle && coldRecordCaptureShell(...)`); completion terminal at `:4966-4974`; `finishPlaybackViewGrain`; the comment at `:4964-4965` (*"Do not retire the raw return shell until its frozen-job and one-reader replacements are linked"*) is the change being made coherent.
+- **Change:** on Complete, promote the candidate to `current` (three-view promotion, no fourth view) with identity `{loop.playbackRevision or frozen pre-publication revision, playbackGeneration, nullptr, PlaybackWindowOrigin::Capture, captureContentGeneration}` and retire the raw shell's `current` metadata in the **same** owner turn. Do **not** touch `TrackPlaybackHotPath.cpp:263-284` (return-window branches) in this slice.
+- **Predicates:** *admission* — candidate complete ∧ identity-qualified ∧ no louder obligation on `current`; *supersession* — `captureContentGeneration` moved or a frozen `ready` exists; *release* — the view is unborrowed and superseded/stopped; *cancellation* — accepted input, epoch change, transport stop, slot exit, clear/load, undo (existing `applyPlaybackViewTransition(ClearOrLoad)`).
+- **Oracle:** S1a GREEN; owner-grant and selection-removal controls stay separate.
+- **Honest gate:** this slice is inside the native epoch-0 branch. **Device-epoch live first-Record Capture on the one reader remains open and unclaimed**; naming it is required in the closeout, and no default/qualification image behaviour changes.
+
+#### S2 — firmware: stop handoff and the single release point
+
+**State table (every row is a code site, not a proposal).** Owner: `Track::stepDeferredRecordRetirement(job)`; entry refusal `Denied` unless `stop.pending && job.mode == Record && captureStopJobs_ && stop.phase == RecordPublished && slot < MAX_LOOPS_PER_TRACK` (`TrackOverdubLifecycle.cpp:1902-1906`).
+
+| State | Condition (code) | Result / next |
+|---|---|---|
+| Frozen build borrowing the range | `runtime->frozenWindowBuildActive() && loop.loopLengthTicks != 0` (`:1923-1938`) | `Pending`; bounded escape via `frozenWindowStallGrain/Grains` vs `kFrozenWindowStallGrainLimit` → `frozenWindowStallExpired` → `releaseFrozenRecordWindow()` |
+| Session-exit root queued, not current | `loop.hasCommittedPasses() && loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent()` (`:1945-1952`) | `Pending` (+ the escape release) |
+| Complete unpublished frozen `ready` | `publishedSnapshotIsCurrent() && job.frozenCaptureContentGeneration != 0` and `views[ready].complete && !published && origin == Capture && sourceGeneration == playbackGeneration && captureContentGeneration == job.frozenCaptureContentGeneration` (`:1957-1970`) | `Pending` — the job owes that successor |
+| **Live** Capture `current` (pre-transfer token) | matches neither `currentRootWindowServed` (`servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity()`) nor `frozenCaptureServed` (`:1980-1994`) | **today: falls through to `releaseFrozenRecordWindow()` (`:2005`)** — the hazard S2 closes: the *live* `current` must be retired by the promotion that creates the frozen `ready` (S1b/S2 ordering), and `frozenCaptureServed` is the acknowledgement surrogate |
+| Frozen Capture `current` serving | `frozenCaptureServed` (`:1991`) | `Pending` — range retained |
+| Root-backed window adopted | `sameCommittedRevision && currentRootWindowServed` | release path proceeds |
+| Empty take / no geometry | `loop.loopLengthTicks == 0` (`:1921`, `:1945`) | immediate retirement (unchanged) |
+| Release | `releaseFrozenRecordWindow()` (`TrackPlaybackRuntime.cpp:2142`; clears `current`/`ready` except `firstRecordReturnWindow`) then `retireJobCaptureSourceGrain` (`TrackOverdubLifecycle.cpp:426-445`) | one grain + borrow release; `reserveTail()` failure deferred to `serviceCaptureStopDescriptorReservations` |
+| Job teardown | `:2026-2045` | `owner=nullptr; loopId=kInvalidLoopId; mode=None; head++; --count; stop.reset()` |
+| Mismatched stop | `Track::qualifiedFrozenRecordCaptureSourceForSlot` (`include/Track.h:393`) refuses wrong interval/slot/LoopId/geometry/pending closure/token | no publication, no identity relabel (existing guard) |
+
+- **Single release point:** `releaseFrozenRecordWindow` + `retireJobCaptureSourceGrain`, each reached only through the table above; `retireJobCaptureSourceGrain` verifies the job identity before dropping the borrow.
+- **Oracle:** flagged real-stop cases in `test/test_shared_capture_finalization` (`-DUNIFIED_RECORD_RETURN_READER_ORACLE`); new assertion that the live `current` is retired exactly once, the frozen `ready` survives the intervening owner turn, and the extent is released only after `frozenCaptureServed`/`currentRootWindowServed`. **RED control:** force the pre-fix order (promote-after-stop without the interim acknowledgement) → assertion RED on premature `ready` discard.
+
+#### S3 — firmware: two sounding slots, existing gesture semantics
+
+- **Anchor:** `Track::resolveRollingPlaybackWindow` (`TrackPlaybackWindowBuild.cpp:4232`; reject clause `:4253-4259`), `Track::serviceRollingPlaybackWindow` (`:4033-4052`, non-active retention via `coldRollingShape`/`coldLayeredSlotFrameForEmission`/`slotMayOwnColdFullLoopWindow`), `Track::resetPlaybackStateForSlot`, `MidiButtonActions::handleOverdubForSlot` (`src/MidiButtonActions.cpp:362`).
+- **Executable target:** `test_two_sounding_slots_keep_distinct_readers_through_selection` (currently RED: after 512 bounded turns **neither** slot publishes a complete new-reader `ready`). Make both publish their own `(slot, generation, revision, interval)` ready and adopt at their own phase origin, without the active-slot change evicting the still-enabled outgoing slot.
+- **Default (no new policy):** loop-row double press → `OVERDUB_FOR_SLOT` keeps the outgoing slot enabled — that is current behaviour and the only in-scope gesture. The two `requestSlotSwitch`/12×CC123 fixtures remain **expected-RED, out of scope, unchanged**; do not implement conditional CC123 suppression (a prior attempt lost outgoing `Off@800` on `commitQueuedPlaybackStart`'s re-anchor — `CURRENT_WORK.md:5714`). `TrackManager` keeps `activeLoopIndex` and the enabled/layered decisions; no second authority.
+- **RED control:** substitute the shared Track projection origin for the non-active slot → the outgoing `Off@800` oracle RED (already recorded as a working mutation).
+
+#### S4 — firmware: NOTE_EDIT interval reader, including an empty effective interval
+
+- **Anchor:** `Track::requestPreviewWindow` (`:5487-5529`), `Track::servicePreviewWindowForNoteEditSession` (`:5549-5635`), `Track::cancelPreviewWindowForSlot` (`:5637+`), edge `fixedViewEligible` (`TrackPlaybackHotPath.cpp:219-220`), existing gather-scratch pattern `Track::gatherRetainedSourceWindowForSlot`, `playbackWindowInterval`.
+- **Exact predicate replacements (the finding's demand):**
+ 1. `requestPreviewWindow` `:5496-5499` — replace *`source == nullptr || sourceCount == 0` ⇒ `NotServable`* with: refuse only when the **identity/composition is absent**; an empty-but-identity-qualified composition is a complete interval and must be `Admitted`. Delete the whole-loop `playbackWindowInterval(loop.loopLengthTicks,false,0,coverage)` (`:5508-5511`) in favour of the requested interval + delta.
+ 2. `servicePreviewWindowForNoteEditSession` `:5584-5589` — the empty-`sessionMidiEvents()` refusal goes; emptiness is no longer an input.
+ 3. `:5574-5579` — the demoted-only gate (`!loop.shouldAvoidFullVisualRebuild(...)`) is replaced by interval qualification for both loop lengths.
+- **Interval-source adapter:** a caller-owned scratch that composes committed interval content with identity-qualified changed/hidden/added/deleted rows and hands the result to `requestPlaybackViewMaintenance` under `origin == Preview`, mirroring how the committed route feeds `requestPlaybackWindow` (`:5483`).
+- **Edge hook:** a selector branch for `editManager.isNoteEditActive()` on the active slot, placed beside the frozen-Capture branch (`:849-931`), adopting only `Preview`-origin identities; `TrackPlaybackHotPath.cpp:348-354` already keeps a non-`Idle` rolling frame audible, so a complete silent preview is not dropped. The merged NOTE_EDIT path stays the **named compatibility fallback** until 3.7b.
+- **RED controls:** (i) suppress the edge hook → adoption RED; (ii) make the empty composition refuse again → the empty-interval case RED; (iii) **stale-preview retention**: keep the previous preview serving after the deletion — the fixture must fail (proves the new ready replaced it), and restoring the old behaviour must fail too (asymmetry recorded).
+- **Commands:** `pio test -e native -f test_windowed_preview_integration` and `-f test_runtime_working_set_ownership`.
+
+#### S5 — firmware: pages become an internal source of the same reader
+
+- **Anchor:** `Track::beginPagedPlaybackForSlot` (`:2767-2850`: requires `runtime->frozenViewRequest.active`, `SourceKind::CommittedSnapshot`, retained source, refuses `PinnedEditRowsUnresolved` by name), `Track::stepPagedPlaybackForSlot`, `Track::consumePagedPlaybackWindowForSlot` (`:2996-3045`: `StaleRevision`, `NeedsPage`, `Exhausted` → `discardPagedWindow`), `WindowPagedStream`; edge branch `runtime.pagedEmission.bound` + `admittedForEmission()` + `servicePagedPassBoundaryForTurn` (`TrackPlaybackHotPath.cpp:321-331`), `eventCount = pagedEmission ? 1u` (`:347`), merged fallback (`:335`).
+- **Transition oracle (decidable):** for one restored over-`L` interval, assert (a) the reader emits every accepted row exactly once, in order, with the same `(channel,pitch)` ledger closure as the committed oracle; (b) wrap does not duplicate or omit (`advancePlaybackCursor` with `playbackCursorAdvanceSend` `:73-79` is the **single** ledger/send owner — pages must feed that cursor, not a parallel sender); (c) `NeedsPage` during a traversal keeps the prior window readable rather than tearing; (d) `StaleRevision` names a miss, never a silent re-serve.
+- **One-cursor/one-ledger rule to state in code comments:** pages are a *source* of the slot's window; the page cursor is the window cursor's backing, never a second emission cursor. **Removal control:** disable the page-as-source mapping → the restored-density oracle RED; only after it stays GREEN with the independent `pagedEmission` edge branch removed may that branch retire (3.7b), with the branch's own fixture polarity recorded.
+- **Out of scope:** same-tick accumulation and closure-capacity refusal (`kWindowAdmissionLimit`, `kWindowClosureReserve`) stay at their owning boundary; the pager's `PinnedEditRowsUnresolved` refusal stays.
+
+#### S6 — root-current next wrap: executable fixture half + measurement-gated half
+
+- **Verified cause (no speculation):** `canCompleteWithinLead` requires `available ≥ leadTicks` **first** (`src/Track/RuntimePlaybackViewBuild.cpp:244`) with `leadTicks = Config::TICKS_PER_BAR = 768` (`TrackPlaybackWindowBuild.cpp:3346`, `include/Track.h:560`); the failing request at bar-two phase1008 of a 1,536-tick loop has 528 → refused before grains are considered. Grains would refuse anyway: `turns = grains × 8`, `2 grains ⇒ 1,792 ticks` needed (verified arithmetic over `deriveGrainsFrom` `:3286-3299`).
+- **Executable now (native fixture, no policy change):** pin the role/admission contract for private root work while a Capture successor is complete, using the already-parameterized `coverageRoleAvailable(bool keepCaptureReady)` (`include/TrackPlaybackRuntime.h:823`, used `:4699`, `:5120`) and the recorded `rootQualificationWaitsForCaptureReady` / `AwaitAdmission` behaviour.
+- **Genuinely blocked half:** admitting the root `ready` with < 768 ticks of lead requires a measured composed service envelope (task 3.10 / 6.3 / 6.5) per design.md's `M + (G_remaining + K) × H × Δ ≤ D`. Stop criterion: **measured** device/service evidence, or an explicit decision to keep the refusal. Do not lower `leadTicks`, credit legacy output, or re-grant deadlines.
+
+#### S7 — 3.15f, route-by-route decidable
+
+Per route (short committed, long committed, live Record, frozen Record return, layered outgoing, NOTE_EDIT, overdub overlay, restored dense, undo/redo, switch, internal/external clock): independent MIDI/ledger oracle + cold legacy reference + refusal/miss rows named as failures. Device leg requires: pinned lane image, `captures/.device-shutdown-incomplete.json` latch cleared as a deliberate human step (it exists, 218 B), verified two-Stop persistence drains before/after, registered `STIM-WINDOW-CONTENT-01@v1` via `windowed_content_parity`, complete accepted-content dump for row-for-row parity, ring `tierA_evict/overflow/crit_rej` counters, RAM1/PSRAM high-water. 3.7b removes each compatibility branch only after its route's oracle stays GREEN without it.
+
+### 4. Commands (actual arguments)
+
+- Focused native: `pio test -e native -f test_runtime_working_set_ownership`, `-f test_shared_capture_finalization`, `-f test_playback_prewarm`, `-f test_windowed_preview_integration`.
+- Gated: `PLATFORMIO_BUILD_FLAGS='-DUNIFIED_RECORD_CAPTURE_INITIAL_ORACLE' pio test -e native -f test_runtime_working_set_ownership`; `' -DUNIFIED_RECORD_RETURN_READER_ORACLE'` on `-f test_shared_capture_finalization`; `'-DUNIFIED_LAYERED_READER_ORACLE'` on the ownership suite.
+- Full: `pio test -e native`.
+- Builds + RAM1: `pio run -e teensy41-capture-serial` and `pio run -e teensy41-capture-serial-window-qualification`; the budget check is a **post-link action** (`platformio.ini:26`), so read the `RAM1: variables:…, code:…, padding:…` line from the build output; current pin `96,192 / 390,360 / 2,856`, floor 840 (`scripts/ram1_budget.json`). No standalone invocation exists.
+- Specs/diff: `openspec validate windowed-playback-generation --strict`, `git diff --check`.
+
+### 5. Remaining unproven external evidence
+
+69-vs-64 `win_gap_overrun` attribution (read-only; 3.10); a measured composed owner service envelope; PSRAM high-water for chunk hints; whether any defensible envelope admits a changed one-bar successor; device-epoch live first-Record on the one reader (S1b limit); device content/timing parity for every S1–S5 route; the latch state; and whether the tightened lane verifier passes against a real capture.
+
+### 6. Risks, rollback, open questions
+
+Highest risk is S1b's raw-shell retirement — mitigated by the S1a fixture (iv) and S2's acknowledgement surrogate; the S2 ordering hazard (a live `current` causing `releaseFrozenRecordWindow` to discard the frozen `ready`) must be RED-proved before landing. Rollback: every change stays behind `PLAYBACK_WINDOW_ROLLING_ENABLED` (default 0), so a revert restores the shipping image by construction; work stays on `feature/unified-rolling-playback-path`, never `dev`. Defaults for the open items: S4 keeps merged as compatibility fallback; S5 keeps closure-capacity refusals untouched; S6 keeps today's refusal until measured; the API-only switch fixtures stay expected-RED and out of scope.
+
+### 7. Closeout impact (later, not now)
+
+Newest-first entries in `docs/Runtime/PROJECT_STATE.md` and `docs/Runtime/CURRENT_WORK.md` (ID + short name), `docs/DELIVERABLE_TRACKING.md`, `openspec/changes/windowed-playback-generation/tasks.md` (3.15a–f only with their own gate evidence), a packet under `evidence/<date>-s315…/EXECUTION.md`, and `docs/Authority/Architecture/Playback.md`/`ExecutionBounds.md` only if one-reader serving is actually enabled. A `DEC-###` only if an owner/contract/representation changes. If this plan is persisted, the repo convention is `docs/Plans/<main>_<sub>_<kind>.md`. No file was written by this investigation.

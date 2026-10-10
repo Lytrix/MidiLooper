@@ -177,5 +177,67 @@ class ClockObservationTests(unittest.TestCase):
         self.assertEqual(1, transport_press_count())
 
 
+
+class StaleClockBacklogTests(unittest.TestCase):
+    """A clock that arrived *before* the question is not an answer to it.
+
+    The scenario legs attach to a device whose transport the attach-readiness step has just
+    stopped (an idempotent realtime Stop, `hitl/managed_capture.py`). The MIDI input buffer still
+    holds the clock the still-running device sent a moment earlier, and `clock_seen_within` used
+    to return True on the first of those -- so `_ensure_transport_running` skipped its start press
+    and the whole NOTE_EDIT leg ran with the track stopped
+    (`captures/live-current-root-entry-t8s4-07`: realtime Stop `MI,U,252,13,0,0` at 159.571864,
+    `Playback stopped @ tick 1653` at 159.650, note-edit entry at 174.766, zero playback rows in
+    between, and the leg's `playing_motor_sync_judged` 0).
+    """
+
+    class _BacklogPort:
+        """A stopped device behind a buffer still holding the clock from before the stop."""
+
+        def __init__(self, backlog: int) -> None:
+            import mido
+
+            self._backlog = [mido.Message("clock") for _ in range(backlog)]
+            self.received = 0
+
+        def poll(self):
+            if self._backlog:
+                self.received += 1
+                return self._backlog.pop(0)
+            return None
+
+    def test_backlog_does_not_prove_the_transport_runs(self) -> None:
+        from hitl.transport_clock import clock_seen_within
+
+        port = self._BacklogPort(31)
+        self.assertFalse(clock_seen_within(port, 0.05))
+
+    def test_a_fresh_clock_still_counts(self) -> None:
+        """The positive direction: a port that keeps producing clock is still 'running'."""
+
+        class _LivePort:
+            def poll(self):
+                import mido
+
+                return mido.Message("clock")
+
+        from hitl.transport_clock import clock_seen_within
+
+        self.assertTrue(clock_seen_within(_LivePort(), 0.05))
+    def test_a_stale_reader_pulse_does_not_prove_the_transport_runs(self) -> None:
+        """The reader leg answers about now too: it polls this same port, so a backlog it reads
+        there is still history. Without the drain first, the port-owning reader reported a pulse
+        "right now" for clock that had arrived before the attach stopped the take."""
+        from hitl.midi_clock import MidiClockReader
+        from hitl.transport_clock import clock_seen_within, set_active_clock_reader
+
+        port = self._BacklogPort(31)
+        reader = MidiClockReader(port)
+        set_active_clock_reader(reader)
+        try:
+            self.assertFalse(clock_seen_within(port, 0.05))
+        finally:
+            set_active_clock_reader(None)
+
 if __name__ == "__main__":
     unittest.main()

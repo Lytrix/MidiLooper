@@ -1,0 +1,68 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_loop_event_store in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_loop_event_store/test_loop_event_store.cpp:28: test_wrapper_clear_unique_one_chunk_and_separate_header_terminal: Expected 512 Was 0	[FAILED]
+test/test_loop_event_store/test_loop_event_store.cpp:1411: test_wrapper_clear_shared_detaches_without_clone_or_source_mutation	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:81: test_wrapper_clear_dirty_cache_discards_without_sync: Expected 512 Was 0	[FAILED]
+test/test_loop_event_store/test_loop_event_store.cpp:1413: test_wrapper_clear_empty_and_empty_dirty_cache	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:110: test_wrapper_clear_stamped_pool_reset_preserves_recycled_chunk: Expected 2 Was 0	[FAILED]
+test/test_loop_event_store/test_loop_event_store.cpp:1415: test_snapshot_window_cursor_pins_only_window_and_preserves_effective_rows	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1416: test_snapshot_window_cursor_cancel_and_retirement_release_at_most_one_leaf_per_unit	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1417: test_snapshot_window_cursor_shared_reader_survives_every_retirement_grain	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1418: test_snapshot_window_cursor_validates_geometry_and_work_is_length_independent	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1420: test_pass_chunk_conversion_bounds_the_pinned_footprint	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1421: test_snapshot_batch_reuses_private_index_nodes	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1422: test_snapshot_reused_membership_preserves_capacity_limit	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1423: test_snapshot_reused_edits_isolate_parent_sibling_and_failure	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1424: test_snapshot_release_shared_root_is_one_unit_and_readable	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1425: test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1426: test_snapshot_release_preserves_shared_descendants_during_every_grain	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1427: test_pool_backs_storage_only_as_content_reaches_it	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1428: test_sealed_pass_read_preserves_order_and_quantum	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1429: test_sealed_pass_read_denies_invalid_capacity_and_stale_inputs	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1430: test_sealed_pass_read_empty_and_invalid_bindings	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1431: test_append_fills_chunks_without_realloc_pattern	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1432: test_adopt_all_moves_chunks	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1433: test_merge_from_combines_sorted_events	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1434: test_merge_from_interleaves_across_chunks	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1435: test_merge_from_stable_on_equal_tick	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1436: test_restore_snapshot_deep_copies	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1437: test_shift_all_ticks_bumps_negative	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1438: test_lower_bound_index_skips_prefix	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1439: test_undo_snapshot_ref_isolated_by_cow	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1440: test_drop_events_at_or_beyond_tick_removes_overflow	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1441: test_map_overflow_note_on_keeps_in_loop_stop_off	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1442: test_first_index_for_bar_uses_bar_index	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1443: test_out_of_range_tick_cannot_size_the_bar_index	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1444: test_first_index_for_bar_skips_empty_bar	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1445: test_transfer_capture_chunk_ids_to_published	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1446: test_detach_chunks_to_committed_seals_and_transfers	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1447: test_deep_clone_committed_chunk_ids_duplicates_pool	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1448: test_assign_missing_note_ids_in_chunks	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1449: test_measure_paged_directory_successor_locality	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1450: test_snapshot_replaces_note_and_shares_unchanged_membership	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1451: test_snapshot_wrap_membership_uses_one_note_reference	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1452: test_snapshot_wrap_spans_follow_root_length	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1453: test_snapshot_with_loop_length_shares_membership	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1454: test_snapshot_event_index_preserves_canonical_order	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1455: test_snapshot_candidate_progress_and_alias_safety	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1456: test_snapshot_applies_one_bar_in_playhead_arrival_order	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1457: test_snapshot_hide_removes_same_note_id	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1458: test_snapshot_one_bar_node_count_and_unchanged_membership_share	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1459: test_snapshot_failed_candidate_preserves_parent	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1460: test_snapshot_replaces_pitch_and_clears_old_membership	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1461: test_snapshot_find_note_uses_pitch_hint_then_scan	[PASSED]
+test/test_loop_event_store/test_loop_event_store.cpp:1462: test_snapshot_find_note_at_pitch_stays_on_event_pitch	[PASSED]
+Program received signal SIGQUIT (Quit: 3)
+----------- native:test_loop_event_store [ERRORED] Took 2.15 seconds -----------
+
+=================================== SUMMARY ===================================
+Environment    Test                   Status    Duration
+-------------  ---------------------  --------  ------------
+native         test_loop_event_store  ERRORED   00:00:02.152
+
+============ 53 test cases: 3 failed, 49 succeeded in 00:00:02.152 ============

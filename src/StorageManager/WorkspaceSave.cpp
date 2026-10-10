@@ -95,6 +95,7 @@ STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
     storageSession.currentWorkspaceSave.loopSettleDeferrals = 0;
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
+    storageSession.currentWorkspaceSave.chunkWriteOffset = 0;
     storageSession.currentWorkspaceSave.midiBatch.clear();
     if (LoopSnapshotBodyFormatV1SaveScratch* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch()) {
         resetLoopSnapshotBodyFormatV1SaveScratch(*scratch);
@@ -562,15 +563,36 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassHeader(File& file, const Captur
     return persistenceWriteRaw(file, &midiCount, sizeof(midiCount), crcMode);
 }
 
+constexpr size_t kCapturePassPayloadWriteQuantumBytes = 512;
+
 STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chunkId,
-                                   LoopPersistPayloadCrc crcMode = LoopPersistPayloadCrc::None) {
-    storageSession.currentWorkspaceSave.midiBatch.clear();
-    LoopEventStore::appendChunkRefEvent(chunkId, storageSession.currentWorkspaceSave.midiBatch);
-    if (storageSession.currentWorkspaceSave.midiBatch.empty()) {
-        return true;
+                                   LoopPersistPayloadCrc crcMode, bool& chunkDone) {
+    CurrentWorkspaceSaveJob& job = storageSession.currentWorkspaceSave;
+    chunkDone = false;
+    if (job.chunkWriteOffset == 0) {
+        job.midiBatch.clear();
+        LoopEventStore::appendChunkRefEvent(chunkId, job.midiBatch);
+        if (job.midiBatch.empty()) {
+            chunkDone = true;
+            return true;
+        }
     }
-    return persistenceWriteRaw(file, storageSession.currentWorkspaceSave.midiBatch.data(),
-                              storageSession.currentWorkspaceSave.midiBatch.size() * sizeof(MidiEvent), crcMode);
+    const size_t payloadBytes = job.midiBatch.size() * sizeof(MidiEvent);
+    if (job.chunkWriteOffset >= payloadBytes) return false;
+    const size_t remainingBytes = payloadBytes - job.chunkWriteOffset;
+    const size_t writeBytes = remainingBytes < kCapturePassPayloadWriteQuantumBytes
+                                  ? remainingBytes : kCapturePassPayloadWriteQuantumBytes;
+    const uint8_t* payload = reinterpret_cast<const uint8_t*>(job.midiBatch.data());
+    if (!persistenceWriteRaw(file, payload + job.chunkWriteOffset, writeBytes, crcMode)) {
+        return false;
+    }
+    job.chunkWriteOffset = static_cast<uint16_t>(job.chunkWriteOffset + writeBytes);
+    if (job.chunkWriteOffset == payloadBytes) {
+        job.chunkWriteOffset = 0;
+        job.midiBatch.clear();
+        chunkDone = true;
+    }
+    return true;
 }
 
 /// DEC-073 RC2: Header-stage body-format resolution. Pins `loopWriteUsesLsv1` for this loop write,
@@ -634,6 +656,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             }
             storageSession.currentWorkspaceSave.capturePassCursor = 0;
             storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.chunkWriteOffset = 0;
             storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
 
@@ -653,6 +676,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                 return false;
             }
             storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.chunkWriteOffset = 0;
+            storageSession.currentWorkspaceSave.midiBatch.clear();
             storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
             return true;
         }
@@ -667,8 +692,11 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             (void)passHeader;
 
             if (storageSession.currentWorkspaceSave.chunkCursor < committedChunkIds->size()) {
-                const uint16_t chunkId = (*committedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor++];
-                return writeDeferredCapturePassChunk(file, chunkId, crcMode);
+                const uint16_t chunkId = (*committedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor];
+                bool chunkDone = false;
+                if (!writeDeferredCapturePassChunk(file, chunkId, crcMode, chunkDone)) return false;
+                if (chunkDone) ++storageSession.currentWorkspaceSave.chunkCursor;
+                return true;
             }
 
             ++storageSession.currentWorkspaceSave.capturePassCursor;
@@ -802,6 +830,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
             }
             storageSession.currentWorkspaceSave.capturePassCursor = 0;
             storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.chunkWriteOffset = 0;
+            storageSession.currentWorkspaceSave.midiBatch.clear();
             storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
 
@@ -822,6 +852,8 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
                 return false;
             }
             storageSession.currentWorkspaceSave.chunkCursor = 0;
+            storageSession.currentWorkspaceSave.chunkWriteOffset = 0;
+            storageSession.currentWorkspaceSave.midiBatch.clear();
             storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassChunk;
             return true;
         }
@@ -837,8 +869,11 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
             (void)passHeader;
 
             if (storageSession.currentWorkspaceSave.chunkCursor < committedChunkIds->size()) {
-                const uint16_t chunkId = (*committedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor++];
-                return writeDeferredCapturePassChunk(file, chunkId);
+                const uint16_t chunkId = (*committedChunkIds)[storageSession.currentWorkspaceSave.chunkCursor];
+                bool chunkDone = false;
+                if (!writeDeferredCapturePassChunk(file, chunkId, LoopPersistPayloadCrc::None, chunkDone)) return false;
+                if (chunkDone) ++storageSession.currentWorkspaceSave.chunkCursor;
+                return true;
             }
 
             ++storageSession.currentWorkspaceSave.capturePassCursor;

@@ -1,0 +1,63 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:45:8: error: 'clearPendingSnapshotPublish' is a private member of 'Loop'
+   45 |   loop.clearPendingSnapshotPublish();
+      |        ^
+include/Loop.h:1550:8: note: declared private here
+ 1550 |   void clearPendingSnapshotPublish();
+      |        ^
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:113:15: error: variable 'membership' with type 'const auto *' has incompatible initializer of type 'SnapshotMembershipRef<LoopSnapshotNoteRef>' (aka 'shared_ptr<const SnapshotMembership<shared_ptr<const LoopSnapshotNote>>>')
+  113 |   const auto* membership = loop.publishedSnapshot()->noteMembership(60, 0);
+      |               ^            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test/test_note_edit_entry_boundary/inventory_adoption.inc:155:30: error: no member named 'publishedSnapshotCoveredPassRevision' in 'Loop'
+  155 |   const auto coverage = loop.publishedSnapshotCoveredPassRevision();
+      |                         ~~~~ ^
+test/test_note_edit_entry_boundary/inventory_adoption.inc:158:67: error: 'clearPendingSnapshotPublish' is a private member of 'Loop'
+  158 |   TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(4)); loop.clearPendingSnapshotPublish();
+      |                                                                   ^
+include/Loop.h:1550:8: note: declared private here
+ 1550 |   void clearPendingSnapshotPublish();
+      |        ^
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:160:125: error: 'clearPendingSnapshotPublish' is a private member of 'Loop'
+  160 |   TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish()); TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(4)); loop.clearPendingSnapshotPublish();
+      |                                                                                                                             ^
+include/Loop.h:1550:8: note: declared private here
+ 1550 |   void clearPendingSnapshotPublish();
+      |        ^
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:167:43: error: no member named 'publishedSnapshotCoveredPassRevision' in 'Loop'
+  167 |   TEST_ASSERT_EQUAL_UINT32(coverage, loop.publishedSnapshotCoveredPassRevision());
+      |                                      ~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:168:30: error: variable 'membership' with type 'const auto *' has incompatible initializer of type 'SnapshotMembershipRef<LoopSnapshotNoteRef>' (aka 'shared_ptr<const SnapshotMembership<shared_ptr<const LoopSnapshotNote>>>')
+  168 |   publish(loop); const auto* membership = loop.publishedSnapshot()->noteMembership(60, 0);
+      |                              ^            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test/test_note_edit_entry_boundary/inventory_adoption.inc:201:44: error: too few arguments to function call, at least argument 'sessionPlayheadPhaseTick' must be specified
+  201 |     if (kind == 4) loop.openOverdubSession();
+      |                    ~~~~~~~~~~~~~~~~~~~~~~~ ^
+test/test_note_edit_entry_boundary/../test_support/../test_support/../../src/Loop/LoopOverdubSession.cpp:28:26: note: 'openOverdubSession' declared here
+   28 | LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, bool forceNew) {
+      |                          ^                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+8 errors generated.
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.o] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 5.35 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:05.355
+================== 1 test cases: 0 succeeded in 00:00:05.355 ==================

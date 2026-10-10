@@ -12,7 +12,15 @@
 #include <vector>
 #include <functional>
 
-// Optional physical-I/O fault/cut boundary; inactive in ordinary native suites.
+/// Native observation for storage-grain regressions; inert unless a fixture resets and reads it.
+inline size_t nativeSdMaximumWriteBytes = 0;
+inline size_t nativeSdTotalWrittenBytes = 0;
+inline std::vector<size_t> nativeSdWriteSizes;
+inline void nativeSdResetWriteObservation() {
+  nativeSdMaximumWriteBytes = 0;
+  nativeSdTotalWrittenBytes = 0;
+  nativeSdWriteSizes.clear();
+}
 inline int nativeSdWriteBudget = -1;
 inline int nativeSdRenameBudget = -1;
 inline bool nativeSdPartialWrite = false;
@@ -83,6 +91,9 @@ class File {
     if (pos + count > bytes->size()) bytes->resize(pos + count);
     std::memcpy(bytes->data() + pos, src, count);
     pos += count;
+    nativeSdMaximumWriteBytes = count > nativeSdMaximumWriteBytes ? count : nativeSdMaximumWriteBytes;
+    nativeSdTotalWrittenBytes += count;
+    nativeSdWriteSizes.push_back(count);
     if (nativeSdAfterMutation) nativeSdAfterMutation();
     return count;
   }

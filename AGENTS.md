@@ -16,34 +16,16 @@ here; read the relevant file on demand using the map at the bottom of this file.
 
 ## Before coding (always)
 
-1. [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md) — execution
-   context, active OpenSpec list.
-2. [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md) —
-   implementation scope. **Do not implement outside § Now implementing.** If the
-   task is not there, ask the user or update the doc first.
-3. [`docs/Authority/PROJECT_INTENT.md`](docs/Authority/PROJECT_INTENT.md) and
-   [`docs/Authority/ARCHITECTURE_RULES.md`](docs/Authority/ARCHITECTURE_RULES.md).
-4. Search [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) for the topic — use the
-   `grep` tool, never a full read (the file is >210 KB). Run
-   [`docs/Templates/DECISION_REVIEW.md`](docs/Templates/DECISION_REVIEW.md)
-   before firmware edits.
-5. Detect the domain in [`docs/AGENT_CONTEXT_MAP.md`](docs/AGENT_CONTEXT_MAP.md)
-   and load its **Required** docs. Orientation only:
-   [`docs/Plans/runtime_process_building_blocks_overview.md`](docs/Plans/runtime_process_building_blocks_overview.md).
-6. Decision ladder: extend the existing owner → reuse an extension point →
-   follow the logged `DEC-###` → run a reassessment only on a
-   [formal trigger](docs/ARCHITECTURE_REASSESSMENT.md) → otherwise **implement**.
+1. Read a bounded window of the newest status entry at the top of [`docs/Runtime/PROJECT_STATE.md`](docs/Runtime/PROJECT_STATE.md); treat deeper journal sections as historical/search-only. Verify branch identity from Git. Determine active OpenSpec from the user-approved task and its current `tasks.md`, not stale `PROJECT_STATE` archive lists.
+2. Find `## Now implementing` in [`docs/Runtime/CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md). Read its scope declarations (not the following history), and confirm which applies to the user-approved task and active OpenSpec `tasks.md`. **Do not implement outside that authorized scope.** If declarations conflict or no applicable scope exists, stop and clarify. Search older history only for specific evidence.
+3. Read [`docs/Authority/PROJECT_INTENT.md`](docs/Authority/PROJECT_INTENT.md) and [`docs/Authority/ARCHITECTURE_RULES.md`](docs/Authority/ARCHITECTURE_RULES.md).
+4. Search [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) for the topic — use the `grep` tool, never a full read. Run [`docs/Templates/DECISION_REVIEW.md`](docs/Templates/DECISION_REVIEW.md) before firmware edits.
+5. Detect the domain in [`docs/AGENT_CONTEXT_MAP.md`](docs/AGENT_CONTEXT_MAP.md) and load only relevant sections of its required docs; use targeted search/read windows, not full historical logs. For firmware work, read the orientation in [`docs/Plans/runtime_process_building_blocks_overview.md`](docs/Plans/runtime_process_building_blocks_overview.md) early; it is not authority.
+6. Decision ladder: extend the existing owner → reuse an extension point → follow the logged `DEC-###` → run a reassessment only on a [formal trigger](docs/ARCHITECTURE_REASSESSMENT.md) → otherwise **implement**.
 
-7. Before each implementation slice, follow the
-   [G2 execution packet](docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice):
-   pin scope and transition oracle, establish controllable production-path fixtures where required,
-   and record verification evidence before checkoff. Use [EXECUTION_PACKET.md](docs/Templates/EXECUTION_PACKET.md).
-   This applies to future steps of existing changes; scale checks to risk, with no extra approval gate.
+7. Before each implementation slice, follow the [G2 execution packet](docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice): pin scope and transition oracle, establish controllable production-path fixtures where required, and record verification evidence before checkoff. Use [EXECUTION_PACKET.md](docs/Templates/EXECUTION_PACKET.md). This applies to future steps of existing changes; scale checks to risk, with no extra approval gate.
 
-8. Before writing a HITL test, serial marker, or Tier-A log line, read
-   [`docs/Agents/hitl_authoring_traps.md`](docs/Agents/hitl_authoring_traps.md) and fill
-   [`HITL_TEST_RECIPE.md`](docs/Templates/HITL_TEST_RECIPE.md): tier registration, RAM1 headroom,
-   and reuse of `scripts/hitl/actions/` (no hand-rolled MIDI bytes).
+8. Before writing a HITL test, serial marker, or Tier-A log line, read [`docs/Agents/hitl_authoring_traps.md`](docs/Agents/hitl_authoring_traps.md) and fill [`HITL_TEST_RECIPE.md`](docs/Templates/HITL_TEST_RECIPE.md): tier registration, RAM1 headroom, and reuse of `scripts/hitl/actions/` (no hand-rolled MIDI bytes).
 
 Follow [critical-path and debugging boundaries](docs/Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary):
 name the acceptance criterion, fix only its blockers or concrete immediate risks,
@@ -137,6 +119,7 @@ Optional roles: [`docs/Agents/architect.md`](docs/Agents/architect.md),
 | Git / PR decisions | `Git-Commit-And-PR-Workflow.mdc` |
 | Vocabulary and naming | `Naming-Vocabulary-Teensy-Looper.mdc` |
 | Translation-unit splits | `Mechanical-TU-Split-Workflow.mdc` |
+| Multi-agent coordinated slices | `Session-Orchestrator-Workflow.mdc` (opt-in) |
 | RAM1 linker overflow | `Teensy-RAM1-Bank-Overflow.mdc` |
 | Device-SD quarantine / delete / rename | `Destructive-SD-Operations.mdc` |
 
@@ -161,6 +144,8 @@ gates pass. For hardware content parity or a dense HITL rerun, use
 
 ## Environment
 
-OpenSpec CLI requires Node.js >= 20 (`nvm use 20`). Host tests use the PlatformIO
+OpenSpec CLI needs Node.js >= 20.19.0 on the default Node (this machine: v24.21.0 via `nvm`);
+do not run `nvm use 20` first — the CLI is installed under the default Node's global prefix, so
+another version hides `openspec` from `PATH`. Host tests use the PlatformIO
 `native` env; suites that include full firmware or the PSRAM sketch are listed
 under `test_ignore` for `native` and need `-e teensy41` or hardware.

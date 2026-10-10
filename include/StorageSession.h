@@ -181,6 +181,7 @@ struct CurrentWorkspaceSaveJob {
   uint8_t undoTrackCursor = 0;
   uint16_t capturePassCursor = 0;
   uint16_t chunkCursor = 0;
+  uint16_t chunkWriteOffset = 0;
   uint32_t undoEntryCursor = 0;
   bool trackHeaderWritten = false;
   uint8_t footerTrackCursor = 0;

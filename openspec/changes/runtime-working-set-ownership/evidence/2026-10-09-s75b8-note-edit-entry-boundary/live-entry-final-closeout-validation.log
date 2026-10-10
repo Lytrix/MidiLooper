@@ -1,0 +1,31 @@
+Change 'runtime-working-set-ownership' is valid
+include/EditManager.h: OK
+src/EditManager/EditSessionDepart.cpp: OK
+src/EditManager/NoteEditSessionLifecycle.cpp: OK
+src/EditManager/NoteEditSelection.cpp: OK
+src/EditManager/EditNoteStateCoordinator.cpp: OK
+src/EditManager/NoteEditGeometryOps.cpp: OK
+src/EditManager/NoteEditSessionCommit.cpp: OK
+src/EditStates/EditSelectNoteState.cpp: OK
+src/ControlSurface/NoteEditButtonInput.cpp: OK
+src/ControlSurface/NoteEditEncoderInput.cpp: OK
+src/ControlSurface/SelectFaderInput.cpp: OK
+src/ControlSurface/GeometryFaderInput.cpp: OK
+src/LoopEditManager.cpp: OK
+src/Track/TrackLoopJamGeometry.cpp: OK
+src/StorageManager/SlotReset.cpp: OK
+src/StorageManager/CurrentSetBootLoad.cpp: OK
+src/StorageManager/LoadLoopJob.cpp: OK
+src/main.cpp: OK
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp: OK
+test/test_note_edit_entry_boundary/live_current_root_entry.inc: OK
+test/test_note_edit_entry_boundary/off_path_deps.h: OK
+test/test_note_edit_entry_boundary/selection_preparation.inc: OK
+test/test_note_edit_entry_boundary/select_state_handoff.inc: OK
+test/test_support/track_harness.inc: OK
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf: OK
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex: OK
+2d3c1fb093ff96676e599ba927ec0f9eab11552d24cc8b5505336ea48a54b923  /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf
+9e8270b41551ae4609b44362ad7fb696a2a6e6f0a4ad7e39184f757ce90b3dec  /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex
+native_passed_suites=112
+openspec_exit=0 diff_check_exit=0 source_checksum_exit=0 firmware_checksum_exit=0

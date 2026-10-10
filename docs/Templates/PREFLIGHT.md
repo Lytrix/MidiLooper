@@ -61,8 +61,8 @@ _Explicit reason; cite ignored decision ID if applicable._
 
 ## Loaded docs
 
-- [ ] `docs/Runtime/PROJECT_STATE.md`
-- [ ] `docs/Runtime/CURRENT_WORK.md` (confirm task is in § Now implementing)
+- [ ] `docs/Runtime/PROJECT_STATE.md` (newest status entry only; bounded read; branch from Git; active OpenSpec from approved task/current tasks.md, not stale deeper sections)
+- [ ] `docs/Runtime/CURRENT_WORK.md` (scope declarations under § Now implementing; reconcile with user-approved task and its active OpenSpec; do not exceed scope)
 - [ ] `docs/DECISION_LOG.md` (relevant entries)
 - [ ] `docs/Authority/PROJECT_INTENT.md`
 - [ ] `docs/Authority/ARCHITECTURE_RULES.md`

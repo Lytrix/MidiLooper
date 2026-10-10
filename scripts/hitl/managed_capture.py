@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -19,9 +20,20 @@ from hitl.actions.cancellation import active_cancel_scope, cancel_active_run
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 from hitl.serial.protocol import (collect_library_observation, fenced_rows,
                                   fenced_window, format_command_request, record_evidence_stats,
-                                  record_evidence_row_counts, stopped_capture_queue_idle)
+                                  record_evidence_row_counts, ring_loss_counters,
+                                  stopped_capture_queue_idle)
 
 _BOOT_BANNER_MARKER = "DIAG,boot_reset,"
+
+# A fenced request needs room for its own answer: with less than this left, the retrieval stops
+# asking instead of reporting a fence it never waited for. Two extra attempts cover a ring flush
+# whose fence was genuinely lost; the flush is read-only, so re-asking cannot duplicate evidence.
+_MIN_REQUEST_BUDGET_S = 0.06
+_DRAIN_FENCE_RETRIES = 2
+
+# A family shortfall (`enq - tx`) unchanged across this many consecutive snapshots is frozen rather
+# than pending: a row the ring shed before this log opened, not one still waiting to be transmitted.
+_DRAIN_STALL_ROUNDS = 2
 
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
 
@@ -207,18 +219,24 @@ class ManagedCaptureSession:
         except OSError:
             return False
 
-    def restart_with_boot_reset(self) -> bool:
+    def restart_with_boot_reset(self, stop_transport: Optional[Callable[[], None]] = None) -> bool:
         """Own a fresh boot after the state check cleared the transport gate.
 
         `!REBOOT` is refused while the transport runs, so this recovers exactly the attach that
-        failed because the device was left playing: the caller stops the transport once (idempotent
-        MIDI Stop) and then asks for this restart, which is the same capture owner with a new
-        session log and the boot banner inside it. Bounded to one restart per run.
+        failed because the device was left playing: the caller hands in the one idempotent MIDI Stop
+        (never the control surface's toggle) that clears that gate, and the restart is the same
+        capture owner with a new session log and the boot banner inside it. Bounded to one restart
+        per run, and a capture that already carries its own boot banner is not restarted.
+
+        The Stop belongs *here*, not in readiness: a run that asked for a fresh boot has already
+        decided to discard the device's playback, while a plain attach must not stop the transport
+        the scenario is about to measure (`captures/live-current-root-entry-t8s4-07/08/09`). Both
+        contracts hold because only the boot-bound path hands the sender in.
         """
-        if self._boot_reset_mode == "force":
+        if self._restarted_for_boot or self.boot_banner_seen():
             return False
-        if self._restarted_for_boot:
-            return False
+        if stop_transport is not None:
+            stop_transport()
         self._restarted_for_boot = True
         print("[hitl-capture] re-attaching with a forced boot reset", flush=True)
         self.stop()
@@ -391,6 +409,16 @@ class ManagedCaptureSession:
             return False
         return True
 
+    def selected_track_status(self, *, timeout_s: float = 0.5) -> Optional[dict]:
+        """Fresh selected-track scalar observation; never infer it from a retained ring row."""
+        from hitl.serial.protocol import selected_track_status
+        nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+        accepted, _detail = self.send_command('!TRACK_STATUS', nonce=nonce, end_nonce=end_nonce)
+        if not accepted:
+            return None
+        rows = self.fenced_response(nonce, end_nonce, timeout_s=max(0.0, timeout_s))
+        return selected_track_status(rows or [])
+
     def drain_record_evidence(self, send_transport_stop: Callable[[], None], *,
                               timeout_s: float = 30.0) -> dict:
         """End-of-leg retrieval, while the same serial owner and MIDI port are open.
@@ -398,11 +426,34 @@ class ManagedCaptureSession:
         Stop is idempotent MIDI Stop, not the control surface's transport toggle.
         A gated stats reply confirms stopped; fence-only replies do not. Completion
         concerns these three Record families, not persistence or the entire ring.
+
+        The counters in that reply span the boot, while this retrieval can only judge
+        what the ring is still holding now. Completion therefore waits for the selected
+        stop queue to idle and for the per-family shortfall (`enq - tx`) to *stop
+        shrinking*, instead of a boot-global `tx == enq` that a row shed before this log
+        opened can never satisfy: `captures/live-current-root-entry-t8s4-14` held
+        `RID entered=7,enq=7,tx=6` (and the same for `RECA`) for the rest of that boot, so
+        the strict equality drained for the whole deadline (`drains=20`) and reported
+        `SERIAL_INCOMPLETE` for evidence the leg had already received. A shortfall this
+        retrieval *witnesses* still fails closed -- a growing shortfall, a family
+        `rej`/`evict`, a regressed or saturated counter, and rows transmitted without
+        appearing in this log all remain incomplete -- and a frozen remainder is named in
+        `stalled_families` next to the ring's own loss counters, so a reader can see it was
+        not this session's rows.
+
+        A fenced request needs room for its own answer: nothing is sent with less than
+        `_MIN_REQUEST_BUDGET_S` of the deadline left, so a reply that simply arrived after
+        the retrieval's budget ran out is reported as pending-at-deadline rather than as a
+        lost fence (that mis-report is what aborted the run above), and the idempotent ring
+        flush is retried a bounded number of times when its fence is genuinely missing.
         """
         result = {"complete": False, "reason": "stopped stats unavailable", "drains": 0,
-                  "stopped_confirmed": False, "families": {}, "log_counts": {}}
+                  "stopped_confirmed": False, "families": {}, "log_counts": {},
+                  "drain_retries": 0, "stalled_families": {}, "ring_loss": {}}
         deadline = time.monotonic() + max(timeout_s, 0.0)
         previous = None
+        previous_shortfall = None
+        frozen_rounds = 0
         drain_start = None
         drain_start_counts = None
         reply_prefix = []
@@ -410,6 +461,9 @@ class ManagedCaptureSession:
         def log_lines():
             return (self._session_log.read_text(encoding="utf-8", errors="replace").splitlines()
                     if self._session_log else [])
+
+        def budget() -> float:
+            return max(0.0, deadline - time.monotonic())
 
         def request(command):
             nonlocal reply_prefix
@@ -433,9 +487,29 @@ class ManagedCaptureSession:
             reply_prefix = lines[:window[1] + 1]
             return rows
 
+        def flush_ring():
+            """The idempotent ring flush, retried while its fence is missing and time remains.
+
+            `None` means the flush did not complete: either the request could not be asked within the
+            remaining budget (the pending-deadline reason stands) or its fence was lost.
+            """
+            if budget() < _MIN_REQUEST_BUDGET_S:
+                return None
+            rows = request("!TRACE_DRAIN")
+            while rows is None and budget() >= _MIN_REQUEST_BUDGET_S:
+                if result["drain_retries"] >= _DRAIN_FENCE_RETRIES:
+                    break
+                result["drain_retries"] += 1
+                rows = request("!TRACE_DRAIN")
+            return rows
+
         try:
             send_transport_stop()
             while time.monotonic() < deadline:
+                if budget() < _MIN_REQUEST_BUDGET_S:
+                    # Too little left to ask a question and read its answer: report what was
+                    # already retrieved instead of claiming a fence this retrieval never waited for.
+                    return result
                 # Check the selected finalizer before taking the counters: otherwise
                 # it could emit its last rows between a stats snapshot and idle receipt.
                 status = request("!STOP_STATUS")
@@ -453,6 +527,8 @@ class ManagedCaptureSession:
                     continue
                 result["stopped_confirmed"] = True
                 result["families"] = stats
+                result["ring_loss"] = ring_loss_counters(rows)
+                result["reason"] = "Record rows or selected stop queue still pending at drain deadline"
                 for family, counts in stats.items():
                     if any(value >= 0xFFFFFFFF for value in counts.values()):
                         result["reason"] = f"{family}: saturated counters"
@@ -469,6 +545,10 @@ class ManagedCaptureSession:
                     if counts["entered"] != counts["enq"] or counts["tx"] > counts["enq"]:
                         result["reason"] = f"{family}: inconsistent counters"
                         return result
+                shortfall = {family: counts["enq"] - counts["tx"]
+                             for family, counts in stats.items() if counts["enq"] > counts["tx"]}
+                frozen_rounds = frozen_rounds + 1 if shortfall == previous_shortfall else 0
+                previous_shortfall = shortfall
                 previous = stats
                 if drain_start is None:
                     # Counters span the boot, while this log can start later. Calibrate
@@ -477,9 +557,10 @@ class ManagedCaptureSession:
                     drain_start = stats
                     drain_start_counts = record_evidence_row_counts(reply_prefix)
                     result["before"] = stats
-                if idle and all(row["tx"] == row["enq"] for row in stats.values()):
+                if idle and (not shortfall or frozen_rounds >= _DRAIN_STALL_ROUNDS):
                     observed = record_evidence_row_counts(reply_prefix)
                     result["log_counts"] = observed
+                    result["stalled_families"] = shortfall
                     # The reply carries every counted family, but only the families whose rows the log
                     # counter sees have a row counterpart to reconcile against: `RECA`/`RECS`/`RID`
                     # receipts. A family that is *reported* rather than counted -- `DIAG,latch`, task 2.2's
@@ -493,12 +574,15 @@ class ManagedCaptureSession:
                            stats[family]["tx"] - drain_start[family]["tx"] for family in reconcile):
                         result["reason"] = "newly transmitted Record rows do not match this session log"
                         return result
-                    result.update(complete=True, reason="queued Record rows drained into this session log")
+                    reason = "queued Record rows drained into this session log"
+                    if shortfall:
+                        reason += ("; " + ", ".join(f"{family}={rows_}" for family, rows_ in sorted(shortfall.items()))
+                                   + " Record row(s) never left the ring (not from this session)")
+                    result.update(complete=True, reason=reason)
                     return result
-                if request("!TRACE_DRAIN") is None:
+                if flush_ring() is None:
                     return result
                 result["drains"] += 1
-                result["reason"] = "Record rows or selected stop queue still pending at drain deadline"
             return result
         except (OSError, ValueError, RuntimeError) as exc:
             result["reason"] = f"Record evidence drain failed: {exc}"
@@ -590,8 +674,46 @@ class ManagedCaptureSession:
         self.stop()
 
 
+def stop_transport_and_observe_heap(
+    session: "ManagedCaptureSession", *, midi_out_name: str = "Teensy", timeout_s: float = 8.0
+) -> list[str]:
+    """Run end: stop the transport, **then** ask for the stopped-state heap observation.
+
+    The order is the point. Mid-run the HITL keeps the device playing and never presses
+    (`establish_attach_readiness` proves liveness from the rows a playing device emits); the run's
+    own end is where it should be stopped, and `!HEAP_STATS` is only granted once it is -- with the
+    transport running, no allowlisted query answers at all (measured). The idempotent realtime Stop
+    is used rather than the control surface's press, which is a toggle.
+    """
+    try:
+        import uuid
+
+        import mido
+
+        from hitl.midi_io import _find_midi_port
+
+        out_port = mido.open_output(_find_midi_port(midi_out_name, "output"))
+        try:
+            out_port.send(mido.Message("stop"))
+        finally:
+            out_port.close()
+        time.sleep(0.5)
+        nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+        accepted, detail = session.send_command("!HEAP_STATS", nonce=nonce, end_nonce=end_nonce)
+        if not accepted:
+            return [f"(heap observation not queued: {detail})"]
+        rows = session.fenced_response(nonce, end_nonce, timeout_s=timeout_s)
+        session.complete_command(nonce)
+        if rows is None:
+            return ["(no fenced !HEAP_STATS reply after the run-end stop)"]
+        return list(rows)
+    except Exception as exc:  # evidence, never a teardown failure
+        return [f"(run-end heap observation failed: {exc!r})"]
+
+
 @contextmanager
 def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
+
     session = ManagedCaptureSession(
         port=config.capture_serial_port,
         boot_wait_s=config.capture_boot_wait_s,
@@ -611,6 +733,13 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         log_path = session.start()
         yield log_path
     finally:
+        # Run end: the transport is stopped here, and only here, and the stopped-state heap
+        # observation follows it. Mid-run the HITL keeps the device playing and never presses.
+        heap_rows = stop_transport_and_observe_heap(
+            session, midi_out_name=config.midi_out_name
+        )
+        for row in heap_rows:
+            print(f"[hitl] run-end heap observation: {row.strip()}", flush=True)
         session.stop()
 
 
@@ -646,26 +775,36 @@ def attach_stream_is_usable(
     return True, f"{len(lines)} line(s)"
 
 
+#: Minimum fresh device rows an attaching run accepts as liveness proof when no command answers
+#: (a playing device refuses every transport-gated query). Rows must carry device stamps newer
+#: than this attach -- freshness, not volume.
+_ATTACH_FRESH_ROW_FLOOR = 8
+
+
 def establish_attach_readiness(
     *, timeout_s: float = 12.0, send_transport_stop: Optional[Callable[[], None]] = None,
     stop_retries: int = 1,
 ) -> tuple[bool, str]:
-    """Readiness from a fresh fenced stopped-state reply, never from line count.
+    """Readiness from a fresh reply this run asked for, never from line count.
 
     Line count says only that bytes arrived; it cannot separate a live device from a backlog left
     by an abruptly stopped session, and it accepts any `#`-prefixed noise. What readiness needs is
-    a reply this run asked for: a fenced `!STOP_STATUS` whose rows appear **after** the attach,
-    reporting the selected track stopped, with no pending finalization and an empty stop queue
-    (`stopped_capture_queue_idle`). Persistence prerequisites stay with the caller's own save-idle
-    wait, which is the owner of that contract.
+    a reply this run asked for, appearing **after** the attach.
 
-    `!STOP_STATUS` is transport-gated, so a device whose transport is still running answers
-    nothing -- and a run that was killed mid-sequence leaves exactly that state
-    (`captures/s4f22-step10-g2`). The reply's silence is therefore ambiguous between "stopped
-    transport, dead device" and "device fine, transport running", and `send_transport_stop` (one
-    idempotent MIDI Stop, never the control surface's toggle) resolves it: after the stop a healthy
-    device answers. A silent device is then refused by name, once.
+    **The end goal is always playing, never stopping**, so this probe asks something the device
+    answers while its transport runs. `!STOP_STATUS` cannot be it: every status query except
+    `!LIB_OBSERVE` is transport-gated in firmware (`StorageManagerHitlSerial.cpp`), so a playing
+    device replies to none of them -- which is why this step used to send an idempotent MIDI Stop
+    first, and why the composed preset's second leg then measured its edit gestures on the stopped
+    take the base leg had left playing (`captures/live-current-root-entry-t8s4-07/08/09`).
+    `!HEAP_STATS` is the one allowlisted query with no transport gate, and it reports exactly the
+    state readiness cares about (its own transport gate, whether any track is playing or has work
+    in flight, and whether storage is busy), so it proves liveness *and* describes the device
+    without touching it. `send_transport_stop` stays in the signature for callers that still pass
+    one, but this function never presses: the run owns the device's state, not this probe.
     """
+    from hitl.device_time import filter_live_lines
+
     session = active_managed_capture()
     if session is None:
         return True, "no managed capture (readiness not applicable)"
@@ -686,30 +825,28 @@ def establish_attach_readiness(
         stops_sent = 0
         while time.monotonic() < deadline:
             nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
-            accepted, detail = session.send_command("!STOP_STATUS", nonce=nonce, end_nonce=end_nonce)
+            accepted, detail = session.send_command("!HEAP_STATS", nonce=nonce, end_nonce=end_nonce)
             if not accepted:
-                return False, f"!STOP_STATUS refused: {detail}"
-            # A direct-serial reply arrives in milliseconds; a transport-gated silence is then cheap
-            # (1 s per attempt) instead of costing the whole readiness budget before the Stop.
+                return False, f"!HEAP_STATS refused: {detail}"
+            # A direct-serial reply arrives in milliseconds; the budget below only bounds a device
+            # that stops answering at all.
             rows = session.fenced_response(
-                nonce, end_nonce, timeout_s=min(1.0, max(0.1, deadline - time.monotonic()))
+                nonce, end_nonce, timeout_s=min(1.5, max(0.1, deadline - time.monotonic()))
             )
             if rows is None:
-                if send_transport_stop is not None and stops_sent < stop_retries:
-                    stops_sent += 1
-                    print(
-                        "[hitl] no !STOP_STATUS reply; the transport is probably still running "
-                        "from a killed run — sending one idempotent MIDI Stop and probing again",
-                        flush=True,
+                # No command answers while the transport runs: every status query is transport-
+                # gated in firmware and `!LIB_OBSERVE`'s reply is ring-deferred behind a gated
+                # drain (measured on this image: all three silent with the device playing). A
+                # playing device is exactly the state the end goal asks for, so fall back to the
+                # evidence it *is* emitting: rows with fresh device stamps since this attach.
+                fresh_rows = filter_live_lines(read_lines(), after_index=baseline)
+                if len(fresh_rows) >= _ATTACH_FRESH_ROW_FLOOR:
+                    return True, (
+                        f"no command replies while the transport runs; "
+                        f"{len(fresh_rows)} fresh device row(s) since the attach"
                     )
-                    send_transport_stop()
-                    last = "no reply to the readiness probe; stopped the transport once"
-                    continue
                 last = (
-                    "no !STOP_STATUS reply even after one idempotent MIDI Stop; the device is "
-                    "not answering"
-                    if stops_sent
-                    else "no fenced !STOP_STATUS reply"
+                    f"no fenced !HEAP_STATS reply and only {len(fresh_rows)} fresh device row(s)"
                 )
                 continue
             lines = read_lines()
@@ -720,19 +857,18 @@ def establish_attach_readiness(
             if window[1] <= baseline:
                 last = "reply is not fresh (it precedes this attach)"
                 continue
-            status_rows = [row for row in rows if "#STOP_STATUS," in row]
-            if not status_rows:
-                last = "reply carried no #STOP_STATUS row"
+            stat_rows = [row for row in rows if "#HEAP_STATS," in row]
+            if not stat_rows:
+                last = "reply carried no #HEAP_STATS row"
                 continue
-            row = status_rows[-1]
-            if "state=STOPPED" not in row:
-                last = f"device is not stopped: {row.strip()}"
-                continue
-            if not stopped_capture_queue_idle([row]):
-                last = f"stop queue is not idle: {row.strip()}"
-                continue
-            suffix = " after one idempotent MIDI Stop" if stops_sent else ""
-            return True, f"fresh stopped reply with an idle stop queue{suffix}"
+            row = stat_rows[-1]
+            # A refusal is still an answer: the device replied to a query this run asked, which is
+            # what readiness needs. A *playing* device (the end goal) refuses the heap observation
+            # by design, so refusing on `refused=` would make "always playing" un-attachable; the
+            # reason travels with the verdict, and the reply's own gate fields are on that row. The
+            # final stopped-state heap observation belongs to the run's own end, after the
+            # transport is stopped there.
+            return True, f"fresh heap observation: {row.strip()}"
         return False, last
     except (OSError, ValueError, RuntimeError) as exc:
         return False, f"readiness probe failed: {exc}"
@@ -754,18 +890,15 @@ def transport_stop_sender(config: HitlConfig, sent: dict) -> Callable[[], None]:
     def _send() -> None:
         if sent.get("value"):
             return
-        sent["value"] = True
-        try:
-            import mido
-
-            from hitl.midi_io import _find_midi_port
-
-            port_name = _find_midi_port(config.midi_out_name, is_input=False)
-            with mido.open_output(port_name) as port:
-                port.send(mido.Message("stop"))
-            print(f"[hitl] sent one idempotent MIDI Stop to {port_name!r}", flush=True)
-        except Exception as exc:  # noqa: BLE001 - a missing MIDI port is reported, not fatal
-            print(f"[hitl] could not send the MIDI Stop: {exc}", flush=True)
+        import mido
+        from hitl.midi_io import _find_midi_port
+        port_name = _find_midi_port(config.midi_out_name, is_input=False)
+        with mido.open_output(port_name) as port:
+            port.send(mido.Message('stop'))
+        # Cache only a successful boot-repair Stop. Teardown failures must reach
+        # DeviceSession, which records disconnection and latches against reset.
+        sent['value'] = True
+        print(f'[hitl] sent one idempotent MIDI Stop to {port_name!r}', flush=True)
 
     return _send
 
@@ -850,51 +983,53 @@ def run_with_managed_capture(
     A run that wanted a fresh boot and still has no banner then re-attaches with a
     forced reset, now that the transport gate is clear.
     """
+    from hitl.device_shutdown import DeviceSession
     timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
-        mode = resolve_boot_reset_mode(config.boot_reset)
-        stopped_once = {"value": False}
-        # Line count is diagnostic only; readiness comes from a reply this run asked for. Only a
-        # run that forces the boot promises a fresh stream to count.
-        usable, detail = attach_stream_is_usable(log_path, require_stream=(mode == "force"))
-        print(f"[hitl] attach stream: {detail}")
-        if not usable:
-            print(f"[hitl] attached stream is not usable ({detail}); refusing to run the scenario")
-            write_metadata_best_effort(config, session_log=log_path)
-            return 3
-        ready, reason = establish_attach_readiness(
-            send_transport_stop=transport_stop_sender(config, stopped_once)
-        )
-        print(f"[hitl] attach readiness: {reason}")
-        # A ready device is driven straight away (no reboot, no boot wait). A device this run had to
-        # *repair* is a different case: the idempotent Stop changed the state, and the capture stream
-        # now mixes the ring's stale backlog with fresh rows -- the drain lands old `BAR`/`DFRAME`
-        # rows *after* newer ones, so a scenario that reads "is the transport running?" from line
-        # position sees the transport running (`captures/s4f22-step11-h2`: BAR rows stamped 850-1864 s
-        # interleaved after a 1855 s `state=STOPPED` reply, and the scenario's stop press then
-        # *started* the transport, so the clear could not drain). Own a fresh boot for that case: it
-        # is the state the scenario is written against, and the reboot clears the backlog with it.
-        needs_fresh_boot = mode != "never" and (not ready or stopped_once["value"])
-        if needs_fresh_boot:
-            session = active_managed_capture()
-            if session is not None and not session.boot_banner_seen() \
-                    and session.restart_with_boot_reset():
-                log_path = session.session_log or log_path
-                usable, detail = attach_stream_is_usable(log_path, require_stream=True)
-                print(f"[hitl] fresh-boot attach stream: {detail}")
-                if usable:
+        def run_attached() -> int:
+            nonlocal log_path
+            mode = resolve_boot_reset_mode(config.boot_reset)
+            stopped_once = {'value': False}
+            ready, reason = establish_attach_readiness(
+                send_transport_stop=transport_stop_sender(config, stopped_once))
+            print(f'[hitl] attach readiness: {reason}')
+            needs_fresh_boot = mode == 'force' or (mode != 'never' and (not ready or stopped_once['value']))
+            if needs_fresh_boot:
+                session = active_managed_capture()
+                if session is not None and session.restart_with_boot_reset(
+                        transport_stop_sender(config, stopped_once)):
+                    log_path = session.session_log or log_path
+                    print('[hitl-capture] fresh boot owns the device state; the scenario starts from it')
                     ready, reason = establish_attach_readiness()
-                    print(f"[hitl] fresh-boot readiness: {reason}")
-        if not ready:
-            print(f"[hitl] attach readiness failed ({reason}); refusing to run the scenario")
-            write_metadata_best_effort(config, session_log=log_path)
-            return 3
-        print(f"[hitl] attach readiness: {reason}")
-        active = replace(config, follow_current_session=False, follow_serial_log=log_path,
-                         legacy_extra_args=tuple(legacy_args_with_managed_capture(
-                             list(config.legacy_extra_args), config, log_path)))
-        write_metadata_best_effort(active, session_log=log_path)
-        return _run_with_watchdog(lambda: run_fn(active), timeout)
+                    print(f'[hitl] fresh-boot readiness: {reason}')
+            usable, detail = attach_stream_is_usable(log_path, require_stream=(mode == 'force'))
+            print(f'[hitl] attach stream: {detail}')
+            if not usable or not ready:
+                print(f'[hitl] attach refused: {detail if not usable else reason}')
+                write_metadata_best_effort(config, session_log=log_path)
+                return 3
+            active = replace(config, follow_current_session=False, follow_serial_log=log_path,
+                             legacy_extra_args=tuple(legacy_args_with_managed_capture(
+                                 list(config.legacy_extra_args), config, log_path)))
+            write_metadata_best_effort(active, session_log=log_path)
+            return _run_with_watchdog(lambda: run_fn(active), timeout)
+
+        # Fresh sender state for EACH teardown cycle, independent of boot repair.
+        # The outer capture remains open through cleanup, including raised/failed legs.
+        shutdown = DeviceSession(capture_log_getter=lambda: log_path,
+                                 send_transport_stop=lambda: transport_stop_sender(config, {})(),
+                                 out_dir=config.out_dir, context='managed-hitl-run')
+        try:
+            with shutdown:
+                code = run_attached()
+        finally:
+            config.out_dir.mkdir(parents=True, exist_ok=True)
+            (config.out_dir / 'shutdown-result.json').write_text(
+                json.dumps(shutdown.result.as_dict(), indent=2) + '\n', encoding='utf-8')
+        if not shutdown.result.ok:
+            print(f'[hitl] canonical shutdown incomplete: {shutdown.result.detail}')
+            return code or 3
+        return code
 
 
 def write_metadata_best_effort(config: HitlConfig, *, session_log: Optional[Path] = None) -> None:

@@ -1,0 +1,46 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Undefined symbols for architecture arm64:
+  "Loop::stepCommittedNoteIdPreparation(Loop::CommittedNoteIdPreparation&)", referenced from:
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      ...
+  "Loop::beginCommittedNoteIdPreparation(Loop::CommittedNoteIdPreparation&) const", referenced from:
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_pass_order_disabled_rows_and_legacy_parity() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_reset_recycled_source_cannot_revive_coordinates() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_wrong_loop_capture_change_and_discard() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_wrong_loop_capture_change_and_discard() in test_note_edit_entry_boundary.o
+      ...
+  "Loop::committedNoteIdPreparationComplete(Loop::CommittedNoteIdPreparation const&) const", referenced from:
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_acceptance_and_single_chunk_grants() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_invalid_chunk_fault_and_empty_completion() in test_note_edit_entry_boundary.o
+      test_committed_id_preparation_invalid_chunk_fault_and_empty_completion() in test_note_edit_entry_boundary.o
+      drainIdPreparation(Loop&, Loop::CommittedNoteIdPreparation&, unsigned long) in test_note_edit_entry_boundary.o
+      drainIdPreparation(Loop&, Loop::CommittedNoteIdPreparation&, unsigned long) in test_note_edit_entry_boundary.o
+      ...
+ld: symbol(s) not found for architecture arm64
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/program] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 7.23 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:07.231
+================== 1 test cases: 0 succeeded in 00:00:07.231 ==================

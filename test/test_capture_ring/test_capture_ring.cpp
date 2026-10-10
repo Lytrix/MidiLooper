@@ -25,6 +25,7 @@ struct CaptureSerial {
 #include "../../src/Utils/DebugSessionCapture.cpp"
 #undef Serial
 #include "../../include/Utils/TelemetryCadence.h"
+#include "../../src/StorageManager/HitlLiveObservationCommands.h"
 
 using namespace DebugSessionCapture;
 static uint8_t backing[1024];
@@ -467,8 +468,73 @@ void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
 }
 
+void test_live_track_status_is_direct_and_does_not_flush_retained_evidence() {
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  flushCaptureBuffer(8);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  TEST_ASSERT_TRUE(emitTrackStatus(7, 3, "PLAYING", true));
+  TEST_ASSERT_TRUE(captureSerial.output.find("track=7,slot=3,state=PLAYING,transport=1") != std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStart.transmitted);
+}
+
+void test_live_track_status_refuses_backpressure_without_queuing_a_stale_reply() {
+  captureSerial.room = 95;
+  TEST_ASSERT_FALSE(emitTrackStatus(7, 3, "PLAYING", true));
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+  captureSerial.room = 96;
+  TEST_ASSERT_TRUE(emitTrackStatus(7, 3, "STOPPED", false));
+  TEST_ASSERT_TRUE(captureSerial.output.find("state=STOPPED,transport=0") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("state=PLAYING") == std::string::npos);
+}
+
+void test_production_live_dispatch_frames_stopped_and_playing_status_without_ring_flush() {
+  using StorageManagerInternal::processLiveObservationCommand;
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  static const char* state;
+  static bool running;
+  const auto reply = [] { (void)emitTrackStatus(7, 3, state, running); };
+  for (const char* sample : {"STOPPED", "PLAYING"}) {
+    state = sample;
+    running = std::strcmp(sample, "PLAYING") == 0;
+    captureSerial.output.clear();
+    TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reply));
+    TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACK_STATUS", reply));
+    TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", reply));
+    const size_t start = captureSerial.output.find("TRACE_FENCE,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const size_t status = captureSerial.output.find("#TRACK_STATUS,");
+    const size_t end = captureSerial.output.find("TRACE_FENCE,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    TEST_ASSERT_TRUE(start != std::string::npos && status != std::string::npos && end != std::string::npos);
+    TEST_ASSERT_TRUE(start < status && status < end);
+    TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+  }
+}
+
+void test_live_fence_dispatch_refuses_backpressure_and_invalid_tokens() {
+  using StorageManagerInternal::processLiveObservationCommand;
+  const auto reply = [] { (void)emitTrackStatus(7, 3, "PLAYING", true); };
+  captureSerial.room = 95;
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reply));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACK_STATUS", reply));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", reply));
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+  captureSerial.room = 96;
+  TEST_ASSERT_FALSE(emitTraceFence("short"));
+  TEST_ASSERT_FALSE(emitTraceFence("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"));
+  TEST_ASSERT_FALSE(emitTraceFence("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_production_live_dispatch_frames_stopped_and_playing_status_without_ring_flush);
+  RUN_TEST(test_live_fence_dispatch_refuses_backpressure_and_invalid_tokens);
+  RUN_TEST(test_live_track_status_is_direct_and_does_not_flush_retained_evidence);
+  RUN_TEST(test_live_track_status_refuses_backpressure_without_queuing_a_stale_reply);
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
   RUN_TEST(test_tier_a_flood_cannot_evict_record_evidence);
   RUN_TEST(test_task22_the_latch_family_is_accounted_and_read_back);

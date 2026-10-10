@@ -6,6 +6,36 @@ For overdub overlap candidate / classify / resolve / seal, see [`OVERDUB_OVERLAP
 
 ---
 
+## NOTE_EDIT committed identity preparation prerequisite
+
+Loop's `beginCommittedNoteIdPreparation` / `stepCommittedNoteIdPreparation` now expose the existing in-place missing committed NoteOn-ID policy through explicit single-chunk/pass-transition grants. The caller-owned scalar cursor retains no references and rejects stale canonical/Capture generations or Loop/revision receipt before reading coordinates. Already assigned IDs stay stable on restart; completion queries are read-only, faults do not claim readiness. Chunk/payload/reference and published-root ownership remain unchanged. This prerequisite is native/build verified but **not used by open/reopen/main**; `assignMissingNoteIdsInCommittedCapturePasses` remains the synchronous entry call. Bounds, tests and remaining integration gates: [committed-ID execution packet](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/COMMITTED-ID-PREPARATION.md).
+
+Loop's `beginCommittedSnapshotInventoryPreparation` / `stepCommittedSnapshotInventoryPreparation` / `committedSnapshotInventoryPreparationResult` enumerate committed capture IDs and active edit companions into caller-owned existing vector headers. Acceptance is metadata-only and requires empty outputs; one metadata row, separate empty-vector reserve, or phase transition per grant. Source/generation/revision/geometry/topology and output header/size/capacity/data qualify all reads and completion; caller excludes writes/reuse/parallel cursors and keeps owners alive. Outputs preserve record→OD ordering, duplicates and active-valid edit eligibility; captured coverage is usable only with a current Complete query. Scalar discard never clears outputs. No live queue/entry/main dispatch, producer/graph retirement or allocator/device timing claim; legacy queue helpers remain synchronous. [Snapshot-inventory evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/SNAPSHOT-INVENTORY-PREPARATION.md).
+
+Construction-owned retirement is a separate prerequisite: irreversible scalar acceptance retains all private payload and blocks further construction/publication handoff. A single-use caller-owned cursor drains workspace aliases/private copy chains, vector rows/empty buffers and candidate/frozen/parent graph edges in separate grains. Keep owner/cursor alive, exclude semantic borrowers/writes/weak resurrection, and finish before destroying an admitted owner; wrong-owner or overlapping calls must preserve valid progress. Unadmitted callers retain synchronous destruction. The pending publish box and live entry/main are not yet wired to this primitive. Allocator/device timing is unqualified. [Construction-retirement contract and verification](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/CONSTRUCTION-RETIREMENT.md).
+
+Pending-box payload retirement has a separate caller-quiescence contract: no live publisher/queue/prepared-companion writes or stale-root overlay readers may use the box during cleanup. Single-use scalar admission retains payload/metadata; construction, both retained MIDI batches, IDs and nested wrap/root edges drain in separate grains. Retain companion policy preserves exact empty reserved allocation; Release retires it after rows. Complete preserves semantic metadata and does not cancel wrap/undo/Capture/session-exit obligations or make a publisher reusable. Roots remain in their existing owner fields, not detached graph cursors. This prerequisite is not live cancellation/adoption/entry integration. [Pending-box contract and verification](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/PENDING-BOX-RETIREMENT.md).
+
+Qualified inventory adoption is a separate Loop-owner prerequisite: prepare a genuinely fresh pending header in its own allocation grant, then consume only a currently Complete inventory receipt via two ID-header swaps and captured coverage/mode metadata. Every refusal preserves receipt/vectors/destination/generations; exchanged old empty buffers remain caller-owned. Retired or obligation-bearing boxes are ineligible; caller excludes semantic borrowers/mutation/lifetime reuse. Loaded mode requires published box absent; Republish retains the audible root. Incoming companion capacity must preserve the old destination reservation and full unchanged prepared-history headroom/limits/both exchange buffers; never reserve populated IDs or shrink the grant in adoption. Existing queue helpers and live cancellation/entry/main remain unchanged. [Inventory-adoption contract and verification](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/INVENTORY-ADOPTION.md).
+
+The live settled-current-root gesture lane is staged separately from source cancellation: accepted Loop→Note intent remains private/inactive with null FSM until bounded payload/derived/ID/selection preparation publishes coherent Note session/Select state. Main gives one preparation grant between MIDI service; callers return rather than running immediate-use tails. Target/source/reset/exit/second-cycle cancellation prevents obsolete publication or feedback. Only the frozen admission lane migrates; cold/stale/Capture/active/non-null-FSM entry stays explicit synchronous compatibility, removable at full bounded-entry cutover before this OpenSpec archive. Preview/feedback execution remains separately unqualified, including the existing MIDI delay. [Live entry contract and verification](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/LIVE-CURRENT-ROOT-ENTRY.md).
+
+`EditManager::beginNoteEditDerivedStateClear` / `stepNoteEditDerivedStateClear` / `noteEditDerivedStateClearResult` provide caller-owned cleanup after completed session payload retirement and FSM departure. Scalar acceptance retains four cache buffers, current/prior selection IDs and kind-boundary undo entry; grants retire one buffer/ID/nested unit or phase/shell/terminal. Every grant qualifies owner/session receipt/inactive/null FSM/selected track+slot, and legacy reset invalidates receipts before synchronous reuse. The live settled-current-root entry continuation now composes these workers; existing general cache invalidation/reopen compatibility remains synchronous. The caller excludes rebuilds/writes/live use/overlapping cursors; source admission/publication and device timing are not established by this component. [Derived-state evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/DERIVED-STATE-RETIREMENT.md).
+
+`EditSession::beginPayloadClear` / `stepPayloadClear` / `payloadClearResult` / `cancelPayloadClear` compose the store/current-state/undo/focus primitives with ID buffers and nested apply-owned rows under a same-live-owner/token receipt. Acceptance invalidates scalar metadata without releasing payload; one unit or phase transition per call, then separate completion. Empty outer buffers release only after drained payload. The live settled-current-root entry continuation now dispatches these workers before derived cleanup/publication; general reopen compatibility remains synchronous. The owner must settle edit/checkpoint obligations, qualify Track/slot/source, exclude live use/writes/borrowers and cancel before legacy reuse. Legacy unstamped stores retain live-pool precondition. [Session-payload evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/SESSION-PAYLOAD-RETIREMENT.md).
+
+`NoteEditFocus::beginClear` invalidates fixed metadata without releasing baseline/overlap scratch maps; `stepClear` retires one global-head node or empty bucket table. False is observational completion. No token or resident cursor is added: caller excludes live use/borrowers and qualifies session/focus per grant. Live settled-current-root entry composes it through session payload cleanup; legacy reset/reopen still uses synchronous `clear`. No overlap authority change. [Focus-retirement evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/FOCUS-RETIREMENT.md).
+
+`LoopEventVectorCache::stepClear` drops one flat cache without syncing, shared canonical reference without cloning, unique chunk, or drained header per call; later `Complete` is observational. It adds no resident operation state. Live settled-current-root entry composes it through session payload cleanup; legacy reopen compatibility remains synchronous. Caller qualifies session/focus and excludes mutable borrowers; legacy unstamped stores still require a live pool. Supported event vectors have trivial payloads; allocator duration unqualified. [Store-retirement evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/STORE-RETIREMENT.md).
+
+For future NOTE_EDIT departure cleanup, the existing `NoteEditSessionUndoStack` now provides `beginClear` / token-qualified `stepClear` / observational `clearComplete`. It disables undo/redo and rejects pushes while retiring, removes nested undo/redo payloads one leaf/table/shell per grant, and rejects late grants after synchronous clear/reuse. Previously borrowed entry pointers are invalid after begin; the caller must qualify session/focus before grants. Empty map tables are compacted before shell destruction to avoid firmware-library bucket scans (fixed small allocation possible). Current reopen still calls the original synchronous `clear`; this prerequisite does not make full entry/retirement bounded or alter normal undo routing. [Undo-retirement evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/UNDO-RETIREMENT.md).
+
+Direct `openNoteEditSession` and `enterDefaultNoteEditSessionState` now reject a Track reference other than the selected Track before accessing Loop content or mutating live session/selection, matching reopen. This guard is not a pending-entry result or protection for subsequent caller tails/same-Track slot changes; valid-target entry remains synchronous. [Departed-entry evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/DEPARTED-ENTRY-GUARDS.md).
+
+EditManager's companion ready-source selection preparation now computes the final real Select landing, including a bounded second nearest-only pass when navigation reclamps the first winner. Each source-qualified grant retains coordinates only; no Loop/root/page ownership transfers. Pending/completed results also qualify the captured FSM context, and already-Select does not reenter. This remains private and not entry/main integrated; no full-loop latency claim. [Final landing packet](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/SECOND-CLAMP-PREPARATION.md).
+
+---
+
 ## Record-stop scratch reuse
 
 `Track::beginDeferredRecordStopForSlot` discards retired frozen order/canonical-order rewrite bindings
@@ -104,6 +134,64 @@ Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **
 | `capture` | `Capture` | Live record/overdub append buffer (`capture.store`, `capture.phase`) |
 | `passes` | `LoopPasses` | Canonical timeline: **recordPass**, **overdubPasses[]**, **editPasses[]**, **loopGeometries[]** |
 | `passesMaterializedStore_` | `CowLoopEventStore` | Derived materialized MIDI cache behind `midiEvents()` (non-canonical) |
+
+`Loop::captureContentGeneration()` is the runtime-only identity of the live Capture
+producer. Accepted appends, destructive rewrites, dirty sorts and Capture
+interval/ownership changes advance it; denied input and clean sorts do not.
+`Track`'s admitted Record/overdub stop job freezes the pre-transfer receipt
+with its sealed `CaptureRange`, then invalidates the emptied producer. This is
+neither `captureDisplayRevision` nor committed `playbackRevision`, is not saved
+to SD, and reaches a selected Capture playback window only behind the
+default-disabled rolling qualification lane. The Record stop's declared
+preparation credits use the producer's pre-cut row/chunk counts,
+not its emptied post-seal directory.
+
+`RuntimePlaybackViewSource::fromLiveCapture` now borrows the live producer
+through a 64-bit generation hook. A private Capture-origin fill/order refuses
+same-count mutation and cannot be mislabeled committed or preview; a frozen
+legacy range cannot be relabeled live Capture. Under the default-disabled
+rolling qualification lane, an empty first Record may also receive Track
+window-owner grants to complete a **private** silent Capture candidate with
+provisional one-bar playback coverage. Its raw first-bar `current/retained`
+remains intact for Record return; accepted input cancels the private builder.
+The Track owner does **not yet** publish or select this candidate as a Record
+`current`, and the raw compatibility path remains active until its separate
+migration gate.
+
+`RuntimePlaybackViewSource::fromFrozenRecordCapture` borrows the job-owned
+sealed range: its Capture content identity is the job-frozen pre-transfer Loop
+token, while `CaptureRange::generation()` guards each fill read. Accepted appends
+(including out-of-order input) maintain a per-32-row block/bar membership hint
+in the Capture store; the hint transfers with its sealed chunks without a
+stop-edge row walk. A Track-owned `RecordCoverage` fill charges one inspected
+block summary or candidate row per bounded unit, skips only proven irrelevant
+blocks and conservatively inspects rows when a hint is invalid or geometry is
+outside the 64-bar index envelope. Raw rows at or beyond final length remain
+candidates because a NoteOn may wrap into the requested interval. Tick-changing
+store rewrites invalidate hints; neither hints nor incomplete fills are a
+second content authority. This is a source-inspection optimization, not a
+new scheduler, view or MIDI emitter.
+
+`Track::qualifiedFrozenRecordCaptureSourceForSlot` admits only the matching
+head Record job (slot, capture interval, Loop pointer/LoopId, final geometry,
+closure, frozen token). Under the default-disabled rolling qualification lane,
+the existing Track owner can publish complete frozen Capture ready and its
+clock-edge reader can adopt it; the default legacy route remains until its
+all-route/device migration gates pass. The Track job retains its sealed range
+for every current/ready/build/future request and closure obligation even after
+copied view order completes. Complete `LoopSnapshot` publication remains a
+separate checkpoint, not a prerequisite for this frozen interval.
+
+On a frozen Record return under the rolling qualification lane, a complete
+Capture `ready` is owed to the clock edge at its own coverage start. If the
+edge has passed without adopting it, Track's off-clock holder retires that
+unborrowed late ready, reports `record_ready_late` through the existing
+capture-gated playback-build row and prepares the next owed bar from the same
+job-owned range. A view that merely covers the current phase after its missed
+boundary does not suppress that next-bar obligation or authorize mid-bar
+replay. The default legacy route, root-current handoff and hardware timing
+still have their own migration gates.
+
 
 ```mermaid
 flowchart LR
@@ -620,7 +708,7 @@ deferred save LSV1 preamble/tail in `stepDeferredLoopPersist`. Boot sync load
 (`CurrentSetBootLoad`) is still legacy-only.
 
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
-- `writeLoopPersisted` streams capture-pass events in bounded batches and records max batch size through storage-loop-io test hooks; the deferred save path writes live loop pool entries as metadata, capture-pass headers, and one capture chunk per main-loop iteration.
+- `writeLoopPersisted` streams capture-pass events and records max batch events through storage-loop-io test hooks; deferred Current workspace persistence retains the serialized pass chunk and resumes its payload write in at-most-512-byte slices, returning to the existing main loop between slices. SD-card internal busy latency is not thereby device-qualified.
 - **STORAGE_VERSION** **5** (when **`scoped-edit-pass-payload`** ships): **loadState** rejects v1–v4; firmware starts empty. **No** edit-tail migration.
 - v5 **editPasses** tail: canonical **EditPassType** **SD file record** (**NoteRef** + property fields); **no** **EditChange** on disk.
 - **`startLoopTick`** is stored in each loop snapshot and restored by **`applySnapshotToLoop`** on load (phase origin for `tickPhaseInLoop`).

@@ -14,7 +14,7 @@ Derived Event Representation  +  Playback interval  →  MIDI out
 
 | Input | Today |
 |-------|-------|
-| Representation | `LoopPlaybackRuntime` (`mergedEvents`, `playbackOrder`); NOTE_EDIT: `editManager.sessionMidiEvents()` when edit active |
+| Representation | `LoopPlaybackRuntime` (`mergedEvents`, `playbackOrder`); current-root NOTE_EDIT: committed playback interval plus identity-qualified `NoteEditCurrentState` / session-store overlay; stale-root NOTE_EDIT: the session's materialized projection |
 | Interval | Rolling cycle via `projectionCycleStartTick` + `playbackEventPhase` per event |
 
 `currentTick` is the clock. `Track::playMidiEvents` does **not** read `visualCache`. It phases `currentTick` and sends from `mergedEvents` (raw MIDI). Long loops gather **2 bars** around the playhead; short loops gather the loop. Live overdub adds `loop.capture.store`. That is the play consumer in [DerivedViews.md](DerivedViews.md) § Consumers.
@@ -33,7 +33,7 @@ Playback **does not** own storage or display representations.
 
 - **No** `LoopPlaybackRuntime` allocation on first tick after transport start (prewarm when heap allows).
 - Rebuild playback order off hot path when `invalidateCaches()` or pass revision changes.
-- NOTE_EDIT: `sessionPreviewRevision_` gates preview refresh; this-session settled overlay rows audition via splice onto the playback window around `currentTick`, not per-fader MIDI note-on. Today’s firmware still full-replaces from `sessionMidiEvents()` (DEC-037 Editor amendment 2026-08-16).
+- NOTE_EDIT: `sessionPreviewRevision_` gates preview refresh. For a current published root, the playback interval remains the committed base and only changed/hidden/deleted session identities overlay it; hidden/deleted active soundings close by identity. A stale-root session keeps its materialized session projection. Neither path reads display notes as playback authority or rematerializes another whole-loop copy on the current-root path.
 
 ---
 
@@ -80,6 +80,20 @@ See the window change's `evidence/requester-retry-integration/ROLLING_HANDOFF.md
 2. `Loop.nextEventIndex` remains event scan index; projection cycle is separate rolling origin.
 3. Queued start (`queuedStartTick`) commits at grid — updates `projectionCycleStartTick` at commit (UIP Phase 4).
 4. **Playback is read-only** — emit MIDI and advance indices only; never append to capture, synthesize note-offs into storage, or modify `pendingNotes`. See [LOOP_MIDI_STORAGE_AND_VALIDATION.md](../../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) capture ownership invariants.
+
+## Active note ledger
+
+`ActiveNoteLedger` holds one entry per `(channel, pitch)` sounding at `currentTick` until its NoteOff.
+An **ActiveNote** carries no `length` / `endTick`; it is not note geometry (`NoteSpan`) and not the LCR
+`PresentNote` query.
+
+| Concern | Site |
+|---------|------|
+| Written from **committed** playback | `playbackCursorAdvanceSend` → `applyPlaybackLedgerEvent` |
+| Not written by capture overdub emit | `playbackCursorAdvanceSendCapture` |
+| Read by | `sendMidiEvent`, `collectOverdubNoteOnParticipantIds` |
+
+Mute still writes the ledger.
 
 ---
 

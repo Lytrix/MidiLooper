@@ -437,6 +437,18 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
 /// a tag starting beyond that could never be recognised as Tier-A at all.
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                            uint32_t revision, uint32_t leadTicks);
+/// The **frozen Record-return** readiness receipt: the same event as `readinessReceiptImmediate`, carrying the
+/// **source and interval it is about**. The generic receipt names the slot's *committed* readiness, which for a first
+/// Record take is `not_servable` (`playbackWindowReadinessForSlot` exits before a frozen Capture ready can be named),
+/// so on its own it cannot tell "the frozen successor completed" from "there is nothing to serve". This row travels
+/// with the completion of the frozen owner's own window, so identity (revision, generation, capture content token) and
+/// the covered interval are the receipt's own fields rather than a reader's inference. Entity-shaped and
+/// cadence-bounded by its caller; delivered direct-when-USB-has-room with the ring as its fallback (Tier-A), exactly
+/// as `readinessReceiptImmediate`.
+SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
+                                                uint32_t revision, uint32_t leadTicks, uint32_t sourceGeneration,
+                                                uint64_t captureToken, uint32_t start, uint32_t length,
+                                                uint32_t loopLength);
 /// Schema-2 lane measurement, sampled at EVERY dispatch, including idle turns.
 /// Maxima are observations, not guaranteed bounds; eligibility is not continuous
 /// pending-work identity. The Tier-A row is aggregated and queued outside the worker.
@@ -487,6 +499,10 @@ SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEn
 /// "enqueue rejected", "evicted" and "delivered but not parsed". Also emits independent
 /// RING,record_stats rows for RECA and RECS. All counters cover the current boot.
 SC_MEM_ATTR void emitIdentityPathStats();
+SC_MEM_ATTR bool emitTraceFence(const char* nonce);
+/// Request-only scalar live observation. No ring fallback; backpressure refuses.
+SC_MEM_ATTR bool emitTrackStatus(uint8_t track, uint8_t slot, const char* state,
+                                  bool transportRunning);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
                                    uint32_t undoEntryCount, uint32_t snapshotCount);
@@ -616,6 +632,16 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 /// The window lane's readiness receipt, emitted directly when USB has room (see `readinessReceiptImmediate`).
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)
+#endif
+/// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_WINDOW_READINESS` pattern). This is
+/// the **source-qualified** companion of `SC_WINDOW_READINESS`: `sourceGeneration`/`captureToken` are the completed
+/// frozen window's own identity, and `start`/`length`/`loopLength` its covered interval, so the row states *which*
+/// window became ready rather than only that the slot's committed readiness is `not_servable`.
+#ifndef SC_FROZEN_WINDOW_READINESS
+#define SC_FROZEN_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks, sourceGeneration, \
+                                   captureToken, start, length, loopLength) \
+  DebugSessionCapture::frozenReadinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks, \
+                                                       sourceGeneration, captureToken, start, length, loopLength)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) \
@@ -840,6 +866,10 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_PERSIST_RESULT(durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #ifndef SC_WINDOW_READINESS
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) ((void)0)
+#endif
+#ifndef SC_FROZEN_WINDOW_READINESS
+#define SC_FROZEN_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks, sourceGeneration, \
+                                   captureToken, start, length, loopLength) ((void)0)
 #endif
 #ifndef SC_PLAYBACK_BUILD_ROW
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)

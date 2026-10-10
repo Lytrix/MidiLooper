@@ -1,0 +1,3 @@
+Tracked scoped git diff --check: PASS
+New fixture whitespace/newline validation: PASS
+Production checkpoints: byte-identical after final tests

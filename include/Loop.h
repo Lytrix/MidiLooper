@@ -138,6 +138,8 @@ struct Loop {
   uint32_t captureMaximumTick_ = 0;
   uint32_t captureMaximumTick() const { return capture.store.empty() ? 0 : captureMaximumTick_; }
   uint16_t captureDisplayRevision = 0;
+  /// E2 Record source receipt (not committed revision or display currency).
+  uint64_t captureContentGeneration() const { return captureContentGeneration_; }
   uint32_t captureDedupEventsDropped_ = 0;
 
   LoopId loopId = kInvalidLoopId;
@@ -384,6 +386,10 @@ struct Loop {
   /// capture extent. `owner` is that job's admission identity. Loop consumers may
   /// read the borrowed range but must never mutate, reorder, clear or release it.
   bool borrowSealedCaptureRange(const LoopEventStore::CaptureRange& range, const void* owner);
+  /// Freeze the producer's content receipt with an admitted job-owned extent.
+  /// A failed cut leaves `frozenContentGeneration` and producer currency intact.
+  bool sealCaptureRangeForJob(LoopEventStore::CaptureRange& range,
+                              uint64_t& frozenContentGeneration);
   /// Clears the borrow only when it still belongs to `owner`, so a stale job can
   /// never drop a successor job's binding.
   bool releaseSealedCaptureRangeBorrow(const void* owner);
@@ -1232,6 +1238,9 @@ struct Loop {
       size_t quantum);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
+  /// Legacy inline stop projection: invalidate live Capture before its store
+  /// rewrites or filters events against the final geometry.
+  void projectCaptureAtRecordStop(uint32_t loopLengthTicks);
   /// May grow canonical pass storage. Call only while non-real-time preparation is allowed.
   /// A successful call establishes the capacity required by transferPreparedCapturePass().
   bool preparePendingCapturePassTransfer();
@@ -1317,9 +1326,121 @@ struct Loop {
   /// as InStore. In-place; chunk ids unchanged so playback refs stay valid.
   void assignMissingNoteIdsInCommittedCapturePasses();
 
+  enum class CommittedNoteIdPreparationResult : uint8_t {
+    Idle, Progress, Complete, Superseded, Fault
+  };
+  /// Caller-owned scalar progress only; the Loop must outlive all calls.
+  class CommittedNoteIdPreparation {
+   public:
+    void discard() { *this = {}; }
+    size_t inspectedChunks() const { return inspectedChunks_; }
+    uint32_t assignedIds() const { return assignedIds_; }
+   private:
+    friend class Loop;
+    const Loop* loop_ = nullptr;
+    LoopId loopId_ = kInvalidLoopId;
+    uint64_t canonicalGeneration_ = 0, captureGeneration_ = 0;
+    uint32_t revision_ = 0;
+    PassId recordId_ = kInvalidPassId;
+    size_t overdubCount_ = 0, pass_ = 0, chunk_ = 0, inspectedChunks_ = 0;
+    uint32_t assignedIds_ = 0;
+    CommittedNoteIdPreparationResult result_ = CommittedNoteIdPreparationResult::Idle;
+  };
+  /// Acceptance never scans or assigns. One step is one pass transition or one
+  /// committed chunk (at most CHUNK_CAPACITY rows); no retained chunk/root refs.
+  void beginCommittedNoteIdPreparation(CommittedNoteIdPreparation& cursor) const;
+  CommittedNoteIdPreparationResult stepCommittedNoteIdPreparation(
+      CommittedNoteIdPreparation& cursor);
+  bool committedNoteIdPreparationComplete(const CommittedNoteIdPreparation& cursor) const;
+
+  enum class CommittedSnapshotInventoryPreparationResult : uint8_t {
+    Idle, Progress, Complete, Superseded, Fault
+  };
+  /// Nonowning scalar cursor. Loop and output headers must outlive calls; caller
+  /// excludes writes/reuse/parallel cursors. Discard never clears the outputs.
+  class CommittedSnapshotInventoryPreparation {
+   public:
+    void discard() { *this = {}; }
+    size_t inspectedRows() const { return inspectedRows_; }
+    /// Captured coverage only: usable solely with a currently Complete query.
+    uint32_t coveredPassRevision() const { return revision_; }
+   private:
+    friend class Loop;
+    enum class Phase : uint8_t {
+      CountRecord, CountOverdub, CountEdit, ReserveCapture, ReserveCompanion,
+      EmitRecord, EmitOverdub, EmitEdit
+    };
+    const Loop* loop_ = nullptr;
+    const std::vector<PassId>* captures_ = nullptr;
+    const EditPassIdList* companions_ = nullptr;
+    const PassId* captureData_ = nullptr;
+    const EditPassId* companionData_ = nullptr;
+    LoopId loopId_ = kInvalidLoopId;
+    uint64_t canonicalGeneration_ = 0;
+    uint32_t revision_ = 0, loopLength_ = 0;
+    PassId recordId_ = kInvalidPassId;
+    size_t overdubCount_ = 0, editCount_ = 0, row_ = 0, inspectedRows_ = 0;
+    size_t captureCount_ = 0, companionCount_ = 0;
+    size_t captureSize_ = 0, companionSize_ = 0;
+    size_t captureCapacity_ = 0, companionCapacity_ = 0;
+    Phase phase_ = Phase::CountRecord;
+    CommittedSnapshotInventoryPreparationResult result_ =
+        CommittedSnapshotInventoryPreparationResult::Idle;
+  };
+  /// Begin is metadata-only and requires empty outputs. A grant inspects one
+  /// pass metadata row, reserves one EMPTY vector, or advances one phase.
+  /// Reservations copy zero elements; allocator byte cost/timing is unqualified.
+  /// No root/pending-owner mutation, no live entry/main dispatch yet.
+  void beginCommittedSnapshotInventoryPreparation(
+      CommittedSnapshotInventoryPreparation& cursor,
+      std::vector<PassId>& captures, EditPassIdList& companions) const;
+  CommittedSnapshotInventoryPreparationResult stepCommittedSnapshotInventoryPreparation(
+      CommittedSnapshotInventoryPreparation& cursor,
+      std::vector<PassId>& captures, EditPassIdList& companions) const;
+  CommittedSnapshotInventoryPreparationResult committedSnapshotInventoryPreparationResult(
+      const CommittedSnapshotInventoryPreparation& cursor,
+      const std::vector<PassId>& captures, const EditPassIdList& companions) const;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  // Fixture-only STOPPED legacy cleanup; never called by the adoption commands.
+  void clearPendingSnapshotPublishForTest() { clearPendingSnapshotPublish(); }
+#endif
+
+  enum class CommittedSnapshotInventoryAdoptionMode : uint8_t { Loaded, Republish };
+  enum class PendingSnapshotInventoryDestinationResult : uint8_t { Ready, NeedsHeader, Busy };
+  enum class CommittedSnapshotInventoryAdoptionResult : uint8_t {
+    Adopted, SourceNotReady, SourceFault, SourceSuperseded, EmptyInventory,
+    InvalidMode, InvalidGeometry, NeedsHeader, DestinationBusy, NeedsCompanionCapacity
+  };
+  /// Observation never allocates. Prepare allocates only an absent default header;
+  /// allocation latency/failure is not qualified. Neither command clears old work.
+  PendingSnapshotInventoryDestinationResult pendingSnapshotInventoryDestinationResult() const;
+  PendingSnapshotInventoryDestinationResult prepareFreshPendingSnapshotInventoryDestination();
+  /// Unused prerequisite: caller keeps this same live Loop, box, cursor and output
+  /// headers alive/unmoved and excludes unstamped writes, competing inventory or
+  /// prepared workers, publisher/queue/wrap/undo callbacks, semantic/header readers,
+  /// borrowed overlays, weak resurrection and reset/reuse/address ABA. Scalar
+  /// guards are not a universal quiescence or lifetime token. Complete must qualify
+  /// on this exact Loop/outputs. Success exchanges only headers; caller owns the
+  /// returned empty buffers and disposes of them separately. No allocation/copy,
+  /// payload retirement or root ownership change; every refusal is observational.
+  CommittedSnapshotInventoryAdoptionResult adoptCommittedSnapshotInventory(
+      CommittedSnapshotInventoryPreparation& cursor, std::vector<PassId>& captures,
+      EditPassIdList& companions, CommittedSnapshotInventoryAdoptionMode mode);
+
   void clearCaptureOnNewPass();
 
  private:
+#if defined(PIO_UNIT_TEST_NATIVE)
+  friend struct PendingSnapshotRetirementTestAccess; // Read-only owned-box observation.
+#endif
+  bool committedNoteIdPreparationSourceMatches(const CommittedNoteIdPreparation& cursor) const;
+  bool committedSnapshotInventoryPreparationMatches(
+      const CommittedSnapshotInventoryPreparation& cursor,
+      const std::vector<PassId>& captures, const EditPassIdList& companions) const;
+  // Separate from pass/history currency: once exhausted, zero is terminal and
+  // cannot compare equal to a valid borrowed Capture receipt.
+  uint64_t captureContentGeneration_ = 1;
+  void advanceCaptureContentGeneration();
   friend class TrackUndo;
   friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
                                             PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);

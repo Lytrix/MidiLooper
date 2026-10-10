@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 // DEC-108 §13b / task 3.9: the window lane's **readiness receipt**, substituted the way the `#ifndef`-guarded
 // `SC_WINDOW_READINESS` macro invites (the `SC_ACCEPTED_LATCH` pattern this suite's siblings use). The production TU
@@ -332,6 +333,7 @@ bool LoopEditManager::hasPendingGeometry() const { return false; }
 
 struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
+  static uint32_t playbackGenerationOf(const Track& track) { return track.playbackGeneration; }
   static bool runtimeAllocated(const Track& track, uint8_t slot) {
     return track.playbackRuntime.slotIfAllocated(slot) != nullptr;
   }
@@ -373,6 +375,16 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  static bool stepRecordSnapshotPublication(Track& track) {
+    auto* job = track.captureStopJobHead();
+    if (job == nullptr || job->mode != CapturePhase::Record ||
+        job->admission.phase != PendingStopPhase::RecordPublished || job->owner == nullptr ||
+        !job->owner->pendingSnapshotSessionExitQueued() || job->owner->publishedSnapshotIsCurrent()) {
+      return false;
+    }
+    job->owner->stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR);
+    return true;
+  }
   /// S4f.3: the real S4f.2 dispatch decision, the same entry `processDeferredIdleMaintenance` calls, so
   /// the accepted stop is driven to admission by the production lane rather than by a test-only path.
   static bool serviceAcceptedInteractionTurn(Track& track) {
@@ -551,6 +563,15 @@ struct TrackCaptureStopTestAccess {
 
 namespace {
 
+bool serviceRecordSnapshotOwnerIfNeeded(Track& track) {
+  return TrackCaptureStopTestAccess::stepRecordSnapshotPublication(track);
+}
+
+void stepDeferredStopOrSnapshot(Track& track) {
+  if (!serviceRecordSnapshotOwnerIfNeeded(track)) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+}
 /// Commit one record pass of `lengthTicks` into a slot so the slot holds content -- the state a restored
 /// library has. The length is a parameter because the populated-target variant must be able to tell
 /// "the successor used **its own** loop's phase" from "the successor inherited the predecessor's": it
@@ -1696,7 +1717,7 @@ void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
   // half: the deferred job carries its own identity and does not hold the active slot.
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
-    (void)TrackCaptureStopTestAccess::step(track);
+    stepDeferredStopOrSnapshot(track);
   }
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
   for (int turn = 0; turn < 64 && !TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1);
@@ -1715,7 +1736,7 @@ void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
   // (5) The predecessor's finalization still retires with its content intact after the switch.
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
-    (void)TrackCaptureStopTestAccess::step(track);
+    stepDeferredStopOrSnapshot(track);
   }
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
   TEST_ASSERT_TRUE_MESSAGE(track.getLoop(1).passes.hasRecordPass(),
@@ -1754,7 +1775,7 @@ void test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction() {
                                    "the stop edge must not latch its predicted length");
 
   for (int turn = 0; turn < 8192 && track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::step(track);
+    stepDeferredStopOrSnapshot(track);
   }
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   trackManager.servicePendingRecordStopGeometry();
@@ -1916,7 +1937,7 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
   TrackCaptureStopTestAccess::transportStop();
   for (int turn = 0; turn < 8192; ++turn) {
     if (TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track)) {
-      (void)TrackCaptureStopTestAccess::step(track);
+      stepDeferredStopOrSnapshot(track);
       continue;
     }
     // A stop that met a busy finalization owner is retained, not dropped: the accepted-stop
@@ -1934,8 +1955,19 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
   // (10) The USER-VISIBLE result. A start marker proves none of this.
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "C must still own the active slot after the transport stop");
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::committedPassesInSlot(track, 2),
-                           "C's take must COMMIT a pass, not merely have started");
+  const bool committedSuccessor = TrackCaptureStopTestAccess::committedPassesInSlot(track, 2);
+  char commitDetail[256];
+  snprintf(commitDetail, sizeof(commitDetail),
+           "C commit diagnostic: capture=%zu active=%d length=%u stopPending=%d accepted=%d job=%d exitQueued=%d rootCurrent=%d",
+           TrackCaptureStopTestAccess::captureEventCount(track),
+           TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0,
+           TrackCaptureStopTestAccess::slotLoopLength(track, 2),
+           TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ? 1 : 0,
+           TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 2) ? 1 : 0,
+           TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 2) ? 1 : 0,
+           track.getLoop(2).pendingSnapshotSessionExitQueued() ? 1 : 0,
+           track.getLoop(2).publishedSnapshotIsCurrent() ? 1 : 0);
+  TEST_ASSERT_TRUE_MESSAGE(committedSuccessor, commitDetail);
   const uint32_t committedLength = TrackCaptureStopTestAccess::slotLoopLength(track, 2);
   char lengthDetail[224];
   snprintf(lengthDetail, sizeof(lengthDetail),
@@ -1955,7 +1987,7 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
   const size_t committedRows = TrackCaptureStopTestAccess::captureEventCount(track);
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
-    (void)TrackCaptureStopTestAccess::step(track);
+    stepDeferredStopOrSnapshot(track);
   }
   for (int turn = 0; turn < 64; ++turn) {
     (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
@@ -3048,14 +3080,16 @@ void test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions
 /// Commit a bar-spaced pass: one note per bar, so any windowed gather of this slot finds events no matter
 /// where the playhead is. The demoted shape needs spread content for the same reason a restored slot has it --
 /// a window centred on the playhead must not fall on empty space.
-void commitBarSpacedPassIntoTrackSlot(Track& track, uint8_t slot, uint32_t bars) {
+void commitBarSpacedPassIntoTrackSlot(Track& track, uint8_t slot, uint32_t bars,
+                                     uint8_t pitch = 48, uint32_t onPhase = 0,
+                                     uint32_t offPhase = 48, uint32_t contentBars = 0) {
   TrackCaptureStopTestAccess::selectSlot(track, slot);
   Loop& loop = track.getActiveLoop();
   loop.loopLengthTicks = bars * 768;
   loop.beginCapture(CapturePhase::Record);
-  for (uint32_t bar = 0; bar < bars; ++bar) {
-    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, 48, 100)));
-    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, 48, 0)));
+  for (uint32_t bar = 0; bar < (contentBars ? contentBars : bars); ++bar) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(bar * 768 + onPhase, 1, pitch, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + offPhase, 1, pitch, 0)));
   }
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(bars * 768, CommitReason::RecordStop));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
@@ -3066,7 +3100,9 @@ void commitBarSpacedPassIntoTrackSlot(Track& track, uint8_t slot, uint32_t bars)
 /// *restored* slot has (SD load publishes a root) and the only source the merged-window build gathers from
 /// (`Loop::tryGatherPublishedSnapshotEventsInWindow`); a hand-committed slot has none, which is the
 /// `GatherMissHoldEmpty` case. Same recipe as `test_loop_take_survival`'s root fixtures.
-void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 0) {
+void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 0,
+                                 uint8_t pitch = 48, uint32_t onPhase = 0,
+                                 uint32_t offPhase = 48) {
   auto empty = std::make_shared<const LoopSnapshot>(
       LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
   LoopSnapshotChangeSet changes;
@@ -3075,10 +3111,10 @@ void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 
     add.kind = SnapshotChangeKind::Add;
     add.next.loopId = loop.loopId;
     add.next.noteId = static_cast<NoteId>(2000 + bar);
-    add.next.pitch = 48;
+    add.next.pitch = pitch;
     add.next.velocity = 100;
-    add.next.startTick = bar * 768;
-    add.next.endTick = bar * 768 + 48;
+    add.next.startTick = bar * 768 + onPhase;
+    add.next.endTick = bar * 768 + offPhase;
     changes.notes.push_back(add);
     // The **event** index is what a windowed gather reads (`gatherPublishedSnapshotMembership` walks
     // `eventMembership(bar)`), so the root must carry the events as well as the notes -- the real builder
@@ -3088,14 +3124,14 @@ void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 
     on.next.loopId = loop.loopId;
     on.next.eventId = static_cast<EventId>(4000 + bar * 2);
     on.next.canonicalOrder = bar * 2;
-    on.next.value = MidiEvent::NoteOn(bar * 768, 1, 48, 100);
+    on.next.value = MidiEvent::NoteOn(bar * 768 + onPhase, 1, pitch, 100);
     changes.events.push_back(on);
     SnapshotEventChange off{};
     off.kind = SnapshotChangeKind::Add;
     off.next.loopId = loop.loopId;
     off.next.eventId = static_cast<EventId>(4001 + bar * 2);
     off.next.canonicalOrder = bar * 2 + 1;
-    off.next.value = MidiEvent::NoteOff(bar * 768 + 48, 1, 48, 0);
+    off.next.value = MidiEvent::NoteOff(bar * 768 + offPhase, 1, pitch, 0);
     changes.events.push_back(off);
   }
   LoopSnapshotConstruction construction(empty, changes);
@@ -3841,6 +3877,8 @@ void test_the_commit_row_is_rendered_by_the_drain_with_its_text_unchanged() {
                                    "the commit row's text and field order are the evidence contract");
   TEST_ASSERT_EQUAL_UINT32(1, LoggerNativeInfoProbe::lineCount);
 }
+
+#include "edge_effect_boot.inc"
 
 /// **The edge-effect queue's own bounds** (timing-path review, item 1): one position per context, FIFO order,
 /// and a full queue counts the effect it could not take instead of overwriting a recorded one.
@@ -8362,6 +8400,31 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
                              "the tied pair really does owe while the cursor rotates between them");
   }
 }
+/// 3.10 — the production caller supplies nullptr, not a test-owned cursor. Both equal-urgency
+/// holders must receive a grain on consecutive owner opportunities. A return value alone cannot
+/// prove this: the first holder could consume both while the second stays in Fill.
+void test_window_owner_null_cursor_rotates_equal_urgency_slot_builds() {
+  constexpr uint32_t kLoopTicks = 300 * Config::TICKS_PER_BAR;
+  constexpr uint32_t kRequestPhase = 10000;
+  constexpr uint32_t kServingPhase = 9200;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 1, kRequestPhase);
+  prepareOwingWindowHolder(track, 1, kLoopTicks, 12, 14, 1, kRequestPhase);
+  auto* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  auto* second = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_FALSE(windowHolderAdvanced(first));
+  TEST_ASSERT_FALSE(windowHolderAdvanced(second));
+  for (unsigned turn = 0; turn < 2; ++turn) {
+    TEST_ASSERT_NOT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                          static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, nullptr)));
+  }
+  TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(first), "first tied slot received a private grain");
+  TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(second), "second tied slot cannot starve behind a reset cursor");
+}
 /// DEC-108 §13b / task 3.9 — the **emission site and its cadence**, which the delivery-rule fixture could not reach:
 /// the lane now reports a readiness receipt where the outcome is reached, so this fixture drives real window builds
 /// to completion and asserts (A) the receipt says what the outcome was (readiness, holder, revision, the slot), and
@@ -10353,6 +10416,1028 @@ void test_rootless_restored_launch_requests_its_source_once_and_becomes_ready() 
   TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
 }
 
+/// 3.15b/c G2 admission control: a one-bar loop cannot promise a fresh
+/// off-clock window at its next wrap under the currently declared service
+/// bound, even with no MIDI events. Keep this refusal explicit until the
+/// prewarmed initial window and affected-tick service contract are qualified.
+#if defined(UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE)
+// E2: first Record's empty source must become the same Track-owned reader's
+// complete silent `current`. The legacy raw shell is a negative control only.
+void test_record_capture_private_initial_build_preserves_raw_return_shell() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(track.isRecording());
+  Loop& loop = track.getLoop(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t rawRole = set->lifecycle.current;
+  TEST_ASSERT_TRUE(rawRole < set->views.size());
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
+  TEST_ASSERT_TRUE(set->views[rawRole].complete && set->views[rawRole].rawCoveragePrepared);
+  TEST_ASSERT_FALSE(set->views[rawRole].published);
+  const uint64_t rawStorage = set->views[rawRole].storageGeneration;
+  const uint64_t captureToken = loop.captureContentGeneration();
+  TEST_ASSERT_TRUE(captureToken != 0);
+  const uint8_t privateRole = set->lifecycle.build;
+  TEST_ASSERT_TRUE(privateRole < set->views.size() && privateRole != rawRole);
+  nativePlaybackDeadlineClock = {0, 0};
+  TEST_ASSERT_FALSE(set->views[privateRole].complete);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+  unsigned grants = 0;
+  // D10 / task 3.9: this branch returns before the coverage grain tail, so the private candidate's own completion owes
+  // the lane's `build_complete` row here. The recorders are cleared so the row is this loop's own.
+  PlaybackPathRows::reset();
+  MidiSendCapture::reset();
+  for (; grants < 16 && !set->views[privateRole].complete; ++grants)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE_MESSAGE(set->views[privateRole].complete,
+      "only Track window-owner grants may finish a silent Capture candidate");
+  TEST_ASSERT_TRUE(grants > 0);
+  TEST_ASSERT_TRUE_MESSAGE(PlaybackPathRows::countOf("build_complete") >= 1,
+      "the live first-Capture completion must be named by the lane's own build_complete row");
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
+  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
+  TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
+  TEST_ASSERT_EQUAL_UINT8(privateRole, set->lifecycle.build);
+  const auto& privateView = set->views[privateRole];
+  TEST_ASSERT_FALSE(privateView.published);
+  TEST_ASSERT_FALSE(privateView.rawCoveragePrepared);
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, privateView.source.origin);
+  TEST_ASSERT_EQUAL_UINT64(captureToken, privateView.source.captureContentGeneration);
+  TEST_ASSERT_EQUAL_UINT32(TrackCaptureStopTestAccess::playbackGenerationOf(track),
+                           privateView.source.sourceGeneration);
+  TEST_ASSERT_NULL(privateView.source.snapshotIdentity);
+  TEST_ASSERT_EQUAL_UINT32(0u, privateView.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, privateView.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, privateView.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(0u, privateView.storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(0u, loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+}
+
+void test_record_capture_private_build_cancels_on_accepted_input_without_losing_raw_shell() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  Loop& loop = track.getLoop(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t rawRole = set->lifecycle.current;
+  const uint8_t candidateRole = set->lifecycle.build;
+  const uint64_t rawStorage = set->views[rawRole].storageGeneration;
+  nativePlaybackDeadlineClock = {0, 0};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, set->views[candidateRole].source.origin);
+  const uint64_t oldToken = loop.captureContentGeneration();
+  track.noteOn(0, 60, 100, 12);
+  TEST_ASSERT_TRUE(loop.captureContentGeneration() != oldToken);
+  const PlaybackViewSourceIdentity legacySource{loop.playbackRevision,
+      TrackCaptureStopTestAccess::playbackGenerationOf(track), loop.publishedSnapshotIdentity()};
+  TEST_ASSERT_FALSE(runtime->serviceFirstRecordingBar(loop, legacySource, Config::TICKS_PER_BAR, 1));
+  TEST_ASSERT_FALSE(runtime->viewBuild.active());
+  TEST_ASSERT_FALSE(set->views[candidateRole].complete);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
+  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
+  TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.capture.store.size());
+}
+
+void test_record_stop_during_private_capture_build_keeps_job_and_raw_return_shell() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  MidiSendCapture::reset();
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  Loop& loop = track.getLoop(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t rawRole = set->lifecycle.current;
+  const uint64_t rawStorage = set->views[rawRole].storageGeneration;
+  nativePlaybackDeadlineClock = {0, 0};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  track.noteOn(0, 60, 100, 12);
+  track.noteOff(0, 60, 0, 240);
+  clockManager.assignCurrentTickSilently(Config::TICKS_PER_BAR);
+  track.stopRecording(Config::TICKS_PER_BAR);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0));
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(),
+      "Record stop must cancel the private live-Capture borrow before frozen-range work");
+  TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
+  TEST_ASSERT_FALSE(set->views[rawRole].published);
+  TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared ||
+                   set->views[rawRole].firstRecordReturnWindow);
+  TEST_ASSERT_FALSE(set->views[set->lifecycle.build].published);
+}
+
+
+void test_record_capture_initial_window_reaches_unified_reader() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  TEST_ASSERT_TRUE(trackManager.isSlotEnabled(0, 0));
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(track.isRecording());
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  nativePlaybackDeadlineClock = {0, 0};
+  unsigned progressingTurns = 0;
+  for (unsigned turn = 0; turn < 64; ++turn) {
+    const auto result = track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    if (result == Track::PlaybackViewTurnResult::GrainServed ||
+        result == Track::PlaybackViewTurnResult::BuildComplete) ++progressingTurns;
+  }
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE(set->lifecycle.current < set->views.size());
+  const auto& current = set->views[set->lifecycle.current];
+  char detail[200];
+  snprintf(detail, sizeof(detail),
+      "record initial: owner=%u complete=%u published=%u raw=%u len=%u loopLen=%u sourceGen=%u",
+      progressingTurns, current.complete, current.published, current.rawCoveragePrepared,
+      current.coverage.lengthTicks, current.coverage.loopLengthTicks,
+      current.source.sourceGeneration);
+  TEST_ASSERT_TRUE_MESSAGE(progressingTurns > 0 && current.complete && current.published &&
+      !current.rawCoveragePrepared && current.storage.eventCount == 0 &&
+      current.coverage.startPhase == 0 &&
+      current.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+      current.coverage.loopLengthTicks == Config::TICKS_PER_BAR &&
+      current.source.snapshotIdentity == nullptr &&
+      current.source.sourceGeneration == TrackCaptureStopTestAccess::playbackGenerationOf(track), detail);
+  const uint8_t servedRole = set->lifecycle.current;
+  const uint64_t servedStorage = current.storageGeneration;
+  nativePlaybackDeadlineClock = {0, 1};
+  MidiSendCapture::reset();
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+      static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT8(servedRole, runtime->rolling.boundView);
+  TEST_ASSERT_EQUAL_UINT64(servedStorage, runtime->rolling.boundStorageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  // E2 next-traversal debt: the initial silent current may not be overwritten
+  // by an accepted late pair, nor may the one-row candidate survive the Off.
+  // The native clock stub only writes currentTick; pair every forward tick with
+  // its unchanged deadline epoch. Production uses advanceCurrentTick here, not
+  // assignCurrentTickSilently (which would rebase and invalidate the reader).
+  const uint32_t recordEpoch = nativePlaybackDeadlineClock.epoch;
+  auto advanceRecordTick = [&](uint32_t tick) {
+    TEST_ASSERT_TRUE(tick >= clockManager.getCurrentTick());
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, recordEpoch};
+    TEST_ASSERT_EQUAL_UINT32(recordEpoch, clockManager.getPlaybackDeadlineClock().epoch);
+  };
+  advanceRecordTick(700);
+  track.noteOn(0, 60, 100, 700);
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT64(700u, clockManager.getPlaybackDeadlineClock().tick);
+  (void)track.stepPlaybackViewMaintenance(0, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT8(servedRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(servedStorage, set->views[servedRole].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(0u, set->views[servedRole].storage.eventCount);
+  advanceRecordTick(740);
+  track.noteOff(0, 60, 0, 740);
+  TEST_ASSERT_EQUAL_UINT32(2u, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT64(740u, clockManager.getPlaybackDeadlineClock().tick);
+  for (unsigned turn = 0; turn < 64; ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT8(servedRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(servedStorage, set->views[servedRole].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(0u, set->views[servedRole].storage.eventCount);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE_MESSAGE(set->lifecycle.ready < set->views.size(),
+      "accepted Off must supersede an earlier one-row Capture candidate");
+  const uint8_t successorRole = set->lifecycle.ready;
+  const auto& successor = set->views[successorRole];
+  TEST_ASSERT_TRUE(successor.complete);
+  TEST_ASSERT_FALSE(successor.published);
+  TEST_ASSERT_EQUAL_UINT32(0u, successor.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, successor.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, successor.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(2u, successor.storage.eventCount);
+  // The expected stream comes from input, not from the candidate's order.
+  MidiSendCapture::reset();
+  const uint32_t nextTicks[] = {768, 1468, 1508};
+  for (size_t i = 0; i < 3; ++i) {
+    advanceRecordTick(nextTicks[i]);
+    trackManager.updateAllTracks(nextTicks[i]);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+        static_cast<int>(runtime->rolling.phase));
+    TEST_ASSERT_EQUAL_UINT8(successorRole, runtime->rolling.boundView);
+    TEST_ASSERT_EQUAL_UINT64(successor.storageGeneration, runtime->rolling.boundStorageGeneration);
+    TEST_ASSERT_EQUAL_UINT64(nextTicks[i], runtime->rolling.lastTick);
+    TEST_ASSERT_EQUAL_UINT32(i, MidiSendCapture::count());
+    if (i > 0) {
+      const MidiEvent& emitted = MidiSendCapture::at(i - 1);
+      TEST_ASSERT_EQUAL_UINT8(1, emitted.channel);
+      TEST_ASSERT_EQUAL_UINT8(60, emitted.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT32(nextTicks[i] - Config::TICKS_PER_BAR, emitted.tick);
+      TEST_ASSERT_EQUAL(i == 1, emitted.isNoteOn());
+      TEST_ASSERT_EQUAL(i == 2, emitted.isNoteOff());
+      TEST_ASSERT_EQUAL_UINT8(i == 1 ? 100 : 0, emitted.data.noteData.velocity);
+    }
+    unsigned sounding = 0;
+    runtime->ledger.forEachActive([&](uint8_t channel, uint8_t pitch,
+                                      const ActiveNoteLedger::Entry&) {
+      ++sounding;
+      TEST_ASSERT_EQUAL_UINT8(1, channel);
+      TEST_ASSERT_EQUAL_UINT8(60, pitch);
+    });
+    TEST_ASSERT_EQUAL_UINT32(i == 1 ? 1u : 0u, sounding);
+    trackManager.updateAllTracks(nextTicks[i]);
+    TEST_ASSERT_EQUAL_UINT32(i, MidiSendCapture::count());
+  }
+}
+#endif
+
+
+void test_one_bar_short_loop_does_not_bypass_the_declared_owner_deadline() {
+  CoverageServiceContract contract = Track::playbackViewCoverageContract();
+  contract.deriveGrainsFrom(0);
+  const uint64_t minimumTicks = contract.leadTicks +
+      uint64_t(contract.requiredGrains()) *
+      (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1u) *
+      contract.maximumPhaseAdvancePerTurn;
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, contract.leadTicks);
+  TEST_ASSERT_EQUAL_UINT32(1792u, minimumTicks);
+  TEST_ASSERT_FALSE_MESSAGE(contract.canCompleteWithinLead(Config::TICKS_PER_BAR),
+                            "one wrap cannot qualify even an empty window under the declared service bound");
+  contract.deriveGrainsFrom(2);
+  TEST_ASSERT_FALSE_MESSAGE(contract.canCompleteBeforeHandoff(0, 0, Config::TICKS_PER_BAR),
+                            "two accepted MIDI rows cannot make the next one-bar wrap admissible");
+}
+
+/// 3.15b/c baseline only: pin short-loop MIDI and ledger at the production TrackManager edge.
+/// The current rolling selector deliberately excludes this shape, so GREEN here is not a
+/// single-reader claim. The replacement oracle must add window identity/adoption and a RED
+/// mutation of the new reader before any route is cut over.
+void test_short_committed_loop_edge_baseline_preserves_two_wrap_traversals() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.setSlotEnabled(0, 0, true);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  nativePlaybackDeadlineClock = {0, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Excluded),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+  // Separate the source/worker opportunity from the edge: neither a withheld
+  // grant nor an unnecessary granted window turn creates a short-loop request.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                    static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false,
+                                                                        nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+  MidiSendCapture::reset();
+  const uint32_t ticks[] = {0, 48, 768, 816};
+  for (size_t i = 0; i < 4; ++i) {
+    clockManager.assignCurrentTickSilently(ticks[i]);
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(i + 1, MidiSendCapture::count(),
+                                    "the real tick emits one expected event, including each wrap");
+    const MidiEvent& event = MidiSendCapture::at(i);
+    TEST_ASSERT_EQUAL_UINT32(ticks[i] % Config::TICKS_PER_BAR, event.tick);
+    TEST_ASSERT_EQUAL_UINT8(48, event.data.noteData.note);
+    TEST_ASSERT_EQUAL(i % 2 == 0, event.isNoteOn());
+    TEST_ASSERT_EQUAL(i % 2 == 1, event.isNoteOff());
+    if (i % 2 == 0) TEST_ASSERT_EQUAL_UINT8(100, event.data.noteData.velocity);
+    unsigned sounding = 0;
+    runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+    TEST_ASSERT_EQUAL_UINT32(i % 2 == 0 ? 1u : 0u, sounding);
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(i + 1, MidiSendCapture::count(),
+                                    "the duplicate edge must not re-emit the same sounding");
+    TEST_ASSERT_NULL(track.pendingViewRequest(0));
+  }
+}
+
+// Qualification-native C1: the Track-owned initial window, not the legacy
+// short-loop emitter, must be selected before the first audible edge.
+void test_short_committed_cold_owner_to_reader_survives_unchanged_wrap() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  // Before the first audible edge, only the real deferred Track owner may
+  // prepare coverage. No test-written view, stopped oracle or old emitter.
+  nativePlaybackDeadlineClock = {0, 0};
+  bool coldReady = false;
+  for (unsigned turn = 0; turn < 256 && !coldReady; ++turn) {
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    const auto* set = runtime->viewSetIfPrewarmed();
+    if (set && set->lifecycle.ready < set->views.size()) {
+      const auto& ready = set->views[set->lifecycle.ready];
+      coldReady = ready.complete && !ready.published && !ready.rawCoveragePrepared &&
+          ready.source.origin == PlaybackWindowOrigin::Committed &&
+          ready.source.playbackRevision == track.getLoop(0).playbackRevision &&
+          ready.coverage.startPhase == 0 &&
+          ready.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+          ready.coverage.loopLengthTicks == Config::TICKS_PER_BAR;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(coldReady, "the active short slot owes complete new-reader coverage before the first edge");
+  const auto* prepared = runtime->viewSetIfPrewarmed();
+  const uint64_t preparedStorage = prepared->views[prepared->lifecycle.ready].storageGeneration;
+  for (unsigned turn = 0; turn < 3; ++turn) {
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                      static_cast<int>(runtime->rolling.phase));
+    TEST_ASSERT_TRUE(prepared->views[prepared->lifecycle.ready].complete);
+    TEST_ASSERT_EQUAL_UINT64(preparedStorage,
+                             prepared->views[prepared->lifecycle.ready].storageGeneration);
+  }
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.setSlotEnabled(0, 0, true);
+  MidiSendCapture::reset();
+  uint8_t servedRole = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t servedStorage = 0;
+  const uint32_t ticks[] = {0, 48, 768, 816};
+  for (size_t i = 0; i < 4; ++i) {
+    nativePlaybackDeadlineClock = {ticks[i], 1};
+    clockManager.assignCurrentTickSilently(ticks[i]);
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                      static_cast<int>(runtime->rolling.phase));
+    const auto* set = runtime->viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    const auto& current = set->views[set->lifecycle.current];
+    TEST_ASSERT_TRUE(current.complete && current.published);
+    TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, current.coverage.lengthTicks);
+    if (i == 0) {
+      servedRole = set->lifecycle.current;
+      servedStorage = current.storageGeneration;
+    }
+    TEST_ASSERT_EQUAL_UINT8(servedRole, set->lifecycle.current);
+    TEST_ASSERT_EQUAL_UINT64(servedStorage, current.storageGeneration);
+    TEST_ASSERT_EQUAL_UINT32(i + 1, MidiSendCapture::count());
+    const auto event = MidiSendCapture::at(i);
+    TEST_ASSERT_EQUAL_UINT32(ticks[i] % Config::TICKS_PER_BAR, event.tick);
+    TEST_ASSERT_EQUAL_UINT8(1, event.channel);
+    TEST_ASSERT_EQUAL_UINT8(48, event.data.noteData.note);
+    TEST_ASSERT_EQUAL(i % 2 == 0, event.isNoteOn());
+    TEST_ASSERT_EQUAL(i % 2 == 1, event.isNoteOff());
+    unsigned sounding = 0;
+    runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+    TEST_ASSERT_EQUAL_UINT32(i % 2 == 0 ? 1u : 0u, sounding);
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL_UINT32(i + 1, MidiSendCapture::count());
+  }
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+}
+
+void test_short_cold_owner_survives_transport_start_before_ready() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  nativePlaybackDeadlineClock = {0, 0};
+  (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Requested),
+                    static_cast<int>(runtime->rolling.phase));
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.setSlotEnabled(0, 0, true);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Requested),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_FALSE(runtime->viewSetIfPrewarmed()->views[
+      runtime->viewSetIfPrewarmed()->lifecycle.ready].complete);
+  // This is a missed initial view, not a successful first-edge deadline.
+  // Only the existing compatibility emitter may serve until a complete ready.
+  nativePlaybackDeadlineClock = {1, 1};
+  for (unsigned turn = 0; turn < 256 &&
+       runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Ready; ++turn)
+    (void)track.stepPlaybackViewMaintenance(1, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                    static_cast<int>(runtime->rolling.phase));
+  for (uint32_t tick = 1; tick < Config::TICKS_PER_BAR; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    trackManager.updateAllTracks(tick);
+  }
+  nativePlaybackDeadlineClock = {Config::TICKS_PER_BAR, 1};
+  clockManager.assignCurrentTickSilently(Config::TICKS_PER_BAR);
+  trackManager.updateAllTracks(Config::TICKS_PER_BAR);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.current].complete);
+  TEST_ASSERT_EQUAL_UINT64(set->views[set->lifecycle.current].storageGeneration,
+                           runtime->rolling.boundStorageGeneration);
+}
+
+void test_short_cold_ready_source_change_retains_new_demand() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  nativePlaybackDeadlineClock = {0, 0};
+  for (unsigned turn = 0; turn < 256 &&
+       runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Ready; ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                    static_cast<int>(runtime->rolling.phase));
+  const auto oldStorage = runtime->viewSetIfPrewarmed()->views[
+      runtime->viewSetIfPrewarmed()->lifecycle.ready].storageGeneration;
+  const uint32_t oldRevision = track.getLoop(0).playbackRevision;
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  TEST_ASSERT_NOT_EQUAL(oldRevision, track.getLoop(0).playbackRevision);
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.setSlotEnabled(0, 0, true);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                        static_cast<int>(runtime->rolling.phase));
+  // Even though the old view has complete coverage, it cannot be relabeled.
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+  (void)track.stepPlaybackViewMaintenance(0, nullptr, true, nativePlaybackDeadlineClock);
+  const auto* pending = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(pending, "the changed source still owes its own interval");
+  TEST_ASSERT_EQUAL_UINT32(track.getLoop(0).playbackRevision, pending->source.playbackRevision);
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
+                    static_cast<int>(pending->reason));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                    static_cast<int>(runtime->rolling.phase));
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_FALSE(set->views[set->lifecycle.ready].complete &&
+                    set->views[set->lifecycle.ready].storageGeneration == oldStorage);
+  track.stopPlaying();
+  nativePlaybackDeadlineClock = {0, 0};
+  bool newReady = false;
+  for (unsigned turn = 0; turn < 512 && !newReady; ++turn) {
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    set = runtime->viewSetIfPrewarmed();
+    newReady = set && set->lifecycle.ready < set->views.size() &&
+        set->views[set->lifecycle.ready].complete &&
+        set->views[set->lifecycle.ready].source.playbackRevision ==
+            track.getLoop(0).playbackRevision;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(newReady, "the stopped owner must rebase the owed source into complete ready");
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+}
+
+// C3 is expected RED until the slot-qualified cold owner and layered reader
+// both exist. Legacy layered MIDI alone cannot satisfy the ready/current pins.
+// F1 review control: rootless committed content must not strand a cold
+// generation-qualified gather when transport starts before the final grain.
+void test_rootless_cold_retained_gather_survives_transport_start() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = bar;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t group = 0; group < 6; ++group) {
+    for (uint8_t pitch = 48; pitch < 60; ++pitch)
+      TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(group * 96, 1, pitch, 100)));
+    for (uint8_t pitch = 48; pitch < 60; ++pitch)
+      TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(group * 96 + 48, 1, pitch, 0)));
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(bar, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  const uint32_t revision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, revision, 41)));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  nativePlaybackDeadlineClock = {0, 0};
+  for (unsigned turn = 0; turn < 16 && !runtime->retainedGatherActive(); ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->retainedGatherActive(),
+      "the real retained source must have an incomplete private gather before start");
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.setSlotEnabled(0, 0, true);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  trackManager.updateAllTracks(0);
+  nativePlaybackDeadlineClock = {1, 1};
+  // This is an unpositioned initial window, not a changed one-bar deadline.
+  bool ready = false;
+  for (unsigned turn = 0; turn < 512 && !ready; ++turn) {
+    (void)track.stepPlaybackViewMaintenance(1, nullptr, true, nativePlaybackDeadlineClock);
+    const auto* set = runtime->viewSetIfPrewarmed();
+    ready = set && set->lifecycle.ready < set->views.size() &&
+        set->views[set->lifecycle.ready].complete &&
+        set->views[set->lifecycle.ready].source.playbackRevision == revision &&
+        set->views[set->lifecycle.ready].coverage.lengthTicks == bar;
+  }
+  const auto* pending = track.pendingViewRequest(0);
+  char detail[240];
+  snprintf(detail, sizeof(detail),
+      "cold rootless ready=%u frame=%u gather=%u refusal=%u prep=%u build=%u owns=%u pending=%u reason=%u invalid=%u source=%u",
+      ready, static_cast<unsigned>(runtime->rolling.phase), runtime->retainedGatherActive(),
+      static_cast<unsigned>(runtime->retainedGatherRefusal),
+      static_cast<unsigned>(runtime->coveragePreparation), runtime->viewBuild.active(),
+      runtime->ownsCoverageSource(), pending != nullptr,
+      pending ? static_cast<unsigned>(pending->reason) : 0,
+      pending ? pending->positionInvalidated : 0,
+      track.playbackWindowSourceIsCurrentForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(ready, detail);
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+  track.stopPlaying();
+  TEST_ASSERT_TRUE(runtime->viewSetIfPrewarmed()->views[
+      runtime->viewSetIfPrewarmed()->lifecycle.ready].complete);
+}
+
+#if defined(UNIFIED_LAYERED_READER_ORACLE)
+void test_two_sounding_slots_keep_distinct_readers_through_selection() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 1, 48);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  commitBarSpacedPassIntoTrackSlot(track, 1, 1, 60);
+  publishBarSpacedRootForSlot(track.getLoop(1), 1, 0, 60);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  trackManager.setSlotEnabled(0, 0, true);
+  trackManager.setSlotEnabled(0, 1, true);
+  auto* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  auto* second = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  nativePlaybackDeadlineClock = {0, 0};
+  bool bothReady = false;
+  unsigned servedTurns = 0;
+  unsigned deniedTurns = 0;
+  unsigned idleTurns = 0;
+  unsigned requestedA = 0;
+  unsigned requestedB = 0;
+  unsigned readyA = 0;
+  unsigned readyB = 0;
+  // Bounded diagnostic drain, not an asserted service/deadline envelope.
+  constexpr unsigned kDiagnosticTurnLimit = 512;
+  for (unsigned turn = 0; turn < kDiagnosticTurnLimit && !bothReady; ++turn) {
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    const auto outcome = track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    servedTurns += outcome == Track::PlaybackViewTurnResult::GrainServed ||
+        outcome == Track::PlaybackViewTurnResult::BuildComplete;
+    deniedTurns += outcome == Track::PlaybackViewTurnResult::GrainDenied;
+    idleTurns += outcome == Track::PlaybackViewTurnResult::Idle;
+    requestedA += first->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested;
+    requestedB += second->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested;
+    readyA += first->rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready;
+    readyB += second->rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready;
+    const auto* a = first->viewSetIfPrewarmed();
+    const auto* b = second->viewSetIfPrewarmed();
+    bothReady = a && b && a->lifecycle.ready < a->views.size() &&
+        b->lifecycle.ready < b->views.size() &&
+        a->views[a->lifecycle.ready].complete && b->views[b->lifecycle.ready].complete &&
+        a->views[a->lifecycle.ready].coverage.lengthTicks == bar &&
+        b->views[b->lifecycle.ready].coverage.lengthTicks == bar &&
+        a->views[a->lifecycle.ready].source.playbackRevision == track.getLoop(0).playbackRevision &&
+        b->views[b->lifecycle.ready].source.playbackRevision == track.getLoop(1).playbackRevision;
+  }
+  char readiness[240];
+  const auto* a = first->viewSetIfPrewarmed();
+  const auto* b = second->viewSetIfPrewarmed();
+  snprintf(readiness, sizeof(readiness),
+      "a_phase=%u a_ready=%u b_phase=%u b_ready=%u role=%u/%u owed=%u/%u src=%u/%u enabled=%u active=%u turns=%u/%u/%u seen_req=%u/%u seen_ready=%u/%u",
+      static_cast<unsigned>(first->rolling.phase),
+      a && a->lifecycle.ready < a->views.size() ? a->views[a->lifecycle.ready].complete : 0,
+      static_cast<unsigned>(second->rolling.phase),
+      b && b->lifecycle.ready < b->views.size() ? b->views[b->lifecycle.ready].complete : 0,
+      first->coverageRoleAvailable(), second->coverageRoleAvailable(),
+      track.playbackViewOutstandingGrains(0), track.playbackViewOutstandingGrains(1),
+      track.playbackWindowSourceIsCurrentForSlot(0), track.playbackWindowSourceIsCurrentForSlot(1),
+      trackManager.isSlotEnabled(0, 1), track.getActiveLoopIndex(),
+      servedTurns, deniedTurns, idleTurns, requestedA, requestedB, readyA, readyB);
+  TEST_ASSERT_TRUE_MESSAGE(bothReady, readiness);
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  MidiSendCapture::reset();
+  const uint32_t dueTicks[] = {0, 48, bar, bar + 48};
+  uint64_t physical[2] = {};
+  for (size_t step = 0; step < 4; ++step) {
+    const uint32_t due = dueTicks[step];
+    if (step == 2) {
+      trackManager.requestSlotSwitch(0, 1, SlotQuantization::LoopEnd, 96);
+      (void)trackManager.servicePendingSlotProvision();
+      for (uint32_t tick = 49; tick < due; ++tick) {
+        nativePlaybackDeadlineClock = {tick, 1};
+        clockManager.assignCurrentTickSilently(tick);
+        trackManager.updateAllTracks(tick);
+      }
+    }
+    nativePlaybackDeadlineClock = {due, 1};
+    clockManager.assignCurrentTickSilently(due);
+    trackManager.updateAllTracks(due);
+    char midiTrace[360];
+    size_t used = 0;
+    for (size_t row = 0; row < MidiSendCapture::count() && row < 20 && used < sizeof(midiTrace); ++row) {
+      const auto event = MidiSendCapture::at(row);
+      used += static_cast<size_t>(snprintf(midiTrace + used, sizeof(midiTrace) - used,
+          "%u:%u:%c ", event.tick, event.data.noteData.note,
+          event.isNoteOn() ? 'N' : event.isNoteOff() ? 'F' : '?'));
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * (step + 1), MidiSendCapture::count(), midiTrace);
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+      auto* runtime = slot == 0 ? first : second;
+      TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                        static_cast<int>(runtime->rolling.phase));
+      const auto* set = runtime->viewSetIfPrewarmed();
+      const auto& current = set->views[set->lifecycle.current];
+      TEST_ASSERT_TRUE(current.complete && current.published);
+      TEST_ASSERT_EQUAL_UINT32(bar, current.coverage.lengthTicks);
+      TEST_ASSERT_EQUAL_UINT64(current.storageGeneration, runtime->rolling.boundStorageGeneration);
+      if (step == 0) physical[slot] = current.storageGeneration;
+      TEST_ASSERT_EQUAL_UINT64(physical[slot], current.storageGeneration);
+      unsigned sounding = 0;
+      runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+      TEST_ASSERT_EQUAL_UINT32(step % 2 == 0 ? 1u : 0u, sounding);
+    }
+    const uint8_t firstPitch = step < 2 ? 48 : 60;
+    const uint8_t secondPitch = step < 2 ? 60 : 48;
+    TEST_ASSERT_EQUAL_UINT8(firstPitch, MidiSendCapture::at(2 * step).data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(secondPitch, MidiSendCapture::at(2 * step + 1).data.noteData.note);
+    TEST_ASSERT_EQUAL(step % 2 == 0, MidiSendCapture::at(2 * step).isNoteOn());
+    TEST_ASSERT_EQUAL(step % 2 == 1, MidiSendCapture::at(2 * step).isNoteOff());
+    trackManager.updateAllTracks(due);
+    TEST_ASSERT_EQUAL_UINT32(2u * (step + 1), MidiSendCapture::count());
+  }
+  TEST_ASSERT_EQUAL_UINT8(1, track.getActiveLoopIndex());
+}
+
+void test_slot_switch_does_not_blanket_enabled_outgoing_sounding() {
+  for (unsigned scenario = 0; scenario < 2; ++scenario) {
+    if (scenario != 0) setUp();
+    LoopEventStore::initPool();
+    Track& track = trackManager.getTrack(0);
+    track.ensureLoopsAllocated();
+    commitBarSpacedPassIntoTrackSlot(track, 0, 2, 48, 700, 800, 1);
+    publishBarSpacedRootForSlot(track.getLoop(0), 1, 0, 48, 700, 800);
+    commitBarSpacedPassIntoTrackSlot(track, 1, 1, 60);
+    publishBarSpacedRootForSlot(track.getLoop(1), 1, 0, 60);
+    TrackCaptureStopTestAccess::selectSlot(track, 0);
+    TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+    TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+    trackManager.setSlotEnabled(0, 0, true);
+    trackManager.setSlotEnabled(0, 1, true);
+    track.forceSetState(TRACK_PLAYING);
+    track.reanchorPlaybackProjection(0, false);
+    MidiSendCapture::reset();
+    for (uint32_t tick = 0; tick <= Config::TICKS_PER_BAR + 32u; ++tick) {
+      if (tick == 720) {
+        trackManager.requestSlotSwitch(0, 1, SlotQuantization::NextGrid, tick);
+        if (scenario != 0) trackManager.setPendingEnabledSetReplacement(0, true);
+        (void)trackManager.servicePendingSlotProvision();
+      }
+      nativePlaybackDeadlineClock = {tick, 1};
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+      if (tick == Config::TICKS_PER_BAR) {
+        TEST_ASSERT_EQUAL_MESSAGE(scenario == 0,
+            TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48),
+            "only the still-enabled outgoing note stays held through selection");
+      }
+    }
+    TEST_ASSERT_EQUAL_UINT8(1, track.getActiveLoopIndex());
+    TEST_ASSERT_EQUAL(scenario == 0, trackManager.isSlotEnabled(0, 0));
+    uint32_t blanketOffs = 0;
+    for (size_t row = 0; row < MidiSendCapture::count(); ++row) {
+      const auto event = MidiSendCapture::at(row);
+      if (event.type == midi::ControlChange && event.data.ccData.cc == 123) ++blanketOffs;
+    }
+    if (scenario == 0) {
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, blanketOffs,
+          "selection cannot send CC123 while a different enabled slot still sounds");
+      uint32_t naturalClosures = 0;
+      for (size_t row = 0; row < MidiSendCapture::count(); ++row) {
+        const auto event = MidiSendCapture::at(row);
+        if (event.isNoteOff() && event.channel == 1 && event.data.noteData.note == 48)
+          ++naturalClosures;
+      }
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, naturalClosures,
+          "the outgoing held note receives its own post-switch Off once");
+      TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48));
+    } else {
+      TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, blanketOffs,
+          "single-slot replacement still closes the outgoing soundings");
+    }
+  }
+}
+
+/// **C3 — the reachable production gesture behind the two fixtures above (session-manager handoff C).**
+///
+/// The fixture above and its held-note sibling drive `TrackManager::requestSlotSwitch` **directly**. Both
+/// production callers of that entry -- `MidiButtonActions.cpp`'s `queuePlayingSlotSwitch` (short press on a
+/// non-selected filled slot) and the long-press `CLEAR_TRACK_FOR_SLOT` branch -- arm
+/// `pendingEnabledSetReplacement` immediately before the request, and the commit then resets the enabled set
+/// to the target alone. A keep-enabled *queued switch* is therefore not a user gesture, and those two
+/// fixtures stay **API-only expected-RED controls**; this fixture is their reachable counterpart rather than
+/// a replacement for them.
+///
+/// The reachable gesture is the loop-row **double press**, mapped to `OVERDUB_FOR_SLOT`
+/// (`src/Utils/MidiButtonConfig.cpp`: short `TOGGLE_RECORD_FOR_SLOT`, long `CLEAR_TRACK_FOR_SLOT`, double
+/// `OVERDUB_FOR_SLOT`, triple `REDO_FOR_SLOT`; `test_midi_button_timing` pins that row and the press
+/// classification). This fixture enters at the action seam the button manager calls
+/// (`MidiButtonActions::executeAction`) -- one level below the timing-only press classifier, which this
+/// harness keeps `OFF_PATH` -- so the active change is produced by the production action, never by a direct
+/// setter. The subject is the production path, not UX policy: a separate `slot-performance-interaction`
+/// proposal may remap the double press later, and nothing here decides that.
+///
+/// Production path under test: `executeAction(OVERDUB_FOR_SLOT, 1)` -> `clearPendingSlotSwitch` ->
+/// `setSelectedSlotIndex(..., SyncPlayback::Yes)` -> `setActiveLoopIndex`/`applyActiveLoopIndex`, then
+/// `startOverdubbingTrack` -> `slotEnabled[slot 1] = true` with slot 0's own flag left standing. So an
+/// active change can leave a **second enabled, still-sounding slot** behind without any enabled-set
+/// replacement.
+///
+/// Independent expectations, written from this fixture's own notes. Slot 0 carries 48 and slot 1 carries
+/// 60, so the emitted MIDI and the slot-qualified ledgers name the slot that owns each note, and a row on
+/// the wrong slot fails. The active slot's row comes first inside a tick and the layered slot's second, so
+/// the order swap between the two legs is the emission-visible half of the change. A selection sends **no**
+/// channel-wide All Notes Off (CC123) and loses no note-off. The retained slot's *content* source -- its
+/// playback revision and its published root -- is untouched, so no source is silently swapped in behind it.
+/// No playback view, cursor or clock reader is written by the fixture: the one complete `[0, bar)` window
+/// the first leg serves is prepared by the real deferred owner turns
+/// (`serviceRollingPlaybackWindow` / `stepPlaybackViewMaintenance`), and the layered leg's MIDI is the
+/// compatibility emitter -- never counted as new-reader evidence.
+///
+/// **Owed, expected RED until the per-slot service handoff (packet §C3, duty B) lands:**
+/// `Track::serviceRollingPlaybackWindow` still cancels every `slot != activeLoopIndex` frame, so an active
+/// change alone evicts the still-enabled, still-sounding outgoing slot's own coverage. The last block below
+/// states that DEC-116 contract and is the only block this fixture is expected to fail today; every
+/// assertion before it describes behavior that already holds. The fixture fails earlier if this route stops
+/// moving the active slot, stops retaining the outgoing enabled slot, or stops emitting/closing either
+/// slot's own note.
+void test_overdub_for_slot_action_moves_the_active_slot_and_keeps_the_outgoing_slot_enabled() {
+  constexpr uint8_t kOutgoing = 0;
+  constexpr uint8_t kIncoming = 1;
+  constexpr uint8_t kOutgoingNote = 48;
+  constexpr uint8_t kIncomingNote = 60;
+  constexpr uint32_t kActionTick = 96;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  // Two accepted, committed one-bar slots with independent pitches, so every later expectation can name the
+  // slot that owns a note without inspecting a view.
+  commitBarSpacedPassIntoTrackSlot(track, kOutgoing, 1, kOutgoingNote);
+  publishBarSpacedRootForSlot(track.getLoop(kOutgoing), 1, 0, kOutgoingNote);
+  commitBarSpacedPassIntoTrackSlot(track, kIncoming, 1, kIncomingNote);
+  publishBarSpacedRootForSlot(track.getLoop(kIncoming), 1, 0, kIncomingNote);
+  TrackCaptureStopTestAccess::selectSlot(track, kOutgoing);
+  // The real roles, through the production cold admission: the outgoing slot's window owner and both slots'
+  // capture staging, which the action's own `startOverdubbingTrack` needs on the pressed slot.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOutgoing, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kIncoming, true));
+  trackManager.setSlotEnabled(0, kOutgoing, true);
+  trackManager.setSlotEnabled(0, kIncoming, true);
+  auto* outgoingRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kOutgoing);
+  auto* incomingRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kIncoming);
+  TEST_ASSERT_NOT_NULL(outgoingRuntime);
+  TEST_ASSERT_NOT_NULL(incomingRuntime);
+
+  // The active short slot's own complete cold window, prepared off-clock by the real deferred owner turns
+  // while the transport is still stopped: no test-written view and no whole-take buffer counted.
+  nativePlaybackDeadlineClock = {0, 0};
+  bool coldReady = false;
+  for (unsigned turn = 0; turn < 256 && !coldReady; ++turn) {
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    const auto* set = outgoingRuntime->viewSetIfPrewarmed();
+    if (set != nullptr && set->lifecycle.ready < set->views.size()) {
+      const auto& ready = set->views[set->lifecycle.ready];
+      coldReady = ready.complete && !ready.published &&
+          ready.source.origin == PlaybackWindowOrigin::Committed &&
+          ready.source.playbackRevision == track.getLoop(kOutgoing).playbackRevision &&
+          ready.coverage.startPhase == 0 && ready.coverage.lengthTicks == kBar &&
+          ready.coverage.loopLengthTicks == kBar;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(coldReady,
+                           "the outgoing slot owes its own complete [0, bar) window before the gesture");
+
+  const uint32_t outgoingRevisionBefore = track.getLoop(kOutgoing).playbackRevision;
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(kOutgoing).publishedSnapshotIsCurrent(),
+                           "the fixture must install a current root, or the gather terms refuse it");
+
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  MidiSendCapture::reset();
+
+  uint8_t servedRole = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t servedStorage = 0;
+  for (uint32_t tick = 0; tick <= kBar + 48; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    if (tick == kActionTick) {
+      // The real gesture, at the seam the button manager calls with `ActionType::OVERDUB_FOR_SLOT`.
+      midiButtonActions.handleOverdubForSlot(kIncoming);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(kIncoming, track.getActiveLoopIndex(),
+                                      "the double press moves the active slot to the pressed slot");
+      TEST_ASSERT_TRUE_MESSAGE(trackManager.isSlotEnabled(0, kOutgoing),
+                               "the outgoing slot stays enabled: this route replaces no enabled set");
+      TEST_ASSERT_FALSE_MESSAGE(trackManager.isSlotMuted(0, kOutgoing),
+                                "the selection does not silence the outgoing slot");
+      TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+                               "the action's own capture admission accepts on the pressed slot");
+      TEST_ASSERT_TRUE_MESSAGE(
+          outgoingRuntime == TrackCaptureStopTestAccess::runtimeIfAllocated(track, kOutgoing),
+          "the retained slot keeps its own runtime identity, it is not rebuilt by the change");
+    }
+    // The production main-loop sweep: the turn that owns a slot's rolling episode.
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    trackManager.updateAllTracks(tick);
+    if (tick == 48) {
+      const auto* set = outgoingRuntime->viewSetIfPrewarmed();
+      TEST_ASSERT_NOT_NULL(set);
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                                static_cast<int>(outgoingRuntime->rolling.phase),
+                                "the active short slot is served from its own window before the gesture");
+      servedRole = set->lifecycle.current;
+      servedStorage = set->views[servedRole].storageGeneration;
+      TEST_ASSERT_TRUE(set->views[servedRole].complete && set->views[servedRole].published);
+    }
+    // Slot-qualified ledger state at the boundary phases: each slot holds exactly its own note and never the
+    // other slot's, so a cross-slot ledger leak fails here.
+    if (tick == 0 || tick == kBar) {
+      TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kOutgoing, kOutgoingNote));
+      TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kIncoming, kIncomingNote));
+      TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kOutgoing, kIncomingNote));
+      TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kIncoming, kOutgoingNote));
+    }
+    if (tick == 48 || tick == kBar + 48) {
+      TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kOutgoing, kOutgoingNote));
+      TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kIncoming, kIncomingNote));
+    }
+  }
+
+  // The emission-visible half of the change. Two due ticks per bar and one note per slot at each, so the
+  // whole capture is this fixture's own expectation: 48/60 with the active slot's row first before the
+  // gesture, 60/48 with the new active slot's row first after it, and nothing in between.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(8u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "one note per slot per due tick: the gesture adds none and loses none");
+  const uint8_t expectedNotes[8] = {kOutgoingNote, kIncomingNote, kOutgoingNote, kIncomingNote,
+                                    kIncomingNote, kOutgoingNote, kIncomingNote, kOutgoingNote};
+  const bool expectedOns[8] = {true, true, false, false, true, true, false, false};
+  const uint32_t expectedPhases[8] = {0, 0, 48, 48, 0, 0, 48, 48};
+  uint32_t blanketOffs = 0;
+  for (size_t row = 0; row < 8; ++row) {
+    const auto event = MidiSendCapture::at(row);
+    TEST_ASSERT_EQUAL_UINT8(expectedNotes[row], event.data.noteData.note);
+    TEST_ASSERT_EQUAL(expectedOns[row], event.isNoteOn());
+    TEST_ASSERT_EQUAL_UINT8(1, event.channel);
+    TEST_ASSERT_EQUAL_UINT32(expectedPhases[row], event.tick);
+    if (event.type == midi::ControlChange && event.data.ccData.cc == 123) {
+      ++blanketOffs;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, blanketOffs,
+                                   "a layered action selection sends no channel-wide All Notes Off");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kOutgoing, kOutgoingNote),
+                            "the outgoing slot's last note-off closes its own ledger entry");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kIncoming, kIncomingNote),
+                            "the incoming slot's last note-off closes its own ledger entry");
+
+  // The retained slot's content source is untouched: no revision swap, no stale root behind it.
+  TEST_ASSERT_EQUAL_UINT32(outgoingRevisionBefore, track.getLoop(kOutgoing).playbackRevision);
+  TEST_ASSERT_TRUE(track.getLoop(kOutgoing).publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(kOutgoing));
+
+  // The retained slot's **own coverage**: the DEC-116 term this fixture exists to pin, and the only block
+  // expected RED on the current image. The identity assertions come first so a run that reaches them has
+  // already shown the view was not dropped, and the phase term last because it is the term production still
+  // owes: `serviceRollingPlaybackWindow` cancels every non-active frame.
+  const auto* outgoingSet = outgoingRuntime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(outgoingSet);
+  TEST_ASSERT_TRUE_MESSAGE(
+      outgoingSet->views[servedRole].complete && outgoingSet->views[servedRole].published,
+      "the retained slot's published window must not be dropped by the active change");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(
+      servedStorage, outgoingSet->views[servedRole].storageGeneration,
+      "the retained slot's window identity must not be overwritten or relabelled by the active change");
+  TEST_ASSERT_TRUE_MESSAGE(
+      outgoingRuntime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Idle,
+      "an enabled, still-sounding outgoing slot must keep its own rolling episode across an active change "
+      "(DEC-116; owed by the per-slot service handoff)");
+}
+
+#endif  // UNIFIED_LAYERED_READER_ORACLE: two-reader and API-only switch gates
+// Qualification-native phase continuity through a reachable action. The
+// outgoing two-bar content still uses the compatibility stream in this slice;
+// this is not all-route new-reader evidence.
+void test_layered_two_bar_off_keeps_its_phase_after_reachable_action() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  // Both bodies are accepted before the action; the outgoing note actually
+  // spans the action tick, unlike a first-bar pair ending at phase 48.
+  commitBarSpacedPassIntoTrackSlot(track, 0, 2, 48, 700, 800, 1);
+  publishBarSpacedRootForSlot(track.getLoop(0), 1, 0, 48, 700, 800);
+  commitBarSpacedPassIntoTrackSlot(track, 1, 1, 60);
+  publishBarSpacedRootForSlot(track.getLoop(1), 1, 0, 60);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  trackManager.setSlotEnabled(0, 0, true);
+  trackManager.setSlotEnabled(0, 1, true);
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  MidiSendCapture::reset();
+  for (uint32_t tick = 0; tick <= bar + 32; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    if (tick == 96) {
+      midiButtonActions.handleOverdubForSlot(1);
+      TEST_ASSERT_EQUAL_UINT8(1, track.getActiveLoopIndex());
+      TEST_ASSERT_TRUE(trackManager.isSlotEnabled(0, 0));
+    }
+    trackManager.updateAllTracks(tick);
+    if (tick == 700 || tick == bar)
+      TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48));
+  }
+  uint32_t outgoingOns = 0;
+  uint32_t outgoingOffs = 0;
+  for (size_t row = 0; row < MidiSendCapture::count(); ++row) {
+    const auto event = MidiSendCapture::at(row);
+    if (event.channel != 1 || event.data.noteData.note != 48) continue;
+    if (event.isNoteOn()) {
+      ++outgoingOns;
+      TEST_ASSERT_EQUAL_UINT32(700, event.tick);
+    } else if (event.isNoteOff()) {
+      ++outgoingOffs;
+      TEST_ASSERT_EQUAL_UINT32(800, event.tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, outgoingOns,
+      "the enabled outgoing slot must not re-trigger after another slot becomes active");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, outgoingOffs,
+      "the held outgoing note's own Off@800 remains due through the action");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48));
+}
+
 void rollingTestTick(Track& track, uint64_t tick, bool service = true) {
   nativePlaybackDeadlineClock = {tick, 1};
   clockManager.assignCurrentTickSilently(static_cast<uint32_t>(tick));
@@ -10467,6 +11552,122 @@ void test_launch_gate_rows_name_the_silent_exits_once_per_state_change() {
   TEST_ASSERT_EQUAL_STRING("launch_not_demoted_content", LaunchGateRows::last()->exit);
   TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kCommittedPasses) != 0);
   TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kAvoidFullRebuild) == 0);
+}
+
+/// 3.15a long-loop subcase: a completed window must be selected by the production
+/// clock reader, not merely built while the legacy emitter supplies matching notes.
+/// The first owner opportunities are withheld; the previous current is untouched
+/// until a later bounded grant sequence completes the successor before its edge.
+void test_long_committed_window_owner_to_edge_selects_the_reader() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  Track& track = trackManager.getTrack(0);
+  Loop& loop = track.getLoop(2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t origin = clockManager.getCurrentTick();
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  const uint64_t deadline = runtime->rolling.deadlineTick;
+  TEST_ASSERT_EQUAL_UINT64(origin + 6u * 768u, deadline);
+  const auto* request = track.pendingViewRequest(2);
+  TEST_ASSERT_NOT_NULL(request);
+  TEST_ASSERT_EQUAL_UINT32(runtime->rolling.generation, request->operationGeneration);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, request->source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(6u * 768u, request->coverage.startPhase);
+  const uint8_t previous = runtime->viewSetIfPrewarmed()->lifecycle.current;
+  for (uint32_t delta = 1; delta < 6u * 768u; ++delta) {
+    // No owner grant for the first 128 ticks, then at most one grant per 64.
+    rollingTestTick(track, origin + delta, delta > 128u && delta % 64u == 0u);
+    TEST_ASSERT_EQUAL_UINT8(previous, runtime->viewSetIfPrewarmed()->lifecycle.current);
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                    static_cast<int>(runtime->rolling.phase));
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto& ready = set->views[set->lifecycle.ready];
+  TEST_ASSERT_TRUE(ready.complete);
+  TEST_ASSERT_FALSE(ready.published);
+  TEST_ASSERT_EQUAL_UINT32(6u * 768u, ready.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(2u * 768u, ready.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, ready.source.playbackRevision);
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(ready.source.origin));
+  TEST_ASSERT_EQUAL_UINT32(4u, ready.storage.eventCount);
+  MidiSendCapture::reset();
+  const auto builds = Track::playbackOrderHotRebuildCount();
+  rollingTestTick(track, deadline, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_EQUAL(previous, set->lifecycle.current);
+  const auto& current = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE(current.complete);
+  TEST_ASSERT_TRUE(current.published);
+  TEST_ASSERT_EQUAL_UINT64(current.storageGeneration, runtime->rolling.boundStorageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(6u * 768u, current.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, current.source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(builds, Track::playbackOrderHotRebuildCount());
+  TEST_ASSERT_EQUAL_UINT32(1u, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOn());
+  TEST_ASSERT_EQUAL_UINT32(6u * 768u, MidiSendCapture::at(0).tick);
+  TEST_ASSERT_EQUAL_UINT8(1, MidiSendCapture::at(0).channel);
+  TEST_ASSERT_EQUAL_UINT8(48, MidiSendCapture::at(0).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT8(100, MidiSendCapture::at(0).data.noteData.velocity);
+  unsigned sounding = 0;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+  TEST_ASSERT_EQUAL_UINT32(1u, sounding);
+  rollingTestTick(track, deadline, false);
+  TEST_ASSERT_EQUAL_UINT32(1u, MidiSendCapture::count());
+  for (uint32_t delta = 1; delta <= 48; ++delta) rollingTestTick(track, deadline + delta, false);
+  TEST_ASSERT_EQUAL_UINT32(2u, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(1).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32(6u * 768u + 48u, MidiSendCapture::at(1).tick);
+  TEST_ASSERT_EQUAL_UINT8(1, MidiSendCapture::at(1).channel);
+  TEST_ASSERT_EQUAL_UINT8(48, MidiSendCapture::at(1).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT8(0, MidiSendCapture::at(1).data.noteData.velocity);
+  sounding = 0;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+  TEST_ASSERT_EQUAL_UINT32(0u, sounding);
+  // No further source/window grants for the rest of this completed interval.
+  // The already-selected reader must keep its physical view, not silently
+  // rebuild a duplicate successor or borrow matching MIDI from the fallback.
+  const uint8_t servedRole = set->lifecycle.current;
+  const uint64_t servedStorage = current.storageGeneration;
+  for (uint32_t delta = 49; delta < 2u * 768u; ++delta) {
+    rollingTestTick(track, deadline + delta, false);
+    if (delta == 768u) {
+      TEST_ASSERT_EQUAL_UINT32(3u, MidiSendCapture::count());
+      const auto on = MidiSendCapture::at(2);
+      TEST_ASSERT_TRUE(on.isNoteOn());
+      TEST_ASSERT_EQUAL_UINT32(7u * 768u, on.tick);
+      TEST_ASSERT_EQUAL_UINT8(1, on.channel);
+      TEST_ASSERT_EQUAL_UINT8(48, on.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT8(100, on.data.noteData.velocity);
+      sounding = 0;
+      runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+      TEST_ASSERT_EQUAL_UINT32(1u, sounding);
+      rollingTestTick(track, deadline + delta, false);
+      TEST_ASSERT_EQUAL_UINT32(3u, MidiSendCapture::count());
+    }
+    if (delta == 768u + 48u) {
+      TEST_ASSERT_EQUAL_UINT32(4u, MidiSendCapture::count());
+      const auto off = MidiSendCapture::at(3);
+      TEST_ASSERT_TRUE(off.isNoteOff());
+      TEST_ASSERT_EQUAL_UINT32(7u * 768u + 48u, off.tick);
+      TEST_ASSERT_EQUAL_UINT8(1, off.channel);
+      TEST_ASSERT_EQUAL_UINT8(48, off.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT8(0, off.data.noteData.velocity);
+      sounding = 0;
+      runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+      TEST_ASSERT_EQUAL_UINT32(0u, sounding);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(4u, MidiSendCapture::count());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT8(servedRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(servedStorage, set->views[servedRole].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(builds, Track::playbackOrderHotRebuildCount());
+  TEST_ASSERT_NULL(track.pendingViewRequest(2));
 }
 
 void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes() {
@@ -14019,6 +15220,25 @@ int main() {
   RUN_TEST(test_committed_retry_residual_lead_and_empty_two_bar_envelope_refuse_without_new_lap);
 
   RUN_TEST(test_window_retry_preserves_borrowed_source_before_gather);
+#if defined(UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE)
+  RUN_TEST(test_record_capture_private_initial_build_preserves_raw_return_shell);
+  RUN_TEST(test_record_capture_private_build_cancels_on_accepted_input_without_losing_raw_shell);
+  RUN_TEST(test_record_stop_during_private_capture_build_keeps_job_and_raw_return_shell);
+  RUN_TEST(test_record_capture_initial_window_reaches_unified_reader);
+#endif
+  RUN_TEST(test_one_bar_short_loop_does_not_bypass_the_declared_owner_deadline);
+  RUN_TEST(test_short_committed_loop_edge_baseline_preserves_two_wrap_traversals);
+  RUN_TEST(test_short_committed_cold_owner_to_reader_survives_unchanged_wrap);
+  RUN_TEST(test_short_cold_owner_survives_transport_start_before_ready);
+  RUN_TEST(test_short_cold_ready_source_change_retains_new_demand);
+  RUN_TEST(test_rootless_cold_retained_gather_survives_transport_start);
+#if defined(UNIFIED_LAYERED_READER_ORACLE)
+  RUN_TEST(test_two_sounding_slots_keep_distinct_readers_through_selection);
+  RUN_TEST(test_slot_switch_does_not_blanket_enabled_outgoing_sounding);
+  // C3 (handoff C): the **reachable** production gesture -- the loop-row double press's own action path.
+  RUN_TEST(test_overdub_for_slot_action_moves_the_active_slot_and_keeps_the_outgoing_slot_enabled);
+#endif
+  RUN_TEST(test_layered_two_bar_off_keeps_its_phase_after_reachable_action);
   RUN_TEST(test_window_retry_preserves_scratch_for_held_completion_and_ready_successor);
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
   RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
@@ -14067,6 +15287,7 @@ int main() {
   RUN_TEST(test_rolling_stop_or_slot_exit_releases_the_episode_off_clock);
   RUN_TEST(test_rolling_handoff_across_natural_wrap_uses_absolute_frame);
   RUN_TEST(test_rolling_empty_interval_preserves_sustain_and_fallback_closure);
+  RUN_TEST(test_long_committed_window_owner_to_edge_selects_the_reader);
   RUN_TEST(test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes);
   RUN_TEST(test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline);
   RUN_TEST(test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick);
@@ -14107,6 +15328,9 @@ int main() {
   // Timing-path review, item 1: the edge records, the drain reports -- and the row's text is unchanged.
   RUN_TEST(test_the_commit_row_is_rendered_by_the_drain_with_its_text_unchanged);
   RUN_TEST(test_the_edge_effect_queue_is_fifo_bounded_and_counts_what_it_cannot_take);
+  RUN_TEST(test_edge_effect_boot_setup_discards_unpublished_stale_storage);
+  RUN_TEST(test_edge_effect_boot_preserves_current_boot_deferred_effects);
+  RUN_TEST(test_edge_effect_queue_preserves_fifo_and_full_rejection_across_counter_rollover);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
@@ -14152,6 +15376,7 @@ int main() {
   RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
   // windowed-playback-generation slice 3.10 increment 3's own fixture: the routed scan serves the urgent holder.
   RUN_TEST(test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them);
+  RUN_TEST(test_window_owner_null_cursor_rotates_equal_urgency_slot_builds);
   RUN_TEST(test_window_owner_refusals_are_named_and_non_destructive);
   // windowed-playback-generation slice 3.2: the owner's atomic interval-window publication.
   RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
@@ -14267,6 +15492,7 @@ int main() {
   // windowed-playback-generation task 3.10 / 6.3: the `H x K` contention sweep -- the declared envelope measured on
   // the composed service (per-track offers, the across-track rotation, one grain per turn).
   RUN_TEST(test_window_contention_sweep_measures_the_composed_cost_across_h_and_k);
+  RUN_TEST(test_positioned_eight_slot_holder_first_service_is_bounded);
   RUN_TEST(test_window_contention_sweep_scales_with_density_and_is_span_independent);
   RUN_TEST(test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed);
   // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,

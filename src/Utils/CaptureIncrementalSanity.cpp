@@ -281,7 +281,8 @@ SliceResult processBudgetSlice(LoopEventStore& store, uint32_t loopLengthTicks, 
 }
 
 size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopLengthTicks,
-                                           uint32_t minLengthTicks, bool enabled) {
+                                           uint32_t minLengthTicks, bool enabled,
+                                           void (*beforeReload)(void*), void* context) {
   if (!enabled || minLengthTicks == 0 || store.empty()) {
     return 0;
   }
@@ -342,6 +343,7 @@ size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopL
       cleaned.push_back(flat[i]);
     }
   }
+  if (beforeReload != nullptr) beforeReload(context);
   reloadStoreFromFlat(store, cleaned);
 
   logger.log(CAT_MIDI, LOG_INFO, "capture NoteMinLength removed %u pairs (min=%lu ticks)",

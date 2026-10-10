@@ -45,11 +45,17 @@ NOTE_EDIT_MEM bool hasNoteNearBracket(const Track& track, uint32_t selectedTick)
 }  // namespace
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleCycleNoteEditType(Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) {
+        const bool published = editManager.isNoteEditActive();
+        editManager.cancelCurrentRootNoteEditEntry();
+        if (!published) return; // private second press cancels; published press keeps normal kind behavior
+    }
     const bool wasInEditOverlay = editManager.getCurrentState() != nullptr;
 
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         editManager.sendEditSessionChange(EditSessionType::Note);
     }
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
 
     if (!shouldCycleNoteEditTypeOnShortPress(wasInEditOverlay)) {
         if (!editManager.isNoteEditActive()) {
@@ -73,6 +79,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleExitEditMode(Track& track) {
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleDeleteSelectedNote(Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     const auto filteredStd = editManager.selectableDisplayNotesForEditUi(track);
     const NoteUtils::DisplayNoteVec filtered(filteredStd.begin(), filteredStd.end());
     if (editManager.deleteSelectedNote(track, filtered)) {
@@ -81,6 +88,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleDeleteSelectedNote(Track& track)
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (editManager.getCurrentState() == nullptr) {
         logger.info("Create note ignored (not in edit mode)");
         return;
@@ -134,6 +142,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCreateNoteAtBracket(Track& track
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleDeleteOrCreateNoteAtBracket(Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (editManager.getCurrentState() == nullptr) {
         logger.info("NOTELEN double: ignored (not in edit mode)");
         return;
@@ -160,6 +169,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleDeleteOrCreateNoteAtBracket(Trac
 NOTE_EDIT_MEM void ControlSurfaceManager::handleBarStepNoteEditGesture(Track& track,
                                                                        const BarStepButtonInfo& info,
                                                                        BarStepPressType pressType) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (info.type != BarStepButtonType::SIXTEENTH) {
         return;
     }

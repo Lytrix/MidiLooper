@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from hitl import legacy_record_baseline as baseline
-from hitl.control_constants import RECORD_BUTTON_NOTE
+from hitl.control_constants import GLOBAL_TRANSPORT_NOTE, RECORD_BUTTON_NOTE
 from hitl.legacy_record_baseline import (
     LOOP_SELECT_NOTE_BASE,
     _await_observed_record_slot,
@@ -279,6 +279,119 @@ class NoClearTargetPreconditionTest(unittest.TestCase):
             )
         select.assert_not_called()
 
+
+
+class RecordArmTransportStopEvidenceTest(unittest.TestCase):
+    """The stop-before-arm press is a *toggle*: it must rest on transport evidence.
+
+    `serial_sequencer_running` answers "is the serial link still alive" and counts
+    `#CAP,DFRAME`, the periodic display-frame monitor a stopped device keeps emitting. Read as
+    "the transport is running" it makes the arm-phase precondition press a toggle that
+    *starts* the transport, and the following restart-after-arm press then stops it
+    (`captures/live-current-root-entry-t8s4-04`: a 768-tick take with one captured note
+    instead of the 1536-tick, eight-note EDIT_RECORD_FIXTURE seed).
+    """
+
+    _STOPPED_WITH_DISPLAY_FRAMES = [
+        "[1590.044] [INFO] Transport stopped",
+        "#CAP,1590918137,ST,Track,STOPPED,ARMED",
+        "#CAP,1591942864,DFRAME,0,17060,26400,21,499,45",
+        "#CAP,1593440697,DFRAME,0,17069,26430,20,488,46",
+    ]
+
+    def _run(self, lines, *, after_index: int = 0):
+        collector = _collector(lines)
+        with patch.object(baseline, "_send_short_press") as send, \
+             patch.object(baseline.time, "sleep"):
+            pressed = baseline._ensure_transport_stopped_before_record_arm(
+                Mock(),
+                Mock(),
+                collector,
+                _arm_args(),
+                press_ms=120,
+                phase_wait_ms=500,
+                after_index=after_index,
+            )
+        return pressed, send
+
+    def test_display_frames_do_not_authorize_a_stop_press(self) -> None:
+        pressed, send = self._run(self._STOPPED_WITH_DISPLAY_FRAMES)
+        send.assert_not_called()
+        self.assertFalse(pressed)
+
+    def test_a_running_transport_is_still_stopped(self) -> None:
+        """Positive control: no evidence change may cancel a genuine stop."""
+        lines = [
+            "[1587.473] [INFO] Transport started",
+            "#CAP,1594433584,BAR,142,0",
+        ]
+        pressed, send = self._run(lines)
+        self.assertTrue(pressed)
+        self.assertEqual([GLOBAL_TRANSPORT_NOTE], _notes(send))
+
+    def test_a_running_track_state_is_still_stopped(self) -> None:
+        """Positive control without a human transport line: the state row is enough."""
+        lines = ["#CAP,1,ST,Track,ARMED,RECORDING"]
+        pressed, send = self._run(lines)
+        self.assertTrue(pressed)
+        self.assertEqual([GLOBAL_TRANSPORT_NOTE], _notes(send))
+
+
+    def test_a_device_bar_row_alone_still_stops_the_transport(self) -> None:
+        """Pins the precondition's running-row term, which the state leg cannot cover.
+
+        No human `Transport started` line and no track-state row, so
+        `_transport_running_before_record_arm` answers False here: deleting the running-row
+        term leaves this case unpressed.
+        """
+        pressed, send = self._run(["#CAP,1594433584,BAR,142,0"])
+        self.assertTrue(pressed)
+        self.assertEqual([GLOBAL_TRANSPORT_NOTE], _notes(send))
+
+    def test_a_press_that_started_the_transport_is_corrected(self) -> None:
+        # The re-check window opens at the press, so it can see the start it caused: the firmware
+        # answers a control press at `press_ms` + its 300 ms debounce, i.e. *before* a baseline
+        # taken after `settle_s`. With the old late baseline this mis-press was invisible and the
+        # arm landed on a running transport (the 768-tick, one-note take it produced).
+        lines = ["[1587.473] [INFO] Transport started", "#CAP,1594433584,BAR,142,0"]
+        presses: list[int] = []
+
+        def _respond(*_args, **kwargs):
+            presses.append(kwargs["note"])
+            lines.extend(
+                [
+                    "[1594.066] [INFO] Transport started",
+                    "#CAP,1,ST,Track,STOPPED,PLAYING",
+                ]
+            )
+
+        collector = _collector(lines)
+        with patch.object(baseline, "_send_short_press", side_effect=_respond), \
+             patch.object(baseline.time, "sleep"):
+            pressed = baseline._ensure_transport_stopped_before_record_arm(
+                Mock(), Mock(), collector, _arm_args(), press_ms=120, phase_wait_ms=500
+            )
+        self.assertTrue(pressed)
+        # One to stop, one to correct the start that press caused.
+        self.assertEqual([GLOBAL_TRANSPORT_NOTE, GLOBAL_TRANSPORT_NOTE], presses)
+
+    def test_a_display_frame_in_the_press_window_is_not_a_restart(self) -> None:
+        """The window is start-edge evidence: a display frame is not, so no second press."""
+        lines = ["[1587.473] [INFO] Transport started", "#CAP,1594433584,BAR,142,0"]
+        presses: list[int] = []
+
+        def _respond(*_args, **kwargs):
+            presses.append(kwargs["note"])
+            lines.append("#CAP,1,DFRAME,0,17060,26400,21,499,45")
+
+        collector = _collector(lines)
+        with patch.object(baseline, "_send_short_press", side_effect=_respond), \
+             patch.object(baseline.time, "sleep"):
+            pressed = baseline._ensure_transport_stopped_before_record_arm(
+                Mock(), Mock(), collector, _arm_args(), press_ms=120, phase_wait_ms=500
+            )
+        self.assertTrue(pressed)
+        self.assertEqual([GLOBAL_TRANSPORT_NOTE], presses)
 
 if __name__ == '__main__':
     unittest.main()

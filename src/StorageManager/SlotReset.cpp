@@ -12,12 +12,14 @@
 
 #include "Globals.h"
 #include "Loop.h"
+#include "EditManager.h"
 #include "StorageManagerInternal.h"
 #include <Arduino.h>
 
 namespace StorageManagerInternal {
 
 FLASHMEM void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
+    editManager.cancelCurrentRootNoteEditEntryForLoop(loop); // before source destruction/reuse
     loop.discardPendingCapturePass();
     loop.discardCapture();
     loop.resetPassTimeline();

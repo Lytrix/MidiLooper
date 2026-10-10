@@ -116,7 +116,8 @@ RuntimePlaybackViewBuild::nextGrain() const {
     case Phase::SnapshotPlaybackOrder:
       return RuntimePlaybackViewBuildGrain::Order;
     case Phase::Complete:
-      return RuntimePlaybackViewBuildGrain::Complete;
+      return fill_.liveCaptureCurrent() ? RuntimePlaybackViewBuildGrain::Complete
+                                        : RuntimePlaybackViewBuildGrain::Denied;
     case Phase::Qualification:
     case Phase::Idle:
     case Phase::Denied:
@@ -159,6 +160,15 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
 RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
+  if ((phase_ == Phase::Order || phase_ == Phase::Complete) &&
+      !fill_.liveCaptureCurrent()) {
+    if (destination_ != nullptr && !destination_->published) {
+      destination_->sourceFilled = false;
+      destination_->complete = false;
+    }
+    phase_ = Phase::Denied;
+    return RuntimePlaybackViewBuildGrain::Denied;
+  }
   if (phase_ == Phase::SnapshotRanks) {
     if (entryQuantum == 0) return nextGrain();
     auto& view = *destination_;

@@ -11,6 +11,7 @@
 #include "Utils/NoteEditMem.h"
 
 NOTE_EDIT_MEM void ControlSurfaceManager::updateGpioEncoderButtonHold(bool encoderButtonHeld) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     const uint32_t now = millis();
     if (encoderButtonHeld && !gpioEncoderButtonWasHeld_) {
         gpioEncoderButtonHoldStartMs_ = now;
@@ -42,6 +43,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::updateGpioEncoderButtonHold(bool encod
 }
 
 NOTE_EDIT_MEM void ControlSurfaceManager::processEncoderMovement(int rawDelta) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (rawDelta == 0) {
         return;
     }

@@ -1,0 +1,57 @@
+668328f2933bc2f87299e3aa888120453599fc9aa222e5ca76e48cc623ae4f14  /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf
+00005cb0 00000024 t _GLOBAL__sub_I_editManager
+20202b78 00000540 B editManager
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+Sections:
+Idx Name          Size      VMA       LMA       File off  Algn
+  0 .text.headers 00001400  60000000  60000000  00010000  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  1 .text.code    000b5d80  60001400  60001400  00011400  2**3
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  2 .text.progmem 00005170  600b7180  600b7180  000c7180  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .text.itcm    0005fd50  00000000  600bc2f0  000d0000  2**6
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  4 .fini         00000004  0005fd50  6011c040  0012fd50  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  5 .ARM.exidx    00000358  0005fd54  6011c044  0012fd54  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  6 .data         00012ec0  20000000  6011c39c  00140000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  7 .bss          00004900  20012ec0  20012ec0  00002ec0  2**6
+                  ALLOC
+  8 .bss.dma      00027e20  20200000  20200000  00010000  2**5
+                  ALLOC
+  9 .bss.extram   00002460  70000000  70000000  00160000  2**3
+                  ALLOC
+ 10 .text.csf     00000da4  6012f25c  6012f25c  0015f25c  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 11 .ARM.attributes 0000002e  00000000  00000000  00160000  2**0
+                  CONTENTS, READONLY
+ 12 .comment      00000033  00000000  00000000  0016002e  2**0
+                  CONTENTS, READONLY
+6000f024 00000184 T EditManager::cycleEditSession(Track&)
+6000ee30 000001f4 T EditManager::sendEditSessionChange(EditSessionType, bool)
+00018478 000001d0 T LoopEditManager::handleLoopLengthInput(unsigned char, Track&)
+00018dd0 000001e4 T LoopEditManager::handleLoopStartFaderInput(short, Track&)
+6006bcd4 0000018c T Track::clear()
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text.code:
+
+Disassembly of section .text.itcm:
+
+Disassembly of section .fini:
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text.code:
+
+Disassembly of section .text.itcm:
+
+Disassembly of section .fini:

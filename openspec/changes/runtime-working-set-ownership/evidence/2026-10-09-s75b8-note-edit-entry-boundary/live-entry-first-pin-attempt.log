@@ -1,0 +1,31 @@
+Change 'runtime-working-set-ownership' is valid
+include/EditManager.h: OK
+src/EditManager/EditSessionDepart.cpp: OK
+src/EditManager/NoteEditSessionLifecycle.cpp: OK
+src/EditManager/NoteEditSelection.cpp: OK
+src/EditManager/EditNoteStateCoordinator.cpp: OK
+src/EditManager/NoteEditGeometryOps.cpp: OK
+src/EditManager/NoteEditSessionCommit.cpp: OK
+src/EditStates/EditSelectNoteState.cpp: OK
+src/ControlSurface/NoteEditButtonInput.cpp: OK
+src/ControlSurface/NoteEditEncoderInput.cpp: OK
+src/ControlSurface/SelectFaderInput.cpp: OK
+src/ControlSurface/GeometryFaderInput.cpp: OK
+src/LoopEditManager.cpp: OK
+src/Track/TrackLoopJamGeometry.cpp: OK
+src/StorageManager/SlotReset.cpp: OK
+src/StorageManager/CurrentSetBootLoad.cpp: OK
+src/StorageManager/LoadLoopJob.cpp: OK
+src/main.cpp: OK
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp: OK
+test/test_note_edit_entry_boundary/live_current_root_entry.inc: OK
+test/test_note_edit_entry_boundary/off_path_deps.h: OK
+test/test_note_edit_entry_boundary/selection_preparation.inc: OK
+test/test_note_edit_entry_boundary/select_state_handoff.inc: OK
+test/test_support/track_harness.inc: OK
+shasum: /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex: No such file or directory
+shasum: /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf: No such file or directory
+native_passed_suites=112
+openspec_exit=0 diff_check_exit=0 checksum_exit=0
+feature/unified-rolling-playback-path
+067be7f3d7bf0500a49da589c02d78c0904f9cda

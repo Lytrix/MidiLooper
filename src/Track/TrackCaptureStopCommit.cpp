@@ -366,7 +366,7 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
     }
     // Overflow NoteOns stay with in-loop stop Offs (174646 last 81). Remaining
     // events past the quantized length are still dropped.
-    loop.capture.store.mapNoteOnsAtOrBeyondTickIntoLoop(loop.loopLengthTicks);
+    loop.projectCaptureAtRecordStop(loop.loopLengthTicks);
   }
   return rawLength;
 }
@@ -448,7 +448,7 @@ TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination des
     // normal PLAYING transition, so launch stays on this boundary while the deferred worker
     // finalizes the take. (The frozen return window the closure grain binds keeps the interval
     // audible after it.)
-    if (!runtime->bindFirstRecordingBar(finalLength)) {
+    if (!runtime->bindFirstRecordingBar(finalLength, &loop)) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "First-record bar-1 playback binding unavailable length=%lu",
                  static_cast<unsigned long>(finalLength));

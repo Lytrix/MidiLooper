@@ -1,0 +1,152 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_session_undo in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:1:51: error: no type named 'ClearResult' in 'NoteEditSessionUndoStack'
+    1 | using UndoClearResult = NoteEditSessionUndoStack::ClearResult;
+      |                         ~~~~~~~~~~~~~~~~~~~~~~~~~~^
+test/test_note_edit_session_undo/bounded_clear.inc:30:33: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   30 |     const size_t before = stack.clearInventoryForTest();
+      |                           ~~~~~ ^
+test/test_note_edit_session_undo/bounded_clear.inc:31:31: error: no member named 'stepClear' in 'NoteEditSessionUndoStack'
+   31 |     const auto result = stack.stepClear(token);
+      |                         ~~~~~ ^
+test/test_note_edit_session_undo/bounded_clear.inc:32:19: error: use of undeclared identifier 'UndoClearResult'
+   32 |     if (result == UndoClearResult::Complete) {
+      |                   ^
+test/test_note_edit_session_undo/bounded_clear.inc:34:30: error: no member named 'clearComplete' in 'NoteEditSessionUndoStack'
+   34 |       TEST_ASSERT_TRUE(stack.clearComplete(token));
+      |                        ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:137:126: note: expanded from macro 'TEST_ASSERT_TRUE'
+  137 | #define TEST_ASSERT_TRUE(condition)                                                                UNITY_TEST_ASSERT(       (condition), __LINE__, " Expected TRUE Was FALSE")
+      |                                                                                                                              ^~~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:891:107: note: expanded from macro 'UNITY_TEST_ASSERT'
+  891 | #define UNITY_TEST_ASSERT(condition, line, message)                                              do { if (condition) { /* nothing*/ } else { UNITY_TEST_FAIL((line), (message)); } } while (0)
+      |                                                                                                           ^~~~~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:37:40: error: use of undeclared identifier 'UndoClearResult'
+   37 |     TEST_ASSERT_EQUAL(static_cast<int>(UndoClearResult::Progress), static_cast<int>(result));
+      |                                        ^
+test/test_note_edit_session_undo/bounded_clear.inc:38:56: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   38 |     TEST_ASSERT_EQUAL_UINT32_MESSAGE(before - 1, stack.clearInventoryForTest(),
+      |                                                  ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:436:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32_MESSAGE'
+  436 | #define TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected, actual, message)                                UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, (message))
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:40:29: error: no member named 'clearComplete' in 'NoteEditSessionUndoStack'
+   40 |     TEST_ASSERT_FALSE(stack.clearComplete(token));
+      |                       ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:139:126: note: expanded from macro 'TEST_ASSERT_FALSE'
+  139 | #define TEST_ASSERT_FALSE(condition)                                                               UNITY_TEST_ASSERT(      !(condition), __LINE__, " Expected FALSE Was TRUE")
+      |                                                                                                                              ^~~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:891:107: note: expanded from macro 'UNITY_TEST_ASSERT'
+  891 | #define UNITY_TEST_ASSERT(condition, line, message)                                              do { if (condition) { /* nothing*/ } else { UNITY_TEST_FAIL((line), (message)); } } while (0)
+      |                                                                                                           ^~~~~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:49:38: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   49 |   TEST_ASSERT_EQUAL_UINT32(63, stack.clearInventoryForTest()); //62 payload +1 shell
+      |                                ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:50:32: error: no member named 'beginClear' in 'NoteEditSessionUndoStack'
+   50 |   const uint32_t token = stack.beginClear();
+      |                          ~~~~~ ^
+test/test_note_edit_session_undo/bounded_clear.inc:53:29: error: no member named 'clearComplete' in 'NoteEditSessionUndoStack'
+   53 |     TEST_ASSERT_FALSE(stack.clearComplete(token));
+      |                       ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:139:126: note: expanded from macro 'TEST_ASSERT_FALSE'
+  139 | #define TEST_ASSERT_FALSE(condition)                                                               UNITY_TEST_ASSERT(      !(condition), __LINE__, " Expected FALSE Was TRUE")
+      |                                                                                                                              ^~~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:891:107: note: expanded from macro 'UNITY_TEST_ASSERT'
+  891 | #define UNITY_TEST_ASSERT(condition, line, message)                                              do { if (condition) { /* nothing*/ } else { UNITY_TEST_FAIL((line), (message)); } } while (0)
+      |                                                                                                           ^~~~~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:54:40: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   54 |     TEST_ASSERT_EQUAL_UINT32(63, stack.clearInventoryForTest());
+      |                                  ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:61:38: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   61 |   TEST_ASSERT_EQUAL_UINT32(63, stack.clearInventoryForTest());
+      |                                ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:68:38: error: no member named 'clearInventoryForTest' in 'NoteEditSessionUndoStack'
+   68 |   TEST_ASSERT_EQUAL_UINT32(63, stack.clearInventoryForTest());
+      |                                ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:69:41: error: no member named 'beginClear' in 'NoteEditSessionUndoStack'
+   69 |   TEST_ASSERT_EQUAL_UINT32(token, stack.beginClear());
+      |                                   ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:71:38: error: use of undeclared identifier 'UndoClearResult'
+   71 |   TEST_ASSERT_EQUAL(static_cast<int>(UndoClearResult::Complete), static_cast<int>(stack.stepClear(token)));
+      |                                      ^
+test/test_note_edit_session_undo/bounded_clear.inc:71:89: error: no member named 'stepClear' in 'NoteEditSessionUndoStack'
+   71 |   TEST_ASSERT_EQUAL(static_cast<int>(UndoClearResult::Complete), static_cast<int>(stack.stepClear(token)));
+      |                                                                                   ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:72:37: error: no member named 'clearEntryCountForTest' in 'NoteEditSessionUndoStack'
+   72 |   TEST_ASSERT_EQUAL_UINT32(0, stack.clearEntryCountForTest());
+      |                               ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:154:145: note: expanded from macro 'TEST_ASSERT_EQUAL_UINT32'
+  154 | #define TEST_ASSERT_EQUAL_UINT32(expected, actual)                                                 UNITY_TEST_ASSERT_EQUAL_UINT32( (expected), (actual), __LINE__, NULL)
+      |                                                                                                                                                 ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:904:184: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_UINT32'
+  904 | #define UNITY_TEST_ASSERT_EQUAL_UINT32(expected, actual, line, message)                          UnityAssertEqualNumber((UNITY_INT)(UNITY_UINT32)(expected), (UNITY_INT)(UNITY_UINT32)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_UINT32)
+      |                                                                                                                                                                                        ^~~~~~
+In file included from test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1342:
+test/test_note_edit_session_undo/bounded_clear.inc:77:37: error: no member named 'beginClear' in 'NoteEditSessionUndoStack'
+   77 |   const uint32_t emptyToken = stack.beginClear();
+      |                               ~~~~~ ^
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 errors generated.
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/test/test_note_edit_session_undo/test_note_edit_session_undo.o] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+-------- native:test_note_edit_session_undo [ERRORED] Took 1.96 seconds --------
+
+=================================== SUMMARY ===================================
+Environment    Test                         Status    Duration
+-------------  ---------------------------  --------  ------------
+native         test_note_edit_session_undo  ERRORED   00:00:01.959
+================== 1 test cases: 0 succeeded in 00:00:01.959 ==================

@@ -1,0 +1,133 @@
+00005cb0 00000024 t _GLOBAL__sub_I_editManager
+6001ae64 000000d4 T EditManager::cancelCurrentRootNoteEditEntry()
+6001af38 00000016 T EditManager::cancelCurrentRootNoteEditEntryForLoop(Loop const&)
+6003e834 00000110 T LoopEditManager::handleLoopLengthInput(unsigned char, Track&)
+6003e944 00000030 T LoopEditManager::handleLoopLengthPitchbend(short, Track&)
+6003e974 00000118 T LoopEditManager::handleLoopStartFaderInput(short, Track&)
+6003e814 00000020 T LoopEditManager::hasPendingGeometry() const
+20202b78 00000540 B editManager
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+Sections:
+Idx Name          Size      VMA       LMA       File off  Algn
+  0 .text.headers 00001400  60000000  60000000  00010000  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  1 .text.code    000b4d60  60001400  60001400  00011400  2**3
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  2 .text.progmem 00005170  600b6160  600b6160  000c6160  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .text.itcm    0005f950  00000000  600bb2d0  000d0000  2**6
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  4 .fini         00000004  0005f950  6011ac20  0012f950  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  5 .ARM.exidx    00000358  0005f954  6011ac24  0012f954  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  6 .data         00012ec0  20000000  6011af7c  00130000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  7 .bss          00004900  20012ec0  20012ec0  00002ec0  2**6
+                  ALLOC
+  8 .bss.dma      00027e20  20200000  20200000  00010000  2**5
+                  ALLOC
+  9 .bss.extram   00002460  70000000  70000000  00150000  2**3
+                  ALLOC
+ 10 .text.csf     00000dc4  6012de3c  6012de3c  0014de3c  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 11 .ARM.attributes 0000002e  00000000  00000000  0014ec00  2**0
+                  CONTENTS, READONLY
+ 12 .comment      00000033  00000000  00000000  0014ec2e  2**0
+                  CONTENTS, READONLY
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text.code:
+
+Disassembly of section .text.itcm:
+
+Disassembly of section .fini:
+3a75f87d9546250665f9f55b580a8d13b9e02130b5e59b284df2c3ef1443c919  /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf
+570da46cda9dc33404dc888b126d29abdc1b286ffb760e53589887cb20c7da62  /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text.code:
+
+Disassembly of section .text.itcm:
+
+Disassembly of section .fini:
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text.code:
+
+6001ae64 <EditManager::cancelCurrentRootNoteEditEntry()>:
+6001ae64:	f890 3048 	ldrb.w	r3, [r0, #72]	; 0x48
+6001ae68:	3b01      	subs	r3, #1
+6001ae6a:	2b0b      	cmp	r3, #11
+6001ae6c:	d85f      	bhi.n	6001af2e <EditManager::cancelCurrentRootNoteEditEntry()+0xca>
+6001ae6e:	2238      	movs	r2, #56	; 0x38
+6001ae70:	2100      	movs	r1, #0
+6001ae72:	b5f0      	push	{r4, r5, r6, r7, lr}
+6001ae74:	b08f      	sub	sp, #60	; 0x3c
+6001ae76:	4604      	mov	r4, r0
+6001ae78:	f04f 36ff 	mov.w	r6, #4294967295	; 0xffffffff
+6001ae7c:	2500      	movs	r5, #0
+6001ae7e:	4668      	mov	r0, sp
+6001ae80:	4f2b      	ldr	r7, [pc, #172]	; (6001af30 <EditManager::cancelCurrentRootNoteEditEntry()+0xcc>)
+6001ae82:	f099 fdfd 	bl	600b4a80 <__memset_veneer>
+6001ae86:	2200      	movs	r2, #0
+6001ae88:	2300      	movs	r3, #0
+6001ae8a:	46ec      	mov	ip, sp
+6001ae8c:	9601      	str	r6, [sp, #4]
+6001ae8e:	f104 0eb8 	add.w	lr, r4, #184	; 0xb8
+6001ae92:	6725      	str	r5, [r4, #112]	; 0x70
+6001ae94:	67e5      	str	r5, [r4, #124]	; 0x7c
+6001ae96:	f884 5098 	strb.w	r5, [r4, #152]	; 0x98
+6001ae9a:	f8c4 50ac 	str.w	r5, [r4, #172]	; 0xac
+6001ae9e:	e9c4 2318 	strd	r2, r3, [r4, #96]	; 0x60
+6001aea2:	e9c4 231a 	strd	r2, r3, [r4, #104]	; 0x68
+6001aea6:	f64f 73ff 	movw	r3, #65535	; 0xffff
+6001aeaa:	f8c4 30b0 	str.w	r3, [r4, #176]	; 0xb0
+6001aeae:	e8bc 000f 	ldmia.w	ip!, {r0, r1, r2, r3}
+6001aeb2:	e9c4 551d 	strd	r5, r5, [r4, #116]	; 0x74
+6001aeb6:	e9c4 5520 	strd	r5, r5, [r4, #128]	; 0x80
+6001aeba:	e9c4 5522 	strd	r5, r5, [r4, #136]	; 0x88
+6001aebe:	e9c4 5524 	strd	r5, r5, [r4, #144]	; 0x90
+6001aec2:	e9c4 5527 	strd	r5, r5, [r4, #156]	; 0x9c
+6001aec6:	e9c4 5529 	strd	r5, r5, [r4, #164]	; 0xa4
+6001aeca:	e8ae 000f 	stmia.w	lr!, {r0, r1, r2, r3}
+6001aece:	e8bc 000f 	ldmia.w	ip!, {r0, r1, r2, r3}
+6001aed2:	e8ae 000f 	stmia.w	lr!, {r0, r1, r2, r3}
+6001aed6:	e8bc 000f 	ldmia.w	ip!, {r0, r1, r2, r3}
+6001aeda:	e8ae 000f 	stmia.w	lr!, {r0, r1, r2, r3}
+6001aede:	e89c 0003 	ldmia.w	ip, {r0, r1}
+6001aee2:	22f0      	movs	r2, #240	; 0xf0
+6001aee4:	e88e 0003 	stmia.w	lr, {r0, r1}
+6001aee8:	4629      	mov	r1, r5
+6001aeea:	f104 00f8 	add.w	r0, r4, #248	; 0xf8
+6001aeee:	65a5      	str	r5, [r4, #88]	; 0x58
+6001aef0:	e9c4 7512 	strd	r7, r5, [r4, #72]	; 0x48
+6001aef4:	e9c4 5614 	strd	r5, r6, [r4, #80]	; 0x50
+6001aef8:	f099 fdc2 	bl	600b4a80 <__memset_veneer>
+6001aefc:	f8d4 3314 	ldr.w	r3, [r4, #788]	; 0x314
+6001af00:	4a0c      	ldr	r2, [pc, #48]	; (6001af34 <EditManager::cancelCurrentRootNoteEditEntry()+0xd0>)
+6001af02:	3301      	adds	r3, #1
+6001af04:	f8c4 6100 	str.w	r6, [r4, #256]	; 0x100
+6001af08:	f8c4 611c 	str.w	r6, [r4, #284]	; 0x11c
+6001af0c:	2b01      	cmp	r3, #1
+6001af0e:	f8c4 20f8 	str.w	r2, [r4, #248]	; 0xf8
+6001af12:	f8c4 6178 	str.w	r6, [r4, #376]	; 0x178
+6001af16:	bf38      	it	cc
+6001af18:	2301      	movcc	r3, #1
+6001af1a:	f8c4 617c 	str.w	r6, [r4, #380]	; 0x17c
+6001af1e:	f8c4 61dc 	str.w	r6, [r4, #476]	; 0x1dc
+6001af22:	f884 531c 	strb.w	r5, [r4, #796]	; 0x31c
+6001af26:	f8c4 3314 	str.w	r3, [r4, #788]	; 0x314
+6001af2a:	b00f      	add	sp, #60	; 0x3c
+6001af2c:	bdf0      	pop	{r4, r5, r6, r7, pc}
+6001af2e:	4770      	bx	lr
+6001af30:	00ffff0e 	.word	0x00ffff0e
+6001af34:	00ffff00 	.word	0x00ffff00

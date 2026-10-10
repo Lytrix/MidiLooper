@@ -1833,6 +1833,7 @@ def _stream_fixture_record(
     for step_notes in fixture_by_step.values():
         step_notes.sort(key=lambda n: n.pitch)
     target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
+    stop_trigger: Optional[int] = None
     if stop_press_advance_clocks < 0:
         stop_trigger = target_clocks
     elif stop_press_advance_clocks > 0:
@@ -2431,7 +2432,29 @@ def _ensure_clear_to_empty(
         )
         reached_empty = True
     if not reached_empty:
-        print("[warn] Timed out waiting for clear->EMPTY; retrying clear long press")
+        from hitl.legacy_record_baseline import (
+            CLEAR_REFUSAL_SAVE_WAIT_S,
+            _serial_clear_refusal,
+            _serial_has_clear_aborted,
+        )
+        if _serial_has_clear_aborted(post_snap, after_index=baseline_len):
+            print("[edit-hitl] clear aborted by the firmware; not retrying a terminal save-drain failure")
+            return False
+        refusal = _serial_clear_refusal(post_snap, after_index=baseline_len)
+        if refusal is not None:
+            from hitl.deferred_save_idle import wait_for_deferred_save_idle_if_active
+            print(f"[info] clear refused by the firmware ({refusal}); waiting for the owed save before retry")
+            if not wait_for_deferred_save_idle_if_active(
+                serial_collector,
+                after_line_index=baseline_len,
+                log_prefix="[clear-retry]",
+                abort=abort,
+                max_timeout_s=CLEAR_REFUSAL_SAVE_WAIT_S,
+            ):
+                print(f"[edit-hitl] deferred save did not become idle after {CLEAR_REFUSAL_SAVE_WAIT_S:.0f}s")
+                return False
+        else:
+            print("[warn] Timed out waiting for clear->EMPTY; retrying clear long press")
         retry_baseline_len = len(serial_collector.snapshot())
         _send_record_clear_long_press(out_port, clear_press_ms=clear_press_ms)
         reached_empty = _wait_for_state_entry_count(

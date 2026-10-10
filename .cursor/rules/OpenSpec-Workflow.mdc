@@ -9,7 +9,7 @@ Spec-driven development for the **timeline data model** track and related change
 
 ## Setup
 
-- OpenSpec CLI: Node.js **>= 20** (`nvm use 20`), then `openspec --version`
+- OpenSpec CLI: Node.js **>= 20.19.0** on the default Node (`nvm` → v24), then `openspec --version`. Do **not** run `nvm use 20`: the CLI is installed under the default Node's global prefix, so another version hides it from `PATH`.
 - Project config: `openspec/config.yaml`
 - Source of truth: `openspec/specs/` (archived behavior after `/opsx:archive`)
 - Active work: `openspec/changes/<name>/` (proposal, specs deltas, design, tasks)
@@ -20,11 +20,11 @@ Spec-driven development for the **timeline data model** track and related change
 
 | Command | Use |
 |---------|-----|
-| `/opsx:propose <idea>` | New change — creates proposal, specs, design, tasks |
+| `/opsx:propose <idea>` | New change — creates proposal, specs, design, tasks; add a `## Terminology` delta when terms change |
 | `/opsx:explore` | Spike / investigate before proposing |
 | `/opsx:apply` | Implement `tasks.md` for the active change |
 | `/opsx:sync` | Reconcile specs with implementation drift |
-| `/opsx:archive` | Merge delta specs into `openspec/specs/`, archive change folder |
+| `/opsx:archive` | Merge delta specs into `openspec/specs/`, archive change folder, and promote the `## Terminology` delta into `docs/Authority/NAMING.md` (or drop it explicitly) |
 
 ## Deliverable sequence (timeline — locked)
 
@@ -71,6 +71,29 @@ If a formal trigger fired, complete a full preflight before firmware edits:
 - add explicit `tasks.md` items for preflight, decision log entry, compatibility removal trigger,
   and validation gates.
 
+## Terminology delta
+
+A change that coins a term, reuses one with a new meaning, or deprecates one carries a `## Terminology` delta in
+`openspec/changes/<name>/design.md`:
+
+| Column | Meaning |
+|--------|---------|
+| Term | The word or identifier |
+| Meaning | One line, in the owning layer's terms |
+| Reuse or new | An existing governed term, or a new top-level domain noun (needs user approval and a `DEC-###`) |
+| Status | `proposed` / `adopted` / `deprecated` |
+
+Until the term is registered in [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md) it is **provisional**: usable
+inside that change, but not in shared docs, other plans or new code names. Precedence is claim-scoped — NAMING decides
+names and meanings, OpenSpec decides behavior — see
+[NAMING.md](docs/Authority/NAMING.md) § Scope of this authority.
+
+| Command | Duty |
+|---------|------|
+| `/opsx:propose` | Add the delta when terms change; get approval first for a new top-level domain noun |
+| `/opsx:apply` | Use adopted terms, or this change's provisional terms only — do not spread a provisional term into other docs |
+| `/opsx:archive` | Promote the delta into `docs/Authority/NAMING.md` (with the `DEC-###`) or drop it explicitly, exactly as delta specs are promoted into `openspec/specs/` |
+
 ## Brownfield docs
 
 Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):
@@ -83,7 +106,7 @@ Cite in OpenSpec artifacts; do not duplicate wholesale (see DELIVERY_RULES):
 ## Naming
 
 See `docs/Authority/NAMING.md` (canonical); `.cursor/rules/Naming-Vocabulary-Teensy-Looper.mdc` is agent pointer and global **action + scope** rule.
-Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline.
+Reuse **passes**, **Capture**, **editPass**, **NoteEditSession**, slot, overdub, jam, JamAction, HITL baseline. A term a change introduces is **provisional** until it is registered in NAMING.md — see § Terminology delta.
 
 ## Verification
 

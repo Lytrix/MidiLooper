@@ -30,6 +30,10 @@ DEST_STEP = 4
 STACKED_COUNT = 2
 # ControlSurfaceManager::FEEDBACK_IGNORE_PERIOD after NOTE_EDIT motor sync.
 FADER1_FEEDBACK_IGNORE_S = 1.6
+# The setup guard judges transport state from the followed serial view, which can still be working
+# through a burst; it waits for that view to stop moving (bounded) before every verdict.
+_STATE_SETTLE_IDLE_MS = 250
+_STATE_SETTLE_MAX_DRAIN_MS = 3000
 
 
 def _parse_scenario_args(args: object) -> argparse.Namespace:
@@ -41,6 +45,7 @@ def _parse_scenario_args(args: object) -> argparse.Namespace:
     parser.add_argument("--follow-current-session", action="store_true")
     parser.add_argument("--follow-serial-log", type=Path, default=None)
     parser.add_argument("--track-number", type=int, default=5)
+    parser.add_argument("--loop-slot", type=int, default=getattr(args, 'loop_slot', None))
     parser.add_argument("--midi-channel", type=int, default=None)
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument("--phase-wait-ms", type=int, default=500)
@@ -190,6 +195,120 @@ def _select_step_until_apply(
     return None
 
 
+def _ensure_target_playing(
+    out_port,
+    collector,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    log_prefix: str,
+    track_number: Optional[int] = None,
+    loop_slot: Optional[int] = None,
+) -> bool:
+    """The end goal is **always playing, never stopping**: an edit gesture is measured on a PLAYING
+    track, so establish that before entering NOTE_EDIT and verify it from the device's own rows.
+
+    Decided from `,ST,Track,` / `DISP` state rows, **never** from a MIDI clock: this firmware keeps
+    sending clock while its transport is stopped (measured -- a fresh pulse arrives with
+    `!STOP_STATUS state=STOPPED`), so a clock-reading helper reports "running" for a stopped
+    device. What leaves the take stopped is the composed preset's own attach: the second leg joins
+    through `hitl.managed_capture.establish_attach_readiness`, whose idempotent realtime Stop stops
+    the transport the base leg had left playing (`captures/live-current-root-entry-t8s4-07/08/09`:
+    `MI,U,252` then `Playback stopped`, and no later `PLAYING` row before the entry).
+
+    One transport press, then a bounded wait for the device to say PLAYING. Deliberately **one**:
+    a second press on a take that is already playing would stop it. Refusing (False) is the honest
+    outcome when the device does not report PLAYING -- the caller turns it into SETUP_INCOMPLETE
+    rather than measuring the gesture in the wrong state.
+    """
+    from hitl.managed_capture import active_managed_capture
+    if track_number is not None and loop_slot is not None:
+        capture = active_managed_capture()
+        if capture is None:
+            print(f'{log_prefix} live target observation requires the managed serial owner')
+            return False
+
+        def observe(timeout_s=0.5):
+            status = capture.selected_track_status(timeout_s=timeout_s)
+            if (status is None or status['track'] != track_number - 1
+                    or status['slot'] != loop_slot - 1):
+                return None
+            return status
+
+        status = observe()
+        if status is None:
+            print(f'{log_prefix} no fresh exact-target status; refusing transport toggle')
+            return False
+        if status['state'] == 'PLAYING':
+            return status['transport'] == 1
+        if status['state'] != 'STOPPED' or status['transport'] != 0:
+            print(f'{log_prefix} target/global state cannot safely authorize a start: {status}')
+            return False
+        from hitl.control_constants import CONTROL_CHANNEL_1BASED, GLOBAL_TRANSPORT_NOTE
+        from hitl.midi_io import _send_short_press
+        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+        deadline = time.monotonic() + max(2.0, phase_wait_ms / 1000.0 * 4.0)
+        while time.monotonic() < deadline:
+            status = observe(timeout_s=min(0.5, max(0.0, deadline - time.monotonic())))
+            if status is None:
+                return False
+            if status['state'] == 'PLAYING' and status['transport'] == 1:
+                return True
+            time.sleep(0.05)
+        return False
+
+    from hitl.capture_transitions import _latest_track_state
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED, GLOBAL_TRANSPORT_NOTE
+    from hitl.midi_io import _send_short_press
+
+    def _settled() -> None:
+        """Let the followed serial view catch up before its state rows are judged.
+
+        This leg joins a stream that can still be working through a burst -- the base leg's own
+        evidence drain flushes the device's retained ring -- and a snapshot taken mid-burst is a
+        *stale* view, not an observation. `captures/live-current-root-entry-t8s4-14` refused with
+        `state=STOPPED` although the device's own rows carry `ST,Track,STOPPED,PLAYING` 0.43 s after
+        the press: the guard read the last rows its collector had seen, which were the pre-press ones.
+        `drain_until_idle` returns only once the followed line count has stopped moving, so the
+        verdict is taken on rows the device actually emitted.
+        """
+        drain = getattr(collector, "drain_until_idle", None)
+        if callable(drain):
+            drain(idle_ms=_STATE_SETTLE_IDLE_MS, max_drain_ms=_STATE_SETTLE_MAX_DRAIN_MS)
+
+    def _state() -> object:
+        return _latest_track_state(collector.snapshot())
+
+    def _seen() -> str:
+        lines = getattr(collector, "line_count", None)
+        integrity = getattr(collector, "capture_integrity", None)
+        return (f"followed lines={lines() if callable(lines) else '?'}, "
+                f"integrity={integrity() if callable(integrity) else '?'}")
+
+    _settled()
+    if _state() == "PLAYING":
+        print(f"{log_prefix} target already PLAYING (device state rows)")
+        return True
+    print(f"{log_prefix} ensure PLAYING: one transport press (device state={_state()}, {_seen()})")
+    _send_short_press(
+        out_port,
+        note=GLOBAL_TRANSPORT_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+    deadline = time.monotonic() + max(2.0, (phase_wait_ms / 1000.0) * 4.0)
+    while time.monotonic() < deadline:
+        _settled()
+        if _state() == "PLAYING":
+            print(f"{log_prefix} ensure PLAYING: confirmed by device state rows")
+            return True
+        time.sleep(0.05)
+    print(f"{log_prefix} ensure PLAYING: device never reported PLAYING "
+          f"(state={_state()}, {_seen()})")
+    return False
+
+
 def run_note_edit_reselect_stacked(args: object) -> int:
     from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
@@ -197,7 +316,6 @@ def run_note_edit_reselect_stacked(args: object) -> int:
         TICKS_PER_16TH_STEP,
         TRACK_SELECT_NOTE_BASE,
     )
-    from hitl.edit_controls import _ensure_transport_running
     from hitl.midi_io import _drain_input_messages, _find_midi_port, _send_short_press
     from hitl.scenarios.edit_minimal import (
         _ensure_note_edit_entered,
@@ -234,22 +352,30 @@ def run_note_edit_reselect_stacked(args: object) -> int:
             print(f"{log_prefix} post-seed settle {ns.post_seed_settle_ms}ms")
             time.sleep(ns.post_seed_settle_ms / 1000.0)
 
-        if not _ensure_transport_running(
-            out_port,
-            in_port,
-            press_ms=ns.press_ms,
-            phase_wait_ms=ns.phase_wait_ms,
-        ):
-            print(f"{log_prefix} WARN: MIDI clock missing after transport start")
+
 
         track_index = max(0, ns.track_number - 1)
-        _send_short_press(
-            out_port,
-            note=TRACK_SELECT_NOTE_BASE + track_index,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.press_ms,
-        )
+        _send_short_press(out_port, note=TRACK_SELECT_NOTE_BASE + track_index,
+                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=ns.press_ms)
         time.sleep(max(ns.phase_wait_ms, 1) / 1000.0)
+
+        if not _ensure_target_playing(
+            out_port,
+            collector,
+            press_ms=ns.press_ms,
+            phase_wait_ms=ns.phase_wait_ms,
+            log_prefix=log_prefix,
+            track_number=ns.track_number,
+            loop_slot=ns.loop_slot,
+        ):
+            print(
+                f"{log_prefix} SETUP_INCOMPLETE: target track is not PLAYING; "
+                "refusing to measure the edit gesture in a stopped state"
+            )
+            return 1
+        # Fresh target PLAYING+transport=1 already proves the setup. A no-clock
+        # helper must not issue a second toggle and stop the state just established.
+
 
         if not _ensure_note_edit_entered(
             out_port,

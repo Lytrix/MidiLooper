@@ -1,0 +1,27 @@
+CONTROL_HASH_COMPARE_EXIT=0
+include/EditManager.h: OK
+src/EditManager/EditSessionDepart.cpp: OK
+src/EditManager/NoteEditSessionLifecycle.cpp: OK
+src/EditManager/NoteEditSelection.cpp: OK
+src/EditManager/EditNoteStateCoordinator.cpp: OK
+src/EditManager/NoteEditGeometryOps.cpp: OK
+src/EditManager/NoteEditSessionCommit.cpp: OK
+src/EditStates/EditSelectNoteState.cpp: OK
+src/ControlSurface/NoteEditButtonInput.cpp: OK
+src/ControlSurface/NoteEditEncoderInput.cpp: OK
+src/ControlSurface/SelectFaderInput.cpp: OK
+src/ControlSurface/GeometryFaderInput.cpp: OK
+src/LoopEditManager.cpp: OK
+src/Track/TrackLoopJamGeometry.cpp: OK
+src/StorageManager/SlotReset.cpp: OK
+src/StorageManager/CurrentSetBootLoad.cpp: OK
+src/StorageManager/LoadLoopJob.cpp: OK
+src/main.cpp: OK
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp: OK
+test/test_note_edit_entry_boundary/live_current_root_entry.inc: OK
+test/test_note_edit_entry_boundary/off_path_deps.h: OK
+test/test_note_edit_entry_boundary/selection_preparation.inc: OK
+test/test_note_edit_entry_boundary/select_state_handoff.inc: OK
+test/test_support/track_harness.inc: OK
+FINAL_HASH_VERIFY_EXIT=0
+WHITESPACE_EXIT=0

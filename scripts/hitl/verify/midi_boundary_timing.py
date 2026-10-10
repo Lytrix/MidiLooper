@@ -18,11 +18,18 @@ from hitl.serial_timing import phase_evidence_start_index
 
 ACTIVE_STATES = frozenset({"RECORDING", "PLAYING", "OVERDUBBING", "OVERDUB_STOPPING"})
 _MIDI_INPUT_CALL_RE = re.compile(r"\bmidiHandler\.handleMidiInput\s*\(")
-# The service call topology is the gate: all input drains belong in main and
-# there are exactly nine of them.  Absolute source lines are not an invariant;
-# a harmless include or comment otherwise invalidates every device capture.
+# The service call topology is the gate: all input drains belong in main and there are exactly
+# ten of them.  Absolute source lines are not an invariant; a harmless include or comment
+# otherwise invalidates every device capture.
+#
+# Nine became ten with S7.5b.8b's live entry: `main.cpp` now brackets one role-owned entry
+# opportunity between two real MIDI service calls
+# (`editManager.stepCurrentRootNoteEditEntry()` between `handleMidiInput()` pairs), which is the
+# slice's own "one main-loop grant between MIDI service" contract. The tenth site is that closing
+# call, and it is in `src/main.cpp` like the rest, so the topology gate still holds; the count is
+# what names the change.
 _EXPECTED_MIDI_INPUT_CALL_PATH = "src/main.cpp"
-_EXPECTED_MIDI_INPUT_CALL_COUNT = 9
+_EXPECTED_MIDI_INPUT_CALL_COUNT = 10
 
 
 @dataclass(frozen=True)

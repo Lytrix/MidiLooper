@@ -50,6 +50,17 @@ The whole-setup term is **Playhead-scheduled MVCC** ([NAMING.md](../NAMING.md));
 **Pipeline of role-owned stages** with declared cost and deadline. The binding invariants and the staged plan
 live in `openspec/changes/runtime-working-set-ownership/`.
 
+**Epoch lease, structurally.** A working set's identity is `owner + generation + role`; release is by
+identity, and a release whose generation does not match is a **rejected, reported no-op**, so a late
+cleanup cannot touch recycled storage. Every resident store declares its class, cardinality, cap and
+eviction policy.
+
+**Readiness, structurally.** After a recording, overdub or edit changes content at a tick, an updated
+immutable state must be ready by the time the playhead moves over that tick again, and a missed deadline
+keeps the **previous** version authoritative for that pass. Contract and deadline semantics:
+[Architecture/IntervalProjection.md](Architecture/IntervalProjection.md) § Readiness deadline; construction
+and publication: [Architecture/Snapshots.md](Architecture/Snapshots.md).
+
 Corollary: a capacity claim that scales with recorded-slot count is a defect, not a tuning problem. A second
 authority for "which slot is active" is a defect (`activeLoopIndex` owns it).
 

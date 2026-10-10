@@ -53,6 +53,7 @@ public:
     void handleRedoClearTrack();
     void handleClearTrack();
     void handleToggleRecordForSlot(uint8_t slotIndex);
+    void handleOverdubForSlot(uint8_t slotIndex);
     void handleMuteTrack(uint8_t trackNumber);
     void handleSoloTrack(uint8_t trackNumber);
     void handleCycleEditMode();

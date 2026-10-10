@@ -30,6 +30,11 @@ public:
     
     // Called to update bracket position during overdubbing
     void updateForOverdubbing(EditManager& manager, Track& track);
+#if defined(PIO_UNIT_TEST_NATIVE)
+    size_t entryReselectionsForTest() const { return entryReselections_; }
+    size_t lastEventCountForTest() const { return lastMidiEventCount; }
+    bool lastCountMutatedCacheForTest() const { return lastCountMutatedCache_; }
+#endif
     
 public:
     static void sendTargetPitchbend(EditManager& manager, Track& track);
@@ -45,4 +50,8 @@ private:
     
     // Track MIDI events count to detect new notes during overdubbing
     size_t lastMidiEventCount = 0;
+#if defined(PIO_UNIT_TEST_NATIVE)
+    size_t entryReselections_ = 0;
+    bool lastCountMutatedCache_ = false;
+#endif
 }; 

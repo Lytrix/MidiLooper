@@ -18,6 +18,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../test_support/NoteEditFocusTestDeps.cpp"
 #include "../../src/EditManager/NoteEditSessionUndoStack.cpp"
+#include "../../src/EditManager/NoteEditSessionPayloadRetirement.cpp"
 
 #include "EditPass.h"
 #include "Globals.h"
@@ -1339,8 +1340,17 @@ void test_first_kind_boundary_opened_snapshot_entry_restores_without_clone() {
   TEST_ASSERT_FALSE(pushed->hasUndoCurrentState);
 }
 
+#include "bounded_clear.inc"
+#include "payload_clear.inc"
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
+  RUN_TEST(test_session_payload_clear_withheld_and_exact_composed_grants);
+  RUN_TEST(test_session_payload_clear_shared_source_unchanged);
+  RUN_TEST(test_session_payload_clear_receipt_rejects_foreign_zero_and_reuse);
+  RUN_TEST(test_session_payload_clear_empty_completion_is_separate);
+  RUN_TEST(test_session_payload_clear_interrupted_child_undo_stops_later_phases);
+  RUN_TEST(test_session_payload_clear_stamped_pool_reset_preserves_recycled_source);
   RUN_TEST(test_session_undo_stack_push_entry);
   RUN_TEST(test_session_three_step_undo_redo_chain);
   RUN_TEST(test_session_undo_entry_matches_clone_restore);
@@ -1368,5 +1378,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_current_state_move_ab_undo_redo_chain);
   RUN_TEST(test_session_rows_fallback_uses_opened_snapshot_span_note_ids);
   RUN_TEST(test_first_kind_boundary_opened_snapshot_entry_restores_without_clone);
+  RUN_TEST(test_bounded_undo_clear_withheld_and_exact_nested_grants);
+  RUN_TEST(test_bounded_undo_clear_empty_and_redo_history);
+  RUN_TEST(test_bounded_undo_clear_bucket_only_is_separate_from_shell);
+  RUN_TEST(test_bounded_undo_clear_rejects_stale_grants_after_synchronous_reuse);
+  RUN_TEST(test_bounded_undo_clear_collisions_and_live_content_are_independent);
   return UNITY_END();
 }

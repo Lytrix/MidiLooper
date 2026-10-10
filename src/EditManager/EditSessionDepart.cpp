@@ -22,6 +22,11 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::isSessionUndoDisplayActive() const {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::cycleEditSession(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) {
+        const bool published = editSession.active;
+        cancelCurrentRootNoteEditEntry();
+        if (!published) return; // private second press cancels an unopened session
+    }
     if (editSession.sessionType == EditSessionType::Note) {
         controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
         syncNoteEditFocusLastFromSessionStore(track);
@@ -56,6 +61,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::emitSessionOpenedToSurface(bool includeM
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::sendEditSessionChange(EditSessionType sessionType, bool notifySurfaceMidi) {
+    if (hasPendingCurrentRootNoteEditEntry()) {
+        const bool published = editSession.active;
+        cancelCurrentRootNoteEditEntry();
+        if (!published) return;
+    }
+    if (sessionType == EditSessionType::Note &&
+        acceptCurrentRootNoteEditEntry(trackManager.getSelectedTrack()) == CurrentRootEntryAdmission::Accepted)
+        return; // type/open/feedback are withheld until qualified publication
     const EditSessionType priorSession = editSession.sessionType;
     if (sessionType == EditSessionType::ControlChange) {
         return;
@@ -92,6 +105,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::sendEditSessionChange(EditSessionType se
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::commitEditSessionOnDepart(Track& track) {
+    cancelCurrentRootNoteEditEntry();
     flushDeferredNoteEditDisplayRefresh(track);
     if (isLoopEditSession()) {
         loopEditManager.commitLoopEditOnDepart(track);
@@ -125,6 +139,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::reenterEditSessionForFocusChange(Track& 
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::beforeSelectedTrackChange(Track& departingTrack) {
+    cancelCurrentRootNoteEditEntry();
     // Task 3.7a (I3) / task 3.13's re-focus hook: the track that is leaving the focus has no live preview source any
     // more, so its preview yields **by name**. A re-focus is not a session exit: nothing becomes owed.
     (void)departingTrack.cancelPreviewWindowForSlot(
@@ -143,6 +158,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::onTrackChanged(Track& newTrack) {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::beforeSelectedSlotChange(Track& track) {
+    cancelCurrentRootNoteEditEntry();
     commitEditSessionOnDepart(track);
 }
 
@@ -172,6 +188,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::clearLengthEditingModeOnNoteSelect() {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::toggleLengthEditMode(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     const bool enabling = !lengthEditingMode_;
     lengthEditingMode_ = enabling;
 

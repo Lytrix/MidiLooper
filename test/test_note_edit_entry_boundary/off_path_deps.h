@@ -19,10 +19,9 @@
 //     -- the fixtures assert the production request and the production call sites around them
 //     (`drainFaderOutboundUntilIdle`'s call is exactly the poll-around-work shape the slice records).
 //     The motor send steps are S7.5b.8c's subject with its own fixture;
-//   * the five `EditStates` FSM TUs (host ill-formed, the same boundary the windowed-preview suite
-//     documents) -- production's `EditSelectNoteState::onEnter` runs a *second* `selectClosestNote`,
-//     so the selection this suite asserts is the one `EditManager::enterDefaultNoteEditSessionState`
-//     itself builds;
+//   * Home/Start/Length/Pitch FSMs remain named boundaries for this entry slice;
+//     the Select FSM TU and geometry action builder are linked and its real
+//     entry/count/selection behavior is asserted, not no-oped;
 //   * storage/persistence requests, display projections and the transport start/stop/record-stop routes
 //     stay observable or fail closed.
 //
@@ -31,6 +30,8 @@
 DisplayManager::DisplayManager() {}
 DisplayManager displayManager;
 void ClockManager::toggleTransport() { OFF_PATH(); }
+// Transport clock remains a controlled native boundary for the real MIDI input poll.
+uint32_t ClockManager::getMicrosPerTick() const { return 2604; }
 void TrackManager::forceMidiLedUpdate(uint32_t) {}
 void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t) {}
 void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {}
@@ -65,14 +66,13 @@ void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
 void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}
 void StorageManager::admitSlotMeta(uint8_t, uint8_t) {}
 void StorageManager::requestUrgentEditSave() {}
-// The note-edit **state FSM** (see the header note): entries are observable no-ops.
+// Four unrelated note-edit FSMs remain no-op boundaries; Select is real.
 #define OBSERVABLE_EDIT_STATE(Type) \
 void Type::onEnter(EditManager&, Track&, uint32_t) {} \
 void Type::onExit(EditManager&, Track&) {} \
 void Type::onEncoderTurn(EditManager&, Track&, int) {} \
 void Type::onButtonPress(EditManager&, Track&) {}
 OBSERVABLE_EDIT_STATE(EditNoteHomeState)
-OBSERVABLE_EDIT_STATE(EditSelectNoteState)
 OBSERVABLE_EDIT_STATE(EditStartNoteState)
 OBSERVABLE_EDIT_STATE(EditLengthNoteState)
 OBSERVABLE_EDIT_STATE(EditPitchNoteState)
@@ -158,3 +158,4 @@ DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track&, uint8_
   OFF_PATH();
   return DetailedWindowContext{};
 }
+void StorageManager::processEditAutosave(const LooperState&) { OFF_PATH(); }

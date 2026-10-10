@@ -4,16 +4,17 @@ Deterministic documentation loading per domain. **Before implementation:** detec
 
 Authority order: [Authority/README.md](Authority/README.md).
 
-Always load first:
+Load runtime context in bounded form; these files are long journals and must not be full-read by default:
 
-- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md)
-- [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) — implementation scope; do not implement outside § Now implementing
-- [Runtime/ROADMAP.md](Runtime/ROADMAP.md) — optional; never sole authority for coding
-- [DECISION_LOG.md](DECISION_LOG.md) — search for topic; run [Templates/DECISION_REVIEW.md](Templates/DECISION_REVIEW.md) before firmware edits
-- [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md)
-- [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md)
+- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) — read the newest status entry at the top; deeper branch/OpenSpec/blocker sections are historical and may be stale. Verify branch from Git; identify active OpenSpec from the user-approved task and its current `tasks.md`.
+- [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) — inspect scope declarations under `## Now implementing`; reconcile against the user-approved task and its active OpenSpec `tasks.md`. Do not implement outside applicable scope; clarify conflicts. Search older history only for specific evidence.
+- [Runtime/ROADMAP.md](Runtime/ROADMAP.md) — optional; never sole authority for implementation.
+- [DECISION_LOG.md](DECISION_LOG.md) — search relevant decisions; never full-read.
+- [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md) and [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — load for coding.
+- [Plans/runtime_process_building_blocks_overview.md](Plans/runtime_process_building_blocks_overview.md) — firmware orientation to skim early; not authority.
 
-**Runtime orientation (agents — load early for firmware work):** [plans/runtime_process_building_blocks_overview.md](Plans/runtime_process_building_blocks_overview.md) — high-level logic, owners, hard don'ts (not authority; then follow domain sections below).
+Older runtime journal entries remain searchable in place; extracted historical scope records live under [Runtime/archive/](Runtime/archive/). Search/open history only for a specific question.
+Historical plans and domain journals elsewhere remain searchable; open them only to answer a specific question. “Required” means authoritative when relevant, not “read every listed file in full”; use headings, targeted search, and bounded windows.
 
 ---
 
@@ -22,7 +23,7 @@ Always load first:
 **Required**
 
 - [Authority/DELIVERY_RULES.md](Authority/DELIVERY_RULES.md) — commands, locked milestone order, hard guards, verification matrix
-- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) — active OpenSpec list
+- [Runtime/PROJECT_STATE.md](Runtime/PROJECT_STATE.md) — bounded newest-entry read only; use Git for branch and the approved task/current OpenSpec for active scope.
 - [Runtime/CURRENT_WORK.md](Runtime/CURRENT_WORK.md) — **implementation scope**
 - `openspec/changes/<active-name>/tasks.md` for the change you implement
 

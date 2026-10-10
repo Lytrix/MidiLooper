@@ -904,6 +904,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // finalization/order/rewrite/transfer grain after MIDI service. Nothing
   // else may stack into this owner turn.
   if (hasPendingDeferredOverdubStop()) {
+    CaptureStopJob* pendingStop = captureStopJobHead();
+    if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot && pendingStop != nullptr &&
+        pendingStop->mode == CapturePhase::Record &&
+        pendingStop->admission.phase == PendingStopPhase::RecordPublished &&
+        pendingStop->owner != nullptr && pendingStop->owner->pendingSnapshotSessionExitQueued() &&
+        !pendingStop->owner->publishedSnapshotIsCurrent()) {
+      // Record retirement waits for this queued root to become current. Lend the existing
+      // Snapshot owner its normal bounded turn; do not stack snapshot work with a stop grain.
+      processSnapshotOwnerTurn(loopWithPendingSnapshotPublish(), snapshotConstructionUnits);
+      return;
+    }
 #if defined(SESSION_CAPTURE)
     const auto phase = captureStopJob().admission.phase;
     const auto generation = captureStopJob().admission.frozenGeneration;
@@ -1019,126 +1030,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     return;
   }
 
-  Loop& snapshotLoop = loopWithPendingSnapshotPublish();
-  const bool havePublishedSnapshot =
-      static_cast<bool>(snapshotLoop.publishedSnapshot());
-  const bool visualCacheNeedsFirstPaint =
-      snapshotLoop.hasCommittedPasses() && snapshotLoop.visualCacheDirty &&
-      snapshotLoop.visualCache.notes.empty();
-  // After the first root exists, playback overlays unpublished passes on that
-  // window. Successor construction copies the span root per note-bar unit and
-  // did not finish after OD1 in session_20260825_232329 (3631 pending=1
-  // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
-  // OVERDUBBING once a root exists. First-record uses the overdub setup:
-  // start during RECORDING after the playhead has left bar 1, and start on
-  // PLAYING. OVERDUBBING advances in-flight work and, before the first root
-  // exists, may start the next session-exit fragment (record-stop RC2).
-  uint32_t recordElapsedTicks = 0;
-  if (snapshotLoop.startLoopTick != UINT32_MAX) {
-    const uint32_t currentTick = clockManager.getCurrentTick();
-    if (currentTick >= snapshotLoop.startLoopTick) {
-      recordElapsedTicks = currentTick - snapshotLoop.startLoopTick;
-    }
-  }
-  const bool liveRecordPastFirstBar = MidiServiceDrain::allowLiveRecordSnapshotStart(
-      isRecording(), recordElapsedTicks, Config::TICKS_PER_BAR);
-  const bool hasWrapJournal = snapshotLoop.hasPendingWrapJournal();
-  const uint32_t liveRecordCompletedTicks = MidiServiceDrain::liveRecordCompletedTicks(
-      recordElapsedTicks, Config::TICKS_PER_BAR);
-  const bool snapshotPending =
-      snapshotLoop.hasPendingSnapshotPublish() ||
-      (isRecording() && !havePublishedSnapshot &&
-       liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks() &&
-       snapshotLoop.liveRecordCanApplyCompletedTicks(liveRecordCompletedTicks));
-  const bool snapshotIdleAllowed =
-      MidiServiceDrain::allowSnapshotIdleStep(
-          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
-          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint,
-          hasWrapJournal, snapshotPending) &&
-      // A *queued* publication must be startable on an in-session turn. Without this the clause
-      // below admitted only live-record progress, an already-running construction, or a wrap
-      // journal -- so a session-exit publication that was queued with neither (a non-wrapping
-      // overdub stop, or the undo/redo rebuild requested by `requestCommittedPassesRepublish`)
-      // never started, leaving the previous root selected: the committed pass stayed visible on the
-      // display and silent in playback. The per-turn reserve/yield budgets below still bound the
-      // work each turn does.
-      (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() ||
-       hasWrapJournal || snapshotLoop.pendingSnapshotSessionExitQueued());
-  const bool snapshotEligible =
-      snapshotPending && snapshotIdleAllowed &&
-      !(snapshotLoop.pendingSnapshotFromLoadedPasses() &&
-        !MidiServiceDrain::allowLoadedSnapshotHydration(
-            false, StorageManager::isBootTitleLoadDrain(),
-            StorageManager::bootInteractiveReady()));
-#if SC_QUALIFICATION_ROWS_ENABLED
-  // windowed-playback-generation, the switch leg's second diagnostic: the **which loop, and which gate** row. The launch
-  // gate proved the demoted target's on-demand republish request was accepted and then never serviced; this names the
-  // owner turn that decides it -- the loop `loopWithPendingSnapshotPublish` selected (printed beside the active slot, so
-  // a starving selector shows as `s != a`) and the two gates that can refuse it. Observes only: the booleans below are
-  // the ones the turn itself uses, read at the same instant, and nothing is recomputed or reordered.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
-    reportSnapshotOwnerGateRow(
-        playbackSlotIndexForLoop(snapshotLoop), activeLoopIndex, snapshotConstructionUnits, liveRecordPastFirstBar,
-        visualCacheNeedsFirstPaint,
-        MidiServiceDrain::allowSnapshotIdleStep(
-            isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
-            snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint, hasWrapJournal,
-            snapshotPending),
-        liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() || hasWrapJournal ||
-            snapshotLoop.pendingSnapshotSessionExitQueued(),
-        snapshotIdleAllowed, snapshotEligible);
-  }
-#endif
-  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
-      snapshotEligible) {
-    const bool timingCritical =
-        isRecording() || isAudiblePlaybackActive() || isStoppedRecording() || isArmed();
-    uint32_t remainingUs = RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(
-#if defined(ARDUINO)
-        micros()
-#else
-        0u
-#endif
-    );
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
-    if (InvestigationCaptureLog::consumeSnapshotIdleForcedYield() &&
-        MidiServiceDrain::kSnapshotIdleReserveYieldEnabled) {
-      remainingUs = 0;
-    }
-#endif
-    if (MidiServiceDrain::kSnapshotIdleReserveYieldEnabled &&
-        !MidiServiceDrain::allowSnapshotIdleReserve(
-            remainingUs, timingCritical,
-            snapshotConstructionUnits)) {
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
-      InvestigationCaptureLog::appendSnapshotIdleYieldLine(
-          remainingUs, MidiServiceDrain::kSnapshotIdleSafetyMarginUs,
-          MidiServiceDrain::admittedSnapshotIdleUs(remainingUs),
-          MidiServiceDrain::snapshotIdleConstructionCostUs(
-              snapshotConstructionUnits),
-          timingCritical, snapshotLoop.hasPendingSnapshotPublish(),
-          snapshotLoop.publishedSnapshotRevision());
-#endif
-    } else {
-#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
-      const uint32_t snapshotIdleStartUs = micros();
-#endif
-      const uint32_t playheadPhaseTick =
-          snapshotLoop.loopLengthTicks == 0
-              ? 0
-              : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
-                                snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
-      snapshotLoop.stepPendingSnapshotPublish(
-          snapshotConstructionUnits,
-          MidiServiceDrain::allowSnapshotConstructionStart(
-              isOverdubbing() || hasPendingDeferredOverdubStop(), liveRecordPastFirstBar,
-              hasWrapJournal, havePublishedSnapshot,
-              snapshotLoop.pendingSnapshotSessionExitQueued()),
-          playheadPhaseTick, liveRecordCompletedTicks);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
-      InvestigationCaptureLog::appendSnapshotIdleLines(snapshotLoop, snapshotIdleStartUs);
-#endif
-    }
+    processSnapshotOwnerTurn(loopWithPendingSnapshotPublish(), snapshotConstructionUnits);
   }
 
   // Title drain must not pass-gather a loaded loop (`015331`). After
@@ -1494,4 +1387,130 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
                static_cast<int>(queued));
     resetDeferredRecordRevts();
   }
+}
+
+void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits) {
+  const bool havePublishedSnapshot = static_cast<bool>(snapshotLoop.publishedSnapshot());
+  const bool visualCacheNeedsFirstPaint =
+      snapshotLoop.hasCommittedPasses() && snapshotLoop.visualCacheDirty &&
+      snapshotLoop.visualCache.notes.empty();
+  uint32_t recordElapsedTicks = 0;
+  if (snapshotLoop.startLoopTick != UINT32_MAX) {
+    const uint32_t currentTick = clockManager.getCurrentTick();
+    if (currentTick >= snapshotLoop.startLoopTick) {
+      recordElapsedTicks = currentTick - snapshotLoop.startLoopTick;
+    }
+  }
+  const bool liveRecordPastFirstBar = MidiServiceDrain::allowLiveRecordSnapshotStart(
+      isRecording(), recordElapsedTicks, Config::TICKS_PER_BAR);
+  const bool hasWrapJournal = snapshotLoop.hasPendingWrapJournal();
+  const uint32_t liveRecordCompletedTicks = MidiServiceDrain::liveRecordCompletedTicks(
+      recordElapsedTicks, Config::TICKS_PER_BAR);
+  const bool snapshotPending =
+      snapshotLoop.hasPendingSnapshotPublish() ||
+      (isRecording() && !havePublishedSnapshot &&
+       liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks() &&
+       snapshotLoop.liveRecordCanApplyCompletedTicks(liveRecordCompletedTicks));
+  const bool snapshotIdleAllowed =
+      MidiServiceDrain::allowSnapshotIdleStep(
+          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint,
+          hasWrapJournal, snapshotPending) &&
+      (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() ||
+       hasWrapJournal || snapshotLoop.pendingSnapshotSessionExitQueued());
+  const bool snapshotEligible =
+      snapshotPending && snapshotIdleAllowed &&
+      !(snapshotLoop.pendingSnapshotFromLoadedPasses() &&
+        !MidiServiceDrain::allowLoadedSnapshotHydration(
+            false, StorageManager::isBootTitleLoadDrain(),
+            StorageManager::bootInteractiveReady()));
+#if SC_QUALIFICATION_ROWS_ENABLED
+  reportSnapshotOwnerGateRow(
+      playbackSlotIndexForLoop(snapshotLoop), activeLoopIndex, snapshotConstructionUnits,
+      liveRecordPastFirstBar, visualCacheNeedsFirstPaint,
+      MidiServiceDrain::allowSnapshotIdleStep(
+          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint,
+          hasWrapJournal, snapshotPending),
+      liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() || hasWrapJournal ||
+          snapshotLoop.pendingSnapshotSessionExitQueued(),
+      snapshotIdleAllowed, snapshotEligible);
+#endif
+  if (!snapshotEligible) return;
+
+  const bool timingCritical =
+      isRecording() || isAudiblePlaybackActive() || isStoppedRecording() || isArmed();
+  uint32_t remainingUs = RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(
+#if defined(ARDUINO)
+      micros()
+#else
+      0u
+#endif
+  );
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+  if (InvestigationCaptureLog::consumeSnapshotIdleForcedYield() &&
+      MidiServiceDrain::kSnapshotIdleReserveYieldEnabled) {
+    remainingUs = 0;
+  }
+#endif
+  if (MidiServiceDrain::kSnapshotIdleReserveYieldEnabled &&
+      !MidiServiceDrain::allowSnapshotIdleReserve(
+          remainingUs, timingCritical, snapshotConstructionUnits)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+    InvestigationCaptureLog::appendSnapshotIdleYieldLine(
+        remainingUs, MidiServiceDrain::kSnapshotIdleSafetyMarginUs,
+        MidiServiceDrain::admittedSnapshotIdleUs(remainingUs),
+        MidiServiceDrain::snapshotIdleConstructionCostUs(snapshotConstructionUnits),
+        timingCritical, snapshotLoop.hasPendingSnapshotPublish(),
+        snapshotLoop.publishedSnapshotRevision());
+#endif
+    return;
+  }
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
+  const uint32_t snapshotIdleStartUs = micros();
+#endif
+  const uint32_t playheadPhaseTick = snapshotLoop.loopLengthTicks == 0
+      ? 0
+      : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
+                        snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
+#if SC_QUALIFICATION_ROWS_ENABLED
+  const uint32_t publishedRevisionBeforeStep = snapshotLoop.publishedSnapshotRevision();
+#endif
+  snapshotLoop.stepPendingSnapshotPublish(
+      snapshotConstructionUnits,
+      MidiServiceDrain::allowSnapshotConstructionStart(
+          isOverdubbing() ||
+              (captureStopJobHead() != nullptr && captureStopJobHead()->admission.pending &&
+               captureStopJobHead()->mode == CapturePhase::Overdub),
+          liveRecordPastFirstBar, hasWrapJournal, havePublishedSnapshot,
+          snapshotLoop.pendingSnapshotSessionExitQueued()),
+      playheadPhaseTick, liveRecordCompletedTicks);
+#if SC_QUALIFICATION_ROWS_ENABLED
+  if (snapshotLoop.publishedSnapshotRevision() != publishedRevisionBeforeStep) {
+    const bool postPublished = static_cast<bool>(snapshotLoop.publishedSnapshot());
+    const bool postFirstPaint = snapshotLoop.hasCommittedPasses() &&
+        snapshotLoop.visualCacheDirty && snapshotLoop.visualCache.notes.empty();
+    const bool postPending = snapshotLoop.hasPendingSnapshotPublish();
+    const bool postWrapJournal = snapshotLoop.hasPendingWrapJournal();
+    const bool postInFlight = snapshotLoop.hasInFlightSnapshotConstruction();
+    const bool postStepAdmits = MidiServiceDrain::allowSnapshotIdleStep(
+        isRecording(), isPlaying(), isOverdubbing(), postPublished, postInFlight,
+        postFirstPaint, postWrapJournal, postPending);
+    const bool postClauseAdmits = liveRecordPastFirstBar || postInFlight ||
+        postWrapJournal || snapshotLoop.pendingSnapshotSessionExitQueued();
+    const bool postIdleAllowed = postStepAdmits && postClauseAdmits;
+    const bool postEligible = postPending && postIdleAllowed &&
+        !(snapshotLoop.pendingSnapshotFromLoadedPasses() &&
+          !MidiServiceDrain::allowLoadedSnapshotHydration(
+              false, StorageManager::isBootTitleLoadDrain(),
+              StorageManager::bootInteractiveReady()));
+    reportSnapshotOwnerGateRow(
+        playbackSlotIndexForLoop(snapshotLoop), activeLoopIndex, snapshotConstructionUnits,
+        liveRecordPastFirstBar, postFirstPaint, postStepAdmits, postClauseAdmits,
+        postIdleAllowed, postEligible);
+  }
+#endif
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
+  InvestigationCaptureLog::appendSnapshotIdleLines(snapshotLoop, snapshotIdleStartUs);
+#endif
 }

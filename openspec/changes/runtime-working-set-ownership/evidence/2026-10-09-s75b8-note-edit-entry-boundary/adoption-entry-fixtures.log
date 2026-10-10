@@ -1,0 +1,23 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:946:
+test/test_note_edit_entry_boundary/inventory_adoption.inc:20:8: error: 'clearPublishedSnapshot' is a private member of 'Loop'
+   20 |   loop.clearPublishedSnapshot(); // Settle legacy Record-stop queue in STOPPED fixture setup.
+      |        ^
+include/Loop.h:1544:8: note: declared private here
+ 1544 |   void clearPublishedSnapshot();
+      |        ^
+1 error generated.
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.o] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 4.39 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:04.385
+================== 1 test cases: 0 succeeded in 00:00:04.385 ==================

@@ -3886,8 +3886,15 @@ void test_project_pitch_capture_only_mover_not_in_snapshot_190408() {
   TEST_ASSERT_TRUE(highlight >= 0);
 }
 
+#include "bounded_focus_clear.inc"
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_focus_clear_acceptance_is_scalar_only);
+  RUN_TEST(test_focus_clear_one_node_or_table_per_grant);
+  RUN_TEST(test_focus_clear_empty_large_tables_require_separate_grants);
+  RUN_TEST(test_focus_clear_collisions_still_retire_one_head_node);
+  RUN_TEST(test_focus_clear_isolated_from_live_current_state_and_reuse);
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
   RUN_TEST(test_populate_baseline_full_loop_includes_cross_pitch);
   RUN_TEST(test_populate_baseline_includes_store_channel_notes);

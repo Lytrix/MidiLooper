@@ -357,7 +357,31 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const uint32_t orderSendBeforeUs = RUNTIME_TIMING_TRACK_PATH_SEND_US();
   const uint32_t orderStartUs = micros();
 #endif
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // C3 (DEC-116) layered qualification: a slot that is no longer the active one but is still enabled and
+  // sounding is read through **its own** phase origin, not through the Track-level `projectionCycleStartTick`
+  // that the switch's `commitQueuedPlaybackStart` re-derives from the incoming loop. With a differing origin
+  // delta (768 against a 1,536-tick outgoing loop) the shared anchor drags the outgoing playhead back to
+  // phase 0, so a held On@700/Off@800 never crosses at 800: `lastTickInLoop` (767) is then read against the
+  // new phase (0), `isPlaybackCatchUpWindow` reports a fresh origin and `didPlaybackEventCross` admits only
+  // events at or below phase 0 -- and the displaced region re-triggers on the way back.
+  // `Loop::startLoopTick` is the per-slot origin the repo already uses for a non-active slot
+  // (`Track::resetPlaybackStateForSlot`, `SlotFocusDisplay::resolvePlayheadStoragePhase`), and this anchor is
+  // the same relation those use (`currentTick - phase`). Being a pure function of the tick, the phase and the
+  // `lastTickInLoop` this turn writes below stay continuous across the switch: no new state, no buffer, no
+  // allocation, no sort and no scan on the clock edge. Active-slot projection authority stays with `Track`.
+  const int32_t slotCycleStartTick =
+      isActive ? projectionCycleStartTick
+               : static_cast<int32_t>(currentTick) -
+                     static_cast<int32_t>(IntervalProjection::tickPhaseInLoop(
+                         currentTick, loop.startLoopTick, loop.loopLengthTicks));
+#endif
   ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // The context matches the phase above, so the ordering/anchor a consumer reads and the frame this turn
+  // emits cannot disagree. (Playback ordering uses `loopLength` only today; this keeps the anchor honest.)
+  playbackContext.projectionCycleStartTick = slotCycleStartTick;
+#endif
   if (useMergedFallback && loop.playbackOrderDirty) {
 #if defined(SESSION_CAPTURE)
     const uint32_t playbackOrderStartUs = micros();
@@ -370,8 +394,16 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     reanchorPlaybackIndex(loop, *mergedEvents, loop.getPlaybackOrder(), playbackContext);
   }
 
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // C3 (DEC-116) slot-qualified layered phase. The active target's value is unchanged (`slotCycleStartTick`
+  // *is* the Track anchor for it, so this is the expression it always had); the default image compiles the
+  // other branch, which is the original statement verbatim.
+  const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, slotCycleStartTick, loop.loopLengthTicks);
+#else
   const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+#endif
 
   const PlaybackEmitPolicy mergedPolicy =
       isActive ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
@@ -546,26 +578,16 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
 }
 
-// FLASHMEM: the onward service is cold relative to the emit loop (it runs once per
-// window per interval) and RAM1 is at its bank boundary, so the MIDI edge keeps only its
-// call.
+// FLASHMEM: a MIDI service edge adopts only a complete frozen-source successor;
+// preparation belongs to the selected deferred playback-view owner turn.
 TRACK_COLD_MEM const RuntimePlaybackView* Track::adoptOrServiceOnwardRecordWindow(
     Loop& loop, LoopPlaybackRuntime& runtime,
     const PlaybackViewSourceIdentity& sourceIdentity, uint32_t currentTick) {
   const CaptureStopJob* job = captureStopJobHead();
-  if (job == nullptr || job->mode != CapturePhase::Record || !job->ownsRawRange) {
-    return nullptr;
-  }
-  const uint32_t launchPhase = IntervalProjection::tickPhaseInProjectionCycle(
+  if (job == nullptr || job->mode != CapturePhase::Record || !job->ownsRawRange) return nullptr;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-  const RuntimePlaybackView* view =
-      runtime.adoptFrozenRecordWindow(sourceIdentity, loop.loopLengthTicks, launchPhase);
-  if (view != nullptr) return view;
-  // One bounded build grain; the next turn adopts the completed window.
-  (void)runtime.serviceFrozenRecordWindow(
-      job->rawRange, job->rawRange.generation(), sourceIdentity, loop.loopLengthTicks,
-      launchPhase, Config::TICKS_PER_BAR, MidiServiceDrain::kCanonicalPrefixInputQuantum);
-  return nullptr;
+  return runtime.adoptFrozenRecordWindow(sourceIdentity, loop.loopLengthTicks, phase);
 }
 
 // FLASHMEM: the admission check is a cold predicate on the MIDI edge (it is called

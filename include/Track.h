@@ -388,6 +388,12 @@ public:
   /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
   bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
                                       PlaybackCoverageInterval& coverageOut) const;
+  /// Qualify this slot's admitted, closure-complete Record stop for the
+  /// requester's exact capture interval. Read-only; refusal leaves outputs untouched.
+  bool qualifiedFrozenRecordCaptureSourceForSlot(
+      uint8_t slotIndex, uint64_t expectedCaptureInterval,
+      RuntimePlaybackViewSource& sourceOut,
+      PlaybackViewSourceIdentity& identityOut) const;
   /// DEC-108 item 5 / task 3.4: the published window's **identity** -- `(slot, playbackGeneration,
   /// playbackRevision, interval)` -- which is what a consumer compares. `false` when no window is published.
   bool publishedPlaybackWindowIdentityForSlot(uint8_t slotIndex, PlaybackWindowIdentity& out) const;
@@ -421,6 +427,8 @@ public:
   /// own qualified frame and are refused rather than borrowing the active phase.
   PlaybackViewRequestResult requestCommittedPlaybackWindow(uint8_t slotIndex,
       const PlaybackCoverageInterval& coverage, PlaybackDeadlineClock clock);
+  bool rootQualificationWaitsForCaptureReady(uint8_t slotIndex,
+      const LoopPlaybackRuntime& runtime, PlaybackDeadlineClock clock) const;
   bool committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
   PlaybackViewTurnResult stepCommittedPlaybackRetry(uint8_t slotIndex, PlaybackDeadlineClock clock);
   /// Task 3.7a (I2): **the window lane's source currency for a slot** -- the current published root, or the retained
@@ -1180,6 +1188,11 @@ public:
   /// `playbackRevision`. Boolean backlog-present only; not a size or cost.
   bool hasSnapshotPublicationBacklogOnAnySlot() const;
   bool hasPendingSessionExitSnapshotOnAnySlot() const;
+  /// Off-clock Snapshot eligibility for a background Track while another Track is realtime.
+  /// Ordinary PLAYING/STOPPED_RECORDING hydration excludes pending stop jobs; a
+  /// stopped RecordPublished job waiting for its queued whole-root handoff may
+  /// borrow the existing one-unit background Snapshot turn.
+  bool canServiceBackgroundSnapshotOwnerTurn() const;
   Loop& loopWithPendingSnapshotPublish();
 
   // ==========================================
@@ -1246,6 +1259,7 @@ private:
   friend class TrackUndo;
 #if defined(PIO_UNIT_TEST_NATIVE)
   friend struct TrackCaptureStopTestAccess;
+  friend struct TrackPlaybackTestAccess;
 #endif
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
@@ -1265,6 +1279,8 @@ private:
   bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void catchUpCommittedPlaybackLedgerToPhase(uint32_t occupyPhase);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
+  /// The selected Snapshot owner turn; shared with RecordPublished retirement so its current root can catch up.
+  void processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits);
   /// Task 2.4 slice 2: publish the slot's current working merged window + order as
   /// the coherent prepared pair. Off-clock only; false when the working window and
   /// its order are not a complete full-loop pair.
@@ -1358,6 +1374,8 @@ private:
     /// Job-owned sealed raw capture extent. Ownership transfers from the Loop
     /// producer at admission; the Loop keeps only a job-identified read borrow.
     LoopEventStore::CaptureRange rawRange;
+    /// E2: Loop Capture content identity frozen before the admitted range cut.
+    uint64_t frozenCaptureContentGeneration = 0;
     bool ownsRawRange = false;
     /// Job-owned pending note changes (Add/Shorten/Hide intents). Swapped out of
     /// the live session at admission; the Loop keeps a read borrow for display.
@@ -1496,6 +1514,14 @@ private:
   /// so this diagnostic cannot evict the evidence it explains. Event-shaped: called where a readiness outcome is
   /// reached (a denied grain, a completion), never per grain.
   void reportPlaybackWindowReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase);
+  /// The **frozen Record-return**'s source-qualified receipt: emitted on the frozen owner's own completion
+  /// transition, naming the window that became ready (its revision, source generation and capture content token) and
+  /// the interval it covers. The generic `reportPlaybackWindowReadinessReceipt` above names the slot's *committed*
+  /// readiness, which for a first Record take is `not_servable`; this row is what tells a reader **which** window
+  /// became ready. Cadence-bounded by its own counter (so a frozen completion is never starved by the shared
+  /// `win_readiness` cadence), never per grain.
+  void reportFrozenRecordReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase,
+                                          const RuntimePlaybackView& ready);
   /// DEC-108 §13a/§13(e) / task 3.10 (**blocker 3, half 2**): what **one missed traversal** means -- the allowance
   /// (`one_pass_late`), then the named breach and the latch. The one implementation, reached from both judgements a miss
   /// can arrive from: the revision rule and the **deadline the admission promised**. It never publishes, adopts,
@@ -1557,15 +1583,11 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    static_assert(sizeof(CaptureStopJobs) == 28936,
-                  "S3.0/S4f.18: the externally allocated ring object also carries the latch, the "
-                  "Record source-staging cursor/receipt and the per-track Record preparation role; "
-                  "its size is a RAM1-relevant decision, not incidental (re-based 2984 -> 3072 for "
-                  "staging, then 3072 -> 28808 for the 25,736 B preparation role: composition "
-                  "cursor + 24,576 B union scratch, then 28808 -> 28936 for the +32 B per job of "
-                  "job-owned Record undo geometry: two 12 B UndoLoopGeometry receipts, the LoopId "
-                  "and the presence flag). The role is externally allocated, so this is "
-                  "PSRAM, not DTCM; the post-link RAM1 gate is the DTCM authority.");
+    static_assert(sizeof(CaptureStopJobs) == 29032,
+                  "S3.0/S4f.18/E2: target external stop ring 29,032 B, measured "
+                  "from target ABI after Capture source-identity token (+64 B vs "
+                  "the 28,968 B frozen-receipt baseline). Track DTCM is separately pinned; "
+                  "post-link RAM1 remains the placement authority.");
 #endif
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.

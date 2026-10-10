@@ -14,7 +14,7 @@ from hitl.legacy_record_baseline import _managed_record_evidence_cleanup
 
 
 class Device:
-    def __init__(self, path):
+    def __init__(self, path, *, answer_delay_s: float = 0.0, clock=None):
         self.path = path
         path.write_text("")
         self.commands = []
@@ -30,10 +30,38 @@ class Device:
         self.regress = False
         self.flush_after_stats_fence = False
         self.latch_stats = False
+        # Rows the ring counted but this log can never receive: shed before the managed
+        # log opened (`captures/live-current-root-entry-t8s4-14` holds `RID entered=7,
+        # enq=7,tx=6` for the rest of that boot) and, separately, rows that keep entering
+        # while the retrieval drains (an in-session loss, which must still fail closed).
+        self.lost_before_session: dict[str, int] = {}
+        self.grow_shortfall = 0
+        self.in_session_lost = 0
+        self.shed_total = 0
+        self.answer_delay_s = answer_delay_s
+        self.clock = clock
 
     def stop(self):
         self.commands.append("MIDI_STOP")
         self.stopped = not self.ignore_stop
+
+    def _family_rows(self):
+        """The reply's counted families, including the shortfalls this fixture models."""
+        extra = self.in_session_lost
+
+        def counts(family, enqueued, transmitted):
+            enqueued += self.lost_before_session.get(family, 0) + extra
+            return enqueued, transmitted
+
+        rid, rid_tx = counts("RID", 0, 0)
+        reca, reca_tx = counts("RECA", 0, 0)
+        recs, recs_tx = counts("RECS", self.enqueued, self.tx)
+        return [f"#CAP,1,RID,stats,entered={rid},enq={rid},rej=0,tx={rid_tx},evict=0",
+                f"#CAP,1,RING,record_stats,RECA,entered={reca},enq={reca},rej=0,tx={reca_tx},evict=0",
+                f"#CAP,1,RING,record_stats,RECS,entered={recs},enq={recs},rej={self.rejected},"
+                f"tx={recs_tx},evict={self.evicted}",
+                f"#CAP,1,RING,stats,attempts=0,ok=0,flush=0,tx={self.tx},shed={self.shed_total},"
+                f"tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"]
 
     def write(self, request):
         start, end, command = parse_command_request(request)
@@ -43,9 +71,8 @@ class Device:
             if command == "!STOP_STATUS":
                 rows.append(f"#STOP_STATUS,us=1,state=STOPPED,pending={self.pending},queue={self.pending}/2")
             elif command == "!CAP_IDENTITY_STATS":
-                rows += ["#CAP,1,RID,stats,entered=0,enq=0,rej=0,tx=0,evict=0",
-                         "#CAP,1,RING,record_stats,RECA,entered=0,enq=0,rej=0,tx=0,evict=0",
-                         f"#CAP,1,RING,record_stats,RECS,entered={self.enqueued},enq={self.enqueued},rej={self.rejected},tx={self.tx},evict={self.evicted}"]
+                self.in_session_lost += self.grow_shortfall
+                rows += self._family_rows()
                 if self.latch_stats:
                     rows.append("#CAP,1,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0")
             elif command == "!TRACE_DRAIN":
@@ -60,8 +87,13 @@ class Device:
                     self.enqueued = self.tx = 0
         if not self.no_fence:
             rows.append(f"#CAP,2,TRACE_FENCE,{end}")
+        payload = "\n".join(rows) + "\n"
+        if self.answer_delay_s and self.clock is not None:
+            # A device whose reply lands later than the request that asked for it.
+            self.clock.defer(self.clock.now + self.answer_delay_s, payload, self.path)
+            return
         with self.path.open("a") as log:
-            log.write("\n".join(rows) + "\n")
+            log.write(payload)
             if command == "!CAP_IDENTITY_STATS" and self.flush_after_stats_fence:
                 self.flush_after_stats_fence = False
                 log.write("#CAP,3,RECS,stage,publish,0,0,0,0,0,0,ok\n")
@@ -69,6 +101,37 @@ class Device:
 
     def flush(self):
         pass
+
+
+class FakeClock:
+    """Deterministic stand-in for the drain's own clock, so a late reply is reproducible.
+
+    The drain waits for a fenced answer with its own polling sleeps, so advancing this clock
+    inside `sleep` is what makes "the device answers after the retrieval's budget ran out"
+    repeatable instead of a rare race.
+    """
+
+    def __init__(self):
+        self.now = 0.0
+        self.due = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += max(seconds, 0.0)
+        self.deliver()
+
+    def defer(self, when, payload, path):
+        self.due.append((when, payload, path))
+        self.due.sort(key=lambda item: item[0])
+
+    def deliver(self):
+        ready = [item for item in self.due if item[0] <= self.now]
+        self.due = [item for item in self.due if item[0] > self.now]
+        for _when, payload, path in ready:
+            with path.open("a") as log:
+                log.write(payload)
 
 
 class DrainTests(unittest.TestCase):
@@ -179,6 +242,57 @@ class DrainTests(unittest.TestCase):
         self.assertFalse(result["complete"])
         self.assertIn("fence missing", result["reason"])
         self.assertIsNone(self.session.pending_command_nonce)
+
+    def test_a_row_shed_before_this_session_does_not_drain_until_the_deadline(self):
+        """Regression: a boot-scoped shortfall the log can never receive must not chase the deadline.
+
+        `captures/live-current-root-entry-t8s4-14` reported `RID entered=7,enq=7,tx=6` and the same for
+        `RECA` -- one Record row that entered the ring and was shed before this managed log opened. The
+        counters span the boot, so requiring every family to balance (`tx == enq`) demanded drain rounds
+        until the retrieval deadline: `drains=20`, the leg reported `INCONCLUSIVE_CAPTURE
+        (SERIAL_INCOMPLETE)` for evidence it had already received, and the run's own take rows were in the
+        log the whole time. The retrieval now converges when the *shortfall* stops shrinking, and names the
+        frozen remainder instead of treating a lost row as a pending transmission.
+        """
+        self.device.lost_before_session = {"RID": 1, "RECA": 1}
+        self.device.shed_total = 901  # the ring's own explanation for a row that never left it
+        result = self.drain()
+        self.assertTrue(result["complete"], result)
+        self.assertEqual({"RID": 1, "RECA": 1}, result["stalled_families"])
+        self.assertIn("never left the ring", result["reason"])
+        self.assertEqual(901, result["ring_loss"]["shed"])
+        self.assertEqual(130, result["log_counts"]["RECS"])
+        self.assertLessEqual(result["drains"], 6, result)
+
+    def test_a_shortfall_that_keeps_growing_is_not_a_successful_drain(self):
+        """The converse guard: rows entering the ring while the retrieval drains are still a failure."""
+        self.device.grow_shortfall = 1  # a Record row enters on every reply and never transmits
+        result = self.drain()
+        self.assertFalse(result["complete"], result)
+        self.assertNotIn("queued Record rows drained into this session log", result["reason"])
+
+    def test_a_request_is_not_issued_without_budget_for_its_own_answer(self):
+        """A fenced request needs room for its reply: an unanswerable last request is not a lost fence.
+
+        The failing request in `captures/live-current-root-entry-t8s4-14` was issued as the deadline
+        expired, so its window was never polled; the fences arrived 3 ms later
+        (`#CAP,2253438046,TRACE_FENCE,2cc9...` / `...8b09...`). The retrieval now reports the pending
+        deadline instead of claiming a fence that was lost.
+        """
+        clock = FakeClock()
+        root = Path(self.temp.name) / "late"
+        root.mkdir()
+        device = Device(root / "session.log", answer_delay_s=0.16, clock=clock)
+        session = ManagedCaptureSession(out_dir=root)
+        session._session_log = device.path
+        session._process = SimpleNamespace(stdin=device, poll=lambda: None)
+        with patch("hitl.managed_capture.time", SimpleNamespace(monotonic=clock.monotonic,
+                                                               sleep=clock.sleep)):
+            result = session.drain_record_evidence(device.stop, timeout_s=0.45)
+        self.assertFalse(result["complete"], result)
+        self.assertIn("drain deadline", result["reason"])
+        self.assertNotIn("fence missing", result["reason"])
+        self.assertNotIn("!TRACE_DRAIN", device.commands)
 
     def test_counter_reset_is_not_empty_ring_success(self):
         self.device.regress = True
@@ -317,12 +431,12 @@ class AttachStreamGateTests(unittest.TestCase):
                     state["nonce"], state["end"] = nonce, end_nonce
                     with log.open("a", encoding="utf-8") as fh:
                         fh.write(f"#CAP,1,TRACE_FENCE,{nonce}\n")
-                        fh.write("#STOP_STATUS,us=1,state=STOPPED,pending=0,queue=0/4\n")
+                        fh.write("#HEAP_STATS,transport=0,tracks=0,storage=0\n")
                         fh.write(f"#CAP,2,TRACE_FENCE,{end_nonce}\n")
                     return True, "accepted"
 
                 def fenced_response(self, nonce, end_nonce, *, timeout_s):
-                    return ["#STOP_STATUS,us=1,state=STOPPED,pending=0,queue=0/4"]
+                    return ["#HEAP_STATS,transport=0,tracks=0,storage=0"]
 
             fake = FakeSession()
             with patch.object(mc, "active_managed_capture", lambda: fake):

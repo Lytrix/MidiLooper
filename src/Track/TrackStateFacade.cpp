@@ -142,8 +142,22 @@ bool Track::hasPendingDeferredOverdubStop() const {
 }
 
 bool Track::hasRealtimeDeferredIdleWork() const {
+  // A stopped Track can still own a committed CaptureStopJob while another
+  // Track plays. Keep its existing bounded stop owner reachable on ordinary
+  // deferred turns; the job does not grant priority or a second scheduler.
   return isRecording() || isAudiblePlaybackActive() || isStoppedRecording() ||
-         hasAcceptedUnexecutedInteraction();
+         hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction();
+}
+TRACK_COLD_MEM bool Track::canServiceBackgroundSnapshotOwnerTurn() const {
+  if (isRecording() || isOverdubbing()) return false;
+  if (!hasPendingDeferredOverdubStop()) return isPlaying() || isStoppedRecording();
+  const CaptureStopJob* stop = captureStopJobHead();
+  // This stopped job's queued Record root is the sole source that can discharge
+  // its retirement gate. Other in-flight stop phases retain ordinary owner turns.
+  return stop != nullptr && stop->mode == CapturePhase::Record &&
+      stop->admission.phase == PendingStopPhase::RecordPublished &&
+      stop->owner != nullptr && stop->owner->pendingSnapshotSessionExitQueued() &&
+      !stop->owner->publishedSnapshotIsCurrent();
 }
 
 bool Track::isPlaying() const {

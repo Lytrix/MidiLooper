@@ -1,0 +1,12 @@
+Change 'runtime-working-set-ownership' is valid
+src/Loop/LoopSnapshotBoxes.h: OK
+src/Loop/LoopPendingSnapshotRetirement.cpp: OK
+include/LoopSnapshot.h: OK
+src/Loop/LoopSnapshot.cpp: OK
+include/Loop.h: OK
+test/test_support/LoopCaptureTestDeps.cpp: OK
+test/test_playback_prewarm/pending_box_release.inc: OK
+test/test_playback_prewarm/test_playback_prewarm.cpp: OK
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp: OK
+native_passed_suites=112
+openspec_exit=0 diff_check_exit=0 checksum_exit=0

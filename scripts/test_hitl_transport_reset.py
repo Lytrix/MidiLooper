@@ -18,6 +18,7 @@ from hitl.serial_follow import ExternalSerialFollowCollector
 from hitl.serial_transport import (
     resolve_wall_tempo_bpm,
     serial_lines_show_bpm_activity,
+    serial_lines_show_running_transport,
     serial_lines_show_transport_activity,
     serial_sequencer_running,
     use_serial_transport_proxy,
@@ -151,6 +152,33 @@ class SerialTransportProxyTests(unittest.TestCase):
     def test_resolve_wall_tempo_falls_back(self) -> None:
         collector = _FakeCollector(["#CAP,1,ST,Track,EMPTY,PLAYING"], silence_s=0.0)
         self.assertEqual(resolve_wall_tempo_bpm(collector, 120.0), 120.0)
+
+
+    def test_display_frames_are_not_running_transport_evidence(self) -> None:
+        """A stopped device keeps emitting `#CAP,DFRAME`, one row every ~1.5 s.
+
+        The wider predicate answers "is the serial link still alive" and counts a display
+        frame; the running-transport predicate must not, or a caller that presses the
+        **toggle** transport button on the strength of it starts the transport it meant to
+        stop (`captures/live-current-root-entry-t8s4-04`: two `DFRAME` rows with the
+        transport stopped decided the record-arm precondition, that press started the
+        transport and the following restart press stopped it -- a 768-tick, one-note seed
+        instead of the 1536-tick, eight-note fixture).
+        """
+        lines = [
+            "#CAP,1591942864,DFRAME,0,17060,26400,21,499,45",
+            "#CAP,1593440697,DFRAME,0,17069,26430,20,488,46",
+        ]
+        self.assertTrue(serial_lines_show_transport_activity(lines))
+        self.assertFalse(serial_lines_show_running_transport(lines))
+
+    def test_device_bar_row_is_running_transport_evidence(self) -> None:
+        self.assertTrue(serial_lines_show_running_transport(["#CAP,1594433584,BAR,142,0"]))
+
+    def test_historical_bar_row_is_not_running_transport_evidence(self) -> None:
+        lines = ["#CAP,1594433584,BAR,142,0", "later line"]
+        self.assertFalse(serial_lines_show_running_transport(lines, after_index=1))
+
 
 class ExternalSerialFollowCollectorTests(unittest.TestCase):
     def test_tails_growing_log(self) -> None:

@@ -1,0 +1,42 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Undefined symbols for architecture arm64:
+  "EditManager::stepDefaultNoteEditSelectionPreparation(Track&)", referenced from:
+      test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned() in test_note_edit_entry_boundary.o
+      test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned() in test_note_edit_entry_boundary.o
+      test_selection_preparation_rejects_stale_result_and_restarts_replaced_source() in test_note_edit_entry_boundary.o
+      test_selection_preparation_refocus_and_reset_supersede_only_private_work() in test_note_edit_entry_boundary.o
+      test_selection_preparation_refocus_and_reset_supersede_only_private_work() in test_note_edit_entry_boundary.o
+      test_selection_preparation_refocus_and_reset_supersede_only_private_work() in test_note_edit_entry_boundary.o
+      drainSelectionPreparation(Track&) in test_note_edit_entry_boundary.o
+      ...
+  "EditManager::beginDefaultNoteEditSelectionPreparation(Track&, unsigned int)", referenced from:
+      test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned() in test_note_edit_entry_boundary.o
+      test_selection_preparation_preserves_inventory_ties_and_nonzero_origin_clamp() in test_note_edit_entry_boundary.o
+      test_selection_preparation_preserves_inventory_ties_and_nonzero_origin_clamp() in test_note_edit_entry_boundary.o
+      test_selection_preparation_exact_snapshot_dedup_across_pages_bars_and_wrap() in test_note_edit_entry_boundary.o
+      test_selection_preparation_clean_visual_keeps_split_starts_and_invalid_identity() in test_note_edit_entry_boundary.o
+      test_selection_preparation_clean_visual_keeps_split_starts_and_invalid_identity() in test_note_edit_entry_boundary.o
+      test_selection_preparation_rejects_stale_result_and_restarts_replaced_source() in test_note_edit_entry_boundary.o
+      ...
+  "EditManager::preparedDefaultNoteEditSelection(Track const&) const", referenced from:
+      test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned() in test_note_edit_entry_boundary.o
+      test_selection_preparation_rejects_stale_result_and_restarts_replaced_source() in test_note_edit_entry_boundary.o
+      test_selection_preparation_refocus_and_reset_supersede_only_private_work() in test_note_edit_entry_boundary.o
+      drainSelectionPreparation(Track&) in test_note_edit_entry_boundary.o
+      drainSelectionPreparation(Track&) in test_note_edit_entry_boundary.o
+ld: symbol(s) not found for architecture arm64
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/program] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 6.89 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:06.886
+================== 1 test cases: 0 succeeded in 00:00:06.886 ==================

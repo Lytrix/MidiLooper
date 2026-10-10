@@ -435,6 +435,8 @@ void LoopEventStore::tryFreeChunk(uint16_t id) {
     retired.used = 0;
     retired.firstTick = 0;
     retired.lastTick = 0;
+    retired.captureIndexValid = 0;
+    retired.captureOverflow = 0;
   }
   poolUsed_[id] = false;
   poolLifecycle_[id] = ChunkLifecycleState::Free;
@@ -470,6 +472,8 @@ uint16_t LoopEventStore::allocChunk() {
       opened.used = 0;
       opened.firstTick = 0;
       opened.lastTick = 0;
+      opened.captureIndexValid = 0;
+      opened.captureOverflow = 0;
       poolLifecycle_[i] = ChunkLifecycleState::Recording;
       return i;
     }
@@ -485,6 +489,14 @@ void LoopEventStore::freeChunk(uint16_t id) {
 EventChunk& LoopEventStore::chunk(uint16_t id) { return chunkSlot(id); }
 
 const EventChunk& LoopEventStore::chunk(uint16_t id) const { return chunkSlot(id); }
+
+void LoopEventStore::invalidateChunkCaptureIndex(uint16_t id) {
+  chunkSlot(id).captureIndexValid = 0;
+}
+
+void LoopEventStore::invalidateCaptureIndex() {
+  for (uint16_t id : chunkIds_) invalidateChunkCaptureIndex(id);
+}
 
 bool LoopEventStore::hasSealedChunks() const {
   for (uint16_t id : chunkIds_) {
@@ -558,6 +570,20 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
   }
 
   EventChunk& tail = chunk(tailId);
+  const uint16_t block = tail.used / kCaptureIndexRows;
+  const uint8_t bit = static_cast<uint8_t>(1u << block);
+  if (tail.used % kCaptureIndexRows == 0) {
+    // A fresh group has no prior rows to invalidate. Never revalidate an
+    // already populated group after an in-place rewrite.
+    tail.captureBarMask[block] = 0;
+    tail.captureOverflow &= static_cast<uint8_t>(~bit);
+    tail.captureIndexValid |= bit;
+  }
+  if (tail.captureIndexValid & bit) {
+    const uint32_t bar = evt.tick / LoopEventStoreConfig::BAR_TICKS;
+    if (bar < kCaptureIndexBars) tail.captureBarMask[block] |= uint64_t(1) << bar;
+    else tail.captureOverflow |= bit;
+  }
   const size_t globalIndex = eventCount_;
   tail.events[tail.used] = evt;
   if (tail.used == 0) {
@@ -627,6 +653,8 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateOrder(
                           LoopEventStoreConfig::CHUNK_CAPACITY;
   if (chunkIds_.size() != expected && !(eventCount_ == 0 && chunkIds_.size() == 1)) return false;
   c.owner_ = this; c.generation_ = ownershipGeneration_; c.pool_ = poolLifetime_;
+  // Ordering may swap tick positions before its completion grain.
+  const_cast<LoopEventStore*>(this)->invalidateCaptureIndex();
   c.count_ = eventCount_; c.chunks_ = chunkIds_.size();
   c.canonical_ = canonical; c.pivotClass_ = 0;
   c.phase_ = LoopEventStoreOrderCursor::Phase::Preflight;
@@ -825,6 +853,8 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateFilter(LoopEventStore
   const size_t expected = (eventCount_ + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
       LoopEventStoreConfig::CHUNK_CAPACITY;
   if (chunkIds_.size() != expected && !(eventCount_ == 0 && chunkIds_.size() == 1)) return false;
+  // Mark/compact can relocate rows at any later grain.
+  invalidateCaptureIndex();
   c.owner_ = this; c.generation_ = ownershipGeneration_; c.pool_ = poolLifetime_;
   c.count_ = eventCount_; c.chunks_ = chunkIds_.size();
   c.phase_ = LoopEventStoreFilterCursor::Phase::Chunks;
@@ -1001,6 +1031,7 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewrit
   }
 
   size_t remaining = eventQuantum;
+  if (cursor.sourceIndex == 0) invalidateCaptureIndex();
   while (remaining > 0 && cursor.sourceIndex < sourceCount) {
     if (cursor.chunkIndex >= chunkIds_.size()) {
       return LoopEventStoreRewriteResult::Denied;
@@ -1567,6 +1598,7 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
     return;
   }
 
+  invalidateCaptureIndex();
   for (uint16_t id : chunkIds_) {
     if (isChunkSealed(id)) {
       continue;
@@ -1587,6 +1619,7 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
   if (empty()) {
     return;
   }
+  invalidateCaptureIndex();
 
   if (hasSealedChunks()) {
     bool needsRebuild = false;
@@ -1682,6 +1715,7 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::mapNoteOnsAtOrBeyondTickIntoLoop(
   if (empty() || loopLength == 0) {
     return;
   }
+  invalidateCaptureIndex();
 
   if (hasSealedChunks()) {
     bool needsRebuild = false;
@@ -1920,6 +1954,42 @@ bool LoopEventStore::CaptureRange::read(uint64_t generation, size_t chunkIndex,
   return true;
 }
 
+
+bool LoopEventStore::CaptureRange::blockMayIntersect(
+    uint64_t generation, size_t firstRow, uint32_t startPhase,
+    uint32_t lengthTicks, uint32_t loopLengthTicks, bool& mayIntersect) const {
+  if (!ready() || generation != generation_ || firstRow >= eventCount_ ||
+      firstRow % kCaptureIndexRows || loopLengthTicks == 0 ||
+      loopLengthTicks > kCaptureIndexBars * LoopEventStoreConfig::BAR_TICKS ||
+      !lengthTicks || startPhase >= loopLengthTicks ||
+      lengthTicks > loopLengthTicks - startPhase) return false;
+  const size_t chunkIndex = firstRow / LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (chunkIndex >= storage_.chunkIds_.size()) return false;
+  const uint16_t id = storage_.chunkIds_[chunkIndex];
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+      !poolChunkRefCount_[id] || !isChunkSealed(id)) return false;
+  const auto& chunk = chunkSlot(id);
+  const uint16_t end = chunkIndex + 1 == storage_.chunkIds_.size()
+      ? tailEnd_ : LoopEventStoreConfig::CHUNK_CAPACITY;
+  const size_t local = firstRow % LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (chunk.used != end || local >= end) return false;
+  const uint8_t bit = static_cast<uint8_t>(1u << (local / kCaptureIndexRows));
+  if (!(chunk.captureIndexValid & bit)) return false;
+  const uint64_t mask = chunk.captureBarMask[local / kCaptureIndexRows];
+  // A raw NoteOn at/after final geometry can project into any requested bar.
+  const uint32_t overflowBar = loopLengthTicks / LoopEventStoreConfig::BAR_TICKS;
+  if ((chunk.captureOverflow & bit) ||
+      (overflowBar < kCaptureIndexBars && (mask & (~uint64_t(0) << overflowBar)))) {
+    mayIntersect = true;
+    return true;
+  }
+  const uint32_t first = startPhase / LoopEventStoreConfig::BAR_TICKS;
+  const uint32_t last = (startPhase + lengthTicks - 1) / LoopEventStoreConfig::BAR_TICKS;
+  const uint64_t low = ~uint64_t(0) << first;
+  const uint64_t high = last == 63 ? ~uint64_t(0) : (uint64_t(1) << (last + 1)) - 1;
+  mayIntersect = (mask & low & high) != 0;
+  return true;
+}
 bool LoopEventStore::CaptureRange::releaseGrain(size_t quantum) {
   if (!quantum) return storage_.chunkIds_.empty();
   if (!releasing_) {

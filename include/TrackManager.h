@@ -114,6 +114,8 @@ public:
   /// invalidation, the LED refresh); `drainEdgeEffects` is the main loop doing that work, in the order the edge
   /// decided it. The edge keeps applying the state changes itself -- the reason to split is that a log line, a
   /// display invalidation and an LED send are not what "advance the playhead" means, while the commit is.
+  /// Boot setup only, before clock startup or any edge-effect producer/drain.
+  void initializeEdgeEffectsForBoot();
   void recordEdgeEffect(EdgeEffectKind kind, uint8_t track, uint8_t fromSlot, uint8_t toSlot,
                         uint32_t loopStartTick, uint32_t loopLengthTicks, uint8_t work);
   /// Call from the main loop only (beside the other deferred outbound work). Bounded per call: at most one
@@ -140,6 +142,10 @@ public:
   bool isTrackSoloed(uint8_t trackIndex) const;
   /// True when any track is RECORDING or OVERDUBBING (multi-track capture gating).
   bool anyTrackRecordingOrOverdubbing() const;
+  /// Snapshot-only background admission: live capture and other pending stops
+  /// block it; a stopped RecordPublished job with a queued root can use the
+  /// existing single background construction unit.
+  bool backgroundSnapshotWorkAllowed() const;
   /// True when any track is in the post-overdub PLAYING MIDI-drain window.
   bool anyPlayingMidiDrainAfterOverdubStop() const;
   /// True when any track is in the post-undo PLAYING loop-prefix measure window.

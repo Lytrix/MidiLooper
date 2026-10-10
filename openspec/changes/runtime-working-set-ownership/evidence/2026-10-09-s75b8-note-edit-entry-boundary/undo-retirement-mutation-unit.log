@@ -1,0 +1,48 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_session_undo in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1346: test_session_undo_stack_push_entry	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1347: test_session_three_step_undo_redo_chain	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1348: test_session_undo_entry_matches_clone_restore	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1349: test_session_redo_entry_restores_after_state	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1350: test_replace_note_edit_pass_uses_final_session_store	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1351: test_replace_note_edit_pass_disables_stale_rows_when_final_store_matches_baseline	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1352: test_visual_cache_reflects_active_edit_passes	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1353: test_session_undo_move_after_add_committed_restores_insert_position	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1354: test_session_undo_four_kind_steps_bounded_entries	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1355: test_session_undo_live_capture_during_note_edit	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1356: test_session_live_capture_survives_pass_replay	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1357: test_kind_boundary_move_twice_one_undo_entry	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1358: test_kind_boundary_pitch_with_active_focus_one_undo_entry	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1359: test_kind_boundary_add_then_move_two_entries	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1360: test_kind_boundary_reselect_move_pushes_again	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1361: test_kind_boundary_select_nav_no_push	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1362: test_session_undo_entry_trims_baseline_map_to_overlap_closure	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1363: test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1364: test_overdub_survives_exit_bake_after_note_range_commit	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1365: test_empty_store_vs_snapshot_baseline_does_not_keep_unrequested_deletes	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1366: test_stale_record_only_session_bake_must_not_delete_overdub	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1367: test_live_capture_baked_on_close_without_prior_edit_passes	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1368: test_current_state_undo_restore_parity_with_clone	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1369: test_current_state_live_capture_undo_redo	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1370: test_current_state_move_ab_undo_redo_chain	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1371: test_session_rows_fallback_uses_opened_snapshot_span_note_ids	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1372: test_first_kind_boundary_opened_snapshot_entry_restores_without_clone	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:39: test_bounded_undo_clear_withheld_and_exact_nested_grants: Expected 62 Was 61. one grant retires exactly one leaf, bucket table or empty shell	[FAILED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:39: test_bounded_undo_clear_empty_and_redo_history: Expected 62 Was 61. one grant retires exactly one leaf, bucket table or empty shell	[FAILED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:1375: test_bounded_undo_clear_bucket_only_is_separate_from_shell	[PASSED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:39: test_bounded_undo_clear_rejects_stale_grants_after_synchronous_reuse: Expected 62 Was 61. one grant retires exactly one leaf, bucket table or empty shell	[FAILED]
+test/test_note_edit_session_undo/test_note_edit_session_undo.cpp:39: test_bounded_undo_clear_collisions_and_live_content_are_independent: Expected 9 Was 8. one grant retires exactly one leaf, bucket table or empty shell	[FAILED]
+Program received signal SIGILL (Illegal instruction: 4)
+-------- native:test_note_edit_session_undo [ERRORED] Took 4.66 seconds --------
+
+=================================== SUMMARY ===================================
+Environment    Test                         Status    Duration
+-------------  ---------------------------  --------  ------------
+native         test_note_edit_session_undo  ERRORED   00:00:04.659
+
+============ 33 test cases: 4 failed, 28 succeeded in 00:00:04.659 ============

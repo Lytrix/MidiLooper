@@ -230,14 +230,28 @@ size_t Loop::activeCapturePassCount() const {
   return count;
 }
 
-void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
-  store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
+LOOP_COLD_MEM void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
+  bool invalidated = false;
+  store.assignMissingNoteIdsToNoteOns([this, &store, &invalidated]() {
+    if (&store == &capture.store && !invalidated) {
+      advanceCaptureContentGeneration();
+      invalidated = true;
+    }
+    return allocateNoteId();
+  });
 }
 
-void Loop::assignMissingNoteIdsInStoreWindow(LoopEventStore& store, size_t beginIndex,
+LOOP_COLD_MEM void Loop::assignMissingNoteIdsInStoreWindow(LoopEventStore& store, size_t beginIndex,
                                              uint32_t includeUntil) {
+  bool invalidated = false;
   store.assignMissingNoteIdsToNoteOnsInTickWindow(beginIndex, includeUntil,
-                                                  [this]() { return allocateNoteId(); });
+      [this, &store, &invalidated]() {
+        if (&store == &capture.store && !invalidated) {
+          advanceCaptureContentGeneration();
+          invalidated = true;
+        }
+        return allocateNoteId();
+      });
 }
 
 namespace {
@@ -462,6 +476,79 @@ LOOP_COLD_MEM void Loop::assignMissingNoteIdsInCommittedCapturePasses() {
                "assignMissingNoteIdsInCommittedCapturePasses: assigned %lu",
                static_cast<unsigned long>(assigned));
   }
+}
+
+LOOP_COLD_MEM void Loop::beginCommittedNoteIdPreparation(
+    CommittedNoteIdPreparation& cursor) const {
+  cursor.discard();
+  cursor.loop_ = this;
+  cursor.loopId_ = loopId;
+  cursor.canonicalGeneration_ = canonicalStorageGeneration;
+  cursor.captureGeneration_ = captureContentGeneration();
+  cursor.revision_ = playbackRevision;
+  cursor.recordId_ = passes.recordPass.id;
+  cursor.overdubCount_ = passes.overdubPasses.size();
+  cursor.result_ = CommittedNoteIdPreparationResult::Progress;
+}
+
+LOOP_COLD_MEM bool Loop::committedNoteIdPreparationSourceMatches(
+    const CommittedNoteIdPreparation& cursor) const {
+  return cursor.loop_ == this && cursor.loopId_ == loopId &&
+      cursor.canonicalGeneration_ == canonicalStorageGeneration &&
+      cursor.captureGeneration_ == captureContentGeneration() &&
+      cursor.revision_ == playbackRevision && cursor.recordId_ == passes.recordPass.id &&
+      cursor.overdubCount_ == passes.overdubPasses.size();
+}
+
+LOOP_COLD_MEM bool Loop::committedNoteIdPreparationComplete(
+    const CommittedNoteIdPreparation& cursor) const {
+  return cursor.result_ == CommittedNoteIdPreparationResult::Complete &&
+      committedNoteIdPreparationSourceMatches(cursor);
+}
+
+LOOP_COLD_MEM Loop::CommittedNoteIdPreparationResult Loop::stepCommittedNoteIdPreparation(
+    CommittedNoteIdPreparation& cursor) {
+  using Result = CommittedNoteIdPreparationResult;
+  if (cursor.result_ == Result::Idle || cursor.result_ == Result::Superseded ||
+      cursor.result_ == Result::Fault) return cursor.result_;
+  // Validate before reacquiring a directory, including completed receipts.
+  if (!committedNoteIdPreparationSourceMatches(cursor)) {
+    cursor.result_ = Result::Superseded;
+    return cursor.result_;
+  }
+  if (cursor.result_ == Result::Complete) return cursor.result_;
+  const CommittedChunkIdList* refs = nullptr;
+  if (cursor.pass_ == 0) {
+    if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active)
+      refs = &passes.recordPass.committedChunkIds;
+  } else if (cursor.pass_ <= cursor.overdubCount_) {
+    const OverdubPass& pass = passes.overdubPasses[cursor.pass_ - 1];
+    if (pass.state == CapturePassState::Active) refs = &pass.committedChunkIds;
+  } else {
+    cursor.result_ = Result::Complete;
+    return cursor.result_;
+  }
+  // Empty/disabled passes and directory ends consume their own grant.
+  if (!refs || cursor.chunk_ >= refs->size()) {
+    ++cursor.pass_;
+    cursor.chunk_ = 0;
+    return Result::Progress;
+  }
+  const uint16_t id = (*refs)[cursor.chunk_];
+  MidiEvent probe;
+  bool atEnd = false;
+  if (LoopEventStore::chunkUsedCount(id) > LoopEventStoreConfig::CHUNK_CAPACITY ||
+      !LoopEventStore::readSealedChunkEvent(id, 0, probe, atEnd)) {
+    cursor.result_ = Result::Fault;
+    return cursor.result_;
+  }
+  // Existing in-place canonical identity policy, now one fixed-cap chunk.
+  AssignCommittedPassNoteIdCtx assignCtx{this, &cursor.assignedIds_};
+  LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+      &id, 1, assignCommittedPassNoteId, &assignCtx);
+  ++cursor.chunk_;
+  ++cursor.inspectedChunks_;
+  return Result::Progress;
 }
 
 void Loop::shiftActiveCapturePassTicks(int64_t delta) {
@@ -1632,8 +1719,24 @@ LOOP_COLD_MEM void Loop::clearSealedCapturePreview() {
   sealedCapturePreviewRevision_ = 0;
 }
 
+void Loop::advanceCaptureContentGeneration() {
+  if (captureContentGeneration_ != 0) {
+    captureContentGeneration_ = captureContentGeneration_ == UINT64_MAX
+                                   ? 0 : captureContentGeneration_ + 1;
+  }
+}
+
+LOOP_COLD_MEM bool Loop::sealCaptureRangeForJob(LoopEventStore::CaptureRange& range,
+                                                 uint64_t& frozenContentGeneration) {
+  if (!capture.store.sealCaptureRange(range)) return false;
+  frozenContentGeneration = captureContentGeneration_;
+  advanceCaptureContentGeneration();
+  return true;
+}
+
 LOOP_COLD_MEM void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   discardPendingCapturePass();
+  advanceCaptureContentGeneration();
   capture.phase = phase;
   // A producer that already owns the pre-reserved successor directory (the
   // state left by a sealed capture range cut) must keep it: releasing it here
@@ -1660,6 +1763,7 @@ LOOP_COLD_MEM void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhase
 }
 
 LOOP_COLD_MEM bool Loop::retireCopiedCaptureSourceGrain(bool closeCapture) {
+  if (!capture.store.empty()) advanceCaptureContentGeneration();
   const bool complete = capture.store.releaseCaptureChunkGrain();
   ++captureDisplayRevision;
   if (complete) {
@@ -1806,6 +1910,8 @@ LOOP_COLD_MEM void Loop::closeProducerCapturePhase() {
 }
 
 void Loop::discardCapture() {
+  if (capture.phase != CapturePhase::None || !capture.store.empty())
+    advanceCaptureContentGeneration();
   capture.store.clear();
   capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;
@@ -1857,6 +1963,7 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
             : CaptureAppendDenyReason::StoreOther;
     return result;
   }
+  advanceCaptureContentGeneration();
   if (captureHasLastAppendTick_) {
     if (evt.tick < captureMaximumTick_) {
       captureEventsSortDirty = true;
@@ -1936,6 +2043,7 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
     return false;
   }
 
+  advanceCaptureContentGeneration();
   capture.store.clear();
   if (!kept.empty()) {
     capture.store.loadFromEvents(kept);
@@ -1989,6 +2097,7 @@ bool Loop::ensureCaptureEventsSorted() {
   if (!captureEventsSortDirty) {
     return false;
   }
+  advanceCaptureContentGeneration();
   uint32_t sortedLastTick = 0;
   sortCaptureStoreByTick(capture.store, &sortedLastTick);
   captureHasLastAppendTick_ = !capture.store.empty();
@@ -2195,6 +2304,13 @@ LOOP_COLD_MEM bool Loop::takePendingCapturePass(PendingCapturePass& out) {
   return true;
 }
 
+LOOP_COLD_MEM void Loop::projectCaptureAtRecordStop(uint32_t finalLengthTicks) {
+  if (capture.store.empty() || finalLengthTicks == 0) return;
+  // Projection may rewrite in-place and drop rows in the same store call.
+  advanceCaptureContentGeneration();
+  capture.store.mapNoteOnsAtOrBeyondTickIntoLoop(finalLengthTicks);
+}
+
 LOOP_COLD_MEM LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
   if (capture.store.empty() || loopLengthTicks == 0) {
     return {};
@@ -2207,8 +2323,10 @@ LOOP_COLD_MEM LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uin
     openTailCloseTick = IntervalProjection::tickPhaseInLoop(stopAbsTick, startLoopTick,
                                                             loopLengthTicks);
   }
-  return LoopStopFinalize::finalizeWrapWindowOnStore(capture.store, loopLengthTicks,
-                                                     openTailCloseTick);
+  const auto result = LoopStopFinalize::finalizeWrapWindowOnStore(
+      capture.store, loopLengthTicks, openTailCloseTick);
+  if (result.syntheticOffsInserted != 0) advanceCaptureContentGeneration();
+  return result;
 }
 
 LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason reason) {
@@ -2271,7 +2389,10 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
 #endif
       minLenPairsRemoved = static_cast<uint32_t>(
           CaptureIncrementalSanity::removePairsShorterThanNoteMinLength(
-              capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled));
+              capture.store, loopLengthTicks, noteMinLengthTicks, noteMinLengthRemoveEnabled,
+              [](void* context) {
+                static_cast<Loop*>(context)->advanceCaptureContentGeneration();
+              }, this));
 #if defined(SESSION_CAPTURE)
       emitOverdubSealTraceStage(sealTrace, "seal_remove_min_length_pairs",
                                 traceMicros() - minLengthStartUs,
@@ -2399,6 +2520,7 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
       (phase == CapturePassPhase::Overdub && hasOverdubSession())
           ? currentOverdubSessionIndex_
           : kUngroupedOverdubSessionIndex;
+  if (&source == &capture) advanceCaptureContentGeneration();
   if (!source.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
@@ -2586,6 +2708,7 @@ void Loop::completePreparedCapturePassAtomic(bool retiresLiveCapture) {
   // The prepared pass has already detached every mutable chunk. This handoff
   // changes only scalar capture ownership and derived invalidation state.
   if (retiresLiveCapture) {
+    if (!capture.store.empty()) advanceCaptureContentGeneration();
     capture.store.clear();
     capture.phase = CapturePhase::None;
     captureNextEventIndex = 0;

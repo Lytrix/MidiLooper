@@ -386,6 +386,14 @@ struct PlaybackViewPendingRequest {
 };
 
 struct LoopPlaybackRuntime {
+  // The external-first slot allocator is FLASH-resident. Keep the defaulted
+  // constructor's value-initialization and fold its one-time body into that
+  // cold allocator on the target instead of emitting a large ITCM ctor.
+#if defined(__IMXRT1062__)
+  __attribute__((always_inline)) LoopPlaybackRuntime() = default;
+#else
+  LoopPlaybackRuntime() = default;
+#endif
   // --- S3.1 working-set lease -------------------------------------------------------------
   // This object *is* the per-slot working set, so it carries its own lease: the slot cannot hold
   // one without this runtime, and the runtime is externally allocated, so the bookkeeping costs
@@ -807,12 +815,12 @@ struct LoopPlaybackRuntime {
   uint32_t coverageEventCount = 0;
   uint32_t coverageSourceUnits = 0;
   bool ownsCoverageSource() const { return !coverageSource.idle(); }
-  bool beginCoverageQualification(const LoopSnapshot& snapshot);
+  bool beginCoverageQualification(const LoopSnapshot& snapshot, bool keepCaptureReady = false);
   bool stepCoverageQualification(size_t quantum);
   bool beginQualifiedCoverageBuild(const CoverageServiceContract& contract, PlaybackDeadlineClock clock);
   void retireCoverageSource();
   bool stepCoverageSourceRetirement(size_t quantum);
-  bool coverageRoleAvailable() const;
+  bool coverageRoleAvailable(bool keepCaptureReady = false) const;
 
   /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
   /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it
@@ -1165,8 +1173,10 @@ struct LoopPlaybackRuntime {
   /// warning; it is not a policy input.
   const char* firstRecordingBarDenialLabel() const;
   // Bind final record geometry and make the retained bar-1 view eligible for
-  // the normal audible handoff. No source copy or order rebuild occurs here.
-  bool bindFirstRecordingBar(uint32_t loopLengthTicks);
+  // the audible handoff. Production supplies `recordedLoop` so a view from an
+  // older Capture revision is refused; standalone native fixtures may omit it.
+  // No source copy or order rebuild occurs here.
+  bool bindFirstRecordingBar(uint32_t loopLengthTicks, const Loop* recordedLoop = nullptr);
   /// S4f.19: bind the retained first-record bar to a **deferred** Record job's
   /// frozen source and final geometry. Job-qualified: refuses a range that is not
   /// ready or whose generation is not `expectedGeneration`, and refuses a final

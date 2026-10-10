@@ -86,12 +86,38 @@ struct NoteEditFocus {
   /// live store). Retained until explicit retire task.
   OverlapNoteMap overlapNotes;
 
-  void clear() {
+  /// Invalidate fixed focus metadata without releasing either scratch map.
+  /// Component operation only: caller excludes live use/borrowers and qualifies
+  /// session/focus before grants. No token or stale-owner protection here.
+  void beginClear() {
     active = false;
     movingNoteId = kInvalidNoteId;
     commitBaseline = {};
     movingNoteRange = {};
     last = {};
+  }
+
+  /// One global-head node or EMPTY bucket-table compaction; false is an
+  /// observational completion. Allocator latency/failure is unqualified.
+  bool stepClear() {
+    const auto retireOne = [](auto& rows) {
+      if (!rows.empty()) {
+        rows.erase(rows.begin());
+        return true;
+      }
+      // Target libstdc++ still zeroes buckets in an empty map destructor.
+      if (rows.bucket_count() > 2) {
+        rows.max_load_factor(1.0f);
+        rows.rehash(0);
+        return true;
+      }
+      return false;
+    };
+    return retireOne(baselineMap) || retireOne(overlapNotes);
+  }
+
+  void clear() {
+    beginClear();
     baselineMap.clear();
     overlapNotes.clear();
   }

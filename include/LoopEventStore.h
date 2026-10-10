@@ -37,11 +37,18 @@ constexpr uint32_t MAX_BAR_INDEX = MAX_INDEXED_BARS;
 constexpr uint32_t INTERNAL_HEAP_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
 
+// Capture-only hint: eight 32-row groups per physical chunk. A false/invalid
+// hint always falls back to row inspection; it is never content authority.
+constexpr size_t kCaptureIndexRows = 32;
+constexpr uint32_t kCaptureIndexBars = 64;
 struct EventChunk {
   MidiEvent events[LoopEventStoreConfig::CHUNK_CAPACITY];
   uint16_t used = 0;
   uint32_t firstTick = 0;
   uint32_t lastTick = 0;
+  uint64_t captureBarMask[LoopEventStoreConfig::CHUNK_CAPACITY / kCaptureIndexRows] = {};
+  uint8_t captureIndexValid = 0;
+  uint8_t captureOverflow = 0;
 };
 
 using CaptureChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint16_t>>;
@@ -448,6 +455,10 @@ class LoopEventStore {
   std::shared_ptr<LoopEventStore> cloneShared() const;
 
   const CaptureChunkIdList& chunkIds() const { return chunkIds_; }
+  /// O(1) observation; unlike barFirstIndices(), does not rebuild the index.
+  bool hasRetainedStorage() const {
+    return chunkIds_.capacity() != 0 || barFirstIndices_.capacity() != 0;
+  }
 
   /// Move chunk ownership out of this store into dest (this store cleared). Used by take Seal.
   void detachChunksTo(CaptureChunkIdList& dest);
@@ -536,6 +547,8 @@ class LoopEventStore {
   const EventChunk& chunk(uint16_t id) const;
   bool appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut = nullptr,
                          ChunkReservation* reservation = nullptr);
+  void invalidateCaptureIndex();
+  static void invalidateChunkCaptureIndex(uint16_t id);
   /// Shared bounded private-order admission; `canonical` selects the key.
   bool beginPrivateOrder(LoopEventStoreOrderCursor& cursor, bool canonical) const;
   void rebuildBarIndex() const;
@@ -598,6 +611,10 @@ class LoopEventStore::CaptureRange {
   /// Generation must be the receipt from this seal, including after reuse.
   bool read(uint64_t generation, size_t chunkIndex, uint16_t eventIndex,
             MidiEvent& out, bool& atEnd) const;
+  /// Returns false for an unavailable/stale summary; caller must inspect rows.
+  bool blockMayIntersect(uint64_t generation, size_t firstRow,
+                         uint32_t startPhase, uint32_t lengthTicks,
+                         uint32_t loopLengthTicks, bool& mayIntersect) const;
   /// Invalidates reads before releasing at most quantum references. True when
   /// empty. A stale pool receipt never decrements a new pool occupant's refs.
   bool releaseGrain(size_t quantum);

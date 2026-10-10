@@ -25,6 +25,7 @@ using DisplayNote = NoteUtils::DisplayNote;
 
 EDIT_MANAGER_IMPL_MEM void EditManager::applyCreatedNoteOverlapGeometry(Track& track,
                                                                         const DisplayNote& createdNote) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     if (!editSession.active || createdNote.noteId == kInvalidNoteId) {
         return;
     }
@@ -51,6 +52,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyCreatedNoteOverlapGeometry(Track& t
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::applyDeleteNoteOverlapRestore(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     if (!editSession.active || !editSession.focus.active) {
         return;
     }
@@ -71,6 +73,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyDeleteNoteOverlapRestore(Track& tra
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
                                                            const NoteUtils::DisplayNoteVec& filteredNotes) {
+    if (hasPendingCurrentRootNoteEditEntry()) return false;
     if (selectedNoteIdx < 0 && lastFader1SelectNoteId == kInvalidNoteId) {
         logger.info("MIDI Encoder: No note selected for deletion");
         return false;
@@ -188,6 +191,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::deleteSelectedNote(Track& track,
 EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track,
                                                            const NoteUtils::DisplayNote& currentNote,
                                                            uint32_t targetTick) {
+    if (hasPendingCurrentRootNoteEditEntry()) return false;
     const NoteEditFocus& focus = editSession.focus;
     uint32_t fromStart = currentNote.startTick;
     if (focus.active && focus.last.pitch == currentNote.note &&
@@ -243,6 +247,7 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::moveNoteToPosition(Track& track,
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::changeNoteEndWithOverlapHandling(
     Track& track, const NoteUtils::DisplayNote& currentNote, uint32_t targetEndTick) {
+    if (hasPendingCurrentRootNoteEditEntry()) return false;
     const NoteEditFocus& focus = editSession.focus;
     const uint32_t currentEnd = focus.active ? focus.last.endTick : currentNote.endTick;
     if (currentEnd == targetEndTick) {

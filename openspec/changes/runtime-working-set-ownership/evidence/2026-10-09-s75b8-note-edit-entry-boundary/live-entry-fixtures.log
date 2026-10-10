@@ -1,0 +1,22 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Undefined symbols for architecture arm64:
+  "resolveEncoderCyclePress(NoteEditKind, bool)", referenced from:
+      EditManager::applyCycleEditKind(Track&) in test_note_edit_entry_boundary.o
+  "StorageManager::processEditAutosave(LooperState const&)", referenced from:
+      EditManager::exitEditMode(Track&) in test_note_edit_entry_boundary.o
+ld: symbol(s) not found for architecture arm64
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/program] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+------- native:test_note_edit_entry_boundary [ERRORED] Took 5.88 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:05.880
+================== 1 test cases: 0 succeeded in 00:00:05.880 ==================

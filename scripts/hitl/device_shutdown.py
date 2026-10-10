@@ -204,6 +204,37 @@ class DeviceSession:
     per-exit helper can be forgotten when a new return is added; this cannot.
     """
 
+    def _capture_heap_observation(self, *, timeout_s: float = 8.0) -> list[str]:
+        """`!HEAP_STATS` through the run's own capture owner, after the drain stopped the transport.
+
+        The run is over by the time this is called, so the device is quiescent and the observation
+        is granted: it is the HITL's final state evidence, and it deliberately runs **after** the
+        stop rather than before it. Returns the reply rows, or a one-line note when the observation
+        could not be taken -- a teardown never fails because evidence was unavailable.
+        """
+        try:
+            import uuid
+
+            from hitl.managed_capture import active_managed_capture
+
+            session = active_managed_capture()
+            if session is None:
+                return []
+            nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+            accepted, detail = session.send_command(
+                "!HEAP_STATS", nonce=nonce, end_nonce=end_nonce
+            )
+            if not accepted:
+                return [f"(heap observation not queued: {detail})"]
+            rows = session.fenced_response(nonce, end_nonce, timeout_s=timeout_s)
+            session.complete_command(nonce)
+            if rows is None:
+                return ["(no fenced !HEAP_STATS reply after the stop)"]
+            return list(rows)
+        except Exception as exc:  # evidence, never a teardown failure
+            return [f"(heap observation failed: {exc!r})"]
+
+
     def __init__(self, *, capture_log_getter: Callable[[], Optional[Path | str]],
                  send_transport_stop: Callable[[], None], out_dir: Path | str,
                  context: str = "", events: Optional[list] = None,
@@ -233,6 +264,17 @@ class DeviceSession:
         self.result = shutdown_device(capture_log=log, send_transport_stop=self._stop,
                                       drain_timeout_s=self._timeout, is_connected=self._is_connected)
         self._events.append({"event": "device_shutdown", **self.result.as_dict()})
+        # The run has finished and the drain has stopped the transport -- that is the order the
+        # heap observation belongs in, and the only place it can run: a *playing* device refuses
+        # `!HEAP_STATS` by design (measured: with the transport running, no allowlisted query
+        # answers at all), which is why readiness no longer asks it mid-run. Recorded beside the
+        # shutdown event so a reader sees stop -> observation.
+        heap_rows = self._capture_heap_observation()
+        if heap_rows:
+            self._events.append(
+                {"event": "heap_observation_after_stop", "rows": heap_rows}
+            )
+
         if not self.result.ok:
             mark_incomplete(self.result, out_dir=self._out_dir, context=self._context,
                             latch_path=self._latch_path)

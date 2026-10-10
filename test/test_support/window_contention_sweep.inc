@@ -66,6 +66,7 @@ struct WindowContentionResult {
   uint32_t othersGrains = 0;
   uint32_t trackGrains = 0;
   uint32_t targetCompletionTurns = 0;
+  uint32_t firstGrainTurn[Config::MAX_LOOPS_PER_TRACK] = {}; // target Track; 0 means not observed
   uint32_t maxCompletionTurns = 0;
   uint64_t deadlineTick = 0;
   uint64_t maxCompletionTick = 0;
@@ -247,12 +248,20 @@ inline WindowContentionResult runWindowContentionCell(const WindowContentionCell
     uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(trackCursor, offers, trackCount, chosen) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
-      // `nullptr` for the holder cursor, exactly as `src/main.cpp` calls it: the within-track scan therefore restarts
-      // at slot 0 every turn, so deadline ties are broken by slot order -- deterministic, not accidental.
+      // Use the production null-cursor path. Its per-Track tie position persists across cells;
+      // neither slot 0 nor a new cell is entitled to reset that owner state.
       (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(kContentionRequestPhase, nullptr, false, clock);
     }
     for (uint8_t i = 0; i < cell.tracks; ++i) {
       for (uint8_t slot = 0; slot <= cell.siblings; ++slot) {
+        if (i == 0 && out.firstGrainTurn[slot] == 0u) {
+          const LoopPlaybackRuntime* owner =
+              TrackCaptureStopTestAccess::runtimeIfAllocated(trackManager.getTrack(i), slot);
+          if (owner != nullptr && (!owner->coverageBuildNeedsService() ||
+                                   owner->nextCoverageBuildGrain() != RuntimePlaybackViewBuildGrain::Fill)) {
+            out.firstGrainTurn[slot] = turn;
+          }
+        }
         if (completionTurn[i][slot] != 0u) continue;
         const LoopPlaybackRuntime* runtime =
             TrackCaptureStopTestAccess::runtimeIfAllocated(trackManager.getTrack(i), slot);
@@ -328,10 +337,18 @@ void test_window_contention_sweep_measures_the_composed_cost_across_h_and_k() {
     // (A) The cost law, measured: the track's whole work spread over the competing tracks.
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(grid[index].tracks * windows * serviceTurns, row.drainTurns,
                                      "H x (1 + K) x the window's own service turns");
-    // (B) The target's own schedule: it is served first in each cycle, so its grains land on every H-th turn -- which
-    // is also what makes a mutation of "one grain per lane turn" move this number.
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE((serviceTurns - 1u) * grid[index].tracks + 1u, row.targetCompletionTurns,
-                                     "the target completes on its own service turns' schedule");
+    // (B) A persistent within-Track tie cursor need not start at slot 0. Retain the exact
+    // own-grain schedule when it is the only holder; with siblings, the target cannot finish
+    // before its own grains and must finish within the already asserted whole-track drain.
+    if (grid[index].siblings == 0u) {
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE((serviceTurns - 1u) * grid[index].tracks + 1u,
+                                       row.targetCompletionTurns, "sole holder completes on its own grain schedule");
+    } else {
+      TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(serviceTurns, row.targetCompletionTurns,
+                                                  "target requires its own service grains");
+      TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(row.drainTurns, row.targetCompletionTurns,
+                                               "the target completes inside the exact charged whole-track drain");
+    }
     // (C) The declaration is sufficient for the cell: the retained promise is at least the declared charge, and the
     // composition fits inside the promise. No promise is crossed anywhere in the grid.
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(row.trackGrains * rotation, row.promisedTurns,
@@ -359,6 +376,34 @@ void test_window_contention_sweep_measures_the_composed_cost_across_h_and_k() {
                                    "the same K at H = 1 and H = 8 charges the same work");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(rows[1].drainTurns * 8u, rows[5].drainTurns,
                                    "and pays for it once per competing track");
+}
+
+/// Eight simultaneously admitted, positioned slots must each receive their first *real* build grain
+/// within one eight-turn within-Track rotation. An eventual complete drain alone would not catch
+/// resetting the cursor and starving the higher slots behind slot 0's multi-grain order work.
+void test_positioned_eight_slot_holder_first_service_is_bounded() {
+  constexpr uint32_t kNotes = 20u; // 40 events, one Fill grain per holder
+  constexpr uint8_t kSiblings = Config::MAX_LOOPS_PER_TRACK - 1u;
+  const WindowShapeProbe probe = probeWindowShape(kNotes);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * kNotes, probe.sourceEvents,
+                                   "the first Fill step examines all 40 accepted rows");
+  const uint32_t bars = contentionLoopBarsFor(probe.chargedGrains, kSiblings,
+                                              kContentionDeclaredAdvance, 2u);
+  const WindowContentionResult row = runWindowContentionCell(
+      {1u, kSiblings, bars, kNotes, kContentionDeclaredAdvance}, bars);
+  TEST_ASSERT_TRUE_MESSAGE(row.drained, "all eight independent positioned obligations complete");
+  TEST_ASSERT_EQUAL_UINT32(Config::MAX_LOOPS_PER_TRACK, row.windowsCompleted);
+  TEST_ASSERT_EQUAL_UINT32(Config::MAX_LOOPS_PER_TRACK * probe.serviceTurns, row.drainTurns);
+  TEST_ASSERT_EQUAL_UINT32(row.windowsOwed, row.completeRows);
+  TEST_ASSERT_EQUAL_UINT32(0u, row.missRows);
+  bool servedTurn[Config::MAX_LOOPS_PER_TRACK + 1u] = {};
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const uint32_t first = row.firstGrainTurn[slot];
+    TEST_ASSERT_TRUE_MESSAGE(first >= 1u && first <= Config::MAX_LOOPS_PER_TRACK,
+        "each positioned slot receives a grain within one Track rotation, not eventual drain");
+    TEST_ASSERT_FALSE_MESSAGE(servedTurn[first], "one owner opportunity serves just one slot grain");
+    servedTurn[first] = true;
+  }
 }
 
 /// **S4 -- density and span.** A cell's cost is its windows' own service turns (the per-grain turn cost is the

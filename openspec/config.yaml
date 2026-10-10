@@ -46,7 +46,9 @@ context: |
   - Before push: `pio test -e native`; HITL when firmware timing/storage/edit changes
   - Do not upload Teensy firmware without user confirmation
 
-  OpenSpec CLI requires Node.js >= 20 (`nvm use 20`).
+  OpenSpec CLI requires Node.js >= 20.19.0 on the default Node (`nvm` -> v24); do not run
+  `nvm use 20` first (the CLI is installed under the default Node's global prefix, so another
+  version hides `openspec` from PATH).
 
 rules:
   proposal:

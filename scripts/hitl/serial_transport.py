@@ -54,6 +54,47 @@ def serial_lines_show_transport_activity(
     return any(serial_line_is_transport(line) for line in live[-tail:])
 
 
+#: Rows that only a *running* transport emits. `serial_lines_show_transport_activity` answers
+#: "is the serial link still alive" and therefore counts `#CAP,DFRAME` -- the periodic
+#: display-frame monitor, one row every ~1.5 s whether or not the transport runs. A caller whose
+#: question is "is the device's transport running?" must not read a display frame as an answer:
+#: on `captures/live-current-root-entry-t8s4-04` the record-arm precondition saw two `DFRAME` rows
+#: with the transport stopped, pressed the **toggle** global transport button, *started* the
+#: transport (which began the take), and the following "restart transport after arm" press then
+#: stopped it -- a 768-tick take with one captured note where the two-bar, eight-note
+#: `EDIT_RECORD_FIXTURE` seed was owed.
+#:
+#: `BAR` is emitted by the firmware when its bar index changes, which only a running sequencer
+#: does (a bar realign while stopped can emit one -- a named residual). `BPM` is the device's
+#: learned clock rate, emitted only where the session-capture BPM sink is enabled and only while
+#: the device is *slaved*; the default `teensy41-capture-serial` build emits none, so `BAR`
+#: carries this predicate on the mandated image.
+_RUNNING_TRANSPORT_MARKERS = (
+    ",BAR,",
+    ",BPM,",
+)
+
+
+def serial_lines_show_running_transport(
+    lines: list[str], *, tail: int = 40, after_index: int = 0
+) -> bool:
+    """True only when the live suffix shows rows a *running* transport emits.
+
+    The narrow sibling of :func:`serial_lines_show_transport_activity`: the same device-time
+    live window, but `DFRAME`/`MI`/`MO`/`ST` rows do not count. `DFRAME` is emitted while the
+    transport is stopped; `MI` is the host's own gestures; `MO` and `ST` are device feedback
+    that also flows stopped. Use this for "is the transport running"; use the wider predicate
+    when the question is whether the serial link is still alive.
+    """
+    from hitl.device_time import filter_live_lines
+
+    live = filter_live_lines(lines, after_index=max(after_index, 0))
+    return any(
+        "#CAP," in line and any(marker in line for marker in _RUNNING_TRANSPORT_MARKERS)
+        for line in live[-tail:]
+    )
+
+
 def serial_lines_show_bpm_activity(lines: list[str], *, tail: int = 40) -> bool:
     """Backward-compatible alias: BPM-only activity check."""
     for line in lines[-tail:]:

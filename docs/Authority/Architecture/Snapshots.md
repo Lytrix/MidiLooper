@@ -62,6 +62,9 @@ membership; only dirty pitch/bar membership and the minimum directory path to it
 are newly constructed. A snapshot never stores a parent pointer used to recover
 content.
 
+This accepted Phase 0 boundary names the logical indexes only. The physical directory that implements
+their structural sharing remains a later measurement decision.
+
 ---
 
 ## Construction
@@ -144,4 +147,5 @@ Publication is **atomic** and conditional:
 - [Storage.md](Storage.md) — persisted passes and snapshot body format
 - [RuntimeArchitecture.md](RuntimeArchitecture.md) — layer boundaries
 - [ExecutionBounds.md](ExecutionBounds.md) — construction units and failure policy
+- [IntervalProjection.md](IntervalProjection.md) — readiness deadline: an updated version must be ready before the playhead returns
 - [NAMING.md](../NAMING.md) — `LoopSnapshot`, `pass`, `materialize`

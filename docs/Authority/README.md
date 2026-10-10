@@ -9,7 +9,7 @@ ARCHITECTURE_RULES.md      ← ownership, execution bounds, structure
     ↓
 IMPLEMENTATION_READINESS.md ← evidence + contract required before firmware work
     ↓
-NAMING.md                  ← architectural vocabulary (ubiquitous language)
+NAMING.md                  ← architectural vocabulary — names and meanings only
     ↓
 OpenSpec                   ← desired behavior, accepted requirements
     openspec/specs/          (archived normative behavior)
@@ -33,7 +33,7 @@ Code                       ← implementation; cannot silently redefine architec
 | **PROJECT_INTENT** | Product identity, scope, litmus tests, key decisions | Overridden by lower layers without deliberate intent update |
 | **ARCHITECTURE_RULES** | Ownership, execution bounds, forbidden patterns, extension rules | Bypassed by OpenSpec, plans, or code |
 | **IMPLEMENTATION_READINESS** | Evidence (G0), architecture (G1), and contract (G2) required before firmware work; STOP conditions for Apply | Used to add a second stop gate — it is a precondition on the existing [reassessment trigger](../ARCHITECTURE_REASSESSMENT.md#formal-triggers), not a new one |
-| **NAMING** | Architectural vocabulary, concept boundaries, verb conventions, migration policy | Bypassed by plans or code without deliberate update |
+| **NAMING** | Names and meanings: architectural vocabulary, concept boundaries, verb conventions, migration policy. It states no behavior, ownership or bound class — for those it cites the owning layer, and a claim that would need behavior to change is a proposal to OpenSpec ([NAMING.md](NAMING.md) § Scope of this authority) | Bypassed by plans or code without deliberate update; over-applied to a behavior requirement |
 | **OpenSpec** | Desired behavior, SHALL/MUST requirements, task scope | Used to redefine architecture directly (new Manager, ownership move) without reassessment |
 | **Guides** | How shipped behavior works today | Authority over OpenSpec specs or architecture |
 | **Historical plans** | Design context, handoffs, exports | Treated as normative or override for architecture |
@@ -130,6 +130,7 @@ Do not resolve conflicts by:
 | Runtime code cannot silently redefine architecture | If code and docs disagree, fix code **or** update authority deliberately. |
 | This layer does not change firmware | These files govern agent workflow and documentation only. |
 | **Progress by default** | Continue implementation unless a [formal reassessment trigger](../ARCHITECTURE_REASSESSMENT.md#formal-triggers) fires — see [decision ladder](ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder) |
+| **NAMING precedence is claim-scoped** | NAMING decides names and meanings; OpenSpec decides behavior; `ARCHITECTURE_RULES` + `Architecture/` decide ownership, forbidden patterns and bound class. A term a change introduces is **provisional** until it is registered in NAMING (`DEC-###` for a new top-level domain noun) — [NAMING.md](NAMING.md) § Scope of this authority |
 
 ### OpenSpec attention (from delivery rules)
 

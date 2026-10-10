@@ -1,0 +1,30 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:926: test_button_entry_publishes_an_identity_qualified_session_on_a_current_root_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:927: test_button_entry_on_a_rootless_source_keeps_the_audible_source_and_no_partial_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:928: test_button_entry_on_dense_content_keeps_the_exact_committed_inventory	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:929: test_button_entry_with_an_empty_selection_publishes_no_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:930: test_button_entry_second_press_returns_to_loop_edit_and_releases_the_session	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:931: test_session_exit_and_reopen_publishes_exactly_one_fresh_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:932: test_focus_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:933: test_slot_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:934: test_mutation_between_units_keeps_the_identity_and_requests_no_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:935: test_workspace_reload_between_units_rebinds_the_session_without_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:936: test_clear_between_units_invalidates_the_pending_session_identities	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:937: test_entry_while_a_competing_track_plays_keeps_both_tracks_exact	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:842: test_entry_returns_to_midi_input_between_admitted_units: Expected 0 Was 1. the entry must not poll the send pipeline to idle inside the callback (no polls around work)	[FAILED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:940: test_entry_refuses_a_late_completion_for_a_superseded_track_reference	[PASSED]
+Program received signal SIGHUP (Hangup: 1)
+------- native:test_note_edit_entry_boundary [ERRORED] Took 6.20 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  ERRORED   00:00:06.196
+
+============ 15 test cases: 1 failed, 13 succeeded in 00:00:06.196 ============

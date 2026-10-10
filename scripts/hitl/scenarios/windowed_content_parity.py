@@ -18,11 +18,11 @@ the legacy arguments, and the leg's own parser is strict about arguments it does
 
 from __future__ import annotations
 
+import json
 import time
-from typing import Any
-
+from datetime import datetime
 from pathlib import Path
-
+from typing import Any
 from hitl.scenarios.long_loop_display_window import run_long_loop_display_window
 from hitl.verify.windowed_lane import verify_windowed_content_parity
 
@@ -37,12 +37,11 @@ TRANSPORT_STOP_PRESS_MS = 120
 #: served**, before the drain. The wait is what makes the lane's rows exist at all: the switch's launch binds the
 #: target's first window, and only then can the rolling lane roll forward from it.
 #:
-#: The value is **derived from measurement, not chosen for comfort**: on a rootless demoted target the publication
-#: needed *well over 30 s* of service at the measured ~105 eligible turns/s x 2 units (`captures/s64-progress-01`),
-#: against a switch hold bound of ~8 s -- so a 20 s wait can observe a demand that was created and not yet served, and
-#: would then report the lane as unexercised. 45 s is that measurement with margin, it is overridable per run with
-#: `--switch-settle-s`, and the managed run timeout (360 s) bounds the whole leg.
-SWITCH_SETTLE_S = 45.0
+#: The earlier 45 s wait was based on a rootless-target publication needing well over 30 s at the measured ~105 eligible
+#: turns/s x 2 units (`captures/s64-progress-01`). An aligned 24-bar run with 90 s still observed only one publication and
+#: a Tier-A eviction, so this is a longer opportunity, not a timing guarantee; the verifier requires repeated builds and
+#: intact ring counters. Callers may override `--switch-settle-s` for a bounded experiment.
+SWITCH_SETTLE_S = 90.0
 #: The edit control (note 38) held long enough to **exit** the loop-edit session a slot selection opens. Measured on
 #: device (run 04): selecting the target enters `LOOP_EDIT`, and while that session is open the queued switch's
 #: preparation is never reached -- no provision row, no prewarm, no lane work -- so the switch holds until its bound.
@@ -376,7 +375,10 @@ def run_windowed_content_parity(args: object) -> int:
         print(f"[windowed-content-parity] --loop-slot {slot} is outside 1..8")
         return 2
 
+    setattr(args, "windowed_record_slot", slot)
+    setattr(args, "windowed_switch_target_slot", switch_target)
     setattr(args, "legacy_args", remaining)
+    ring_stats_before = _request_ring_stats_readback("before-record")
 
     import mido
 
@@ -391,14 +393,73 @@ def run_windowed_content_parity(args: object) -> int:
         out_port.close()
 
     code = run_long_loop_display_window(args)
-    # The lane's rows are produced under transport and the ring is retained while one runs, so the leg's own capture
-    # cannot contain them; the switch leg (when asked for) and the drain are what make them observable at all. The
-    # settle window is the demand's own time to be served -- see `SWITCH_SETTLE_S`.
-    run_post_leg_phase(args, switch_target_slot=switch_target,
-                       switch_settle_s=switch_settle if switch_settle is not None else SWITCH_SETTLE_S)
-    return code
+    drain_path = run_post_leg_phase(
+        args,
+        switch_target_slot=switch_target,
+        switch_settle_s=switch_settle if switch_settle is not None else SWITCH_SETTLE_S,
+    )
+    ring_stats_after = _request_ring_stats_readback("after-stop-drain")
+    out_dir = Path(getattr(args, "out_dir", Path("captures")))
+    capture_log = _capture_session_log(out_dir)
+    if capture_log is not None:
+        verification_lines = capture_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    else:
+        leg_log = _leg_capture_log(out_dir)
+        verification_lines = leg_log.read_text(encoding="utf-8", errors="replace").splitlines() if leg_log else []
+        if drain_path is not None and drain_path.is_file():
+            verification_lines.extend(drain_path.read_text(encoding="utf-8", errors="replace").splitlines())
+
+    leg_reports = sorted(out_dir.glob("host_midi_hitl_long_loop_display_window_*.json"))
+    if leg_reports:
+        try:
+            standalone = json.loads(leg_reports[-1].read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            standalone = {}
+        if isinstance(standalone.get("serial_verification"), dict):
+            setattr(args, "windowed_leg_run_report", standalone["serial_verification"])
+    report = verify_windowed_content_parity_leg(verification_lines, args)
+    report["run"] = {
+        "leg_exit_code": code,
+        "record_slot": slot,
+        "switch_target_slot": switch_target,
+        "verification_rows": len(verification_lines),
+        "ring_stats_before": ring_stats_before,
+        "ring_stats_after": ring_stats_after,
+    }
+    if leg_reports:
+        report["run"]["standalone_leg_report"] = str(leg_reports[-1])
+    if code != 0:
+        report["ok"] = False
+        detail = f"execution: reused long-loop leg exited {code}"
+        if leg_reports:
+            detail += f"; standalone leg report={leg_reports[-1]}"
+        report["issues"].append(detail)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / f"host_midi_hitl_windowed_content_parity_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"[windowed-content-parity] combined verifier report: {report_path}")
+    if not report["ok"]:
+        for issue in report["issues"]:
+            print(f"[windowed-content-parity] verifier: {issue}")
+    return max(code, 0 if report["ok"] else 2)
 
 
 def verify_windowed_content_parity_leg(lines: list[str], args: object) -> dict[str, Any]:
     """The reused leg's oracle **plus** the windowed lane's checks (see `hitl.verify.windowed_lane`)."""
     return verify_windowed_content_parity(lines, args)
+def _request_ring_stats_readback(stage: str) -> bool:
+    """Use the managed serial owner for a stopped-only, read-only ring counter snapshot."""
+    try:
+        from hitl.managed_capture import active_managed_capture
+    except ImportError:
+        return False
+    session = active_managed_capture()
+    if session is None:
+        print(f"[windowed-content-parity] {stage} RING stats unavailable: no managed capture owner")
+        return False
+    rows = session.identity_stat_lines(timeout_s=6.0)
+    if rows is None:
+        print(f"[windowed-content-parity] {stage} RING stats readback unavailable")
+        return False
+    print(f"[windowed-content-parity] {stage} RING stats readback received")
+    return True

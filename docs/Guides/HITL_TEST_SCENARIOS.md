@@ -14,6 +14,12 @@ from the host Mac. Entry point: [`scripts/host_midi_hitl.py`](../../scripts/host
 
 Never use `--serial-port` while `capture_session.py` holds the USB serial port.
 
+### Live setup evidence and managed closeout
+
+During playback, timing-protected `#CAP` ring rows may remain retained until Stop; silence of those rows is not by itself a firmware transmission stall. The stacked-reselect setup guard uses a fresh fenced `!TRACK_STATUS` reply (selected track, sole active slot, state, global transport) before deciding or pressing. Both status and validated `!TRACE_FENCE` framing are direct, request-only, TX-room-guarded responses; backpressure refuses rather than queuing a stale reply. The query never changes transport/content or flushes the protected ring. Missing, malformed or wrong-target evidence fails setup without a speculative toggle.
+
+Caller-start confirmation is scoped to that request's new Start acknowledgement. Record attribution uses configured musical-channel positive-velocity NoteOns and actual count, excluding setup controls; content/first-note assertions still apply to the selected take. Managed runs use the canonical `DeviceSession` Stop/drain before capture release on every exit and write `shutdown-result.json`; incomplete cleanup latches against reset/upload and cannot return success. Existing final stopped heap observation is retained.
+
 ## Result contract (host harness)
 
 Machine-readable verdicts live in [`scripts/hitl/contract.py`](../../scripts/hitl/contract.py). Plan: [`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md).

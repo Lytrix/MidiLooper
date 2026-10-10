@@ -4552,8 +4552,18 @@ void test_resolve_display_notes_keeps_capture_dsharp_committed_offs() {
   TEST_ASSERT_EQUAL_UINT32(2976u, third->endTick);
 }
 
+#include "construction_release.inc"
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_construction_release_acceptance_and_literal_rows);
+  RUN_TEST(test_construction_release_identity_and_single_use);
+  RUN_TEST(test_construction_release_partial_note_copy_and_failure);
+  RUN_TEST(test_construction_release_partial_event_copy_last_owner);
+  RUN_TEST(test_construction_release_idle_shared_frozen_and_parent);
+  RUN_TEST(test_construction_release_exclusive_frozen_empty_missing_parent);
+  RUN_TEST(test_construction_release_previous_edges_before_rows);
+  RUN_TEST(test_construction_release_private_frozen_last_owner);
   RUN_TEST(test_snapshot_queries_are_explicit_and_self_contained);
   RUN_TEST(test_snapshot_display_notes_use_span_membership_not_event_reconstruct);
   RUN_TEST(test_canonical_fixture_inventory);

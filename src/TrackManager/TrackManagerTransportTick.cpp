@@ -14,10 +14,9 @@
 
 namespace {
 
-/// The edge's deferred-effect queue (timing-path review, item 1). `DMAMEM` because it is mutable state and this
-/// tree's rule is that mutable state never grows DTCM (`scripts/ram1_budget.json`'s variables line is checked
-/// byte-for-byte; `PersistenceWorkItemPersist.cpp` records the same reason). Zero-initialised, which is exactly
-/// the queue's empty state, so nothing has to run at boot to arm it.
+/// The edge's deferred-effect queue. Keep mutable state in RAM2, not DTCM.
+/// Teensy's DMAMEM is NOLOAD and is not zeroed at startup: TrackManager::setup
+/// explicitly initializes the positions/drop metadata before clock startup.
 #if defined(__IMXRT1062__)
 #define EDGE_EFFECT_QUEUE_MEM DMAMEM
 #else
@@ -30,6 +29,12 @@ EDGE_EFFECT_QUEUE_MEM EdgeEffectQueue gEdgeEffectQueue;
 EDGE_EFFECT_QUEUE_MEM uint32_t gReportedDroppedEdgeEffects = 0;
 
 }  // namespace
+
+FLASHMEM void TrackManager::initializeEdgeEffectsForBoot() {
+  // Quiescent boot boundary only; retained payload is unreachable at depth zero.
+  gEdgeEffectQueue.initializeForBoot();
+  gReportedDroppedEdgeEffects = 0;
+}
 
 void TrackManager::startPlayingTrack(uint8_t trackIndex) {
   if (trackIndex < Config::NUM_TRACKS) {

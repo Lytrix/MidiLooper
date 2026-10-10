@@ -8,7 +8,7 @@ from typing import Optional
 from hitl.capture_transitions import _phase_ts_from_marker_line
 from hitl.contract import PhaseAmbiguity
 from hitl.control_constants import MIDI_CLOCKS_PER_BAR, MIDI_CLOCKS_PER_BEAT
-from hitl.serial.protocol import track_transitions
+from hitl.serial.protocol import incoming_note_on, track_transitions
 from hitl.serial_transport import parse_latest_bpm
 
 
@@ -157,7 +157,8 @@ def _armed_record_starts(lines: list[str], *, start_index: int) -> set[int]:
 
 
 def _record_take_note_counts(
-    lines: list[str], sessions: list[tuple[int, int]], *, start_index: int
+    lines: list[str], sessions: list[tuple[int, int]], *, start_index: int,
+    midi_channel_1based: Optional[int] = None,
 ) -> list[int]:
     """Host note-on rows (``#CAP,<ts>,MI,U,144,...``) inside each record take's window.
 
@@ -166,18 +167,14 @@ def _record_take_note_counts(
     stream. See the selection in :func:`extract_phase_sessions`.
     """
     note_ts: list[int] = []
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
     for line in lines[start_index:]:
-        if ",MI,U," not in line:
+        note = incoming_note_on(line)
+        if note is None:
             continue
-        parts = line.split(",")
-        if len(parts) < 8:
-            continue
-        try:
-            ts = int(parts[1])
-            msg_type = int(parts[4])
-        except ValueError:
-            continue
-        if msg_type == 144:
+        ts, channel, _pitch = note
+        if (channel == midi_channel_1based if midi_channel_1based is not None
+                else channel != CONTROL_CHANNEL_1BASED):
             note_ts.append(ts)
     counts: list[int] = []
     for start_ts, stop_ts in sessions:
@@ -270,7 +267,8 @@ def _pair_overdub_sessions(
 
 
 def extract_phase_sessions(
-    lines: list[str], *, after_index: Optional[int] = None
+    lines: list[str], *, after_index: Optional[int] = None,
+    midi_channel_1based: Optional[int] = None,
 ) -> PhaseSessionReport:
     start_index = phase_evidence_start_index(lines, after_index)
     record_sessions, open_record_start = _pair_record_sessions(lines, start_index=start_index)
@@ -296,12 +294,13 @@ def extract_phase_sessions(
         #      mode change such as `EMPTY->RECORDING` -- the distinction
         #      `test_uses_last_complete_recording_window` asks for, and one a bare "first pair"
         #      rule got wrong at HEAD.
-        note_counts = _record_take_note_counts(lines, record_sessions, start_index=start_index)
+        note_counts = _record_take_note_counts(lines, record_sessions, start_index=start_index,
+                                              midi_channel_1based=midi_channel_1based)
         armed_starts = _armed_record_starts(lines, start_index=start_index)
         best = max(
             range(len(record_sessions)),
             key=lambda index: (
-                note_counts[index] > 0,
+                note_counts[index],
                 record_sessions[index][0] in armed_starts,
                 -index,
             ),

@@ -1,0 +1,204 @@
+00005cb0 00000024 t _GLOBAL__sub_I_editManager
+6000dee8 000001b4 T EditManager::moveBracket(int, Track const&, unsigned long)
+6000e09c 0000000c T EditManager::moveBracket(Track&, int)
+6001df00 00000198 T EditManager::sessionRedo(Track&)
+6001da24 000004dc T EditManager::sessionUndo(Track&)
+6000de28 000000c0 T EditManager::exitEditMode(Track&)
+6000a578 0000000e T EditManager::emitEditEvent(EditEvent)
+6000ddb8 00000070 T EditManager::enterEditMode(EditNoteState*, unsigned long)
+6000da68 00000020 T EditManager::onButtonPress(Track&)
+6000da10 00000058 T EditManager::onEncoderTurn(Track&, int)
+60018230 000002b8 T EditManager::applySelectNav(Track&, unsigned long, unsigned long, bool, bool)
+6000a588 00000018 T EditManager::editMidiEvents(Track&)
+6000ee50 0000008c T EditManager::onTrackChanged(Track&)
+6000a54c 0000002c T EditManager::resetSelection()
+6000e0a8 0000000a T EditManager::selectNextNote(Track const&)
+6000e0b4 0000000c T EditManager::selectPrevNote(Track const&)
+600190d4 000008c0 T EditManager::commitEditAction(Track&, std::vector<EditPass, InternalHeapFirstAllocator<EditPass> >, bool)
+6000ec8c 000000cc T EditManager::cycleEditSession(Track&)
+6001b774 0000031c T EditManager::closeNoteEditPass(Track&)
+6000e0d4 00000048 T EditManager::cycleNoteEditType(Track&)
+6000e0d0 00000004 T EditManager::exitPitchEditMode(Track&)
+6000da88 00000114 T EditManager::selectClosestNote(Track&, unsigned long)
+60009ec0 00000100 T EditManager::sessionMidiEvents()
+6000dc58 00000140 T EditManager::stepSelectNavSlot(Track&, int)
+6000dd98 0000001e T EditManager::switchToNextState(Track&)
+60017bc4 00000036 T EditManager::applyCycleEditKind(Track&)
+600171b4 0000047c T EditManager::deleteSelectedNote(Track&, std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote> > const&)
+6000e0c0 0000000e T EditManager::enterPitchEditMode(Track&)
+60016f9c 00000128 T EditManager::moveNoteToPosition(Track&, NoteUtils::DisplayNote const&, unsigned long)
+6000a514 00000028 T EditManager::setSelectedNoteIdx(int)
+6001bf24 00000460 T EditManager::openNoteEditSession(Track&)
+6000db9c 000000ba T EditManager::selectNoteAtBracket(Track&, unsigned long)
+6000e11c 00000010 T EditManager::sendEditModeProgram(EditManager::EditModeState)
+6001d394 00000194 T EditManager::applyUndoRedoLanding(Track&)
+6001ba90 00000228 T EditManager::closeNoteEditSession(Track&)
+6000efbc 00000184 T EditManager::toggleLengthEditMode(Track&)
+600178fc 0000002c T EditManager::beginGeometryMutation(Track&, NoteEditKind, bool)
+6000eef8 00000070 T EditManager::onSelectedSlotChanged(Track&, unsigned char)
+6001c384 00000138 T EditManager::reopenNoteEditSession(Track&)
+6000eb54 00000138 T EditManager::sendEditSessionChange(EditSessionType, bool)
+6000ef94 00000016 T EditManager::clearLengthEditingMode(bool)
+60009eb0 00000006 T EditManager::noteEditCurrentStateMut()
+6001d878 000001ac T EditManager::restoreSessionUndoEntry(Track&, SessionUndoEntry const&)
+6000eedc 0000001a T EditManager::beforeSelectedSlotChange(Track&)
+6000ee28 00000026 T EditManager::beforeSelectedTrackChange(Track&)
+6000ed58 00000060 T EditManager::commitEditSessionOnDepart(Track&)
+60017928 000000b0 T EditManager::resetNoteEditSessionState()
+6000a53c 00000006 T EditManager::setLastFader1SelectNoteId(unsigned long)
+600179d8 0000000c T EditManager::syncGeometrySelectionToUi(Track&)
+6000a02c 0000000c T EditManager::bumpSessionPreviewRevision()
+6000eb44 00000010 T EditManager::emitSessionOpenedToSurface(bool, bool)
+600129b0 00000010 T EditManager::markNoteEditDisplayPainted()
+6000a544 00000008 T EditManager::clearLastFader1SelectNoteId()
+6001b5d4 00000170 T EditManager::markCurrentEditBatchDurable(Track&)
+6001d528 0000034e T EditManager::processKindBoundaryUndoWarm(Track&)
+6001e098 000004e8 T EditManager::pushSessionUndoOnKindChange(Track&, NoteEditKind)
+600178dc 00000020 T EditManager::applyGeometryKindFromControl(Track&, NoteEditKind, bool)
+6001b744 0000002e T EditManager::persistActiveNoteEditSession(Track&)
+600153e8 00000400 T EditManager::rebuildNoteEditFocusAtSelect(Track&, int)
+6001d378 0000001c T EditManager::scheduleKindBoundaryUndoWarm()
+6001b3d4 00000200 T EditManager::stepCurrentRootNoteEditEntry()
+600179e4 000001e0 T EditManager::syncNoteEditSessionStateToUi(Track&)
+60016e34 00000168 T EditManager::applyDeleteNoteOverlapRestore(Track&)
+6001a328 00000004 T EditManager::commitPendingOverlapNoteEdits(Track&)
+60012194 00000788 T EditManager::stepNoteEditDerivedStateClear(EditManager::DerivedStateClear&)
+60018894 00000158 T EditManager::stepSelectionSnapshotPosition(LoopSnapshot const&, EditManager::SelectionSnapshotPosition&, NoteUtils::DisplayNote&)
+6001af50 000001c0 T EditManager::acceptCurrentRootNoteEditEntry(Track&)
+60018188 000000a8 T EditManager::applySelectionFromGeometryEdit(Track&, unsigned long, unsigned long)
+6001206c 00000128 T EditManager::beginNoteEditDerivedStateClear(Track&, EditSession::PayloadClearReceipt const&, EditManager::DerivedStateClear&)
+6001ae64 000000d4 T EditManager::cancelCurrentRootNoteEditEntry()
+60015234 00000044 T EditManager::ensureNoteEditFocusForLiveEdit(Track&, NoteUtils::DisplayNote const&)
+60016d5c 000000d8 T EditManager::applyCreatedNoteOverlapGeometry(Track&, NoteUtils::DisplayNote const&)
+60019994 00000994 T EditManager::commitAllPendingNoteEditActions(Track&)
+60012a04 00000074 T EditManager::invalidateNoteEditDerivedCaches()
+600189ec 00000098 T EditManager::reduceDefaultSelectionCandidate()
+6001a32c 00000870 T EditManager::bakeNoteEditSessionStoreToPasses(Track&)
+60015278 00000170 T EditManager::cancelPendingDeleteForSelectNote(unsigned long)
+600170c4 000000f0 T EditManager::changeNoteEndWithOverlapHandling(Track&, NoteUtils::DisplayNote const&, unsigned long)
+60017fac 000001dc T EditManager::enterDefaultNoteEditSessionState(Track&, unsigned long)
+6000edb8 00000070 T EditManager::reenterEditSessionForFocusChange(Track&, unsigned char)
+6000a5a0 000000ac T EditManager::refreshNoteEditSessionProjection(unsigned char)
+6001bcb8 0000026c T EditManager::revertNoteEditSessionForLoopClear(Track&)
+60017f98 00000014 T EditManager::syncReferenceStepFromSelectedTick(unsigned long)
+6000a038 0000000c T EditManager::bumpSessionPlaybackPreviewRevision()
+6000efac 0000000e T EditManager::clearLengthEditingModeOnNoteSelect()
+6001c660 00000a26 T EditManager::foldLiveCaptureIntoNoteEditSession(Track&)
+6000a64c 000001fc T EditManager::normalizeNoteEditClosureProjection(Track&)
+60015028 0000020c T EditManager::rebuildNoteEditFocusForDisplayNote(Track&, NoteUtils::DisplayNote const&)
+60012d54 0000003c T EditManager::flushDeferredNoteEditDisplayRefresh(Track&)
+600186d8 000000d8 T EditManager::bindDefaultSelectionPreparationSource(Track&)
+6001af38 00000016 T EditManager::cancelCurrentRootNoteEditEntryForLoop(Loop const&)
+60012d90 0000002c T EditManager::processDeferredNoteEditDisplayRefresh(Track&)
+60014c4c 00000064 T EditManager::syncNoteEditFocusLastFromSessionStore(Track&)
+600129c0 00000044 T EditManager::invalidateNoteEditDerivedCacheMetadata()
+60012c90 000000b0 T EditManager::materializedLoopEventsForNoteEditFocus(Track&)
+60012d40 00000014 T EditManager::scheduleDeferredNoteEditDisplayRefresh()
+60014dd0 00000258 T EditManager::syncSelectedNoteIdxToFilteredInventory(Track&)
+6001b2a4 00000130 T EditManager::publishPreparedCurrentRootNoteEditEntry(Track&)
+60018a84 0000061a T EditManager::stepDefaultNoteEditSelectionPreparation(Track&)
+600187b0 000000e4 T EditManager::beginDefaultNoteEditSelectionPreparation(Track&, unsigned long)
+60009e1c 00000028 T EditManager::clampNoteEditBracketPhaseTickForNavigation(unsigned long, unsigned long, unsigned long)
+6000a848 00000204 T EditManager::normalizeNoteEditSessionProjectionForCommit(Track&)
+60012c2c 00000064 T EditManager::ensureCurrentStateVisibleRowsFromVisualCache(Track&)
+60014cb0 0000003a T EditManager::clearVisibleOverlapParticipationBeforeDeselect()
+6001c4bc 000001a4 T EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track&)
+6000d96c 000000a4 T EditManager::setState(EditNoteState*, Track&, unsigned long)
+6000a0b8 0000045a T EditManager::EditManager()
+6000a0b8 0000045a T EditManager::EditManager()
+000059e0 000002ce W EditManager::~EditManager()
+000059e0 000002ce W EditManager::~EditManager()
+00018be4 00000028 T LoopEditManager::onTrackChanged(Track&)
+00018658 000000cc T LoopEditManager::handleTempoInput(unsigned char)
+00018724 00000080 T LoopEditManager::sendCurrentTempoCC()
+00017fd4 00000054 T LoopEditManager::applyLoopStartPreview(Track&, unsigned long)
+00018478 00000110 T LoopEditManager::handleLoopLengthInput(unsigned char, Track&)
+00018be0 00000004 T LoopEditManager::reopenLoopEditSession(Track&)
+00018168 00000054 T LoopEditManager::applyLoopLengthPreview(Track&, unsigned long)
+00018c88 00000088 T LoopEditManager::calculateLoopStartTick(short, Track&)
+00017f80 00000054 T LoopEditManager::captureSessionBaseline(Track&)
+0001839c 000000dc T LoopEditManager::commitLoopEditOnDepart(Track&)
+00018ba0 00000040 T LoopEditManager::onEnterLoopEditSession(Track&)
+000181cc 0000003c T LoopEditManager::onLeaveLoopEditSession()
+00018208 0000004e T LoopEditManager::flushAllPendingGeometry(Track&)
+000185b8 000000a0 T LoopEditManager::sendCurrentLoopLengthCC(Track&)
+00018c0c 0000007c T LoopEditManager::onGlobalGeometryRestored(Track&)
+00018028 00000140 T LoopEditManager::commitPendingLoopGeometry(Track&)
+00018588 00000030 T LoopEditManager::handleLoopLengthPitchbend(short, Track&)
+00018d10 00000118 T LoopEditManager::handleLoopStartFaderInput(short, Track&)
+000181bc 00000010 T LoopEditManager::armLoopFaderFeedbackIgnore()
+00018278 00000050 T LoopEditManager::cancelPendingGeometryPreview(Track&)
+00018ab0 000000f0 T LoopEditManager::sendCurrentLoopStartPitchbend(Track&)
+000182c8 000000d4 T LoopEditManager::updateLoopEndpointAfterGracePeriod(Track&)
+000187a4 000000e4 T LoopEditManager::update()
+6000591c 000000ac T ControlSurfaceManager::handleCycleNoteEditType(Track&)
+6006ac9c 000000c0 T Track::clear()
+6000a044 00000074 T EditManager::editMidiEvents(Track const&) const
+60009fc0 0000006c T EditManager::sessionMidiEvents() const
+6000ef68 0000002a T EditManager::getDisplayUndoCount(Track const&, Loop const&) const
+60009eb8 00000006 T EditManager::noteEditCurrentState() const
+60009cb0 00000054 T EditManager::noteEditLoopStartTick(Track const&) const
+60009c88 00000028 T EditManager::noteEditLoopLengthTicks(Track const&) const
+60009c78 00000010 T EditManager::isLengthBracketEditActive() const
+60017e60 00000138 T EditManager::buildSelectNavigationSlots(Track const&, unsigned long, bool) const
+6000eb2c 00000018 T EditManager::isSessionUndoDisplayActive() const
+60013434 0000019e T EditManager::liveEditDisplayNoteAtSelect(Track const&) const
+60009dbc 00000060 T EditManager::clampNoteEditBracketPhaseTick(Track const&, unsigned long) const
+60014cec 0000006a T EditManager::isLiveEditDriverValidForTrack(Track const&) const
+60013260 0000000e T EditManager::noteEditCommittedDisplayNotes(Track const&) const
+600131ec 00000074 T EditManager::projectedNoteEditDisplayNotes(Track const&) const
+60012010 0000005c T EditManager::noteEditDerivedStateClearResult(EditManager::DerivedStateClear const&) const
+60009e44 0000006c T EditManager::noteEditSessionProjectionEvents() const
+60017bfc 00000234 T EditManager::selectableDisplayNotesForEditUi(Track const&) const
+60012bdc 00000050 T EditManager::visualCacheNotesForSelectedSlot(Track const&) const
+600190a0 00000032 T EditManager::preparedDefaultNoteEditSelection(Track const&) const
+600132e4 00000150 T EditManager::selectableDisplayNotesAtEditSelect(Track const&) const
+60017e30 00000030 T EditManager::selectTickFromSelectFaderPitchbend(Track const&, short) const
+60009d04 000000b8 T EditManager::noteEditSelectNavigationLengthTicks(Track const&) const
+60012a78 00000164 T EditManager::tryCollectPreparedOverlapHoldNoteIds(Track const&, unsigned char, unsigned long, unsigned long, unsigned long, OverlapNoteIdSet&, OverlapNoteIdObservation::OverlapCandidateQueryStats*) const
+6001b110 00000194 T EditManager::currentRootNoteEditEntryContextMatches() const
+60012954 0000005c T EditManager::invalidateProjectedNoteEditDisplayCache() const
+60011fbc 00000054 T EditManager::noteEditDerivedStateClearContextMatches(EditManager::DerivedStateClear const&) const
+60018628 000000b0 T EditManager::defaultSelectionPreparationSourceMatches(Track const&) const
+600184e8 000000c8 T EditManager::defaultSelectionPreparationContextMatches(Track const&) const
+600185b0 00000078 T EditManager::defaultSelectionPreparationInputSupported(Track const&) const
+60013270 00000074 T EditManager::filteredSelectableDisplayNotesForNoteEdit(Track const&) const
+60012dbc 00000430 T EditManager::ensureNoteEditDisplayProjectionCachesBuilt(Track const&) const
+60014d58 00000078 T EditManager::isMacroCommitAlignedWithSelectTargetForTrack(Track const&, unsigned long, unsigned long) const
+6001291c 00000038 T EditManager::invalidateProjectedNoteEditDisplayCacheMetadata() const
+00018258 00000020 T LoopEditManager::hasPendingGeometry() const
+0001895c 00000154 T LoopEditManager::buildLoopStartFaderPositions(Track const&) const
+00005380 0000005c t std::_Rb_tree<unsigned char, std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > >, std::_Select1st<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > > >::_M_erase(std::_Rb_tree_node<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > >*) [clone .isra.0]
+000053f4 00000140 t std::_Rb_tree<Track const*, std::pair<Track const* const, std::map<unsigned char, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > > > >, std::_Select1st<std::pair<Track const* const, std::map<unsigned char, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > > > > >, std::less<Track const*>, std::allocator<std::pair<Track const* const, std::map<unsigned char, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > > > > > >::_M_erase(std::_Rb_tree_node<std::pair<Track const* const, std::map<unsigned char, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, std::vector<EditManager::RemovedNote, std::allocator<EditManager::RemovedNote> > > > > > >*) [clone .isra.0]
+20202b78 00000540 B editManager
+
+/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.elf:     file format elf32-littlearm
+
+Sections:
+Idx Name          Size      VMA       LMA       File off  Algn
+  0 .text.headers 00001400  60000000  60000000  00010000  2**2
+                  CONTENTS, ALLOC, LOAD, DATA
+  1 .text.code    000b4af0  60001400  60001400  00011400  2**3
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  2 .text.progmem 00005170  600b5ef0  600b5ef0  000c5ef0  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  3 .text.itcm    0005fbd0  00000000  600bb060  000d0000  2**6
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  4 .fini         00000004  0005fbd0  6011ac30  0012fbd0  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  5 .ARM.exidx    00000358  0005fbd4  6011ac34  0012fbd4  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  6 .data         00012ec0  20000000  6011af8c  00130000  2**12
+                  CONTENTS, ALLOC, LOAD, DATA
+  7 .bss          00004900  20012ec0  20012ec0  00002ec0  2**6
+                  ALLOC
+  8 .bss.dma      00027e20  20200000  20200000  00010000  2**5
+                  ALLOC
+  9 .bss.extram   00002460  70000000  70000000  00150000  2**3
+                  ALLOC
+ 10 .text.csf     00000db4  6012de4c  6012de4c  0014de4c  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+ 11 .ARM.attributes 0000002e  00000000  00000000  0014ec00  2**0
+                  CONTENTS, READONLY
+ 12 .comment      00000033  00000000  00000000  0014ec2e  2**0
+                  CONTENTS, READONLY

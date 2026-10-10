@@ -16,6 +16,14 @@ During NOTE_EDIT, editable geometry is owned by **`NoteEditCurrentState`**. **`N
 
 ---
 
+## Default Select-state activation
+
+`enterDefaultNoteEditSessionState` hands a clamp-qualified same-stack selection to the real `EditSelectNoteState::onEnter`. The FSM avoids a repeated nearest scan only when the selected display tick remains inside the already-computed navigation span; outside it, the legacy second clamp/nearest pass can change the landing and remains authoritative. Direct Select entry also retains its nearest behavior. Scoped flag/limit metadata are not asynchronous readiness receipts or another selection authority.
+
+Active Select entry observes cached-or-canonical event-value count without materializing a vector, COW, syncing or dirty marking just for the count. Other legacy selection/projection calls can still materialize values. Whole entry, source-miss preparation, cleanup and feedback are not thereby bounded or hardware-qualified. Native/build evidence and remaining integration gates: [Select-state handoff packet](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/SELECT-STATE-HANDOFF.md).
+
+---
+
 ## End-state authority chain (do not invert)
 
 Each stage lists its owner and the only inputs it may trust. Same table as contracts plan §1, updated for shipped participation (`Ended`) and latch removal.

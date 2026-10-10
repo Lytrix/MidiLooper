@@ -134,6 +134,7 @@ from hitl.serial_transport import (
     serial_follow_active as _serial_follow_active,
     serial_global_transport_running,
     serial_lines_show_bpm_activity as _serial_lines_show_bpm_activity,
+    serial_lines_show_running_transport as _serial_lines_show_running_transport,
     serial_lines_show_transport_activity as _serial_lines_show_transport_activity,
     serial_sequencer_running as _serial_sequencer_running,
     use_serial_transport_proxy as _use_serial_transport_proxy,
@@ -1008,11 +1009,16 @@ def _prepare_deferred_save_before_clear(
     # firmware with `Clear aborted: could not complete deferred save first` and the whole run dies at
     # its precondition (`captures/sd-fix-persist4`, 2026-09-23). `_ensure_transport_stopped_before_record_arm`
     # already uses this whole-log-first shape for the same reason.
+    #   The last term is the honest "transport running" evidence: the wide
+    #   `_serial_sequencer_running` counts `#CAP,DFRAME` -- the display-frame monitor a stopped
+    #   device emits every ~1.5 s -- so on a stopped device it made this press a *start*
+    #   (`captures/live-current-root-entry-t8s4-04`).
     if (serial_global_transport_running(lines, after_index=0)
             or serial_global_transport_running(lines, after_index=after_index)
-            or _serial_sequencer_running(serial_collector, max_silence_s=2.0,
-                                          after_index=after_index)):
+            or _serial_lines_show_running_transport(lines, after_index=after_index)):
         print("[info] transport stop before clear long press")
+        # Window opens at the press; see `_transport_started_since`.
+        post_stop_anchor = len(serial_collector.snapshot())
         _send_short_press(
             out_port,
             note=GLOBAL_TRANSPORT_NOTE,
@@ -1020,10 +1026,8 @@ def _prepare_deferred_save_before_clear(
             press_ms=press_ms,
         )
         time.sleep(max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0)
-        post_stop_anchor = len(serial_collector.snapshot())
         time.sleep(0.35)
-        if _serial_sequencer_running(serial_collector, max_silence_s=1.0,
-                                     after_index=post_stop_anchor):
+        if _transport_started_since(serial_collector.snapshot(), after_index=post_stop_anchor):
             # Transport is a toggle, and the device may already be stopped by the time this
             # runs (an empty-slot select can start and stop a capture on its own). A blind
             # stop press then *starts* it, and blocking clear here aborts the whole fixture
@@ -1032,6 +1036,7 @@ def _prepare_deferred_save_before_clear(
             # `_ensure_transport_stopped_before_record_arm` already does, and only block if
             # the transport is genuinely still running after the retry.
             print("[info] transport still active after stop; pressing transport again")
+            retry_stop_anchor = len(serial_collector.snapshot())
             _send_short_press(
                 out_port,
                 note=GLOBAL_TRANSPORT_NOTE,
@@ -1039,10 +1044,10 @@ def _prepare_deferred_save_before_clear(
                 press_ms=press_ms,
             )
             time.sleep(max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0)
-            retry_stop_anchor = len(serial_collector.snapshot())
             time.sleep(0.35)
-            if _serial_sequencer_running(serial_collector, max_silence_s=1.0,
-                                         after_index=retry_stop_anchor):
+            if _transport_started_since(
+                serial_collector.snapshot(), after_index=retry_stop_anchor
+            ):
                 print("[warn] transport still active after stop; clear blocked")
                 return False
         # Retain the pre-existing pending marker as well as activity/completion
@@ -1572,9 +1577,11 @@ def _transport_running_before_record_arm(
     fresh ``Transport started`` line ([`session_20260910_123738.log`]): Record
     then jumps STOPPED→RECORDING and skips ARMED.
 
-    Live #CAP BAR/BPM while STOPPED is handled in
-    ``_ensure_transport_stopped_before_record_arm`` via ``serial_sequencer_running``
-    so stale BAR rows do not toggle a stopped transport back on.
+    Live rows that only a running transport emits (a device `BAR` row, and `BPM` where the
+    session-capture BPM sink is enabled) are handled in
+    ``_ensure_transport_stopped_before_record_arm`` via ``_serial_lines_show_running_transport``
+    so stale rows do not toggle a stopped transport back on. A ``#CAP,DFRAME`` display frame is
+    not such a row: the device emits one every ~1.5 s whether or not the transport runs.
     """
     if serial_global_transport_running(lines, after_index=0):
         return True
@@ -1613,6 +1620,33 @@ def _transport_running_before_record_arm(
         return last_to_playing_us > last_transport_stopped_us
     return last_to_playing > last_transport_stopped
 
+#: Track states that only a running transport produces. The companion of our own playback
+#: states in `_transport_running_before_record_arm`; `STOPPED_RECORDING` is deliberately absent
+#: here because it is the *outcome* of the stop this window is testing for.
+_RUNNING_TRACK_STATES = ("PLAYING", "OVERDUBBING", "RECORDING")
+
+
+def _transport_started_since(lines: list[str], *, after_index: int) -> bool:
+    """True when the window shows the transport (re)starting after ``after_index``.
+
+    The wrong direction of a transport **toggle** press is a *start*, so a re-check that asks
+    \"did the press do what this call did not want?\" must look for a start edge:
+    `serial_global_transport_running` over the window names exactly that (a `Transport started`
+    with no later `Transport stopped`), and a track-state row in the window is the same edge when
+    the human line did not land. A display frame is not: on `captures/live-current-root-entry-t8s4-04`
+    the old wide liveness predicate counted a `#CAP,DFRAME` row arriving 0.35 s after a *correct*
+    stop and pressed the toggle again, restarting the transport.
+
+    The window must open **at the press**, not after the settle: the firmware acts on a control
+    press at `press_ms` + its own 300 ms debounce (~0.42 s at `press_ms` 120), so a baseline taken
+    after `max(phase_wait_ms, 300) ms` opens the window after the device has already answered and
+    the mis-press can no longer be seen.
+    """
+    if serial_global_transport_running(lines, after_index=max(after_index, 0)):
+        return True
+    return _latest_track_state(lines, after_index=after_index) in _RUNNING_TRACK_STATES
+
+
 
 def _ensure_transport_stopped_before_record_arm(
     out_port: mido.ports.BaseOutput,
@@ -1646,18 +1680,28 @@ def _ensure_transport_stopped_before_record_arm(
         time.sleep(max(phase_wait_ms, 1) / 1000.0)
         return True
     lines = serial_collector.snapshot() if serial_collector is not None else []
-    sequencer_live = bool(
+    # The press below is a **toggle**, so it must rest on transport evidence. The wider
+    # `_serial_sequencer_running` answers "is the serial link still alive" and counts
+    # `#CAP,DFRAME`, the periodic display-frame monitor a stopped device keeps emitting; read as
+    # "running" it pressed the toggle onto a stopped device, *starting* the transport, and the
+    # following `_restart_transport_after_clear` press stopped it again
+    # (`captures/live-current-root-entry-t8s4-04`: a 768-tick, one-note take where the two-bar,
+    # eight-note `EDIT_RECORD_FIXTURE` seed was owed).
+    transport_live = bool(
         serial_collector is not None
-        and _serial_sequencer_running(
-            serial_collector, max_silence_s=2.0, after_index=after_index
-        )
+        and _serial_lines_show_running_transport(lines, after_index=after_index)
     )
     if not (
         _transport_running_before_record_arm(lines, after_index=after_index)
-        or sequencer_live
+        or transport_live
     ):
         return False
     print("[info] transport stop before record arm (control-surface flow)")
+    # The re-check window opens **at the press**: the firmware answers a control press at
+    # `press_ms` + its 300 ms debounce (~0.42 s at `press_ms` 120), so a baseline taken after
+    # `settle_s` would open the window after the device had answered, and this re-check could
+    # never see the very mis-press it exists to correct.
+    press_baseline = len(serial_collector.snapshot()) if serial_collector is not None else None
     settle_s = max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0
     _send_short_press(
         out_port,
@@ -1666,12 +1710,9 @@ def _ensure_transport_stopped_before_record_arm(
         press_ms=press_ms,
     )
     time.sleep(settle_s)
-    if serial_collector is not None:
-        post_stop_baseline = len(serial_collector.snapshot())
+    if serial_collector is not None and press_baseline is not None:
         time.sleep(0.35)
-        if _serial_sequencer_running(
-            serial_collector, max_silence_s=1.0, after_index=post_stop_baseline
-        ):
+        if _transport_started_since(serial_collector.snapshot(), after_index=press_baseline):
             print(
                 "[info] transport still active after stop press; "
                 "pressing transport again"
@@ -4247,7 +4288,8 @@ def _build_serial_verification(
     phase_after_index: Optional[int] = None,
 ) -> dict[str, object]:
     record_only = bool(getattr(args, "record_only", False))
-    phase_report = _extract_phase_sessions(lines, after_index=phase_after_index)
+    phase_report = _extract_phase_sessions(
+        lines, after_index=phase_after_index, midi_channel_1based=getattr(args, 'midi_channel', None))
     boundaries = phase_report.boundaries()
     record_stop_stage_rows = _extract_record_stop_stage_rows(lines)
     record_stop_stage_trace = _summarize_record_stop_stages(record_stop_stage_rows)
@@ -6081,10 +6123,26 @@ def run() -> int:
                             press_ms=args.press_ms,
                         )
                         time.sleep(args.phase_wait_ms / 1000.0)
-                        if _clock_seen_within(in_port, 1.0):
+                        device_running = (
+                            serial_collector is not None
+                            and serial_global_transport_running(
+                                serial_collector.snapshot(), after_index=session_after_index
+                            )
+                        )
+                        if _clock_seen_within(in_port, 1.0) or device_running:
                             clock_started = True
                             break
-                        # A press is a toggle, so confirm the device's own transport edge
+                        # A press is a toggle, so the confirmation above is device-led: the clock
+                        # alone is not enough here. Host USB MIDI in misses this device's clock
+                        # often enough that the repo records it as the norm ("Host USB MIDI in
+                        # often misses Teensy clock", `baseline_loop_inventory.
+                        # base_report_record_seed_ok`), and that miss is what made this retry press
+                        # a second time and toggle the transport back off:
+                        # `captures/live-current-root-entry-t8s4-13` shows `Transport started`
+                        # 2078.300 -> `Transport stopped` 2079.030 from its own two presses, then
+                        # `recording not confirmed before note stream`. The device's own
+                        # `Transport started` line is immediate and unambiguous, so it ends the
+                        # retry loop on its own.
                         # before pressing again: either a device clock pulse or a current
                         # #CAP,BAR/BPM row ends the retry loop.
                         # Wait briefly for #CAP,BAR/BPM before the next press.
@@ -6168,7 +6226,18 @@ def run() -> int:
                         # Host clock source: the master owns the transport, so there is nothing to
                         # recover, and an inbound-clock probe can only fail while the device slaves.
                         clock_master is not None
-                        or (clock_reader is not None and clock_reader.pulse_seen())
+                        # **Recency, not history.** `pulse_seen()` is sticky: once the reader has
+                        # ever taken a pulse it answers True for the rest of the run, so this block
+                        # skipped its start presses for a device that was standing still. The
+                        # module's own `_active_reader_sees_clock` records that exact bug ("a sticky
+                        # check kept answering True after the record-arm step had stopped the
+                        # transport, which suppressed the transport restart the record leg needs
+                        # (`record on/off 0/0`, a 1-bar take)"). With the attach no longer stopping
+                        # the device, this skip became fatal: `captures/live-current-root-entry-t8s4-12`
+                        # logged `MIDI clock active; skipping transport reset recovery`, sent
+                        # `transport_press_count 0`, and then aborted with `midi clock missing
+                        # before record phase` and zero seed notes.
+                        or (clock_reader is not None and clock_reader.recent_pulse())
                         or _clock_seen_within(in_port, 0.5)
                     )
                     serial_proxy = _use_serial_transport_proxy(

@@ -279,7 +279,7 @@ void LoopEditManager::flushAllPendingGeometry(Track& track) {
     flushPendingLoopLengthSettle(track);
 }
 
-bool LoopEditManager::hasPendingGeometry() const {
+NOTE_EDIT_MEM bool LoopEditManager::hasPendingGeometry() const {
     return hasPendingLoopStartTick_ || loopStartSettleUntilMs_ != 0 ||
            pendingLoopLengthTicks_ != 0 || loopLengthSettleUntilMs_ != 0;
 }
@@ -400,7 +400,8 @@ void LoopEditManager::sendCurrentLoopStartPitchbend(Track& track) {
 }
 
 
-void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
+NOTE_EDIT_MEM void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track) {
+    editManager.cancelCurrentRootNoteEditEntry(); // cancel private entry; retain ordinary input policy
     if (!isLoopEditMode()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: not in LOOP_EDIT mode");
         return;
@@ -504,14 +505,15 @@ void LoopEditManager::updateLoopEndpointAfterGracePeriod(Track& track) {
     }
 }
 
-void LoopEditManager::handleLoopLengthPitchbend(int16_t pitchValue, Track& track) {
+NOTE_EDIT_MEM void LoopEditManager::handleLoopLengthPitchbend(int16_t pitchValue, Track& track) {
     const int16_t clamped = MidiConfig::Pitchbend::clampLogical(pitchValue);
     const uint8_t ccValue = static_cast<uint8_t>(
         map(clamped, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0, 127));
     handleLoopLengthInput(ccValue, track);
 }
 
-void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
+NOTE_EDIT_MEM void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
+    editManager.cancelCurrentRootNoteEditEntry(); // geometry supersedes entry, not musical input
     if (!isLoopEditMode()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: not in LOOP_EDIT mode");
         return;

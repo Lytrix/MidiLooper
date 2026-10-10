@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "NoteEditSessionUndo.h"
+#include "EditSession.h"
 
 #include <algorithm>
 
@@ -500,3 +501,51 @@ bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b) {
   }
   return true;
 }
+
+NOTE_EDIT_MEM bool NoteEditSessionUndoStack::retireEntryUnit(SessionUndoEntry& entry) {
+  return retireMapUnit(entry.focus.baselineMap) ||
+      retireMapUnit(entry.focus.overlapNotes) ||
+      retireMapUnit(entry.redoFocus.baselineMap) ||
+      retireMapUnit(entry.redoFocus.overlapNotes) ||
+      entry.undoCurrentState.stepClear() || entry.redoCurrentState.stepClear() ||
+      retireEditRowUnit(entry.editRows) || retireEditRowUnit(entry.redoEditRows) ||
+      retireScalarVectorUnit(entry.selection.selectedNotes) ||
+      retireScalarVectorUnit(entry.redoSelection.selectedNotes) ||
+      retireScalarVectorUnit(entry.editPassIdsAtPush) ||
+      retireScalarVectorUnit(entry.redoEditPassIds);
+}
+
+NOTE_EDIT_MEM NoteEditSessionUndoStack::ClearResult
+NoteEditSessionUndoStack::stepClear(uint32_t token) {
+  if (token == 0 || token != clearToken_) return ClearResult::Superseded;
+  if (clearResult_ != ClearResult::Progress) return clearResult_;
+  if (entries_.empty()) {
+    clearResult_ = ClearResult::Complete;
+    return ClearResult::Complete;
+  }
+  if (retireEntryUnit(entries_.back())) return ClearResult::Progress;
+  // All nodes, nested values and large bucket tables have gone. Destruction is
+  // now a fixed set of empty containers, not a hidden content-sized drain.
+  entries_.pop_back();
+  return ClearResult::Progress;
+}
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+size_t NoteEditSessionUndoStack::clearInventoryForTest() const {
+  const auto mapUnits = [](const auto& map) {
+    return map.size() + (map.bucket_count() > 2 ? 1u : 0u);
+  };
+  size_t units = entries_.size();
+  for (const auto& entry : entries_) {
+    units += mapUnits(entry.focus.baselineMap) + mapUnits(entry.focus.overlapNotes) +
+        mapUnits(entry.redoFocus.baselineMap) + mapUnits(entry.redoFocus.overlapNotes) +
+        mapUnits(entry.undoCurrentState.rows()) + mapUnits(entry.redoCurrentState.rows());
+    units += entry.editRows.size() + entry.redoEditRows.size() +
+        entry.selection.selectedNotes.size() + entry.redoSelection.selectedNotes.size() +
+        entry.editPassIdsAtPush.size() + entry.redoEditPassIds.size();
+    for (const auto& row : entry.editRows) units += row.addedEvents.size();
+    for (const auto& row : entry.redoEditRows) units += row.addedEvents.size();
+  }
+  return units;
+}
+#endif

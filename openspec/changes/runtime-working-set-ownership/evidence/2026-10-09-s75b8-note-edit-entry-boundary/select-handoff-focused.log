@@ -1,0 +1,60 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:938: test_button_entry_publishes_an_identity_qualified_session_on_a_current_root_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:939: test_button_entry_on_a_rootless_source_keeps_the_audible_source_and_no_partial_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:940: test_button_entry_on_dense_content_keeps_the_exact_committed_inventory	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:941: test_button_entry_with_an_empty_selection_publishes_no_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:942: test_button_entry_second_press_returns_to_loop_edit_and_releases_the_session	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:943: test_session_exit_and_reopen_publishes_exactly_one_fresh_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:944: test_focus_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:945: test_slot_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:946: test_mutation_between_units_keeps_the_identity_and_requests_no_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:947: test_workspace_reload_between_units_rebinds_the_session_without_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:948: test_clear_between_units_invalidates_the_pending_session_identities	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:949: test_entry_while_a_competing_track_plays_keeps_both_tracks_exact	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:951: test_entry_returns_to_midi_input_between_admitted_units	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:952: test_entry_refuses_a_late_completion_for_a_superseded_track_reference	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:953: test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:954: test_selection_preparation_preserves_inventory_ties_and_nonzero_origin_clamp	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:955: test_selection_preparation_exact_snapshot_dedup_across_pages_bars_and_wrap	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:956: test_selection_preparation_clean_visual_keeps_split_starts_and_invalid_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:957: test_selection_preparation_rejects_stale_result_and_restarts_replaced_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:958: test_selection_preparation_refocus_and_reset_supersede_only_private_work	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:959: test_selection_preparation_empty_source_has_no_fabricated_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:960: test_selection_preparation_waits_for_real_snapshot_owner_without_losing_request	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:961: test_selection_preparation_source_replacement_during_dedup_discards_old_coordinates	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:962: test_selection_preparation_slot_and_selection_supersession_are_qualified	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:963: test_selection_preparation_unsupported_overlay_and_stopped_dirty_source_are_explicit	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:964: test_selection_preparation_matches_legacy_selection_on_ready_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:965: test_selection_preparation_pending_work_preserves_real_current_root_midi	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:966: test_selection_preparation_distinguishes_empty_dirty_cache_from_pending_event_values	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:967: test_selection_preparation_snapshot_read_unit_accepts_maximum_page_and_rejects_over_cap	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:968: test_selection_preparation_snapshot_dedup_preserves_same_identity_different_starts	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:969: test_committed_id_preparation_acceptance_and_single_chunk_grants	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:970: test_committed_id_preparation_pass_order_disabled_rows_and_legacy_parity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:971: test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:972: test_committed_id_preparation_reset_recycled_source_cannot_revive_coordinates	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:973: test_committed_id_preparation_wrong_loop_capture_change_and_discard	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:974: test_committed_id_preparation_invalid_chunk_fault_and_empty_completion	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:975: test_committed_id_preparation_preserves_shared_payload_root_and_refcounts	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:976: test_committed_id_preparation_valid_first_unsealed_second_is_not_drained	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:977: test_real_select_default_entry_consumes_completed_selection_once	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:978: test_real_select_default_entry_does_not_create_or_dirty_event_cache	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:979: test_real_select_empty_default_entry_keeps_bracket_without_reselection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:980: test_real_select_direct_entry_still_resolves_and_handoff_does_not_leak	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:981: test_real_select_entry_observes_canonical_count_without_materializing_values	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:982: test_real_select_entry_observes_dirty_value_count_without_sync_or_discard	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:983: test_real_select_zero_length_default_return_preserves_direct_entry_behavior	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:984: test_real_select_default_entry_preserves_legacy_second_clamp_landing	[PASSED]
+------- native:test_note_edit_entry_boundary [PASSED] Took 7.08 seconds -------
+
+=================================== SUMMARY ===================================
+Environment    Test                           Status    Duration
+-------------  -----------------------------  --------  ------------
+native         test_note_edit_entry_boundary  PASSED    00:00:07.085
+================= 46 test cases: 46 succeeded in 00:00:07.085 =================

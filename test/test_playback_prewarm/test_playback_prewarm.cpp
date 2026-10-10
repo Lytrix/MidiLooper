@@ -7055,11 +7055,13 @@ void test_frozen_record_source_is_windowed_quantized_and_immutable() {
       EmissionCursor{}, LedgerBoundarySummary{}, RuntimePlaybackViewFillScope::RecordCoverage));
   const auto chunks = LoopEventStore::usedChunkCount();
   const size_t grains = (count + 4 + 31) / 32;
-  for (size_t i = 0; i < grains; ++i) {
-    TEST_ASSERT_EQUAL(i + 1 == grains ? RuntimePlaybackViewBuildGrain::Order :
-        RuntimePlaybackViewBuildGrain::Fill, build.stepFill(32));
+  size_t served = 0;
+  for (; served < 2 * grains && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++served) {
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(32));
     TEST_ASSERT_EQUAL(chunks, LoopEventStore::usedChunkCount());
   }
+  TEST_ASSERT_TRUE(served > 0 && served <= 2 * grains);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.nextGrain());
   TEST_ASSERT_EQUAL(2, view.storage.eventCount);
   TEST_ASSERT_EQUAL(10, view.storage.events[0].tick);
   TEST_ASSERT_TRUE(view.storage.events[0].isNoteOn());
@@ -7096,8 +7098,9 @@ void test_frozen_record_source_denies_expiry_and_window_overflow() {
   TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(3, 1, 62, 100)));
   TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
   TEST_ASSERT_TRUE(begin());
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(1));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(2));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(1)); // one block summary
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(2)); // two rows
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(1)); // third exceeds capacity
   TEST_ASSERT_FALSE(view.complete);
   TEST_ASSERT_FALSE(view.sourceFilled);
   // Ensure the expiry assertion cannot pass merely due to window overflow.
@@ -7454,13 +7457,357 @@ void test_snapshot_binding_empty_window_completes_and_costs_saturate() {
   TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredOrderGrains);
 }
 
+void test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins() {
+  const PlaybackViewSourceIdentity capture{0, 7, nullptr, PlaybackWindowOrigin::Capture, 41};
+  const PlaybackViewSourceIdentity newer{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
+  const PlaybackViewSourceIdentity committed{0, 7, nullptr, PlaybackWindowOrigin::Committed};
+  const PlaybackViewSourceIdentity preview{0, 7, nullptr, PlaybackWindowOrigin::Preview};
+  TEST_ASSERT_FALSE(capture == newer);
+  TEST_ASSERT_FALSE(capture == committed);
+  TEST_ASSERT_FALSE(capture == preview);
+  TEST_ASSERT_TRUE(capture == capture);
+}
+
+void test_live_capture_borrow_denies_same_count_sort_and_rebuilds_privately() {
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(150, 1, 7, 64)));
+  TEST_ASSERT_TRUE(loop.captureEventsSortDirty);
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(8));
+  RuntimePlaybackViewBuild build;
+  auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  TEST_ASSERT_EQUAL_UINT32(3, source.count);
+  TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), source.generationToken);
+  const PlaybackCoverageInterval coverage{0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR};
+  const PlaybackViewSourceIdentity identity{0, 7, nullptr, PlaybackWindowOrigin::Capture,
+                                            source.generationToken};
+  TEST_ASSERT_FALSE(build.begin(view, source,
+      {0, 7, nullptr, PlaybackWindowOrigin::Committed}, coverage, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_FALSE(build.begin(view, source,
+      {0, 7, nullptr, PlaybackWindowOrigin::Preview}, coverage, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_FALSE(build.begin(view, source,
+      {0, 7, nullptr, PlaybackWindowOrigin::Capture, source.generationToken + 1},
+      coverage, {}, {}, RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {},
+                               RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, build.stepFill(1));
+  const uint64_t oldToken = loop.captureContentGeneration();
+  TEST_ASSERT_TRUE(loop.ensureCaptureEventsSorted());
+  TEST_ASSERT_EQUAL_UINT32(3, loop.capture.store.size());
+  TEST_ASSERT_NOT_EQUAL_UINT64(oldToken, loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(1));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  TEST_ASSERT_EQUAL_UINT32(3, loop.capture.store.size());
+  build.discard();
+  view.resetMetadata();
+  source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  const PlaybackViewSourceIdentity fresh{0, 7, nullptr, PlaybackWindowOrigin::Capture,
+                                         source.generationToken};
+  TEST_ASSERT_TRUE(build.begin(view, source, fresh, coverage, {}, {},
+                               RuntimePlaybackViewFillScope::PlaybackCoverage));
+  for (unsigned grain = 0; grain < 8 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++grain)
+    (void)build.stepFill(2);
+  for (unsigned grain = 0; grain < 8 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++grain)
+    (void)build.stepOrder(8);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  TEST_ASSERT_FALSE(view.rawCoveragePrepared);
+  TEST_ASSERT_TRUE(view.source == fresh);
+  TEST_ASSERT_EQUAL_UINT32(3, view.storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(100, view.storage.events[view.storage.order[0]].tick);
+  TEST_ASSERT_TRUE(view.storage.events[view.storage.order[0]].isNoteOn());
+  TEST_ASSERT_EQUAL_UINT32(150, view.storage.events[view.storage.order[1]].tick);
+  TEST_ASSERT_EQUAL(midi::ControlChange, view.storage.events[view.storage.order[1]].type);
+  TEST_ASSERT_EQUAL_UINT32(200, view.storage.events[view.storage.order[2]].tick);
+  TEST_ASSERT_TRUE(view.storage.events[view.storage.order[2]].isNoteOff());
+  const uint64_t stable = loop.captureContentGeneration();
+  TEST_ASSERT_FALSE(loop.ensureCaptureEventsSorted());
+  TEST_ASSERT_EQUAL_UINT64(stable, loop.captureContentGeneration());
+}
+
+void test_frozen_range_descriptor_cannot_claim_live_capture_origin() {
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::ControlChange(100, 1, 7, 64)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(4));
+  RuntimePlaybackViewBuild build;
+  const auto source = RuntimePlaybackViewSource::fromCaptureRange(frozen);
+  const PlaybackViewSourceIdentity falseCapture{0, 7, nullptr, PlaybackWindowOrigin::Capture, 41};
+  TEST_ASSERT_FALSE(build.begin(view, source, falseCapture,
+      {0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR}, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  TEST_ASSERT_TRUE(frozen.ready());
+}
+
+void test_live_capture_borrow_rechecks_after_fill_and_completion() {
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(150, 1, 7, 64)));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(8));
+  RuntimePlaybackViewBuild build;
+  const auto coverage = PlaybackCoverageInterval{0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR};
+  auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  auto identity = PlaybackViewSourceIdentity{0, 7, nullptr, PlaybackWindowOrigin::Capture,
+                                              source.generationToken};
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {},
+                               RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(8));
+  TEST_ASSERT_FALSE(view.complete);
+  const uint64_t beforeSort = loop.captureContentGeneration();
+  TEST_ASSERT_TRUE(loop.ensureCaptureEventsSorted());
+  TEST_ASSERT_EQUAL_UINT32(3, loop.capture.store.size());
+  TEST_ASSERT_NOT_EQUAL_UINT64(beforeSort, loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepOrder(8));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  build.discard();
+  view.resetMetadata();
+  source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  identity.captureContentGeneration = source.generationToken;
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {},
+                               RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(8));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepOrder(8));
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_FALSE(view.published);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(300, 1, 10, 65)));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+  TEST_ASSERT_FALSE(view.published);
+}
+
+void test_frozen_record_capture_range_expires_during_fill_but_not_after_copy() {
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  const auto coverage = PlaybackCoverageInterval{0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR};
+  const PlaybackViewSourceIdentity identity{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(4));
+  RuntimePlaybackViewBuild build;
+  auto source = RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42);
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, build.stepFill(1));
+  TEST_ASSERT_TRUE(range.releaseGrain(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(1));
+  TEST_ASSERT_FALSE(view.complete || view.published);
+  build.discard();
+  TEST_ASSERT_NULL(RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42).context);
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  view.resetMetadata();
+  source = RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42);
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(4));
+  TEST_ASSERT_TRUE(range.releaseGrain(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepOrder(4));
+  TEST_ASSERT_TRUE(view.complete && !view.published);
+  TEST_ASSERT_EQUAL_UINT32(2, view.storage.eventCount);
+}
+void test_frozen_record_block_index_keeps_out_of_order_and_wrapped_rows() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 24 * bar;
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  for (uint32_t index = 0; index < 768; ++index) {
+    const uint32_t tick = index == 600 ? bar + 18
+        : index == 767 ? length + 9 : (index / 32) * bar + 40;
+    const MidiEvent row = index == 600 || index == 767
+        ? MidiEvent::NoteOn(tick, 1, index == 600 ? 61 : 62, 100)
+        : MidiEvent::ControlChange(tick, 1, 7, static_cast<uint8_t>(index % 128));
+    TEST_ASSERT_TRUE(producer.append(row));
+  }
+  TEST_ASSERT_TRUE(range.size() == 0); // A reserved descriptor is not a source.
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  TEST_ASSERT_EQUAL_UINT32(768u, range.size());
+  const auto source = RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42);
+  const PlaybackViewSourceIdentity identity{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(64));
+  RuntimePlaybackViewBuild build;
+  const auto serve = [&](uint32_t start) {
+    view.resetMetadata();
+    TEST_ASSERT_TRUE(build.begin(view, source, identity, {start, bar, length}, {}, {},
+        RuntimePlaybackViewFillScope::RecordCoverage));
+    for (unsigned turn = 0; turn < 6 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++turn)
+      (void)build.stepFill(32);
+    TEST_ASSERT_EQUAL_MESSAGE(RuntimePlaybackViewBuildGrain::Order, build.nextGrain(),
+        "irrelevant 32-row blocks must be charged but not copied one row at a time");
+    for (unsigned turn = 0; turn < 4 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++turn)
+      (void)build.stepOrder(64);
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  };
+  serve(bar);
+  TEST_ASSERT_EQUAL_UINT32(33u, view.storage.eventCount);
+  unsigned late = 0;
+  for (size_t index = 0; index < view.storage.eventCount; ++index)
+    if (view.storage.events[index].isNoteOn() && view.storage.events[index].tick == bar + 18) ++late;
+  TEST_ASSERT_EQUAL_UINT32(1u, late);
+  build.discard();
+  serve(0);
+  TEST_ASSERT_EQUAL_UINT32(33u, view.storage.eventCount);
+  unsigned wrapped = 0;
+  for (size_t index = 0; index < view.storage.eventCount; ++index)
+    if (view.storage.events[index].isNoteOn() && view.storage.events[index].tick == 9) ++wrapped;
+  TEST_ASSERT_EQUAL_UINT32(1u, wrapped);
+  TEST_ASSERT_TRUE(range.ready());
+}
+
+
+void test_frozen_record_index_invalidates_before_tick_rewrite() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(bar + 12, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(bar + 32, 1, 60, 0)));
+  producer.shiftAllTicks(bar); // Prior group membership names bar 1, not bar 2.
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(4));
+  RuntimePlaybackViewBuild build;
+  const PlaybackViewSourceIdentity identity{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
+  TEST_ASSERT_TRUE(build.begin(view, RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42),
+      identity, {2 * bar, bar, 4 * bar}, {}, {}, RuntimePlaybackViewFillScope::RecordCoverage));
+  for (unsigned turn = 0; turn < 8 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++turn)
+    (void)build.stepFill(4);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.nextGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepOrder(4));
+  TEST_ASSERT_EQUAL_UINT32(2u, view.storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(2 * bar + 12, view.storage.events[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(2 * bar + 32, view.storage.events[1].tick);
+}
+
+// A frozen Capture ready may coexist with the legacy Record return path, but
+// that path cannot turn its content receipt into committed-root provenance.
+void test_legacy_record_adopter_cannot_reidentify_frozen_capture_ready() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(800, 1, 62, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(900, 1, 62, 0)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(Config::TICKS_PER_BAR));
+  auto* set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE(set->lifecycle.build < set->views.size());
+  const PlaybackViewSourceIdentity capture{1, 2, nullptr, PlaybackWindowOrigin::Capture, 42};
+  const PlaybackViewSourceIdentity committed{1, 2, nullptr};
+  const PlaybackCoverageInterval coverage{768, 768, 1536};
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(build.begin(set->views[set->lifecycle.build],
+      RuntimePlaybackViewSource::fromFrozenRecordCapture(range, 42), capture,
+      coverage, {}, {}, RuntimePlaybackViewFillScope::PlaybackCoverage));
+  for (unsigned grain = 0; grain < 16 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++grain)
+    (void)build.stepFill(4);
+  for (unsigned grain = 0; grain < 16 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++grain)
+    (void)build.stepOrder(4);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_TRUE(set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation));
+  const uint8_t readyRole = set->lifecycle.ready;
+  const uint8_t currentRole = set->lifecycle.current;
+  const uint64_t storage = set->views[readyRole].storageGeneration;
+  TEST_ASSERT_TRUE(set->views[readyRole].source == capture);
+  TEST_ASSERT_NULL(runtime.adoptFrozenRecordWindow(committed, 1536, 800));
+  TEST_ASSERT_EQUAL_UINT8(currentRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.ready);
+  TEST_ASSERT_EQUAL_UINT64(storage, set->views[readyRole].storageGeneration);
+  TEST_ASSERT_TRUE(set->views[readyRole].source == capture);
+  TEST_ASSERT_FALSE(set->views[readyRole].published);
+  TEST_ASSERT_TRUE(range.ready());
+  const PlaybackViewSourceIdentity wrongToken{1, 2, nullptr, PlaybackWindowOrigin::Capture, 43};
+  TEST_ASSERT_NULL(runtime.adoptFrozenRecordWindow(wrongToken, 1536, 800));
+  TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.ready);
+  TEST_ASSERT_TRUE(set->views[readyRole].source == capture);
+  const RuntimePlaybackView* adopted = runtime.adoptFrozenRecordWindow(capture, 1536, 800);
+  TEST_ASSERT_NOT_NULL(adopted);
+  TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(storage, adopted->storageGeneration);
+  TEST_ASSERT_TRUE(adopted->source == capture);
+  TEST_ASSERT_NULL(runtime.adoptFrozenRecordWindow(committed, 1536, 800));
+  TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(storage, set->views[readyRole].storageGeneration);
+  TEST_ASSERT_TRUE(set->views[readyRole].source == capture);
+
+  LoopSnapshot oldRoot;
+  LoopSnapshot newRoot;
+  const PlaybackViewSourceIdentity oldCommitted{1, 2, &oldRoot};
+  const PlaybackViewSourceIdentity newCommitted{1, 2, &newRoot};
+  LoopPlaybackRuntime legacy;
+  TEST_ASSERT_TRUE(legacy.prewarmViews());
+  TEST_ASSERT_TRUE(legacy.prepareFirstRecordingBar(Config::TICKS_PER_BAR));
+  for (unsigned grain = 0; grain < 16 && !legacy.frozenRecordWindowReady(); ++grain)
+    (void)legacy.serviceFrozenRecordWindow(range, range.generation(), oldCommitted, 1536, 800, 768, 4);
+  TEST_ASSERT_TRUE(legacy.frozenRecordWindowReady());
+  auto* legacySet = legacy.viewSetIfPrewarmed();
+  const uint8_t legacyReadyRole = legacySet->lifecycle.ready;
+  const uint64_t legacyStorage = legacySet->views[legacyReadyRole].storageGeneration;
+  const RuntimePlaybackView* rebound = legacy.adoptFrozenRecordWindow(newCommitted, 1536, 800);
+  TEST_ASSERT_NOT_NULL(rebound);
+  TEST_ASSERT_EQUAL_UINT8(legacyReadyRole, legacySet->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(legacyStorage, rebound->storageGeneration);
+  TEST_ASSERT_TRUE(rebound->source == newCommitted);
+}
+
+#include "pending_box_release.inc"
+#define INVENTORY_ADOPTION_WORKER_HARNESS 1
+#include "../test_note_edit_entry_boundary/inventory_adoption.inc"
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_adoption_prepared_real_ready_committed_recycle_owner_refuse);
+  RUN_TEST(test_adoption_preserved_full_grant_future_worker_begin_commit);
+  RUN_TEST(test_pending_box_admission_qualification_and_row_grains);
+  RUN_TEST(test_pending_box_real_prewarm_retain_and_empty_release);
+  RUN_TEST(test_pending_box_partial_construction_and_progress_batches);
+  RUN_TEST(test_pending_box_both_invalid_batches_and_exclusive_root);
+  RUN_TEST(test_pending_box_failed_child_and_shared_republish_parent);
+  RUN_TEST(test_pending_box_live_capture_frontiers_remain_metadata);
+  RUN_TEST(test_pending_box_applied_inventory_literal_rows_and_buffer);
   RUN_TEST(test_qualification_fill_is_private_and_cursor_rewind_denies_without_touching_current);
   RUN_TEST(test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering);
   RUN_TEST(test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties);
   RUN_TEST(test_snapshot_binding_denies_rebound_cursor_overflow_and_published_destination);
   RUN_TEST(test_snapshot_binding_empty_window_completes_and_costs_saturate);
+  RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
+  RUN_TEST(test_live_capture_borrow_denies_same_count_sort_and_rebuilds_privately);
+  RUN_TEST(test_frozen_range_descriptor_cannot_claim_live_capture_origin);
+  RUN_TEST(test_live_capture_borrow_rechecks_after_fill_and_completion);
   RUN_TEST(test_shared_raw_preparation_rotates_then_returns_only_after_final_binding);
   RUN_TEST(test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering);
   RUN_TEST(test_shared_raw_window_cannot_become_audible_before_binding);
@@ -7574,6 +7921,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_deferred_record_projection_refusal_leaves_the_window_untouched);
   RUN_TEST(test_deferred_record_return_window_refuses_an_unsealed_range);
   RUN_TEST(test_frozen_record_source_builds_the_next_playback_window);
+  RUN_TEST(test_legacy_record_adopter_cannot_reidentify_frozen_capture_ready);
   RUN_TEST(test_projection_closes_only_lanes_open_at_the_stop);
   RUN_TEST(test_frozen_record_window_refuses_a_stale_range);
   RUN_TEST(test_deferred_record_interval_is_eligible_only_under_a_pending_owner);
@@ -7650,6 +7998,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_windowed_only_slot_reserves_no_whole_take_representation);
   RUN_TEST(test_windowed_only_slot_refuses_the_whole_take_publishers);
   RUN_TEST(test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission);
+  RUN_TEST(test_frozen_record_capture_range_expires_during_fill_but_not_after_copy);
+  RUN_TEST(test_frozen_record_block_index_keeps_out_of_order_and_wrapped_rows);
+  RUN_TEST(test_frozen_record_index_invalidates_before_tick_rewrite);
   RUN_TEST(test_frozen_record_source_is_windowed_quantized_and_immutable);
   RUN_TEST(test_frozen_record_source_denies_expiry_and_window_overflow);
   RUN_TEST(test_frozen_record_source_rejects_pool_reset_and_failed_row_reads);

@@ -1,0 +1,159 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_playback_prewarm in native environment
+--------------------------------------------------------------------------------
+Building...
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:9:21: error: no type named 'PayloadReleaseResult' in 'PendingSnapshotPublishBox'
+    9 | using Result = Box::PayloadReleaseResult;
+      |                ~~~~~^
+test/test_playback_prewarm/pending_box_release.inc:10:21: error: no type named 'CompanionStoragePolicy' in 'PendingSnapshotPublishBox'
+   10 | using Policy = Box::CompanionStoragePolicy;
+      |                ~~~~~^
+test/test_playback_prewarm/pending_box_release.inc:28:31: error: no type named 'PayloadReleaseCursor' in 'PendingSnapshotPublishBox'
+   28 | size_t drain(Box& owner, Box::PayloadReleaseCursor& cursor) {
+      |                          ~~~~~^
+test/test_playback_prewarm/pending_box_release.inc:30:16: error: no member named 'payloadReleaseResult' in 'PendingSnapshotPublishBox'
+   30 |   while (owner.payloadReleaseResult(cursor) == Result::Progress && grants < 20000) {
+      |          ~~~~~ ^
+test/test_playback_prewarm/pending_box_release.inc:30:48: error: use of undeclared identifier 'Result'; did you mean 'LoopStopFinalize::Result'?
+   30 |   while (owner.payloadReleaseResult(cursor) == Result::Progress && grants < 20000) {
+      |                                                ^~~~~~
+      |                                                LoopStopFinalize::Result
+include/Utils/LoopStopFinalize.h:90:8: note: 'LoopStopFinalize::Result' declared here
+   90 | struct Result {
+      |        ^
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:30:56: error: no member named 'Progress' in 'LoopStopFinalize::Result'
+   30 |   while (owner.payloadReleaseResult(cursor) == Result::Progress && grants < 20000) {
+      |                                                ~~~~~~~~^
+test/test_playback_prewarm/pending_box_release.inc:32:11: error: no member named 'stepPayloadRelease' in 'PendingSnapshotPublishBox'
+   32 |     owner.stepPayloadRelease(cursor, 1);
+      |     ~~~~~ ^
+test/test_playback_prewarm/pending_box_release.inc:36:21: error: use of undeclared identifier 'Result'; did you mean 'LoopStopFinalize::Result'?
+   36 |   TEST_ASSERT_EQUAL(Result::Complete, owner.payloadReleaseResult(cursor));
+      |                     ^~~~~~
+      |                     LoopStopFinalize::Result
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^
+include/Utils/LoopStopFinalize.h:90:8: note: 'LoopStopFinalize::Result' declared here
+   90 | struct Result {
+      |        ^
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:36:29: error: no member named 'Complete' in 'LoopStopFinalize::Result'; did you mean 'template'?
+   36 |   TEST_ASSERT_EQUAL(Result::Complete, owner.payloadReleaseResult(cursor));
+      |                     ~~~~~~~~^~~~~~~~
+      |                             template
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^~~~~~~~
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:36:3: error: expected unqualified-id
+   36 |   TEST_ASSERT_EQUAL(Result::Complete, owner.payloadReleaseResult(cursor));
+      |   ^
+.pio/libdeps/native/Unity/src/unity.h:393:137: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                         ^
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:36:45: error: no member named 'payloadReleaseResult' in 'PendingSnapshotPublishBox'
+   36 |   TEST_ASSERT_EQUAL(Result::Complete, owner.payloadReleaseResult(cursor));
+      |                                       ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^~~~~~
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:51:8: error: no type named 'PayloadReleaseCursor' in 'PendingSnapshotPublishBox'
+   51 |   Box::PayloadReleaseCursor cursor, overlap;
+      |   ~~~~~^
+test/test_playback_prewarm/pending_box_release.inc:56:21: error: use of undeclared identifier 'Result'; did you mean 'LoopStopFinalize::Result'?
+   56 |   TEST_ASSERT_EQUAL(Result::Idle, owner.payloadReleaseResult(cursor));
+      |                     ^~~~~~
+      |                     LoopStopFinalize::Result
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^
+include/Utils/LoopStopFinalize.h:90:8: note: 'LoopStopFinalize::Result' declared here
+   90 | struct Result {
+      |        ^
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:56:41: error: no member named 'payloadReleaseResult' in 'PendingSnapshotPublishBox'
+   56 |   TEST_ASSERT_EQUAL(Result::Idle, owner.payloadReleaseResult(cursor));
+      |                                   ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^~~~~~
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:56:29: error: no member named 'Idle' in 'LoopStopFinalize::Result'
+   56 |   TEST_ASSERT_EQUAL(Result::Idle, owner.payloadReleaseResult(cursor));
+      |                     ~~~~~~~~^
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^~~~~~~~
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:57:21: error: use of undeclared identifier 'Result'; did you mean 'LoopStopFinalize::Result'?
+   57 |   TEST_ASSERT_EQUAL(Result::Progress, owner.beginPayloadRelease(cursor, Policy::Release));
+      |                     ^~~~~~
+      |                     LoopStopFinalize::Result
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^
+include/Utils/LoopStopFinalize.h:90:8: note: 'LoopStopFinalize::Result' declared here
+   90 | struct Result {
+      |        ^
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:57:45: error: no member named 'beginPayloadRelease' in 'PendingSnapshotPublishBox'
+   57 |   TEST_ASSERT_EQUAL(Result::Progress, owner.beginPayloadRelease(cursor, Policy::Release));
+      |                                       ~~~~~ ^
+.pio/libdeps/native/Unity/src/unity.h:393:141: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                             ^~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:156: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                                            ^~~~~~
+In file included from test/test_playback_prewarm/test_playback_prewarm.cpp:7787:
+test/test_playback_prewarm/pending_box_release.inc:57:73: error: use of undeclared identifier 'Policy'
+   57 |   TEST_ASSERT_EQUAL(Result::Progress, owner.beginPayloadRelease(cursor, Policy::Release));
+      |                                                                         ^
+test/test_playback_prewarm/pending_box_release.inc:57:29: error: no member named 'Progress' in 'LoopStopFinalize::Result'
+   57 |   TEST_ASSERT_EQUAL(Result::Progress, owner.beginPayloadRelease(cursor, Policy::Release));
+      |                     ~~~~~~~~^
+.pio/libdeps/native/Unity/src/unity.h:393:129: note: expanded from macro 'TEST_ASSERT_EQUAL'
+  393 | #define TEST_ASSERT_EQUAL(expected, actual)                                                        UNITY_TEST_ASSERT_EQUAL_INT((expected), (actual), __LINE__, NULL)
+      |                                                                                                                                 ^~~~~~~~
+.pio/libdeps/native/Unity/src/unity_internals.h:897:133: note: expanded from macro 'UNITY_TEST_ASSERT_EQUAL_INT'
+  897 | #define UNITY_TEST_ASSERT_EQUAL_INT(expected, actual, line, message)                             UnityAssertEqualNumber((UNITY_INT)(expected), (UNITY_INT)(actual), (message), (UNITY_LINE_TYPE)(line), UNITY_DISPLAY_STYLE_INT)
+      |                                                                                                                                     ^~~~~~~~
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 errors generated.
+*** [/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/native/test/test_playback_prewarm/test_playback_prewarm.o] Error 1
+Building stage has failed, see errors above. Use `pio test -vvv` option to enable verbose output.
+----------- native:test_playback_prewarm [ERRORED] Took 2.87 seconds -----------
+
+=================================== SUMMARY ===================================
+Environment    Test                   Status    Duration
+-------------  ---------------------  --------  ------------
+native         test_playback_prewarm  ERRORED   00:00:02.867
+================== 1 test cases: 0 succeeded in 00:00:02.867 ==================

@@ -5,7 +5,7 @@ answer, and *names* -- never restates -- the two whose verdict belongs to anothe
 
 | Declared term | Judged here? | Owner of the verdict |
 |---|---|---|
-| `readiness_receipts_under_transport` | **yes** | this module, from `#CAP,<us>,DIAG,win_readiness,…` inside a running-transport interval (AC-8: the receipt must arrive where it is produced, i.e. before the transport stops) |
+| `readiness_receipts_under_transport` | **yes** | this module, from `#CAP,<us>,DIAG,win_frozen_readiness,…` inside a running-transport interval (AC-8: the receipt must arrive where it is produced, i.e. before the transport stops). It must be **source-qualified**: the row names the window that became ready, so a generic `win_readiness` row saying `not_servable` does not answer the term (see `frozen_readiness_rows`) |
 | `windowed_service_coverage_under_transport` | **yes** | this module, from `#CAP,<us>,DIAG,win_gap,…` blocks with `running=1`, plus the **named** `win_gap_overrun` row, which fails the check when it is raised under transport |
 | `content_parity_across_window_boundary` | **partly** | the boundary crossings are judged here (`build_complete` publications under transport, so a verdict can be formed); the parity **verdict** is the existing content pipeline's |
 | `root_demoted_residency_over_loop_lengths` | **no** | deferred: the row set that states per-slot residency is not identified, so it is recorded as unknown rather than guessed |
@@ -23,6 +23,12 @@ from typing import Any, Iterable
 #: The lane's own rows, exactly as `DebugSessionCapture` emits them (verified against the emitters, not from memory):
 #: `#CAP,<us>,DIAG,win_readiness,<track>,<slot>,<readiness>,<holder>,<revision>,<leadTicks>`
 READINESS_ROW = "DIAG,win_readiness,"
+#: `#CAP,<us>,DIAG,win_frozen_readiness,<track>,<slot>,<readiness>,<holder>,<revision>,<leadTicks>,` +
+#: `<sourceGeneration>,<captureToken>,<start>,<length>,<loopLength>` — the frozen Record-return **completion**'s own
+#: receipt, emitted by `DebugSessionCapture::frozenReadinessReceiptImmediate` on the frozen owner's completion
+#: transition only. Where `win_readiness` names the slot's *committed* readiness (for a first take: `not_servable`),
+#: this row names the window that actually became ready, so a reader can tell a completion from "nothing to serve".
+FROZEN_READINESS_ROW = "DIAG,win_frozen_readiness,"
 #: `#CAP,<us>,DIAG,win_gap,<maxDelta>,<opportunities>,<phase>,<running>,<discontinuities>,<eligibleMax>,<eligibleTurns>,`
 #: `<progressTurns>,<deniedTurns>,<maxWorkerUs>,<epoch>,<saturatedGaps>,<permitted>,<overruns>,<overrunMax>,<schema>`
 #: (fields 4..19; the trailing `3` is the schema number the emitter writes)
@@ -204,6 +210,53 @@ def readiness_rows(lines: list[str]) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+def frozen_readiness_rows(lines: list[str]) -> list[dict[str, Any]]:
+    """The frozen Record-return completion's own receipt rows, in the emitter's field order.
+
+    These are what make a completion **source-qualified**: the row carries the window's own identity (revision, source
+    generation, frozen capture content token) and the interval it covers, so a reader never has to infer which window
+    became ready from a generic slot verdict. `captureToken` is emitted in full (64-bit), and a row with a zero token
+    or an invalid interval is not evidence of a completion.
+    """
+    rows: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if not _is_lane_row(line, FROZEN_READINESS_ROW):
+            continue
+        fields = _split(line)
+        if len(fields) < 15:
+            continue
+        rows.append(
+            {
+                "index": index,
+                "us": row_us(line),
+                "track": fields[4],
+                "slot": fields[5],
+                "readiness": fields[6],
+                "holder": fields[7],
+                "revision": fields[8],
+                "lead_ticks": fields[9],
+                "source_generation": fields[10],
+                "capture_token": fields[11],
+                "start": fields[12],
+                "length": fields[13],
+                "loop_length": fields[14],
+            }
+        )
+    return rows
+
+
+def frozen_receipt_is_source_qualified(row: dict[str, Any]) -> bool:
+    """Whether a frozen receipt row names a **real** window: a nonzero content token over a valid interval."""
+    try:
+        token = int(row["capture_token"])
+        start = int(row["start"])
+        length = int(row["length"])
+        loop_length = int(row["loop_length"])
+    except (TypeError, ValueError):
+        return False
+    return token != 0 and length > 0 and loop_length > 0 and length <= loop_length and start < loop_length
+
 
 
 def gap_rows(lines: list[str]) -> list[dict[str, Any]]:
@@ -447,11 +500,43 @@ def _demand_detail(summary: dict[str, Any]) -> str:
     return detail
 
 
-def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
-    """Judge the declared oracle's judgeable half, and name the rest."""
+RING_EVIDENCE_LOSS = frozenset({"overflow", "critical_rejected", "tier_a_evicted", "wiped"})
+def ring_evidence_loss_rows(lines: list[str]) -> list[dict[str, Any]]:
+    """Return explicit ring events that invalidate absence/count conclusions for critical evidence."""
+    rows: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        fields = _split(line)
+        if len(fields) < 4 or fields[0] != "#CAP" or fields[2] != "RING":
+            continue
+        if fields[3] in RING_EVIDENCE_LOSS:
+            rows.append({"index": index, "us": row_us(line), "kind": fields[3], "line": line.strip()})
+    return rows
+def verify_windowed_lane(
+    lines: list[str], *, expected_track_number: int | None = None, switch_target_slot: int | None = None,
+    require_ring_stats: bool = False,
+) -> dict[str, Any]:
+    """Judge the declared lane oracle and, when named, validate the switch target's eligibility."""
     intervals = running_intervals(lines)
     checks: list[dict[str, Any]] = []
     summary = demand_entry_summary(lines)
+    losses = ring_evidence_loss_rows(lines)
+    stats = ring_stats_rows(lines)
+    counter_keys = ("tierA_evict", "overflow", "crit_rej", "wipe")
+    if len(stats) >= 2:
+        baseline_stats, final_stats = stats[0], stats[-1]
+        deltas = {key: final_stats[key] - baseline_stats[key] for key in counter_keys}
+        counters_clean = all(delta == 0 for delta in deltas.values())
+        scoped_losses = [row for row in losses if row["us"] is None or baseline_stats["us"] is None or row["us"] >= baseline_stats["us"]]
+        stats_detail = f"stats_readbacks={len(stats)} deltas={deltas}"
+    else:
+        deltas = None
+        counters_clean = not require_ring_stats
+        scoped_losses = losses
+        stats_detail = f"stats_readbacks={len(stats)} baseline_and_final_required={require_ring_stats}"
+    loss_counts = {kind: sum(row["kind"] == kind for row in scoped_losses) for kind in sorted(RING_EVIDENCE_LOSS)}
+    ring_clean = not scoped_losses and counters_clean
+    checks.append(_check("capture_evidence_ring_intact", ring_clean,
+                         f"critical_evidence_loss_rows={len(scoped_losses)} kinds={loss_counts} {stats_detail}"))
     demand = bool(summary["observed"])
     checks.append(
         _check(
@@ -463,14 +548,28 @@ def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
 
     # **AC-8: the receipt must arrive while the transport runs.** A receipt that only reaches the stream after the
     # stop is exactly what the direct-when-USB-has-room path exists to avoid, so it is a failure and not a pass.
+    #
+    # **And it must be source-qualified.** The declared term is about the lane's *own* window becoming ready. A generic
+    # `win_readiness` row naming `not_servable` is not that: for a first Record take `playbackWindowReadinessForSlot`
+    # exits on `!loop.hasCommittedPasses()` before a frozen Capture ready can be named, so accepting it silently passed
+    # a run whose frozen completions were never named (the reading that made
+    # `captures/e2-lane-rows-202609…-run2` look like a pass). The row that answers the term is the frozen family's own
+    # `win_frozen_readiness`, carrying the completed window's identity and interval.
     receipts = readiness_rows(lines)
     receipts_under = [row for row in receipts if _under_transport(row["us"], intervals)]
+    frozen = frozen_readiness_rows(lines)
+    frozen_under = [row for row in frozen if _under_transport(row["us"], intervals)]
+    qualified = [row for row in frozen_under if frozen_receipt_is_source_qualified(row)]
     checks.append(
         _check(
             "readiness_receipts_under_transport",
-            bool(receipts_under),
+            bool(qualified),
             f"receipts={len(receipts)} under_transport={len(receipts_under)}"
-            + (f" first={receipts_under[0]['readiness']}/{receipts_under[0]['holder']}" if receipts_under else ""),
+            + (f" first={receipts_under[0]['readiness']}/{receipts_under[0]['holder']}" if receipts_under else "")
+            + f" source_qualified={len(qualified)} of {len(frozen_under)} frozen_receipts_under_transport"
+            + (f" first={qualified[0]['readiness']}/{qualified[0]['holder']}"
+               f" token={qualified[0]['capture_token']} interval={qualified[0]['start']}+{qualified[0]['length']}"
+               f"/{qualified[0]['loop_length']}" if qualified else ""),
         )
     )
 
@@ -501,6 +600,32 @@ def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
         )
     )
 
+    if expected_track_number is not None and switch_target_slot is not None:
+        target_track = str(expected_track_number - 1)
+        target_slot = str(switch_target_slot - 1)
+        target_gates = [
+            row for row in gate_rows(lines)
+            if row["track"] == target_track and row["slot"] == target_slot
+            and _under_transport(row["us"], intervals)
+        ]
+        aligned = [
+            row for row in target_gates
+            if all(row["flags"].get(name) == "1" for name in ("ep", "av", "al", "pl"))
+        ]
+        if not target_gates:
+            alignment_detail = f"target t={target_track} s={target_slot}: no win_gate row under transport"
+        elif aligned:
+            last_aligned = aligned[-1]
+            alignment_detail = f"target t={target_track} s={target_slot} span-aligned len={last_aligned['loop_len']}"
+        else:
+            last_target = target_gates[-1]
+            alignment_detail = (
+                f"target t={target_track} s={target_slot} has no eligible aligned gate under transport; "
+                f"last len={last_target['loop_len']} x={last_target['exit']} "
+                f"ep={last_target['flags'].get('ep')} av={last_target['flags'].get('av')} "
+                f"al={last_target['flags'].get('al')} pl={last_target['flags'].get('pl')}"
+            )
+        checks.append(_check("switch_target_span_alignment", bool(aligned), alignment_detail))
     # Successive publications under transport: the precondition for a parity verdict at a boundary (the verdict itself
     # stays the content pipeline's -- see `DEFERRED_TERMS`).
     completions = [
@@ -539,26 +664,80 @@ def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
     }
 
 
+def _legacy_int_option(args: object, name: str) -> int | None:
+    values = list(getattr(args, "legacy_args", []) or [])
+    for index, token in enumerate(values[:-1]):
+        if token == name:
+            try:
+                return int(values[index + 1])
+            except ValueError:
+                return None
+    return None
+
+
 def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, Any]:
-    """The windowed profile's verifier: the reused long-loop leg's own oracle **plus** the windowed lane's rows.
-
-    The leg is the existing content-verification pipeline's (task 6.4 feeds it, it does not replace it), so both halves
-    must pass; a run where the windowed rows are healthy but the leg's own oracle failed is not a pass, and neither is
-    one where the leg was fine but the lane's receipts never arrived under transport.
-    """
+    """Combine the legacy leg, lane oracle, target alignment and Record Snapshot progress."""
     from hitl.verify.display_window import verify_long_loop_display_window
+    from hitl.verify.record_snapshot import verify_record_snapshot_progress
 
-    leg = verify_long_loop_display_window(lines, args)
-    lane = verify_windowed_lane(lines)
+    leg = getattr(args, "windowed_leg_run_report", None)
+    if not isinstance(leg, dict):
+        import json
+        from pathlib import Path
+        out_dir = getattr(args, "out_dir", None)
+        reports = sorted(Path(out_dir).glob("host_midi_hitl_long_loop_display_window_*.json")) if out_dir else []
+        if reports:
+            try:
+                standalone = json.loads(reports[-1].read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                standalone = {}
+            leg = standalone.get("serial_verification")
+    if not isinstance(leg, dict):
+        leg = verify_long_loop_display_window(lines, args)
+    track_number = getattr(args, "track_number", None)
+    target_slot = getattr(args, "windowed_switch_target_slot", None)
+    if target_slot is None:
+        target_slot = _legacy_int_option(args, "--switch-target-slot")
+    lane = verify_windowed_lane(
+        lines,
+        expected_track_number=track_number if target_slot is not None else None,
+        switch_target_slot=target_slot,
+        require_ring_stats=True,
+    )
+    loop_slot = getattr(args, "windowed_record_slot", getattr(args, "loop_slot", None))
+    snapshot = verify_record_snapshot_progress(lines, track_number=track_number, loop_slot=loop_slot)
     issues: list[str] = []
     if not leg.get("ok"):
         issues.extend(f"leg: {issue}" for issue in (leg.get("issues") or ["failed"]))
     issues.extend(f"lane: {issue}" for issue in lane["issues"])
+    if snapshot["applicable"]:
+        issues.extend(f"snapshot: {issue}" for issue in snapshot["issues"])
     return {
         "ok": not issues,
         "issues": issues,
         "leg": leg,
         "lane": lane,
+        "snapshot": snapshot,
         "deferred": lane["deferred"],
         "oracle_complete": False,
     }
+def ring_stats_rows(lines: list[str]) -> list[dict[str, Any]]:
+    """Parse stopped-only `RING,stats` counter readbacks."""
+    counters = ("tierA_evict", "overflow", "crit_rej", "wipe")
+    rows: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        fields = _split(line)
+        if len(fields) < 4 or fields[0] != "#CAP" or fields[2:4] != ["RING", "stats"]:
+            continue
+        values = {}
+        for item in fields[4:]:
+            if "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            try:
+                values[key] = int(value)
+            except ValueError:
+                continue
+        if all(key in values for key in counters):
+            rows.append({"index": index, "us": row_us(line), **values})
+    return rows

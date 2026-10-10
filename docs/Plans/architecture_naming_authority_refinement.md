@@ -112,6 +112,33 @@ Reference also: [`naming_drift_scoped_edit_pass_handoff.md`](naming_drift_scoped
 
 **Consolidated index:** [`refactor_priority_backlog.md`](refactor_priority_backlog.md) — cross-cutting P1/P2/P3 backlog linking this audit, hygiene, and CURRENT_WORK.
 
+### Migrated out of NAMING.md (2026-10-08 — migration status only)
+
+NAMING.md keeps the **preferred-term policy** (preferred names, prefix rules, avoid list). Current-vs-preferred
+status and timing live here, per its own migration-policy rule.
+
+| Symbol today | Preferred | Status / timing |
+|--------------|-----------|-----------------|
+| `runEditSessionGeometryPipeline` | `NoteGeometryResolver::resolve` | EditManager TU split **Phase 7a** |
+| `RunEditSessionGeometryPipeline.*` | `NoteGeometryResolver.*` | Phase 7a |
+| `ResolveConstrainedGeometry.h/.cpp` | Evaluate `ResolveConstrainedNoteGeometry` or move under `NoteGeometry/` | Phase 7 or 7c |
+| `resolveConstrainedGeometry` / `resolveAllConstrainedGeometry` | Evaluate `resolveConstrainedNoteGeometry` / `resolveAllConstrainedNoteGeometry` | With resolver TU work |
+| `EditedGeometry` | Evaluate `EditedNoteGeometry` | Phase 7+ when `EditSessionAction.h` is touched |
+| `ConstrainedNoteGeometry` | **Keep** — already explicit | — |
+| `GeometryFaderInput.cpp` | Evaluate `NoteGeometryFaderInput.cpp` | Next ControlSurface note-edit fader work |
+| `PlayingEditGeometryDefer.cpp` | **Done** — was `PlayingGeometryDefer.cpp` | Playing-transport note-edit geometry defer |
+| `isGeometryDriverActive`, `finishGeometryDriverSideEffects`, … | Evaluate **NoteGeometryDriver** vocabulary | ControlSurface boundary — disambiguate from UI/display geometry |
+| `EditEvent::GeometryChanged` | Evaluate `NoteGeometryChanged` | When `EditEvent` consumers are refactored |
+| `beginGeometryMutation`, `isGeometryEditKind`, … | **Keep** concise — `EditManager` / `NoteEditKind` context is sufficient | — |
+| `UndoLoopGeometry`, `LoopEditDepartGeometry` | **Keep** — loop-length domain, not note geometry | — |
+| Display / piano-roll “geometry” in plans | **Not** note geometry — do not conflate | — |
+| Geometry-pipeline legacy debt | `NoteGeometryResolver` (EditManager TU split Phase 7); capture telemetry `#CAP,…,GEOM_APPLY,resolve,…`, helper `logGeomApplyResolve` | **Done**; NAMING keeps the rule that new `*Pipeline*` identifiers are not used for synchronous geometry resolution |
+| UI rename | `class EditState` → `EditNoteState` (note-edit FSM base) | **Shipped**; NAMING keeps the rule that `EditState` on an `EditPass` means Active \| Disabled |
+| “Related types today” | `EditedGeometry`, `ConstrainedNoteGeometry`, geometry driver, `NoteGeometryResolver` | Current state, 2026-08-10 pass |
+
+NAMING.md keeps the § Note geometry policy (namespace compression, future folder, on-touch review). Its accepted
+Phase 0 boundary sentence (logical indexes only; physical directory a later measurement decision) moved to
+[`Authority/Architecture/Snapshots.md`](../Authority/Architecture/Snapshots.md) § Representation.
 ---
 
 ## Section C — Geometry resolution naming
@@ -188,6 +215,7 @@ Phase 7 ships `NoteGeometryResolver` only; other rows adopt on subsystem refacto
 - Added naming review checklist to `docs/Agents/reviewer.md`
 - Updated `docs/README.md`, `AGENT_CONTEXT_MAP.md`, `openspec/config.yaml`
 - Trimmed root `README.md` glossary to summary + link
+- Fenced `NAMING.md` to names and meanings (new § Scope of this authority) and moved embedded behavior contracts to their owners: bound classes → `Authority/Architecture/ExecutionBounds.md`, readiness deadline → `Authority/Architecture/IntervalProjection.md`, epoch-lease and readiness invariants → `Authority/ARCHITECTURE_RULES.md`, active-note ledger sites → `Authority/Architecture/Playback.md`, migration status → this plan. Claim-scoped precedence recorded in `Authority/README.md`.
 
 ### Plan glossary index
 

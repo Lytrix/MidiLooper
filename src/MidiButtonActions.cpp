@@ -337,31 +337,8 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             break;
 
         case MidiButtonConfig::ActionType::OVERDUB_FOR_SLOT:
-            if (parameter < ::Config::MAX_LOOPS_PER_TRACK) {
-                uint8_t tidx = trackManager.getSelectedTrackIndex();
-                uint8_t slot = static_cast<uint8_t>(parameter);
-                uint32_t now = getCurrentTick();
-                Track& track = getCurrentTrack();
-
-                const bool slotHasData = track.hasDataInSlot(slot);
-                if (!slotHasData) {
-                    // Keep behavior consistent with short-press for empty slots.
-                    handleToggleRecordForSlot(slot);
-                    return;
-                }
-
-                trackManager.clearPendingSlotSwitch(tidx);
-                trackManager.setSelectedSlotIndex(tidx, slot);
-
-                // Ensure we are not in TRACK_EMPTY before starting overdub.
-                if (track.isEmpty()) {
-                    track.startPlaying(now);
-                } else if (!track.isAudiblePlaybackActive()) {
-                    track.startPlaying(now);
-                }
-
-                trackManager.startOverdubbingTrack(tidx);
-            }
+            if (parameter < ::Config::MAX_LOOPS_PER_TRACK)
+                handleOverdubForSlot(static_cast<uint8_t>(parameter));
             break;
         case MidiButtonConfig::ActionType::MUTE_TRACK:
             handleMuteTrack(static_cast<uint8_t>(parameter));
@@ -380,6 +357,32 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
             logger.info("Action type %d not yet implemented", static_cast<int>(actionType));
             break;
     }
+}
+
+void MidiButtonActions::handleOverdubForSlot(uint8_t slot) {
+    if (slot >= ::Config::MAX_LOOPS_PER_TRACK) return;
+    uint8_t tidx = trackManager.getSelectedTrackIndex();
+    uint32_t now = getCurrentTick();
+    Track& track = getCurrentTrack();
+
+    const bool slotHasData = track.hasDataInSlot(slot);
+    if (!slotHasData) {
+        // Keep behavior consistent with short-press for empty slots.
+        handleToggleRecordForSlot(slot);
+        return;
+    }
+
+    trackManager.clearPendingSlotSwitch(tidx);
+    trackManager.setSelectedSlotIndex(tidx, slot);
+
+    // Ensure we are not in TRACK_EMPTY before starting overdub.
+    if (track.isEmpty()) {
+        track.startPlaying(now);
+    } else if (!track.isAudiblePlaybackActive()) {
+        track.startPlaying(now);
+    }
+
+    trackManager.startOverdubbingTrack(tidx);
 }
 
 void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {

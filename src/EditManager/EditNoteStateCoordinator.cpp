@@ -24,6 +24,10 @@
 using DisplayNote = NoteUtils::DisplayNote;
 
 EDIT_MANAGER_IMPL_MEM void EditManager::setState(EditNoteState* newState, Track& track, uint32_t startTick) {
+    if (hasPendingCurrentRootNoteEditEntry()) {
+        if (newState) return; // unsupported arbitrary-state intent rejects while private
+        cancelCurrentRootNoteEditEntry();
+    }
     if (currentState) {
         if (currentState == &startNoteState || currentState == &lengthNoteState ||
             currentState == &pitchNoteState) {
@@ -168,6 +172,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::switchToNextState(Track& track) {
 
 EDIT_MANAGER_IMPL_MEM void EditManager::enterEditMode(EditNoteState* newState, uint32_t startTick) {
     auto& track = trackManager.getSelectedTrack();
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     if (!editSession.active) {
         openNoteEditSession(track);
@@ -177,6 +182,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterEditMode(EditNoteState* newState, u
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::exitEditMode(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry() && !editSession.active) {
+        cancelCurrentRootNoteEditEntry(); return; // private open never became a session
+    }
+    cancelCurrentRootNoteEditEntry();
     controlSurfaceManager.resetLengthEditingModeOnSessionBoundary();
     syncNoteEditFocusLastFromSessionStore(track);
     commitAllPendingNoteEditActions(track);
@@ -275,6 +284,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::exitPitchEditMode(Track& track) {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::cycleNoteEditType(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     if (!editSession.active) {
         openNoteEditSession(track);
         emitSessionOpenedToSurface(false, true);

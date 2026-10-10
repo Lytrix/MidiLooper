@@ -504,6 +504,8 @@ void test_allow_snapshot_construction_start_before_first_root_session_exit() {
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotConstructionStart(
       true, true, false, true, true));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
+      false, false, false, true, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
       false, false, true, true, false));
 }
 

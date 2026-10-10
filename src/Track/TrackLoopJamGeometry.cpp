@@ -30,6 +30,7 @@ TRACK_COLD_MEM void resetActiveLoopPlaybackCursorForJam(Track& track) {
 }  // namespace
 
 TRACK_COLD_MEM void Track::clear() {
+    if (loopsAllocated()) editManager.cancelCurrentRootNoteEditEntryForLoop(getActiveLoop());
     if (trackState == TRACK_EMPTY) {
         // Name the target: identification was previously impossible from the log, so a preparation that
         // silently kept content could not be told from one that cleared the intended slot.

@@ -1139,6 +1139,30 @@ SC_MEM_ATTR void recSlotIdentity(const char* event, uint32_t takeId, uint8_t tra
           : 0u;
 }
 
+SC_MEM_ATTR bool emitTraceFence(const char* nonce) {
+  // Fixed validated token, no ring fallback and no transport gate.
+  if (nonce == nullptr) return false;
+  for (size_t i = 0; i < 32; ++i) {
+    const char ch = nonce[i];
+    if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return false;
+  }
+  if (nonce[32] != '\0' || !serialWriteRoom(96)) return false;
+  Serial.printf_P(SC_FMT("#CAP,%lu,TRACE_FENCE,%s\r\n"),
+                  static_cast<unsigned long>(micros()), nonce);
+  return true;
+}
+
+SC_MEM_ATTR bool emitTrackStatus(uint8_t track, uint8_t slot, const char* state,
+                                  bool transportRunning) {
+  // Called by the read-only serial command owner, never on a clock edge.
+  // Do not enqueue an old reply: the next request must observe fresh scalars.
+  if (!serialWriteRoom(96)) return false;
+  Serial.printf_P(SC_FMT("#TRACK_STATUS,us=%lu,track=%u,slot=%u,state=%s,transport=%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(slot), state, transportRunning ? 1u : 0u);
+  return true;
+}
+
 // S1.3 save/restore-survival: the read-back for the bounded identity-path counters. One fixed-size
 // record, emitted only from the stopped-only HITL command, so the record/persist path never prints.
 SC_MEM_ATTR void emitRecordFamilyStats(const char* family, const RecordFamilyStats& stats) {
@@ -1717,6 +1741,51 @@ SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const ch
                 holder == nullptr ? "?" : holder, static_cast<unsigned long>(revision),
                 static_cast<unsigned long>(leadTicks));
 }
+
+/// The frozen Record-return receipt's **ring-path** format, placed in memory-mapped FLASH (`PROGMEM` -> the
+/// `.progmem` carve-out the linker script already routes to `FLASH`) rather than left as a `.rodata.str*` literal in
+/// DTCM. `.rodata` is DTCM in this script, and this TU's newly added strings were ~150 B past the
+/// `_VectorsRam`/periodictable alignment edge -- enough to snap the RAM1 `variables` figure by 4 KB and take it out of
+/// the local allowance (`variables` 96,192 -> 100,288 with the ITCM `code` figure unchanged). The direct path's
+/// literal already travels to FLASH because `SC_FMT` is `PSTR` on this target; this is the same treatment for the
+/// ring path, so no linker-script carve-out and no budget re-base is needed.
+/// DTCM. `.rodata` is DTCM in this script, and this TU's newly added strings were ~150 B past the
+/// `_VectorsRam`/periodictable alignment edge -- enough to snap the RAM1 `variables` figure by 4 KB and take it out of
+/// the local allowance (`variables` 96,192 -> 100,288 with the ITCM `code` figure unchanged). The direct path's
+/// literal already travels to FLASH because `SC_FMT` is `PSTR` on this target; this is the same treatment for the
+/// ring path, so no linker-script carve-out and no budget re-base is needed.
+static const char kFrozenReadinessRowFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,win_frozen_readiness,%u,%u,%s,%s,%lu,%lu,%lu,%llu,%lu,%lu,%lu\r\n";
+
+/// The frozen Record-return's **source-qualified** readiness receipt. Same two delivery rules as
+/// `readinessReceiptImmediate` -- direct when USB has room, ring otherwise -- so a receipt produced under transport is
+/// delayed rather than lost; `win_frozen_readiness` is its own family so the windowed lane can require a
+/// source-qualified receipt instead of accepting the generic `not_servable` row. The capture token is emitted in full
+/// (`%llu`), so a reader compares it against the frozen job's generation without truncation arithmetic.
+SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
+                                                uint32_t revision, uint32_t leadTicks, uint32_t sourceGeneration,
+                                                uint64_t captureToken, uint32_t start, uint32_t length,
+                                                uint32_t loopLength) {
+  if (serialWriteRoom(160)) {
+    // `.progmem` is memory-mapped on this target, so the FLASH-resident format is read directly -- the same
+    // treatment `SC_FMT` (`PSTR`) already gives the sibling receipt's direct path.
+    Serial.printf(kFrozenReadinessRowFormat,
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(slot), readiness == nullptr ? "?" : readiness,
+                  holder == nullptr ? "?" : holder, static_cast<unsigned long>(revision),
+                  static_cast<unsigned long>(leadTicks), static_cast<unsigned long>(sourceGeneration),
+                  static_cast<unsigned long long>(captureToken), static_cast<unsigned long>(start),
+                  static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength));
+    return;
+  }
+  emitCapPrintf(kFrozenReadinessRowFormat,
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), readiness == nullptr ? "?" : readiness,
+                holder == nullptr ? "?" : holder, static_cast<unsigned long>(revision),
+                static_cast<unsigned long>(leadTicks), static_cast<unsigned long>(sourceGeneration),
+                static_cast<unsigned long long>(captureToken), static_cast<unsigned long>(start),
+                static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength));
+}
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
@@ -2074,4 +2143,20 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record) {
 
 }  // namespace DebugSessionCapture
 
+#if defined(__IMXRT1062__)
+// The frozen receipt's **tag prefix**, FLASH-resident for the same reason as the format string above: `.rodata` is
+// DTCM in this script, and this TU's literals already sit on the `_VectorsRam`/periodictable alignment edge, where the
+// ~30 B of a new tag snaps the RAM1 `variables` figure by 4 KB. `CaptureLineTier.h` declares the accessor -- the header
+// itself cannot carry the attribute (the compiler reports a section type conflict) -- and picks up this definition on
+// the target; the host build returns the literal from the header instead. Defined at global scope, after the emitter
+// namespace closes, because the classification namespace owns the name.
+namespace CaptureLineTier {
+namespace {
+const char kFrozenReadinessTagPrefix[] PROGMEM = "DIAG,win_frozen_readiness,";
+}  // namespace
+const char* frozenReadinessTagPrefix() {
+  return kFrozenReadinessTagPrefix;
+}
+}  // namespace CaptureLineTier
+#endif  // __IMXRT1062__ -- the host build takes the header's inline literal instead
 #endif  // SESSION_CAPTURE

@@ -1,0 +1,212 @@
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 119 tests
+
+Processing test_windowed_preview_integration in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1067: test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1068: test_current_root_note_edit_open_keeps_the_committed_playback_interval	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1069: test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stale_preview	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1070: test_an_in_session_undo_and_redo_advance_the_preview_revision_and_the_served_content	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1071: test_a_selected_track_change_cancels_the_departing_tracks_preview_by_its_own_lifecycle	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1072: test_the_session_exit_owes_the_committed_handoff_and_the_preview_keeps_serving	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1075: test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1076: test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1077: test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_preview	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1078: test_3_7a_i3_a_refocus_yields_the_preview_without_owing_a_handoff	[PASSED]
+test/test_windowed_preview_integration/test_windowed_preview_integration.cpp:1081: test_the_save_serializes_the_committed_checkpoint_and_never_the_served_preview	[PASSED]
+----- native:test_windowed_preview_integration [PASSED] Took 1.11 seconds -----
+
+Processing test_note_edit_entry_boundary in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:962: test_live_ready_root_zero_grant_acceptance	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:963: test_live_dedup_and_accepted_capture_input_supersede_without_obsolete_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:964: test_live_empty_ready_root_and_split_start_tie_inventory	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:965: test_live_compatibility_admission_is_explicit_and_nonmutating	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:966: test_live_real_storage_reset_before_source_reuse_and_geometry_cancel	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:967: test_live_populated_inactive_payload_and_derived_cleanup_precede_publication	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:968: test_live_real_publisher_second_clamp_final_landing_and_late_cancel	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:969: test_live_one_grant_private_selection_and_exact_completion	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:970: test_live_short_wrapper_and_pending_inputs_do_not_run_immediate_tails	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:971: test_live_pending_second_press_cancels_without_fake_session_events	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:972: test_live_every_prepublication_phase_target_slot_and_source_cancel	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:973: test_live_cleanup_reset_clear_reload_and_compatibility_supersede	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:974: test_live_obsolete_feedback_cancelled_after_publication_and_callback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:975: test_live_dense_preparation_one_unit_and_peer_midi_unchanged	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:976: test_adoption_queries_header_grant_and_consumed_swap	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:977: test_adoption_real_borrowers_withhold_header_and_adoption	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:978: test_adoption_real_prewarm_history_staleness_preserves_grant	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:979: test_adoption_real_wrap_journal_refuses_without_mutation	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:980: test_adoption_delete_companion_literal_inventory_and_publisher_parity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:981: test_adoption_both_retained_invalid_batches_refuse	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:982: test_adoption_partial_foreign_fault_and_stale_receipts	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:983: test_adoption_empty_invalid_mode_and_zero_geometry	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:984: test_adoption_loaded_root_refusal_republish_preserves_stale_root_and_parity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:985: test_adoption_reservation_shortfall_exact_and_full_horizon	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:986: test_adoption_live_staged_undo_and_queued_destinations_refuse	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:987: test_adoption_retirement_progress_and_complete_are_never_fresh	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:988: test_adoption_imported_metadata_order_is_observation_only	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:989: test_pending_box_real_wrap_edges_shells_and_companion_rows	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:990: test_inventory_withheld_exact_grants_and_literal_ids	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:991: test_inventory_empty_and_existing_capacity_no_fabrication	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:992: test_inventory_nonempty_admission_and_discard_do_not_release_outputs	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:993: test_inventory_revision_and_completed_receipt_supersession_sticky	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:994: test_inventory_same_shape_reset_reseed_generation_rejects	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:995: test_inventory_foreign_loop_and_scalar_topology_guards	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:996: test_inventory_output_headers_sizes_and_storage_are_qualified	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:997: test_inventory_preserves_root_pending_chunks_and_legacy_parity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:998: test_derived_state_clear_production_payload_baseline	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:999: test_derived_state_clear_withheld_exact_grants_and_preserved_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1000: test_derived_state_clear_admission_requires_completed_receipt_and_departed_fsm	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1001: test_derived_state_clear_refocus_and_slot_supersession_are_sticky	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1002: test_derived_state_clear_legacy_reset_reopen_rejects_old_cursor	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1003: test_derived_state_clear_empty_local_owner_finishes_without_materializing	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1005: test_button_entry_publishes_an_identity_qualified_session_on_a_current_root_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1006: test_button_entry_on_a_rootless_source_keeps_the_audible_source_and_no_partial_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1007: test_button_entry_on_dense_content_keeps_the_exact_committed_inventory	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1008: test_button_entry_with_an_empty_selection_publishes_no_selection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1009: test_button_entry_second_press_returns_to_loop_edit_and_releases_the_session	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1010: test_session_exit_and_reopen_publishes_exactly_one_fresh_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1011: test_focus_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1012: test_slot_change_between_units_revalidates_the_session_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1013: test_mutation_between_units_keeps_the_identity_and_requests_no_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1014: test_workspace_reload_between_units_rebinds_the_session_without_feedback	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1015: test_clear_between_units_invalidates_the_pending_session_identities	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1016: test_entry_while_a_competing_track_plays_keeps_both_tracks_exact	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1018: test_entry_returns_to_midi_input_between_admitted_units	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1019: test_entry_refuses_a_late_completion_for_a_superseded_track_reference	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1020: test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1021: test_selection_preparation_preserves_inventory_ties_and_nonzero_origin_clamp	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1022: test_selection_preparation_exact_snapshot_dedup_across_pages_bars_and_wrap	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1023: test_selection_preparation_clean_visual_keeps_split_starts_and_invalid_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1024: test_selection_preparation_rejects_stale_result_and_restarts_replaced_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1025: test_selection_preparation_refocus_and_reset_supersede_only_private_work	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1026: test_selection_preparation_empty_source_has_no_fabricated_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1027: test_selection_preparation_waits_for_real_snapshot_owner_without_losing_request	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1028: test_selection_preparation_source_replacement_during_dedup_discards_old_coordinates	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1029: test_selection_preparation_slot_and_selection_supersession_are_qualified	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1030: test_selection_preparation_unsupported_overlay_and_stopped_dirty_source_are_explicit	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1031: test_selection_preparation_matches_legacy_selection_on_ready_source	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1032: test_selection_preparation_pending_work_preserves_real_current_root_midi	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1033: test_selection_preparation_distinguishes_empty_dirty_cache_from_pending_event_values	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1034: test_selection_preparation_snapshot_read_unit_accepts_maximum_page_and_rejects_over_cap	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1035: test_selection_preparation_snapshot_dedup_preserves_same_identity_different_starts	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1036: test_committed_id_preparation_acceptance_and_single_chunk_grants	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1037: test_committed_id_preparation_pass_order_disabled_rows_and_legacy_parity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1038: test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1039: test_committed_id_preparation_reset_recycled_source_cannot_revive_coordinates	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1040: test_committed_id_preparation_wrong_loop_capture_change_and_discard	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1041: test_committed_id_preparation_invalid_chunk_fault_and_empty_completion	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1042: test_committed_id_preparation_preserves_shared_payload_root_and_refcounts	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1043: test_committed_id_preparation_valid_first_unsealed_second_is_not_drained	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1044: test_real_select_default_entry_consumes_completed_selection_once	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1045: test_real_select_default_entry_does_not_create_or_dirty_event_cache	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1046: test_real_select_empty_default_entry_keeps_bracket_without_reselection	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1047: test_real_select_direct_entry_still_resolves_and_handoff_does_not_leak	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1048: test_real_select_entry_observes_canonical_count_without_materializing_values	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1049: test_real_select_entry_observes_dirty_value_count_without_sync_or_discard	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1050: test_real_select_zero_length_default_return_preserves_direct_entry_behavior	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1051: test_real_select_default_entry_preserves_legacy_second_clamp_landing	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1052: test_second_clamp_withheld_pass_is_private_bounded_and_unpinned	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1053: test_second_clamp_source_replacement_restarts_first_pass	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1054: test_second_clamp_fsm_only_change_supersedes_pending_and_completed	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1055: test_second_clamp_already_select_keeps_first_landing_without_reentry	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1056: test_second_clamp_clean_visual_nearest_only_preserves_origin_and_tie_order	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1057: test_departed_direct_open_preserves_inactive_selected_target	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1058: test_departed_default_selection_preserves_active_current_identity	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1059: test_departed_direct_open_does_not_allocate_cold_track	[PASSED]
+test/test_note_edit_entry_boundary/test_note_edit_entry_boundary.cpp:1060: test_departed_default_selection_does_not_read_cold_track	[PASSED]
+------- native:test_note_edit_entry_boundary [PASSED] Took 6.37 seconds -------
+
+Processing test_storage_drain_restore in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1318: test_drain_suite_links_the_closed_import_set	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1319: test_a35_drain_reports_the_holdoff_by_name_instead_of_waiting_it_out	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1320: test_a35_holdoff_remaining_reader_does_not_clear_the_holdoff	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1322: test_a36_audible_playback_is_not_a_persistence_gate	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1323: test_a36_a_recording_track_parks_the_multi_frame_writers	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1324: test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1326: test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1327: test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1328: test_s2b7_the_drain_services_a_parked_instance_holding_the_session	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1329: test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1331: test_s4_1_the_footer_records_the_focus_at_footer_write_time_not_the_interval_slot	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1332: test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1333: test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1334: test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1335: test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:1337: test_f4_a_failed_completion_is_discharged_and_releases_the_queue	[PASSED]
+--------- native:test_storage_drain_restore [PASSED] Took 1.00 seconds ---------
+
+Processing test_storage_manager_load in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_storage_manager_load/test_storage_manager_load.cpp:1306: test_restore_queue_orders_by_priority_and_peek_returns_the_head	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1307: test_restore_queue_peek_has_no_done_test_for_an_attempted_slot	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1308: test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1309: test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1310: test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1312: test_restore_harness_smoke_commits_a_queued_request_through_production_path	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1317: test_c1_transport_gated_background_admission_desired	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1318: test_c2_parked_job_is_serviced_or_named_after_transport_starts	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1319: test_restore_request_prepare_complete_waits_at_commit_gate	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1321: test_c4_blocked_priority_head_does_not_stall_a_startable_request	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1322: test_a23_startable_service_preserves_priority_order_and_releases_the_blocked_head	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1323: test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pending	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1324: test_c6_transient_failure_is_retried_not_latched	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1326: test_restore_state_probe_reports_queue_and_job_ownership	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1327: test_restore_state_probe_reports_the_save_blocked_by_restore	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1328: test_a18_probe_reports_prepare_complete_commit_gate_wait	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1329: test_a18_probe_reports_a_decided_terminal	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1331: test_restore_request_state_is_driven_by_the_production_path	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1332: test_restore_request_slot_owned_denial_names_the_wait	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1333: test_restore_request_starts_queued_and_is_not_a_terminal	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1334: test_restore_request_running_keeps_identity_without_a_wait	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1335: test_restore_request_wait_is_named_and_not_terminal	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1336: test_restore_request_records_exactly_one_terminal_per_identity	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1337: test_restore_request_reused_coordinates_are_a_new_request	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1338: test_restore_request_set_change_supersedes_outstanding	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1339: test_s2b8_set_change_decides_a_request_exactly_once	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1340: test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1341: test_a21_recording_names_the_capture_wait	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1342: test_a21_stale_identity_is_rejected_immediately_before_publication	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1343: test_s2b8_set_change_is_rejected_immediately_before_publication	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1345: test_sd_rewrite_does_not_inherit_a_stale_temp_body	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1346: test_sd_in_place_patch_keeps_the_body_and_does_not_append	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1348: test_a34a_a_nested_scope_cannot_acquire_or_release_the_owner	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1349: test_a34a_guard_is_released_and_a_later_drain_can_take_it	[PASSED]
+test/test_storage_manager_load/test_storage_manager_load.cpp:1350: test_a34a_guard_predicate_is_false_without_an_owner	[PASSED]
+--------- native:test_storage_manager_load [PASSED] Took 0.87 seconds ---------
+
+Processing test_library_observation_session in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_library_observation_session/test_library_observation_session.cpp:719: test_slot_payload_pages_are_bounded_read_only_and_admitted	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:720: test_o02_observation_advances_while_load_admission_is_blocked	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:721: test_o01_permanently_waiting_request_still_yields_a_diagnostic	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:722: test_o03_collection_is_incremental_and_bounded	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:723: test_o04_generation_change_between_slices_invalidates_the_slot	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:724: test_o05_set_epoch_change_restarts_the_whole_observation	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:725: test_o06_publication_between_slices_invalidates_without_a_generation_change	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:726: test_o07_denied_sd_admission_degrades_fields_not_the_report	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:727: test_o08_observation_is_not_the_settled_census	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:728: test_o09_root_content_and_root_replacement_between_slices	[PASSED]
+test/test_library_observation_session/test_library_observation_session.cpp:729: test_o10_end_record_reports_union_and_both_representations	[PASSED]
+------ native:test_library_observation_session [PASSED] Took 0.81 seconds ------
+
+=================================== SUMMARY ===================================
+Environment    Test                               Status    Duration
+-------------  ---------------------------------  --------  ------------
+native         test_windowed_preview_integration  PASSED    00:00:01.108
+native         test_note_edit_entry_boundary      PASSED    00:00:06.372
+native         test_storage_drain_restore         PASSED    00:00:00.998
+native         test_storage_manager_load          PASSED    00:00:00.867
+native         test_library_observation_session   PASSED    00:00:00.805
+================ 170 test cases: 170 succeeded in 00:00:10.151 ================

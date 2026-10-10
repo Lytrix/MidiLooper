@@ -403,6 +403,10 @@ class LoopSnapshot {
   friend class LoopSnapshotConstruction;
   friend struct LoopSnapshotNoteBarApply;
   friend struct LoopSnapshotEventBarApply;
+  friend struct PendingSnapshotPublishBox;
+  // One existing graph grain, with the root retained in its original owner.
+  static bool releaseInPlaceUnit(ImmutableLoopSnapshotRef& root,
+                                 std::array<size_t, 5>& positions, uint8_t& rootPhase);
 
   LoopId loopId_ = kInvalidLoopId;
   uint32_t loopLengthTicks_ = 0;
@@ -432,13 +436,38 @@ enum class LoopSnapshotFailureReason : uint8_t {
 /// owned by `Loop` at session-exit, wrap-journal idle, and NOTE_EDIT close.
 class LoopSnapshotConstruction {
  public:
+  enum class ReleaseResult : uint8_t { Idle, Progress, Complete, Rejected };
+  /// Single-use, non-owning cleanup progress. Cursor and owner must remain
+  /// alive through completion; callers exclude semantic borrows, mutation and
+  /// weak resurrection. No cancellation, restart or address-reuse protection.
+  class ReleaseCursor {
+   public:
+    ReleaseCursor() = default;
+    ReleaseCursor(const ReleaseCursor&) = delete;
+    ReleaseCursor& operator=(const ReleaseCursor&) = delete;
+    ReleaseCursor(ReleaseCursor&&) = delete;
+    ReleaseCursor& operator=(ReleaseCursor&&) = delete;
+    size_t completedUnitCount() const { return units_; }
+   private:
+    friend class LoopSnapshotConstruction;
+    const LoopSnapshotConstruction* owner_ = nullptr;
+    std::array<size_t, 5> positions_{};
+    size_t units_ = 0;
+    uint8_t phase_ = 0;
+    uint8_t workspacePhase_ = 0;
+  };
+  /// Scalar-only irreversible admission; repeated begin observes progress.
+  ReleaseResult beginRelease(ReleaseCursor& cursor);
+  ReleaseResult stepRelease(ReleaseCursor& cursor, size_t maximumUnits);
+  ReleaseResult releaseResult(const ReleaseCursor& cursor) const;
+
   LoopSnapshotConstruction(std::shared_ptr<const LoopSnapshot> parent,
                             const LoopSnapshotChangeSet& changes);
   ~LoopSnapshotConstruction();
 
   bool step(size_t maximumUnits, uint32_t playheadPhaseTick = 0);
   bool complete() const {
-    return nextChangeIndex_ == totalChangeCount() && !noteApplyActive_ && !eventApplyActive_;
+    return !releaseCursor_ && nextChangeIndex_ == totalChangeCount() && !noteApplyActive_ && !eventApplyActive_;
   }
   bool failed() const { return failed_; }
   LoopSnapshotFailureReason failureReason() const { return failureReason_; }
@@ -469,6 +498,12 @@ class LoopSnapshotConstruction {
   std::shared_ptr<const LoopSnapshot> freeze() const;
 
  private:
+#if defined(PIO_UNIT_TEST_NATIVE)
+  friend struct LoopSnapshotConstructionTestAccess; // Read-only test observation.
+#endif
+  // Identity also permanently gates normal construction APIs; never dereferenced
+  // by them, including after a completed cursor has left scope.
+  ReleaseCursor* releaseCursor_ = nullptr;
   bool applyNextBar(uint32_t playheadPhaseTick);
 
   std::shared_ptr<const LoopSnapshot> parent_;

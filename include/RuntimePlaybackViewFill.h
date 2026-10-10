@@ -11,6 +11,8 @@
 #include "LoopEventStore.h"
 #include "RuntimeCompanionPasses.h"
 
+struct Loop;
+
 enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage, RecordCoverage, SnapshotWindow };
 
 enum class RuntimePlaybackViewFillResult : uint8_t { Pending, Complete, Denied };
@@ -20,6 +22,8 @@ struct RuntimePlaybackViewSource {
   using EventAtFn = const MidiEvent& (*)(const void*, size_t);
   using ReadEventAtFn = bool (*)(const void*, size_t, MidiEvent&);
   using GenerationFn = uint64_t (*)(const void*);
+  using BlockMayIntersectFn = bool (*)(const void*, uint64_t, size_t,
+                                        uint32_t, uint32_t, uint32_t, bool&);
   const void* context = nullptr;
   SizeFn size = nullptr;
   union {
@@ -27,18 +31,27 @@ struct RuntimePlaybackViewSource {
     ReadEventAtFn readEventAt;
   };
   GenerationFn generation = nullptr;
+  BlockMayIntersectFn blockMayIntersect = nullptr;
   size_t count = 0;
   uint64_t generationToken = 0;
   bool readsByCopy = false;
+  PlaybackWindowOrigin origin = PlaybackWindowOrigin::Committed;
+  /// Capture-origin frozen Record source: content token is frozen by the job,
+  /// while generationToken continues to protect the sealed range's lifetime.
+  uint64_t captureContentToken = 0;
+  bool mutableCapture = false;
   /// Borrows the sealed range until fill completion. Never flattens its chunks.
   static RuntimePlaybackViewSource fromCaptureRange(const LoopEventStore::CaptureRange& range);
+  /// Borrow the live Loop Capture producer, never a committed root or raw shell.
+  static RuntimePlaybackViewSource fromLiveCapture(const Loop& loop);
+  static RuntimePlaybackViewSource fromFrozenRecordCapture(
+      const LoopEventStore::CaptureRange& range, uint64_t frozenContentToken);
 };
-
-/// Copies an already immutable source into a prewarmed view in fixed entry
-/// quanta.  The caller owns source lifetime until completion.
-/// Coverage-scoped fills charge every examined source row to the quantum,
-/// even when outside the window. Source extent need not fit the destination;
-/// matching rows must fit or the unpublished build is denied.
+/// Copies an immutable source into a prewarmed view in fixed entry quanta.
+/// Coverage-scoped fills charge examined rows; a sealed Capture source may
+/// additionally charge one unit per 32-row summary and skip only proven
+/// irrelevant groups. Invalid summaries always fall back to charged rows.
+/// Matching rows must fit the destination or the unpublished build is denied.
 /// This has no Loop dependency: task 2.3 supplies immutable capture/source staging.
 class RuntimePlaybackViewFill {
  public:
@@ -70,6 +83,9 @@ class RuntimePlaybackViewFill {
              const LedgerBoundarySummary& ledgerBoundary);
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
+  /// An immutable frozen source may release after copying. A *live* Capture
+  /// borrow remains mutation-sensitive through private ordering/publication.
+  bool liveCaptureCurrent() const;
   size_t copiedEventCount() const { return copied_; }
   bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }
 
@@ -90,9 +106,12 @@ class RuntimePlaybackViewFill {
   RuntimePlaybackViewSource::GenerationFn sourceGeneration_ = nullptr;
   const void* sourceContext_ = nullptr;
   uint64_t sourceGenerationToken_ = 0;
+  RuntimePlaybackViewSource::BlockMayIntersectFn blockMayIntersect_ = nullptr;
+  bool inspectBlockRows_ = false;
   size_t sourceCount_ = 0;
   size_t cursor_ = 0;
   size_t copied_ = 0;
   RuntimePlaybackViewFillScope scope_ = RuntimePlaybackViewFillScope::AllSource;
   bool sourceReadsByCopy_ = false;
+  bool guardLiveCaptureAfterFill_ = false;
 };

@@ -4208,30 +4208,6 @@ void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8
   }
 }
 
-/// Host twin of `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (GAP-8).
-void supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
-    const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow, uint8_t pitchHigh,
-    NoteUtils::DisplayNoteVec& frame, size_t& committedDisplayEnd) {
-  const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
-  if (!DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
-          loop.isPlaybackSessionExitPublicationGap(), static_cast<bool>(unpublished))) {
-    return;
-  }
-  const uint32_t loopLength = loop.loopLengthTicks;
-  if (loopLength == 0 || firstBar > lastBar) {
-    return;
-  }
-  const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
-  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    if (displayFrameCoversBar(frame, bar, loopLength)) {
-      continue;
-    }
-    appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
-  }
-  if (committedDisplayEnd < frame.size()) {
-    committedDisplayEnd = frame.size();
-  }
-}
 
 void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_t bar,
                                 uint32_t loopLength, NoteUtils::DisplayNoteVec& out,
@@ -6032,7 +6008,7 @@ void test_stage7_snapshot_compose_includes_idle_overdub_preview_130411() {
   TEST_ASSERT_EQUAL_UINT32(1u, previewComposeMatchHost(compose, preview));
 }
 
-void test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot() {
+void test_gap_handoff_keeps_complete_frame_until_current_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -6053,32 +6029,35 @@ void test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot() {
                     loop.commitCapturePass(CommitReason::RecordStop, loopLength - 48));
   TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
   TEST_ASSERT_NOT_NULL(loop.unpublishedSnapshot().get());
-  for (uint32_t bar = 2; bar <= 5; ++bar) {
-    TEST_ASSERT_NOT_NULL(loop.unpublishedSnapshot()->noteMembership(60 + bar, bar).get());
-  }
 
+  // This is the last complete frame; candidate construction must not splice its
+  // partially available bars into the retained frame.
   NoteUtils::DisplayNoteVec handoff;
   for (uint32_t bar = 16; bar <= 20; ++bar) {
     appendSnapshotNotesForBar(*loop.unpublishedSnapshot(), bar, 0, 127, handoff);
   }
-  for (uint32_t bar = 2; bar <= 5; ++bar) {
-    TEST_ASSERT_FALSE(displayFrameCoversBar(handoff, bar, loopLength));
+  const NoteUtils::DisplayNoteVec retainedFrame = handoff;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  loop.stepPendingSnapshotPublish(1, true);
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+  TEST_ASSERT_EQUAL(retainedFrame.size(), handoff.size());
+  for (size_t i = 0; i < retainedFrame.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(retainedFrame[i].noteId, handoff[i].noteId);
+    TEST_ASSERT_EQUAL_UINT32(retainedFrame[i].startTick, handoff[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(retainedFrame[i].endTick, handoff[i].endTick);
   }
-
-  size_t committedEnd = handoff.size();
-  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 0, 20, 0, 127, handoff,
-                                                              committedEnd);
-  for (uint32_t bar = 2; bar <= 5; ++bar) {
-    TEST_ASSERT_TRUE(displayFrameCoversBar(handoff, bar, loopLength));
-  }
-  TEST_ASSERT_TRUE(committedEnd >= handoff.size());
 
   drainPendingSnapshotPublish(loop);
   TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
-  const size_t sizeBeforeNoOp = handoff.size();
-  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 2, 5, 0, 127, handoff,
-                                                              committedEnd);
-  TEST_ASSERT_EQUAL(sizeBeforeNoOp, handoff.size());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  NoteUtils::DisplayNoteVec replacement;
+  for (uint32_t bar = 0; bar <= 20; ++bar) {
+    appendSnapshotNotesForBar(*loop.publishedSnapshot(), bar, 0, 127, replacement);
+  }
+  for (uint32_t bar = 0; bar <= 20; ++bar) {
+    TEST_ASSERT_TRUE(displayFrameCoversBar(replacement, bar, loopLength));
+  }
+  TEST_ASSERT_EQUAL_UINT32(21u, replacement.size());
 }
 
 void test_session_exit_handoff_when_live_record_notes_fit_sealed_length() {
@@ -6875,8 +6854,84 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
   TEST_ASSERT_EQUAL(3u, snapshotPitchCount);
 }
 
+// E2 Record producer currency: even a same-count reorder must retire a
+// borrowed builder receipt; rejected input and clean reads must not.
+void test_record_capture_content_generation_tracks_accepted_mutations() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  const uint64_t before = loop.captureContentGeneration();
+  loop.beginCapture(CapturePhase::Record);
+  const uint64_t empty = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL_UINT64(before, empty);
+  TEST_ASSERT_TRUE(empty != 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(100, 1, 7, 64)));
+  const uint64_t first = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL_UINT64(empty, first);
+  TEST_ASSERT_FALSE(loop.appendCaptureEvent(MidiEvent::ControlChange(100, 1, 7, 64)));
+  TEST_ASSERT_EQUAL_UINT64(first, loop.captureContentGeneration());
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(10, 1, 7, 65)));
+  const uint64_t second = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL_UINT64(first, second);
+  TEST_ASSERT_EQUAL_UINT32(2u, loop.capture.store.size());
+  TEST_ASSERT_TRUE(loop.captureEventsSortDirty);
+  TEST_ASSERT_TRUE(loop.ensureCaptureEventsSorted());
+  const uint64_t reordered = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL_UINT64(second, reordered);
+  TEST_ASSERT_EQUAL_UINT32(2u, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT32(10u, loop.capture.store.at(0).tick);
+  TEST_ASSERT_FALSE(loop.ensureCaptureEventsSorted());
+  TEST_ASSERT_EQUAL_UINT64(reordered, loop.captureContentGeneration());
+  loop.discardCapture();
+  const uint64_t cleared = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL_UINT64(reordered, cleared);
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_FALSE(loop.appendCaptureEvent(MidiEvent::ControlChange(20, 1, 7, 66)));
+  TEST_ASSERT_EQUAL_UINT64(cleared, loop.captureContentGeneration());
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_NOT_EQUAL_UINT64(cleared, loop.captureContentGeneration());
+  // Construct an imported-style unassigned NoteOn in the producer. The
+  // production Loop ID-assignment owner mutates that row in place at constant
+  // cardinality; a second no-op pass must leave the receipt unchanged.
+  TEST_ASSERT_TRUE(loop.capture.store.append(MidiEvent::NoteOn(200, 1, 60, 100)));
+  TEST_ASSERT_EQUAL(kInvalidNoteId, loop.capture.store.at(0).noteId);
+  const uint64_t beforeId = loop.captureContentGeneration();
+  loop.assignMissingNoteIdsInStore(loop.capture.store);
+  TEST_ASSERT_NOT_EQUAL_UINT64(beforeId, loop.captureContentGeneration());
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, loop.capture.store.at(0).noteId);
+  const uint64_t withId = loop.captureContentGeneration();
+  loop.assignMissingNoteIdsInStore(loop.capture.store);
+  TEST_ASSERT_EQUAL_UINT64(withId, loop.captureContentGeneration());
+  TEST_ASSERT_TRUE(loop.removeOpenCaptureNoteOn(1, 60));
+  TEST_ASSERT_NOT_EQUAL_UINT64(withId, loop.captureContentGeneration());
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(12, 1, 64, 100)));
+  const uint64_t beforeCut = loop.captureContentGeneration();
+  LoopEventStore::CaptureRange raw;
+  uint64_t frozen = 777;
+  TEST_ASSERT_FALSE(loop.sealCaptureRangeForJob(raw, frozen));
+  TEST_ASSERT_EQUAL_UINT64(777u, frozen);
+  TEST_ASSERT_EQUAL_UINT64(beforeCut, loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.capture.store.size());
+  TEST_ASSERT_TRUE(raw.reserveTail());
+  TEST_ASSERT_TRUE(loop.sealCaptureRangeForJob(raw, frozen));
+  TEST_ASSERT_EQUAL_UINT64(beforeCut, frozen);
+  TEST_ASSERT_NOT_EQUAL_UINT64(frozen, loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL_UINT32(0u, loop.capture.store.size());
+  TEST_ASSERT_TRUE(raw.ready());
+  MidiEvent frozenEvent;
+  bool atEnd = true;
+  TEST_ASSERT_TRUE(raw.read(raw.generation(), 0, 0, frozenEvent, atEnd));
+  TEST_ASSERT_FALSE(atEnd);
+  TEST_ASSERT_TRUE(frozenEvent.isNoteOn());
+  TEST_ASSERT_EQUAL_UINT32(12u, frozenEvent.tick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_record_capture_content_generation_tracks_accepted_mutations);
   RUN_TEST(test_prepared_capture_transfer_moves_pass_without_vector_growth);
   RUN_TEST(test_take_pending_capture_pass_is_lossless_and_nonallocating);
   RUN_TEST(test_job_owned_capture_commit_and_preview_cleanup_preserve_live_capture);
@@ -7009,7 +7064,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_stage7_snapshot_compose_includes_active_overdub_preview_130411);
   RUN_TEST(test_stage7_snapshot_compose_includes_idle_overdub_preview_130411);
-  RUN_TEST(test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot);
+  RUN_TEST(test_gap_handoff_keeps_complete_frame_until_current_snapshot);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_handoff_when_candidate_shorter_than_sealed_length);
   RUN_TEST(test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail);

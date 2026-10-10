@@ -434,14 +434,16 @@ inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverd
 
 /// Whether `stepPendingSnapshotPublish` may call `startNextPendingConstruction`.
 /// OVERDUBBING normally steps in-flight work only; before the first published
-/// root, session-exit publication must still start the next bounded fragment.
+/// root, an overdub session-exit may still start its bounded fragment. A Record
+/// session-exit may continue against a stale published root so the committed
+/// Record pass can become current without waiting for transport to stop.
 inline bool allowSnapshotConstructionStart(bool isOverdubbing, bool liveRecordPastFirstBar,
                                            bool hasWrapJournal, bool havePublishedSnapshot,
                                            bool sessionExitQueued) {
   if ((!isOverdubbing && liveRecordPastFirstBar) || hasWrapJournal) {
     return true;
   }
-  return !havePublishedSnapshot && sessionExitQueued;
+  return sessionExitQueued && (!isOverdubbing || !havePublishedSnapshot);
 }
 
 /// STOPPED idle may keep the transport clock running. Snapshot is still

@@ -1403,8 +1403,15 @@ void test_snapshot_window_cursor_validates_geometry_and_work_is_length_independe
   drainWindowCursor(cursor);
 }
 
+#include "bounded_wrapper_clear.inc"
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_wrapper_clear_unique_one_chunk_and_separate_header_terminal);
+  RUN_TEST(test_wrapper_clear_shared_detaches_without_clone_or_source_mutation);
+  RUN_TEST(test_wrapper_clear_dirty_cache_discards_without_sync);
+  RUN_TEST(test_wrapper_clear_empty_and_empty_dirty_cache);
+  RUN_TEST(test_wrapper_clear_stamped_pool_reset_preserves_recycled_chunk);
   RUN_TEST(test_snapshot_window_cursor_pins_only_window_and_preserves_effective_rows);
   RUN_TEST(test_snapshot_window_cursor_cancel_and_retirement_release_at_most_one_leaf_per_unit);
   RUN_TEST(test_snapshot_window_cursor_shared_reader_survives_every_retirement_grain);

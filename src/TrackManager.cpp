@@ -159,6 +159,19 @@ bool TrackManager::anyTrackRecordingOrOverdubbing() const {
   return false;
 }
 
+FLASHMEM __attribute__((noinline)) bool TrackManager::backgroundSnapshotWorkAllowed() const {
+  // Unlike the mode-wide capture gate, this one existing Snapshot opportunity
+  // may serve a stopped RecordPublished job whose queued root is its retirement
+  // prerequisite. Any live capture or other pending stop still excludes it.
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    const Track& track = tracks[i];
+    if (track.isRecording() || track.isOverdubbing() ||
+        (track.hasPendingDeferredOverdubStop() &&
+         !track.canServiceBackgroundSnapshotOwnerTurn())) return false;
+  }
+  return true;
+}
+
 bool TrackManager::anyPlayingMidiDrainAfterOverdubStop() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     if (tracks[i].playingMidiDrainAfterOverdubStopActive()) {
@@ -263,6 +276,7 @@ uint8_t TrackManager::getTrackCount() const {
 }
 
 void TrackManager::setup() {
+  initializeEdgeEffectsForBoot();
   // Allocate Loop arrays (deferred from Track ctor to avoid static-init crash)
   // Loops allocated in allocateLoopsEarly() at start of setup
   // Set default MIDI output channel per track (track 1 = ch 1, track 2 = ch 2, etc.)

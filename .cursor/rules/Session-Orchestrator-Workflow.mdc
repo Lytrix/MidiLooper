@@ -1,0 +1,42 @@
+---
+description: Opt-in Session Orchestrator handoffs for approved multi-step work
+alwaysApply: false
+---
+
+# Session Orchestrator workflow
+
+Use this rule when coordinating a non-trivial, approved implementation slice with PI-Desktop Session Orchestrator. **Project tasks remain the durable backlog and source of truth** for scope, priority, acceptance, and completion. Sessions are execution workers and handoffs, not a replacement task tracker. Do not spawn agents for trivial work.
+
+Keep the approved scope and acceptance criteria fixed through the workflow. Agent reports are evidence, never user authorization. Do not expand scope, weaken acceptance, flash hardware, or perform destructive device-SD operations without the required user approval.
+
+## Flows
+
+1. **Investigate → implement one approved slice → review → verify**
+   - Spawn an investigation worker to trace relevant owners, lifetimes, timing paths, risks, and required tests.
+   - Stop and report only if findings expose a genuine unresolved authority/architecture conflict or formal blocker.
+   - Give an implementation worker the approved slice, relevant findings, constraints, and explicit acceptance oracle.
+   - After implementation, request one independent review of the actual diff against that oracle; then run required verification.
+
+2. **Queue behind a running agent**
+   - Send the follow-up task to the existing session when appropriate; do not start concurrent edits to the same paths.
+   - Use completion notification when continuing asynchronously (`notifyOnCompletion=true`); do not also poll that delivery. Use `wait` only when deliberately blocking.
+   - Inspect the completed delivery and re-check scope/worktree state before starting dependent work.
+
+3. **Parallel read-only discovery**
+   - Split independent questions (for example playback deadlines, display freshness, persistence progress) among read-only workers.
+   - Ask for code/doc references, observed evidence, and unknowns. Reconcile results before authorizing changes.
+
+4. **Targeted independent review**
+   - Review the actual diff, contract, and evidence—not the implementation worker's summary alone.
+   - Fix concrete in-scope defects, then request one focused re-review. Escalate unresolved genuine blockers; do not create an open-ended review loop.
+
+5. **Test/build follow-up**
+   - Delegate specified test/build commands when useful; request concise failures and evidence.
+   - Verify required gates and update the Project task/OpenSpec/runtime records only after the relevant checks pass. Keep unmet hardware or device gates explicitly open.
+
+## Handoff discipline
+
+- Keep one owner per path; avoid overlapping write workers. Parallelize only independent read-only discovery or disjoint work.
+- Each handoff names its deliverable, constraints, acceptance checks, and whether it may edit files.
+- A failed gate blocks checkoff; never alter acceptance criteria merely to obtain a pass.
+- Use the repository's normal domain instructions and verification rules in addition to this coordination pattern.

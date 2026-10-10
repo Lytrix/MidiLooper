@@ -116,6 +116,7 @@ NOTE_EDIT_MEM ControlSurfaceManager::Fader1SelectTarget ControlSurfaceManager::r
     return target;
 }
 NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchValue, Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return; // private selection cannot be edited
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Select fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
                    (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");

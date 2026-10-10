@@ -103,6 +103,19 @@ ClockManager clockManager;
 #if !defined(HARNESS_LINKS_REAL_EDIT_MANAGER)
 EditManager::EditManager() {}
 EditManager editManager;
+// Scalar cancellation boundary for suites that do not link the live lifecycle.
+// Same receipt invalidation as production; never fabricate readiness or open content.
+void EditManager::cancelCurrentRootNoteEditEntry() {
+  if (!hasPendingCurrentRootNoteEditEntry()) return;
+  currentRootEntry_ = {};
+  currentRootEntry_.phase = CurrentRootEntryPhase::Cancelled;
+  cancelDefaultNoteEditSelectionPreparation();
+  editSession.cancelPayloadClear();
+}
+void EditManager::cancelCurrentRootNoteEditEntryForLoop(const Loop& loop) {
+  if (hasPendingCurrentRootNoteEditEntry() && currentRootEntry_.loop == &loop)
+    cancelCurrentRootNoteEditEntry();
+}
 #endif
 LooperStateManager looperState;
 uint32_t ClockManager::getCurrentTick() const { return currentTick; }

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <type_traits>
 
 #include "EditPass.h"
 #include "Globals.h"
@@ -37,22 +38,52 @@ inline EditPassType passTypeForSession(EditSessionType session) {
 
 /// In-session undo before saveEdit — edit pass rows + focus entries (not full store clones).
 struct NoteEditSessionUndoStack {
+  enum class ClearResult : uint8_t { Idle, Progress, Complete, Superseded };
+
+  /// Destructive departure only. Invalidates all previously borrowed entry pointers.
+  /// Acceptance retains payload; a grant must carry the token for this live stack.
+  uint32_t beginClear() {
+    if (clearResult_ != ClearResult::Progress) {
+      advanceClearToken();
+      clearResult_ = ClearResult::Progress;
+      cursor_ = 0;
+    }
+    return clearToken_;
+  }
+  ClearResult stepClear(uint32_t token);
+  bool clearComplete(uint32_t token) const {
+    return token != 0 && token == clearToken_ && clearResult_ == ClearResult::Complete;
+  }
+
+  /// Existing synchronous compatibility; not a bounded retirement grant.
   void clear() {
+    advanceClearToken();
+    clearResult_ = ClearResult::Idle;
     entries_.clear();
     cursor_ = 0;
   }
 
-  bool canUndo() const { return cursor_ > 0; }
-  bool canRedo() const { return cursor_ < entries_.size(); }
-  size_t undoCount() const { return cursor_; }
-  size_t redoCount() const { return entries_.size() - cursor_; }
+  bool canUndo() const { return clearResult_ != ClearResult::Progress && cursor_ > 0; }
+  bool canRedo() const {
+    return clearResult_ != ClearResult::Progress && cursor_ < entries_.size();
+  }
+  size_t undoCount() const { return clearResult_ == ClearResult::Progress ? 0 : cursor_; }
+  size_t redoCount() const {
+    return clearResult_ == ClearResult::Progress ? 0 : entries_.size() - cursor_;
+  }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  size_t clearEntryCountForTest() const { return entries_.size(); }
+  size_t clearInventoryForTest() const;
+#endif
 
   bool pushEntry(const SessionUndoEntry& entry) {
+    if (clearResult_ == ClearResult::Progress) return false; // reject before nested copy
     SessionUndoEntry copy = entry;
     return pushEntry(std::move(copy));
   }
 
   bool pushEntry(SessionUndoEntry&& entry) {
+    if (clearResult_ == ClearResult::Progress) return false; // preserve caller payload
 #if defined(SESSION_CAPTURE)
     const uint32_t totalStartUs = micros();
     uint32_t phaseStartUs = totalStartUs;
@@ -87,6 +118,8 @@ struct NoteEditSessionUndoStack {
     phaseStartUs = micros();
 #endif
     cursor_ = entries_.size();
+    advanceClearToken();
+    clearResult_ = ClearResult::Idle;
     trimHistory();
 #if defined(SESSION_CAPTURE)
     logUndoPushPhase("trim_history", phaseStartUs, entries_.size(), cursor_);
@@ -126,6 +159,7 @@ struct NoteEditSessionUndoStack {
   }
 
   void dropRedoBranch() {
+    if (clearResult_ == ClearResult::Progress) return;
     if (cursor_ >= entries_.size()) {
       return;
     }
@@ -133,6 +167,46 @@ struct NoteEditSessionUndoStack {
   }
 
  private:
+  friend struct EditSession;
+  friend class EditManager;
+  static bool retireEntryUnit(SessionUndoEntry& entry);
+  void advanceClearToken() {
+    if (++clearToken_ == 0) ++clearToken_;
+  }
+  template <typename Map>
+  static bool retireMapUnit(Map& map) {
+    static_assert(std::is_trivially_destructible<typename Map::mapped_type>::value,
+                  "a map retirement leaf must not own nested payload");
+    if (!map.empty()) {
+      // Global head has the before-begin predecessor, even in a collision chain.
+      map.erase(map.begin());
+      return true;
+    }
+    if (map.bucket_count() > 2) {
+      // GCC's empty-map destructor still zeroes all buckets. Shrink only after
+      // all nodes are gone; rehash then visits no nodes and creates <=2 buckets.
+      map.max_load_factor(1.0f);
+      map.rehash(0);
+      return true;
+    }
+    return false;
+  }
+  static bool retireEditRowUnit(EditPassVec& rows) {
+    static_assert(std::is_trivially_destructible<MidiEvent>::value,
+                  "a MIDI retirement leaf must not own nested payload");
+    if (rows.empty()) return false;
+    if (!rows.back().addedEvents.empty()) rows.back().addedEvents.pop_back();
+    else rows.pop_back();
+    return true;
+  }
+  template <typename Vector>
+  static bool retireScalarVectorUnit(Vector& values) {
+    static_assert(std::is_trivially_destructible<typename Vector::value_type>::value,
+                  "a retirement element must not hide nested payload destruction");
+    if (values.empty()) return false;
+    values.pop_back();
+    return true;
+  }
   bool trimOneSessionUndoEntryForDepthCap() {
     if (entries_.empty()) {
       return false;
@@ -182,6 +256,8 @@ struct NoteEditSessionUndoStack {
   using EntryVec = std::vector<SessionUndoEntry, ExternalMemoryFirstAllocator<SessionUndoEntry>>;
   EntryVec entries_;
   size_t cursor_ = 0;
+  uint32_t clearToken_ = 0;
+  ClearResult clearResult_ = ClearResult::Idle;
 };
 
 struct EditSession {
@@ -205,4 +281,36 @@ struct EditSession {
   uint32_t openedSnapshotRevision = 0;
 
   bool isNote() const { return sessionType == EditSessionType::Note; }
+
+  enum class PayloadClearResult : uint8_t { Progress, Complete, Superseded };
+  struct PayloadClearReceipt {
+    const EditSession* owner = nullptr;
+    uint32_t token = 0;
+  };
+  /// Destructive departure component, not an EditManager/session-FSM handoff.
+  /// Caller excludes live use/borrowers/writes and qualifies Track/slot/source.
+  /// Cancel before legacy reuse; receipts qualify only this same live object.
+  PayloadClearReceipt beginPayloadClear();
+  PayloadClearResult stepPayloadClear(const PayloadClearReceipt& receipt);
+  PayloadClearResult payloadClearResult(const PayloadClearReceipt& receipt) const;
+  void cancelPayloadClear() {
+    advancePayloadClearToken();
+    payloadClearPhase_ = PayloadClearPhase::Idle;
+    // Payload stays owned; cancellation does not resurrect live edit authority.
+  }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  size_t payloadClearInventoryForTest() const;
+#endif
+
+ private:
+  enum class PayloadClearPhase : uint8_t {
+    Idle, Store, CurrentState, Undo, UndoStorage, Focus, EditIds, DurableIds,
+    ApplyRows, Complete, Superseded
+  };
+  void advancePayloadClearToken() {
+    if (++payloadClearToken_ == 0) ++payloadClearToken_;
+  }
+  uint32_t payloadClearToken_ = 0;
+  uint32_t payloadClearUndoToken_ = 0;
+  PayloadClearPhase payloadClearPhase_ = PayloadClearPhase::Idle;
 };

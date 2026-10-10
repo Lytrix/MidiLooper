@@ -117,7 +117,40 @@ def _active_reader_sees_clock() -> bool:
     return reader.recent_pulse()
 
 
+#: Bound for `_discard_buffered_input`: comfortably above a backlog of already-received clock
+#: (an attach stop leaves well under a second of it, ~48 messages at 120 BPM) and small enough
+#: that a device still clocking cannot hold the drain open.
+_DRAIN_BOUND_MESSAGES = 256
+
+
+def _discard_buffered_input(in_port: mido.ports.BaseInput) -> int:
+    """Drop what the port has *already* received, so a clock answer is about **now**.
+
+    "Is a clock flowing?" is this module's evidence that the device's transport is running, and a
+    transport that has just been stopped leaves its last clock messages sitting in the input
+    buffer. Reading one of those answers "running" for a device standing still: on
+    `captures/live-current-root-entry-t8s4-07` the scenario leg's attach had just sent the
+    idempotent realtime Stop (159.571864), the buffer still held the clock from the moment before,
+    so `_ensure_transport_running` saw a clock, skipped its start press, and the whole NOTE_EDIT
+    leg ran with the track **stopped** (`playing_motor_sync_judged` 0; the leg's own
+    `selected_note_moved`/`stacked_reselect_after_deselect` checks failed).
+
+    Reuses `hitl.midi_io`'s drain owner rather than a second copy of the loop, bounded so a device
+    that is clocking *now* cannot keep the drain running: the timed wait that follows is what
+    decides, and it will see the next pulse of a live clock.
+    """
+    from hitl.midi_io import _drain_input_messages
+
+    return _drain_input_messages(in_port, max_messages=_DRAIN_BOUND_MESSAGES)
+
+
 def clock_seen_within(in_port: mido.ports.BaseInput, timeout_s: float) -> bool:
+    # Only a clock that arrives *after* the question counts; a backlog is history, not evidence.
+    # The drain comes **before** the reader leg for the same reason: the reader's own `poll()`
+    # drains this very port, so a stale message it reads there would otherwise be reported as a
+    # pulse arriving "right now" -- which is how `_ensure_transport_running` concluded the
+    # transport was running for a device whose take had just been stopped by the attach.
+    _discard_buffered_input(in_port)
     if _active_reader_sees_clock():
         return True
     deadline = time.monotonic() + max(timeout_s, 0.0)
@@ -281,36 +314,26 @@ def ensure_transport_clock(
     press's own acknowledgement can. Callers that are not confirming a press leave this ``None``
     and keep the previous behaviour.
     """
-    if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
-        return True, True
-
     def _start_acknowledged() -> bool:
-        if started_since_index is None or serial_collector is None:
-            return False
-        return serial_global_transport_running(
-            serial_collector.snapshot(), after_index=started_since_index
-        )
+        return (serial_collector is not None and started_since_index is not None
+                and serial_global_transport_running(
+                    serial_collector.snapshot(), after_index=started_since_index))
 
-    if _start_acknowledged():
-        return True, True
     if started_since_index is not None:
+        # Confirm this request before consulting any generic proxy. An older Start
+        # or a stopped-device DFRAME can otherwise release notes before this Start.
         ack_deadline = time.monotonic() + min(max(timeout_s, 0.0), 2.0)
-        while time.monotonic() < ack_deadline:
+        while True:
             if abort is not None and abort.check() is not None:
                 return False, False
-            if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
-                return True, True
             if _start_acknowledged():
                 return True, True
+            if time.monotonic() >= ack_deadline:
+                return False, False
             time.sleep(0.05)
 
-    if started_since_index is not None:
-        # The caller has already sent Start and is only confirming it. `ensure_midi_clock`'s press
-        # is a toggle, so a late acknowledgement would stop the transport that start just began --
-        # measured twice on device (`captures/s4f22-base-device-03`: start 25.086, toggle 25.603;
-        # `captures/s4f22-step7-d2`: start 53.527, recording 53.974, unexplained press 54.526).
-        # Missing clocks or a delayed receipt is a named failure for the caller, never a re-press.
-        return False, False
+    if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
+        return True, True
 
     if not allow_transport_press:
         return False, False

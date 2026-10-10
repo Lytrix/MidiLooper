@@ -21,6 +21,7 @@
 #include "Utils/SelectNavigation.h"
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchValue, Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     // Only process fader input when in NOTE_EDIT mode
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Coarse fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
@@ -210,6 +211,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleCoarseFaderInput(int16_t pitchVa
     }
 }
 NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Fine fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
                    (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");
@@ -330,6 +332,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleFineFaderInput(uint8_t ccValue, 
     }
 }
 NOTE_EDIT_MEM void ControlSurfaceManager::handleNoteValueFaderInput(uint8_t ccValue, Track& track) {
+    if (editManager.hasPendingCurrentRootNoteEditEntry()) return;
     if (editManager.getEditSessionType() != EditSessionType::Note) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Note value fader input ignored: not in NOTE_EDIT mode (current mode: %s)", 
                    (editManager.getEditSessionType() == EditSessionType::Loop) ? "LOOP_EDIT" : "UNKNOWN");

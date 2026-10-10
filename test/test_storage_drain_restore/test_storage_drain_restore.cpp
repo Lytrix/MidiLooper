@@ -1201,6 +1201,118 @@ void test_f4_a_failed_completion_is_discharged_and_releases_the_queue() {
 }
 
 
+void test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore captured;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(captured.append(MidiEvent::NoteOn(i, 1, static_cast<uint8_t>(48 + (i % 24)), 100)));
+  }
+  loop.passes.recordPass.id = 1;
+  loop.passes.recordPass.state = CapturePassState::Active;
+  loop.passes.recordPass.sealedAtTick = loop.loopLengthTicks;
+  CaptureChunkIdList capturedIds;
+  captured.detachChunksTo(capturedIds);
+  TEST_ASSERT_TRUE(LoopEventStore::transferCaptureChunkIdsToCommittedChunkIds(
+      loop.passes.recordPass.committedChunkIds, capturedIds));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(loop.passes.recordPass.committedChunkIds.size()));
+  MidiEventVec expected;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, expected);
+
+  std::vector<uint8_t> bytes;
+  File file;
+  file.bytes = &bytes;
+  file.isOpen = true;
+  file.writable = true;
+  storageSession.revisionCommit.payloadCrcSeeded = false;
+  storageSession.revisionCommit.payloadCrc = 0;
+  storageSession.revisionCommit.payloadWriteOffset = 0;
+  nativeSdResetWriteObservation();
+  StorageManagerInternal::resetDeferredLoopWriteState();
+  bool done = false;
+  uint32_t turns = 0;
+  while (!done && turns < 256) {
+    TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::stepDeferredLoopPersist(
+                                 file, loop, done, LoopPersistPayloadCrc::RevisionCommit),
+                             "the production loop-persist continuation advances");
+    ++turns;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(done, "the bounded writer eventually completes");
+  TEST_ASSERT_GREATER_THAN_UINT32(1u, turns);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(512u,
+      static_cast<uint32_t>(nativeSdMaximumWriteBytes),
+      "each payload write returns at the bounded byte quantum");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(bytes.size()),
+      static_cast<uint32_t>(nativeSdTotalWrittenBytes),
+      "the write observation accounts for the entire serialized body");
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.payloadCrcSeeded);
+  uint32_t expectedCrc = 0;
+  size_t crcOffset = 0;
+  bool crcSeeded = false;
+  for (const size_t count : nativeSdWriteSizes) {
+    expectedCrc = crcSeeded
+        ? PersistenceSchema::crc32Continue(expectedCrc, bytes.data() + crcOffset, count)
+        : PersistenceSchema::crc32(bytes.data() + crcOffset, count);
+    crcSeeded = true;
+    crcOffset += count;
+  }
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bytes.size()), static_cast<uint32_t>(crcOffset));
+  TEST_ASSERT_EQUAL_UINT32(expectedCrc, storageSession.revisionCommit.payloadCrc);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bytes.size()),
+                           storageSession.revisionCommit.payloadWriteOffset);
+
+  file.pos = 0;
+  Loop restored;
+  TEST_ASSERT_TRUE_MESSAGE(readLoopPersisted(storageIoFromFileRead(file), restored),
+                           "the sliced body remains readable by the production parser");
+  MidiEventVec actual;
+  LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, actual);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.size()), static_cast<uint32_t>(actual.size()));
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, actual[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].type, actual[i].type);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].channel, actual[i].channel);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].data.noteData.note, actual[i].data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].data.noteData.velocity, actual[i].data.noteData.velocity);
+  }
+  std::vector<uint8_t> failedBytes;
+  File failedFile;
+  failedFile.bytes = &failedBytes;
+  failedFile.isOpen = true;
+  failedFile.writable = true;
+  StorageManagerInternal::resetDeferredLoopWriteState();
+  done = false;
+  turns = 0;
+  while (storageSession.currentWorkspaceSave.loopWriteStage != DeferredLoopWriteStage::CapturePassChunk &&
+         turns < 256) {
+    TEST_ASSERT_TRUE(StorageManagerInternal::stepDeferredLoopPersist(
+        failedFile, loop, done, LoopPersistPayloadCrc::None));
+    ++turns;
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(DeferredLoopWriteStage::CapturePassChunk),
+                    static_cast<int>(storageSession.currentWorkspaceSave.loopWriteStage));
+  nativeSdWriteBudget = 1;
+  TEST_ASSERT_TRUE(StorageManagerInternal::stepDeferredLoopPersist(
+      failedFile, loop, done, LoopPersistPayloadCrc::None));
+  TEST_ASSERT_EQUAL_UINT16(512u, storageSession.currentWorkspaceSave.chunkWriteOffset);
+  TEST_ASSERT_EQUAL_UINT16(0u, storageSession.currentWorkspaceSave.chunkCursor);
+  nativeSdWriteBudget = 0;
+  TEST_ASSERT_FALSE(StorageManagerInternal::stepDeferredLoopPersist(
+      failedFile, loop, done, LoopPersistPayloadCrc::None));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(512u, storageSession.currentWorkspaceSave.chunkWriteOffset,
+                                   "a failed slice does not acknowledge unwritten bytes");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, storageSession.currentWorkspaceSave.chunkCursor,
+                                   "the owning chunk is retained until every byte succeeds");
+  nativeSdWriteBudget = -1;
+  StorageManagerInternal::resetDeferredLoopWriteState();
+  StorageManagerInternal::resetDeferredLoopWriteState();
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_drain_suite_links_the_closed_import_set);
@@ -1220,6 +1332,7 @@ int main(int, char**) {
   RUN_TEST(test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus);
   RUN_TEST(test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands);
   RUN_TEST(test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff);
+  RUN_TEST(test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact);
   // F4 / DEC-091 -- a failed workspace completion must not hold the queue.
   RUN_TEST(test_f4_a_failed_completion_is_discharged_and_releases_the_queue);
   return UNITY_END();

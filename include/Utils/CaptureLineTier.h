@@ -12,8 +12,20 @@
 #ifndef SESSION_CAPTURE_SNAPSHOT_IDLE
 #define SESSION_CAPTURE_SNAPSHOT_IDLE 0
 #endif
-
 namespace CaptureLineTier {
+
+/// The frozen Record-return receipt's tag prefix. On the target it is **defined by the emitter TU**
+/// (`DebugSessionCapture.cpp`) as `PROGMEM` data: `.rodata` is DTCM in this script and this header's literals already
+/// sit on the `_VectorsRam`/periodictable alignment edge, where ~100 B of new string data snaps the RAM1 `variables`
+/// figure by 4 KB and takes it out of the local allowance (`Teensy-RAM1-Bank-Overflow`). Declaring the array here with
+/// the attribute is rejected by the compiler -- "causes a section type conflict" -- so the definition lives where the
+/// other FLASH-resident capture strings do. On the host the literal is returned directly, which is what keeps this
+/// header coverable without Arduino headers.
+#if defined(__IMXRT1062__)
+const char* frozenReadinessTagPrefix();
+#else
+inline const char* frozenReadinessTagPrefix() { return "DIAG,win_frozen_readiness,"; }
+#endif
 
 /**
  * Tag field of a "#CAP,<micros>,<tag>,..." line, or nullptr when the line is not a
@@ -177,12 +189,19 @@ inline bool isTierALine(const char* line) {
          // `canonical_release` and the post-restore markers Tier-A above. Bounded by `strlen` of the literal
          // for the reason stated at the top of this list; the boundary is pinned in `test_capture_line_tier`.
          strncmp(tag, "DIAG,win_readiness,", strlen("DIAG,win_readiness,")) == 0 ||
-         strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
-         strncmp(tag, "DIAG,snapshot_unit,", 19) == 0 ||
-         strncmp(tag, "DIAG,snapshot_slab_fail,", 24) == 0 ||
-         strncmp(tag, "DIAG,capture_prewarm,", 21) == 0 ||
-         // One-shot post-restore census checkpoint (S1.3/S2b.3). A slope run reads `free_chunks`
-         // against the readiness fields, so the marker must survive the timing-critical flush budget.
+         // The frozen Record-return's **source-qualified** receipt (the `win_readiness` row's companion: same
+         // event, but naming the frozen window's own identity and interval). It is produced under the same
+         // transport regime and delivered by the same direct-when-room/ring-otherwise rule, so it is Tier-A for
+         // the same reason: a shed fallback would mean the completion was never reported at all. It cannot
+         // collide with `DIAG,win_readiness,` because the trailing comma is part of both literals. The boundary
+         // is pinned in `test_capture_line_tier`.
+        strncmp(tag, frozenReadinessTagPrefix(), strlen(frozenReadinessTagPrefix())) == 0 ||
+        strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
+        strncmp(tag, "DIAG,snapshot_unit,", 19) == 0 ||
+        strncmp(tag, "DIAG,snapshot_slab_fail,", 24) == 0 ||
+        strncmp(tag, "DIAG,capture_prewarm,", 21) == 0 ||
+        // One-shot post-restore census checkpoint (S1.3/S2b.3). A slope run reads `free_chunks`
+        // against the readiness fields, so the marker must survive the timing-critical flush budget.
          strncmp(tag, "DIAG,post_restore_census,", 25) == 0 ||
          // `restored-library-stability` 1.3: the bounded on-demand library observation. It is an
          // explicitly requested one-shot inventory (66 records, ≤2 emitted per invocation), and the

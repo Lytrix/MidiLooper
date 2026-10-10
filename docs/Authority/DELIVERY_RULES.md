@@ -25,7 +25,7 @@ Historical `docs/Plans/*.plan.md` exports are **context** — they do not overri
 
 | Item | Location / command |
 |------|-------------------|
-| CLI | Node.js **≥ 20** (`nvm use 20`), `openspec --version` |
+| CLI | Node.js **≥ 20.19.0** on the default Node (`nvm` → v24), `openspec --version` — do **not** run `nvm use 20` (the CLI is installed under the default Node's global prefix, so another version hides it) |
 | Project config | `openspec/config.yaml` |
 | Archived requirements | `openspec/specs/` (after `/opsx:archive`) |
 | Active work | `openspec/changes/<name>/` (proposal, design, specs, `tasks.md`) |

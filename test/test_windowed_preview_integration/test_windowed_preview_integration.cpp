@@ -92,6 +92,7 @@ void resetSlotChangeObservation() { slotChangeObservation() = SlotChangeObservat
 // The focus route's disabled-pass reclaim is not what the fixture asserts (it is storage bookkeeping
 // beside the departure), so it is observable rather than fail-closed -- no note-edit suite asserts it.
 #define HARNESS_OBSERVABLE_START_RECLAIM
+#define HARNESS_LINKS_REAL_PLAYBACK_EDGE
 #include "off_path_deps.h"
 
 // --- the real note-edit owner (the subject of fixture 2.12) -------------------------------
@@ -162,6 +163,13 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 // SD path and the display routes the save touches), and the suite's nine fixtures kept passing.
 #include "../../src/StorageLoopIo.cpp"
 #include "../../src/StorageLoopIoBodyFormatV1.cpp"
+#include "../../src/Track/TrackPlaybackHotPath.cpp"
+
+struct TrackPlaybackTestAccess {
+  static LoopPlaybackRuntime* runtime(Track& track, uint8_t slot) {
+    return track.playbackRuntime.slotIfAllocated(slot);
+  }
+};
 
 namespace {
 
@@ -405,6 +413,7 @@ void publishCommittedRootForSlot(Loop& loop, uint32_t bars) {
     on.next.eventId = static_cast<EventId>(4000 + bar * 2u);
     on.next.canonicalOrder = bar * 2u;
     on.next.value = MidiEvent::NoteOn(bar * 768u, kChannel, 48, 100);
+    on.next.value.noteId = add.next.noteId;
     changes.events.push_back(on);
     SnapshotEventChange off{};
     off.kind = SnapshotChangeKind::Add;
@@ -412,6 +421,7 @@ void publishCommittedRootForSlot(Loop& loop, uint32_t bars) {
     off.next.eventId = static_cast<EventId>(4001 + bar * 2u);
     off.next.canonicalOrder = bar * 2u + 1u;
     off.next.value = MidiEvent::NoteOff(bar * 768u + 48u, kChannel, 48, 0);
+    off.next.value.noteId = add.next.noteId;
     changes.events.push_back(off);
   }
   LoopSnapshotConstruction construction(empty, changes);
@@ -431,6 +441,122 @@ void setUp() { setUpHarness(); }
 
 void tearDown() {}
 
+/// DEC-055 / S7.5b.2: a current-root NOTE_EDIT session starts with an empty overlay, which must not
+/// replace the committed playback interval with an empty representation.
+static void test_current_root_note_edit_open_keeps_the_committed_playback_interval() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.rebuildVisualCacheFromPasses();
+  publishCommittedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  editManager.openNoteEditSession(track);
+  TEST_ASSERT_TRUE(editManager.isNoteEditActive());
+  TEST_ASSERT_TRUE_MESSAGE(sessionProjection().empty(),
+                           "current-root NOTE_EDIT begins with an empty edit delta");
+  TEST_ASSERT_TRUE_MESSAGE(editManager.noteEditCurrentState().empty(),
+                           "the control case has no edited identities yet");
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_TRUE_MESSAGE(ensurePlaybackMergedMidiEventsBuilt(
+                               track, loop, *runtime, false, kPlayhead),
+                           "the production builder refreshes for the NOTE_EDIT preview revision");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u,
+      static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+      "an empty NOTE_EDIT delta must not silence the committed playback interval");
+
+  SessionMidiEventVec expected;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(
+      expected, 0, 2u * Config::TICKS_PER_BAR, &path));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.size()),
+      static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()));
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const MidiEvent& actual = runtime->mergedMidiEvents.mergedEvents[i];
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, actual.tick);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].type, actual.type);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].data.noteData.note, actual.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].data.noteData.velocity, actual.data.noteData.velocity);
+  }
+  track.reanchorPlaybackProjection(0, false);
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  for (uint32_t tick = 64; tick < 2u * Config::TICKS_PER_BAR; tick += 64) {
+    track.playMidiEvents(tick, true);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "NOTE_EDIT open emits both committed note pairs through the Track MIDI edge");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the handler boundary agrees with the Track send sink");
+  const NoteId editedNote = 2001;
+  const NoteBaseline committedSpan{48, 100, 768, 816};
+  const NoteBaseline editedSpan{49, 100, 800, 848};
+  editManager.noteEditCurrentStateMut().upsertRow(
+      editedNote, committedSpan, editedSpan, NoteEditPresenceType::Visible);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  TEST_ASSERT_FALSE(sessionProjection().empty());
+  editManager.bumpSessionPlaybackPreviewRevision();
+  TEST_ASSERT_TRUE(ensurePlaybackMergedMidiEventsBuilt(
+      track, loop, *runtime, false, kPlayhead));
+  TEST_ASSERT_EQUAL_UINT32(4u,
+      static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()));
+  TEST_ASSERT_EQUAL_UINT32(0u, runtime->mergedMidiEvents.mergedEvents[0].tick);
+  TEST_ASSERT_EQUAL_UINT8(48u, runtime->mergedMidiEvents.mergedEvents[0].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(48u, runtime->mergedMidiEvents.mergedEvents[1].tick);
+  TEST_ASSERT_EQUAL_UINT32(800u, runtime->mergedMidiEvents.mergedEvents[2].tick);
+  TEST_ASSERT_EQUAL_UINT8(49u, runtime->mergedMidiEvents.mergedEvents[2].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(848u, runtime->mergedMidiEvents.mergedEvents[3].tick);
+  track.reanchorPlaybackProjection(0, false);
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  for (uint32_t tick = 64; tick <= 832u; tick += 64) {
+    track.playMidiEvents(tick, true);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(3u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   "the committed pair and edited note-on reach MIDI before its new off");
+  TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(MidiSendCapture::count()));
+  TEST_ASSERT_EQUAL_UINT32(0u, track.sentPlaybackMidiAtForTest(0).event.tick);
+  TEST_ASSERT_EQUAL_UINT32(48u, track.sentPlaybackMidiAtForTest(1).event.tick);
+  TEST_ASSERT_EQUAL_UINT32(800u, track.sentPlaybackMidiAtForTest(2).event.tick);
+  TEST_ASSERT_EQUAL_UINT8(49u, track.sentPlaybackMidiAtForTest(2).event.data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(editedNote, track.sentPlaybackMidiAtForTest(2).event.noteId);
+  bool editedSounding = false;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
+    editedSounding = editedSounding || entry.noteId == editedNote;
+  });
+  TEST_ASSERT_TRUE_MESSAGE(editedSounding, "the test reaches deletion while this exact identity is sounding");
+  TEST_ASSERT_TRUE(track.sentPlaybackMidiAtForTest(2).event.isNoteOn());
+
+  // Remove the edited note while it is sounding: the real clock entry rebuilds the overlay/base
+  // representation, reconciles the identity, and still services committed unaffected content.
+  editManager.noteEditCurrentStateMut().markRowDeleted(editedNote);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  editManager.bumpSessionPlaybackPreviewRevision();
+  const NoteEditCurrentNoteState* deletedRow = editManager.noteEditCurrentState().find(editedNote);
+  TEST_ASSERT_NOT_NULL(deletedRow);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(NoteEditPresenceType::Deleted),
+                          static_cast<uint8_t>(deletedRow->presence));
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(trackManager.isSelectedTrack(track));
+  bool stillSoundingBeforeDelete = false;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
+    stillSoundingBeforeDelete = stillSoundingBeforeDelete || entry.noteId == editedNote;
+  });
+  TEST_ASSERT_TRUE_MESSAGE(stillSoundingBeforeDelete, "the edited identity is still in the active-note ledger");
+  track.playMidiEvents(840u, true);
+  TEST_ASSERT_EQUAL_UINT32(2u,
+      static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()));
+  TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the preview handoff closes the removed identity on the immediate MIDI edge");
+  const MidiEvent closure = MidiSendCapture::at(3);
+  TEST_ASSERT_TRUE(closure.isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(49u, closure.data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(840u, closure.tick);
+}
 /// Fixture 2.12 (identity + currency clause), driven by the **real** session: the slot's preview source
 /// is the session's own projection at the session's own revision, and nothing serves the slot before the
 /// session exists (so "the window is the session's" cannot pass by accident).
@@ -939,6 +1065,7 @@ static void test_the_save_serializes_the_committed_checkpoint_and_never_the_serv
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
+  RUN_TEST(test_current_root_note_edit_open_keeps_the_committed_playback_interval);
   RUN_TEST(test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stale_preview);
   RUN_TEST(test_an_in_session_undo_and_redo_advance_the_preview_revision_and_the_served_content);
   RUN_TEST(test_a_selected_track_change_cancels_the_departing_tracks_preview_by_its_own_lifecycle);

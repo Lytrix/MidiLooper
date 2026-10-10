@@ -109,7 +109,7 @@ From `~/.cursor/plans/timeline_data_model_refactor_9cbaeb60.plan.md` §1. Do not
 
 ## Getting started in Cursor
 
-1. `nvm use 20` — `openspec --version`
+1. Node.js **>= 20.19.0** on the default Node (`nvm` → v24) — `openspec --version`. Do **not** run `nvm use 20`: the CLI lives in the default Node's global prefix, so switching to v20 hides it from `PATH`.
 2. Read [PROJECT_STATE.md](../Runtime/PROJECT_STATE.md) and [CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) — pick the active change
 3. Open `openspec/changes/<name>/` (proposal → design → `tasks.md`)
 4. Load brownfield guides cited in the change — **cite, do not duplicate** (see below)
@@ -170,7 +170,7 @@ Use these when debugging behavior — before trusting older `docs/Plans/` export
 ## CLI maintenance
 
 ```bash
-nvm use 20
+# default Node (`nvm` -> v24); never `nvm use 20` first, or `openspec` disappears
 npm install -g @fission-ai/openspec@latest
 openspec update --tools
 openspec list

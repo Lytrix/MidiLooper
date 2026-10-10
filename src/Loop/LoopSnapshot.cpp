@@ -1299,6 +1299,7 @@ LOOP_COLD_MEM LoopSnapshotConstruction::~LoopSnapshotConstruction() = default;
 
 LOOP_COLD_MEM void LoopSnapshotConstruction::handoffLoopLengthTicks(
     uint32_t loopLengthTicks) {
+  if (releaseCursor_) return;
   candidate_.loopLengthTicks_ = loopLengthTicks;
 }
 
@@ -1365,6 +1366,7 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
 
 LOOP_COLD_MEM bool LoopSnapshotConstruction::step(size_t maximumUnits,
                                                  uint32_t playheadPhaseTick) {
+  if (releaseCursor_) return false;
   if (failed_ || complete()) {
     return complete() && !failed_;
   }
@@ -1594,6 +1596,61 @@ template <> struct SnapshotReleaseChildren<SnapshotEventRoot> {
     return false;
   }
 };
+
+// Move, do not copy: an artificial const owner would make the existing walker
+// misclassify an exclusive mutable graph as shared and destroy it recursively.
+template <typename Type>
+LOOP_SNAPSHOT_COLD_MEM bool releaseConstructionReference(
+    std::shared_ptr<Type>& value, SnapshotReleasePositions& positions) {
+  std::shared_ptr<const Type> view(std::move(value));
+  const bool done = releaseSnapshotReference(view, positions, 0);
+  value = std::const_pointer_cast<Type>(std::move(view));
+  return done;
+}
+template <typename Type>
+LOOP_SNAPSHOT_COLD_MEM bool releaseConstructionReference(
+    std::shared_ptr<const Type>& value, SnapshotReleasePositions& positions) {
+  return releaseSnapshotReference(value, positions, 0);
+}
+template <typename Vector>
+LOOP_SNAPSHOT_COLD_MEM bool releaseConstructionBuffer(Vector& rows) {
+  // Only called on an empty vector. One empty allocation retirement (or phase).
+  Vector{}.swap(rows);
+  return true;
+}
+template <typename Vector, typename Edge>
+LOOP_SNAPSHOT_COLD_MEM bool releaseConstructionRows(
+    Vector& rows, SnapshotReleasePositions& positions, Edge edge) {
+  if (rows.empty()) return releaseConstructionBuffer(rows);
+  auto& reference = edge(rows.back());
+  if (reference) releaseConstructionReference(reference, positions);
+  else rows.pop_back(); // A separate grant AFTER its retained edge is empty.
+  return false;
+}
+template <typename Workspace>
+LOOP_SNAPSHOT_COLD_MEM bool releaseConstructionWorkspace(
+    Workspace& work, uint8_t& phase, SnapshotReleasePositions& positions) {
+  bool done = false;
+  switch (phase) {
+    case 0: done = releaseConstructionReference(work.change.previous, positions); break;
+    case 1: done = releaseConstructionReference(work.nextReference, positions); break;
+    case 2: done = releaseConstructionReference(work.membershipCopy.source, positions); break;
+    case 3: done = releaseConstructionReference(work.membershipCopy.tail, positions); break;
+    case 4: done = releaseConstructionReference(work.membershipCopy.head, positions); break;
+    case 5: done = releaseConstructionReference(work.currentMembership, positions); break;
+    case 6: done = releaseConstructionReference(work.currentPage, positions); break;
+    case 7:
+      done = releaseConstructionRows(work.membershipEdits, positions,
+          [](auto& row) -> auto& { return row.membership; }); break;
+    case 8:
+      done = releaseConstructionRows(work.pageEdits, positions,
+          [](auto& row) -> auto& { return row.page; }); break;
+    case 9: done = releaseConstructionReference(work.nextRoot, positions); break;
+    default: return true; // All common edges and buffers empty; no work here.
+  }
+  if (done) ++phase;
+  return false;
+}
 }  // namespace
 
 LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::beginRelease(
@@ -1610,21 +1667,111 @@ LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::stepRelease(
     ReleaseCursor& cursor, size_t maximumUnits) {
   for (size_t unit = 0; unit < maximumUnits && cursor.root_; ++unit) {
     ++cursor.units_;
-    if (cursor.root_.use_count() > 1) {
-      cursor.root_.reset();
-    } else if (cursor.phase_ == 0) {
-      if (releaseSnapshotReference(cursor.root_->spanRoot_, cursor.positions_, 0)) {
-        ++cursor.phase_;
-      }
-    } else if (cursor.phase_ == 1) {
-      if (releaseSnapshotReference(cursor.root_->eventRoot_, cursor.positions_, 0)) {
-        ++cursor.phase_;
-      }
-    } else {
-      cursor.root_.reset();  // Both child roots are empty.
-    }
+    releaseInPlaceUnit(cursor.root_, cursor.positions_, cursor.phase_);
   }
   return cursor.complete();
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::releaseInPlaceUnit(
+    ImmutableLoopSnapshotRef& root, std::array<size_t, 5>& positions, uint8_t& rootPhase) {
+  if (!root) return true;
+  if (root.use_count() > 1) {
+    root.reset();
+  } else if (rootPhase == 0) {
+    if (releaseSnapshotReference(root->spanRoot_, positions, 0)) ++rootPhase;
+  } else if (rootPhase == 1) {
+    if (releaseSnapshotReference(root->eventRoot_, positions, 0)) ++rootPhase;
+  } else {
+    root.reset(); // Both child roots already empty; shell is a separate grain.
+  }
+  return !root;
+}
+
+LOOP_SNAPSHOT_COLD_MEM LoopSnapshotConstruction::ReleaseResult
+LoopSnapshotConstruction::releaseResult(const ReleaseCursor& cursor) const {
+  if (!cursor.owner_) return ReleaseResult::Idle;
+  if (cursor.owner_ != this || releaseCursor_ != &cursor) return ReleaseResult::Rejected;
+  return cursor.phase_ == 14 ? ReleaseResult::Complete : ReleaseResult::Progress;
+}
+
+LOOP_SNAPSHOT_COLD_MEM LoopSnapshotConstruction::ReleaseResult
+LoopSnapshotConstruction::beginRelease(ReleaseCursor& cursor) {
+  if (releaseCursor_ == &cursor && cursor.owner_ == this) return releaseResult(cursor);
+  if (releaseCursor_ || cursor.owner_) return ReleaseResult::Rejected;
+  // Scalar-only, irreversible, single-use admission. No graph owner moves here.
+  cursor.owner_ = this;
+  releaseCursor_ = &cursor;
+  return ReleaseResult::Progress;
+}
+
+LOOP_SNAPSHOT_COLD_MEM LoopSnapshotConstruction::ReleaseResult
+LoopSnapshotConstruction::stepRelease(ReleaseCursor& cursor, size_t maximumUnits) {
+  if (cursor.owner_ != this || releaseCursor_ != &cursor) return ReleaseResult::Rejected;
+  for (size_t unit = 0; unit < maximumUnits && cursor.phase_ != 14; ++unit) {
+    ++cursor.units_;
+    bool done = false;
+    auto& positions = cursor.positions_;
+    // 0 note workspace, 1 event workspace, 2/3 change rows+buffers,
+    // 4/5 mutable construction roots, 6/7 candidate roots,
+    // 8/9/10 frozen span/event/shell, 11/12/13 parent span/event/shell.
+    // 14 is terminal. Advancing bookkeeping never performs another grain.
+    switch (cursor.phase_) {
+      case 0:
+        if (!noteApply_) { done = true; break; }
+        if (cursor.workspacePhase_ < 10) {
+          releaseConstructionWorkspace(*noteApply_, cursor.workspacePhase_, positions);
+        } else if (cursor.workspacePhase_ == 10) {
+          if (releaseConstructionRows(noteApply_->pitchEdits, positions,
+              [](auto& row) -> auto& { return row.second; })) ++cursor.workspacePhase_;
+        } else {
+          noteApply_.reset(); // All graph edges and variable buffers empty.
+          done = true;
+        }
+        break;
+      case 1:
+        if (!eventApply_) { done = true; break; }
+        if (cursor.workspacePhase_ < 10) {
+          releaseConstructionWorkspace(*eventApply_, cursor.workspacePhase_, positions);
+        } else if (cursor.workspacePhase_ == 10) {
+          if (!eventApply_->remainingBars.empty()) eventApply_->remainingBars.pop_back();
+          else { releaseConstructionBuffer(eventApply_->remainingBars); ++cursor.workspacePhase_; }
+        } else {
+          eventApply_.reset();
+          done = true;
+        }
+        break;
+      case 2:
+        done = releaseConstructionRows(changes_.notes, positions,
+            [](auto& row) -> auto& { return row.previous; }); break;
+      case 3:
+        done = releaseConstructionRows(changes_.events, positions,
+            [](auto& row) -> auto& { return row.previous; }); break;
+      case 4: done = releaseConstructionReference(constructionSpanRoot_, positions); break;
+      case 5: done = releaseConstructionReference(constructionEventRoot_, positions); break;
+      case 6: done = releaseSnapshotReference(candidate_.spanRoot_, positions, 0); break;
+      case 7: done = releaseSnapshotReference(candidate_.eventRoot_, positions, 0); break;
+      case 8: case 9: case 11: case 12: {
+        auto& root = cursor.phase_ < 11 ? frozenCandidate_ : parent_;
+        if (!root) { done = true; break; }
+        if (root.use_count() > 1) {
+          root.reset(); // Shared immutable snapshot and descendants stay untouched.
+          done = true;
+        } else if (cursor.phase_ == 8 || cursor.phase_ == 11) {
+          done = releaseSnapshotReference(root->spanRoot_, positions, 0);
+        } else {
+          done = releaseSnapshotReference(root->eventRoot_, positions, 0);
+        }
+        break;
+      }
+      case 10: frozenCandidate_.reset(); done = true; break;
+      case 13: parent_.reset(); done = true; break;
+    }
+    if (done) {
+      ++cursor.phase_;
+      cursor.workspacePhase_ = 0;
+    }
+  }
+  return releaseResult(cursor);
 }
 
 LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::EventWindowCursor::begin(

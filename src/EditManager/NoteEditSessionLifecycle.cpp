@@ -189,6 +189,11 @@ NOTE_EDIT_MEM void logNoteEditOpenQ3(const Loop& loop, const LoopEventStore& sto
 #endif
 
 EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
+    cancelCurrentRootNoteEditEntry();
+    // A late direct caller must not open departed content under current focus.
+    if (&track != &trackManager.getSelectedTrack()) {
+        return;
+    }
     if (editSession.active) {
         return;
     }
@@ -283,6 +288,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::reopenNoteEditSession(Track& track) {
+    cancelCurrentRootNoteEditEntry();
+    // Reject a departed caller before clearing or rebuilding the current session.
+    // The selected Track and its selected slot remain the sole focus authority.
+    if (&track != &trackManager.getSelectedTrack()) {
+        return;
+    }
     if (editSession.active) {
         editSession.store.mutStore().clear();
         editSession.store.discardEventsCache();
@@ -378,6 +389,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::markCurrentEditBatchDurable(Track& track
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
+    cancelCurrentRootNoteEditEntry();
     if (!editSession.active) {
         return;
     }
@@ -412,6 +424,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::revertNoteEditSessionForLoopClear(Track& track) {
+    cancelCurrentRootNoteEditEntry();
     if (editSession.sessionType != EditSessionType::Note && !editSession.active) {
         return;
     }
@@ -452,6 +465,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::revertNoteEditSessionForLoopClear(Track&
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::rematerializeNoteEditSessionAfterWorkspaceReload(Track& track) {
+    cancelCurrentRootNoteEditEntry();
     if (editSession.sessionType == EditSessionType::Note) {
         reopenNoteEditSession(track);
         return;
@@ -554,4 +568,185 @@ EDIT_MANAGER_IMPL_MEM void EditManager::persistActiveNoteEditSession(Track& trac
     commitAllPendingNoteEditActions(track);
     bakeNoteEditSessionStoreToPasses(track);
     markCurrentEditBatchDurable(track);
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::cancelCurrentRootNoteEditEntry() {
+    if (!hasPendingCurrentRootNoteEditEntry()) return;
+    currentRootEntry_ = {};
+    currentRootEntry_.phase = CurrentRootEntryPhase::Cancelled;
+    cancelDefaultNoteEditSelectionPreparation();
+    editSession.cancelPayloadClear(); // scalar invalidation, not destructive clearing
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::cancelCurrentRootNoteEditEntryForLoop(const Loop& loop) {
+    if (hasPendingCurrentRootNoteEditEntry() && currentRootEntry_.loop == &loop)
+        cancelCurrentRootNoteEditEntry();
+}
+
+// Settled LIVE lane only. Stale/rootless, Capture, active/FSM and debug-bisect
+// entries keep explicit synchronous compatibility until their own cutover.
+EDIT_MANAGER_IMPL_MEM EditManager::CurrentRootEntryAdmission
+EditManager::acceptCurrentRootNoteEditEntry(Track& track) {
+#if NOTE_EDIT_OPEN_BISECT_STAGE != 4
+    return CurrentRootEntryAdmission::Unavailable;
+#else
+    if (hasPendingCurrentRootNoteEditEntry() || &track != &trackManager.getSelectedTrack() ||
+        !track.loopsAllocated() || editSession.active || currentState ||
+        editSession.sessionType != EditSessionType::Loop || track.isRecording() ||
+        track.isOverdubbing() || loopEditManager.hasPendingGeometry())
+        return CurrentRootEntryAdmission::Unavailable;
+    const Loop& loop = trackManager.getSelectedLoop(track);
+    if (!loop.publishedSnapshotIsCurrent() || !loop.loopLengthTicks ||
+        loop.pendingSnapshotInventoryDestinationResult() == Loop::PendingSnapshotInventoryDestinationResult::Busy ||
+        (!track.isPlaying() && loop.visualCacheDirty)) return CurrentRootEntryAdmission::Unavailable;
+    auto& p = currentRootEntry_;
+    p = {};
+    p.track = trackManager.getSelectedTrackIndex();
+    if (++currentRootEntryToken_ == 0) ++currentRootEntryToken_;
+    p.token = currentRootEntryToken_;
+    p.slot = trackManager.getSelectedSlotIndex(p.track);
+    p.priorType = editSession.sessionType;
+    p.loop = &loop; p.loopId = loop.loopId;
+    p.root = loop.publishedSnapshotIdentity(); p.rootRevision = loop.publishedSnapshotRevision();
+    p.canonicalGeneration = loop.canonicalStorageGeneration;
+    p.captureGeneration = loop.captureContentGeneration();
+    p.trackGeneration = track.getPlaybackGeneration(); p.playbackRevision = loop.playbackRevision;
+    p.length = loop.loopLengthTicks; p.origin = loop.loopStartTick; p.start = loop.startLoopTick;
+    p.visualRevision = loop.visualCache.revision; p.visualDirty = loop.visualCacheDirty;
+    p.preview = sessionPreviewRevision_; p.playbackPreview = sessionPlaybackPreviewRevision_;
+    p.acceptedTick = clockManager.getCurrentTick();
+    p.phase = CurrentRootEntryPhase::BeginPayload;
+    return CurrentRootEntryAdmission::Accepted;
+#endif
+}
+
+EDIT_MANAGER_IMPL_MEM bool EditManager::currentRootNoteEditEntryContextMatches() const {
+    const auto& p = currentRootEntry_;
+    if (!hasPendingCurrentRootNoteEditEntry() || p.token != currentRootEntryToken_ ||
+        p.track != trackManager.getSelectedTrackIndex() ||
+        p.slot != trackManager.getSelectedSlotIndex(p.track)) return false;
+    const Track& track = trackManager.getSelectedTrack();
+    if (!track.loopsAllocated()) return false;
+    // Re-resolve allocation BEFORE comparing identity; saved pointers are never dereferenced.
+    const Loop& loop = trackManager.getSelectedLoop(track);
+    if (&loop != p.loop || loop.loopId != p.loopId || !loop.publishedSnapshotIsCurrent() ||
+        loop.publishedSnapshotIdentity() != p.root || loop.publishedSnapshotRevision() != p.rootRevision ||
+        loop.canonicalStorageGeneration != p.canonicalGeneration || loop.captureContentGeneration() != p.captureGeneration ||
+        track.getPlaybackGeneration() != p.trackGeneration || loop.playbackRevision != p.playbackRevision ||
+        loop.loopLengthTicks != p.length || loop.loopStartTick != p.origin || loop.startLoopTick != p.start ||
+        loop.visualCache.revision != p.visualRevision || loop.visualCacheDirty != p.visualDirty ||
+        track.isRecording() || track.isOverdubbing() || loopEditManager.hasPendingGeometry() ||
+        loop.pendingSnapshotInventoryDestinationResult() == Loop::PendingSnapshotInventoryDestinationResult::Busy ||
+        sessionPreviewRevision_ != p.preview || sessionPlaybackPreviewRevision_ != p.playbackPreview) return false;
+    const bool published = p.phase >= CurrentRootEntryPhase::PreviewTail;
+    return published ? editSession.active && editSession.sessionType == EditSessionType::Note &&
+                       currentState == &selectNoteState
+                     : !editSession.active && editSession.sessionType == p.priorType && !currentState;
+}
+
+EDIT_MANAGER_IMPL_MEM bool EditManager::publishPreparedCurrentRootNoteEditEntry(Track& track) {
+    if (!currentRootNoteEditEntryContextMatches()) return false;
+    const auto* candidate = preparedDefaultNoteEditSelection(track);
+    if (!candidate || !sessionState.selection.selectedNotes.empty() ||
+        sessionState.selection.selectedNotes.capacity() < 1) return false;
+    // Consume only a freshly queried Complete result, without a yield or legacy UI rescan.
+    sessionState.kind = NoteEditKind::Select;
+    auto& selection = sessionState.selection;
+    selection.trackId = static_cast<TrackId>(currentRootEntry_.track);
+    selection.loopId = currentRootEntry_.loopId;
+    selection.selectedTick = candidate->selectedTick;
+    selection.primaryNote = candidate->primaryNote;
+    selectedNoteIdx = candidate->selectedNoteIdx;
+    if (candidate->primaryNote != kInvalidNoteId) selection.selectedNotes.push_back(candidate->primaryNote);
+    hasMovedBracket = true;
+    syncReferenceStepFromSelectedTick(selection.selectedTick);
+    setLastFader1SelectNoteId(selection.primaryNote);
+    editSession.sessionType = EditSessionType::Note;
+    editSession.active = true;
+    editSession.editPassIndex = 0;
+    editSession.openedOnCurrentSnapshot = true;
+    editSession.openedSnapshotRevision = currentRootEntry_.rootRevision;
+    currentEditMode = EDIT_MODE_SELECT;
+    bumpSessionPreviewRevision(); bumpSessionPlaybackPreviewRevision();
+    currentRootEntry_.preview = sessionPreviewRevision_;
+    currentRootEntry_.playbackPreview = sessionPlaybackPreviewRevision_;
+    currentState = &selectNoteState;
+    loopEditManager.onLeaveLoopEditSession(); // no geometry obligation admitted
+    preparedSelectionPublication_ = true;
+    currentState->onEnter(*this, track, selection.selectedTick);
+    preparedSelectionPublication_ = false;
+    cancelDefaultNoteEditSelectionPreparation();
+    editSession.cancelPayloadClear();
+    return true;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::stepCurrentRootNoteEditEntry() {
+    if (!hasPendingCurrentRootNoteEditEntry()) return;
+    if (!currentRootNoteEditEntryContextMatches()) { cancelCurrentRootNoteEditEntry(); return; }
+    auto& p = currentRootEntry_;
+    Track& track = trackManager.getSelectedTrack();
+    Loop& loop = trackManager.getSelectedLoop(track);
+    using Phase = CurrentRootEntryPhase;
+    switch (p.phase) {
+        case Phase::BeginPayload:
+            p.payload = editSession.beginPayloadClear(); p.phase = Phase::Payload; return;
+        case Phase::Payload:
+            if (editSession.stepPayloadClear(p.payload) == EditSession::PayloadClearResult::Complete)
+                p.phase = Phase::BeginDerived;
+            return;
+        case Phase::BeginDerived:
+            if (beginNoteEditDerivedStateClear(track, p.payload, p.derived) != DerivedStateClearResult::Progress) {
+                cancelCurrentRootNoteEditEntry(); return;
+            }
+            p.preview = sessionPreviewRevision_; p.playbackPreview = sessionPlaybackPreviewRevision_;
+            p.phase = Phase::Derived; return;
+        case Phase::Derived:
+            if (stepNoteEditDerivedStateClear(p.derived) == DerivedStateClearResult::Complete) p.phase = Phase::BeginIds;
+            return;
+        case Phase::BeginIds:
+            loop.beginCommittedNoteIdPreparation(p.ids); p.phase = Phase::Ids; return;
+        case Phase::Ids: {
+            const auto result = loop.stepCommittedNoteIdPreparation(p.ids);
+            if (result == Loop::CommittedNoteIdPreparationResult::Complete) p.phase = Phase::ReserveSelection;
+            else if (result != Loop::CommittedNoteIdPreparationResult::Progress) cancelCurrentRootNoteEditEntry();
+            return;
+        }
+        case Phase::ReserveSelection:
+            if (!sessionState.selection.selectedNotes.empty()) { cancelCurrentRootNoteEditEntry(); return; }
+            sessionState.selection.selectedNotes.reserve(1); // empty buffer grant; allocator duration unqualified
+            p.phase = Phase::BeginSelection; return;
+        case Phase::BeginSelection:
+            if (beginDefaultNoteEditSelectionPreparation(track, p.acceptedTick) != SelectionPreparationResult::Progress) {
+                cancelCurrentRootNoteEditEntry(); return;
+            }
+            p.phase = Phase::Selection; return;
+        case Phase::Selection: {
+            const auto result = stepDefaultNoteEditSelectionPreparation(track);
+            if (result == SelectionPreparationResult::Complete) p.phase = Phase::Publish;
+            else if (result != SelectionPreparationResult::Progress) cancelCurrentRootNoteEditEntry();
+            return;
+        }
+        case Phase::Publish:
+            if (!loop.committedNoteIdPreparationComplete(p.ids) || !publishPreparedCurrentRootNoteEditEntry(track)) {
+                cancelCurrentRootNoteEditEntry(); return;
+            }
+            p.phase = Phase::PreviewTail; return;
+        case Phase::PreviewTail:
+            // Compatibility tail, NOT a bounded preparation grain: preview may project/scan.
+            sendEditModeProgram(EDIT_MODE_SELECT);
+            track.servicePreviewWindowForNoteEditSession();
+            p.phase = Phase::FeedbackTail; return;
+        case Phase::FeedbackTail: {
+            // Existing prep and delay(10) are not a bounded preparation grant.
+            // Keep the intent cancellable during SessionClosed callbacks.
+            const uint32_t token = p.token;
+            emitEditEvent(EditEvent::SessionClosed);
+            if (token != currentRootEntryToken_) return; // a callback accepted a successor; don't cancel it
+            if (!currentRootNoteEditEntryContextMatches()) { cancelCurrentRootNoteEditEntry(); return; }
+            p.phase = Phase::Complete;
+            emitSessionOpenedToSurface(true, true);
+            return;
+        }
+        default: return;
+    }
 }

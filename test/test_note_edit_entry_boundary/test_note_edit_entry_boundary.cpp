@@ -1,42 +1,13 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// `runtime-working-set-ownership` **S7.5b.8a — freeze the production entry/focus/feedback boundary
-// oracle** (fixture-only; no firmware line is changed by this suite).
-//
-// The parent slice S7.5b.8 bounds NOTE_EDIT entry, selection/focus preparation and feedback
-// preparation/execution so each admitted indivisible unit returns to MIDI input service, while the
-// committed audible source, accepted input, selected `NoteId`, motor-echo guards and existing feedback
-// deadlines stay as they are today. Before any of that firmware work, this suite freezes the oracle:
-//
-//   * the production **button** entry (`MidiButtonActions::handleCycleEditMode`) and the production
-//     **session** entry behind it (`ControlSurfaceManager::cycleEditSession` ->
-//     `EditManager::cycleEditSession`/`sendEditSessionChange` -> `reopenNoteEditSession` ->
-//     `openNoteEditSession` -> `enterDefaultNoteEditSessionState`);
-//   * the production **selection/focus** publication (identity-qualified `NoteId`, track/slot/loop
-//     identity, bracket tick) and its focus-change/slot-change/clear/load entries;
-//   * the production **outbound** seam (`handleSessionOpenedEvent` -> `prepareNoteEditSessionOpen` ->
-//     `sendNoteEditSessionFaderFeedback` -> `requestFaderOutbound(Trigger::SessionOpen)` with the
-//     normative `NoteEditFaderOutbound` stage flags), plus the entry's own nested
-//     `drainFaderOutboundUntilIdle()` call site.
-//
-// Two families live here:
-//
-//   1. the **baseline oracle** (unflagged, green today): for short/long loops, current-root and
-//      rootless sources, empty selection and dense content, the entry publishes exactly one
-//      identity-qualified session/focus result, keeps the committed soundings exact through the Track
-//      MIDI edge and the active-note ledger, and requests the session-open feedback exactly once --
-//      including across exit/reopen, track/slot change, mutation, workspace reload and clear;
-//   2. the **boundary oracle** (`-DS75B8_ENTRY_BOUNDARY_ORACLE`), RED today by construction and what
-//      S7.5b.8b must turn green: the entry must return to MIDI input between admitted units instead of
-//      polling the feedback pipeline to idle in its own callback (the documented missing-yield case), it
-//      must keep the accepted gesture pending when the owner's next turn is withheld, and it must refuse
-//      to publish for an identity superseded before the completion ran.
-//
-// The suite is *fixtures only*: it neither adds a continuation seam nor changes production behaviour, and
-// no timing/numeric limit is asserted here (S7.5a supplies the envelope; unit quanta are pinned with
-// S7.5b.8b). Declared boundaries: see `off_path_deps.h`. Packet:
-// `openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/EXECUTION.md`.
+// S7.5b.8b: LIVE settled-current-root entry through real cycle/short callers,
+// cleanup, private selection, real Select publication and qualified feedback tails.
+// Other FSMs/outbound sends remain named boundaries; no hardware timing claim.
+// S75B8_ENTRY_BOUNDARY_ORACLE retains the unchanged COLD/rootless withholding
+// failure: source expansion and full entry/feedback qualification remain open.
+// Packet: openspec/changes/runtime-working-set-ownership/evidence/
+// 2026-10-09-s75b8-note-edit-entry-boundary/LIVE-CURRENT-ROOT-ENTRY.md.
 
 #define ARDUINO 1
 
@@ -122,6 +93,7 @@ float bpm = 120.0f;
 
 #include "../../src/MidiHandler.cpp"
 #include "../../src/EditManager.cpp"
+#include "../../src/NoteEditSessionState.cpp"
 // `src/LoopEditManager.cpp` uses Arduino's `map()`, which the native Arduino stub does not provide.
 inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
   if (inMax == inMin) return outMin;
@@ -140,17 +112,23 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 #include "../../src/EditManager/NoteEditSessionCommit.cpp"
 #include "../../src/EditManager/NoteEditCommitColdHelpers.cpp"
 #include "../../src/EditManager/NoteEditSelection.cpp"
+#include "../../src/EditManager/NoteEditSelectionPreparation.cpp"
 #include "../../src/EditManager/EditNoteStateCoordinator.cpp"
 #include "../../src/EditManager/NoteEditCurrentState.cpp"
 #include "../../src/EditManager/NoteEditSessionUndo.cpp"
 #include "../../src/EditManager/NoteEditSessionUndoStack.cpp"
+#include "../../src/EditManager/NoteEditSessionPayloadRetirement.cpp"
+#include "../../src/EditManager/NoteEditDerivedStateRetirement.cpp"
 #include "../../src/EditManager/EditSessionStoreInvariant.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/EditManager/ApplyOwnedEditPassRows.cpp"
 #include "../../src/EditManager/ApplyEditSessionActions.cpp"
-// `EditSessionActionBuilder.cpp` is deliberately absent: `EditSessionInteraction.cpp` already provides
-// its `baselineSpansEqual` helper in this concatenated TU.
+// The real Select virtual button method references the real geometry action builder.
+// Rename only its private helper to avoid a concatenated-TU collision.
+#define baselineSpansEqual baselineSpansEqualActionBuilder
+#include "../../src/EditManager/EditSessionActionBuilder.cpp"
+#undef baselineSpansEqual
 #include "../../src/EditManager/NoteEditFocusBaseline.cpp"
 #include "../../src/EditManager/NoteEditFocusRebuild.cpp"
 #include "../../src/EditManager/NoteEditFocusState.cpp"
@@ -166,8 +144,12 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 #include "../../src/EditManager/NoteEditGeometryApplyInternalHelpers.cpp"
 #include "../../src/EditManager/NoteGeometryResolver.cpp"
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
-// The five `EditStates` TUs are **not** linked: on the host toolchain their narrowing initializers are
-// ill-formed, so the FSM's state entries are a declared boundary (see `off_path_deps.h`).
+// Arduino platform boundary needed by the real Select motor conversion, not domain logic.
+template <typename T> T constrain(T value, T low, T high) {
+  return std::max(low, std::min(value, high));
+}
+// The real Select FSM is part of the entry contract; other states remain named boundaries.
+#include "../../src/EditStates/EditSelectNoteState.cpp"
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 // The slot-matrix focus route reaches the capture-queue finalization step, so the real TrackManager
 // capture-queue owner is linked rather than stubbed: a slot move must not be able to skip the
@@ -182,6 +164,8 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 #include "../../src/Track/TrackPlaybackHotPath.cpp"
 // --- S7.5b.8a's subject: the real button entry and the real session/feedback seam. ---
 #include "../../src/ControlSurface/EditEventFeedback.cpp"
+#include "../../src/ControlSurface/NoteEditButtonInput.cpp"
+#include "../../src/StorageManager/SlotReset.cpp"
 /// `Track`'s own friend (`include/Track.h`): test-side access to the slot's playback runtime so the
 /// fixtures can read the production active-note ledger. Must be declared at namespace scope.
 struct TrackPlaybackTestAccess {
@@ -231,11 +215,12 @@ void setUpHarness() {
   MidiSendCapture::reset();
   // Fixture isolation: `editManager` is a global and the loop storage survives between fixtures, so an
   // earlier fixture's session can still be open. Close it through the production exit and reset the
-  // session state, so every fixture starts from "no session, revision 0". (The FSM pointer survives, but
-  // every FSM entry is a declared no-op boundary here, so it cannot decide an assertion.)
+  // Reset the real FSM before recycling Track storage; other four entries are
+  // named boundaries, while Select entry now participates in this oracle.
   if (editManager.isNoteEditActive()) {
     editManager.closeNoteEditSession(trackManager.getSelectedTrack());
   }
+  editManager.setState(nullptr, trackManager.getSelectedTrack());
   editManager.resetNoteEditSessionState();
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
@@ -351,6 +336,14 @@ void publishCommittedRootForSlot(Loop& loop, uint32_t bars, uint8_t pitch = 48) 
 
 /// The production entry the momentary edit-mode gesture performs.
 void pressEditModeButton() { midiButtonActions.handleCycleEditMode(); }
+void finishLiveEntry() {
+  for (unsigned i = 0; editManager.hasPendingCurrentRootNoteEditEntry() && i < 100000; ++i) {
+    midiHandler.handleMidiInput();
+    editManager.stepCurrentRootNoteEditEntry();
+    midiHandler.handleMidiInput();
+  }
+  TEST_ASSERT_FALSE(editManager.hasPendingCurrentRootNoteEditEntry());
+}
 
 /// The session's own projection: `store.readEvents()` (the const overload), the content the session
 /// serves. The non-const overload returns the mutable store the edit ops write.
@@ -847,7 +840,6 @@ static void test_entry_while_a_competing_track_plays_keeps_both_tracks_exact() {
 // Family 2 -- the boundary oracle. RED today by construction; S7.5b.8b must turn it green.
 // ---------------------------------------------------------------------------------------------------
 
-#if defined(S75B8_ENTRY_BOUNDARY_ORACLE)
 
 /// **Documented missing-yield case.** The entry must return to MIDI input between admitted units: the
 /// feedback preparation is one unit, the send pipeline belongs to the existing main-loop continuation,
@@ -871,6 +863,7 @@ static void test_entry_returns_to_midi_input_between_admitted_units() {
                                    "the entry's own unit is the single session-open feedback request");
 }
 
+#if defined(S75B8_ENTRY_BOUNDARY_ORACLE)
 /// **Withheld-grant control.** With the owner's next turn withheld, the accepted gesture must stay
 /// pending: acceptance is bounded metadata, and the content-sized preparation waits for its unit. RED
 /// today: the whole entry (content rematerialize + focus build + feedback request) runs inside the button
@@ -891,6 +884,8 @@ static void test_entry_keeps_the_accepted_gesture_pending_when_the_owner_turn_is
   TEST_ASSERT_TRUE_MESSAGE(track.hasAudiblePlaybackSource(0),
                            "the accepted interaction keeps the audible source pending, not silent");
 }
+
+#endif  // S75B8_ENTRY_BOUNDARY_ORACLE: pending-entry implementation remains open.
 
 /// **Identity-rejection control.** A completion that carries an identity superseded *before* it ran must
 /// not publish: only a complete session/slot/`NoteId`/source-qualified result becomes ready, and a late
@@ -913,9 +908,20 @@ static void test_entry_refuses_a_late_completion_for_a_superseded_track_referenc
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(
                                    editManager.getNoteEditSessionState().selection.trackId));
 
+  const NoteId primaryBefore = editManager.getNoteEditSessionState().selection.primaryNote;
+  const int selectedBefore = editManager.getSelectedNoteIdx();
+  const uint32_t previewBefore = editManager.sessionPreviewRevision();
+  const uint32_t playbackPreviewBefore = editManager.sessionPlaybackPreviewRevision();
   // A late completion that still carries the departed reference must be refused.
   editManager.reopenNoteEditSession(departed);
 
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, outboundObservation().requestCalls,
+                                   "a rejected reopen must not issue another feedback request");
+  TEST_ASSERT_EQUAL_UINT32(primaryBefore,
+      editManager.getNoteEditSessionState().selection.primaryNote);
+  TEST_ASSERT_EQUAL_INT(selectedBefore, editManager.getSelectedNoteIdx());
+  TEST_ASSERT_EQUAL_UINT32(previewBefore, editManager.sessionPreviewRevision());
+  TEST_ASSERT_EQUAL_UINT32(playbackPreviewBefore, editManager.sessionPlaybackPreviewRevision());
   const NoteEditSessionState& state = editManager.getNoteEditSessionState();
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       1u, static_cast<uint32_t>(state.selection.trackId),
@@ -932,10 +938,74 @@ static void test_entry_refuses_a_late_completion_for_a_superseded_track_referenc
   }
 }
 
-#endif  // S75B8_ENTRY_BOUNDARY_ORACLE
+
+#include "selection_preparation.inc"
+#include "committed_id_preparation.inc"
+#include "inventory_preparation.inc"
+#include "select_state_handoff.inc"
+#include "second_clamp_preparation.inc"
+#include "departed_entry_guards.inc"
+
+#include "derived_state_clear.inc"
+
+// Real pending-note overlap and seal owner is linked here, unlike prewarm.
+#define PENDING_BOX_WRAP_HARNESS 1
+#include "../test_playback_prewarm/pending_box_release.inc"
+#define INVENTORY_ADOPTION_METADATA_HARNESS 1
+#include "inventory_adoption.inc"
+#include "live_current_root_entry.inc"
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_live_repair_cycle_preview_tail);
+  RUN_TEST(test_live_repair_cycle_feedback_tail);
+  RUN_TEST(test_live_repair_short_preview_tail);
+  RUN_TEST(test_live_repair_short_feedback_tail);
+  RUN_TEST(test_live_repair_explicit_preview_tail);
+  RUN_TEST(test_live_repair_explicit_feedback_tail);
+  RUN_TEST(test_live_ready_root_zero_grant_acceptance);
+  RUN_TEST(test_live_callback_successor_keeps_its_new_request_without_old_open);
+  RUN_TEST(test_live_dedup_and_accepted_capture_input_supersede_without_obsolete_feedback);
+  RUN_TEST(test_live_empty_ready_root_and_split_start_tie_inventory);
+  RUN_TEST(test_live_compatibility_admission_is_explicit_and_nonmutating);
+  RUN_TEST(test_live_real_storage_reset_before_source_reuse_and_geometry_cancel);
+  RUN_TEST(test_live_populated_inactive_payload_and_derived_cleanup_precede_publication);
+  RUN_TEST(test_live_real_publisher_second_clamp_final_landing_and_late_cancel);
+  RUN_TEST(test_live_one_grant_private_selection_and_exact_completion);
+  RUN_TEST(test_live_short_wrapper_and_pending_inputs_do_not_run_immediate_tails);
+  RUN_TEST(test_live_pending_second_press_cancels_without_fake_session_events);
+  RUN_TEST(test_live_every_prepublication_phase_target_slot_and_source_cancel);
+  RUN_TEST(test_live_cleanup_reset_clear_reload_and_compatibility_supersede);
+  RUN_TEST(test_live_obsolete_feedback_cancelled_after_publication_and_callback);
+  RUN_TEST(test_live_dense_preparation_one_unit_and_peer_midi_unchanged);
+  RUN_TEST(test_adoption_queries_header_grant_and_consumed_swap);
+  RUN_TEST(test_adoption_real_borrowers_withhold_header_and_adoption);
+  RUN_TEST(test_adoption_real_prewarm_history_staleness_preserves_grant);
+  RUN_TEST(test_adoption_real_wrap_journal_refuses_without_mutation);
+  RUN_TEST(test_adoption_delete_companion_literal_inventory_and_publisher_parity);
+  RUN_TEST(test_adoption_both_retained_invalid_batches_refuse);
+  RUN_TEST(test_adoption_partial_foreign_fault_and_stale_receipts);
+  RUN_TEST(test_adoption_empty_invalid_mode_and_zero_geometry);
+  RUN_TEST(test_adoption_loaded_root_refusal_republish_preserves_stale_root_and_parity);
+  RUN_TEST(test_adoption_reservation_shortfall_exact_and_full_horizon);
+  RUN_TEST(test_adoption_live_staged_undo_and_queued_destinations_refuse);
+  RUN_TEST(test_adoption_retirement_progress_and_complete_are_never_fresh);
+  RUN_TEST(test_adoption_imported_metadata_order_is_observation_only);
+  RUN_TEST(test_pending_box_real_wrap_edges_shells_and_companion_rows);
+  RUN_TEST(test_inventory_withheld_exact_grants_and_literal_ids);
+  RUN_TEST(test_inventory_empty_and_existing_capacity_no_fabrication);
+  RUN_TEST(test_inventory_nonempty_admission_and_discard_do_not_release_outputs);
+  RUN_TEST(test_inventory_revision_and_completed_receipt_supersession_sticky);
+  RUN_TEST(test_inventory_same_shape_reset_reseed_generation_rejects);
+  RUN_TEST(test_inventory_foreign_loop_and_scalar_topology_guards);
+  RUN_TEST(test_inventory_output_headers_sizes_and_storage_are_qualified);
+  RUN_TEST(test_inventory_preserves_root_pending_chunks_and_legacy_parity);
+  RUN_TEST(test_derived_state_clear_production_payload_baseline);
+  RUN_TEST(test_derived_state_clear_withheld_exact_grants_and_preserved_source);
+  RUN_TEST(test_derived_state_clear_admission_requires_completed_receipt_and_departed_fsm);
+  RUN_TEST(test_derived_state_clear_refocus_and_slot_supersession_are_sticky);
+  RUN_TEST(test_derived_state_clear_legacy_reset_reopen_rejects_old_cursor);
+  RUN_TEST(test_derived_state_clear_empty_local_owner_finishes_without_materializing);
   // Family 1 -- the baseline oracle frozen by S7.5b.8a.
   RUN_TEST(test_button_entry_publishes_an_identity_qualified_session_on_a_current_root_source);
   RUN_TEST(test_button_entry_on_a_rootless_source_keeps_the_audible_source_and_no_partial_selection);
@@ -949,11 +1019,52 @@ int main(int, char**) {
   RUN_TEST(test_workspace_reload_between_units_rebinds_the_session_without_feedback);
   RUN_TEST(test_clear_between_units_invalidates_the_pending_session_identities);
   RUN_TEST(test_entry_while_a_competing_track_plays_keeps_both_tracks_exact);
-#if defined(S75B8_ENTRY_BOUNDARY_ORACLE)
-  // Family 2 -- the boundary oracle, RED until S7.5b.8b lands the bounded entry.
+  // Landed boundary predicates remain mandatory in the ordinary native suite.
   RUN_TEST(test_entry_returns_to_midi_input_between_admitted_units);
-  RUN_TEST(test_entry_keeps_the_accepted_gesture_pending_when_the_owner_turn_is_withheld);
   RUN_TEST(test_entry_refuses_a_late_completion_for_a_superseded_track_reference);
+  RUN_TEST(test_selection_preparation_withheld_units_keep_result_private_and_source_unpinned);
+  RUN_TEST(test_selection_preparation_preserves_inventory_ties_and_nonzero_origin_clamp);
+  RUN_TEST(test_selection_preparation_exact_snapshot_dedup_across_pages_bars_and_wrap);
+  RUN_TEST(test_selection_preparation_clean_visual_keeps_split_starts_and_invalid_identity);
+  RUN_TEST(test_selection_preparation_rejects_stale_result_and_restarts_replaced_source);
+  RUN_TEST(test_selection_preparation_refocus_and_reset_supersede_only_private_work);
+  RUN_TEST(test_selection_preparation_empty_source_has_no_fabricated_identity);
+  RUN_TEST(test_selection_preparation_waits_for_real_snapshot_owner_without_losing_request);
+  RUN_TEST(test_selection_preparation_source_replacement_during_dedup_discards_old_coordinates);
+  RUN_TEST(test_selection_preparation_slot_and_selection_supersession_are_qualified);
+  RUN_TEST(test_selection_preparation_unsupported_overlay_and_stopped_dirty_source_are_explicit);
+  RUN_TEST(test_selection_preparation_matches_legacy_selection_on_ready_source);
+  RUN_TEST(test_selection_preparation_pending_work_preserves_real_current_root_midi);
+  RUN_TEST(test_selection_preparation_distinguishes_empty_dirty_cache_from_pending_event_values);
+  RUN_TEST(test_selection_preparation_snapshot_read_unit_accepts_maximum_page_and_rejects_over_cap);
+  RUN_TEST(test_selection_preparation_snapshot_dedup_preserves_same_identity_different_starts);
+  RUN_TEST(test_committed_id_preparation_acceptance_and_single_chunk_grants);
+  RUN_TEST(test_committed_id_preparation_pass_order_disabled_rows_and_legacy_parity);
+  RUN_TEST(test_committed_id_preparation_stale_revision_rejects_then_restarts_idempotently);
+  RUN_TEST(test_committed_id_preparation_reset_recycled_source_cannot_revive_coordinates);
+  RUN_TEST(test_committed_id_preparation_wrong_loop_capture_change_and_discard);
+  RUN_TEST(test_committed_id_preparation_invalid_chunk_fault_and_empty_completion);
+  RUN_TEST(test_committed_id_preparation_preserves_shared_payload_root_and_refcounts);
+  RUN_TEST(test_committed_id_preparation_valid_first_unsealed_second_is_not_drained);
+  RUN_TEST(test_real_select_default_entry_consumes_completed_selection_once);
+  RUN_TEST(test_real_select_default_entry_does_not_create_or_dirty_event_cache);
+  RUN_TEST(test_real_select_empty_default_entry_keeps_bracket_without_reselection);
+  RUN_TEST(test_real_select_direct_entry_still_resolves_and_handoff_does_not_leak);
+  RUN_TEST(test_real_select_entry_observes_canonical_count_without_materializing_values);
+  RUN_TEST(test_real_select_entry_observes_dirty_value_count_without_sync_or_discard);
+  RUN_TEST(test_real_select_zero_length_default_return_preserves_direct_entry_behavior);
+  RUN_TEST(test_real_select_default_entry_preserves_legacy_second_clamp_landing);
+  RUN_TEST(test_second_clamp_withheld_pass_is_private_bounded_and_unpinned);
+  RUN_TEST(test_second_clamp_source_replacement_restarts_first_pass);
+  RUN_TEST(test_second_clamp_fsm_only_change_supersedes_pending_and_completed);
+  RUN_TEST(test_second_clamp_already_select_keeps_first_landing_without_reentry);
+  RUN_TEST(test_second_clamp_clean_visual_nearest_only_preserves_origin_and_tie_order);
+  RUN_TEST(test_departed_direct_open_preserves_inactive_selected_target);
+  RUN_TEST(test_departed_default_selection_preserves_active_current_identity);
+  RUN_TEST(test_departed_direct_open_does_not_allocate_cold_track);
+  RUN_TEST(test_departed_default_selection_does_not_read_cold_track);
+#if defined(S75B8_ENTRY_BOUNDARY_ORACLE)
+  RUN_TEST(test_entry_keeps_the_accepted_gesture_pending_when_the_owner_turn_is_withheld);
 #endif
   return UNITY_END();
 }

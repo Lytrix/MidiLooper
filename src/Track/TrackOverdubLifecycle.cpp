@@ -739,6 +739,8 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // Prove the raw ownership transfer before any mutation. An empty capture owns no extent
   // and stays on the producer path.
   const bool hasRawExtent = !loop.capture.store.empty();
+  const size_t rawRowCount = loop.capture.store.size();
+  const size_t rawChunkCount = loop.capture.store.chunkIds().size();
   if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.rawRange)) {
     return deny("raw_range_unsealable");
   }
@@ -773,8 +775,9 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
                       ? tickPhaseInLoop(currentTick, loop.startLoopTick, finalLength)
                       : 0;
   job.loopLengthTicks = finalLength;
+  job.frozenCaptureContentGeneration = 0;
   if (hasRawExtent) {
-    if (!loop.capture.store.sealCaptureRange(job.rawRange) ||
+    if (!loop.sealCaptureRangeForJob(job.rawRange, job.frozenCaptureContentGeneration) ||
         !loop.borrowSealedCaptureRange(job.rawRange, &job.admission)) {
       return deny("raw_transfer_failed");
     }
@@ -790,8 +793,7 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // scratch resets, the resumable row passes and the bounded chunk moves. Read here from
   // O(1) scalars, then consumed one grain at a time by the Record phases.
   job.admission.remainingCanonicalPreparationGrains = recordStopPreparationGrainBound(
-      loop.capture.store.size(), loop.capture.store.chunkIds().size(),
-      kDeferredStopPreparationQuantum);
+      rawRowCount, rawChunkCount, kDeferredStopPreparationQuantum);
   job.admission.canonicalPreparationQuantum = kDeferredStopPreparationQuantum;
   // The frozen token is the interval identity: unique per actual start and the same space the
   // worker compares against the runtime owner generation.
@@ -1067,7 +1069,9 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // here mutates the producer or the destination directory, so admission has no
   // fallible step left. If the cut still fails, the job stays on the legacy
   // producer path instead of publishing an interval without its owned input.
-  if (hasRawExtent && loop.capture.store.sealCaptureRange(job.rawRange)) {
+  job.frozenCaptureContentGeneration = 0;
+  if (hasRawExtent &&
+      loop.sealCaptureRangeForJob(job.rawRange, job.frozenCaptureContentGeneration)) {
     job.ownsRawRange = true;
     (void)loop.borrowSealedCaptureRange(job.rawRange, &job.admission);
   } else {
@@ -1503,8 +1507,13 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(Capt
       const size_t lane = static_cast<size_t>(channel - 1) * 128 + note;
       openAtStopLanes[lane >> 6] |= static_cast<uint64_t>(1) << (lane & 63u);
     }
-    (void)runtime->bindDeferredRecordReturnWindow(job.rawRange, source.finalizingGeneration,
-                                                  job.loopLengthTicks, openAtStopLanes.data());
+    const bool bound = runtime->bindDeferredRecordReturnWindow(
+        job.rawRange, source.finalizingGeneration, job.loopLengthTicks, openAtStopLanes.data());
+    if (!bound && pending == job.pendingNotes.end()) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Deferred Record return bind refused slot=%u; frozen source retained",
+                 static_cast<unsigned>(job.slot));
+    }
   }
 
   auto& output = runtime->canonicalCaptureOutput;
@@ -1909,17 +1918,11 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // owner, which never runs for a slot with no audible source: waiting there would hold the
   // job, its raw range and the capture-stop owner forever instead of transferring them.
   const bool intervalHasGeometry = loop.loopLengthTicks != 0;
+  bool frozenWindowStallExpired = false;
   if (runtime != nullptr && runtime->frozenWindowBuildActive() && intervalHasGeometry) {
-    // Bounded in DEC-070's shape. The build has two writers and both sit on other owners: the
-    // playback hot path (`adoptOrServiceOnwardRecordWindow` -> `serviceFrozenRecordWindow`) and
-    // the maintenance owner's `serviceFirstRecordingBar`, which is gated on `TRACK_RECORDING`.
-    // With neither feeding it this predicate can never become false, and waiting is the unbounded
-    // wedge DEC-070 warns about: the job keeps its raw range, its capture-stop owner and its ring
-    // entry, so no stop on the track is ever admitted again. Progress -- the build's own next
-    // grain -- resets the count, so a build its writers are still feeding is never cut. Past the
-    // bound `releaseFrozenRecordWindow` below discards the stale build *before* the raw range is
-    // released, so the use-after-free this gate exists to prevent is still prevented; only the
-    // completion of a window that retirement discards anyway is given up.
+    // The job still owns the range while an onward build borrows it. Keep the existing
+    // bounded stale-build escape, but do not confuse "no builder active" with a source
+    // handoff: the Record pass can be committed while the queued LoopSnapshot is stale.
     const auto buildGrain = static_cast<uint8_t>(runtime->frozenWindowBuildGrain());
     if (runtime->frozenWindowStallGrain != buildGrain) {
       runtime->frozenWindowStallGrain = buildGrain;
@@ -1930,11 +1933,76 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
     if (runtime->frozenWindowStallGrains < kFrozenWindowStallGrainLimit) {
       return LoopEventStoreRewriteResult::Pending;
     }
+    frozenWindowStallExpired = true;
   } else if (runtime != nullptr) {
     runtime->frozenWindowStallGrains = 0;
     runtime->frozenWindowStallGrain = 0;
   }
-  if (runtime != nullptr) runtime->releaseFrozenRecordWindow();
+  // A committed pass only queues its session-exit root. Until that immutable root covers
+  // the new revision, the job's frozen CaptureRange is still the only onward source. Keep
+  // both it and the bound return-window owner so the hot path can prepare/serve successive
+  // intervals while the Snapshot owner advances independently. Empty/filtered takes have
+  // no interval geometry and keep the existing immediate-retirement behavior.
+  if (runtime != nullptr && intervalHasGeometry && loop.hasCommittedPasses() &&
+      loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent()) {
+    // A refused first-bar bind does not cancel this source. The playback holder
+    // may still build the current bar from the frozen range before the next edge.
+    // Never release the only range while the checkpoint remains stale.
+    if (frozenWindowStallExpired) runtime->releaseFrozenRecordWindow();
+    return LoopEventStoreRewriteResult::Pending;
+  }
+  // A complete frozen Capture successor may still be waiting at its boundary
+  // when the whole root publishes first. Its bytes are copied, but the job's
+  // source/closure obligation is not retired until that ready role is adopted
+  // or cancelled by the Track window owner.
+  if (runtime != nullptr && intervalHasGeometry && loop.publishedSnapshotIsCurrent() &&
+      job.frozenCaptureContentGeneration != 0) {
+    const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+    if (set && set->lifecycle.ready < set->views.size()) {
+      const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+      if (ready.complete && !ready.published &&
+          ready.source.origin == PlaybackWindowOrigin::Capture &&
+          ready.source.sourceGeneration == playbackGeneration &&
+          ready.source.captureContentGeneration == job.frozenCaptureContentGeneration)
+        return LoopEventStoreRewriteResult::Pending;
+    }
+  }
+  // S7.5b.5: once the checkpoint root is current, keep the Record job/range
+  // until a complete current-root successor has actually been adopted during
+  // playback. The copied serving view then outlives the raw source extent.
+  bool currentRootWindowServed = false;
+  if (runtime != nullptr && intervalHasGeometry && loop.publishedSnapshotIsCurrent() &&
+      isAudiblePlaybackActive() && loop.lastTickInLoop != UINT32_MAX) {
+    PlaybackViewSourceIdentity servedIdentity{};
+    PlaybackCoverageInterval servedCoverage{};
+    const bool hasServedWindow = publishedPlaybackWindowForSlot(
+        job.slot, servedIdentity, servedCoverage);
+    const bool sameCommittedRevision = hasServedWindow &&
+        servedIdentity.playbackRevision == loop.playbackRevision &&
+        servedIdentity.sourceGeneration == playbackGeneration;
+    currentRootWindowServed = sameCommittedRevision &&
+        servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity();
+    // The copied frozen Capture view keeps its pre-publication revision when
+    // the whole root advances. Do not require today's committed revision to
+    // recognize the still-serving job source; release waits for a complete
+    // root-backed window to take over this physical reader.
+    const bool frozenCaptureServed = hasServedWindow &&
+        servedIdentity.origin == PlaybackWindowOrigin::Capture &&
+        servedIdentity.captureContentGeneration != 0 &&
+        servedIdentity.captureContentGeneration == job.frozenCaptureContentGeneration &&
+        servedIdentity.sourceGeneration == playbackGeneration &&
+        servedCoverage.loopLengthTicks == loop.loopLengthTicks;
+    if (frozenCaptureServed) return LoopEventStoreRewriteResult::Pending;
+    // A failed first-view bind leaves no published view at all. Do not drop the
+    // frozen range while this active playback owner is still preparing the
+    // first current-root window; its complete adoption is the release edge.
+    // An older served revision is not this job's borrowed source.
+    if ((sameCommittedRevision && !currentRootWindowServed) ||
+        (!hasServedWindow && job.slot == activeLoopIndex && isPlaying() &&
+         runtime->hasBoundRecordReturnWindowForPendingJob()))
+      return LoopEventStoreRewriteResult::Pending;
+  }
+  if (runtime != nullptr && !currentRootWindowServed) runtime->releaseFrozenRecordWindow();
   // Bounded: one raw-extent grain per call until the frozen source is gone.
   if (runtime != nullptr) {
     // Record retirement has the same release edge as overdub retirement. Keep the

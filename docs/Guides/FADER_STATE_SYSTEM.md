@@ -241,6 +241,8 @@ Set `kNoteEditFaderFeedbackEnabled = true` for production motorized DROID use an
 | **F4 pitch** | Ignores CC during `FEEDBACK_IGNORE_PERIOD` after note select |
 | **Session open** | Full `SessionOpen` outbound pipeline (F1 → F2 → F3 → F4) per `note-edit-fader-feedback` spec |
 
+Session entry requests this pipeline and returns; `ControlSurfaceManager::update` advances it through `processFaderOutbound`. `handleSessionOpenedEvent` does not poll `drainFaderOutboundUntilIdle` inside the entry callback. This boundary does not itself bound nested feedback preparation/send work or establish hardware latency; those remain the active S7.5b.8c/d qualification work.
+
 ### When feedback is OFF (`false`)
 
 | Subsystem | Behavior |

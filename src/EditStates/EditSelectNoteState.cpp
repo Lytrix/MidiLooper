@@ -27,12 +27,33 @@
 void EditSelectNoteState::onEnter(EditManager& manager, Track& track, uint32_t startTick) {
     logger.debug("EditSelectNoteState::onEnter at tick %lu", startTick);
     
-    // Initialize MIDI event count for overdub tracking
-    lastMidiEventCount = track.editAwareMidiEvents().size();
-    
-    // Use the existing selectClosestNote logic which properly finds nearest notes
-    // or snaps to the current position if no notes exist
-    manager.selectClosestNote(track, startTick);
+    // The active overlay's current value count is already available; a count
+    // must not materialize/COW a whole event vector or mark it dirty.
+#if defined(PIO_UNIT_TEST_NATIVE)
+    const bool activeSession = manager.isNoteEditActive();
+    const auto& countStore = manager.getEditSession().store;
+    const bool hadCache = countStore.hasEventsCacheForTest();
+    const bool wasDirty = countStore.isEventsDirty();
+    const auto* canonicalBefore = &countStore.readStore();
+#endif
+    lastMidiEventCount = manager.isNoteEditActive()
+        ? manager.getEditSession().store.eventValueCount()
+        : track.editAwareMidiEvents().size();
+#if defined(PIO_UNIT_TEST_NATIVE)
+    lastCountMutatedCache_ = activeSession &&
+        (hadCache != countStore.hasEventsCacheForTest() || wasDirty != countStore.isEventsDirty() ||
+         canonicalBefore != &countStore.readStore());
+#endif
+
+    // Consume only a clamp-qualified default handoff. Outside its navigation
+    // span the legacy second nearest pass can change the landing and must stay.
+    // Ordinary/direct state entry retains that same existing behavior.
+    if (!manager.preparedSelectionPublicationActive() && !manager.defaultNoteEditSelectionHandoffActive()) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+        ++entryReselections_;
+#endif
+        manager.selectClosestNote(track, startTick);
+    }
     
     uint32_t selectedTick = manager.getSelectedTick();
     int selectedIdx = manager.getSelectedNoteIdx();

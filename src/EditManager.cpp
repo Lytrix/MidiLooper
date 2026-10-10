@@ -113,7 +113,13 @@ EDIT_MANAGER_IMPL_MEM uint32_t EditManager::clampNoteEditBracketPhaseTick(const 
     if (loopLength == 0) {
         return 0;
     }
-    const uint32_t navLength = noteEditSelectNavigationLengthTicks(track);
+    return clampNoteEditBracketPhaseTickForNavigation(
+        phaseTick, loopLength, noteEditSelectNavigationLengthTicks(track));
+}
+
+EDIT_MANAGER_IMPL_MEM uint32_t EditManager::clampNoteEditBracketPhaseTickForNavigation(
+    uint32_t phaseTick, uint32_t loopLength, uint32_t navLength) {
+    if (loopLength == 0) return 0;
     const uint32_t modPhase = phaseTick % loopLength;
     if (navLength > 0 && navLength < loopLength && modPhase >= navLength) {
         return navLength > Config::TICKS_PER_16TH_STEP ? navLength - Config::TICKS_PER_16TH_STEP : 0;

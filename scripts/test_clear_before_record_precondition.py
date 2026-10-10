@@ -14,6 +14,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl import legacy_record_baseline as baseline
+from hitl import legacy_edit_baseline as edit
 
 from hitl.capture_transitions import (
     _count_capture_transitions,
@@ -364,40 +365,93 @@ class EditMinimalSeedOkTests(unittest.TestCase):
         self.assertEqual(ns.track_number, 5)
 
 class DeferredSaveClearTests(unittest.TestCase):
-    def run_prepare(self, lines, sequencer, idle=True):
+    def run_prepare(self, lines, responses, idle=True):
+        """Drive the clear-time stop decision with a device that answers each press.
+
+        ``responses`` is one list of device lines per transport press, appended to the log when
+        that press is sent -- the honest model, because the decision under test reads the window
+        **opened at the press**. A start edge there means the press did the wrong thing (transport
+        is a toggle); a stop line or silence means it did the intended thing.
+        """
+        state = {"lines": list(lines), "presses": 0}
+
+        def _press(*_args, **_kwargs):
+            index = state["presses"]
+            state["presses"] += 1
+            if index < len(responses):
+                state["lines"].extend(responses[index])
+
         collector = Mock()
-        collector.snapshot.return_value = lines
-        with patch.object(baseline, "_serial_sequencer_running", side_effect=sequencer), \
-             patch.object(baseline, "_send_short_press") as send, \
+        collector.snapshot.side_effect = lambda: list(state["lines"])
+        with patch.object(baseline, "_send_short_press", side_effect=_press), \
              patch.object(baseline.time, "sleep"), \
              patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active", return_value=idle):
             result = baseline._prepare_deferred_save_before_clear(
                 Mock(), Mock(), collector, SimpleNamespace(deferred_save_wait_ms=3000),
                 press_ms=120, phase_wait_ms=500, after_index=0, abort=Mock())
-            return result, send.call_count
+            return result, state["presses"]
 
-    def test_recent_sequencer_activity_stops_without_transport_transition(self):
-        result, sends = self.run_prepare([], [True, False])
+    def test_recent_transport_activity_stops_without_transport_transition(self):
+        """A device `BAR` row means the transport runs, so the stop press is sent once.
+
+        The stop that press causes is not a start edge, so the clear is not blocked. `DFRAME`
+        would not do this: the device emits it while stopped, and reading it as running is what
+        sent the toggle onto a stopped device in `captures/live-current-root-entry-t8s4-04`.
+        """
+        result, sends = self.run_prepare(
+            ["#CAP,1594433584,BAR,142,0"],
+            [["[1595.165] [INFO] Transport stopped"]],
+        )
         self.assertTrue(result)
         self.assertEqual(sends, 1)
 
-    def test_active_after_stop_and_retry_blocks_clear(self):
-        """Still active after the retry stop press -> blocked, and both presses were sent.
+    def test_a_start_edge_in_the_press_window_blocks_the_clear(self):
+        """Still mis-pressed after the retry -> blocked, and both presses were sent.
 
-        The retry is deliberate (see `_prepare_deferred_save_before_clear`: transport is a toggle, so a
-        blind stop press can *start* it when the device already stopped itself; `captures/successor-wrap-50`
-        died that way). This asserts the block still happens after the retry, which is strictly stronger
-        than the pre-retry expectation of a single press, so the third sequencer probe must be supplied.
+        The retry is deliberate (see `_prepare_deferred_save_before_clear`: transport is a toggle,
+        so a blind stop press can *start* it when the device already stopped itself;
+        `captures/successor-wrap-50` died that way). Each window here opens with the start edge
+        that press produced.
         """
-        result, sends = self.run_prepare([], [True, True, True])
+        result, sends = self.run_prepare(
+            ["#CAP,1594433584,BAR,142,0"],
+            [
+                ["[1594.066] [INFO] Transport started"],
+                ["[1595.166] [INFO] Transport started"],
+            ],
+        )
         self.assertFalse(result)
         self.assertEqual(sends, 2)
 
     def test_retry_stop_press_recovers_toggle_started_transport(self):
         """The retry's purpose: a second press clears a transport the first press accidentally started."""
-        result, sends = self.run_prepare([], [True, True, False])
+        result, sends = self.run_prepare(
+            ["#CAP,1594433584,BAR,142,0"],
+            [
+                ["[1594.066] [INFO] Transport started"],
+                ["[1595.166] [INFO] Transport stopped"],
+            ],
+        )
         self.assertTrue(result)
         self.assertEqual(sends, 2)
+
+    def test_display_frames_alone_do_not_press_or_block_the_clear(self):
+        """The seed-killer, one layer up: `DFRAME` flows while the transport is stopped.
+
+        Read as "running" it made this press a *start*, and a display frame inside the re-check
+        window then looked like "still active" and blocked the clear -- aborting the whole seed
+        fixture before a note was streamed. A stopped device emits nothing else here.
+        """
+        result, sends = self.run_prepare(
+            [
+                "[1590.044] [INFO] Transport stopped",
+                "#CAP,1591942864,DFRAME,0,17060,26400,21,499,45",
+                "#CAP,1593440697,DFRAME,0,17069,26430,20,488,46",
+            ],
+            [["#CAP,1,DFRAME,0,17069,26430,20,488,46"]],
+        )
+        self.assertTrue(result)
+        self.assertEqual(sends, 0)
 
     def test_a_pending_save_does_not_block_the_clear(self):
         """The setup-latency contract: no deferred-save idle receipt is awaited before the clear.
@@ -407,7 +461,7 @@ class DeferredSaveClearTests(unittest.TestCase):
         (`captures/s4f22-base-device-16`). After boot the device is driven straight away and the
         firmware owns the refusal, which is read downstream as a clear abort.
         """
-        result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [False], idle=False)
+        result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [], idle=False)
         self.assertTrue(result)
 
     def test_a_save_pending_before_the_baseline_is_reported_not_waited_on(self):
@@ -419,7 +473,7 @@ class DeferredSaveClearTests(unittest.TestCase):
         lines = ["#CAP,100,SAVE,pending,1"]
         collector = Mock()
         collector.snapshot.return_value = lines
-        with patch.object(baseline, "_serial_sequencer_running", return_value=False), \
+        with patch.object(baseline, "_serial_lines_show_running_transport", return_value=False), \
              patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active") as wait:
             result = baseline._prepare_deferred_save_before_clear(
                 Mock(), Mock(), collector, SimpleNamespace(deferred_save_wait_ms=3000),
@@ -479,6 +533,38 @@ class ClearRefusalTests(unittest.TestCase):
         self.assertGreaterEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 1)
         self.assertLessEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 3)
         self.assertGreater(self.baseline.CLEAR_REFUSAL_SAVE_WAIT_S, 0.0)
+
+
+class WindowedClearRetryTests(unittest.TestCase):
+    def test_temporary_save_refusal_waits_for_idle_before_one_retry(self) -> None:
+        refusal = ["Clear waiting for deferred save completion", "Clear refused: deferred save temporarily blocked by waiting_commit_gate; slot left untouched, save still owed"]
+        collector = Mock()
+        collector.snapshot.side_effect = [[], refusal, refusal, [], []]
+        with patch.object(edit, "_can_skip_clear_for_record", return_value=False):
+            with patch.object(edit, "_count_capture_state_entries", return_value={"EMPTY": 0}):
+                with patch.object(baseline, "_send_record_clear_long_press") as clear_press:
+                    with patch.object(edit, "_wait_for_state_entry_count", side_effect=[False, True]):
+                        with patch.object(edit, "_serial_has_clear_ignored_empty", return_value=False):
+                            with patch.object(edit, "_serial_has_clear_completed", return_value=False):
+                                with patch.object(edit, "_track_cleared_for_record", return_value=False):
+                                    with patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active", return_value=True) as wait_idle:
+                                        result = edit._ensure_clear_to_empty(Mock(), collector, clear_press_ms=900, state_sync_timeout_ms=20, abort=None, loop_slot=4)
+        self.assertTrue(result)
+        self.assertEqual(2, clear_press.call_count)
+        wait_idle.assert_called_once_with(collector, after_line_index=0, log_prefix="[clear-retry]", abort=None, max_timeout_s=baseline.CLEAR_REFUSAL_SAVE_WAIT_S)
+
+    def test_terminal_clear_abort_is_not_retried(self) -> None:
+        collector = Mock()
+        collector.snapshot.side_effect = [[], ["Clear aborted: could not complete deferred save first (drain_stuck)"]]
+        with patch.object(edit, "_can_skip_clear_for_record", return_value=False):
+            with patch.object(edit, "_count_capture_state_entries", return_value={"EMPTY": 0}):
+                with patch.object(baseline, "_send_record_clear_long_press") as clear_press:
+                    with patch.object(edit, "_wait_for_state_entry_count", return_value=False):
+                        with patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active") as wait_idle:
+                            result = edit._ensure_clear_to_empty(Mock(), collector, clear_press_ms=900, state_sync_timeout_ms=20, abort=None, loop_slot=4)
+        self.assertFalse(result)
+        self.assertEqual(1, clear_press.call_count)
+        wait_idle.assert_not_called()
 
 
 class ClearBeforeTransportTests(unittest.TestCase):

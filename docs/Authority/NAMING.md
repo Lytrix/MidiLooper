@@ -6,6 +6,25 @@ Architectural vocabulary for MidiLooper — a **ubiquitous language** that docum
 
 **Investigation and naming debt:** one-time audit and migration roadmap live in [`docs/Plans/architecture_naming_authority_refinement.md`](../Plans/architecture_naming_authority_refinement.md). This document stays timeless — no usage counts or time-stamped debt tables here.
 
+## Scope of this authority
+
+**This document decides names and meanings. It states no behavior, ownership or bound class.**
+
+| The claim being made | Owner | What this document does |
+|----------------------|-------|-------------------------|
+| What a thing is called; what a word means | **this document** | decides |
+| What must happen (requirements) | OpenSpec — `openspec/specs/`, active `openspec/changes/<name>/` | cites the change or spec |
+| Who owns state; what is forbidden; execution bound class | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md), [Architecture/](Architecture/) | cites the owning section |
+| How shipped behavior works today | [docs/Guides/](../Guides/) | cites the guide |
+
+Precedence is **claim-scoped**, not layer-global: this document wins over plans, guides and code for **names and meanings**, and for behavior, ownership and bounds the owning layer wins while this document only points at it. A naming question that would require behavior to change is a proposal to OpenSpec — not an edit here. A contract sentence lives in the owning layer and is cited here once, never restated.
+
+**A change may introduce a term before it is registered here.** The proposing change carries a `## Terminology` delta in its `design.md` (term, meaning, reuse-or-new, status). Until the term is registered below (§ Introducing new terminology) — and, for a new top-level domain noun, ratified by a `DEC-###` — it is **provisional**: usable inside that change, not in shared docs, other plans or new code names. Registration is to vocabulary what `openspec/specs/` is to behavior. Mechanism: [`.cursor/rules/OpenSpec-Workflow.mdc`](../../.cursor/rules/OpenSpec-Workflow.mdc).
+
+### Citation rule
+
+Every statement about behavior, ownership or an execution bound must **name the owning document and be cited** — a link on the same line, in the owning layer's own terms. This document keeps one-line meanings plus citations; it never restates a contract, a bound class, a policy value, or a write/read-site list. Terms are looked up in § Term index (alphabetical) at the end. The mechanical half of this rule is checked by [`scripts/check_naming_doc.py`](../../scripts/check_naming_doc.py).
+
 ---
 
 ## Short names beside IDs in chat
@@ -52,14 +71,14 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **Position** | Hardware or protocol position — fader motor, `sendSongPosition`, GPIO position buttons | Note-edit geometry |
 | **State** | Mutable ownership — live session, transport mode, persistence queue fields | Immutable captured copies |
 | **Snapshot** | The act or role of capturing immutable state of some owner (undo snapshot, display snapshot, share-for-snapshot) | The Loop’s published complete state (that object is **LoopSnapshot**); live mutable owner |
-| **LoopSnapshot** | Complete immutable effective-state object: LoopGeometry, allocator counters, a **span index** (pitch → canonical 768-tick bar → membership lists of **NoteRef**s for complete notes intersecting that bar), and an **event index** (bar → membership lists of **EventRef**s, an indexed view of existing event-stream order). `loopLengthTicks` on the snapshot root is the sole loop-boundary authority; note objects store identity and start/end geometry only. Logical content is completely determined by its own reference root — resolving a reference or answering a content query never consults a parent snapshot. Unchanged objects keep the same references; changed content allocates new immutable objects. Unchanged pitch/bar membership remains shared with the parent; only dirty membership and the minimum directory path to it are newly constructed. Absent until the first published snapshot. | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers; Tile / Lane / Bucket / Grid; a parent-delta chain |
-| **Effective content** | The loop's canonical committed musical content — what the published **`LoopSnapshot`** represents, read through `Loop::copyEffectiveCommittedEvents*`. `LoopPasses::materializeToEventVector` is a test/oracle path only. | Compatibility `LoopPass` rows; a consumer's derived representation; a raw MIDI vector |
-| **Published root** | The selected `LoopSnapshot` at its `playbackRevision` — `publishedSnapshot`, `publishedSnapshotIsCurrent`, `publishedSnapshotIdentity`. The previous root stays selected until a complete candidate is frozen and stored. | An unpublished candidate; a derived representation; transport state |
+| **LoopSnapshot** | Complete immutable effective-state object (LoopGeometry, allocation counters, span index, event index); its `loopLengthTicks` is the sole loop-boundary authority, and its own reference root determines logical content. Representation, construction, publication: [Architecture/Snapshots.md](Architecture/Snapshots.md). | A `LoopPass`; `PersistedLoopSnapshot`; a materialized MIDI vector; live Capture; raw C++ pointers; Tile / Lane / Bucket / Grid; a parent-delta chain |
+| **Effective content** | The loop's canonical committed musical content — what the published **LoopSnapshot** represents. Read path: [Architecture/Snapshots.md](Architecture/Snapshots.md) § Consumers. | Compatibility `LoopPass` rows; a consumer's derived representation; a raw MIDI vector |
+| **Published root** | The selected `LoopSnapshot` at its `playbackRevision` — `publishedSnapshot`, `publishedSnapshotIsCurrent`, `publishedSnapshotIdentity`. Lifetime and handoff: [Architecture/Snapshots.md](Architecture/Snapshots.md) § Owner and lifetime. | An unpublished candidate; a derived representation; transport state |
 | **Compatibility gather** | Reconstructing content from `LoopPass` rows when no current published root exists. A fallback, never the normal source. | The snapshot source; a second content authority |
 | **Derived representation** | A consumer-owned structure built from a selected `LoopSnapshot`, each with its own storage, revision, invalidation, and build policy (playback window/order, `visualCache`, analyze indexes, LED pads). See [DerivedViews.md](Architecture/DerivedViews.md). | The `LoopSnapshot` itself; a window or interval; a second content authority |
-| **Bridge** | A compiled transition overlay between two coverage windows/cycles (`RuntimePlaybackBridge`, `FixedPlaybackBridgeStorage`): base order, insertions, and inherited held-note closures. Retains an original Off across a wrap and admits each changed pair at its first safe On. | A second content authority; a `LoopSnapshot`; a whole-loop rebuild |
+| **Bridge** | A compiled transition overlay between two coverage windows/cycles (`RuntimePlaybackBridge`, `FixedPlaybackBridgeStorage`): base order, insertions, inherited held-note closures. | A second content authority; a `LoopSnapshot`; a whole-loop rebuild |
 | **Emission cursor** | Identity of an event **instance** emitted from a projection cycle — `EmissionCursor` (`projectionCycle`, `phase`, `samePhaseOrdinal`, `eventProvenance`, `effectiveSourceGeneration`). A source event alone is insufficient because it may fire again after a loop wrap. | `currentTick` (transport clock); an event scan index; a snapshot index |
-| **Overlay** (playback) | A stale published root plus unpublished session / pending-publish passes applied on top for a consumer window (`tryGatherPublishedSnapshotEventsInWindow` Overlay path). Valid for playback and windowed paint fallback; rejected by idle visual-cache fill. | Publishing a prefix; a new snapshot; the current-root path |
+| **Overlay** (playback) | A stale published root plus unpublished session / pending-publish passes applied on top for a consumer window. Consumer rules: [Architecture/DerivedViews.md](Architecture/DerivedViews.md). | Publishing a prefix; a new snapshot; the current-root path |
 | **Deferred** | Work intentionally postponed to idle or budget drain — `processDeferredSaveState` | Queued user intent; synchronous algorithms |
 | **Pending** | Queued intent not yet committed — `hasPendingCapturePass`, `pendingOutboundTrigger_` | Idle-deferred maintenance work |
 | **Scheduled** | Work placed on an explicit schedule or queue for later execution — `PersistenceWorkQueue` | Synchronous resolution; generic “later” |
@@ -68,15 +87,12 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **NoteGeometryResolver** | Live NOTE_EDIT overlap Resolution (geometry → actions) | Loop history / playback effective-state queries |
 | **LoopContentResolution** | Historical DEC-037 prototype name. New docs do not use it. Callers are **LoopSnapshot** consumers. | A current effective-state owner; `NoteGeometryResolver` |
 | **PresentNote** | LCR query snapshot of notes whose span contains tick S (`resolveState` / `StateCheckpoints::presentAt`). Keyed by `NoteId`; many same-pitch rows allowed. Emitted type has no `endTick` | `ActiveNoteLedger::Entry` (one per `(channel, pitch)` at `currentTick`); `midiHandler.sendMidiEvent` |
-| **ActiveNote** | Runtime slot at `currentTick` until NoteOff — `ActiveNoteLedger::Entry`, one per `(channel, pitch)`. No `length` / `endTick`. Written from **committed** playback (`playbackCursorAdvanceSend` → `applyPlaybackLedgerEvent`). Capture overdub emit (`playbackCursorAdvanceSendCapture`) does not write it. `sendMidiEvent` and `collectOverdubNoteOnParticipantIds` read it. Mute still writes the ledger. Does not mean stored `LoopPasses` are already one-owner | Geometry (`NoteSpan`); LCR `PresentNoteVec`; `midiHandler.sendMidiEvent` (only if `playbackEmitMidiOutput_`) |
+| **ActiveNote** | Runtime slot at `currentTick` until NoteOff — `ActiveNoteLedger::Entry`, one per `(channel, pitch)`. Written, read and suppressed sites: [Architecture/Playback.md](Architecture/Playback.md) § Active note ledger. | Geometry (`NoteSpan`); LCR `PresentNoteVec`; `midiHandler.sendMidiEvent` (only if `playbackEmitMidiOutput_`) |
 | **Analyze** (consumer role) | Select / overlap / present-at queries against the selected **LoopSnapshot** around a tick | A new owner type; piano-roll `visualCache`; playback `mergedEvents` |
 | **Pipeline** | Formal multi-stage processing where **each stage has independent responsibility** and stages may be async or budget-sliced | Sequential synchronous algorithms (use **Resolution**) |
 | **Outbound** | Note-edit fader motor and Droid feedback path — distinct from MIDI Output | Generic MIDI egress |
 | **Input** / **Output** | MIDI and USB routing — `MidiHandler` ingress and egress (`handleMidiInput`) | Control-surface motor path (Outbound); **MIDI service** (not a domain noun or owner) |
 | **Interval path** | Work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap), including clock dispatch that consumes that interval | One `loop()` iteration; persist `admit*` |
-| **Structurally bounded** | Code enforces a fixed maximum amount of work and storage | A measured typical cost; a µs budget checked only *between* steps |
-| **Empirically bounded** | Measurements provide an engineering limit, but code does not enforce it | A structural cap; a reservation guarantee without an overrun policy |
-| **Unbounded owner** | Owner that scans, drains, allocates, sorts, or loops on a content-dependent condition without an enforced cap | A structurally bounded slice; an empirically bounded unit with an explicit overrun policy |
 | **Manager** | Domain owner coordinating lifecycle over a scope | Controller (not used); thin routing (Handler) |
 | **Capture** | Live record or overdub append buffer until stop | Committed timeline rows |
 | **pass** / **passes** | One committed content row on `LoopPasses`: a first **recordPass** at record stop, an **overdubPass** at the LoopGeometry wrap in force at that time, or an **editPass** for one note change. | A LoopSnapshot; a session; moving note range; single-note focus lifecycle |
@@ -88,6 +104,7 @@ Each term below defines **architectural meaning**. Preferred words are consequen
 | **replay** | Reconstruct current Loop state from content records | Undo/redo derivation (use **editing derivation**) |
 | **editing derivation** | Runtime undo/redo semantics from ordered content plus grouping rules | Persisted undo payload; current notes alone |
 | **Active** / **Disabled** | Current code names (`CapturePassState`, `EditPassState`) for whether a committed pass participates at the current undo/redo position. **Active** = included in derived content; **Disabled** = still stored, skipped by `materialize` / merge. Set by undo/redo traversal (`setCapturePassState` / `setEditPassState`), not by sealing store or Capture. When that pass-state / undo logic is refactored, rename to **Included** / **Excluded**. Do not rename earlier. | `ActiveNote`; active loop; Capture live; a broken or invalid pass |
+**Bound classes** — **structurally bounded**, **empirically bounded**, and **unbounded owner** ([Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) names the third **Unbounded**) — are defined in [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) § Bound classes and ruled in [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Execution bound rules. They are not restated here.
 
 ---
 
@@ -120,9 +137,9 @@ Every part of that sentence is already a governed term; compose them rather than
 | Bounded resident state | **working set**, leased per **role** and reclaimed by **epoch** (generation) |
 | Where the bytes live | **internal heap** / **external memory pool** |
 
-**Readiness is the contract.** After a recording, overdub or edit changes content at a tick, an updated immutable state must be ready by the time the playhead moves over that tick again. A missed deadline keeps the **previous** version authoritative for that pass: a read is never torn, never held silent, and never deferred in a way that disturbs timing. Playback consumes immutable versions only — that is why the versions exist.
+**Readiness is the contract.** Contract and missed-deadline semantics: [Architecture/IntervalProjection.md](Architecture/IntervalProjection.md) § Readiness deadline. Structural invariant: [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Runtime working sets are role-owned.
 
-Use **epoch-leased working set** for bounded resident state held by a **role** and reclaimed when its generation is unreachable. Identity is `owner + generation + role`; release is by identity, and a generation-mismatched release is a **rejected, reported no-op** so a late cleanup cannot touch recycled storage. Capacity is **derived** from measurement, never asserted, and every resident store declares its class, cardinality, cap and eviction policy.
+Use **epoch-leased working set** for bounded resident state held by a **role** and reclaimed when its generation is unreachable. Lease identity, release and capacity rules: [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Runtime working sets are role-owned.
 
 Do **not** use **service**, **microservice**, **module**, or **API** as an architectural noun for these owners: there is no message passing, no serialization and no dynamic dispatch between them. They are preallocated, role-owned stages invoked cooperatively inside budget slices. Do not use **cache** unqualified for a working set — name the tier (**standby**, **window**, **envelope**) and its cap. Do not use **lease** for anything that is not role-owned and generation-qualified.
 
@@ -132,13 +149,9 @@ Owning design: `openspec/changes/runtime-working-set-ownership/`.
 
 Use **Snapshot** for the *act or role* of capturing immutable state (`shareForSnapshot`, undo snapshot, display snapshot).
 
-Use **LoopSnapshot** for the Loop’s complete immutable effective-state object: LoopGeometry plus a **span index** (pitch → bar → membership lists of **NoteRef**s) and an **event index** (bar → membership lists of **EventRef**s). Event-list order is an indexed view of existing event-stream semantics, not a second authority. `Loop` publishes a global snapshot at session exit (record stop, overdub stop, note-edit close) by reading the previous LoopSnapshot as const and writing a new root. A session may also hold playable **provisional** snapshots that are not global undo entries. There is no mutable LoopSnapshot during a session. It is not a `LoopPass` and not a flattened `materialize` vector. Do not name the bar granule a tile, lane, bucket, or grid.
+Use **LoopSnapshot** for the Loop’s complete immutable effective-state object. Its representation (span index, event index, membership envelopes), construction, transaction and publication are owned by [Architecture/Snapshots.md](Architecture/Snapshots.md); a session may also hold playable **provisional** snapshots that are not global undo entries. It is not a `LoopPass` and not a flattened `materialize` vector. Do not name the bar granule a tile, lane, bucket, or grid.
 
 Spelling is **LoopSnapshot** (one word Snapshot), matching `PersistedLoopSnapshot` and `LoopSnapshotRef`. `PersistedLoopSnapshot` remains the transitional file/undo DTO of geometry plus deep-cloned `LoopPasses`. Do not store raw C++ pointers. The verb prefix `handle*` stays hardware/MIDI ingress.
-
-This accepted Phase 0 boundary names the logical indexes only. The physical
-directory that implements their structural sharing remains a later
-measurement decision.
 
 Prefer **State** for the **mutable owner** of live data.
 
@@ -163,18 +176,15 @@ MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `han
 | **MIDI Input handling duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`) |
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
 | **MIDI deadline lateness** | `lateness_us = sendMidiEvent() − scheduled_deadline` for each required note-on, note-off, and MIDI clock (scored independently). Equality is on time. This is **product correctness**, not a synonym for MIDI Input Gap |
-| **T_RT_reserve** | Snapshot-idle construction contract: maximum construction-attributable time from idle-turn start to the next timing-critical `handleMidiInput()` entry while `RECORDING` / `PLAYING` / `OVERDUBBING`. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary). Not `60% × T_clock`. **STOPPED is excluded.** |
-| **T_RT_reserve_ceiling** | Fixed policy cap on construction-attributable work per snapshot-idle turn. Initial value **10,000 µs**. Independent of BPM. Not an observed unit. |
-| **reserve_us** | Per-turn measured availability on `DIAG,snapshot_idle,child`: idle start to the next timing-critical `handleMidiInput()` enter. Authoritative per-turn admission bound. Not `DIAG,midi_gap`. |
-| **T_RT_safety_margin** | Margin subtracted from `reserve_us` before comparing to the ceiling. Not frozen; 1,000 µs is a working hypothesis only. |
+| **T_RT_reserve** | Snapshot-idle construction contract: maximum construction-attributable time from idle-turn start to the next timing-critical `handleMidiInput()` entry while `RECORDING` / `PLAYING` / `OVERDUBBING`. Not `60% × T_clock`. **STOPPED is excluded.** [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary). |
+| **T_RT_reserve_ceiling** | Fixed policy cap on construction-attributable work per snapshot-idle turn. Independent of BPM. Not an observed unit. |
+| **reserve_us** | Per-turn measured availability on `DIAG,snapshot_idle,child`; the authoritative per-turn admission bound. Not `DIAG,midi_gap`. |
+| **T_RT_safety_margin** | Margin subtracted from `reserve_us` before it is compared with the ceiling. |
 | **RuntimeTimingTelemetry** | Instrumentation for MIDI Input Gap, `handleMidiInput()` duration, and (when hooked) MIDI deadline lateness — not a MIDI owner |
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
 | **Interval path** | Work between consecutive `handleMidiInput()` entries, including clock dispatch that runs inside that gap |
-| **Structurally bounded** | Code enforces a fixed maximum amount of work and storage |
-| **Empirically bounded** | Measurements provide an engineering limit, but code does not enforce it |
-| **Unbounded owner** | Scans, drains, allocates, sorts, or loops on a content-dependent condition without an enforced cap |
 
-Maintained owner inventory and gate: [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md), [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Execution bound rules. Do not use **scheduling class** or `admit(WorkClass)` as a substitute for a declared bound class.
+Maintained owner inventory and class definitions: [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) § Bound classes — values, the per-turn formula and the rationale for the reserve terms live there with [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary); rules: [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) § Execution bound rules. Do not use **scheduling class** or `admit(WorkClass)` as a substitute for a declared bound class. This table names the terms only.
 
 Historical captures (2026-08-12) emit `DIAG,msi` / `DIAG,midisvc` for the same two measurements. Do not rename `MidiHandler` or `handleMidiInput()` to fit scheduling prose.
 
@@ -394,23 +404,7 @@ Avoid `projectNoteGeometryBaseline()` inside `NoteGeometryResolver`; avoid `note
 
 #### Public symbol review (evaluate on touch)
 
-| Current | Recommendation | Timing / notes |
-|---------|----------------|--------------|
-| `runEditSessionGeometryPipeline` | `NoteGeometryResolver::resolve` | EditManager TU split **Phase 7a** |
-| `RunEditSessionGeometryPipeline.*` | `NoteGeometryResolver.*` | Phase 7a |
-| `ResolveConstrainedGeometry.h/.cpp` | Evaluate `ResolveConstrainedNoteGeometry` or move under `NoteGeometry/` | Phase 7 or 7c |
-| `resolveConstrainedGeometry` / `resolveAllConstrainedGeometry` | Evaluate `resolveConstrainedNoteGeometry` / `resolveAllConstrainedNoteGeometry` | With resolver TU work |
-| `EditedGeometry` | Evaluate `EditedNoteGeometry` | Phase 7+ when `EditSessionAction.h` touched |
-| `ConstrainedNoteGeometry` | **Keep** — already explicit | — |
-| `GeometryFaderInput.cpp` | Evaluate `NoteGeometryFaderInput.cpp` | Next ControlSurface note-edit fader work |
-| `PlayingEditGeometryDefer.cpp` | **Done** — was `PlayingGeometryDefer.cpp` | Playing-transport note-edit geometry defer |
-| `isGeometryDriverActive`, `finishGeometryDriverSideEffects`, … | Evaluate **NoteGeometryDriver** vocabulary | ControlSurface boundary — disambiguate from UI/display geometry |
-| `EditEvent::GeometryChanged` | Evaluate `NoteGeometryChanged` | When `EditEvent` consumers refactored |
-| `beginGeometryMutation`, `isGeometryEditKind`, … | **Keep** concise — `EditManager` / `NoteEditKind` context is sufficient | — |
-| `UndoLoopGeometry`, `LoopEditDepartGeometry` | **Keep** — loop-length domain, not note geometry | — |
-| Display / piano-roll “geometry” in plans | **Not** note geometry — do not conflate | — |
-
-Related types today: `EditedGeometry`, `ConstrainedNoteGeometry`, geometry driver, **`NoteGeometryResolver`**.
+Current-vs-preferred symbols, priorities and the phases that carry each rename live in [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) § Section B — not here. The preferred-term policy stays in § Note geometry and § Geometry resolution above.
 
 ### Geometry resolution (preferred term)
 
@@ -436,7 +430,7 @@ public:
 
 **TU:** [`src/EditManager/NoteGeometryResolver.cpp`](../../src/EditManager/NoteGeometryResolver.cpp), [`include/NoteGeometryResolver.h`](../../include/NoteGeometryResolver.h).
 
-**Legacy debt:** `runEditSessionGeometryPipeline` / `RunEditSessionGeometryPipeline.*` — migrated to `NoteGeometryResolver` (EditManager TU split Phase 7). Do not introduce new `*Pipeline*` identifiers for synchronous geometry resolution. **Capture telemetry:** `#CAP,…,GEOM_APPLY,resolve,…` (was `pipeline`); helper `logGeomApplyResolve`.
+**Migration status:** [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) § Section B. **Rule:** do not introduce new `*Pipeline*` identifiers for synchronous geometry resolution. **Capture telemetry:** `#CAP,…,GEOM_APPLY,resolve,…` (was `pipeline`); helper `logGeomApplyResolve`.
 
 **Inner steps** (already named): `resolveConstrainedGeometry`, `resolveAllConstrainedGeometry`, `applyEditSessionActions` — evaluate **NoteGeometry** promotion per § Note geometry public symbol review. **Future** (optional): private phase methods on `NoteGeometryResolver` (`validate`, `prepareEvaluationScope`, `analyzeInteractions`, …) — not required for the initial rename.
 
@@ -453,10 +447,10 @@ public:
 
 Prefer helpers on **`NoteEditFocus`** or **`SelectNavigation`** — not new `*View` / `*Inventory` types without approval.
 
-### UI rename (shipped)
+### Edit-state vocabulary
 
-- `class EditState` → **`EditNoteState`** (note-edit FSM base)
 - **`EditState`** on **EditPass** = Active \| Disabled (parallel **CapturePassState**)
+- The note-edit FSM base class is **`EditNoteState`**; the earlier `EditState` → `EditNoteState` rename is recorded as migration status in [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) § Section B.
 
 ### Words to avoid in new names
 
@@ -488,6 +482,30 @@ Before adding a new architectural term:
 3. Avoid introducing synonyms for concepts already named.
 4. Introduce a new top-level vocabulary word only when genuinely required (no existing term fits).
 5. Document approved additions here and append **`DEC-###`** to [DECISION_LOG.md](../DECISION_LOG.md).
+
+### Term life-cycle
+
+A term passes through four states; the state, not the layer, decides what may be relied on.
+
+| State | Where it lives | What it obliges |
+|-------|----------------|-----------------|
+| **Proposed** | The change's `## Terminology` delta in its `design.md` | Usable inside that change only — not in shared docs, other plans or new code names |
+| **Provisional** | The change, under review | Same as proposed; the change is expected to settle it before archive |
+| **Adopted** | An entry in this document (concept boundaries / domain vocabulary), with `DEC-###` for a new top-level domain noun | Binding for new code, docs and plans from that point |
+| **Deprecated** | § Deprecated terms below, with its replacement | Not used in new names; existing uses are renamed on next touch (§ Migration policy) |
+
+Registration happens at archive time, as `openspec/specs/` is for behavior: on `/opsx:archive` the change's delta is either promoted here (with the `DEC-###`) or explicitly dropped. A term may be promoted earlier when the user approves it, and a term that was never promoted must not appear in shared vocabulary. Mechanism and per-command duties: [`.cursor/rules/OpenSpec-Workflow.mdc`](../../.cursor/rules/OpenSpec-Workflow.mdc).
+
+### Deprecated terms
+
+Superseded or rejected terms stay listed so older docs, plans and captures remain readable. Do not use them in new names or prose.
+
+| Deprecated | Use instead | Record |
+|------------|-------------|--------|
+| `LoopContentResolution` | the selected **LoopSnapshot** and its consumers | DEC-037 (historical prototype) |
+| `RunEditSessionGeometryPipeline` / `*Pipeline*` for synchronous geometry | **`NoteGeometryResolver::resolve`**, or **Resolution** | [architecture_naming_authority_refinement.md](../Plans/architecture_naming_authority_refinement.md) § Section B |
+| `EditState` for the note-edit FSM base | **`EditNoteState`** | same section |
+| **service** / **module** / **API** as an architectural noun for role-owned stages | the stage or owner name | § Legitimate architectural terms |
 
 ---
 
@@ -532,8 +550,118 @@ Referenced from [docs/Agents/reviewer.md](../Agents/reviewer.md).
 | Plan glossary vs this document | **NAMING.md wins** — update plan or run reassessment |
 | Guide vs this document | **NAMING.md wins** for vocabulary; update guide after deliberate term change |
 | Code vs this document | Fix code on next subsystem refactor, or update this document via `DEC-###` if term was wrong |
+These rows resolve **naming** conflicts only (vocabulary, concept boundaries). A conflict about behavior, ownership or bounds follows [Authority/README.md](README.md) § Conflict resolution, and a term a change introduces is provisional until it is registered — see § Scope of this authority above.
 
 ---
+
+## Term index (alphabetical)
+
+Lookup only — each term's meaning, and its "not this" column, live in the section named here (and, for behavior, in the owning document cited there).
+
+| Term | Section |
+|------|---------|
+| **Action** | § Module suffix vocabulary |
+| **Active** | § Concept boundaries |
+| **ActiveNote** | § Concept boundaries |
+| **Analyze** | § Concept boundaries |
+| **apply\*** | § Verb conventions |
+| **AvailableData** | § Loop content history (persistence) |
+| **bar membership list** | § Types and ids |
+| **Bridge** | § Concept boundaries |
+| **BufferedData** | § Loop content history (persistence) |
+| **Capture** | § Concept boundaries |
+| **commit\*** | § Verb conventions |
+| **Compatibility gather** | § Concept boundaries |
+| **content history** | § Concept boundaries |
+| **content record** | § Concept boundaries |
+| **ContentUndoUnit** | § Loop content history (persistence) |
+| **controlChangeEditPass** | § Pass types (audio/MIDI time) |
+| **ControlChangeEditSession** | § Edit sessions (RAM scope) |
+| **Controller** | § Module suffix vocabulary |
+| **Deferred** | § Concept boundaries |
+| **Derived representation** | § Concept boundaries |
+| **EditAction** | § Loop content resolution (DEC-037, historical) |
+| **EditActionType** | § Types and ids |
+| **EditChange** | § Scope words |
+| **editing derivation** | § Concept boundaries |
+| **editPass** | § Concept boundaries |
+| **EditPassId** | § Types and ids |
+| **EditPassType** | § Types and ids |
+| **EditPropertyType** | § Types and ids |
+| **EditSession** | § Edit sessions (RAM scope) |
+| **EditSessionType** | § Types and ids |
+| **Effective content** | § Concept boundaries |
+| **Emission cursor** | § Concept boundaries |
+| **event index** | § Types and ids |
+| **EventRef** | § Types and ids |
+| **Geometry** | § Concept boundaries |
+| **handle\*** | § Verb conventions |
+| **Handler** | § Module suffix vocabulary |
+| **Input** | § Concept boundaries |
+| **Interval path** | § Concept boundaries |
+| **invalidate\* / rebuild\*** | § Verb conventions |
+| **JamSession** | § Edit sessions (RAM scope) |
+| **lastUnlinkedSlotLink** | § Loop content history (persistence) |
+| **Loop** | § Scope words |
+| **LoopContentResolution** | § Concept boundaries |
+| **LoopEditSession** | § Edit sessions (RAM scope) |
+| **LoopGeometry** | § Loop content history (persistence) |
+| **LoopGeometry.id** | § Types and ids |
+| **LoopSnapshot** | § Concept boundaries |
+| **Manager** | § Concept boundaries |
+| **materialize** | § Concept boundaries |
+| **merge** | § Concept boundaries |
+| **MIDI deadline lateness** | § Timing-critical MIDI Input |
+| **MIDI Input Gap (MIG)** | § Timing-critical MIDI Input |
+| **MIDI Input handling duration** | § Timing-critical MIDI Input |
+| **moving note** | § Note edit overlap (moving note + overlap notes) |
+| **noteEditPass** | § Pass types (audio/MIDI time) |
+| **NoteEditPassClosed** | § Action + scope examples |
+| **NoteGeometryResolver** | § Concept boundaries |
+| **NoteRef** | § Types and ids |
+| **Outbound** | § Concept boundaries |
+| **overdubPass** | § Pass types (audio/MIDI time) |
+| **OverdubPassAdded** | § Action + scope examples |
+| **overlap note** | § Note edit overlap (moving note + overlap notes) |
+| **OverlapNote** | § Note edit overlap (moving note + overlap notes) |
+| **overlapNotes** | § Note edit overlap (moving note + overlap notes) |
+| **OverlapNoteStoreState** | § Note edit overlap (moving note + overlap notes) |
+| **Overlay** | § Concept boundaries |
+| **pass** | § Concept boundaries |
+| **passes** | § Scope words |
+| **Pending** | § Concept boundaries |
+| **Pipeline** | § Concept boundaries |
+| **Playback** | § Concept boundaries |
+| **Playing** | § Concept boundaries |
+| **Position** | § Concept boundaries |
+| **PresentNote** | § Concept boundaries |
+| **process\*** | § Verb conventions |
+| **Processor** | § Module suffix vocabulary |
+| **Published root** | § Concept boundaries |
+| **Queue** | § Concept boundaries |
+| **RawMidiEvent** | § Loop content resolution (DEC-037, historical) |
+| **recordPass** | § Pass types (audio/MIDI time) |
+| **RecordPassAdded** | § Action + scope examples |
+| **replay** | § Concept boundaries |
+| **Repository** | § Module suffix vocabulary |
+| **request\* / admit\*** | § Verb conventions |
+| **reserve_us** | § Timing-critical MIDI Input |
+| **Resolution** | § Concept boundaries |
+| **resolve\*** | § Verb conventions |
+| **run\*** | § Verb conventions |
+| **Runtime admission** | § Timing-critical MIDI Input |
+| **RuntimeTimingTelemetry** | § Timing-critical MIDI Input |
+| **Scheduled** | § Concept boundaries |
+| **Select** | § Concept boundaries |
+| **Selection** | § Concept boundaries |
+| **SelectNavigation** | § Concept boundaries |
+| **Snapshot** | § Concept boundaries |
+| **span index** | § Types and ids |
+| **State** | § Concept boundaries |
+| **T_RT_reserve** | § Timing-critical MIDI Input |
+| **T_RT_reserve_ceiling** | § Timing-critical MIDI Input |
+| **T_RT_safety_margin** | § Timing-critical MIDI Input |
+| **update\*** | § Verb conventions |
 
 ## Related documents
 

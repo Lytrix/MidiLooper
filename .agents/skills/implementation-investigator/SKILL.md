@@ -20,8 +20,8 @@ Read, in order:
 2. [`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md)
 3. [`docs/Authority/ARCHITECTURE_RULES.md`](../../../docs/Authority/ARCHITECTURE_RULES.md)
 4. [`docs/Authority/IMPLEMENTATION_READINESS.md`](../../../docs/Authority/IMPLEMENTATION_READINESS.md)
-5. [`docs/Runtime/PROJECT_STATE.md`](../../../docs/Runtime/PROJECT_STATE.md)
-6. The authoritative scope in [`docs/Runtime/CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md) § Now implementing
+5. [`docs/Runtime/PROJECT_STATE.md`](../../../docs/Runtime/PROJECT_STATE.md) — newest status entry only, bounded read; treat deeper sections as historical/search-only. Verify branch from Git and active OpenSpec from the user-approved task/current `tasks.md`.
+6. [`docs/Runtime/CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md) — inspect scope declarations under § Now implementing; reconcile the applicable scope with the user-approved task and its active OpenSpec `tasks.md`. Do not implement outside it; stop and clarify conflicts. Search older history only for specific questions.
 7. The relevant `openspec/specs/` entry
 8. Relevant `DEC-###` entries — **grep** `docs/DECISION_LOG.md`, never full-read it (>210 KB)
 

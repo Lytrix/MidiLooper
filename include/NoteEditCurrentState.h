@@ -73,6 +73,20 @@ struct NoteEditCurrentStateVerifyResult {
 class NoteEditCurrentState {
  public:
   void clear() { rows_.clear(); }
+  /// Destructive retirement only: one global-head row or empty bucket-table shrink.
+  /// Returns work performed, not readiness; do not use on a live editable state.
+  bool stepClear() {
+    if (!rows_.empty()) {
+      rows_.erase(rows_.begin());
+      return true;
+    }
+    if (rows_.bucket_count() > 2) {
+      rows_.max_load_factor(1.0f);
+      rows_.rehash(0);
+      return true;
+    }
+    return false;
+  }
   bool empty() const { return rows_.empty(); }
   size_t size() const { return rows_.size(); }
 

@@ -159,6 +159,8 @@ enum class PlaybackWindowOrigin : uint8_t {
   Committed = 0,
   /// Live preview content from the edit session, carrying the session's **preview revision** as its currency.
   Preview = 1,
+  /// Live Loop Capture: distinct from committed revision and NOTE_EDIT preview.
+  Capture = 2,
 };
 
 struct PlaybackViewSourceIdentity {
@@ -169,10 +171,13 @@ struct PlaybackViewSourceIdentity {
   /// compare equal to a committed one at the same revision and generation.
   PlaybackWindowOrigin origin = PlaybackWindowOrigin::Committed;
 
-  bool operator==(const PlaybackViewSourceIdentity& other) const {
+  /// Loop-owned live Capture content receipt; zero for other source origins.
+  uint64_t captureContentGeneration = 0;
+  __attribute__((noinline)) bool operator==(const PlaybackViewSourceIdentity& other) const {
     return playbackRevision == other.playbackRevision &&
            sourceGeneration == other.sourceGeneration &&
-           snapshotIdentity == other.snapshotIdentity && origin == other.origin;
+           snapshotIdentity == other.snapshotIdentity && origin == other.origin &&
+           captureContentGeneration == other.captureContentGeneration;
   }
 };
 
@@ -697,6 +702,9 @@ struct RuntimePlaybackViewLifecycle {
   bool publishCompletedBuildAsReady(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
       PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
+  // Drop a superseded complete successor without recycling the serving or
+  // retained view. Return its storage to `idle` for the next ready publication.
+  bool retireSupersededReady(std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
   /// DEC-108 item 1 (windowed-playback task 3.2): install a **completed build** as the current **interval
   /// window** when no authoritative window exists yet -- the demoted slot's first window, whose only
   /// representation is windowed, so `publishCompletedBuildAsReady`'s retained/idle successor requirement can

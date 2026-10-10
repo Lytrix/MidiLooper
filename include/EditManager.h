@@ -19,11 +19,14 @@
 #include "OverlapNoteIdObservation.h"
 #include "OverlapNoteIdSet.h"
 #include "Utils/SelectNavigation.h"
+#include "LoopSnapshot.h"
+#include "Loop.h"
 #include <vector>
 #include <map>
 
 // Forward declarations
 class Track;
+class Loop;
 
 /**
  * @class EditManager
@@ -71,6 +74,27 @@ public:
     void emitSessionOpenedToSurface(bool includeMidi, bool includeNoteFaderFeedback = false);
     bool sessionOpenedIncludesMidi() const { return sessionOpenedIncludesMidi_; }
     bool sessionOpenedIncludesFaderFeedback() const { return sessionOpenedIncludesFaderFeedback_; }
+    enum class CurrentRootEntryAdmission : uint8_t { Accepted, Unavailable };
+    enum class CurrentRootEntryPhase : uint8_t {
+        Idle, BeginPayload, Payload, BeginDerived, Derived, BeginIds, Ids,
+        ReserveSelection, BeginSelection, Selection, Publish, PreviewTail, FeedbackTail,
+        Complete, Cancelled
+    };
+    CurrentRootEntryAdmission acceptCurrentRootNoteEditEntry(Track& track);
+    bool hasPendingCurrentRootNoteEditEntry() const {
+        return currentRootEntry_.phase >= CurrentRootEntryPhase::BeginPayload &&
+               currentRootEntry_.phase <= CurrentRootEntryPhase::FeedbackTail;
+    }
+    CurrentRootEntryPhase currentRootNoteEditEntryPhase() const { return currentRootEntry_.phase; }
+    void stepCurrentRootNoteEditEntry();
+    // Cold out-of-line cleanup: do not duplicate scalar cursor resets in hot callers.
+    NOTE_EDIT_MEM __attribute__((noinline)) void cancelCurrentRootNoteEditEntry();
+    NOTE_EDIT_MEM __attribute__((noinline)) void cancelCurrentRootNoteEditEntryForLoop(const Loop& loop);
+#if defined(PIO_UNIT_TEST_NATIVE)
+    size_t currentRootEntryBytesForTest() const { return sizeof(currentRootEntry_); }
+#endif
+    /// Only the qualified real Select onEnter may consume this lexical handoff.
+    bool preparedSelectionPublicationActive() const { return preparedSelectionPublication_; }
     void openNoteEditSession(Track& track);
     void reopenNoteEditSession(Track& track);
     void closeNoteEditSession(Track& track);
@@ -151,6 +175,61 @@ public:
 
     void syncNoteEditSessionStateToUi(Track& track);
     void enterDefaultNoteEditSessionState(Track& track, uint32_t startTick);
+    /// Lexical default-selection handoff only; never an async readiness receipt.
+    bool defaultNoteEditSelectionHandoffActive() const {
+        return defaultSelectionHandoff_ &&
+            sessionState.selection.selectedTick < defaultSelectionHandoffClampLimit_;
+    }
+    enum class DerivedStateClearResult : uint8_t { Idle, Unavailable, Progress, Complete, Superseded };
+    struct DerivedStateClear {
+     private:
+        friend class EditManager;
+        enum class Phase : uint8_t {
+            Materialized, Paint, Committed, Selectable, Selection, PriorSelection,
+            KindPayload, KindShell, Terminal, Complete
+        };
+        const EditManager* owner_ = nullptr;
+        EditSession::PayloadClearReceipt receipt_{};
+        uint8_t track_ = 255, slot_ = 255;
+        Phase phase_ = Phase::Materialized;
+        DerivedStateClearResult result_ = DerivedStateClearResult::Idle;
+    };
+    static_assert(std::is_trivially_copyable<DerivedStateClear>::value,
+                  "derived cleanup cursor must not retain payload ownership");
+    /// Destructive departure component after payload retirement and FSM exit.
+    /// Exclude live use/rebuilds/writes; no source admission or entry publication.
+    DerivedStateClearResult beginNoteEditDerivedStateClear(
+        Track& track, const EditSession::PayloadClearReceipt& receipt, DerivedStateClear& cursor);
+    DerivedStateClearResult stepNoteEditDerivedStateClear(DerivedStateClear& cursor);
+    DerivedStateClearResult noteEditDerivedStateClearResult(const DerivedStateClear& cursor) const;
+
+    /// Fresh, empty-overlay selection preparation. No session/FSM publication.
+    enum class SelectionPreparationResult : uint8_t {
+        Idle, WaitingForSource, Progress, Complete, Superseded, Unsupported
+    };
+    struct PreparedNoteEditSelection {
+        uint32_t selectedTick = 0;
+        NoteId primaryNote = kInvalidNoteId;
+        int selectedNoteIdx = -1;
+        size_t inventoryCount = 0;
+    };
+    SelectionPreparationResult beginDefaultNoteEditSelectionPreparation(Track& track,
+                                                                         uint32_t transportTick);
+    /// One metadata/row/topology unit; no allocation or nested projection.
+    SelectionPreparationResult stepDefaultNoteEditSelectionPreparation(Track& track);
+    /// Observation valid only until the next preparation/step/cancel or source change.
+    /// Re-query after a yield; copied candidates are not publication receipts.
+    const PreparedNoteEditSelection* preparedDefaultNoteEditSelection(const Track& track) const;
+    void cancelDefaultNoteEditSelectionPreparation() { selectionPreparation_ = {}; }
+#if defined(PIO_UNIT_TEST_NATIVE)
+    size_t selectionPreparationUnitsForTest() const { return selectionPreparation_.units; }
+    bool selectionPreparationIsDeduplicatingForTest() const {
+        return selectionPreparation_.phase == SelectionPreparationPhase::Deduplicate;
+    }
+    bool selectionPreparationIsReselectingForTest() const {
+        return selectionPreparation_.reselecting;
+    }
+#endif
     /// Pre-commit resolve + single saveEdit at fader-1 reselect / exit / overdub start.
     void commitAllPendingNoteEditActions(Track& track);
     /// True when live edit driver satisfies D19a (NoteId + store linear span).
@@ -313,11 +392,94 @@ public:
     size_t getDisplayUndoCount(const Track& track, const Loop& loop) const;
     bool isSessionUndoDisplayActive() const;
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+    friend struct NoteEditSelectionPreparationTestAccess;
+    friend struct NoteEditDerivedStateClearTestAccess;
+#endif
     /// Committed loop MIDI for note-edit baseline discovery (D21). Current snapshot
     /// root plus this session's edit rows; pass rematerialize when no current root.
     const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
 
 private:
+    struct CurrentRootEntry {
+        CurrentRootEntryPhase phase = CurrentRootEntryPhase::Idle;
+        uint8_t track = 255, slot = 255;
+        EditSessionType priorType = EditSessionType::Loop;
+        const Loop* loop = nullptr;
+        const void* root = nullptr;
+        LoopId loopId = kInvalidLoopId;
+        uint32_t token = 0;
+        uint64_t canonicalGeneration = 0, captureGeneration = 0;
+        uint32_t acceptedTick = 0, trackGeneration = 0, playbackRevision = 0;
+        uint32_t rootRevision = 0, length = 0, origin = 0, start = 0;
+        uint32_t visualRevision = 0, preview = 0, playbackPreview = 0;
+        bool visualDirty = false;
+        EditSession::PayloadClearReceipt payload{};
+        DerivedStateClear derived{};
+        Loop::CommittedNoteIdPreparation ids{};
+    } currentRootEntry_;
+    uint32_t currentRootEntryToken_ = 0;
+    static_assert(std::is_trivially_copyable<CurrentRootEntry>::value,
+                  "one role-owned scalar continuation, no content or source leases");
+    bool preparedSelectionPublication_ = false;
+    bool currentRootNoteEditEntryContextMatches() const;
+    bool publishPreparedCurrentRootNoteEditEntry(Track& track);
+    bool noteEditDerivedStateClearContextMatches(const DerivedStateClear& cursor) const;
+    void invalidateProjectedNoteEditDisplayCacheMetadata() const;
+    void invalidateNoteEditDerivedCacheMetadata();
+    static uint32_t clampNoteEditBracketPhaseTickForNavigation(
+        uint32_t phaseTick, uint32_t loopLength, uint32_t navLength);
+    struct SelectionSnapshotPosition {
+        uint16_t pageIndex = 0;
+        uint32_t bar = 0;
+        uint16_t pitch = 0;
+        uint8_t entry = 0;
+        bool loaded = false;
+    };
+    enum class SelectionPreparationPhase : uint8_t {
+        Idle, Source, Chunks, VisualExtent, Rows, Deduplicate, Reduce,
+        Complete, Superseded, Unsupported
+    };
+    struct DefaultSelectionPreparation {
+        SelectionPreparationPhase phase = SelectionPreparationPhase::Idle;
+        uint8_t track = 255, slot = 255;
+        const Loop* loop = nullptr;
+        LoopId loopId = kInvalidLoopId;
+        uint32_t transportTick = 0;
+        bool sessionActive = false;
+        EditSessionType sessionType = EditSessionType::Loop;
+        uint32_t preview = 0, playbackPreview = 0, priorTick = 0;
+        NoteId priorNote = kInvalidNoteId;
+        int priorIndex = -1;
+        const EditNoteState* priorState = nullptr;
+        uint32_t trackGeneration = 0, playbackRevision = 0, visualRevision = 0;
+        uint64_t captureGeneration = 0;
+        const void* root = nullptr;
+        uint32_t rootRevision = 0, length = 0, origin = 0, start = 0;
+        bool visualDirty = false, snapshotSource = false, hasCommitted = false;
+        bool reselecting = false;
+        size_t pass = 0, chunk = 0, visual = 0, ordinal = 0;
+        uint32_t lastCommittedTick = 0, maxVisualEnd = 0, navLength = 0;
+        uint32_t bracket = 0, nearestTarget = 0, bestDistance = 0;
+        int exactIndex = -1, nearestIndex = -1;
+        NoteUtils::DisplayNote exact{}, nearest{}, candidate{};
+        SelectionSnapshotPosition rows{}, prior{}, candidatePosition{};
+        PreparedNoteEditSelection prepared{};
+#if defined(PIO_UNIT_TEST_NATIVE)
+        size_t units = 0;
+#endif
+    } selectionPreparation_{};
+    static_assert(std::is_trivially_copyable<DefaultSelectionPreparation>::value,
+                  "selection preparation must remain fixed-size non-owning metadata");
+    bool defaultSelectionPreparationContextMatches(const Track& track) const;
+    bool defaultSelectionPreparationSourceMatches(const Track& track) const;
+    bool defaultSelectionPreparationInputSupported(const Track& track) const;
+    void bindDefaultSelectionPreparationSource(Track& track);
+    enum class SelectionSnapshotRead : uint8_t { Progress, Row, Complete, Unsupported };
+    static SelectionSnapshotRead stepSelectionSnapshotPosition(
+        const LoopSnapshot& root, SelectionSnapshotPosition& position,
+        NoteUtils::DisplayNote& out);
+    void reduceDefaultSelectionCandidate();
     size_t bakeNoteEditSessionStoreToPasses(Track& track);
     void persistActiveNoteEditSession(Track& track);
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
@@ -342,6 +504,8 @@ private:
     bool selectionChangeRequestFaderSync_ = false;
     /** Suppress SelectionChanged surface events while reopening NOTE_EDIT (SessionOpen owns motor sync). */
     bool deferSelectionSurfaceEvents_ = false;
+    uint32_t defaultSelectionHandoffClampLimit_ = UINT32_MAX;
+    bool defaultSelectionHandoff_ = false;
     bool sessionOpenedIncludesMidi_ = false;
     bool sessionOpenedIncludesFaderFeedback_ = false;
     EditSession editSession;

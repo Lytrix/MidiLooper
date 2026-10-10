@@ -619,11 +619,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       }
     }
 
-    // A background snapshot may run only when no capture is active, and only
-    // one construction unit is admitted per Snapshot owner turn. Previously
-    // every realtime track could take the normal two-unit allowance in the
-    // same loop turn, multiplying the display stall on multi-track playback.
-    if (!trackManager.anyTrackRecordingOrOverdubbing()) {
+    // A background snapshot may run only when no live capture or unqualified
+    // stop is active. A stopped RecordPublished job whose queued root is needed
+    // to retire its frozen interval may borrow this existing one-unit turn;
+    // never stack a second background construction unit.
+    if (trackManager.backgroundSnapshotWorkAllowed()) {
       static uint8_t sBackgroundSnapshotTrackCursor = 0;
       if (realtimeTrackCount != 0) {
         for (uint8_t offset = 0; offset < realtimeTrackCount; ++offset) {
@@ -633,9 +633,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
             continue;
           }
           Track& track = trackManager.getTrack(trackIndex);
-          const bool backgroundTrackEligible =
-              (track.isPlaying() || track.isStoppedRecording()) &&
-              !track.isRecording() && !track.isOverdubbing() && !track.hasPendingDeferredOverdubStop();
+          // One bounded background unit, including a stopped RecordPublished
+          // job whose queued root alone can release its finalization hold.
+          const bool backgroundTrackEligible = track.canServiceBackgroundSnapshotOwnerTurn();
           if (!backgroundTrackEligible) {
             continue;
           }
@@ -830,6 +830,9 @@ void loop() {
   uint32_t now = millis();
   // Poll MIDI input
   midiHandler.handleMidiInput();
+  // One role-owned entry opportunity, bracketed by real MIDI service. Never drain.
+  editManager.stepCurrentRootNoteEditEntry();
+  midiHandler.handleMidiInput();
 #if defined(SESSION_CAPTURE)
   const uint32_t loopPrefixStartUs = micros();
 #endif
@@ -866,7 +869,8 @@ void loop() {
   SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64);
 
   // Update SELECT mode for overdubbing if active
-  if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
+  if (!editManager.hasPendingCurrentRootNoteEditEntry() &&
+      editManager.getCurrentState() == editManager.getSelectNoteState()) {
     auto* selectState = static_cast<EditSelectNoteState*>(editManager.getSelectNoteState());
     selectState->updateForOverdubbing(editManager, trackManager.getSelectedTrack());
   }

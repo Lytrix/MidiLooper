@@ -12,6 +12,7 @@
 #include "Loop.h"
 #include "SlotLoadSession.h"
 #include "StorageLoopIo.h"
+#include "EditManager.h"
 #include "TrackManager.h"
 #include "TrackUndo.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
@@ -379,6 +380,7 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
         return false;
     }
     Loop& loop = trackManager.getTrack(trackIndex).getLoop(slotIndex);
+    editManager.cancelCurrentRootNoteEditEntryForLoop(loop); // before any load/reset early return
     if (!SD.exists(loopPath)) {
         resetLoopSlotToEmpty(loop, slotIndex);
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);

@@ -386,8 +386,14 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
   completedPromisePendingJudgement = false;
   admittedPromiseInvalidated = false;
   viewBuildWork = {};
-  recordingWindowGeneration = 0;
-  recordingWindowGenerationValid = false;
+  // A preserved complete raw Record bar keeps the generation it was built from.
+  // Clearing this stamp while retaining the view would make a stale view look
+  // indistinguishable from an unstamped one at the stop-edge bind.
+  if (preservedView == nullptr || !preservedView->rawCoveragePrepared ||
+      !preservedView->complete || viewSet->lifecycle.retained != preservedIndex) {
+    recordingWindowGeneration = 0;
+    recordingWindowGenerationValid = false;
+  }
   discardFrozenCaptureOrder();
   discardFrozenCaptureCanonicalOrder();
   if (viewSet != nullptr) {
@@ -1623,9 +1629,14 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  const bool cold = frozenViewRequest.active && rolling.phase == RollingPhase::Requested &&
+      rolling.epoch == 0 && rolling.deadlineTick == 0 && frozenViewRequest.clockEpoch == 0 &&
+      frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      frozenViewRequest.operationGeneration == rolling.generation && coverage.startPhase == 0 &&
+      coverage.lengthTicks == rolling.loopLength && coverage.loopLengthTicks == rolling.loopLength;
   if (set == nullptr || viewBuild.active() || completedPromisePendingJudgement || ownsCoverageSource() ||
       set->lifecycle.build == RuntimePlaybackViewLifecycle::kNoView ||
-      !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) {
+      (!cold && !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks))) {
     return false;
   }
   RuntimePlaybackView& destination = set->views[set->lifecycle.build];
@@ -1650,17 +1661,26 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
   return true;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageRoleAvailable() const {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageRoleAvailable(bool keepCaptureReady) const {
   const auto* set = viewSetIfPrewarmed();
-  return set && !viewBuild.active() && !completedPromisePendingJudgement && !ownsCoverageSource() &&
-      (canonicalWindowPhase == CanonicalWindowPhase::Idle || canonicalWindowPhase == CanonicalWindowPhase::Ready) &&
-      set->lifecycle.build < set->views.size() && !set->views[set->lifecycle.build].published &&
-      !set->views[set->lifecycle.build].complete &&
-      !(set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete);
+  if (!set || viewBuild.active() || completedPromisePendingJudgement || ownsCoverageSource() ||
+      (canonicalWindowPhase != CanonicalWindowPhase::Idle &&
+       canonicalWindowPhase != CanonicalWindowPhase::Ready) ||
+      set->lifecycle.build >= set->views.size() || set->views[set->lifecycle.build].published ||
+      set->views[set->lifecycle.build].complete) return false;
+  if (set->lifecycle.ready >= set->views.size() || !set->views[set->lifecycle.ready].complete)
+    return true;
+  const auto& ready = set->views[set->lifecycle.ready];
+  return keepCaptureReady && !ready.published &&
+      ready.source.origin == PlaybackWindowOrigin::Capture &&
+      set->lifecycle.build != set->lifecycle.ready &&
+      set->lifecycle.build != set->lifecycle.current &&
+      set->lifecycle.build != set->lifecycle.retained;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageQualification(const LoopSnapshot& snapshot) {
-  if (!coverageRoleAvailable() || !pendingViewRequest_.active ||
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageQualification(
+    const LoopSnapshot& snapshot, bool keepCaptureReady) {
+  if (!coverageRoleAvailable(keepCaptureReady) || !pendingViewRequest_.active ||
       (pendingViewRequest_.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
        pendingViewRequest_.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedLaunch)) return false;
   if (!coverageSource.begin(snapshot, pendingViewRequest_.coverage.startPhase,
@@ -1699,13 +1719,25 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepCoverageQualificat
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverageBuild(
     const CoverageServiceContract& contract, PlaybackDeadlineClock clock) {
   const bool launch = frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
+  const auto& frame = rolling;
+  const bool cold = frame.phase == RollingPhase::Requested && frame.epoch == 0 &&
+      frame.deadlineTick == 0 && frame.startPhase == 0 &&
+      frame.loopLength == frozenViewRequest.coverage.loopLengthTicks &&
+      frozenViewRequest.coverage.startPhase == 0 &&
+      frozenViewRequest.coverage.lengthTicks == frame.loopLength &&
+      frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      frozenViewRequest.operationGeneration == frame.generation &&
+      frozenViewRequest.clockEpoch == 0 && frozenViewRequest.deadlineTick == 0;
   if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSource.complete() ||
       !frozenViewRequest.active || frozenViewRequest.positionInvalidated ||
-      (!launch && (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
+      (!launch && !cold && (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
       clock.tick < frozenViewRequest.work.admittedTick || clock.tick >= frozenViewRequest.deadlineTick ||
       !contract.canCompleteWithinLead(frozenViewRequest.deadlineTick - clock.tick)))) return false;
   auto* set = viewSetIfPrewarmed();
+  // Qualification may run privately beside a Capture ready, but admission
+  // cannot discharge that request until the single successor role is free.
   if (!set || set->lifecycle.build >= set->views.size() ||
+      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) ||
       coverageSource.readUnits() != coverageSourceUnits) return false;
   const auto& candidate = set->views[set->lifecycle.build];
   if (!(candidate.source == frozenViewRequest.source) || candidate.storage.eventCount != coverageEventCount ||
@@ -1905,13 +1937,22 @@ LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
-    uint32_t loopLengthTicks) {
+    uint32_t loopLengthTicks, const Loop* recordedLoop) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView ||
       set->lifecycle.retained >= set->views.size()) {
     return false;
   }
   RuntimePlaybackView& retained = set->views[set->lifecycle.retained];
+  if (recordedLoop != nullptr && retained.complete && retained.rawCoveragePrepared &&
+      (!recordingWindowGenerationValid ||
+       recordingWindowGeneration != recordedLoop->captureDisplayRevision)) {
+    // The unpublished raw bar predates accepted Capture input. Never publish it
+    // as current; the existing frozen-range owner builds the complete bar idle.
+    viewBuild.discard();
+    retained.complete = false;
+    return false;
+  }
   if (!retained.bindRawCoverage(loopLengthTicks)) return false;
   return set->lifecycle.handoffToRetained(set->views);
 }
@@ -1923,6 +1964,21 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordRetu
   if (set == nullptr || loopLengthTicks == 0 || !range.ready() ||
       range.generation() != expectedGeneration) {
     return false;
+  }
+  // The Record stop edge can already have bound the complete first bar and
+  // handed `retained` to `current`. That published view is immutable: the
+  // deferred closure acknowledges the same final geometry, not a second
+  // projection into the view the MIDI edge may be reading. Short takes cannot
+  // pass the stop-edge bind and still take the raw retained path below.
+  if (set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView &&
+      set->lifecycle.current < set->views.size()) {
+    const RuntimePlaybackView& current = set->views[set->lifecycle.current];
+    if (current.firstRecordReturnWindow && current.complete &&
+        !current.rawCoveragePrepared && current.coverage.startPhase == 0 &&
+        current.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+        current.coverage.loopLengthTicks == loopLengthTicks) {
+      return true;
+    }
   }
   if (set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView ||
       set->lifecycle.retained >= set->views.size()) {
@@ -1993,7 +2049,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFrozenRecordWin
     const uint32_t length = remaining < windowTicks ? remaining : windowTicks;
     const PlaybackCoverageInterval coverage{start, length, loopLengthTicks};
     const RuntimePlaybackViewSource source =
-        RuntimePlaybackViewSource::fromCaptureRange(range);
+        sourceIdentity.origin == PlaybackWindowOrigin::Capture
+            ? RuntimePlaybackViewSource::fromFrozenRecordCapture(range, sourceIdentity.captureContentGeneration)
+            : RuntimePlaybackViewSource::fromCaptureRange(range);
+    if (sourceIdentity.origin == PlaybackWindowOrigin::Capture &&
+        sourceIdentity.captureContentGeneration == 0) return false;
     if (!viewBuild.begin(set->views[set->lifecycle.build], source, sourceIdentity, coverage,
                          EmissionCursor{}, LedgerBoundarySummary{},
                          RuntimePlaybackViewFillScope::RecordCoverage)) {
@@ -2031,21 +2091,39 @@ LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& s
         phase >= window.coverage.startPhase &&
         phase - window.coverage.startPhase < window.coverage.lengthTicks;
   };
-  // Already serving an onward window for this phase: keep it rather than rebuild.
+  const auto sameSourceGeneration = [&](const RuntimePlaybackView& window) {
+    // A committed root may replace another committed root without changing the
+    // copied Record revision. A Capture-origin view, however, has its own frozen
+    // content receipt: the legacy committed adopter may not erase that identity.
+    return window.source.playbackRevision == sourceIdentity.playbackRevision &&
+        window.source.sourceGeneration == sourceIdentity.sourceGeneration &&
+        window.source.origin == sourceIdentity.origin &&
+        window.source.captureContentGeneration == sourceIdentity.captureContentGeneration;
+  };
+  // Prefer a complete successor built from the now-current checkpoint. Only if
+  // none exists may the current copied Record window be re-identified: revision
+  // and source generation must still match, so an overdub mutation cannot make
+  // older content masquerade as current.
+  if (set->lifecycle.ready < set->views.size()) {
+    RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+    if (covers(ready) && ready.source == sourceIdentity) {
+      if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
+      ready.published = true;
+      return &set->views[set->lifecycle.current];
+    }
+  }
   if (set->lifecycle.current < set->views.size()) {
     RuntimePlaybackView& current = set->views[set->lifecycle.current];
-    if (!current.firstRecordReturnWindow && covers(current)) {
+    if (!current.firstRecordReturnWindow && covers(current) && sameSourceGeneration(current)) {
       current.source = sourceIdentity;
       current.published = true;
       return &current;
     }
   }
   if (set->lifecycle.ready == RuntimePlaybackViewLifecycle::kNoView ||
-      set->lifecycle.ready >= set->views.size()) {
-    return nullptr;
-  }
+      set->lifecycle.ready >= set->views.size()) return nullptr;
   RuntimePlaybackView& window = set->views[set->lifecycle.ready];
-  if (!covers(window)) return nullptr;
+  if (!covers(window) || !sameSourceGeneration(window)) return nullptr;
   window.source = sourceIdentity;
   if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
   window.published = true;
@@ -2079,6 +2157,25 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseFrozenRecordWin
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (auto* candidateSet = viewSetIfPrewarmed()) {
+    const uint8_t index = candidateSet->lifecycle.build;
+    if (index < candidateSet->views.size() &&
+        candidateSet->views[index].source.origin == PlaybackWindowOrigin::Capture &&
+        !candidateSet->views[index].published) {
+      const bool current = loop.capture.phase == CapturePhase::Record &&
+          loop.capture.store.empty() &&
+          candidateSet->views[index].source.captureContentGeneration == loop.captureContentGeneration();
+      if (!current) {
+        viewBuild.discard();
+        candidateSet->views[index].resetMetadata();
+      }
+      // The Track window owner alone owns this private builder. After a
+      // superseding input, a later VisualCache turn may resume legacy raw fill.
+      return false;
+    }
+  }
+#endif
   if (ownsLaunchPreparation() || (viewBuild.coverageOwned() && (viewBuild.active() || completedPromisePendingJudgement))) return false;
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || ticksPerBar == 0 || entryQuantum == 0 ||
@@ -2561,11 +2658,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // Task 3.7a (I7) re-base: +16 B for the caller-owned **layer scratch** the per-layer edit resolution stages the current
 // layer in (one `SessionMidiEventVec` header; the events themselves are its external allocation, taken and released with
 // the window). Measured by the compiler on this ABI, not estimated.
-static_assert(sizeof(LoopPlaybackRuntime) == 7400,
-              "S3.0/3.10: target per-slot runtime 7,400 B, including the gated rolling frame, the "
-              "3.7a retained-source gather, the 3.7a paged ring, the 3.7a paged emission state and the 3.7a/I7 "
-              "layer scratch");
-static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
+// E2 Capture source receipt plus bounded source-index fill state; externally
+// allocated per slot, not a Track DTCM field.
+static_assert(sizeof(LoopPlaybackRuntime) == 7632,
+              "E2: target per-slot runtime 7,632 B with source-index fill receipt");
+static_assert(sizeof(Loop) == 992,
+              "S3.0/E2: LoopPool shell 984 B baseline + 8 B Capture-content generation "
+              "(external-first, eight shells per allocated Track)");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");
@@ -2587,8 +2686,9 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Task 3.7a (I3c-a) re-base: +40 B for the paged **emission** state (the same fields, this ABI's padding). The
 // staging variant measured +296 B here and was removed in favour of reading the ring's pages by ordinal.
 // Task 3.7a (I7) re-base: +24 B for the same layer scratch on this ABI (9,528 -> 9,552). Compiler-measured here too.
-static_assert(sizeof(LoopPlaybackRuntime) == 9552,
-              "S3.0/3.10: host-ABI per-slot runtime size (9,552 B, including rolling frame, the 3.7a gather, the 3.7a "
-              "paged ring, the 3.7a paged emission state and the 3.7a/I7 layer scratch)");
+// E2 source-index fill receipt adds 32 B to the host per-slot runtime
+// (9,736 -> 9,768); no Track member or additional view.
+static_assert(sizeof(LoopPlaybackRuntime) == 9768,
+              "E2: host per-slot runtime 9,768 B with source-index fill receipt");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

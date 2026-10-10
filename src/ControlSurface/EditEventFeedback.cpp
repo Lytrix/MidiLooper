@@ -160,7 +160,8 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSessionOpenedEvent(Track& track)
     if (editManager.sessionOpenedIncludesFaderFeedback() && editManager.isNoteEditActive()) {
         prepareNoteEditSessionOpen();
         sendNoteEditSessionFaderFeedback(track);
-        drainFaderOutboundUntilIdle();
+        // The ordinary surface update advances outbound work after MIDI input.
+        // Session entry must not poll the pipeline to idle inside this callback.
     }
 }
 

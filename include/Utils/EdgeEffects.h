@@ -74,6 +74,14 @@ class EdgeEffectQueue {
   /// a main loop that has not drained in that long is already a case the drain's own row must name.
   static constexpr uint16_t kCapacity = 16;
 
+  /// Boot only, before any producer/consumer starts. DMAMEM is not cleared by
+  /// Teensy startup; equal positions hide retained payload until publication.
+  void initializeForBoot() {
+    write_ = 0;
+    read_ = 0;
+    droppedCount_ = 0;
+  }
+
   /// **Producer** step (the tick edge): O(1), no formatting, no MIDI, no display. Returns false when the queue
   /// is full, in which case the caller has lost an effect and `droppedCount()` has grown.
   bool record(const EdgeEffectRecord& effect) {

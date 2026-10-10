@@ -150,7 +150,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
                                                selectedNoteIdx);
 }
 
-EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache() const {
+EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCacheMetadata() const {
     ++noteEditDisplayInvalidateEpoch_;
     noteEditDisplayImmediatePaintRequested_ = true;
     noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
@@ -161,6 +161,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCachePublishedSnapshotIdentity_ = nullptr;
     noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache() const {
+    invalidateProjectedNoteEditDisplayCacheMetadata();
     noteEditPaintDisplayCacheNotes_.clear();
     noteEditCommittedDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();
@@ -171,13 +175,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::markNoteEditDisplayPainted() {
     noteEditDisplayImmediatePaintRequested_ = false;
 }
 
-EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
+EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCacheMetadata() {
     noteEditFocusMaterializeLoopRevision_ = UINT32_MAX;
     noteEditFocusMaterializeSlot_ = 255;
     noteEditFocusMaterializeLoopLength_ = 0;
     noteEditFocusMaterializePublishedSnapshotIdentity_ = nullptr;
+    invalidateProjectedNoteEditDisplayCacheMetadata();
+}
+
+EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
+    invalidateNoteEditDerivedCacheMetadata();
     noteEditFocusMaterializedLoopEvents_.clear();
-    invalidateProjectedNoteEditDisplayCache();
+    noteEditPaintDisplayCacheNotes_.clear();
+    noteEditCommittedDisplayCacheNotes_.clear();
+    noteEditSelectableDisplayCacheNotes_.clear();
 }
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::tryCollectPreparedOverlapHoldNoteIds(

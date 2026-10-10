@@ -8,6 +8,47 @@ nothing of it is applied here);
 canonical eviction depends on S6. Until those gates land, report retained roots/canonical bodies and
 make no whole-law or 60-long-slot claim. Final archive requires both dependencies.
 
+### Requirement: HITL observes the requested live state and closes every managed run safely
+
+Transport-start confirmation SHALL require acknowledgement after the caller's own start request, never historical transport or generic display activity. Record-take selection SHALL use the configured musical channel's note traffic, excluding control-channel gestures and zero-velocity NoteOns; the take containing the greatest number of streamed notes SHALL take precedence over incidental setup takes.
+
+Selected-track setup observations SHALL identify the actual selected track, active slot, Track state and global transport state through a fresh fenced read-only response available while the capture ring is retained for playback. This observation SHALL neither change transport/content nor flush the protected evidence ring, allocate memory or advance deferred work; unavailable/backpressured/wrong-target observations SHALL refuse setup without speculative toggle retries.
+
+Every managed run SHALL perform the existing canonical idempotent Stop/drain on normal, failed, exceptional and watchdog exits while capture still owns serial. Boot-repair Stop deduplication SHALL NOT suppress final teardown; incomplete shutdown SHALL be recorded and latch against subsequent reset/upload, and SHALL NOT return success.
+
+#### Scenario: Old rows cannot start the next take
+- **GIVEN** an earlier start/display row is in the collector before a new start request
+- **WHEN** the host confirms that request
+- **THEN** it waits for that request's fresh acknowledgement without another toggle and streams no notes on the historical receipt
+
+#### Scenario: Setup controls cannot steal the musical take
+- **GIVEN** two completed takes, the first containing only control gestures and the second containing the configured musical note stream
+- **WHEN** the verifier extracts recording boundaries
+- **THEN** it selects the second take and still reports missing or early musical notes rather than weakening content assertions
+
+#### Scenario: Playback setup remains observable without bulk ring flushing
+- **WHEN** the target starts playing and its ST/DISP rows are retained
+- **THEN** one fresh selected-track response can establish the exact target's PLAYING/transport-running state
+- **AND** a wrong target, stopped global transport, malformed response or unavailable response does not authorize setup
+
+#### Scenario: Failed edit leg still stops and drains
+- **WHEN** a composed edit leg restarts playback and then fails or raises
+- **THEN** final canonical Stop/drain executes before capture closes, regardless of any Stop already sent during boot repair or base-leg retrieval
+
+### Requirement: Deferred edge effects begin empty after every boot
+
+Before clock-driven edge-effect publication or main-loop consumption begins, the runtime SHALL explicitly initialize the existing edge-effect queue's producer/consumer positions, dropped-effect count and reported-drop baseline, independently of retained or uncleared backing memory. Payload storage SHALL NOT be consumed until a producer publishes a record in the current boot. Initialization SHALL preserve the existing fixed-capacity FIFO, full-queue rejection/counting, interrupt-mask restoration and deferred log/display/LED semantics; it SHALL NOT add allocations or work to the clock edge.
+
+#### Scenario: Retained queue storage is not published work
+- **GIVEN** the queue backing memory contains stale record bytes, unequal positions and stale drop counters before boot setup
+- **WHEN** the existing TrackManager boot setup completes before clock startup
+- **THEN** queue depth and both drop counters are zero, and a drain performs no stale log, display or LED effect
+- **AND** subsequent producer records are consumed once in FIFO order, rejecting rather than overwriting records when full, including across 16-bit counter rollover
+
+#### Scenario: Hardware display recovery is separately qualified
+- **WHEN** the boot-initialization repair passes native and linked-image verification but has not been evaluated on hardware
+- **THEN** local repair verification SHALL NOT establish display recovery or device boot acceptance
+
 ### Requirement: Continuous runtime operation has one end-to-end acceptance contract
 
 Within the declared and verified workload envelope, the runtime SHALL support continuous playback, recording,

@@ -40,6 +40,20 @@ struct PendingPassChangeProgress {
   uint32_t windowStartTick = 0;
   uint32_t windowLengthTicks = 0;
 
+  bool freshForInventoryAdoption() const {
+    if (passId != kInvalidPassId || cursor.listIndex || cursor.chunkIndex ||
+        cursor.chunkEventOffset || cursor.complete || !batch.empty() || batchIndex ||
+        nextEventId != 1 || nextCanonicalOrder != 1 || openNoteCount || active ||
+        fromCaptureStore || storeWindowComplete || nextStoreIndex || includeUntil ||
+        windowStartTick || windowLengthTicks) return false;
+    // Fixed 32 slots, not a variable payload scan. Count zero alone is insufficient.
+    for (const auto& note : openNotes) {
+      if (note.noteId != kInvalidNoteId || note.pitch || note.velocity ||
+          note.startTick || note.endTick || note.hasStart || note.hasEnd) return false;
+    }
+    return true;
+  }
+
   void reset() { *this = PendingPassChangeProgress{}; }
 
   bool batchExhausted() const { return batchIndex >= batch.size(); }
@@ -74,6 +88,34 @@ struct PublishedSnapshotBox {
 };
 
 struct PendingSnapshotPublishBox {
+  enum class PayloadReleaseResult : uint8_t { Idle, Progress, Complete, Rejected };
+  enum class CompanionStoragePolicy : uint8_t { Retain, Release };
+  /// Single-use non-owning coordinates. Caller keeps box, original construction,
+  /// cursor and allocator alive/unmoved, excludes all writes/publisher/overlay,
+  /// semantic borrows, weak resurrection and lifetime/address reuse. This does
+  /// not cancel or settle obligations. Accepted boxes must never resume live work.
+  class PayloadReleaseCursor {
+   public:
+    PayloadReleaseCursor() = default;
+    PayloadReleaseCursor(const PayloadReleaseCursor&) = delete;
+    PayloadReleaseCursor& operator=(const PayloadReleaseCursor&) = delete;
+    PayloadReleaseCursor(PayloadReleaseCursor&&) = delete;
+    PayloadReleaseCursor& operator=(PayloadReleaseCursor&&) = delete;
+    size_t completedUnitCount() const { return units_; }
+   private:
+    friend struct PendingSnapshotPublishBox;
+    const PendingSnapshotPublishBox* owner_ = nullptr;
+    LoopSnapshotConstruction::ReleaseCursor constructionCursor_;
+    std::array<size_t, 5> positions_{};
+    size_t units_ = 0;
+    uint8_t phase_ = 0;
+    uint8_t fragmentPhase_ = 0;
+    uint8_t rootPhase_ = 0;
+    CompanionStoragePolicy policy_ = CompanionStoragePolicy::Release;
+  };
+  PayloadReleaseResult beginPayloadRelease(PayloadReleaseCursor&, CompanionStoragePolicy);
+  PayloadReleaseResult stepPayloadRelease(PayloadReleaseCursor&, size_t maximumUnits);
+  PayloadReleaseResult payloadReleaseResult(const PayloadReleaseCursor&) const;
   bool sessionExitQueued = false;
   /// DEC-073: the committed-pass revision the box's enumerated pass/companion inventory covers.
   /// It advances only when a request actually enumerates passes into this box, and the candidate
@@ -121,7 +163,25 @@ struct PendingSnapshotPublishBox {
   std::unique_ptr<LoopSnapshotConstruction> construction;
   ImmutableLoopSnapshotRef unpublishedCandidate;
 
+  /// Default semantic shell only; retained EMPTY allocations are permitted.
+  /// Retirement admission is irreversible, including after payload completion.
+  bool freshForInventoryAdoption() const {
+    return !payloadReleaseCursor_ && !sessionExitQueued &&
+        coveredPassRevision == kSnapshotCoverageUnset && !fromLoadedPasses &&
+        loadedHydrationPhase == LoadedSnapshotHydrationPhase::None &&
+        !companionsApplied && !applyingCompanions && !wrapJournalInFlight &&
+        sessionExitReason == CommitReason::RecordStop && !sessionExitUndoAttachEntryId &&
+        companionIds.empty() && queuedPassIds.empty() && appliedPassIds.empty() &&
+        journaledPassIds.empty() && queuedWrapJournals.empty() &&
+        passChangeProgress.freshForInventoryAdoption() && fragmentProgress.freshForInventoryAdoption() &&
+        !fragmentProgressValid && !consecutiveFragmentFailures && !fragmentBlocked &&
+        !fragmentBlockTransient && !fragmentParkSawDenial &&
+        constructionPassId == kInvalidPassId && !appliedLiveRecordEventIndex &&
+        !appliedLiveRecordCompletedTicks && !construction && !unpublishedCandidate;
+  }
+
   void persistLiveRecordCursor() {
+    if (payloadReleaseCursor_) return;
     if (!passChangeProgress.fromCaptureStore) {
       return;
     }
@@ -130,6 +190,10 @@ struct PendingSnapshotPublishBox {
       appliedLiveRecordCompletedTicks = passChangeProgress.includeUntil;
     }
   }
+
+ private:
+  // Identity only, never dereferenced; permanently gates cursor persistence.
+  PayloadReleaseCursor* payloadReleaseCursor_ = nullptr;
 };
 
 // Reserved before capture admission. Owns the session identities across close;

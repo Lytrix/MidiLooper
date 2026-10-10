@@ -304,6 +304,27 @@ def record_evidence_row_counts(lines: list[str]) -> dict[str, int]:
     return counts
 
 
+_RING_LOSS_FIELDS = ("shed", "tierA_evict", "overflow", "crit_rej", "wipe")
+
+
+def ring_loss_counters(lines: list[str]) -> dict[str, int]:
+    """The reply's ring-level loss counters, `{}` when the reply carries no `RING,stats` row.
+
+    These are boot-scoped totals, so they never decide one retrieval's verdict on their own: a loss
+    that happened before this managed log opened (a long capture run, an earlier leg) is not this
+    session's evidence loss. They are reported beside a family shortfall that never drained, so a
+    reader can see whether a row which never left the ring is explained by ring loss rather than by
+    a transmission still in flight.
+    """
+    for line in lines:
+        match = re.search(r"#CAP,\d+,RING,stats,(.*)$", line)
+        if not match:
+            continue
+        fields = dict(re.findall(r"([A-Za-z_]+)=(\d+)", match[1]))
+        return {name: int(fields[name]) for name in _RING_LOSS_FIELDS if name in fields}
+    return {}
+
+
 def stopped_capture_queue_idle(lines: list[str]) -> bool:
     """The selected Track's stopped-only status must explicitly report no jobs."""
     for line in reversed(lines):
@@ -312,3 +333,34 @@ def stopped_capture_queue_idle(lines: list[str]) -> bool:
         return (re.search(r",pending=0(?:,|$)", line) is not None
                 and re.search(r",queue=0/\d+(?:\s|$)", line) is not None)
     return False
+
+
+def incoming_note_on(line: str) -> Optional[tuple[int, int, int]]:
+    """Validated musical candidate: timestamp, 1-based channel, pitch (velocity > 0)."""
+    parts = line.split(',')
+    if len(parts) != 8 or parts[0] != '#CAP' or parts[2:5] != ['MI', 'U', '144']:
+        return None
+    try:
+        stamp, channel, pitch, velocity = (int(parts[i]) for i in (1, 5, 6, 7))
+    except ValueError:
+        return None
+    if stamp < 0 or not 1 <= channel <= 16 or not 0 <= pitch <= 127 or not 1 <= velocity <= 127:
+        return None
+    return stamp, channel, pitch
+
+
+def selected_track_status(lines: list[str]) -> Optional[dict]:
+    """One exact scalar reply from the caller's fenced !TRACK_STATUS window."""
+    rows = [line.strip() for line in lines if line.startswith('#TRACK_STATUS,')]
+    if len(rows) != 1:
+        return None
+    match = re.fullmatch(
+        r'#TRACK_STATUS,us=([0-9]+),track=([0-7]),slot=([0-7]),'
+        r'state=(EMPTY|STOPPED|ARMED|RECORDING|STOPPED_RECORDING|PLAYING|OVERDUBBING|OVERDUB_STOPPING),'
+        r'transport=([01])', rows[0])
+    if match is None:
+        return None
+    stamp, track, slot, state, transport = match.groups()
+    if int(stamp) > 0xffffffff:
+        return None
+    return dict(us=int(stamp), track=int(track), slot=int(slot), state=state, transport=int(transport))

@@ -150,7 +150,7 @@ pio test -e native                                      # full suite; every case
 pio run -e teensy41-capture-serial                       # build only; RAM1 budget line reported, floor 840 B
 python3 scripts/check_ram1_budget.py                     # budget passes on the fresh target build
 git diff --check                                         # whitespace
-nvm use 20 && openspec validate windowed-playback-generation --strict
+openspec validate windowed-playback-generation --strict   # default Node (v24); never 'nvm use 20' first
 ```
 
 - **Pass criteria:** the focused suites green with the new cases *present by name*; full native with **0 failures and

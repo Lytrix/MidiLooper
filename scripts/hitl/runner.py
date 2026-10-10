@@ -223,6 +223,26 @@ def _should_use_managed_capture(args: argparse.Namespace, legacy: list[str], sce
     return True
 
 
+def _legacy_int_option(legacy: list[str], name: str, default: int) -> int:
+    """Read an integer option that belongs to a delegated scenario, for accurate managed metadata."""
+    result = default
+    index = 0
+    while index < len(legacy):
+        token = legacy[index]
+        if token == name and index + 1 < len(legacy):
+            try:
+                result = int(legacy[index + 1])
+            except ValueError:
+                return default
+            index += 2
+            continue
+        if token.startswith(name + "="):
+            try:
+                result = int(token.split("=", 1)[1])
+            except ValueError:
+                return default
+        index += 1
+    return result
 def _run_with_optional_managed_capture(
     args: argparse.Namespace,
     legacy: list[str],
@@ -241,8 +261,8 @@ def _run_with_optional_managed_capture(
         track_number=track_number,
         loop_slot=loop_slot,
         midi_channel=midi_channel,
-        record_bars=2,
-        overdub_bars=2,
+        record_bars=_legacy_int_option(legacy, "--record-bars", 2),
+        overdub_bars=_legacy_int_option(legacy, "--overdub-bars", 2),
         midi_out_name="Teensy",
         midi_in_name="Teensy",
         serial_port=None,

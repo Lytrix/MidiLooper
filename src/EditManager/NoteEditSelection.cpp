@@ -26,6 +26,7 @@
 EDIT_MANAGER_IMPL_MEM void EditManager::applyGeometryKindFromControl(Track& track, NoteEditKind kind,
                                                                      bool fromFaderControl) {
     (void)track;
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     sessionState.kind = kind;
     if (fromFaderControl && isGeometryEditKind(kind)) {
         encoderCycleNeedsAnchor_ = true;
@@ -34,11 +35,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applyGeometryKindFromControl(Track& trac
 
 EDIT_MANAGER_IMPL_MEM bool EditManager::beginGeometryMutation(Track& track, NoteEditKind kind,
                                                               bool fromFaderControl) {
+    if (hasPendingCurrentRootNoteEditEntry()) return false;
     applyGeometryKindFromControl(track, kind, fromFaderControl);
     return pushSessionUndoOnKindChange(track, kind);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::resetNoteEditSessionState() {
+    cancelCurrentRootNoteEditEntry();
+    editSession.cancelPayloadClear(); // reject late departure/cache grants before legacy reuse
+    cancelDefaultNoteEditSelectionPreparation();
     sessionState = {};
     lengthEditingMode_ = false;
     lengthFineAnchorEndTick_ = 0;
@@ -86,6 +91,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncGeometrySelectionToUi(Track& track) 
 EDIT_MANAGER_IMPL_MEM void EditManager::applySelectNav(Track& track, uint32_t selectedTick,
                                                        NoteId primaryNote, bool requestFaderSync,
                                                        bool skipFader1Outbound) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     (void)skipFader1Outbound;
     const EditorSelection priorSelection = sessionState.selection;
     sessionState.kind = NoteEditKind::Select;
@@ -117,12 +123,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectNav(Track& track, uint32_t se
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::applyCycleEditKind(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     sessionState.kind = resolveEncoderCyclePress(sessionState.kind, encoderCycleNeedsAnchor_);
     encoderCycleNeedsAnchor_ = false;
     syncNoteEditSessionStateToUi(track);
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditSessionStateToUi(Track& track) {
+    if (hasPendingCurrentRootNoteEditEntry()) return;
     const int prevSelectedIdx = selectedNoteIdx;
     const NoteUtils::DisplayNoteVec& notes = selectableDisplayNotesAtEditSelect(track);
     const bool lengthBracket = sessionState.kind == NoteEditKind::Length || isLengthEditingMode();
@@ -187,6 +195,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::syncNoteEditSessionStateToUi(Track& trac
 
 EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& track,
                                                                          uint32_t transportTick) {
+    cancelCurrentRootNoteEditEntry();
+    // Qualify direct entry before any Loop read or live selection publication.
+    if (&track != &trackManager.getSelectedTrack()) {
+        return;
+    }
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (loopLength == 0) {
         selectedNoteIdx = -1;
@@ -196,10 +209,28 @@ EDIT_MANAGER_IMPL_MEM void EditManager::enterDefaultNoteEditSessionState(Track& 
         return;
     }
 
+    // Selection is resolved by this owner before the nested Select FSM entry.
+    // Restore lexical state even for a nested/default caller; it is not retained
+    // across a service turn and cannot authorize late publication.
+    const uint32_t navLength = noteEditSelectNavigationLengthTicks(track);
+    struct SelectionHandoffScope {
+        bool& active;
+        uint32_t& limit;
+        bool priorActive;
+        uint32_t priorLimit;
+        SelectionHandoffScope(bool& flag, uint32_t& clampLimit, uint32_t nextLimit)
+            : active(flag), limit(clampLimit), priorActive(flag), priorLimit(clampLimit) {
+            active = true;
+            limit = nextLimit;
+        }
+        ~SelectionHandoffScope() { active = priorActive; limit = priorLimit; }
+    } handoff(defaultSelectionHandoff_, defaultSelectionHandoffClampLimit_,
+              navLength > 0 && navLength < loopLength ? navLength : UINT32_MAX);
     const Loop& loop = trackManager.getSelectedLoop(track);
     const uint32_t loopStartTick = noteEditLoopStartTick(track);
     const uint32_t playheadPhase = tickPhaseInLoop(transportTick, loop.startLoopTick, loopLength);
-    const uint32_t bracketPhase = clampNoteEditBracketPhaseTick(track, playheadPhase);
+    const uint32_t bracketPhase =
+        clampNoteEditBracketPhaseTickForNavigation(playheadPhase, loopLength, navLength);
     const uint32_t bracketTick =
         SelectNavigation::noteRelativeTick(bracketPhase, loopStartTick, loopLength);
     selectNoteAtBracket(track, bracketTick);

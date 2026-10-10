@@ -2,10 +2,23 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackViewFill.h"
+#include "Loop.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/IntervalProjection.h"
 
 namespace {
+NOTE_EDIT_MEM size_t liveCaptureSize(const void* context) {
+  return static_cast<const Loop*>(context)->capture.store.size();
+}
+NOTE_EDIT_MEM const MidiEvent& liveCaptureEventAt(const void* context, size_t index) {
+  return static_cast<const Loop*>(context)->capture.store.at(index);
+}
+
+NOTE_EDIT_MEM uint64_t liveCaptureGeneration(const void* context) {
+  const Loop& loop = *static_cast<const Loop*>(context);
+  return loop.captureActive() ? loop.captureContentGeneration() : 0;
+}
+
 NOTE_EDIT_MEM size_t frozenCaptureSize(const void* context) {
   return static_cast<const LoopEventStore::CaptureRange*>(context)->size();
 }
@@ -19,6 +32,11 @@ NOTE_EDIT_MEM bool readFrozenCaptureEvent(const void* context, size_t index, Mid
   return range.read(range.generation(), index / LoopEventStoreConfig::CHUNK_CAPACITY,
                     index % LoopEventStoreConfig::CHUNK_CAPACITY, event, atEnd) && !atEnd;
 }
+NOTE_EDIT_MEM bool frozenBlockMayIntersect(const void* context, uint64_t generation,
+    size_t firstRow, uint32_t start, uint32_t length, uint32_t loopLength, bool& mayIntersect) {
+  return static_cast<const LoopEventStore::CaptureRange*>(context)->blockMayIntersect(
+      generation, firstRow, start, length, loopLength, mayIntersect);
+}
 }
 
 NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromCaptureRange(
@@ -30,10 +48,36 @@ NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromCaptureRa
   source.readsByCopy = true;
   source.readEventAt = readFrozenCaptureEvent;
   source.generation = frozenCaptureGeneration;
+  source.blockMayIntersect = frozenBlockMayIntersect;
   source.count = range.size();
   source.generationToken = range.generation();
   return source;
 }
+NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromFrozenRecordCapture(
+    const LoopEventStore::CaptureRange& range, uint64_t frozenContentToken) {
+  RuntimePlaybackViewSource source;
+  if (!range.ready() || frozenContentToken == 0) return source;
+  source = fromCaptureRange(range);
+  source.origin = PlaybackWindowOrigin::Capture;
+  source.captureContentToken = frozenContentToken;
+  return source;
+}
+
+NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromLiveCapture(const Loop& loop) {
+  RuntimePlaybackViewSource source;
+  if (!loop.captureActive() || loop.captureContentGeneration() == 0) return source;
+  source.context = &loop;
+  source.size = liveCaptureSize;
+  source.eventAt = liveCaptureEventAt;
+  source.generation = liveCaptureGeneration;
+  source.origin = PlaybackWindowOrigin::Capture;
+  source.count = loop.capture.store.size();
+  source.generationToken = loop.captureContentGeneration();
+  source.captureContentToken = source.generationToken;
+  source.mutableCapture = true;
+  return source;
+}
+
 
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
@@ -50,6 +94,9 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   sourceGeneration_ = nullptr;
   sourceContext_ = nullptr;
   sourceGenerationToken_ = 0;
+  blockMayIntersect_ = nullptr;
+  inspectBlockRows_ = false;
+  guardLiveCaptureAfterFill_ = false;
   sourceCount_ = 0;
   cursor_ = 0;
   copied_ = 0;
@@ -84,6 +131,14 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
+  if ((source.origin == PlaybackWindowOrigin::Capture) !=
+      (sourceIdentity.origin == PlaybackWindowOrigin::Capture)) return false;
+  if (source.origin == PlaybackWindowOrigin::Capture &&
+      (sourceIdentity.origin != PlaybackWindowOrigin::Capture ||
+       sourceIdentity.snapshotIdentity != nullptr ||
+       sourceIdentity.captureContentGeneration == 0 ||
+       sourceIdentity.captureContentGeneration != source.captureContentToken ||
+       source.generation == nullptr)) return false;
   if (source.context == nullptr || source.size == nullptr ||
       (source.readsByCopy ? source.readEventAt == nullptr : source.eventAt == nullptr) ||
       source.size(source.context) != source.count ||
@@ -99,6 +154,9 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   else sourceEventAt_ = source.eventAt;
   sourceGeneration_ = source.generation;
   sourceGenerationToken_ = source.generationToken;
+  blockMayIntersect_ = scope == RuntimePlaybackViewFillScope::RecordCoverage
+      ? source.blockMayIntersect : nullptr;
+  guardLiveCaptureAfterFill_ = source.mutableCapture;
   return true;
 }
 
@@ -187,6 +245,21 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
   }
   size_t remaining = entryQuantum;
   while (remaining > 0 && cursor_ < sourceCount_) {
+    // One inspected summary consumes one unit. On a proven miss the whole
+    // 32-row group is accounted for; an invalid hint inspects every row.
+    if (blockMayIntersect_ && !inspectBlockRows_ && cursor_ % kCaptureIndexRows == 0) {
+      bool mayIntersect = true;
+      (void)blockMayIntersect_(sourceContext_, sourceGenerationToken_, cursor_,
+          destination_->coverage.startPhase, destination_->coverage.lengthTicks,
+          destination_->coverage.loopLengthTicks, mayIntersect);
+      --remaining;
+      if (!mayIntersect) {
+        cursor_ += std::min(kCaptureIndexRows, sourceCount_ - cursor_);
+        continue;
+      }
+      inspectBlockRows_ = true;
+      if (!remaining) break;
+    }
     MidiEvent event;
     if (sourceReadsByCopy_) {
       if (!sourceReadEventAt_(sourceContext_, cursor_, event)) {
@@ -218,6 +291,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
       ++copied_;
     }
     ++cursor_;
+    if (cursor_ % kCaptureIndexRows == 0) inspectBlockRows_ = false;
     --remaining;
   }
   if (cursor_ == sourceCount_) {
@@ -228,6 +302,13 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     return RuntimePlaybackViewFillResult::Complete;
   }
   return RuntimePlaybackViewFillResult::Pending;
+}
+
+NOTE_EDIT_MEM bool RuntimePlaybackViewFill::liveCaptureCurrent() const {
+  if (!guardLiveCaptureAfterFill_) return true;
+  return sourceContext_ != nullptr && sourceSize_ != nullptr && sourceGeneration_ != nullptr &&
+         sourceSize_(sourceContext_) == sourceCount_ &&
+         sourceGeneration_(sourceContext_) == sourceGenerationToken_;
 }
 
 NOTE_EDIT_MEM void RuntimePlaybackViewFill::discard() {

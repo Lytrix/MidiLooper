@@ -12,6 +12,7 @@
 #include "GlobalUndoStack.h"
 #include "Globals.h"
 #include "Loop.h"
+#include "EditManager.h"
 #include "LooperState.h"
 #include "PersistenceQueue.h"
 #include "SavedSetCatalog.h"
@@ -31,6 +32,7 @@
 namespace StorageManagerInternal {
 
 void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex) {
+    editManager.cancelCurrentRootNoteEditEntryForLoop(loop);
     loop.discardPendingCapturePass();
     loop.discardCapture();
     loop.resetPassTimeline();
@@ -48,6 +50,7 @@ void resetLoopSlotForBootManifest(Loop& loop, uint8_t slotIndex) {
 }
 
 void resetTracksAfterFailedLoad() {
+    editManager.cancelCurrentRootNoteEditEntry();
     trackManager.setMasterLoopLength(0);
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
         Track& track = trackManager.getTrack(t);

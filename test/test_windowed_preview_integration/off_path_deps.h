@@ -43,7 +43,7 @@ CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8
 // destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
 // native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
 // was silenced -- without pretending the silence itself is under test. Reset in setUp.
-#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE) && !defined(HARNESS_LINKS_REAL_PLAYBACK_EDGE)
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 #endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
@@ -166,7 +166,7 @@ void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
 void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 #endif
 #endif
-#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE) && !defined(HARNESS_LINKS_REAL_PLAYBACK_EDGE)
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
 #endif
 #include "BarStepButtonHandler.h"
@@ -213,7 +213,7 @@ MidiFaderActions::MidiFaderActions() {}
 //  * `Track::sendAllNotesOff` -- a physical output boundary, so it is observable for a suite that drives the
 //    stop route (no-op) and fail-closed otherwise.
 void DisplayManager::refreshViewportAfterRecordStop(Track&, uint8_t, uint32_t) {}
-#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE) && !defined(HARNESS_LINKS_REAL_PLAYBACK_EDGE)
 #if defined(HARNESS_OBSERVABLE_ALL_NOTES_OFF)
 void Track::sendAllNotesOff() {}
 #else

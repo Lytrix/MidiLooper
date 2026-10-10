@@ -1,0 +1,5 @@
+Change 'runtime-working-set-ownership' is valid
+src/Loop/LoopSnapshotInventoryAdoption.cpp: OK
+src/Loop/LoopSnapshotBoxes.h: OK
+native_passed_suites=112
+openspec_exit=0 diff_check_exit=0 checksum_exit=0

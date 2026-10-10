@@ -31,6 +31,8 @@
 #define CAPTURE_HITL_DATA
 #endif
 
+#include "HitlLiveObservationCommands.h"
+
 using namespace StorageManagerInternal;
 
 namespace StorageManagerInternal {
@@ -40,6 +42,25 @@ CAPTURE_HITL_DATA HitlRevisionCommitBackup hitlRevisionCommitBackup{};
 }  // namespace StorageManagerInternal
 
 namespace {
+
+
+CAPTURE_HITL_MEM void printSelectedTrackStatusForHitl() {
+    // Snapshot only scalar getters while the tick ISR cannot switch the active slot.
+#if defined(__IMXRT1062__)
+    uint32_t savedMask;
+    __asm__ volatile("mrs %0, primask" : "=r"(savedMask));
+    __asm__ volatile("cpsid i" ::: "memory");
+#endif
+    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
+    const Track& track = trackManager.getTrack(trackIndex);
+    const uint8_t slot = track.getActiveLoopIndex();
+    const char* state = track.getStateName(track.getState());
+    const bool transportRunning = clockManager.isTransportRunning();
+#if defined(__IMXRT1062__)
+    __asm__ volatile("msr primask, %0" :: "r"(savedMask) : "memory");
+#endif
+    (void)DebugSessionCapture::emitTrackStatus(trackIndex, slot, state, transportRunning);
+}
 
 // Serial line accumulator must live in RAM: processHitlSerialCommands is FLASHMEM and cannot
 // access DMAMEM on IMXRT1062.
@@ -656,13 +677,8 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
         }
         if (ch == '\n') {
             sHitlSerialLineBuffer[sHitlSerialLineLength] = '\0';
-            if (std::strncmp(sHitlSerialLineBuffer, "!TRACE_FENCE ", 13) == 0 &&
-                std::strlen(sHitlSerialLineBuffer + 13) == 32 &&
-                !clockManager.isTransportRunning()) {
-                // Explicit host request only; bypass the retained capture ring
-                // so an old buffered run cannot impersonate this acknowledgement.
-                Serial.printf("#CAP,%lu,TRACE_FENCE,%s\r\n",
-                              static_cast<unsigned long>(micros()), sHitlSerialLineBuffer + 13);
+            if (processLiveObservationCommand(sHitlSerialLineBuffer, printSelectedTrackStatusForHitl)) {
+                // Request-only scalar observations, live and backpressure-safe.
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CRASH_LOG") == 0 &&
                        !clockManager.isTransportRunning()) {
                 printCrashLogTailForHitl();

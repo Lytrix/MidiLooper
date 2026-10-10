@@ -19,6 +19,20 @@ from hitl.managed_capture import wait_for_current_session_pointer
 
 
 class ManagedCaptureTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # These fixtures own bootstrap/orchestration only, not device shutdown.
+        # test_hitl_live_observation drives the real DeviceSession separately.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        class ShutdownBoundary:
+            def __init__(self, **_kwargs):
+                self.result = SimpleNamespace(ok=True, as_dict=lambda: dict(ok=True))
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+        self.enterContext(patch('hitl.device_shutdown.DeviceSession', ShutdownBoundary))
+
     def test_wait_for_current_session_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
@@ -285,6 +299,155 @@ class ManagedCaptureTests(unittest.TestCase):
             self.assertEqual(meta["session_log"], str(target))
             self.assertIsNone(meta["firmware_hex_sha256"])
 
+    def test_boot_bound_capture_restarts_after_the_idempotent_stop(self) -> None:
+        """The real method, not a stand-in: a forced capture with no banner stops then restarts.
+
+        The old guard refused whenever the capture's own mode was already `force` -- i.e. exactly for
+        the `--boot-reset` run whose reset the firmware had just refused because the transport was
+        running, which is the state the repair exists for (`captures/live-current-root-entry-t8s4-16`).
+        """
+        from hitl.managed_capture import ManagedCaptureSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            log = out / "session.log"
+            log.write_text("line\nline\n", encoding="utf-8")  # no boot banner yet
+            session = ManagedCaptureSession(out_dir=out, boot_reset="force")
+            session._session_log = log
+            calls: list[str] = []
+            session.stop = lambda: calls.append("capture_stop")
+            session.start = lambda: (calls.append("capture_start"), log)[1]
+            self.assertTrue(session.restart_with_boot_reset(lambda: calls.append("midi_stop")))
+            self.assertEqual(["midi_stop", "capture_stop", "capture_start"], calls)
+            # Bounded to one restart per run, and never a reboot of a capture that already booted.
+            self.assertFalse(session.restart_with_boot_reset(lambda: calls.append("midi_stop")))
+
+
+    def test_forced_boot_stops_the_transport_before_asking_for_the_reset(self) -> None:
+        """A `--boot-reset` run on a device left playing must still get its boot.
+
+        Regression (`captures/live-current-root-entry-t8s4-16`): the capture asked `!REBOOT`, the
+        firmware refused it because the transport was still running, and the run then demanded a fresh
+        stream from a capture that had never rebooted -- 2 lines -- so it refused at the stream check
+        before anything stopped the transport. Readiness answered **ready** in that run ("no command
+        replies while the transport runs; 8 fresh device row(s)": a playing device answers no query but
+        does emit rows), so neither `not ready` nor a repair stop could tell that this run still owed a
+        boot -- only the forced mode itself can. The stop that clears the `!REBOOT` gate is the
+        idempotent MIDI Stop, and it is handed in only on this boot-bound path.
+        """
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from hitl import managed_capture as mc
+
+        events: list[str] = []
+
+        class FakeSession:
+            def __init__(self, log):
+                self.log = log
+                self.session_log = None
+                self._booted = False
+
+            def boot_banner_seen(self):
+                return self._booted
+
+            def restart_with_boot_reset(self, stop_transport=None):
+                events.append("restart")
+                if self._booted:
+                    return False
+                if stop_transport is not None:
+                    stop_transport()
+                self._booted = True
+                self.log.write_text("BOOT,load,ok\n" + "\n".join(
+                    f"#CAP,{i},DFRAME,0,0,0,0,0,0" for i in range(60)) + "\n", encoding="utf-8")
+                self.session_log = self.log
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            target = out / "session.log"
+            target.write_text("line\nline\n", encoding="utf-8")  # a playing device says almost nothing
+            session = FakeSession(target)
+            config = HitlConfig(
+                preset="base", scenario_ids=("base",), track_number=8, loop_slot=4,
+                midi_channel=8, record_bars=2, overdub_bars=2, midi_out_name="Teensy",
+                midi_in_name="Teensy", serial_port=None, verify_serial_log=None,
+                verify_only=False, out_dir=out, build_env="__no_such_env__", boot_reset="force",
+            )
+
+            @contextmanager
+            def managed(_config):
+                yield target
+
+            def stop_sender(_config, sent):
+                def send():
+                    if sent.get("value"):
+                        return
+                    sent["value"] = True
+                    events.append("stop")
+                return send
+
+            def readiness(**_kwargs):
+                # Run-16's shape: a playing device answers no query but does emit rows, so readiness
+                # said *ready* and the boot this run forced was still owed.
+                return True, "no command replies while the transport runs; 8 fresh device row(s)"
+
+            with patch.object(mc, "managed_capture_session", managed), \
+                    patch.object(mc, "active_managed_capture", lambda: session), \
+                    patch.object(mc, "establish_attach_readiness", readiness), \
+                    patch.object(mc, "transport_stop_sender", stop_sender):
+                code = mc.run_with_managed_capture(config, lambda _active: 0, timeout_s=0)
+        self.assertEqual(0, code)
+        self.assertEqual(["restart", "stop"], events)
+
+    def test_attach_without_a_boot_request_never_stops_the_transport(self) -> None:
+        """The other half of the contract: a plain attach must not change the transport state."""
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from hitl import managed_capture as mc
+
+        stops: list[str] = []
+
+        class FakeSession:
+            session_log = None
+
+            def boot_banner_seen(self):
+                return False
+
+            def restart_with_boot_reset(self, stop_transport=None):
+                stops.append("restart")
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            target = out / "session.log"
+            target.write_text("BOOT,load,ok\n" + "\n".join(
+                f"#CAP,{i},ST,Track,PLAYING,PLAYING" for i in range(60)) + "\n", encoding="utf-8")
+            config = HitlConfig(
+                preset="base", scenario_ids=("base",), track_number=8, loop_slot=4,
+                midi_channel=8, record_bars=2, overdub_bars=2, midi_out_name="Teensy",
+                midi_in_name="Teensy", serial_port=None, verify_serial_log=None,
+                verify_only=False, out_dir=out, build_env="__no_such_env__", boot_reset="never",
+            )
+
+            @contextmanager
+            def managed(_config):
+                yield target
+
+            def stop_sender(_config, sent):
+                def send():
+                    stops.append("stop")
+                return send
+
+            with patch.object(mc, "managed_capture_session", managed), \
+                    patch.object(mc, "active_managed_capture", lambda: FakeSession()), \
+                    patch.object(mc, "establish_attach_readiness",
+                                 lambda **kwargs: (True, "attaching to a running device")), \
+                    patch.object(mc, "transport_stop_sender", stop_sender):
+                code = mc.run_with_managed_capture(config, lambda _active: 0, timeout_s=0)
+        self.assertEqual(0, code)
+        self.assertEqual([], stops)
 
 if __name__ == "__main__":
     unittest.main()

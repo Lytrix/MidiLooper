@@ -403,6 +403,22 @@ void test_window_lane_readiness_receipt_is_tier_a_and_its_boundary_is_exact() {
       "#CAP,1,DIAG,playback_build,grain_denied,0,0,0,0,0,0,0,0,0,0"));
 }
 
+/// The frozen Record-return's **source-qualified** receipt (`win_frozen_readiness`) is Tier-A for the same reason its
+/// generic sibling is -- it is produced under transport, delivered direct-when-room with the ring as its fallback, and
+/// a shed fallback would mean the completion was never reported at all. Its own boundary matters too: the longer
+/// literal must not sweep in a different family, and it must stay distinct from `win_readiness` in both directions.
+void test_frozen_window_readiness_receipt_is_tier_a_and_its_boundary_is_exact() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,DIAG,win_frozen_readiness,3,5,complete_ready,clock_edge,42,1,7,900000001,768,768,1536"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,1,DIAG,win_frozen_readiness,0,0,complete_ready,clock_edge,0,0,1,1,0,768,768"));
+  // A longer subtag is a different tag and must not be swept in.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_frozen_readiness_partial,1"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_frozen_readinessx,1"));
+  // The two receipt families stay distinct: neither literal may match the other's row.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_readiness_frozen,1"));
+}
+
 // The micros field grows over a long session; the tag offset must not be assumed fixed.
 void test_tag_parse_survives_a_wide_micros_field() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,7,DIAG,clockrate,0"));
@@ -521,6 +537,7 @@ int main() {
   RUN_TEST(test_s4_5_finalization_busy_owner_vocabulary_is_tier_a);
   RUN_TEST(test_deferred_stop_identity_match_has_no_length_boundary_gap);
   RUN_TEST(test_window_lane_readiness_receipt_is_tier_a_and_its_boundary_is_exact);
+  RUN_TEST(test_frozen_window_readiness_receipt_is_tier_a_and_its_boundary_is_exact);
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
   RUN_TEST(test_tag_starts_with_matches_led_mo_diag);
   RUN_TEST(test_malformed_lines_are_not_tier_a);

@@ -839,6 +839,19 @@ bool RuntimePlaybackViewLifecycle::publishCompletedBuildAsReady(
   return true;
 }
 
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewLifecycle::retireSupersededReady(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
+  if (ready >= views.size() || idle != kNoView || !views[ready].complete ||
+      views[ready].published || ready == current || ready == build || ready == retained) {
+    return false;
+  }
+  const uint8_t released = ready;
+  views[released].resetMetadata();
+  ready = kNoView;
+  idle = released;
+  return true;
+}
+
 void RuntimePlaybackBridgeLifecycle::reset() {
   selected = kNoBridge;
   candidate = 0;

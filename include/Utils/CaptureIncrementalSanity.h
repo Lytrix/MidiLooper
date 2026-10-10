@@ -78,9 +78,13 @@ SliceResult repairWrapWindowSlice(LoopEventStore& store, uint32_t loopLengthTick
 SliceResult processBudgetSlice(LoopEventStore& store, uint32_t loopLengthTicks, size_t& cursor,
                                size_t maxEvents = kBudgetSliceMaxEvents);
 
-/// Hot stop: drop completed pairs with linear span < minLengthTicks.
+/// Hot stop: drop completed pairs with linear span < minLengthTicks. A caller
+/// borrowing the mutable store can invalidate its receipt immediately before
+/// the first destructive reload; no callback runs when no pair is removed.
 size_t removePairsShorterThanNoteMinLength(LoopEventStore& store, uint32_t loopLengthTicks,
-                                           uint32_t minLengthTicks, bool enabled);
+                                           uint32_t minLengthTicks, bool enabled,
+                                           void (*beforeReload)(void*) = nullptr,
+                                           void* context = nullptr);
 
 /// Hot stop: canonical invariant check — log warning on failure; no repair.
 bool verifyCaptureHotStop(const LoopEventStore& store, uint32_t loopLengthTicks);

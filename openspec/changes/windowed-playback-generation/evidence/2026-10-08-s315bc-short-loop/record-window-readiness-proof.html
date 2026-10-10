@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Record window readiness — MidiLooper</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f9fafb; --surface: #fff; --ink: #18202b; --muted: #536172; --line: #dce2e8; --accent: #125e8a; --warning-bg: #fff6e6; --warning-ink: #66420b; --info-bg: #eaf4f9; --info-ink: #19465e; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #14191f; --surface: #1c242d; --ink: #eaf0f5; --muted: #acbac8; --line: #394653; --accent: #8cd2fa; --warning-bg: #352c1e; --warning-ink: #ffdda0; --info-bg: #19313e; --info-ink: #b5e3fa; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 1060px; padding: 38px 26px 80px; margin: auto; }
+    .eyebrow { color: var(--accent); font-size: .73rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { font-size: clamp(1.7rem, 3.6vw, 2.55rem); line-height: 1.16; letter-spacing: -.03em; margin: 12px 0 16px; max-width: 780px; }
+    h2 { font-size: 1.28rem; letter-spacing: -.01em; margin: 38px 0 14px; }
+    p { margin: 0 0 13px; }
+    .intro { max-width: 800px; color: var(--muted); font-size: 1.12rem; }
+    .callout { padding: 18px 20px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; background: var(--surface); margin: 22px 0; }
+    .callout.warning { background: var(--warning-bg); color: var(--warning-ink); border-left-color: var(--warning-ink); }
+    .callout.info { background: var(--info-bg); color: var(--info-ink); border-left-color: var(--accent); }
+    .callout strong { display: block; margin-bottom: 5px; }
+    .callout p:last-child, .card p:last-child { margin-bottom: 0; }
+    .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 25px 0 18px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 19px 20px; }
+    .card h2 { font-size: 1.05rem; margin: 0 0 11px; }
+    .formula { display: block; font-weight: 700; font-size: 1.05rem; padding: 7px 0 12px; }
+    .small, .caption { color: var(--muted); font-size: .87rem; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    table { border-collapse: collapse; width: 100%; min-width: 720px; text-align: left; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font-size: .77rem; text-transform: uppercase; letter-spacing: .045em; color: var(--muted); white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    td:last-child { font-weight: 700; white-space: nowrap; }
+    .caption { margin-top: 10px; }
+    .steps { margin: 0; padding-left: 23px; }
+    .steps li { padding: 0 0 13px 8px; }
+    code { font-size: .88em; padding: .1em .3em; border: 1px solid var(--line); border-radius: 3px; overflow-wrap: anywhere; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 36px 0; }
+    .proof { font-weight: 600; padding: 18px 0 0; }
+    .sources { margin-top: 32px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    @media (max-width: 700px) { main { padding: 24px 16px 55px; } .columns { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">MidiLooper · Architecture proof · 2026-10-08</div>
+    <h1>Can late Record input be ready on a one-bar loop?</h1>
+    <p class="intro">Under the currently declared owner-service contract: <strong>no universal next-traversal guarantee</strong>. A persistent complete current window solves unchanged wraps, but not new content arriving after the last safe preparation opportunity.</p>
+  </header>
+
+  <aside class="callout warning" aria-label="Existing contract verdict">
+    <strong>Proved impossible under the current contract</strong>
+    <p>A changed interval has at most <b>768 ticks</b> before the next one-bar traversal. The current <code>canCompleteWithinLead</code> predicate requires <b>1,792 ticks of available lead</b> for an empty successor and <b>2,304 ticks</b> for a two-event successor, before extra source work. These are conservative <em>admission thresholds</em>, not measured build durations or proof that hardware could never be faster.</p>
+  </aside>
+
+  <section class="columns" aria-label="Proof premises">
+    <div class="card"><h2>Admission inequality</h2><span class="formula">Available ≥ margin + grains × holders × advance</span><p class="small">Current terms: margin 768 ticks; eight cross-track opportunities per grain (seven denied + one served); permitted advance 64 ticks. Source: <code>Track::playbackViewCoverageContract</code> and <code>CoverageServiceContract::canCompleteWithinLead</code>.</p></div>
+    <div class="card"><h2>Adversarial arrival</h2><p>An accepted Record event arrives just before the end of its one-bar cycle. It cannot already be in a frozen immutable window. Its next occurrence is at most 768 ticks away; a private successor must incorporate it before that tick.</p></div>
+  </section>
+
+  <section aria-labelledby="lead-heading">
+    <h2 id="lead-heading">Current admission threshold versus next traversal</h2>
+    <div class="table-wrap"><table><thead><tr><th>Window contents</th><th>Charged grains</th><th>Admission lead (ticks)</th><th>Next traversal (ticks)</th><th>Current gate</th></tr></thead><tbody>
+      <tr><td>Empty, complete coverage</td><td>2</td><td>768 + 2 × 8 × 64 = 1,792</td><td>≤ 768</td><td>Refused</td></tr>
+      <tr><td>One note pair (2 events)</td><td>3</td><td>768 + 3 × 8 × 64 = 2,304</td><td>≤ 768</td><td>Refused</td></tr>
+      <tr><td>Hypothetical one-grain update</td><td>1</td><td>768 + 1 × 8 × 64 = 1,280</td><td>≤ 768</td><td>Still refused</td></tr>
+    </tbody></table></div>
+    <p class="caption">Source: production admission arithmetic and grain derivation in <code>RuntimePlaybackViewBuild.cpp</code>, <code>TrackPlaybackWindowBuild.cpp</code> and <code>RuntimePlaybackOrderBuilder.cpp</code>. The native test asserts 1,792 exactly and the two-event one-bar refusal; 2,304 is calculated from the production two-event grain formula, not separately asserted. The one-grain row is arithmetic only, not implemented behavior.</p>
+  </section>
+
+  <hr>
+  <section aria-labelledby="achievable-heading">
+    <h2 id="achievable-heading">What is already achievable—and what is not</h2>
+    <div class="table-wrap"><table><thead><tr><th>Case</th><th>Mechanism</th><th>Proof status</th></tr></thead><tbody>
+      <tr><td>Unchanged short loop</td><td>Keep one complete <code>current</code> window; reuse it on every wrap.</td><td>Structurally plausible; new reader not implemented</td></tr>
+      <tr><td>Record first bar</td><td>Prepare a Capture-generation-qualified private window.</td><td>Existing raw first-bar worker is still separate</td></tr>
+      <tr><td>Whole <code>LoopSnapshot</code></td><td>Keep candidate private and publish atomically; use qualified Capture/frozen range for playback meanwhile.</td><td>Partial root forbidden</td></tr>
+      <tr><td>Late accepted event</td><td>Complete a successor before the next affected tick.</td><td>Not proved by current 64/7/768 bound</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <aside class="callout"><strong>Eight sounding tracks: necessary capacity</strong><p>Eight simultaneous two-event changes cost at least 8 × 3 = <b>24 owner grains</b>. One-grain-per-turn service must guarantee 24 opportunities inside 768 ticks: at most <b>32 ticks/opportunity</b> with zero margin, or about <b>21 ticks/opportunity</b> with a 256-tick margin. The declared permitted gap is 64 ticks. Faster scheduling still needs CPU and contention proof.</p></aside>
+  <aside class="callout warning"><strong>Stop-time geometry is separate</strong><p>Stop selects final loop length and may project raw coverage or close held notes. A prepared window transfers unchanged only if its Capture generation, geometry, content and closures match. Otherwise the frozen source must remain pinned while the owner prepares a corrected successor.</p></aside>
+
+  <section aria-labelledby="conditions-heading">
+    <h2 id="conditions-heading">Conditions for a real guarantee</h2>
+    <ol class="steps">
+      <li>Keep a complete immutable <code>current</code> per sounding slot, with a private <code>build</code> and complete <code>ready</code>. A late Capture append invalidates the candidate source identity, never the reader.</li>
+      <li>Prove a bounded incremental successor and service cadence. For the earliest affected deadline <em>D</em>, establish <b>M + (G + K) × H × Δ ≤ D</b>, including source lookup, ordering, closures, publication and competing holders. Today's one-bar margin alone consumes the deadline.</li>
+      <li>On failure, name the missed interval and retain the previous complete source for only its permitted traversal. One-pass-late is containment, not a readiness pass; do not discard accepted input to make the bound pass.</li>
+      <li>Verify the real production entry → deferred owner → clock reader with native interleavings, then measure worst-case service on a pinned device image under eight-track contention, late append, stop, persistence and display work.</li>
+    </ol>
+    <p class="proof">Conditional proof: if a complete <code>current</code> exists, accepted changes retain their source, all charged work is finite, and measured service satisfies the inequality for each affected deadline, the owner finishes <code>ready</code> before that deadline. The edge then adopts it. Repeated edits must preserve useful progress instead of indefinitely restarting it. Those new bounds are not established today.</p>
+  </section>
+
+  <aside class="callout info"><strong>Decision before cutover</strong><p>The present contract cannot promise next-traversal readiness for arbitrarily late accepted Record input on a one-bar loop. Qualify a stronger bounded service protocol, or explicitly change the musical latency requirement. Reusing unchanged <code>current</code> solves wraps, not late mutations.</p></aside>
+  <footer class="sources">Evidence: <code>include/Globals.h</code>; <code>src/Track/TrackPlaybackWindowBuild.cpp</code>; <code>src/Track/RuntimePlaybackViewBuild.cpp</code>; <code>src/Track/RuntimePlaybackOrderBuilder.cpp</code>; <code>src/Track/TrackCaptureStopCommit.cpp</code>; <code>src/Track/RuntimePlaybackView.cpp</code>; <code>docs/Authority/Architecture/Snapshots.md</code>. The native one-bar bound fixture passed in the prior turn (179/179 focused tests). This HTML is a static view of the proof; it changes no firmware.</footer>
+</main>
+</body>
+</html>

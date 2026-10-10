@@ -22,6 +22,7 @@ ALLOWED_HITL_COMMANDS = frozenset({
     "!HEAP_STATS",
     "!LIB_OBSERVE_STATUS",
     "!STOP_STATUS",
+    "!TRACK_STATUS",
     # Read-only ring flush. The observation family is emitted through the capture
     # ring, so an idle device can hold it unflushed; the drain makes a completed
     # observation visible without mutating content.
@@ -107,18 +108,38 @@ def is_fence_token(token: str) -> bool:
     return len(token) == FENCE_TOKEN_LENGTH and all(c in "0123456789abcdef" for c in token)
 
 
+def is_allowed_hitl_command(command: str) -> bool:
+    """Exact read-only grammar; never forward arbitrary serial command text."""
+    if any(ord(c) < 32 or ord(c) > 126 for c in command):
+        return False
+    if command in ALLOWED_HITL_COMMANDS:
+        return True
+    parts = command.split(" ")
+    limits = {
+        "!SLOT_BYTES": (7, 7, 4294967295),
+        "!CAPTURE_CONTENT_SLOT": (7,),
+    }.get(parts[0])
+    if limits is None or len(parts) != len(limits) + 1:
+        return False
+    return all(
+        0 < len(value) <= 10 and all("0" <= c <= "9" for c in value)
+        and int(value) <= limit
+        for value, limit in zip(parts[1:], limits)
+    )
+
+
 def parse_command_request(line: str):
-    """``<start> <end> <!COMMAND>`` -> ``(start, end, command)``; malformed input returns None."""
-    parts = line.strip().split()
+    """Parse a fenced read-only request; reject controls except its terminal LF."""
+    text = line[:-1] if line.endswith("\n") else line
+    if any(ord(c) < 32 or ord(c) > 126 for c in text):
+        return None
+    parts = text.split(" ", 2)
     if len(parts) != 3:
         return None
     start, end, command = parts
-    command = command.strip()
-    # A command is `!` plus a name: no bare bang and no embedded whitespace, so a
-    # coalesced or truncated line is refused instead of forwarded as something else.
     if not is_fence_token(start) or not is_fence_token(end) or start == end:
         return None
-    if len(command) < 2 or not command.startswith("!") or any(c.isspace() for c in command):
+    if not is_allowed_hitl_command(command):
         return None
     return start, end, command
 
@@ -147,7 +168,7 @@ def _service_command_requests(ser, *, enabled: bool) -> None:
             print("[capture] command refused: malformed request", flush=True)
             continue
         start, end, command = parsed
-        if command not in ALLOWED_HITL_COMMANDS:
+        if not is_allowed_hitl_command(command):
             print(f"[capture] command refused nonce={start} command={command}", flush=True)
             continue
         ser.write(f"!TRACE_FENCE {start}\n".encode("ascii"))
