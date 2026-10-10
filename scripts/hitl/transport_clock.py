@@ -413,6 +413,12 @@ def stream_pattern_for_bars(
 
     ``in_port`` is not polled for pacing in the ``clock``/``master`` modes (in ``clock`` mode
     the reader owns the port).
+
+    The returned `timing` carries ``first_note_intent_clocks``: where this phase's first note was
+    *meant* to sound, as a musical clock position inside the phase (the declared grid delay plus
+    the first step's own position). A verifier subtracts exactly this from the measured offset, so
+    the clock the emitter lands on -- ``step_clocks * s + 1`` -- is reported as latency instead of
+    being declared as intent.
     """
     if high_note < low_note:
         raise ValueError("high_note must be >= low_note")
@@ -695,6 +701,16 @@ def stream_pattern_for_bars(
         "max_abs_grid_jitter_clocks": float(max_abs),
         "mean_abs_grid_jitter_clocks": float(mean_abs),
         "stop_press_sent_during_stream": 1.0 if stop_press_sent_during_stream else 0.0,
+        # The first note's intended *musical* position in this phase, in clocks: the declared grid
+        # delay plus the first step's own grid position. With `emit_immediate_first_step` the first
+        # step is the phase's downbeat, so it declares `0` past the delay; without it the grid's
+        # first step sits one `step_clocks` in. The clock the emitter actually lands on is
+        # deliberately NOT part of it: `step_clocks * s + 1` is the emitter's own
+        # ceiling-minus-one granularity, and a verifier that subtracted it would be folding real
+        # lateness into "intent" (the failure mode this field exists to prevent).
+        "first_note_intent_clocks": int(
+            phase_delay_clocks + (0 if emit_immediate_first_step else step_clocks)
+        ),
         # Pacing evidence: which source timed this phase, and how many of its positions the
         # phase actually consumed (grid positions for the two clock modes, deadlined steps for
         # the wall-clock proxy, raw `in_port` messages for the legacy path). `pulses_observed`

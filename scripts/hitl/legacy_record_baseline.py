@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 try:
     import mido
@@ -1083,6 +1083,22 @@ def _sleep_until_monotonic(target_mono: float, abort: RunAbort) -> bool:
         time.sleep(min(max(remaining, 0.0), 0.005))
     return True
 
+#: One 16th note at 24 PPQN: the grid a step-indexed record fixture is emitted on
+#: (`TICKS_PER_16TH_STEP` = 48 ticks), expressed in clocks.
+FIXTURE_STEP_CLOCKS: int = RECORD_GRID_STEP_CLOCKS
+
+
+def _fixture_first_note_intent_clocks(fixture: tuple[Any, ...], *, step_clocks: int) -> int:
+    """The fixture's first emitted step as a *musical* clock position.
+
+    `_emit_fixture_steps_for_clock` emits step ``s`` on the first clock where
+    ``ceil(phase_clock / step_clocks) - 1 >= s``, i.e. at ``step_clocks * s + 1``. The musical
+    placement is ``step_clocks * s``; the extra clock is the emitter's own ceiling-minus-one
+    granularity and stays in the measured latency rather than being declared as intent.
+    """
+    steps = [int(getattr(note, "step", 0)) for note in fixture]
+    return max(min(steps), 0) * step_clocks if steps else 0
+
 
 def _stream_fixture_record_wall_scheduled(
     out_port: mido.ports.BaseOutput,
@@ -1095,11 +1111,13 @@ def _stream_fixture_record_wall_scheduled(
     stop_press_advance_clocks: int = 0,
     press_ms: int = 120,
     abort: RunAbort,
-) -> tuple[int, int, bool]:
+) -> tuple[int, int, bool, int]:
     """Emit fixture notes on absolute wall-time grid from transport record start.
 
-    Returns ``(note_on_count, clocks, record_stop_sent)``. Record stop is scheduled at
-    ``target_bars`` minus button debounce lead so the device stops at 2 bars, not after.
+    Returns ``(note_on_count, clocks, record_stop_sent, first_note_intent_clocks)``. Record stop
+    is scheduled at ``target_bars`` minus button debounce lead so the device stops at 2 bars, not
+    after. The declared intent is the fixture's own first musical step, so this wall-time shape
+    and the clock-paced shapes describe the same placement for the same fixture.
     """
     from hitl.control_constants import TICKS_PER_16TH_STEP, TICKS_PER_BAR
     from hitl.serial_tick_anchor import (
@@ -1111,7 +1129,7 @@ def _stream_fixture_record_wall_scheduled(
     ch = midi_channel_1based - 1
     tps = ticks_per_second_from_bpm(bpm)
     if tps <= 0:
-        return 0, 0, False
+        return 0, 0, False, 0
 
     fixture_by_step: dict[int, list[Any]] = {}
     for note in fixture:
@@ -1178,7 +1196,12 @@ def _stream_fixture_record_wall_scheduled(
 
     elapsed_s = max(0.0, time.monotonic() - record_start_mono)
     clocks = int(elapsed_s * (bpm / 60.0) * 24.0)
-    return note_on_count, clocks, stop_sent
+    return (
+        note_on_count,
+        clocks,
+        stop_sent,
+        _fixture_first_note_intent_clocks(fixture, step_clocks=FIXTURE_STEP_CLOCKS),
+    )
 
 
 def _stream_fixture_record_serial_anchored(
@@ -1194,8 +1217,13 @@ def _stream_fixture_record_serial_anchored(
     stop_press_advance_clocks: int = 0,
     press_ms: int = 120,
     abort: RunAbort,
-) -> tuple[int, int]:
-    """Emit fixture notes paced to Teensy transport via #CAP,BAR tick extrapolation."""
+) -> tuple[int, int, int]:
+    """Emit fixture notes paced to Teensy transport via #CAP,BAR tick extrapolation.
+
+    Returns ``(note_on_count, clocks, first_note_intent_clocks)``: the phase's last clock index and
+    the fixture's own first musical step, which is what a verifier subtracts from the measured
+    first-note offset.
+    """
     from host_midi_automation_edit_baseline import _emit_fixture_steps_for_clock
 
     from hitl.control_constants import TICKS_PER_BAR
@@ -1286,7 +1314,11 @@ def _stream_fixture_record_serial_anchored(
     for note, _off_at in held:
         out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
 
-    return note_on_count, phase_clock
+    return (
+        note_on_count,
+        phase_clock,
+        _fixture_first_note_intent_clocks(fixture, step_clocks=step_clocks),
+    )
 
 
 
@@ -1400,20 +1432,17 @@ def _stream_fixture_record_bars(
     skip_clock_preamble: bool = False,
     clock: Optional[Any] = None,
     master: Optional[Any] = None,
-) -> tuple[int, int, bool, bool]:
+) -> tuple[int, int, bool, bool, int]:
     """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
 
-    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
+    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent, first_note_intent_clocks)``,
+    where the intent is whatever the stream shape that actually ran declares.
 
     ``clock``/``master`` are the run's clock source (device grid / host drive). When one is given
     it *is* the readiness proof and the pacing source: the inbound-clock probe below can only race
     a transport that has just started (that race is the whole reason the preamble exists), and the
     wall-clock-scheduled path is skipped because it is exactly the ~300 ms late first note the
     clock-paced phase replaces.
-    """
-    """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
-
-    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
     """
     using_serial_proxy = False
     wall_clock_tempo: Optional[float] = None
@@ -1460,10 +1489,10 @@ def _stream_fixture_record_bars(
             "[error] strict MIDI-clock mode refused serial/wall-clock fallback; "
             "connect a MIDI-clock feedback path from the device"
         )
-        return 0, 0, False, False
+        return 0, 0, False, False, 0
     if not clock_ok:
         print("[error] MIDI clock / serial transport proxy missing before fixture record.")
-        return 0, 0, False, False
+        return 0, 0, False, False, 0
 
     proxy_bpm = wall_clock_tempo or float(getattr(args, "tempo_bpm", 120.0) or 120.0)
     # `wall_clock_tempo` is passed to the streamer even when a device clock was seen, and
@@ -1506,7 +1535,7 @@ def _stream_fixture_record_bars(
             if reca_start is None:
                 time.sleep(0.02)
         if reca_start is not None:
-            rec_notes, rec_clocks = _stream_fixture_record_serial_anchored(
+            rec_notes, rec_clocks, rec_intent = _stream_fixture_record_serial_anchored(
                 out_port,
                 serial_collector,
                 fixture=fixture,
@@ -1520,7 +1549,7 @@ def _stream_fixture_record_bars(
                 press_ms=args.press_ms,
                 abort=abort,
             )
-            return rec_notes, rec_clocks, True, True
+            return rec_notes, rec_clocks, True, True, rec_intent
 
     if (
         clock is None
@@ -1528,7 +1557,7 @@ def _stream_fixture_record_bars(
         and record_schedule_start_mono is not None
         and not require_midi_clock
     ):
-        rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
+        rec_notes, rec_clocks, stop_sent, rec_intent = _stream_fixture_record_wall_scheduled(
             out_port,
             fixture=fixture,
             target_bars=target_bars,
@@ -1539,7 +1568,7 @@ def _stream_fixture_record_bars(
             press_ms=args.press_ms,
             abort=abort,
         )
-        return rec_notes, rec_clocks, True, stop_sent
+        return rec_notes, rec_clocks, True, stop_sent, rec_intent
 
     from host_midi_automation_edit_baseline import _stream_fixture_record
 
@@ -1560,7 +1589,13 @@ def _stream_fixture_record_bars(
         clock=clock,
         master=master,
     )
-    return rec_notes, rec_clocks, True, require_midi_clock
+    return (
+        rec_notes,
+        rec_clocks,
+        True,
+        require_midi_clock,
+        _fixture_first_note_intent_clocks(fixture, step_clocks=FIXTURE_STEP_CLOCKS),
+    )
 
 
 def _transport_running_before_record_arm(
@@ -4279,6 +4314,67 @@ def _spawn_probe_press(
         print(f"[warn] successor reentry press helper did not start: {exc}")
         return None
 
+@dataclass(frozen=True)
+class FirstNoteIntent:
+    """Where one phase's first note was *meant* to sound, and which owner said so."""
+
+    clocks: int
+    #: ``"streamer"`` when the stream shape that actually ran declared its own placement, and
+    #: ``"run_default"`` when it declares nothing (the occupy/wrap fallbacks) so the run's own
+    #: ``--*start-delay-bars/beats`` is the only statement of intent. Never inferred from the
+    #: measured offset: that is exactly how real lateness would be folded into intent.
+    source: str
+
+
+def _declared_intent_clocks(value: Any) -> int:
+    """A streamer's declared first-note intent in clocks, or ``-1`` when it declared none."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _first_note_intents(
+    *,
+    args: argparse.Namespace,
+    per_track_stats: Optional[list[dict[str, object]]] = None,
+) -> dict[str, FirstNoteIntent]:
+    """The per-phase first-note intent the verification subtracts from the measured offset.
+
+    The streamer that ran owns the declaration (`first_note_intent_clocks` in its own timing
+    evidence), which is the whole point: a generator that emits its first note a step into the bar
+    describes *that* placement instead of leaving the verifier to guess from the CLI. The verified
+    phase window is the last track's leg (``phase_after_index`` is that track's baseline), so the
+    last per-track row is the one that describes it.
+    """
+    row: Mapping[str, Any] = per_track_stats[-1] if per_track_stats else {}
+    keys = (
+        ("record", "record_first_note_intent_clocks", 0, 0),
+        (
+            "overdub",
+            "overdub_first_note_intent_clocks",
+            int(getattr(args, "overdub_start_delay_bars", 0) or 0),
+            int(getattr(args, "overdub_start_delay_beats", 0) or 0),
+        ),
+        (
+            "second_overdub",
+            "second_overdub_first_note_intent_clocks",
+            int(getattr(args, "second_overdub_start_delay_bars", 0) or 0),
+            int(getattr(args, "second_overdub_start_delay_beats", 0) or 0),
+        ),
+    )
+    intents: dict[str, FirstNoteIntent] = {}
+    for phase, key, delay_bars, delay_beats in keys:
+        declared = _declared_intent_clocks(row.get(key))
+        if declared < 0:
+            intents[phase] = FirstNoteIntent(
+                clocks=_phase_start_delay_clocks(delay_bars=delay_bars, delay_beats=delay_beats),
+                source="run_default",
+            )
+        else:
+            intents[phase] = FirstNoteIntent(clocks=declared, source="streamer")
+    return intents
+
 
 def _build_serial_verification(
     lines: list[str],
@@ -4286,7 +4382,11 @@ def _build_serial_verification(
     *,
     per_track_stats: Optional[list[dict[str, object]]] = None,
     phase_after_index: Optional[int] = None,
+    first_note_intent_clocks: Optional[Mapping[str, FirstNoteIntent]] = None,
 ) -> dict[str, object]:
+    first_note_intents = first_note_intent_clocks or _first_note_intents(
+        args=args, per_track_stats=per_track_stats
+    )
     record_only = bool(getattr(args, "record_only", False))
     phase_report = _extract_phase_sessions(
         lines, after_index=phase_after_index, midi_channel_1based=getattr(args, 'midi_channel', None))
@@ -4381,7 +4481,9 @@ def _build_serial_verification(
         phase_start_ts=boundaries["record_start_ts"],
         phase_stop_ts=boundaries["record_stop_ts"],
         fallback_bpm=args.tempo_bpm,
+        phase_start_delay_clocks=first_note_intents["record"].clocks,
     )
+    record_first_note_offset["intent_source"] = first_note_intents["record"].source
     if record_only:
         overdub_first_note_offset = {
             "offset_us": None,
@@ -4396,11 +4498,9 @@ def _build_serial_verification(
             phase_start_ts=boundaries["overdub_start_ts"],
             phase_stop_ts=boundaries["overdub_stop_ts"],
             fallback_bpm=args.tempo_bpm,
-            phase_start_delay_clocks=_phase_start_delay_clocks(
-                delay_bars=args.overdub_start_delay_bars,
-                delay_beats=args.overdub_start_delay_beats,
-            ),
+            phase_start_delay_clocks=first_note_intents["overdub"].clocks,
         )
+        overdub_first_note_offset["intent_source"] = first_note_intents["overdub"].source
     issues: list[str] = []
     timing_warnings: list[str] = []
     # TEMPORARY (2026-09-16): the stored-MIDI (SEVT) dump is not reliably armed by
@@ -4590,11 +4690,11 @@ def _build_serial_verification(
             phase_start_ts=boundaries.get("second_overdub_start_ts"),
             phase_stop_ts=boundaries.get("second_overdub_stop_ts"),
             fallback_bpm=args.tempo_bpm,
-            phase_start_delay_clocks=_phase_start_delay_clocks(
-                delay_bars=args.second_overdub_start_delay_bars,
-                delay_beats=args.second_overdub_start_delay_beats,
-            ),
+            phase_start_delay_clocks=first_note_intents["second_overdub"].clocks,
         )
+        second_overdub_first_note_offset["intent_source"] = first_note_intents[
+            "second_overdub"
+        ].source
         if second_overdub.get("phase_missing"):
             issues.append("second_overdub_missing_phase_boundaries")
         if int(second_overdub.get("unmatched_open_notes", 0)) > 0 and not getattr(
@@ -6509,7 +6609,13 @@ def run() -> int:
                     if getattr(args, "edit_record_fixture", False):
                         from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
 
-                        rec_notes, rec_clock_count, stream_ok, record_stop_sent = _stream_fixture_record_bars(
+                        (
+                            rec_notes,
+                            rec_clock_count,
+                            stream_ok,
+                            record_stop_sent,
+                            rec_intent,
+                        ) = _stream_fixture_record_bars(
                             out_port,
                             in_port,
                             serial_collector,
@@ -6531,6 +6637,9 @@ def run() -> int:
                             "grid_steps_emitted": float(rec_notes),
                             "max_abs_grid_jitter_clocks": 0.0,
                             "mean_abs_grid_jitter_clocks": 0.0,
+                            # The edit-fixture stream declares its own first-note placement; the
+                            # verifier subtracts exactly this (see `_first_note_intents`).
+                            "first_note_intent_clocks": rec_intent,
                         }
                         fixture_record_stop_sent = record_stop_sent
                     elif getattr(args, "occupy_paint_pattern", False):
@@ -6707,6 +6816,11 @@ def run() -> int:
                             "record_clock_pulses_seen": rec_clock_count,
                             "record_used_seconds_fallback": rec_fallback_seconds,
                             "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
+                            "record_first_note_intent_clocks": _declared_intent_clocks(
+                                rec_timing.get("first_note_intent_clocks")
+                            ),
+                            "overdub_first_note_intent_clocks": -1,
+                            "second_overdub_first_note_intent_clocks": -1,
                         "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
                         "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
                         "record_device_bar_relative_bars": int(
@@ -6906,6 +7020,11 @@ def run() -> int:
                         ),
                         "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                         "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
+                        # Each streamer's own first-note intent (clocks), or -1 when it declared
+                        # none so the verifier falls back to the run's declared phase delay.
+                        "record_first_note_intent_clocks": _declared_intent_clocks(
+                            rec_timing.get("first_note_intent_clocks")
+                        ),
                         "overdub_notes_sent": od_notes,
                         "overdub_cc_sent": od_cc,
                         "overdub_clock_pulses_seen": od_clock_count,
@@ -6925,6 +7044,12 @@ def run() -> int:
                         "second_overdub_grid_steps_emitted": int(od2_timing["grid_steps_emitted"]),
                         "second_overdub_max_abs_grid_jitter_clocks": od2_timing["max_abs_grid_jitter_clocks"],
                         "second_overdub_mean_abs_grid_jitter_clocks": od2_timing["mean_abs_grid_jitter_clocks"],
+                        "overdub_first_note_intent_clocks": _declared_intent_clocks(
+                            od_timing.get("first_note_intent_clocks")
+                        ),
+                        "second_overdub_first_note_intent_clocks": _declared_intent_clocks(
+                            od2_timing.get("first_note_intent_clocks")
+                        ),
                     }
                 )
 
@@ -7204,6 +7329,12 @@ def run() -> int:
             args,
             per_track_stats=per_track_stats,
             phase_after_index=track_baseline_len,
+            # The phases the verification reads are the last track's leg, and each phase's own
+            # streamer declared where it meant its first note to sound; the verifier subtracts
+            # exactly that so `capture_latency_clocks` stays a latency, not an intent.
+            first_note_intent_clocks=_first_note_intents(
+                args=args, per_track_stats=per_track_stats
+            ),
         )
         if verification_lines
         else None

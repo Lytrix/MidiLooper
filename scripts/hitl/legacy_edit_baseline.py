@@ -5680,17 +5680,19 @@ def run_edit_baseline(
 
         from hitl.legacy_record_baseline import _stream_fixture_record_bars
 
-        note_count, clocks, stream_ok, record_stop_sent = _stream_fixture_record_bars(
-            out_port,
-            in_port,
-            serial_collector,
-            args,
-            fixture=record_fixture,
-            target_bars=args.record_bars,
-            midi_channel_1based=midi_channel,
-            abort=abort,
-            record_schedule_start_mono=record_schedule_start,
-            skip_clock_preamble=record_schedule_start is not None,
+        note_count, clocks, stream_ok, record_stop_sent, _first_note_intent = (
+            _stream_fixture_record_bars(
+                out_port,
+                in_port,
+                serial_collector,
+                args,
+                fixture=record_fixture,
+                target_bars=args.record_bars,
+                midi_channel_1based=midi_channel,
+                abort=abort,
+                record_schedule_start_mono=record_schedule_start,
+                skip_clock_preamble=record_schedule_start is not None,
+            )
         )
         if not stream_ok:
             print("[error] MIDI clock / serial transport proxy missing before fixture record")

@@ -271,6 +271,11 @@ overdub phases the same way, since od1's 40/16 may likewise carry its intended p
 `capture_latency_clocks` mean what its name says and retires the advisory as a false positive rather than by raising a
 bound. **No change has been made yet**; this section records what the read established.
 
+**Superseded in part by §14:** the intended placement this section inferred for the *base record* phase (12
+clocks) is not that stream's placement -- reading the recorded leg shows it emits the immediate step 0 and is
+genuinely ~13 clocks late. §14 keeps this section's *checker* finding (the subtrahend must be the fixture's own
+placement, not a constant) and refutes the number.
+
 ## 13. Plan step 0 executed: the granularity pin (the 12-vs-13 question answered from the code)
 
 A second-opinion review of §12's plan flagged that `legacy_edit_baseline.py:1775` schedules fixture step 2 at phase
@@ -309,3 +314,94 @@ the fix must have **every** generator declare its own intent and must retire the
 **Status: plan step 0 done; steps 1-4 (generators declare intent, single mapping threaded into
 `_build_serial_verification`, per-mode + delayed-overdub + genuine-lateness + no-inflation tests, then the device
 re-run and the content verdict) are not implemented.** No code was changed by this section.
+
+**Superseded in part by §14:** this pin is correct for a fixture whose first note is at step 2 and is now tested
+as such (`scripts/test_hitl_first_note_intent.py`), but the base preset's record stream emits the *immediate*
+step 0, so its declaration is 0 -- and steps 1-3 are implemented there. Steps 1-3 landed; step 4's device re-run
+and the content verdict are not run (§14 says why).
+
+## 14. Steps 1-3 implemented, and step 4's premise is refuted by the fixture's own stored content
+
+**Status: the intent mapping landed (host tooling only; no firmware line, no device leg, no limit declared).**
+Section 13's *granularity* decision stands and is now tested; its *step-2 premise* does **not** hold for the base
+preset's record stream, so the record-phase advisory is not an intent problem and step 4's expected outcome
+("the advisory gone with `capture_latency_clocks ≈ 2`") cannot be reached by this change.
+
+### What landed
+
+* `scripts/hitl/transport_clock.py` -- `stream_pattern_for_bars` declares `first_note_intent_clocks` in its own
+  `timing` evidence: `phase_delay_clocks + (0 if emit_immediate_first_step else step_clocks)`.
+* `scripts/hitl/legacy_record_baseline.py`:
+  * `FIXTURE_STEP_CLOCKS` (= `RECORD_GRID_STEP_CLOCKS`, one 16th at 24 PPQN) and
+    `_fixture_first_note_intent_clocks(fixture, step_clocks)`: the fixture's first emitted step as a *musical*
+    clock position (`step × step_clocks`). The emitter's own clock (`step_clocks × s + 1`) is deliberately not
+    part of it.
+  * All three record stream shapes return their own declaration: `_stream_fixture_record_wall_scheduled`,
+    `_stream_fixture_record_serial_anchored`, and `_stream_fixture_record_bars` (which passes its sub-shape's
+    declaration through).
+  * `FirstNoteIntent` + `_declared_intent_clocks` + `_first_note_intents`: **one** per-phase mapping, threaded
+    into `_build_serial_verification(..., first_note_intent_clocks=...)` and used for the record, overdub and
+    second-overdub offsets. `source` says who declared it (`streamer`, from the timing evidence the run records
+    into `per_track_stats`, or `run_default`, the run's own `--*start-delay-bars/beats`). The duplicated
+    `_phase_start_delay_clocks(...)` calls in the verifier are retired; the fallback survives only for a
+    streamer that declares nothing (the occupy and wrap-note-off flows).
+* `scripts/test_hitl_first_note_intent.py` -- **17/17**: the granularity pin (step 2, `step_clocks 6` → intent
+  12, emission 13, so 1 clock stays latency), one declaration test per pacing mode (wall schedule, serial tick
+  anchor, bars mode, grid pattern with and without the immediate step), the delayed overdub's own placement,
+  genuine lateness still warning (`intent + bound + 1`), no intent inflation, and the mapping's ownership and
+  fallback. Five mutations red-proved with byte-identical restores (M1 grid intent folds the emitter clock,
+  M2 fixture intent folds it, M3 the mapping ignores the declaration, M4 the verifier drops the record intent,
+  M5 "declared nothing" reads as a declaration). Full host sweep **1,404 tests, 6F+1E** -- the same pre-existing
+  failure set as the pristine `a8d50522` worktree (which ran 1,387 tests: the difference is exactly this new
+  suite), with no new failure.
+
+### The refutation: the base record phase intends the downbeat
+
+Section 12 read the record phase's intended placement as 12 clocks (step 2 × 6). The recorded 300 BPM device
+clock leg says otherwise, three ways:
+
+| Evidence | Reading |
+|---|---|
+| Note-ons in the record window | **33** = 1 immediate step + 32 grid steps (2 bars × 16), pitches ascending from 48 = `--record-low-note`, spacing 6 clocks |
+| The stream shape | `_stream_pattern_for_bars(step_clocks=RECORD_GRID_STEP_CLOCKS, phase_start_delay_bars/beats=0, emit_immediate_first_step=True)` -- the first note *is* step 0 on the first clock |
+| The device's own stored grid (`REVT`) | the 48..79 grid's first stored tick is **108** at 300 BPM (13.5 clocks), matching the measured 14-clock offset; the ticks 9/57 (120 BPM: 25/72) belong to a different pitch family (77-79), so `stored_record_grid.first_tick` does *not* name the record grid's first note |
+
+So the fixture's first record note is 108 ticks late at 300 BPM, and the advisory is **true**:
+`capture_latency_clocks` of 14 is host pre-stream latency (the fixture starts streaming after it has confirmed
+RECORDING), which is a *pacing* term. Declaring 12 would have hidden exactly 12 clocks of real lateness -- the
+failure mode section 13 was written to prevent. Section 13's granularity pin remains correct *for a fixture whose
+first note is step 2*; no run in this packet uses such a fixture, and the edit fixture in the tree starts at step 0.
+
+### Behaviour for this configuration: none, replayed on the recorded leg
+
+The real 300 BPM device-clock capture, run through the new verifier twice -- with the recorded row (no
+declaration → `run_default`) and with the row the run now writes (streamer declarations 0/24/24):
+
+| Phase | recorded report | replayed, old row | replayed, new row |
+|---|---|---|---|
+| record | offset 14, intent 0, latency 14 | 14 / 0 / 14 `run_default` | 14 / 0 / 14 `streamer` |
+| overdub 1 | offset 40, intent 24, latency 16 | 40 / 24 / 16 `run_default` | 40 / 24 / 16 `streamer` |
+| overdub 2 | offset 27, intent 24, latency 3 | 27 / 24 / 3 `run_default` | 27 / 24 / 3 `streamer` |
+| `timing_warnings` | `record_first_note_too_late` | same | same |
+
+The base preset's declaration *equals* its run default on every phase, so the advisory is unchanged and a device
+re-run cannot show it cleared. What the change buys is ownership: a streamer that emits its first note a step into
+the bar now describes that placement, and the verifier no longer guesses it from the CLI.
+
+### Owed, and now separated
+
+1. **The record-phase advisory is a pacing problem, not an intent problem (recommended next).** The base record
+   phase starts its stream after confirming RECORDING, which costs 14 clocks of host latency at 300 BPM (16 at
+   120). The measured shape that avoids it already exists in this file: the serial-anchored path
+   (`_stream_fixture_record_serial_anchored`, used by the edit-fixture seed) lands its first note on the
+   recorder's own `RECA` tick, and the edit seed's first note measured 0 clocks
+   (`captures/live-current-root-entry-t8s4-05`). Re-anchoring the base record stream on the clock grid is a
+   fixture change with a device leg to prove it -- not an "intent".
+2. **The content verdict on the stored-span/wrap class (section 5) is still not taken**, and is a separate device
+   leg through the skill's content pipeline (`dump_and_capture.py` → `!CAPTURE_CONTENT` → playback cycles →
+   `verify_playback_content.py`); it needs a per-session authorization for the bench target's content. Neither
+   the device re-run nor the content leg was run in this session: a device leg cannot show a change the replay
+   above proves is a no-op.
+
+**Not changed:** no firmware line, no build, no upload, no SD or device action, no limit or envelope declared, no
+`DEC-###`, and S7.5a/S7.5b/S7.5 plus S7.5b.8c/d stay unchecked.
