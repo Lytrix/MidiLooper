@@ -194,3 +194,79 @@ code at all — only the right invocation.
 
 This is recorded as the next step rather than a conclusion: **no fixture change has been made** (nothing in
 `legacy_record_baseline.py` was edited), and the selection point has not yet been read.
+
+## 11. Which configuration is most stable: three runs compared
+
+The three stream shapes of §10 are **not** freely selectable call sites: the cascade at
+`legacy_record_baseline.py:1499–1544` picks the **serial-anchored** stream whenever serial capture plus a `RECA`
+receipt exist (the normal case, including both 300 BPM runs below), path 2 (`wall_scheduled`) needs *no* clock
+reader **and** no master and is therefore unreachable with any `--clock-source`, and `_stream_fixture_record_bars`
+(`:6512`) belongs to a different function/path. So what could be varied was the **phase anchor**: host clock vs
+device clock.
+
+| Run | `overall_ok` | record off/lat | od1 off/lat | od2 off/lat | record length exp/act | issues |
+|---|---|---|---|---|---|---|
+| 120 BPM, device clock (`envdist-t8s4-01`) | **True** | 16/16 | 28/4 | 31/7 | 1536/1536 | — |
+| 300 BPM, host clock | False | 26/26 | 40/16 | 35/11 | 1536/**2304** | `overdub_unmatched_open_notes`, `record_stored_revt_missing` |
+| 300 BPM, device clock | False | **14/14** | 40/16 | **27/3** | **1536/1536** | `overdub_stored_span_too_short`, `second_overdub_stored_span_too_short` |
+
+*(`record_first_note_too_late` is an advisory in all three; offsets are `offset_clocks/capture_latency_clocks`.)*
+
+**Verdict: the device clock is the more stable configuration at 300 BPM**, and it is the right base to fix from:
+
+* **The stop edge is correct only with the device clock** — 1536/1536 exact, against the host clock's 2304 (one bar
+  late, the defect §3 already recorded). This is a reason to prefer it, not a preference.
+* **The first-note offsets improve under it**: record 26 → **14** clocks (of which 14 is latency, against a 12-clock
+  bound), od2 35/11 → **27/3** (capture latency back in line with the 120 BPM baseline's 7).
+* **What does not improve**: overdub 1 stays at 40/16 in both 300 BPM variants, and both 300 BPM runs still carry
+  stored-span / unmatched-open-note issues — the class the content pipeline must adjudicate (§5).
+* **Neither 300 BPM configuration is stable yet**: the 120 BPM device-clock run remains the only `overall_ok=True`.
+
+**Why the residual is where it is:** path 1 exists to fix a real bug — its own header (`:1491`) records that the
+modelled transport-start wall clock put the fixture's stream *ahead* of the take — but it then anchors the stream on
+a **polled observation** (`parse_record_start_tick` in a 20 ms loop), which is exactly the wall-clock term of §8/§9.
+The next change belongs inside that path: start the stream on a **pulse index** derived from the receipt's tick
+rather than on the instant the receipt was observed.
+
+## 12. The stream is already clock-indexed — the false advisory is a *checker* attribution
+
+Reading `_stream_fixture_record_serial_anchored` (`:1184`) shows the stream is **not** wall-clock paced at all:
+
+```python
+anchor = TransportTickAnchor.from_collector(serial_collector, bpm, fallback_tick=reca_start_tick)
+while anchor.estimated_tick() < end_transport_tick:
+    anchor.refresh(serial_collector)
+    transport_offset   = max(0, anchor.estimated_tick() - reca_start_tick)
+    target_phase_clock = min(target_clocks, transport_offset // TICKS_PER_CLOCK)
+    if phase_clock < target_phase_clock:
+        phase_clock += 1
+        _emit_fixture_steps_for_clock(phase_clock=phase_clock, step_clocks=6, ...)
+```
+
+Notes are emitted **per clock index** off the device's own tick (`step_clocks = 6` = one 16th note at 24 PPQN), which
+is exactly the tempo-following behaviour the owner remembered. So the residual is not in the stream.
+
+It is in the **checker's attribution**. `capture_latency_clocks = max(0, offset_clocks - phase_start_delay_clocks)`,
+and the record phase passes `phase_start_delay_clocks = 0` — but the fixture's first record note is placed at a
+**non-zero step** by design. That intended placement is therefore counted as capture latency:
+
+| Run | record offset | fixture's intended first-note placement (step x 6 clocks) | residual latency |
+|---|---|---|---|
+| 120 BPM, device clock | 16 | 12 | **~4 clocks** (5 ms) |
+| 300 BPM, device clock | 14 | 12 | **~2 clocks** (1.7 ms) |
+| 300 BPM, host clock | 26 | 12 | ~14 clocks (the host-clock anchoring is the real outlier) |
+
+Two consequences:
+
+1. **`record_first_note_too_late` is a false positive** and always will be while the caller passes `0`: the record
+   phase's first note is 12 clocks in *by design*, so it trips the 12-clock bound at every tempo. The advisory is not
+   evidence about the device or the stream.
+2. **The real capture latency of the first note is small and tempo-stable** (~4 clocks at 120, ~2 clocks at 300), and
+   the genuine outlier is the **host-clock** run (26 - 12 = 14 clocks), which is consistent with section 11's verdict
+   that the device clock is the correct base.
+
+**The change to make is therefore in the verification half, not the stream**: pass the fixture's intended first-note
+placement (its first `step` x `step_clocks`) as `phase_start_delay_clocks` for the record phase — and re-read the
+overdub phases the same way, since od1's 40/16 may likewise carry its intended placement. That makes
+`capture_latency_clocks` mean what its name says and retires the advisory as a false positive rather than by raising a
+bound. **No change has been made yet**; this section records what the read established.
