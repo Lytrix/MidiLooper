@@ -6,39 +6,50 @@ turning the §2 tempo basis and Table A anchors into **candidate numbers**, and 
 **No value here is owner-approved**, no qualifying run was made, no firmware/test/bound-class/checkbox changed, and
 **S7.5a stays unchecked**. `DEC-100` still governs: the envelope is reported, never enforced at admission.
 
-## 1. How a limit is expressed here, and the rule that produced it
+## 1. How a limit is expressed here: the metric's own unit, justified by musical time
 
-Every limit below is a **musical interval in ticks**, converted to µs only at the tempo the qualifying run actually
-advanced (never a nominal tempo, per §2's external-clock caveat):
+Two units are in play and they answer different questions:
 
-`µs = 60000 / BPM / 192 × ticks` — 1 tick = 1,041.7 µs @300 BPM, 2,604 µs @120, 15,625 µs @20.
+* **µs** is the unit of the *processes* — the MIDI input service, the emission path, serialization, the service
+  period. Those are wall-clock and tempo-independent: the same 12 ms of scheduler work costs 12 ms whether the
+  transport runs at 20 or 300 BPM.
+* **Ticks** is the unit of *musical damage* — how far an event was displaced on the grid. The same µs harms the music
+  more at a fast tempo.
 
-This shape is deliberate: `DEC-108` §13(b) forbids an invented microsecond budget, and the spec forbids fitting a
-limit to an observed run. A tick-denominated limit is *derived from the musical grid* and is tempo-correct by
-construction; the run supplies the tempo, not the number. **The readings already collected in increments 3–4 are
-evidence that an instrument is fed — they are not, and must not become, the source of any limit in §3.**
+So **a limit is declared in the unit its metric is measured in** — µs for the timing families, ticks or counts where
+the row itself counts ticks or events — and musical time is used to **justify** the number, never as a run-time
+conversion the reader has to perform. The µs values are the musical interval read at the **fastest reachable tempo
+(300 BPM, 1,041.7 µs per tick)**, i.e. the tightest case, so one fixed number holds at every tempo and the oracle
+compares a row against it directly: `µs = 60000 / BPM / 192 × ticks`.
 
-`Δmax` = the per-lane-turn permitted phase advance (Table A, 64 ticks) is the one anchor a limit is inherited from,
-and it is inherited **by citation**, with its own owed owner confirmation still attached to it.
+**Why the tightest tempo rather than a per-tempo table.** The failure this envelope exists to catch is a *scheduler*
+excursion, and the musically equivalent bound at 20 BPM (187.5 ms for 12 ticks) would tolerate a 187 ms stall — the
+CPU having left the MIDI path entirely — because the music is slow. A fixed µs cap cannot be satisfied by playing
+slowly. The cost is stated plainly: at slow tempos the cap is stricter than the music alone requires, so if that
+slack is wanted back it must be declared as an explicit named allowance (§6 question 1), not discovered per run.
+
+**The readings collected in increments 3–4 are evidence that an instrument is fed — they are not, and must not
+become, the source of any limit in §2.** `Δmax` (Table A, 64 ticks) is the one anchor a limit is inherited from, by
+citation, with its own owed owner confirmation still attached.
 
 ## 2. L1 — the proposed limits (all **proposed**, none approved)
 
-| # | Metric | Row / field (measurement point) | Unit | Proposed limit | Musical justification | @300 | @120 | @20 |
-|---|---|---|---|---|---|---|---|---|
-| L1.1 | `max_midi_input_service_gap` | `DIAG,midi_gap,<maxUs>` (+ `env_dist` p50/p99) | µs | **≤ 12 ticks** = 1/16 beat | An event is stamped from `getCurrentTick()` *at process time*, so a gap displaces it by the gap's worth of ticks; the band's own upper edge is the largest displacement still inside one notated subdivision | 12.5 ms | 31.25 ms | 187.5 ms |
-| L1.2 | `max_midi_input_service_duration` | `DIAG,midi_input,<maxUs>` (+ `env_dist`) | µs | **≤ 12 ticks**, and `gap + duration` also ≤ 12 ticks | Same displacement argument: it is the *sum* of the two that delays the next arrival, so the oracle checks both lines | 12.5 ms | 31.25 ms | 187.5 ms |
-| L1.3 | `capture_timestamp_error` | `DIAG,envelope_instr,capstamp_max` (+ `capstamp_n`) | ticks | **≤ 1 tick** | The storage grid *is* the 192nd note (PPQN 192); an event stored on a neighbouring tick is a grid error. Physically admissible: one DIN byte is 320 µs against a 1,041.7 µs tick at the fastest reachable tempo, so the transport floor does not force a looser bound | 1.04 ms | 2.60 ms | 15.6 ms |
-| L1.4 | `per_route_output_lateness` — deadline line | `DIAG,late_route,<type>,<ch>,<maxUs>` | µs | **≤ 64 ticks** (= `Δmax`, cited from Table A) | An emission may consume the lane's whole permitted advance for one opportunity, and no more: beyond it the lane is outside the envelope the sibling already declared | 66.7 ms | 166.7 ms | 1000 ms |
-| L1.5 | `per_route_output_lateness` — typical line | `DIAG,env_dist,late_on|late_off` | µs | **p50 ≤ 6 ticks** (1/32 beat) and **p99 ≤ 64 ticks** | The *median* emission should land inside the finest subdivision the band names, while a rare emission may consume the whole permitted advance; the p99 line is L1.4 restated so the shape is checked, not only the worst sample | 6.25 / 66.7 ms | 15.6 / 166.7 ms | 93.75 / 1000 ms |
-| L1.6 | `per_route_output_jitter` | fitted-per-traversal residual | µs | **≤ 6 ticks** | Scatter around the route's own clock line should not exceed the finest subdivision either; this is the line that separates "late" from "irregular" | 6.25 ms | 15.6 ms | 93.75 ms |
-| L1.7 | `deferred_owner_service_advance` | `DIAG,win_gap.maxDelta` vs `permitted` | ticks | **≤ 64 ticks** (the `permitted` field's own declared value, cited) | Table A anchor; the row already carries the declared term, so the oracle compares against the field, not against a repeated constant | 66.7 ms | 166.7 ms | 1000 ms |
-| L1.8 | `deferred_owner_denial` | `DIAG,win_gap.deniedTurns` (+ `eligibleTurns`) | turns | **≤ 7** (= `H`) per eligible window | The across-track rotation is `NUM_TRACKS - 1`: an eligible lane is revisited within H turns, so H is the largest denial a rotation can produce without starvation | — | — | — |
-| L1.9 | `same_tick_burst` | `MO` tick column, per traversal — reported per route **and** aggregated | events | **≤ 2 × roles at one tick**: ≤ 16 aggregate across the 8 supported roles (on + off each), and ≤ 8 on any single route (a route carries at most one note event per sounding role, so which figure binds depends on the channel mapping) | Derived from the *supported* topology (8 tracks × one sounding slot, Table A role envelope), not from a run. Bursts above `L` = 2,048 admitted events stay unsupported (§5); the serialization share is reported separately — a DIN route cannot carry 16 × 960 µs inside a 1.04 ms tick | — | — | — |
-| L1.10 | `route_throughput` (physical route ceiling) | `MO` rows per route | events/s | **≤ 1,041** on DIN (3-byte messages, no running status) | Transport capacity, accounted **separately** from firmware lateness as the spec requires: 31,250 baud, 10 bits/byte ⇒ 3,125 B/s ⇒ a 3-byte note message every 960 µs. The firmware requirement under it is L1.4, not a throughput figure | — | — | — |
-| L1.11 | `route_throughput` (input, same ceiling) | `MI` rows per route | events/s | **≤ 1,041** on DIN | Symmetric with L1.10; the firmware requirement under it is L1.1/L1.2 | — | — | — |
-| L1.12 | `capture_replenishment` | `DIAG,envelope_instr,repl_wait_us` / `repl_pairs` | µs | **no limit declared** — see §5: never observed, and a refusal fails the run outright | The metric's own role is diagnostic: a refusal is a fail-class event, so a "latency limit" would only describe how the failure looked | — | — | — |
-| L1.13 | `queue_residence` | `DIAG,droid_queue` | µs | **no limit declared** — see §5 (env-gated family; no owner/age probe for any other queue) | — | — | — |
-| L1.14 | `action_to_audible` | parked | µs | **kept out** (owner decision 2026-10-11) | Two questions (which operator action, which emission class) under one position-based rule; see the increment-4 packet's decision section | — | — | — |
+| # | Metric | Row / field (measurement point) | Limit, in the row's own unit | Musical justification (the derivation) | Equivalent at 300 BPM |
+|---|---|---|---|---|---|
+| L1.1 | `max_midi_input_service_gap` | `DIAG,midi_gap,<maxUs>` (+ `env_dist` p50/p99) | **≤ 12,500 µs** | An arrival is stamped at *process* time, so a gap displaces it by the gap's worth of ticks; 12 ticks = 1/16 beat is the band's own upper edge, the largest displacement still inside one notated subdivision | 12 ticks (≈0.8 tick at 20 BPM: the cap is deliberate wall-clock) |
+| L1.2 | `max_midi_input_service_duration` | `DIAG,midi_input,<maxUs>` (+ `env_dist`) | **≤ 12,500 µs**, and `gap + duration` also ≤ 12,500 µs | Same displacement argument, and it is the *sum* of the two that delays the next arrival — so the oracle checks both lines | 12 ticks |
+| L1.3 | `capture_timestamp_error` | `DIAG,envelope_instr,capstamp_max` (+ `capstamp_n`) | **≤ 1 tick** (the row counts ticks; its µs form is tempo-dependent and is *not* the limit) | The storage grid *is* the 192nd note (PPQN 192): an event stored on a neighbouring tick is a grid error. Admissible at every tempo: one DIN byte is 320 µs against a 1,041.7 µs tick at the fastest reachable tempo | 1.04 ms |
+| L1.4 | `per_route_output_lateness` — deadline line | `DIAG,late_route,<type>,<ch>,<maxUs>` | **≤ 66,700 µs** | An emission may consume the lane's whole permitted advance (`Δmax` = 64 ticks, cited from Table A) for one opportunity and no more | 64 ticks |
+| L1.5 | `per_route_output_lateness` — typical line | `DIAG,env_dist` `late_on`/`late_off` | **p50 ≤ 6,250 µs** and **p99 ≤ 66,700 µs** | The *median* emission should land inside the finest subdivision the band names (6 ticks = 1/32 beat); the p99 line is L1.4 restated so the shape is checked, not only the worst sample | 6 / 64 ticks |
+| L1.6 | `per_route_output_jitter` | fitted-per-traversal residual | **≤ 6,250 µs** | Scatter around the route's own clock line should not exceed the finest subdivision either; this is the line that separates "late" from "irregular" | 6 ticks |
+| L1.7 | `deferred_owner_service_advance` | `DIAG,win_gap.maxDelta` vs `permitted` | **≤ 64 ticks** — compared against the row's own `permitted` field | Table A anchor; the row already carries the declared term, so the oracle reads the field rather than repeating a constant | 66.7 ms |
+| L1.8 | `deferred_owner_denial` | `DIAG,win_gap.deniedTurns` (+ `eligibleTurns`) | **≤ 7 turns** (= `H`) per eligible window | The across-track rotation is `NUM_TRACKS - 1`: an eligible lane is revisited within H turns, so H is the largest denial a rotation can produce without starvation | — |
+| L1.9 | `same_tick_burst` | `MO` tick column, per traversal — reported per route **and** aggregated | **≤ 16 events** aggregate, **≤ 8** on any one route | Derived from the *supported* topology (8 tracks × one sounding slot ⇒ on + off per role), not from a run. Bursts above `L` = 2,048 admitted events stay unsupported (§5); the serialization share is reported separately | — |
+| L1.10 | `route_throughput` (output) | `MO` rows per route | **≤ 1,041 events/s** on DIN (3-byte messages, no running status) | Transport capacity, accounted **separately** from firmware lateness as the spec requires: 31,250 baud, 10 bits/byte ⇒ 3,125 B/s ⇒ one 3-byte note message every 960 µs. The firmware requirement under it is L1.4, not a throughput figure | — |
+| L1.11 | `route_throughput` (input) | `MI` rows per route | **≤ 1,041 events/s** on DIN | Symmetric with L1.10; the firmware requirement under it is L1.1/L1.2 | — |
+| L1.12 | `capture_replenishment` | `DIAG,envelope_instr,repl_wait_us` / `repl_pairs` | **no limit declared** (§5): never observed, and a refusal fails the run outright | The metric's role is diagnostic — a refusal is a fail-class event, so a "latency limit" would only describe how the failure looked | — |
+| L1.13 | `queue_residence` | `DIAG,droid_queue` | **no limit declared** (§5) | Family compile-gated off in the default capture env; no owner/age probe for any other queue | — |
+| L1.14 | `action_to_audible` | parked | **kept out** (owner decision 2026-10-11) | Two questions (which operator action, which emission class) under one position-based rule; see the increment-4 packet's decision section | — |
 
 Two consequences worth stating plainly, because they are properties of the proposed numbers rather than of any run:
 
@@ -67,10 +78,11 @@ Two consequences worth stating plainly, because they are properties of the propo
 ## 4. L3 — the verdict oracle (mechanical, one run at a time)
 
 **Inputs.** A pinned run: image SHA-256, the env metadata pin (a capture whose metadata names the wrong environment
-is not accepted), the registered stimulus ID, `invocation.json`, and the run's **actual clock advancement** (the
-device's own tempo/clock rows) for the tick→µs conversion of §3.
+is not accepted), the registered stimulus ID, `invocation.json`, and the run's own tempo/clock rows **as context for
+reading the music** — not as a scaling factor. Every µs limit of §2 is fixed, so nothing is converted at run time;
+the tempo is reported beside the verdict so a reader can see which musical interval the run was playing.
 
-**Per metric**, read its row, convert the limit at the run's tempo, and return one of:
+**Per metric**, read its row and compare it against its own fixed limit, returning one of:
 
 | Verdict | Rule |
 |---|---|
@@ -112,20 +124,26 @@ so a pass is never read as covering something it did not measure.
 
 ## 6. The sign-off questions (what the owner has to decide, each with its arithmetic)
 
-1. L1.1/L1.2 band: **12 ticks (1/16 beat, proposed)** or 6 ticks (1/32 beat) or 48 ticks (a full 16th *note*)?
-2. L1.3: is **±1 tick** on the storage grid the criterion, or ±1/32 beat (6 ticks)?
-3. L1.4: confirm **64 ticks** (`Δmax`) as the output deadline line — noting the 64-tick anchor is itself still
-   recorded as *not* owner-confirmed.
-4. L1.5: accept the **p50 = 6 ticks, p99 = 64 ticks** shape, or collapse to the single max line?
-5. L1.6: what does jitter's limit mean before its interpretation is settled (or hold it unproven)?
-6. L1.8: is **H = 7 turns** the denial bound, and are seconds-scale starvation runs a declared exception?
-7. L1.10/L1.11: accept the **DIN serialization ceiling** as the *route* limit (firmware judged only by L1.4), and what
-   is the USB route's derivation (unproven today)?
-8. L1.9: **16 events per route per tick** as the declared burst, with the serialization share reported separately?
-9. §4 oracle: confirm the fail-class list and that `indeterminate` is never rounded into a pass.
-10. §5: `queue_residence` in or out; `capture_replenishment` fault-injection scope; confirm the `action_to_audible`
+1. **Slow-tempo slack (new, because the cap is fixed):** accept the fixed µs cap as it stands — stricter than the
+   music alone requires at slow tempos — or declare an explicit **named allowance** for a stated tempo band? The
+   arithmetic: 12 ticks is 12,500 µs at 300 BPM but 187,500 µs at 20 BPM, so the fixed cap is ~15× stricter
+   musically at the slow end; the alternative must be *declared*, never discovered per run.
+2. L1.1/L1.2 — which musical interval justifies the cap: **12 ticks (1/16 beat) → 12,500 µs (proposed)**, 6 ticks
+   (1/32 beat) → 6,250 µs, or 48 ticks (a full 16th note) → 50,000 µs?
+3. L1.3 — **±1 tick** on the storage grid, or ±6 ticks (1/32 beat)? (This one stays in ticks: the row counts ticks.)
+4. L1.4 — confirm `Δmax` = **64 ticks** as the output deadline line, declared as **66,700 µs**? Note the 64-tick
+   anchor is itself still recorded as *not* owner-confirmed.
+5. L1.5 — accept the **p50 6,250 µs / p99 66,700 µs** shape, or collapse to the single max line?
+6. L1.6 — what does jitter's 6,250 µs limit mean before its interpretation is settled (or hold it unproven)?
+7. L1.8 — is **H = 7 turns** the denial bound, and are seconds-scale starvation runs a declared exception?
+8. L1.10/L1.11 — accept the **DIN serialization ceiling** (1,041 events/s) as the *route* limit, with the firmware
+   judged only by L1.4, and what is the USB route's derivation (unproven today)?
+9. L1.9 — **16 events aggregate / ≤ 8 on any one route** at one tick, with the serialization share reported
+   separately?
+10. §4 oracle — confirm the fail-class list and that `indeterminate` is never rounded into a pass.
+11. §5 — `queue_residence` in or out; `capture_replenishment` fault-injection scope; confirm the `action_to_audible`
     parking.
-11. After 1–10: the `DEC-###` entry that records the envelope, and the owner's sign-off line itself.
+12. After 1–11: the `DEC-###` entry that records the envelope, and the owner's sign-off line itself.
 
 ## 7. What this increment does not claim
 

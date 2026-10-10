@@ -138,11 +138,13 @@ silently shrinking concurrency.
    `DECISION_LOG.md`). Not appended here: the numbers it would carry are not yet owner-approved.
 
    → **Items 3–5 are produced as a proposal (increment 5):** [`LIMITS-AND-ORACLE-PROPOSAL.md`](LIMITS-AND-ORACLE-PROPOSAL.md) —
-   candidate limits expressed in **ticks** (converted at the tempo a run actually advances, never a nominal tempo),
-   the per-row measurement plan with each row's clock and uncertainty, the verdict oracle including its
-   `indeterminate` rule for bucket-bounded quantiles and its fail-class list, and the named-unproven set. It declares
-   nothing: §8 item 1 (owner sign-off) and item 6 (the `DEC-###`) remain owed, and three metrics (L1.12–L1.14) carry
-   no limit at all.
+   candidate limits **in the unit each metric is measured in** (µs for the timing families, ticks or counts where the
+   row counts ticks or events), with the musical interval used only to *justify* the number: the µs caps are that
+   interval read at the **fastest reachable tempo** (300 BPM), so the failure-catching limit is wall-clock and no
+   conversion happens at run time. It also carries the per-row measurement plan with each row's clock and
+   uncertainty, the verdict oracle including its `indeterminate` rule for bucket-bounded quantiles and its fail-class
+   list, and the named-unproven set. It declares nothing: §8 item 1 (owner sign-off) and item 6 (the `DEC-###`)
+   remain owed, and three metrics (L1.12–L1.14) carry no limit at all.
 
 **Not claimed by this increment:** no numeric limit is declared, no qualification run was made, no firmware,
 test, bound-class, task-checkbox or device claim; no `windowed` sibling number is restated as a runtime
