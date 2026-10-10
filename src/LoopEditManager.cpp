@@ -269,7 +269,7 @@ void LoopEditManager::onEnterLoopEditSession(Track& track) {
     captureSessionBaseline(track);
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
-    sendCurrentTempoCC();
+    sendCurrentTempoPitchBend();
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Loop edit session entered — sent loop start/length/tempo fader feedback");
 }
@@ -323,7 +323,7 @@ void LoopEditManager::onGlobalGeometryRestored(Track& track) {
     armLoopFaderFeedbackIgnore();
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
-    sendCurrentTempoCC();
+    sendCurrentTempoPitchBend();
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Loop geometry baseline synced to live loop — fader feedback updated");
 }
@@ -586,7 +586,7 @@ uint8_t LoopEditManager::calculateCCFromTempo(float tempoBpm) {
     return TempoMapping::ccFromTempo(tempoBpm);
 }
 
-void LoopEditManager::handleTempoInput(uint8_t ccValue) {
+void LoopEditManager::handleTempoInput(int16_t pitchValue) {
     if (!isLoopEditMode()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Tempo input ignored: not in LOOP_EDIT mode");
         return;
@@ -595,22 +595,24 @@ void LoopEditManager::handleTempoInput(uint8_t ccValue) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Tempo input ignored: session feedback settle");
         return;
     }
-    const float newBpm = calculateTempoFromCC(ccValue);
-    if (fabsf(newBpm - bpm) < 0.05f) {
-        logger.log(CAT_MIDI, LOG_DEBUG, "Tempo unchanged: CC=%d maps to current %.1f BPM",
-                   ccValue, (double)bpm);
+    const float newBpm = TempoMapping::bpmFromPitchBendLogical(pitchValue);
+    // The declared quantum is a tenth of a BPM, so half a step is "unchanged": fader noise must not drive the clock.
+    if (fabsf(newBpm - bpm) < (TempoMapping::BPM_STEP / 2.0f)) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Tempo unchanged: pitchbend=%d maps to current %.1f BPM",
+                   pitchValue, (double)bpm);
         return;
     }
     clockManager.setBpmFloat(newBpm);
-    logger.log(CAT_MIDI, LOG_INFO, "TEMPO: CC=%d -> %.1f BPM", ccValue, (double)bpm);
+    // One decimal: the fader's whole point is that it resolves 0.1 BPM, and the host reads this line.
+    logger.log(CAT_MIDI, LOG_INFO, "TEMPO: PB=%d -> %.1f BPM", pitchValue, (double)bpm);
 }
 
-void LoopEditManager::sendCurrentTempoCC() {
-    const uint8_t ccValue = calculateCCFromTempo(bpm);
-    midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL,
-                                  MidiConfig::LoopEdit::TEMPO_CC_NUMBER, ccValue);
-    logger.log(CAT_MIDI, LOG_DEBUG, "Sent tempo CC feedback: %.1f BPM -> CC=%d", (double)bpm,
-               ccValue);
+void LoopEditManager::sendCurrentTempoPitchBend() {
+    const int16_t pitchValue = TempoMapping::pitchBendLogicalFromBpm(bpm);
+    midiHandler.sendPitchBend(MidiConfig::LoopEdit::TEMPO_PITCHBEND_CHANNEL, pitchValue);
+    // The historical "Sent tempo CC feedback" prefix is kept deliberately: the retention probes and the handoff
+    // marker match that literal, and the tail now names the pitchbend that parks the motor.
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent tempo CC feedback: %.1f BPM -> PB=%d", (double)bpm, pitchValue);
 }
 
 void LoopEditManager::onTrackChanged(Track& newTrack) {

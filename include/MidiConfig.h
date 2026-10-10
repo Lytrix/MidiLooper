@@ -113,13 +113,14 @@ namespace LoopEdit {
   constexpr uint8_t LENGTH_CC_NUMBER = 101;
   constexpr uint8_t START_PITCHBEND_CHANNEL = 16;
   /**
-   * Tempo fader on the loop-edit control channel: CC 0..127 maps one BPM per
-   * step to TempoMapping::TEMPO_MIN_BPM..TEMPO_MAX_BPM exactly as CC 101 maps
-   * bars. Session-entry feedback parks the motor at the whole-BPM tempo.
+   * Tempo fader: **pitchbend on channel 15** in the loop-edit bank (owner decision 2026-10-11). The 7-bit CC form is
+   * retired — 128 steps cannot span the enforced 1–300 BPM range at the 0.1 BPM quantum the control surface needs.
+   * Full travel is the whole range (`TempoMapping::bpmFromPitchBendLogical`), and the session-entry feedback parks
+   * the motor at the live tempo with a pitchbend on the same channel.
    */
-  constexpr uint8_t TEMPO_CC_NUMBER = 102;
-  constexpr float TEMPO_MIN_BPM = TempoMapping::TEMPO_MIN_BPM;
-  constexpr float TEMPO_MAX_BPM = TempoMapping::TEMPO_MAX_BPM;
+  constexpr uint8_t TEMPO_PITCHBEND_CHANNEL = 15;
+  constexpr float TEMPO_MIN_BPM = TempoMapping::BPM_MIN;
+  constexpr float TEMPO_MAX_BPM = TempoMapping::BPM_MAX;
 }
 
 // --- Program change (edit session on ch16 → DROID _EDIT_NOTE_STATE) ---

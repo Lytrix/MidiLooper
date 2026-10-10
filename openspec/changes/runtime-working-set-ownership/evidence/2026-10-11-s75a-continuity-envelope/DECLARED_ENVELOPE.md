@@ -23,10 +23,12 @@ true: *"S7.5a is open — it has no numeric limits recorded"*
 
 Recorded constants (`include/Globals.h`): `INTERNAL_PPQN = 192` (:72), `QUARTERS_PER_BAR = 4` (:73),
 `TICKS_PER_CLOCK = 8` (:75), `TICKS_PER_BAR = 768` (:76), `TICKS_PER_16TH_STEP = 48` (:77).
-Reachable clock tempo is the one `ClockManager` enforces, **20–300 BPM** (`DEC-108` item 7, which also records
-that the 60/187 pair in `TempoMapping.h` is the CC102 fader mapping, **not** the clock), and external pulses
+Reachable clock tempo is the one `ClockManager` enforces, **1–300 BPM** (`DEC-108` item 7 as revised 2026-10-11; the
+loop-edit tempo fader is a 14-bit pitchbend on channel 15 spanning that whole range in 0.1 BPM steps, so the slow end
+is reachable from the control surface and not only from a saved set or an external clock), and external pulses
 advance playback directly (`TICKS_PER_CLOCK` per pulse), so **batched pulses compress the effective deadline**
 and the proof must run against actual clock advancement, never a nominal tempo.
+The `TEMPO_MIN_BPM`/`TEMPO_MAX_BPM` = 60/187 pair is the **retired CC fader mapping**, not the clock.
 
 Derived wall-clock windows (arithmetic only — `ms = 60000 / BPM * ticks / 192`):
 

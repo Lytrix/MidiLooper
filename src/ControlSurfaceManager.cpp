@@ -98,6 +98,14 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleMidiPitchbend(uint8_t channel, i
     // Log all pitchbend messages for debugging
     logger.log(CAT_MIDI, LOG_DEBUG, "Received pitchbend: ch=%d value=%d", channel, pitchValue);
     
+    // Tempo fader in loop edit mode: a pitchbend on its own channel, so it can span the enforced 1..300 BPM range at
+    // 0.1 steps (TempoMapping::bpmFromPitchBendLogical). The 7-bit CC form is retired.
+    if (channel == MidiConfig::LoopEdit::TEMPO_PITCHBEND_CHANNEL &&
+        editManager.getEditSessionType() == EditSessionType::Loop) {
+        loopEditManager.handleTempoInput(pitchValue);
+        return;
+    }
+
     // Route channel 16 based on current edit mode
     if (channel == PITCHBEND_SELECT_CHANNEL) {  // Channel 16
         if (editManager.getEditSessionType() == EditSessionType::Loop) {
@@ -145,11 +153,8 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleMidiCC(uint8_t channel, uint8_t 
         return;
     }
 
-    // Tempo fader shares the loop-edit control channel (CC102 -> 72..200 BPM).
-    if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL && ccNumber == MidiConfig::LoopEdit::TEMPO_CC_NUMBER) {
-        loopEditManager.handleTempoInput(value);
-        return;
-    }
+    // CC 102 no longer sets the tempo: the loop-edit tempo fader is the ch15 pitchbend (see handleMidiPitchbend),
+    // and the generic fader registry's tempo entry moved with it (owner decision 2026-10-11).
 
     if (editManager.getEditSessionType() == EditSessionType::Loop &&
         channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {

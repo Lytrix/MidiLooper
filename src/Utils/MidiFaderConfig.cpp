@@ -60,17 +60,18 @@ void Config::loadBasicConfiguration() {
           .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4);
 
-    // Tempo fader: global BPM on the loop-edit control channel (ch16 CC102).
-    // CC 0..127 maps to 72..200 BPM; the loop-edit session sends the current
-    // tempo back so the motor parks at the live value.
+    // Tempo fader: global BPM as a pitchbend on its own channel (ch15) in the loop-edit bank. Full travel is the
+    // enforced 1..300 BPM range at a 0.1 BPM quantum (TempoMapping::bpmFromPitchBendLogical), and the loop-edit
+    // session sends the live tempo back as a pitchbend on the same channel so the motor parks on it.
+    // The deadband is 1 wire value on purpose: 0.1 BPM is only ~5.5 wire values, so the 23-value default used by the
+    // note faders would swallow more than four steps of travel.
     FaderConfig tempoFader(MidiMapping::FaderType::FADER_TEMPO,
-                           MidiConfig::LoopEdit::LENGTH_CC_CHANNEL,
-                           MidiConfig::LoopEdit::TEMPO_CC_NUMBER, "Tempo");
+                           MidiConfig::LoopEdit::TEMPO_PITCHBEND_CHANNEL, "Tempo");
     tempoFader.withAction(ActionType::SET_TEMPO)
           .withFeedbackIgnore(100)
-          .withDeadbands(23, 1)
+          .withDeadbands(1, 1)
           .withCenters(0, 64)
-          .withGroup(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL);
+          .withGroup(MidiConfig::LoopEdit::TEMPO_PITCHBEND_CHANNEL);
     faderConfigs.push_back(tempoFader);
     
     logger.info("Loaded basic fader configuration: %d faders", faderConfigs.size());

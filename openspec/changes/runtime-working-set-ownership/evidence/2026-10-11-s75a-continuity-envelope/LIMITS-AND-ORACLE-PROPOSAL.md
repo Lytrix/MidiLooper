@@ -198,3 +198,22 @@ delivery change; **S7.5a, S7.5b and S7.5 stay unchecked**, and the sibling's sta
 numeric limits recorded"* — remains true until the owner signs §2. A `DEC-###` entry is deliberately **not**
 appended: the numbers it would carry are proposals. Three of the twelve metrics have no limit at all in this
 proposal (L1.12–L1.14), and that is a statement about the instruments, not a reduction of the required envelope.
+
+## Basis update, 2026-10-11: the reachable clock range is now 1–300 BPM
+
+`DEC-108` item 7 was revised on owner decision, together with the loop-edit tempo fader moving from the ch16 CC 102
+form (128 steps, one BPM per step, 60–187) to a **14-bit pitchbend on channel 15** spanning **1–300 BPM in 0.1 BPM
+steps** (`TempoMapping::bpmFromPitchBendLogical`; 16,384 wire values onto 2,991 positions, 5.5 wire values per step).
+`DECLARED_ENVELOPE.md` §2 carries the revised basis.
+
+What that changes here, and what it does not:
+
+* **The fixed µs caps of §2 are unaffected** — 300 BPM is still the fastest reachable tempo, so every cap is still the
+  justifying interval read at its tightest point, and §4's oracle still converts nothing at run time.
+* **The slow-tempo caveat in §2b gets stronger**: the range now reaches 1 BPM (1 tick = 312.5 ms), so a
+  musically-equivalent bound at the slow end would be 3,750 ms for 12 ticks — an even clearer reason why the cap is
+  wall-clock and why any slow-tempo slack must be a declared allowance (sign-off question 1).
+* **§2b's tempo-axis conclusion is unchanged**: the primary qualifying leg is still the fastest reachable tempo, and
+  the slow leg is still owed for the contention and batched-external-clock classes. The 1 BPM end does not need its
+  own worse case for *deadline-shaped* metrics — it is strictly looser — but it is now reachable from the control
+  surface, which is what makes a slow leg runnable at all.

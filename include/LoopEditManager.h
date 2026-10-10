@@ -46,11 +46,11 @@ public:
     void sendCurrentLoopLengthCC(Track& track);
     void sendCurrentLoopStartPitchbend(Track& track);
 
-    // Tempo editing (global BPM; loop-edit control channel CC102)
-    /// CC 0..127 maps one BPM per step to 60..187 BPM; applies immediately, no settle.
-    void handleTempoInput(uint8_t ccValue);
-    /// Park the tempo motor at the whole-BPM tempo on loop-edit session entry.
-    void sendCurrentTempoCC();
+    // Tempo editing (global BPM; the loop-edit tempo fader is a pitchbend on MidiConfig::LoopEdit::TEMPO_PITCHBEND_CHANNEL)
+    /// Full pitchbend travel maps onto the whole enforced range in 0.1 BPM steps; applies immediately, no settle.
+    void handleTempoInput(int16_t pitchValue);
+    /// Park the tempo motor at the live tempo (14-bit pitchbend) on loop-edit session entry.
+    void sendCurrentTempoPitchBend();
 
     /** Cancel pending loop-start grace work and ignore motor feedback briefly. */
     void onLeaveLoopEditSession();
