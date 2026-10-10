@@ -5,6 +5,10 @@ Sends the loop-edit select tap, then discriminating pitchbend values, and reads 
 plus the outgoing tempo feedback. The point of the fine-grained values is the **0.1 BPM resolution**: 120.0/120.1/
 120.2 are adjacent steps that the retired 7-bit CC fader could not express at all. Not a HITL content run: no
 record/overdub, no clear, no writes to loop content. It does set the global tempo, and leaves the last value in place.
+
+MIDI detail: pitchbend is 14-bit on the wire (0..16383) but mido's `pitchwheel` message takes the **signed** value
+(-8192..8191), which is also what the firmware logs for the input it received -- so the probe converts once and
+compares on the same signed value.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ TEMPO_MIN_BPM = 1.0
 TEMPO_MAX_BPM = 300.0
 TEMPO_STEP_BPM = 0.1
 PITCHBEND_WIRE_MAX = 16383
+PITCHBEND_CENTER = 8192
 BPM_STEP_COUNT = 2991  # 1..300 inclusive at 0.1
 
 # Adjacent 0.1 BPM steps: the discriminator the CC fader could not pass.
@@ -43,12 +48,13 @@ DISCRIMINATING_BPMS = (120.0, 120.1, 120.2)
 FULL_TRAVEL_BPM = 300.0
 
 
-def _wire_for_bpm(tempo_bpm: float) -> int:
-    """BPM -> pitchbend wire value, mirroring `TempoMapping::pitchBendWireFromBpm` (0.1 BPM steps, clamped)."""
+def _logical_for_bpm(tempo_bpm: float) -> int:
+    """BPM -> signed pitchbend value, mirroring `TempoMapping::pitchBendLogicalFromBpm` (0.1 BPM steps, clamped)."""
     clamped = min(max(tempo_bpm, TEMPO_MIN_BPM), TEMPO_MAX_BPM)
     index = round((clamped - TEMPO_MIN_BPM) / TEMPO_STEP_BPM)
     index = min(max(index, 0), BPM_STEP_COUNT - 1)
-    return round(index * PITCHBEND_WIRE_MAX / (BPM_STEP_COUNT - 1))
+    wire = round(index * PITCHBEND_WIRE_MAX / (BPM_STEP_COUNT - 1))
+    return wire - PITCHBEND_CENTER
 
 
 def _parse_args() -> argparse.Namespace:
@@ -117,8 +123,8 @@ def main() -> int:
 
     # Mode gate: outside LOOP_EDIT the tempo pitchbend must be ignored (and CC 102 must set nothing at all now).
     before_non_edit = len(lines)
-    print("[tempo] pitchbend=100 outside LOOP_EDIT (expect ignored)")
-    out_port.send(mido.Message("pitchbend", channel=channel, pitch=100))
+    print("[tempo] pitchbend=-1000 outside LOOP_EDIT (expect ignored)")
+    out_port.send(mido.Message("pitchwheel", channel=channel, pitch=-1000))
     out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1, control=102, value=100))
     _drain(1.5)
     non_edit_tempo = [ln for ln in lines[before_non_edit:] if "TEMPO: PB=" in ln or "TEMPO: CC=" in ln]
@@ -138,18 +144,18 @@ def main() -> int:
 
     results: list[tuple[int, float, float | None]] = []
     for target in targets:
-        wire = _wire_for_bpm(target)
-        print(f"[tempo] pitchbend={wire} (expect {target:.1f} BPM)")
-        out_port.send(mido.Message("pitchbend", channel=channel, pitch=wire))
+        logical = _logical_for_bpm(target)
+        print(f"[tempo] pitchbend={logical} (expect {target:.1f} BPM)")
+        out_port.send(mido.Message("pitchwheel", channel=channel, pitch=logical))
         before = len(lines)
         _drain(4.0)
         observed: float | None = None
         for line in lines[before:]:
-            match = re.search(r"TEMPO: PB=(\d+) -> ([\d.]+) BPM", line)
-            if match and int(match.group(1)) == wire:
+            match = re.search(r"TEMPO: PB=(-?\d+) -> ([\d.]+) BPM", line)
+            if match and int(match.group(1)) == logical:
                 observed = float(match.group(2))
                 break
-        results.append((wire, target, observed))
+        results.append((logical, target, observed))
 
     if args.set_tempo is not None:
         pinned = results[0][2]
@@ -171,15 +177,15 @@ def main() -> int:
         )
     else:
         print("[tempo] PASS: the tempo pitchbend (and CC 102) did nothing before this probe selected a track")
-    for wire, target, observed in results:
+    for logical, target, observed in results:
         if observed is None:
-            print(f"[tempo] FAIL: no device TEMPO line for pitchbend={wire} (expected {target:.1f} BPM)")
+            print(f"[tempo] FAIL: no device TEMPO line for pitchbend={logical} (expected {target:.1f} BPM)")
             ok = False
         elif abs(observed - target) > 0.05:
-            print(f"[tempo] FAIL: pitchbend={wire} -> {observed} BPM, expected {target:.1f}")
+            print(f"[tempo] FAIL: pitchbend={logical} -> {observed} BPM, expected {target:.1f}")
             ok = False
         else:
-            print(f"[tempo] PASS: pitchbend={wire} -> {observed} BPM")
+            print(f"[tempo] PASS: pitchbend={logical} -> {observed} BPM")
     # The resolution claim itself: adjacent 0.1 BPM steps must be distinguishable, which is why the CC fader went.
     if args.set_tempo is None and not args.skip_full_travel:
         steps = [observed for _, target, observed in results if target in DISCRIMINATING_BPMS]
