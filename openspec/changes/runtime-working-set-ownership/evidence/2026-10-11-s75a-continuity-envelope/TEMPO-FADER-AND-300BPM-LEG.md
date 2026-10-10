@@ -509,3 +509,36 @@ write) refines the state: the device's heap inspection is **refused with `track_
 overdub's obligations are still held even though the transport is stopped and persistence drained (the last
 display frame before the run's Stops reads `OVERDUBBING`). Nothing further was pressed into it: the next leg must
 carry its own `--boot-reset`, exactly as the run's own flow expects.
+
+## 17. Pre-stream probe: the readiness checks cost 0.5 ms, and the residual 10 clocks is the host's row observation
+
+"Continue with the next bounded step" -- the named step was to anchor the base record stream's start on the clock
+grid. Before changing anything, a **temporary env-guarded probe** (`HITL_PRESEAM_PROBE`, monotonic timestamps at
+the arm-confirm, the clock readiness and the reader probe; withdrawn afterwards, tree clean) attributed the
+pre-stream gap on one leg:
+
+`base-300bpm-preseam-probe-t8s4-07` (boot reset, device clock, 300 BPM, tree `e36f25ec` + the probe):
+
+```
+[probe] arm-confirm -> clock-readiness   0.3 ms
+[probe] clock-readiness -> reader-probe  0.2 ms
+record first note: 10 clocks (offset 10, intent 0, intent_source=run_default), no warning
+record loop length: 2304/1536 (raw 2479); abort `second overdub transition not confirmed`; shutdown complete/2
+```
+
+**Ruled out:** the 24-pulse preamble (`ensure_transport_clock`'s `min_clocks=24` is never reached in a managed run
+-- `use_serial_transport_proxy` short-circuits it, which is why the checks cost 0.5 ms and not the 1 s the
+preamble would need), and the readiness/probe code as the cost. **Ruled in:** the residual ~10 clocks is the
+host's **observation of the `RECORDING` row** (the serial poll cadence inside the arm's confirmation) plus the
+streamer's own entry (<= 1 clock), and the 33-37 clocks measured in sections 15-16 came largely from the *device
+state* rather than this code -- the same path measured **10 clocks with no advisory at all** on a clean boot
+(inside the 12-clock bound).
+
+**Re-scoped next step.** The first-note pacing is therefore no longer the blocker for a passing 300 BPM leg: on a
+clean boot it is in bound and silent. What still stops a leg is (a) the **3-bar stop edge** (`2304/1536`,
+reproduced on the device clock in every leg here, against the recorded 2026-10-10 device-clock leg's exact
+`1536/1536`) and (b) the **second-overdub confirmation refusal**. Both are device-state/image dependent (section
+16), so the next step is either to remove the image confound first -- build `teensy41-capture-serial` at this tree
+and upload it, which needs an explicit upload approval -- or to diagnose the stop-edge scheduling from the
+captures (host-only): the in-stream stop press should land on the 2-bar boundary in device-clock mode, and the
+recordings say it lands a bar later.
