@@ -140,3 +140,30 @@ So the fixture fix splits in two: (a) the **record** first note, whose whole off
 phase-start-to-first-send path to become clock-indexed (and its 12-clock bound re-examined, since it fails at 120 BPM
 alone); (b) the **overdub** first note needs its intended musical placement preserved while whatever wall-clock
 component it carries is removed.
+
+## 9. Refinement: the wall-clock component is a host *observation* delay, not a sleep in the phase
+
+§8 split the first-note offset into an intended musical placement plus a wall-clock component. The obvious candidate —
+the flat `time.sleep(0.35)` at `scripts/hitl/legacy_record_baseline.py:1029/1047` — is **wrong**, and reading the block
+is what shows it: those sleeps live in `_prepare_deferred_save_before_clear`, i.e. in the transport-stop/clear prep
+that runs **before** the record phase begins, so they cannot sit between `phase_start_ts` and the first note.
+
+What the shape actually fits, given `extract_first_note_offset` measures from the **device's** phase boundary to the
+**device's** timestamp of the first incoming note:
+
+* A host that starts its note stream **after observing** the device's phase transition (a serial-polled reaction, tens
+  of milliseconds and jittery) produces exactly this signature: an offset that is partly musical, partly fixed-in-time,
+  growing in clocks with tempo, and **varying per phase** (the fitted wall-clock component was ~139 / ~167 / ~55 ms for
+  record / overdub1 / overdub2 — a spread that a single sleep could not produce, but polling jitter plus per-phase
+  ordering can).
+* The record phase passes `phase_start_delay_clocks` = 0, i.e. the fixture *intends* the first recorded note at the
+  phase start — so on that phase the whole measured offset is the observation/reaction delay.
+
+So the fix is not to delete a sleep. It is to **re-anchor the note stream's start on the clock grid**: when the host is
+the clock master (`--clock-source host`, where it owns the 24 PPQN grid and knows the phase's first pulse index) the
+generator should begin on that pulse index rather than on the observation of a serial row; and the overdubs' intended
+placements (`phase_start_delay_clocks` ≈ 20 and ~28 clocks) must be preserved as musical positions, not replaced by a
+wall-clock wait.
+
+Evidence status: **no fixture change has been made.** This section corrects the candidate mechanism so the next attempt
+starts from the code rather than from the sleep I first suspected.
