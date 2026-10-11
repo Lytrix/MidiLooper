@@ -1,3 +1,5 @@
+**2026-10-11 — host edit-entry acknowledgement and observation repairs verified.** Focused102/102; existing-take bounded probe05 exact8/4 PLAYING→first-press NOTE_EDIT, final two drains complete/no latch. Newest mode/exit wins, no blind toggle retry, fenced final read and existing live-guard budget reused. No firmware/seed/note mutation/upload/reset/Git delivery; full stacked-reselect qualification remains open. [Evidence](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-edit-hitl-entry/EXECUTION.md).
+
 # Deliverable Tracking (Main vs Refinement)
 
 **2026-10-10 — HITL repaired image uploaded, hardware rerun FAIL.** Pinned `c2dee3be…` flashed SUCCESS, registered authorized8/4 run fresh crash0 and8 On/8 Off; live exact-target fenced PLAYING response and canonical terminal shutdown complete/2/ok verified. Seed2304 ticks vs1536/grid6 bad deltas/first-note17 clocks, base persistence-report window and online live guard refusal remain. Hardware content/selection task unchecked; no repeat or other-slot/SD-destructive action. [Device result](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-10-hitl-live-observation/DEVICE-RUN.md).

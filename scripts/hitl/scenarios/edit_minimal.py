@@ -114,28 +114,26 @@ def _ensure_note_edit_entered(
     )
     from hitl.midi_io import _send_short_press
 
-    def _note_edit_active(lines: list[str]) -> bool:
-        last_toggle = -1
-        last_kind = ""
-        for index, line in enumerate(lines):
-            if "Edit session: NOTE_EDIT" in line:
-                last_toggle = index
-                last_kind = "NOTE_EDIT"
-            elif "Edit session: LOOP_EDIT" in line:
-                last_toggle = index
-                last_kind = "LOOP_EDIT"
-        if last_kind == "NOTE_EDIT":
-            return True
-        return any("entered note edit mode" in line for line in lines)
+    from hitl.edit_mode_precondition import _edit_ack_kind
 
-    snapshot = collector.snapshot()
-    if _note_edit_active(snapshot):
-        print(f"{log_prefix} NOTE_EDIT already active")
+    def _latest_kind(lines: list[str]) -> str | None:
+        # Judge acknowledgements in order, including legacy entry and exit rows.
+        # An old encoder entry must never override a newer LOOP_EDIT session.
+        for line in reversed(lines):
+            kind = _edit_ack_kind([line])
+            if kind is not None:
+                return kind
+            if "entered note edit mode" in line:
+                return "NOTE_EDIT"
+        return None
+
+    if _latest_kind(collector.snapshot()) == "NOTE_EDIT":
+        print(f"{log_prefix} NOTE_EDIT already active", flush=True)
         return True
 
     for attempt in range(1, 3):
         baseline = len(collector.snapshot())
-        print(f"{log_prefix} enter NOTE_EDIT attempt {attempt}/2")
+        print(f"{log_prefix} enter NOTE_EDIT attempt {attempt}/2", flush=True)
         _send_short_press(
             out_port,
             note=EDIT_BUTTON_NOTE,
@@ -145,16 +143,21 @@ def _ensure_note_edit_entered(
         time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
         deadline = time.monotonic() + max(timeout_s, 0.0)
         while time.monotonic() < deadline:
-            suffix = collector.snapshot()[baseline:]
-            if any("exited edit mode" in line for line in suffix):
-                break
-            if any("Edit session: NOTE_EDIT" in line for line in suffix):
-                print(f"{log_prefix} NOTE_EDIT enter confirmed")
-                return True
-            if any("entered note edit mode" in line for line in suffix):
-                print(f"{log_prefix} NOTE_EDIT enter confirmed (encoder log)")
+            kind = _latest_kind(collector.snapshot()[baseline:])
+            if kind == "NOTE_EDIT":
+                print(f"{log_prefix} NOTE_EDIT enter confirmed", flush=True)
                 return True
             time.sleep(0.05)
+        # A missing reply is not proof that a toggle failed: another short press
+        # could exit NOTE_EDIT. Retry only on a fresh, explicit LOOP_EDIT ack.
+        kind = _latest_kind(collector.snapshot()[baseline:])
+        if kind == "NOTE_EDIT":
+            print(f"{log_prefix} NOTE_EDIT enter confirmed", flush=True)
+            return True
+        if kind != "LOOP_EDIT":
+            print(f"{log_prefix} NOTE_EDIT entry unconfirmed; refusing blind toggle retry",
+                  flush=True)
+            return False
     return False
 
 

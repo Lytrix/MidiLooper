@@ -235,7 +235,8 @@ def _ensure_target_playing(
                 return None
             return status
 
-        status = observe()
+        setup_timeout_s = max(2.0, phase_wait_ms / 1000.0 * 4.0)
+        status = observe(timeout_s=setup_timeout_s)
         if status is None:
             print(f'{log_prefix} no fresh exact-target status; refusing transport toggle')
             return False
@@ -248,12 +249,10 @@ def _ensure_target_playing(
         from hitl.midi_io import _send_short_press
         _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
                           channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-        deadline = time.monotonic() + max(2.0, phase_wait_ms / 1000.0 * 4.0)
+        deadline = time.monotonic() + setup_timeout_s
         while time.monotonic() < deadline:
             status = observe(timeout_s=min(0.5, max(0.0, deadline - time.monotonic())))
-            if status is None:
-                return False
-            if status['state'] == 'PLAYING' and status['transport'] == 1:
+            if status is not None and status['state'] == 'PLAYING' and status['transport'] == 1:
                 return True
             time.sleep(0.05)
         return False

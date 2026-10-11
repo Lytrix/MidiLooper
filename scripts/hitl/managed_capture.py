@@ -357,7 +357,9 @@ class ManagedCaptureSession:
         """This request's fenced response window, or None when it never completed."""
         deadline = time.monotonic() + max(timeout_s, 0.0)
         try:
-            while time.monotonic() < deadline:
+            # Read before declaring timeout: a complete response may have landed
+            # during the final poll sleep (notably the 0.5s live status query).
+            while True:
                 log = self._session_log
                 if log is not None and log.is_file():
                     rows = fenced_rows(
@@ -365,8 +367,10 @@ class ManagedCaptureSession:
                         nonce, end_nonce)
                     if rows is not None:
                         return rows
-                time.sleep(poll_s)
-            return None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                time.sleep(min(poll_s, remaining))
         finally:
             self.complete_command(nonce)
 
