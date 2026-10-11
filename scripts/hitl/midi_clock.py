@@ -56,6 +56,7 @@ from typing import Any, Optional
 import mido
 
 from hitl.control_constants import MIDI_CLOCKS_PER_BAR, MIDI_CLOCKS_PER_BEAT
+from hitl.serial_tick_anchor import TICKS_PER_CLOCK
 
 # A pulse that arrives more than this many grid positions late implies lost pulses.
 GAP_STEPS = 2
@@ -322,6 +323,10 @@ class MidiClockMaster:
         self._pump: Optional[threading.Thread] = None
         self._pump_stop = threading.Event()
         self._pump_error: Optional[BaseException] = None
+        # Absolute pulse index the last realtime ``Start`` declared to be device tick 0. ``None``
+        # until a ``Start`` has been sent: without one there is no grid origin to anchor on, and a
+        # caller must not invent one (the device's tick then depends on its own running sequencer).
+        self._grid_start_pulse: Optional[int] = None
 
     # ---- transport ------------------------------------------------------------
     def start(self, *, bpm: Optional[float] = None, abort: Any = None) -> None:
@@ -329,15 +334,46 @@ class MidiClockMaster:
 
         ``Start`` is the downbeat: the device resets its tick to 0, holds that 0 through the first
         pulse after ``Start`` (``ClockManager::onMidiClockPulse``, ``firstPulseAfterStart``), and
-        slaves from the pulses that follow.
+        slaves from the pulses that follow. That first pulse is therefore **device tick 0**, and it
+        is remembered here as :meth:`grid_origin_pulse` so a phase can be anchored on the grid the
+        device is actually recording against instead of on whenever the host next looked.
         """
+        # Retire any previous pump *before* the Start: a stray pulse from the outgoing grid landing
+        # after the Start would either become the new origin (making the anchor already past) or land
+        # inside it (making ``grid_origin_pulse`` one pulse ahead of the device's real tick-0 pulse).
+        # The window is micro- against milliseconds, which is exactly why it has to be closed here
+        # rather than left to chance.
+        self.stop_pump()
         self._out.send(mido.Message("start"))
+        # The next pulse is the grid origin: the pump's first send, or the caller's next
+        # ``send_pulses`` when no pump is started.
+        self._grid_start_pulse = self._sent + 1
         if bpm is not None:
             self.start_pump(bpm=bpm, abort=abort)
+
+    def grid_origin_pulse(self) -> Optional[int]:
+        """Absolute pulse index the last realtime ``Start`` made device tick 0, or ``None``.
+
+        ``None`` means no ``Start`` has been sent on this master, so there is no grid to anchor a
+        phase on; a caller that anchors anyway would be guessing where the device's tick 0 sits.
+        """
+        return self._grid_start_pulse
+
+    def tick_for_pulse(self, pulse: int) -> Optional[int]:
+        """Device transport tick at absolute pulse ``pulse`` on the last ``Start``'s grid.
+
+        The device holds tick 0 through the first pulse after ``Start`` and advances
+        ``TICKS_PER_CLOCK`` per pulse after that (``ClockManager::onMidiClockPulse``), so the origin
+        pulse *is* tick 0 and pulse ``origin + n`` is tick ``n * TICKS_PER_CLOCK``.
+        """
+        if self._grid_start_pulse is None:
+            return None
+        return (pulse - self._grid_start_pulse) * TICKS_PER_CLOCK
 
     def stop(self) -> None:
         self.stop_pump()
         self._out.send(mido.Message("stop"))
+
 
     # ---- continuous pump ------------------------------------------------------
     def start_pump(self, *, bpm: float, abort: Any = None) -> None:

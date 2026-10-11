@@ -379,6 +379,7 @@ def stream_pattern_for_bars(
     device_bar_baseline: Optional[int] = None,
     clock: Optional[MidiClockReader] = None,
     master: Optional[MidiClockMaster] = None,
+    grid_origin_pulse: Optional[int] = None,
 ) -> tuple[int, int, int, dict[str, Any]]:
     """Send note pattern until target bar count, paced by one of four clock sources.
 
@@ -408,6 +409,21 @@ def stream_pattern_for_bars(
       continuous pump is running, this phase **waits** on the pulses the pump owes (the one grid
       covers the whole run, so it also survives the gaps between phases); otherwise the phase sends
       its own pulses on one absolute schedule anchored at its first iteration.
+
+    ``grid_origin_pulse`` pins the ``master`` shape to the grid a realtime ``Start`` declared:
+    the pulse index :meth:`MidiClockMaster.grid_origin_pulse` reports is the device's **tick 0**
+    (``ClockManager::onMidiStart`` resets the tick and holds it through the first pulse after
+    ``Start``), so grid position ``c`` of the phase is device tick ``(c - 1) * TICKS_PER_CLOCK``
+    and step ``s`` lands on tick ``step_clocks * s * TICKS_PER_CLOCK`` exactly. Anchoring on the
+    master's *current* pulse count instead puts the whole phase wherever the host happened to
+    arrive -- the device's recording is already running from tick 0, so every note is late by the
+    host's observation delay, and the record stop that follows lands in the next length bucket.
+    With it set, the phase is the grid the device is recording against and the device's own ``BAR``
+    probe fed from the lagging serial ring can only truncate the phase. A ``grid_origin_pulse``
+    without a running pump is refused, because then no pulse closes the loop, and one the host has
+    already passed is *not* refused here: the phase starts on the next pulse instead and reports
+    ``grid_anchor_missed_pulses``, so a stalled host cannot raise an exception out of a phase whose
+    take is already armed -- the caller refuses such a run on that reading.
     * ``wall_clock_tempo_bpm`` set -- unchanged: pace to absolute wall-clock deadlines.
     * none of them -- unchanged: count raw ``in_port`` clock messages.
 
@@ -449,6 +465,26 @@ def stream_pattern_for_bars(
     pitch_cycle_clocks = pitch_cycle_bars * MIDI_CLOCKS_PER_BAR
     if clock is not None and master is not None:
         raise ValueError("clock and master are mutually exclusive pacing sources")
+    anchor_missed_pulses = 0
+    if grid_origin_pulse is not None:
+        # The anchor is only meaningful where the host closes the loop: with a running pump the
+        # pulses it owes are the ones that carry the phase, and grid position 1 is the pulse
+        # `grid_origin_pulse` names. Without one the phase would wait forever for a pulse whose
+        # index the phase origin was moved past.
+        if master is None:
+            raise ValueError("grid_origin_pulse requires the host clock master")
+        if not master.pump_running():
+            raise ValueError("grid_origin_pulse requires the master's continuous pump")
+        if grid_origin_pulse <= master.pulses_sent():
+            # The anchor has already gone: the host stalled for longer than one pump period between
+            # the `Start` and this call, so the phase cannot start on the pulse that made tick 0.
+            # This is NOT an error to raise: the phase falls back to the next pulse (which is what an
+            # unanchored phase would have done) and reports how far behind the anchor it is, so the
+            # caller can refuse the run on its own terms and no exception escapes with the take armed
+            # and the transport running. Fast-forwarding through the missed grid positions instead is
+            # the "whole phase emitted in milliseconds" failure (`midi_clock.py`, the drain comment in
+            # the device-clock branch).
+            anchor_missed_pulses = int(master.pulses_sent()) - int(grid_origin_pulse) + 1
 
     def select_grid_note() -> Optional[int]:
         if fixed_note is not None:
@@ -489,6 +525,10 @@ def stream_pattern_for_bars(
     master_pump_origin: Optional[int] = None
     master_pulse_timeout_s = 1.0
     master_pulses_sent = 0
+    # Absolute pulse index this phase's first note was emitted on (master: a pump pulse; device
+    # clock: the reader's grid index). It is what turns "the phase started on the grid" into a
+    # device tick in the evidence (`grid_first_note_tick`), so the claim is measured, not asserted.
+    phase_first_pulse: Optional[int] = None
     master_bpm = wall_clock_tempo_bpm if (wall_clock_tempo_bpm or 0.0) > 0 else DEFAULT_MASTER_BPM
     if clock is not None:
         clock_source = "device_clock"
@@ -515,10 +555,27 @@ def stream_pattern_for_bars(
             # is the same grid contract the inline branch below gives: pulse k of the phase is
             # one grid position, and the streamer emits step k with it. The pump makes the grid
             # continuous across the whole run instead of only inside the phases.
-            master_pump_origin = master.pulses_sent()
+            #
+            # `grid_origin_pulse` overrides *where on that grid* the phase starts: the caller that
+            # sent the realtime `Start` knows which pulse the device made tick 0
+            # (`MidiClockMaster.grid_origin_pulse`) and hands it in, so grid position 1 is the
+            # device's tick 0 instead of the pulse the host happened to arrive on.
+            if grid_origin_pulse is not None and anchor_missed_pulses == 0:
+                master_pump_origin = grid_origin_pulse - 1
+            else:
+                # Unanchored, or an anchor the host already passed: start on the next pulse, which
+                # keeps the phase one-grid-position-per-pulse. `anchor_missed_pulses` records how far
+                # behind the anchor the host was, and the caller refuses such a run.
+                master_pump_origin = master.pulses_sent()
             master_pulse_timeout_s = max(
                 0.5, 4.0 * (60.0 / master_bpm / 24.0) if master_bpm > 0 else 0.5
             )
+    if grid_origin_pulse is not None:
+        # Grid-anchored host phase: the host knows the tick, so the device's own `BAR` rows are not
+        # an end condition -- they reach the host through the lagging serial ring and would end the
+        # phase wherever the ring happened to be (see the docstring).
+        device_bar_probe = None
+        device_bar_baseline = None
     # The baseline must be the device bar index at the *phase* start (the record or overdub
     # boundary), not at the note stream's first clock: the device begins counting before the
     # host streams, so a stream-relative baseline makes an 8-bar request record 10 bars.
@@ -614,6 +671,15 @@ def stream_pattern_for_bars(
             else:
                 still_held.append((note, off_at))
         held_notes = still_held
+
+        if clock_count_total == phase_delay_clocks + 1 and phase_first_pulse is None:
+            # The grid position this phase's first note is emitted on, so the timing evidence can state
+            # the *device tick* the first note landed on rather than a host-side opinion. Only a
+            # host-master phase has a grid whose pulses map onto device ticks (the device-clock reader's
+            # index is the device's own pulse counter, a different frame), so the field stays -1
+            # elsewhere and a consumer cannot read a device run as an anchored host run.
+            if master is not None:
+                phase_first_pulse = master.pulses_sent()
 
         if emit_immediate_first_step and not immediate_step_emitted:
             # First grid step now — advance next_step_clock so this does not also
@@ -725,6 +791,27 @@ def stream_pattern_for_bars(
         "device_bar_start": -1.0 if device_bar_start is None else float(device_bar_start),
         "device_bar_latest": -1.0 if device_bar_latest is None else float(device_bar_latest),
         "device_bar_relative_bars": float(device_bar_relative_bars),
+        # Grid anchor evidence. `grid_origin_pulse` is the anchor the caller pinned (or -1 when the
+        # phase paced from wherever the host arrived); `grid_first_note_pulse` is the absolute pulse
+        # the first note was actually emitted on and `grid_first_note_tick` the device tick that
+        # pulse is, per the anchor's grid -- so "the script dictated tick 0" is a reading, not a
+        # claim: a correctly anchored host record phase reports `grid_first_note_tick == 0`.
+        "grid_origin_pulse": -1 if grid_origin_pulse is None else int(grid_origin_pulse),
+        # How far past the anchor the host arrived (0 = the anchor was honoured). A non-zero value
+        # means the phase started on the next pulse instead of the one that made tick 0: the grid is
+        # still one pulse per position, but the first note's tick is `grid_first_note_tick` rather
+        # than 0, and the caller refuses the run on this reading.
+        "grid_anchor_missed_pulses": int(anchor_missed_pulses),
+        "grid_first_note_pulse": -1 if phase_first_pulse is None else int(phase_first_pulse),
+        "grid_first_note_tick": (
+            -1
+            if (phase_first_pulse is None or master is None)
+            else int(
+                master.tick_for_pulse(phase_first_pulse)
+                if master.tick_for_pulse(phase_first_pulse) is not None
+                else -1
+            )
+        ),
     }
     return note_on_count, cc_count, phase_clock_count, timing
 

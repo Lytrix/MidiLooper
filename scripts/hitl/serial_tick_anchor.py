@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -30,6 +31,37 @@ def transport_record_start_monotonic(press_sent_mono: float, *, press_ms: int) -
 def record_button_lead_seconds(*, press_ms: int) -> float:
     """Lead time before a bar boundary to press record/transport (short-press debounce)."""
     return (max(press_ms, 0) + TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0
+
+
+def record_stop_press_advance_clocks(*, bpm: float, press_ms: int) -> int:
+    """Clocks *before* the target boundary at which the record-stop press must be emitted.
+
+    The device does not act on a record-button short press when the note-on arrives: it acts when
+    its double-tap window has expired with no second tap (`MidiButtonProcessor::onShortRelease` ->
+    `tapStateExpireTime = release + doubleTapWindow`, 300 ms by default), i.e. `press_ms` + 300 ms
+    after the note-on -- the same `record_button_lead_seconds` the wall-clock streamer schedules
+    its stop with. A record stop is applied at the tick the press is *processed*
+    (`MidiButtonActions` -> `TrackManager::stopRecordingTrack(clockManager.getCurrentTick())`), and
+    the committed length is that raw length quantised to the nearest bar
+    (`RecordStopLength::quantizeTransportRecordLength`, +/- `TICKS_PER_BAR / 2`). Emitting the
+    press one press-lead *before* the boundary therefore puts the effect on the boundary -- at worst
+    one clock before it, the `- 1` below -- which is the centre of the bucket for the requested bar
+    count; pressing when the note stream ends (the behaviour this replaces) puts the effect one
+    press-lead into the *next* bucket whenever that lead exceeds half a bar -- at 300 BPM a 0.8 s bar
+    leaves 0.4 s, and a 0.42 s press lead is already past it, which is the recorded 2-bar request
+    committing as 3 bars.
+
+    The result is the streamer's `stop_press_advance_clocks`, whose trigger is grid position
+    `target_clocks - advance`; grid position ``c`` carries the device to tick
+    ``(c - 1) * TICKS_PER_CLOCK``, hence the `- 1`. A lead that does not fit before the boundary is
+    the caller's to refuse (the take's length is then not achievable by this press); this helper
+    only reports the arithmetic, floored at one clock so the press is always in-stream.
+    """
+    if bpm <= 0:
+        raise ValueError("bpm must be > 0")
+    lead_seconds = record_button_lead_seconds(press_ms=press_ms)
+    lead_clocks = lead_seconds * (bpm / 60.0) * MIDI_CLOCKS_PER_BEAT
+    return max(1, math.ceil(lead_clocks) - 1)
 
 
 def parse_latest_cap_bar_tick(lines: list[str], *, after_index: int = 0) -> Optional[int]:

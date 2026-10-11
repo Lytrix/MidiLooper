@@ -109,7 +109,10 @@ from hitl.midi_io import (
     _send_short_press,
 )
 from hitl.serial_collector import RunAbort, SerialCaptureCollector, _wait_for_serial_line_idle
-from hitl.serial_tick_anchor import TRANSPORT_SHORT_DEBOUNCE_MS
+from hitl.serial_tick_anchor import (
+    TRANSPORT_SHORT_DEBOUNCE_MS,
+    record_stop_press_advance_clocks as _record_stop_press_advance_clocks,
+)
 from hitl.serial_timing import (
     extract_first_note_offset as _extract_first_note_offset,
     extract_phase_boundaries as _extract_phase_boundaries,
@@ -1088,6 +1091,40 @@ def _sleep_until_monotonic(target_mono: float, abort: RunAbort) -> bool:
 FIXTURE_STEP_CLOCKS: int = RECORD_GRID_STEP_CLOCKS
 
 
+def _stream_pressed_the_record_stop(timing: Mapping[str, Any]) -> bool:
+    """Did the streamer that just ran send the record-stop press itself?
+
+    The streamers report this in their own `timing` evidence (`stop_press_sent_during_stream`), so
+    the phase's caller reads the emitter's statement rather than assuming the old shape in which
+    the press always came afterwards from wall time. That assumption is what made a stop land past
+    its bar boundary: the in-stream press is the one now scheduled on the grid, and a second press
+    after the stream would not be a stop at all (the track is already `PLAYING`).
+    """
+    return float(timing.get("stop_press_sent_during_stream", 0.0) or 0.0) > 0.0
+
+
+def _record_phase_sent_its_own_stop(
+    *,
+    rec_timing: Mapping[str, Any],
+    edit_fixture: bool,
+    fixture_record_stop_sent: bool,
+    occupy_record_stop_sent: bool,
+) -> bool:
+    """Did *this* record phase press its own stop, whichever stream shape ran?
+
+    The composition is one decision per shape -- the edit fixture reports it as a return value, the
+    occupy stream and the base grid stream in their `timing` evidence -- and it is kept here rather
+    than inline so a reverted branch is a failing test rather than a silent second press on a track
+    that is already `PLAYING` again (a second press is not a stop: `MidiButtonActions::
+    handleToggleRecordForSlot` would queue a new record or stop playback).
+    """
+    return bool(
+        (edit_fixture and fixture_record_stop_sent)
+        or occupy_record_stop_sent
+        or _stream_pressed_the_record_stop(rec_timing)
+    )
+
+
 def _fixture_first_note_intent_clocks(fixture: tuple[Any, ...], *, step_clocks: int) -> int:
     """The fixture's first emitted step as a *musical* clock position.
 
@@ -1098,6 +1135,42 @@ def _fixture_first_note_intent_clocks(fixture: tuple[Any, ...], *, step_clocks: 
     """
     steps = [int(getattr(note, "step", 0)) for note in fixture]
     return max(min(steps), 0) * step_clocks if steps else 0
+
+
+def _host_grid_record_stop_advance_clocks(
+    *,
+    requested: int,
+    bpm: float,
+    press_ms: int,
+    record_bars: int,
+) -> tuple[int, Optional[str]]:
+    """The clocks before the record boundary at which the host-grid stop press is emitted.
+
+    Returns ``(advance_clocks, refusal)``; ``refusal`` is a named reason (the run's own
+    `abort_reason`) when no press can land the stop's effect on the requested boundary.
+
+    * ``requested <= 0`` (the flag's default) -- the lead is the record button's own latency,
+      converted at this tempo by `record_stop_press_advance_clocks`.
+    * a positive ``requested`` below that lead is **raised** to it: the flag exists to end the stream
+      early enough for the short press to be processed on the boundary, so a value inside the
+      button's own latency cannot serve it, and obeying it silently is what re-creates the
+      one-bar-long take this path removes (the caller prints the raise).
+    * a lead that does not fit inside the phase at all is refused by name: at the top tempos a
+      one-bar phase is shorter than the button's latency, and streaming a take whose length cannot
+      land is worse than not streaming one.
+    """
+    minimum = _record_stop_press_advance_clocks(bpm=bpm, press_ms=press_ms)
+    if record_bars <= 0:
+        return minimum, "a host-grid record phase needs --record-bars"
+    advance = minimum if requested <= 0 else max(requested, minimum)
+    target_clocks = record_bars * MIDI_CLOCKS_PER_BAR
+    if advance >= target_clocks:
+        return advance, (
+            f"the record stop press lead ({advance} clocks, at least the record button's own "
+            f"latency at {bpm:.1f} BPM) does not fit inside a {record_bars}-bar phase "
+            f"({target_clocks} clocks); refusing to stream a take whose length cannot land"
+        )
+    return advance, None
 
 
 def _stream_fixture_record_wall_scheduled(
@@ -1949,7 +2022,11 @@ def _run_record_arm_until_capturing(
         )
         if not ok or press_sent is None:
             return False, None
-        schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+        schedule = (
+            press_sent
+            if master is not None
+            else transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+        )
         return True, schedule
 
     timeout_s = args.state_sync_timeout_ms / 1000.0
@@ -2026,7 +2103,16 @@ def _run_record_arm_until_capturing(
     )
     if not ok or press_sent is None:
         return False, None
-    schedule = transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+    # The modelled short-press lead only exists for a *button* start. With the host as clock
+    # master the start is the host's realtime `Start`, whose downbeat is the instant it was sent
+    # (the device resets its tick there), so the grid origin is that instant and not
+    # `press_ms + debounce` later -- subtracting a debounce the host never waited for would move
+    # the whole host-grid phase off tick 0.
+    schedule = (
+        press_sent
+        if master is not None
+        else transport_record_start_monotonic(press_sent, press_ms=args.press_ms)
+    )
 
     if not wait_for_recording_confirm:
         return True, schedule
@@ -5209,7 +5295,7 @@ def _run_overdub_pass(
 
     time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
     print(f"[track {_user_track_number(idx)}] {pass_label} stop")
-    stop_sent_in_stream = od_timing.get("stop_press_sent_during_stream", 0.0) > 0.0
+    stop_sent_in_stream = _stream_pressed_the_record_stop(od_timing)
     if serial_collector is None:
         if not stop_sent_in_stream:
             _send_short_press(
@@ -6514,7 +6600,16 @@ def run() -> int:
                     track_baseline_len=track_baseline_len,
                     record_loop_slot=record_loop_slot,
                     abort=abort,
-                    wait_for_recording_confirm=not edit_fixture,
+                    # Host clock source (grid-anchored): the realtime `Start` *is* the record's
+                    # tick 0 -- the armed slot starts at `currentTick == 0` on it
+                    # (`TrackManager::handlePendingRecordStart`) -- so the phase must be streamed
+                    # from that instant, not after the host has observed the device's `RECORDING`
+                    # row. Confirming first would put the phase origin, and with it every note, one
+                    # serial-observation delay late; the device's own rows still evidence the take
+                    # in the capture, they are simply not the anchor.
+                    wait_for_recording_confirm=(
+                        not edit_fixture and clock_master is None
+                    ),
                     # Host clock source: the transport around the arm is the host's realtime
                     # Stop/Start and the pump carries the grid across it (`--clock-source host`).
                     master=clock_master,
@@ -6522,6 +6617,12 @@ def run() -> int:
                 )
                 if serial_collector is not None and reached_recording and not edit_fixture:
                     recording_confirmed_at = time.monotonic()
+                if clock_master is not None:
+                    # The phase anchor is the realtime `Start` itself: `record_schedule_start` is
+                    # the instant `master.start()` returned, so the stream begins on the grid the
+                    # device made tick 0 rather than after a serial round trip. Set *after* the
+                    # generic assignment above, which is the observation this replaces.
+                    recording_confirmed_at = record_schedule_start
                 if serial_collector is not None and not reached_recording:
                     print(
                         "[error] Record phase did not confirm RECORDING in serial capture; "
@@ -6683,10 +6784,70 @@ def run() -> int:
                             stop_press_ms=args.press_ms,
                             abort=abort,
                         )
-                        occupy_record_stop_sent = rec_timing.get(
-                            "stop_press_sent_during_stream", 0.0
-                        ) > 0.0
+                        occupy_record_stop_sent = _stream_pressed_the_record_stop(rec_timing)
                     else:
+                        # ---- host-grid record phase (the script dictates tick 0) ----------------
+                        # With the host as clock master the grid is the host's: the realtime `Start`
+                        # sent after the arm made the device's tick 0, so the phase is anchored on
+                        # that pulse instead of on whenever the host next looked, and the record stop
+                        # is emitted *in-stream* one press-lead before the boundary. Without the
+                        # anchor every note is late by the host's observation delay; without the lead
+                        # the stop is processed after the boundary and the take commits one bar long
+                        # (the 2-bar request that lands as 3 bars).
+                        record_grid_origin_pulse: Optional[int] = None
+                        record_stop_advance_clocks = int(
+                            getattr(args, "stop_press_advance_clocks", 0) or 0
+                        )
+                        record_stop_press_note: Optional[int] = None
+                        if phase_master is not None:
+                            record_grid_origin_pulse = phase_master.grid_origin_pulse()
+                            if record_grid_origin_pulse is None:
+                                print(
+                                    "[error] host clock source without a realtime Start: no grid "
+                                    "origin to anchor the record phase on."
+                                )
+                                abort_reason = "host clock with no Start grid origin"
+                                break
+                            if record_grid_origin_pulse <= phase_master.pulses_sent():
+                                # The host took longer than one pump period to get from the realtime
+                                # `Start` to here, so the pulse that made tick 0 has gone and the phase
+                                # could only start late. Refuse by name, in the run's own abort
+                                # vocabulary, rather than streaming a take whose "tick 0" claim is
+                                # already false (the streamer degrades to the next pulse and reports
+                                # `grid_anchor_missed_pulses`, which is exactly this reading).
+                                _anchor_late_pulses = (
+                                    int(phase_master.pulses_sent())
+                                    - int(record_grid_origin_pulse)
+                                    + 1
+                                )
+                                print(
+                                    "[error] the Start grid origin (pulse "
+                                    f"{record_grid_origin_pulse}) is already {_anchor_late_pulses} "
+                                    "pulse(s) past; the record phase cannot begin on the device's "
+                                    "tick 0. Refusing the take."
+                                )
+                                abort_reason = "host grid anchor missed before the record phase"
+                                break
+                            (
+                                record_stop_advance_clocks,
+                                _record_advance_refusal,
+                            ) = _host_grid_record_stop_advance_clocks(
+                                requested=record_stop_advance_clocks,
+                                bpm=float(wall_clock_tempo),
+                                press_ms=args.press_ms,
+                                record_bars=args.record_bars,
+                            )
+                            if _record_advance_refusal is not None:
+                                print(f"[error] {_record_advance_refusal}")
+                                abort_reason = _record_advance_refusal
+                                break
+                            record_stop_press_note = RECORD_BUTTON_NOTE
+                            print(
+                                "[info] record phase anchored on the Start grid "
+                                f"(origin pulse {record_grid_origin_pulse}); record stop pressed "
+                                f"{record_stop_advance_clocks} clocks before the "
+                                f"{args.record_bars}-bar boundary."
+                            )
                         rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
                             out_port,
                             in_port,
@@ -6706,7 +6867,15 @@ def run() -> int:
                             clock=phase_clock,
                             master=phase_master,
                             fixed_note=args.record_fixed_note if args.fixed_grid_notes else None,
-                            stop_press_advance_clocks=args.stop_press_advance_clocks,
+                            stop_press_advance_clocks=(
+                                record_stop_advance_clocks
+                                if record_stop_press_note is not None
+                                else args.stop_press_advance_clocks
+                            ),
+                            stop_press_note=record_stop_press_note,
+                            stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
+                            stop_press_press_ms=args.press_ms,
+                            grid_origin_pulse=record_grid_origin_pulse,
                             abort=abort,
                             emit_immediate_first_step=True,
                             stream_start_monotonic=recording_confirmed_at,
@@ -6743,13 +6912,62 @@ def run() -> int:
                     abort_reason = reason
                     break
 
+                if phase_master is not None and serial_collector is not None:
+                    # Host mode streams from the realtime `Start` without waiting for the device's
+                    # `RECORDING` row (that wait is the observation delay this path removes), so the
+                    # confirmation is asserted *after* the phase instead: the rows the device emitted
+                    # during it are the evidence that the armed slot actually began capturing. A start
+                    # that never happened would otherwise stream a phase into a non-recording track and
+                    # let the in-stream press act on whatever state the track was in.
+                    _recording_deadline = time.monotonic() + min(
+                        max(float(getattr(args, "state_sync_timeout_ms", 8000)) / 1000.0, 0.5),
+                        2.0,
+                    )
+                    _recording_started = False
+                    while True:
+                        _lines = serial_collector.snapshot()
+                        if _serial_has_recording_started(
+                            _lines, after_index=record_baseline_len
+                        ) or _serial_has_recording_active(
+                            _lines, after_index=record_baseline_len
+                        ):
+                            _recording_started = True
+                            break
+                        if time.monotonic() >= _recording_deadline:
+                            break
+                        if abort.check() is not None:
+                            break
+                        time.sleep(0.02)
+                    if not _recording_started:
+                        print(
+                            "[error] the host Start did not begin the armed record: no RECORDING "
+                            "evidence in serial capture after the record phase. Aborting the run "
+                            "(the take's notes went nowhere)."
+                        )
+                        precondition_failures.append(
+                            {
+                                "track_index": idx,
+                                "step": "record_start",
+                                "reason": "recording_not_confirmed_after_start",
+                            }
+                        )
+                        abort_reason = "recording not confirmed after the host Start"
+                        break
+
                 if args.record_bars and args.bar_sync_from_midi_clock and rec_clock_count <= 0:
                     print("[error] Record phase saw 0 MIDI clock pulses; aborting track run.")
                     abort_reason = "record phase saw 0 midi clock pulses"
                     break
 
-                record_stop_sent_during_stream = (
-                    (edit_fixture and fixture_record_stop_sent) or occupy_record_stop_sent
+                # The base record phase owns its own in-stream stop now (`record_stop_press_note`
+                # above, on the Start grid); when it sent one, the press below must not send a
+                # second, because the second press on a STOPPED_RECORDING/PLAYING track is not a
+                # stop.
+                record_stop_sent_during_stream = _record_phase_sent_its_own_stop(
+                    rec_timing=rec_timing,
+                    edit_fixture=edit_fixture,
+                    fixture_record_stop_sent=fixture_record_stop_sent,
+                    occupy_record_stop_sent=occupy_record_stop_sent,
                 )
                 if not record_stop_sent_during_stream:
                     time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
@@ -6841,13 +7059,23 @@ def run() -> int:
                             ),
                             FIRST_NOTE_INTENT_ROW_KEYS["overdub"]: -1,
                             FIRST_NOTE_INTENT_ROW_KEYS["second_overdub"]: -1,
-                        "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
-                        "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
-                        "record_device_bar_relative_bars": int(
-                            rec_timing.get("device_bar_relative_bars", 0)
-                        ),
                             "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                             "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
+                            # Grid anchor evidence (host clock source): the pulse the first record
+                            # note was emitted on and the device tick it is. `..._tick == 0` is the
+                            # reading that says the script dictated tick 0; `-1` means this run did
+                            # not pace from a host grid.
+                            "record_grid_origin_pulse": int(
+                                rec_timing.get("grid_origin_pulse", -1)
+                            ),
+                            "record_grid_first_note_pulse": int(
+                                rec_timing.get("grid_first_note_pulse", -1)
+                            ),
+                            "record_grid_first_note_tick": int(
+                                rec_timing.get("grid_first_note_tick", -1)
+                            ),
+                            # Device-authoritative end condition evidence; -1 when the phase was
+                            # grid-anchored and the probe was deliberately not consulted.
                             "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
                             "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
                             "record_device_bar_relative_bars": int(
@@ -7040,6 +7268,14 @@ def run() -> int:
                         ),
                         "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                         "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
+                        # Grid anchor evidence (host clock source); see the record-only branch above.
+                        "record_grid_origin_pulse": int(rec_timing.get("grid_origin_pulse", -1)),
+                        "record_grid_first_note_pulse": int(
+                            rec_timing.get("grid_first_note_pulse", -1)
+                        ),
+                        "record_grid_first_note_tick": int(
+                            rec_timing.get("grid_first_note_tick", -1)
+                        ),
                         # Each streamer's own first-note intent (clocks), or -1 when it declared
                         # none so the verifier falls back to the run's declared phase delay.
                         FIRST_NOTE_INTENT_ROW_KEYS["record"]: _declared_intent_clocks(
