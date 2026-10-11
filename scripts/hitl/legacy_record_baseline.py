@@ -1125,6 +1125,46 @@ def _record_phase_sent_its_own_stop(
     )
 
 
+def _run_end_transport_stop(
+    out_port: mido.ports.BaseOutput,
+    *,
+    master: Optional[Any] = None,
+    press_ms: int = 120,
+) -> str:
+    """End the whole run's transport, and say which gesture did it.
+
+    The **final** stop of a run is not a phase stop, and the two are deliberately different gestures:
+
+    * a phase stop (record, overdub) stays on the record button -- it is the gesture the device's own
+      control surface owns, its take bounds are settled by the in-stream press, and the phase that
+      follows waits on the control-surface receipts that press produces;
+    * the run's final stop has nothing timing-critical after it, so when the host owns the clock it is
+      delivered as a realtime **Stop**. One byte with no double-tap window and no toggle risk: the
+      device applies it at once, and it leaves the stopped state the verification drain requires.
+      The clock pump keeps running (`send_realtime_stop`): a transport stop is not a clock-source
+      change, and the drain that follows is measured under the conditions the press-based end stop
+      produced. Pump retirement stays where it already is -- the pre-arm stop and the loop teardown
+      -- because this helper is not a teardown.
+
+    The caller decides *when* the run is over: a multi-track run hands ``master`` only for its last
+    leg, so an earlier leg's stop is a mid-run transport transition and keeps the button gesture.
+
+    Returns ``"host_realtime_stop"`` or ``"transport_press"`` for the run's evidence. (The one
+    other literal the run writes, ``"transport_press_after_replay"``, is set by the temporary
+    post-save replay branch, which restarts the transport *after* this stop.)
+    """
+    if master is not None:
+        master.send_realtime_stop()
+        return "host_realtime_stop"
+    _send_short_press(
+        out_port,
+        note=GLOBAL_TRANSPORT_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+    return "transport_press"
+
+
 def _fixture_first_note_intent_clocks(fixture: tuple[Any, ...], *, step_clocks: int) -> int:
     """The fixture's first emitted step as a *musical* clock position.
 
@@ -6243,6 +6283,10 @@ def run() -> int:
             f"abort after {args.serial_heartbeat_timeout_seconds:.0f}s without serial lines"
         )
     per_track_stats: list[dict[str, int]] = []
+    # Which gesture ended the whole run's transport, and nothing about the per-track phases: the
+    # phase stops stay on the record button, so this is the one reading that says whether the
+    # host-owned realtime `Stop` was the run's last transport gesture (`_run_end_transport_stop`).
+    run_end_stop_gesture = ""
     midi_in_messages = 0
     abort_reason: Optional[str] = None
     precondition_failures: list[dict[str, object]] = []
@@ -7205,17 +7249,30 @@ def run() -> int:
                             )
                         time.sleep(args.phase_wait_ms / 1000.0)
                     if args.stop_after_overdub:
-                        print(f"[track {_user_track_number(idx)}] transport stop")
+                        # The run's **final** transport stop -- not a phase stop. Nothing is
+                        # timing-critical after it (the take is committed and the drain follows), so
+                        # the host delivers it as a realtime `Stop` when it owns the clock: one byte
+                        # the device applies at once, with no double-tap window and no toggle risk.
+                        # The record and overdub *phase* stops stay on the record button, which is the
+                        # gesture the control surface owns.
                         drain_baseline = (
                             len(serial_collector.snapshot())
                             if serial_collector is not None
                             else 0
                         )
-                        _send_short_press(
+                        # Only the **last** leg ends the run: an earlier leg's stop is an ordinary
+                        # mid-run transport transition -- the next leg starts the transport again --
+                        # so it keeps the button gesture the fixture's other phases use, and the
+                        # realtime `Stop` stays the run's last transport gesture.
+                        is_final_leg = idx == args.first_track_index + args.track_count - 1
+                        run_end_stop_gesture = _run_end_transport_stop(
                             out_port,
-                            note=GLOBAL_TRANSPORT_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
+                            master=clock_master if is_final_leg else None,
                             press_ms=args.press_ms,
+                        )
+                        print(
+                            f"[track {_user_track_number(idx)}] transport stop "
+                            f"({run_end_stop_gesture})"
                         )
                         time.sleep(args.phase_wait_ms / 1000.0)
                         # The take now ends stopped, which is the idle state the
@@ -7246,6 +7303,10 @@ def run() -> int:
                                 channel_1based=CONTROL_CHANNEL_1BASED,
                                 press_ms=args.press_ms,
                             )
+                            # This replay restarts the transport *after* the run-end stop, so the
+                            # gesture above is no longer the run's last transport gesture and the
+                            # field must not keep claiming it was.
+                            run_end_stop_gesture = "transport_press_after_replay"
                             time.sleep(post_play_ms / 1000.0)
 
                 if (reason := abort.check()) is not None:
@@ -7318,9 +7379,9 @@ def run() -> int:
             time.sleep(max(args.final_wait_ms, 1) / 1000.0)
 
             if clock_master is not None:
-                # Stop the host drive before the ports close: the device is left stopped on the
-                # next realtime Stop (or on the 500 ms timeout) instead of mid-grid, and the pump
-                # thread does not race the port teardown.
+                # Stop the host drive before the ports close: in host mode the run-end realtime
+                # `Stop` has already left the device stopped (the press path stopped it earlier in
+                # the leg), and the pump thread must not race the port teardown.
                 clock_master.stop_pump()
 
     finally:
@@ -7714,6 +7775,7 @@ def run() -> int:
     # attributable from the report instead of inferred from its effect on the device.
     assertions["transport_press_count"] = _transport_press_count()
     assertions["control_actions"] = _control_action_log()
+    assertions["run_end_transport_stop"] = run_end_stop_gesture
 
     run_finished = datetime.now()
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -203,6 +203,92 @@ already exists (`stop_press_note` + a positive `stop_press_advance_clocks`, whic
 overdub call sites use), so extending it is a bounded follow-up with its own leg rather than part of
 this request.
 
+## 3c. The run's **final** transport stop is the host's realtime `Stop`
+
+Two gestures, kept apart on purpose: a **record or overdub stop stays a record-button press**
+in-stream on the grid (§2 — that is the edges' mechanism and what the phases' receipts are keyed to),
+while the stop that ends the whole run is the host's realtime `Stop` when the host owns the clock.
+Nothing is timing-critical after it, and one byte has no double-tap window and no toggle risk; the
+phase stops would lose their settled bounds if they were converted, which is why they are not.
+
+Code: `_run_end_transport_stop` (the run-end site, `--stop-after-overdub`) and
+`MidiClockMaster.send_realtime_stop` (the `Stop` byte **without** retiring the pump — a transport
+stop is not a clock-source change, so the drain below is measured under exactly the conditions the
+press-based end stop produced; `stop()` stays the teardown shape, and pump retirement stays where it
+already was — the pre-arm `master.stop()` inside `_ensure_transport_stopped_before_record_arm` and the
+loop teardown). The **last leg** owns the gesture: a multi-track run hands the master only for the
+leg that ends the run (`is_final_leg`), so an earlier leg's stop remains the ordinary mid-run
+transport transition it always was. The run writes one other literal, `"transport_press_after_replay"`,
+from the temporary `--post-save-play-wait-ms` replay branch, which restarts the transport *after* this
+stop; the field is then not left claiming the realtime `Stop` was the run's last gesture.
+
+Device evidence, same preset/tempo/clock, target track 8 / slot 4, no upload and no flash —
+`captures/host-grid-record-t8s4-03` after `…-t8s4-01` (the run this packet's §3b measured). Both legs
+are single-track runs (`--track` sets `track_count = 1`), so the last-leg gate below leaves them
+exactly as measured:
+
+| Reading (report-level, attributed by caller) | `…-t8s4-01` (press) | `…-t8s4-03` (this change) |
+|---|---|---|
+| `assertions.run_end_transport_stop` | (no such field) | **`host_realtime_stop`** |
+| `assertions.transport_press_count` | **2** | **1** |
+| transport presses, with `caller` | `_prepare_deferred_save_before_clear`, **`run`** | **`_prepare_deferred_save_before_clear` only** |
+
+So the run no longer ends with a transport *toggle*: the last transport gesture on the wire is the
+realtime `Stop`, and the device's own last transitions agree — `ST,Track,PLAYING,STOPPED` closes the
+session (`#CAP,59148370`) and the post-stop display frame is `DISP,3,STOPPED,1536,58,58,58,58` with
+`transport_ok=true`. Shutdown is `complete/2/ok` ("2 stop+drain cycle(s) reached verified persistence
+idle", `captures/host-grid-record-t8s4-03/shutdown-result.json`), no latch.
+
+**The record phase is unchanged by this leg, which is the point of running it:**
+`Recording stopped @ tick 1536 (recStart=0 length=1536)`, `RECS,stop,3,1536,0,1536,1536,0`,
+`actual_final_length 1536/1536` (`raw 1536`), `record_grid_first_note_tick == 0`
+(`origin_pulse = first_note_pulse = 76`), `record_stop_stages first_missing=None`,
+`persistence handoff first_missing=None result=ok`, `stored_record_grid` 32 ons `bad 0/2`.
+The preset's verdict stays inconclusive for its own residuals — `…-t8s4-03` reports
+`INCONCLUSIVE_CAPTURE (EVIDENCE_MISSING)` with the single gap
+`persistence_active_snapshot_unavailable_during_save` (a report-window gap; the `PERS,result,…` rows
+are in the session log), a different residual from §3b's `SETUP_UNCONFIRMED` pair. Neither is a
+content or timing qualification of this change.
+
+**One observed host-side flake, named rather than smoothed over.** The first repeat of this leg
+(`captures/host-grid-record-t8s4-02`, identical invocation) aborted *before* the changed code path —
+`overdub start refused: no predecessor stop-completion receipt`, `abort_reason` set,
+`run_end_transport_stop == ''` — with `RING,shed,2` inside the record-stop window and the record pass
+publishing no `Record pass undo reset for slot 3` receipt (leg 01 and leg 03 both log it ~780 ms /
+~1.4 s after `Recording stopped`). Its record stop also landed one clock early (`raw 1528`, still the
+2-bar bucket, committed 1536). The identical invocation then completed in `…-t8s4-03`. The flake is
+an evidence/admission one at a gate upstream of this change, not a reading about the end stop.
+
+**Still a transport press in the run, and it is not a phase stop.** `…-t8s4-03`'s single remaining
+press is `_prepare_deferred_save_before_clear` — the fixture's *setup* gesture that stops a transport
+already running before the clear long press (guarded by `serial_global_transport_running`, present in
+§3b's accepted leg as well). This change deliberately leaves it alone: it is neither a record/overdub
+stop nor the run's end, and converting it would move the clear precondition's own path. Named here so
+the next reader can decide it on its own evidence.
+
+**One focused adversarial read-only review (APPROVE), and what it changed.** It confirmed that the
+replaced site *is* the run's only end stop, that leaving the pump running is correct (the drain is
+device-side and keys on the device's own `DIAG,stored_verify,drain_complete` rows; a stopped device
+ignores pulses, so its `CLOCK_INTERNAL` timeout and the `DISP,…STOPPED` frame the report reads behave
+as before), that the gesture local cannot be unbound before the report is built, and that the phase
+path cannot emit a realtime stop (one `send_realtime_stop()` call site; the only production
+`master.stop()` is the pre-arm stop). It raised two latent defects — with `--track-count N > 1` every
+leg would have ended the run with a realtime `Stop`, and the `--post-save-play-wait-ms` replay branch
+would have left the field naming a gesture that was no longer the run's last — plus three nits
+(non-discriminating tripwire assertions, an inaccurate assertion message, and a comment that
+described a now-unreachable case). All are repaired, and the repairs are re-proved: **six mutations**,
+each killing exactly its own test, restored byte-identically.
+
+**Residual named, not fixed (device-side logging).** The realtime path logs nothing on the device,
+where the press path logged `Transport stopped` in `ClockManager`'s stop handler, so two host readers
+cannot see a realtime `Stop` inside a measured window: `serial_global_transport_running` and the
+accepted-sequence probe's `continuous_transport` check. Harmless *here* (host mode short-circuits
+`clock_present`, record pacing is forced to the host clock, and the drain keys on the device's own
+rows), and the positive side is that the gesture is now its own reported field rather than something
+inferred from `control_actions`. Closing it needs a firmware marker, i.e. outside this change. The
+field also reads `""` when the run never reached the end stop (`--record-only` continues before the
+site, `--no-stop-after-overdub`, or an abort) — honest, but the report cannot tell those apart.
+
 ## 4. Owed, named rather than claimed
 
 1. **~~The device leg~~ — RUN, and all three readings met** (§3b): `actual_final_length 1536/1536`
@@ -223,8 +309,14 @@ this request.
    deliberate here (the host knows the tick while slaved), but it means a host that loses slaving
    mid-phase would keep streaming its own grid; the device's `BAR` rows stay in the capture as the
    cross-check the leg should read.
-4. **The overdub phases keep their old stop shape.** Their stop cannot change the loop length, so they
-   are outside this defect's blast radius, but the same "press after the stream" lateness is still
-   there for the *stored span* checks. Not touched.
+4. **The overdub phases keep their stop on the record button — deliberately, not by omission.** Their
+   stop cannot change the loop length, and a phase stop is the gesture the device's control surface
+   owns; the run's *final* stop is the one carried by the host's realtime `Stop` (§3c). The same
+   "press after the stream" lateness is still there for the *stored span* checks, unchanged.
 5. **The device image confound named in §16 is unchanged.** Any before/after on this bench must pin
    the image as well as the tempo; the board's image is newer than the 2026-10-10 300 BPM legs'.
+
+6. **One non-phase transport press stays in the run** (§3c): `_prepare_deferred_save_before_clear`'s
+   stop-before-clear *setup* gesture, which §3b's accepted leg also carried. It is neither a
+   record/overdub stop nor the run's end; converting it means moving the clear precondition's own
+   path, so it is named rather than folded into this change.

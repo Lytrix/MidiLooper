@@ -374,6 +374,15 @@ class MidiClockMaster:
         self.stop_pump()
         self._out.send(mido.Message("stop"))
 
+    def send_realtime_stop(self) -> None:
+        """Send the realtime ``Stop`` byte only; the clock pump keeps running.
+
+        A transport stop is not a clock-source change, so this leaves the pump alone: the run-end
+        drain that follows is measured with the host still pacing, the same condition the
+        press-based end stop produced. :meth:`stop` (pump + ``Stop``) stays the teardown shape.
+        """
+        self._out.send(mido.Message("stop"))
+
 
     # ---- continuous pump ------------------------------------------------------
     def start_pump(self, *, bpm: float, abort: Any = None) -> None:

@@ -36,6 +36,8 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.control_constants import (  # noqa: E402
+    CONTROL_CHANNEL_1BASED,
+    GLOBAL_TRANSPORT_NOTE,
     MIDI_CLOCKS_PER_BAR,
     RECORD_BUTTON_NOTE,
     TICKS_PER_BAR,
@@ -43,6 +45,7 @@ from hitl.control_constants import (  # noqa: E402
 from hitl.legacy_record_baseline import (  # noqa: E402
     _host_grid_record_stop_advance_clocks,
     _record_phase_sent_its_own_stop,
+    _run_end_transport_stop,
     _stream_pressed_the_record_stop,
 )
 from hitl.midi_clock import MidiClockMaster  # noqa: E402
@@ -676,6 +679,117 @@ class HostGridStopLeadTests(unittest.TestCase):
             requested=0, bpm=300.0, press_ms=120, record_bars=0
         )
         self.assertIn("--record-bars", no_bars)
+
+
+class _StubMaster:
+    """A master that records *how* it was ended, with no port and no pump."""
+
+    def __init__(self) -> None:
+        self.realtime_stops = 0
+        self.full_stops = 0
+
+    def send_realtime_stop(self) -> None:
+        self.realtime_stops += 1
+
+    def stop(self) -> None:
+        self.full_stops += 1
+
+
+class RunEndTransportStopTests(unittest.TestCase):
+    """The run's **final** stop is the host's realtime `Stop`; every phase stop stays a button press.
+
+    The two gestures are deliberately different, and that difference is the point of this class. A
+    record or overdub stop is a record-button press whose effect the device applies only after its
+    double-tap window, so the phase presses it *in-stream* one press-lead early (pinned above). The
+    stop that ends the whole run has nothing timing-critical after it, so a host-owned clock
+    delivers a single realtime `Stop` byte instead: no button, no window, no toggle risk.
+    """
+
+    def test_a_host_owned_clock_ends_the_run_with_a_realtime_stop(self) -> None:
+        port = _RecordingPort()
+        master = _StubMaster()
+        gesture = _run_end_transport_stop(port, master=master, press_ms=120)
+        self.assertEqual("host_realtime_stop", gesture)
+        self.assertEqual(1, master.realtime_stops)
+        self.assertEqual(
+            0, master.full_stops,
+            "the run-end stop must not use the teardown shape (`stop()` retires the pump), which "
+            "the pump test below pins separately",
+        )
+        self.assertEqual([], port.sent, "no transport button message in host-clock mode")
+
+    def test_a_device_owned_clock_still_presses_the_transport(self) -> None:
+        port = _RecordingPort()
+        gesture = _run_end_transport_stop(port, master=None, press_ms=120)
+        self.assertEqual("transport_press", gesture)
+        self.assertEqual(
+            [("note_on", GLOBAL_TRANSPORT_NOTE), ("note_off", GLOBAL_TRANSPORT_NOTE)],
+            [(message.type, message.note) for message in port.sent],
+        )
+        self.assertEqual(
+            {CONTROL_CHANNEL_1BASED - 1}, {message.channel for message in port.sent}
+        )
+
+    def test_the_host_stop_does_not_retire_the_clock_pump(self) -> None:
+        """`send_realtime_stop` leaves the pump alone, against the real master.
+
+        The drain that follows the run-end stop is read with the host still pacing -- the same
+        condition the press-based end stop produced. `stop()` (pump + `Stop`) stays the teardown
+        shape, which the second half of this test pins.
+        """
+        port = _RecordingPort()
+        master = MidiClockMaster(port, spin_s=5.0e-4)
+        master.start_pump(bpm=300.0)
+        try:
+            master.send_realtime_stop()
+            self.assertTrue(
+                master.pump_running(),
+                "the run-end drain is measured with the host still pacing",
+            )
+        finally:
+            master.stop()
+        self.assertFalse(master.pump_running(), "`stop()` stays the teardown shape")
+        self.assertEqual(["stop", "stop"], [m.type for m in port.sent if m.type == "stop"])
+
+    def test_the_wiring_keeps_the_two_gestures_apart(self) -> None:
+        """Source scan: the run end routes through the helper, and nothing else does.
+
+        No unit can drive `run()` without the bench, so this pins the call sites the same way the
+        record-phase tripwire above does. Each assertion is written to *fail* on a specific revert:
+        the run end going back to a bare transport press, the realtime stop being reused for a
+        record/overdub stop, and the multi-track gate being dropped so an intermediate leg would end
+        the run with a realtime `Stop`. Adding a second end stop (say for `--record-only`) is meant
+        to fail here and be re-declared deliberately.
+        """
+        import inspect
+
+        from hitl import legacy_record_baseline as module
+        from hitl import transport_clock as streamer_module
+
+        source = inspect.getsource(module)
+        self.assertEqual(
+            1, source.count("run_end_stop_gesture = _run_end_transport_stop("),
+            "the realtime stop is the run's final gesture only; a phase stop stays a button press",
+        )
+        self.assertEqual(
+            1, source.count("master.send_realtime_stop()"),
+            "the realtime `Stop` has exactly one call site: the run-end helper",
+        )
+        self.assertIn("master=clock_master if is_final_leg else None,", source)
+        self.assertIn(
+            "is_final_leg = idx == args.first_track_index + args.track_count - 1", source
+        )
+        self.assertIn('assertions["run_end_transport_stop"] = run_end_stop_gesture', source)
+        self.assertIn(
+            'run_end_stop_gesture = "transport_press_after_replay"', source,
+            "the post-save replay restarts the transport, so the field must stop claiming the "
+            "realtime stop was the run's last gesture",
+        )
+        # The phase stop's own emitter is the streamer, and it stays a record-button press: the
+        # gesture whose effect the device applies after its double-tap window.
+        streamer_source = inspect.getsource(streamer_module)
+        self.assertIn("note=stop_press_note,", streamer_source)
+        self.assertNotIn('mido.Message("stop")', streamer_source)
 
 
 if __name__ == "__main__":
