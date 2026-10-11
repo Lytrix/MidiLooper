@@ -15,9 +15,11 @@ task (6.8)** among the evidence it collects.
 
 This document states **no** end-to-end timing, gap, capacity or residency limit of its own. Every such number belongs to
 S7.5a, whose own entry requires limits to be *"derive[d] before qualifying runs, never fit … after observing a run"*, and
-requires unsupported combinations to be stated rather than silently shrunk. As of 2026-10-05 **S7.5a is open** — it has
-no numeric limits recorded — so this change's contribution is the **method, the fixtures and the rows**, not a competing
-set of numbers.
+requires unsupported combinations to be stated rather than silently shrunk. The2026-10-05 state had no numeric limits;
+**current correction2026-10-11:** DEC-117 — continuity envelope records the choices in
+[`DECLARED-LIMITS.md`](../runtime-working-set-ownership/evidence/2026-10-11-s75a-continuity-envelope/DECLARED-LIMITS.md).
+S7.5a — envelope/timing oracle remains open because required measurements, resource allocations and qualification
+are not complete. This change contributes methods/fixtures/rows, not a competing set of numbers or a qualification claim.
 
 ## 2. What must be allocated against the shared budget before the affected paths are enabled
 
@@ -26,7 +28,7 @@ and memory budget* before the affected production paths are enabled. The honest 
 
 | Work | Allocation against S7.5a's budget | Why |
 |---|---|---|
-| window build/publication (the lane's per-turn work) | **not yet allocated** | the oracle's limits are unpinned; instead this change's native sweeps measure the composed cost law `drainTurns = H × (1 + K) × serviceTurns` and its density/span/boundary cases, and the lane's per-turn cost is charged as **one declared grain** |
+| window build/publication (the lane's per-turn work) | **not yet allocated/qualified** | shared numerical choices are recorded, but the lane's cost/bound and resource allocation still need evidence; native sweeps measure `drainTurns = H × (1 + K) × serviceTurns` and density/span/boundary cases, while one declared grain is not yet a device timing guarantee |
 | index over the selected snapshot | **not yet allocated** | task 3.6's interval index is unfinished, so there is nothing to charge |
 | retention (pinned source) | **not yet allocated** | 3.6a's retained-source figure is recorded but not budgeted against S7.5a |
 | paging (the legacy paged path) | **partially** | 5.5's envelope statement and the `S312b` paged-path work bound it within its declared envelope; the shared-budget allocation is still owed |

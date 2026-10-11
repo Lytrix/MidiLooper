@@ -698,38 +698,46 @@ def measure_same_tick_burst(lines: Sequence[str]) -> Measurement:
 
 
 def measure_deferred_owner_service_advance(lines: Sequence[str]) -> Measurement:
-    """Per-opportunity service advance, ticks — `DIAG,win_gap`'s `maxDelta` vs its `permitted`.
+    """Eligible-predecessor advance, ticks — not the row's raw/idle ``maxDelta``.
 
-    This is the measured half of `Delta-max × H × bounded per-track work`: the row reports the worst phase
-    advance across a turn whose predecessor was eligible, beside the declared permitted value it is judged
-    against (`include/Track.h`).
+    The producer compares ``eligiblePredecessorMax`` with ``permitted`` and records
+    explicit overruns. Reporting may occur after transport stops; the row's current
+    transport flag must not erase observations accumulated while work was eligible.
     """
     parsed = _win_gap_rows(lines)
     if not parsed:
         return Measurement(
-            "deferred_owner_service_advance",
-            "ticks",
-            MISSING,
+            "deferred_owner_service_advance", "ticks", MISSING,
             reason="no complete DIAG,win_gap row in this capture (qualification-image family)",
         )
+    eligible_max = max(int(row[5]) for row in parsed)
+    eligible_turns = sum(int(row[6]) for row in parsed)
+    detail = {
+        "basis": "DIAG,win_gap eligiblePredecessorMax; raw maxDelta is diagnostic only",
+        "raw_max_delta_ticks": max(int(row[0]) for row in parsed),
+        "declared_permitted_ticks": sorted({int(row[12]) for row in parsed}),
+        "overrun_sum": sum(int(row[13]) for row in parsed),
+        "overrun_max_ticks": max(int(row[14]) for row in parsed),
+        "saturated_gap_sum": sum(int(row[11]) for row in parsed),
+        "opportunities_sum": sum(int(row[1]) for row in parsed),
+        "eligible_turns_sum": eligible_turns,
+        "progress_turns_sum": sum(int(row[7]) for row in parsed),
+        "caveat": "eligible observations do not establish every required workload/readiness gate",
+    }
+    if eligible_turns == 0 and eligible_max == 0:
+        return Measurement(
+            "deferred_owner_service_advance", "ticks", UNPROVEN,
+            source_rows=len(parsed), detail=detail,
+            reason="no eligible observations; idle gaps cannot establish a service bound",
+        )
     return Measurement(
-        "deferred_owner_service_advance",
-        "ticks",
-        MEASURED,
-        value=float(max(int(row[0]) for row in parsed)),
-        source_rows=len(parsed),
-        detail={
-            "declared_permitted_ticks": sorted({int(row[12]) for row in parsed}),
-            "overrun_sum": sum(int(row[13]) for row in parsed),
-            "overrun_max_ticks": max(int(row[14]) for row in parsed),
-            "saturated_gap_sum": sum(int(row[11]) for row in parsed),
-            "caveat": "blocked runs of lost turns are not held by a per-turn constant (DEC-108 §13b)",
-        },
+        "deferred_owner_service_advance", "ticks", MEASURED,
+        value=float(eligible_max), source_rows=len(parsed), detail=detail,
     )
 
 
 def measure_deferred_owner_denial(lines: Sequence[str]) -> Measurement:
-    """Deferred-owner denial and rotation, **turns** — `DIAG,win_gap`'s `deniedTurns`/`eligibleTurns`."""
+    """Denied-dispatch totals, **turns** — not a per-holder consecutive-wait metric."""
     parsed = _win_gap_rows(lines)
     if not parsed:
         return Measurement(
@@ -748,7 +756,8 @@ def measure_deferred_owner_denial(lines: Sequence[str]) -> Measurement:
             "opportunities_sum": sum(int(row[1]) for row in parsed),
             "eligible_turns_sum": sum(int(row[6]) for row in parsed),
             "progress_turns_sum": sum(int(row[7]) for row in parsed),
-            "rotation_bound_turns": "NUM_TRACKS - 1 = 7 (include/Track.h)",
+            "basis": "deniedTurns is a reporting-block aggregate, not a consecutive wait",
+            "consecutive_wait_owed": "per-progress-capable-holder wait observation is not in this row",
         },
     )
 

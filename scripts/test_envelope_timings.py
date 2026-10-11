@@ -29,6 +29,7 @@ REAL_CAPTURES = (
 def _win_gap(
     *,
     max_delta: int = 0,
+    eligible_predecessor_max: int = 0,
     opportunities: int = 1,
     eligible: int = 0,
     progress: int = 0,
@@ -40,7 +41,7 @@ def _win_gap(
 ) -> str:
     """One `DIAG,win_gap` row in the emitter's field order (see `scripts/hitl/verify/windowed_lane.py`)."""
     fields = [
-        max_delta, opportunities, 0, 0, 0, 0, eligible, progress, denied, 0, 1, saturated,
+        max_delta, opportunities, 0, 0, 0, eligible_predecessor_max, eligible, progress, denied, 0, 1, saturated,
         permitted, overruns, overrun_max, 3,
     ]
     return f"#CAP,1000,DIAG,win_gap,{','.join(str(field) for field in fields)}"
@@ -316,18 +317,44 @@ class TestSameTickBurst(unittest.TestCase):
 
 
 class TestDeferredOwnerServiceAdvance(unittest.TestCase):
-    def test_reads_max_delta_beside_the_declared_permitted_value(self) -> None:
-        lines = [_win_gap(max_delta=0), _win_gap(max_delta=59, opportunities=256)]
+    def test_reads_eligible_predecessor_delta_beside_permitted(self) -> None:
+        lines = [_win_gap(max_delta=0), _win_gap(
+            max_delta=90, eligible_predecessor_max=59, eligible=1, opportunities=256)]
         result = m.measure_deferred_owner_service_advance(lines)
         self.assertEqual(result.availability, m.MEASURED)
         self.assertEqual(result.value, 59)
         self.assertEqual(result.detail["declared_permitted_ticks"], [64])
 
     def test_overruns_are_reported_not_smoothed(self) -> None:
-        lines = [_win_gap(max_delta=120, overruns=1, overrun_max=120)]
+        lines = [_win_gap(max_delta=150, eligible_predecessor_max=120,
+                          eligible=1, overruns=1, overrun_max=120)]
         result = m.measure_deferred_owner_service_advance(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 120)
+        self.assertEqual(result.detail["raw_max_delta_ticks"], 150)
         self.assertEqual(result.detail["overrun_sum"], 1)
         self.assertEqual(result.detail["overrun_max_ticks"], 120)
+
+    def test_idle_gap_does_not_become_an_eligible_overrun(self) -> None:
+        lines = [_win_gap(max_delta=158), _win_gap(
+            max_delta=6, eligible_predecessor_max=6, eligible=157, progress=23)]
+        result = m.measure_deferred_owner_service_advance(lines)
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 6)
+        self.assertEqual(result.detail["raw_max_delta_ticks"], 158)
+        self.assertEqual(result.detail["overrun_sum"], 0)
+
+    def test_only_idle_observations_are_unproven_not_measured_zero(self) -> None:
+        result = m.measure_deferred_owner_service_advance([_win_gap(max_delta=158)])
+        self.assertEqual(result.availability, m.UNPROVEN)
+        self.assertIsNone(result.value)
+        self.assertEqual(result.detail["raw_max_delta_ticks"], 158)
+
+    def test_final_eligible_predecessor_is_counted_after_current_eligibility_ends(self) -> None:
+        result = m.measure_deferred_owner_service_advance([
+            _win_gap(max_delta=90, eligible_predecessor_max=6)])
+        self.assertEqual(result.availability, m.MEASURED)
+        self.assertEqual(result.value, 6)
 
     def test_not_in_capture_is_missing_for_this_family(self) -> None:
         self.assertEqual(
@@ -336,13 +363,16 @@ class TestDeferredOwnerServiceAdvance(unittest.TestCase):
 
 
 class TestDeferredOwnerDenial(unittest.TestCase):
-    def test_reads_denied_turns_against_the_rotation_bound(self) -> None:
+    def test_reads_reporting_block_denials_without_claiming_consecutive_wait(self) -> None:
         lines = [_win_gap(eligible=10, progress=10, denied=0), _win_gap(eligible=4, denied=3)]
         result = m.measure_deferred_owner_denial(lines)
         self.assertEqual(result.availability, m.MEASURED)
         self.assertEqual(result.value, 3)
         self.assertEqual(result.detail["eligible_turns_sum"], 14)
         self.assertEqual(result.detail["progress_turns_sum"], 10)
+        self.assertIn("reporting-block aggregate", result.detail["basis"])
+        self.assertIn("consecutive_wait_owed", result.detail)
+        self.assertNotIn("rotation_bound_turns", result.detail)
 
 
 class TestCaptureReplenishment(unittest.TestCase):

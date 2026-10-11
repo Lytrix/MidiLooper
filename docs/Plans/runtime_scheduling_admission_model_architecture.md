@@ -329,7 +329,7 @@ Allocation (`assign`, `resize`, `push_back`, sort) is part of unit cost. O(loop)
 
 ## 13. S0 telemetry (shipped, observation only)
 
-`RuntimeTimingTelemetry` emits Tier-A `DIAG` windows every 5 s from `main.cpp::loop()`. No scheduling decision reads these values. Native: `test_runtime_timing_telemetry`. `overCount` uses an observational 5000 µs soft ceiling for counting only.
+`RuntimeTimingTelemetry` emits Tier-A `DIAG` windows nominally every5s from `main.cpp::loop()`; report the actual span. No scheduling decision reads these values. Native: `test_runtime_timing_telemetry`. `overCount` uses the single counting-only `kObservationalSoftCeilingUs` in `include/Utils/RuntimeTimingTelemetry.h`: **6,250µs** in the aligned/flashed image, **5,000µs** in earlier images. Match counts by image, cohort, metric and bar, not calendar date. This is a **component/sample diagnostic count**, not the declared combined-cycle p99 or its crossing frequency;4ms+4ms can cross6.25ms with neither component counted. Other sample families share this bar, not their own declared limits; positive-lateness counting is separate. DEC-117 — continuity envelope and `DECLARED-LIMITS.md` carry the corrected metric scope.
 
 | Metric | Definition | DIAG tag |
 |--------|------------|----------|

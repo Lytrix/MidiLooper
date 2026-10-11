@@ -1,10 +1,20 @@
 # S7.5a — the declared limits, the per-row measurement plan and the verdict oracle (increment 5: a **proposal**)
 
-**Status: proposal for owner sign-off. Nothing in this document is declared, approved or exercised.** It answers
-items 3–5 of [`DECLARED_ENVELOPE.md`](DECLARED_ENVELOPE.md) §8 (a measurement plan per row, then the oracle row) by
-turning the §2 tempo basis and Table A anchors into **candidate numbers**, and it names what cannot carry one.
-**No value here is owner-approved**, no qualifying run was made, no firmware/test/bound-class/checkbox changed, and
-**S7.5a stays unchecked**. `DEC-100` still governs: the envelope is reported, never enforced at admission.
+**Status: HISTORICAL, UNAPPROVED PROPOSAL VERSION — SUPERSEDED for current limits and oracle.**
+**Use [`DECLARED-LIMITS.md`](DECLARED-LIMITS.md) §2 (current table), §2b (input-only exception policy),
+§3 (current oracle) and §9 (corrected observations).** The signed numerical record stands; this older version
+is not retroactively approved. In particular its **12,500 µs** choices are historical proposals, not current caps.
+S7.5a — continuity envelope stays unchecked; no qualifying run or firmware/test/device change is claimed here.
+
+**Representation correction:** this version's old table/plan surfaces below are historical proxies, not proof:
+combined input requires direct `D_i + G_(i+1)` cycle histogram (**unmeasured**), not marginal quantile sums;
+`capstamp_max` is positive in-service drift, not signed physical-arrival error; `late_route(type,ch)` is logical
+and `late_on/off` pooled, not physical-route quantiles; eligible advance uses `eligiblePredecessorMax` with
+`permitted/overruns/overrunMax`, not raw `maxDelta`; block-total `deniedTurns` is not consecutive holder wait.
+Burst **16 aggregate / 8 physical route** is a chosen workload limit, not a theorem from eight tracks.
+USB output does not qualify the **1,041 events/s DIN** reference or MI input. Required missing data always
+prevents qualification; accepted input p99 violations are never plain PASS. The current oracle, not historical
+§4's wording about unproven metrics, decides this. No measurement instrument or runtime verdict enum is implemented.
 
 ## 1. How a limit is expressed here: the metric's own unit, justified by musical time
 
@@ -20,7 +30,7 @@ So **a limit is declared in the unit its metric is measured in** — µs for the
 the row itself counts ticks or events — and musical time is used to **justify** the number, never as a run-time
 conversion the reader has to perform. The µs values are the musical interval read at the **fastest reachable tempo
 (300 BPM, 1,041.7 µs per tick)**, i.e. the tightest case, so one fixed number holds at every tempo and the oracle
-compares a row against it directly: `µs = 60000 / BPM / 192 × ticks`.
+compares a row against it directly: `µs = 60000000 / BPM / 192 × ticks` (`60000` gives milliseconds).
 
 **Why the tightest tempo rather than a per-tempo table.** The failure this envelope exists to catch is a *scheduler*
 excursion, and the musically equivalent bound at 20 BPM (187.5 ms for 12 ticks) would tolerate a 187 ms stall — the
@@ -69,11 +79,10 @@ musical density loads the firmware ~15× harder). A leg at **180 BPM** is a usef
 tempo a demanding player actually reaches — but it is **coverage, not the bound**: 300 BPM is the number that
 decides.
 
-**What that buys.** For every **deadline-shaped** metric (gap, input-service duration, output lateness and its
-distribution, jitter, and the tick-counted capture timestamp error), a pass at 300 BPM implies a pass at any slower
-tempo: the declared caps are fixed at their 300 BPM values (§1), the musical requirement loosens as tempo falls, and
-the event rate falls with it. That is the sense in which "lower will always work" — and it is worth stating that it
-is an *implication*, not an assumption: it holds because every cap of §2 is fixed and read at the fast end.
+**Correction to the historical tempo inference.** Fixed caps are an owner policy, not proof that a pass at
+300 BPM implies every slower tempo or multi-track workload passes. Lower nominal musical rate can relax
+musical deadlines without bounding independent contention, operation batching or clock advancement.
+One 300 BPM run does not qualify the whole matrix; the named slow and batched-clock coverage below remains owed.
 
 **What it does not buy — two named classes still need the slow end of the range:**
 
@@ -87,13 +96,11 @@ is an *implication*, not an assumption: it holds because every cap of §2 is fix
    unbounded until measured. A 300 BPM leg therefore does not bound the contention axis; the matrix keeps a slow leg
    for it (the §3 rows name which is which).
 
-**Prerequisite, verified and named:** the managed HITL entry point has **no tempo or clock-source plumbing** today —
-`scripts/host_midi_hitl.py run` exposes no `--tempo`/`--bpm`, and the presets fix the pacing (checked 2026-10-11).
-So a 300 BPM qualifying leg needs a **pinned way to set tempo and clock source first** (a registered stimulus, or a
-declared temporary variant with its reason — never an edit to a canonical stimulus). Until that exists, the tempo
-axis cannot be exercised at all, and that is a prerequisite of the acceptance run, not a property of these limits.
-Content must also be *tempo-following* (the same musical density) for the rate comparison above to mean anything;
-a leg whose note density is fixed in wall-clock terms would not test the fast end.
+**Correction to the historical plumbing claim:** the canonical managed entry point supports
+`host_midi_hitl.py run --preset base --clock-source host --tempo-bpm 300 …`, forwarded to the baseline.
+The current registered recipe, invocation and actual tempo/clock provenance must match. This capability does
+not supply a qualifying run or authorization to execute it, alter a canonical stimulus, overwrite or upload.
+Content must also be tempo-following for musical-density rate comparisons to mean anything.
 
 ## 3. L2 — the measurement plan, one row per metric (covers `DECLARED_ENVELOPE.md` §8 item 3)
 
@@ -193,11 +200,12 @@ so a pass is never read as covering something it did not measure.
 
 ## 7. What this increment does not claim
 
-No limit is declared, approved or enforced; no qualifying run; no firmware, test, bound-class, task-checkbox or
-delivery change; **S7.5a, S7.5b and S7.5 stay unchecked**, and the sibling's statement — *"S7.5a is open: it has no
-numeric limits recorded"* — remains true until the owner signs §2. A `DEC-###` entry is deliberately **not**
-appended: the numbers it would carry are proposals. Three of the twelve metrics have no limit at all in this
-proposal (L1.12–L1.14), and that is a statement about the instruments, not a reduction of the required envelope.
+This historical proposal version declares/enforces no current limit and claims no qualifying run or firmware,
+test, bound-class, checkbox or delivery change. **S7.5a — continuity envelope, S7.5b — continuity implementation,
+and S7.5 — combined acceptance stay unchecked.** The former claim that no numeric limits are recorded is
+superseded by the signed **DECLARED-LIMITS.md** record and DEC-117 — declared continuity envelope, not by
+retroactively signing this table. L1.12–L1.14 are the explicitly excluded watch list in the current document;
+other required unmeasured metrics cannot be excluded merely because their instruments are insufficient.
 
 ## Basis update, 2026-10-11: the reachable clock range is now 1–300 BPM
 
@@ -213,7 +221,7 @@ What that changes here, and what it does not:
 * **The slow-tempo caveat in §2b gets stronger**: the range now reaches 1 BPM (1 tick = 312.5 ms), so a
   musically-equivalent bound at the slow end would be 3,750 ms for 12 ticks — an even clearer reason why the cap is
   wall-clock and why any slow-tempo slack must be a declared allowance (sign-off question 1).
-* **§2b's tempo-axis conclusion is unchanged**: the primary qualifying leg is still the fastest reachable tempo, and
-  the slow leg is still owed for the contention and batched-external-clock classes. The 1 BPM end does not need its
-  own worse case for *deadline-shaped* metrics — it is strictly looser — but it is now reachable from the control
-  surface, which is what makes a slow leg runnable at all.
+* **Current coverage caveat:** fastest reachable tempo remains the primary stress leg; slow contention and
+  batched-clock coverage remain owed. A looser musical tick at 1 BPM does not prove slower-tempo execution,
+  multi-track or wall-clock contention bounds. See the current declared limits §1/§4 rather than the withdrawn
+  universal implication or historical sign-off question 12.
