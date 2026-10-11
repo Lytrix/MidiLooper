@@ -19,10 +19,12 @@ the legacy arguments, and the leg's own parser is strict about arguments it does
 from __future__ import annotations
 
 import json
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from hitl.boot_handoff import wait_for_boot_handoff
 from hitl.scenarios.long_loop_display_window import run_long_loop_display_window
 from hitl.verify.windowed_lane import verify_windowed_content_parity
 
@@ -313,6 +315,21 @@ def run_post_leg_phase(
             return None
         print(f"[windowed-content-parity] the capture owns the serial port: draining {drain_log.name}")
         drain_from = len(drain_log.read_text(encoding="utf-8").splitlines())
+
+    # The post-leg switch/stop gestures must not land inside the device's boot/display handoff
+    # (owner report 2026-10-12). Row evidence, not a sleep; no collector (managed capture owns the
+    # port) -> skip.
+    if collector is not None:
+        handoff = wait_for_boot_handoff(collector)
+        print(f"[hitl] boot handoff: {handoff}")
+        if handoff == "timeout":
+            print(
+                "[error] device boot handoff not observed within 30.0s (DisplayManager: Boot "
+                "setup complete / boot_commit missing): refusing to send control gestures into "
+                "an unfinished boot",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
     out_port = mido.open_output(_find_midi_port("Teensy", False))
     try:
         if switch_target_slot is not None:

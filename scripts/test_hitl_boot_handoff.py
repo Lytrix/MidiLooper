@@ -8,11 +8,21 @@ starting during bootup so too soon which makes the display hang after boot"), pi
 `captures/i3a-edge-effect-boot-rerun-t8s4-02` (a press into the unfinished boot read as 1 ms and
 cycled LOOP_EDIT -> NOTE_EDIT). The gate is row evidence, never a sleep, and never writes.
 
+The same gate is ported to the edit driver `legacy_edit_baseline.run_edit_baseline` (the seeded-edit
+preset `note_edit_reselect_stacked --boot-reset` hung the display the same way, owner report
+2026-10-12); both drivers' call-site order is pinned by source-offset tripwires.
+
+The seeded-edit scenarios that own their gestures (`note_edit_reselect_stacked`,
+`note_edit_overdub_compose`, `edit_overdub_during_note_edit`, `windowed_content_parity`) are gated the
+same way and pinned by the same tripwire; `overdub_occupy_paint` and `edit_full` reach their gestures
+only through the already-gated drivers.
+
 Run: .venv/bin/python scripts/test_hitl_boot_handoff.py
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 import unittest
@@ -167,6 +177,141 @@ class StartSequencingTripwireTests(unittest.TestCase):
         self.assertEqual("DisplayManager: Boot setup complete", BOOT_SETUP_COMPLETE_ROW)
         self.assertEqual("DIAG,loop_rem,boot_commit", BOOT_COMMIT_ROW)
 
+
+
+class EditStartSequencingTripwireTests(unittest.TestCase):
+    """The gate must also run before the first control-surface gesture of `run_edit_baseline()`."""
+
+    _SOURCE = _SCRIPT_DIR / "hitl" / "legacy_edit_baseline.py"
+    _FUNCTION = "def run_edit_baseline("
+    _GATE_CALL = "wait_for_boot_handoff("
+    _GESTURE_CALLS = (
+        "_send_short_press(",
+        "_send_double_press(",
+        "_send_triple_press(",
+        "_send_long_press(",
+        "_select_loop_slot_before_record_arm(",
+        "_run_clear_before_record(",
+        "_run_record_arm_until_capturing(",
+    )
+
+    def _function_body(self, source: str) -> str:
+        """`run_edit_baseline()` up to the next top-level def (its gestures live in `main()`'s file)."""
+        start = source.index(self._FUNCTION)
+        next_def = re.search(r"\ndef [A-Za-z_]", source[start + 1 :])
+        end = start + 1 + next_def.start() if next_def is not None else len(source)
+        return source[start:end]
+
+    def test_gate_call_site_precedes_the_control_gesture_call_sites(self) -> None:
+        body = self._function_body(self._SOURCE.read_text(encoding="utf-8"))
+        self.assertIn(self._GATE_CALL, body)
+        gate_offset = body.index(self._GATE_CALL)
+        gesture_offsets = [body.index(name) for name in self._GESTURE_CALLS if name in body]
+        self.assertTrue(gesture_offsets, "the tripwire must find a control-gesture call site")
+        self.assertLess(
+            gate_offset,
+            min(gesture_offsets),
+            "wait_for_boot_handoff must be called before the first control gesture in "
+            "run_edit_baseline()",
+        )
+
+    def test_gate_reads_the_edit_run_s_own_serial_collector(self) -> None:
+        body = self._function_body(self._SOURCE.read_text(encoding="utf-8"))
+        gate_offset = body.index(self._GATE_CALL)
+        self.assertIn("wait_for_boot_handoff(serial_collector)", body[gate_offset:])
+        # The timeout branch refuses by name and aborts before any gesture.
+        self.assertIn("refusing to send control gestures", body)
+        self.assertIn("raise SystemExit(3)", body)
+
+    def test_gate_is_skipped_when_no_serial_collector_exists(self) -> None:
+        body = self._function_body(self._SOURCE.read_text(encoding="utf-8"))
+        self.assertIn("if serial_collector is not None:", body)
+
+
+class ScenarioStartSequencingTripwireTests(unittest.TestCase):
+    """Each scenario that owns control gestures must gate them behind the boot handoff."""
+
+    _SCENARIO_DIR = _SCRIPT_DIR / "hitl" / "scenarios"
+    _GATE_CALL = "wait_for_boot_handoff("
+    #: (source file, function that owns the gate, control-gesture call sites in that function).
+    _CASES = (
+        (
+            "note_edit_reselect_stacked.py",
+            "def run_note_edit_reselect_stacked(",
+            (
+                "_send_short_press(",
+                "_send_select_pitchbend(",
+                "_fader1_select_fixture_note(",
+                "_fader2_move_to_sixteenth_step(",
+                "_ensure_target_playing(",
+                "_ensure_note_edit_entered(",
+            ),
+        ),
+        (
+            "note_edit_overdub_compose.py",
+            "def run_note_edit_overdub_compose(",
+            (
+                "_ensure_transport_running(",
+                "_send_short_press(",
+                "_fader1_select_nav_slot_index(",
+                "_ensure_note_edit_entered(",
+            ),
+        ),
+        (
+            "edit_overdub_during_note_edit.py",
+            "def run_edit_overdub_during_note_edit(",
+            (
+                "_ensure_transport_running(",
+                "_send_short_press(",
+                "_send_long_press(",
+                "_stop_transport_if_running(",
+            ),
+        ),
+        (
+            "windowed_content_parity.py",
+            "def run_post_leg_phase(",
+            ("switch_leg(", "press_global_transport_stop("),
+        ),
+    )
+
+    def _body_for(self, case: tuple) -> str:
+        file_name, function_marker, _gesture_calls = case
+        source = (self._SCENARIO_DIR / file_name).read_text(encoding="utf-8")
+        start = source.index(function_marker)
+        next_def = re.search(r"\ndef [A-Za-z_]", source[start + 1 :])
+        end = start + 1 + next_def.start() if next_def is not None else len(source)
+        return source[start:end]
+
+    def test_gate_call_site_precedes_the_control_gesture_call_sites(self) -> None:
+        for case in self._CASES:
+            file_name, _function_marker, gesture_calls = case
+            with self.subTest(scenario=file_name):
+                body = self._body_for(case)
+                self.assertIn(self._GATE_CALL, body)
+                gate_offset = body.index(self._GATE_CALL)
+                gesture_offsets = [
+                    body.index(name) for name in gesture_calls if name in body
+                ]
+                self.assertTrue(
+                    gesture_offsets, f"{file_name}: the tripwire must find a gesture call site"
+                )
+                self.assertLess(
+                    gate_offset,
+                    min(gesture_offsets),
+                    f"{file_name}: wait_for_boot_handoff must precede the first control gesture",
+                )
+
+    def test_gate_reads_the_scenarios_own_collector_and_refuses_by_name(self) -> None:
+        for case in self._CASES:
+            file_name, _function_marker, _gesture_calls = case
+            with self.subTest(scenario=file_name):
+                body = self._body_for(case)
+                match = re.search(r"wait_for_boot_handoff\((\w+)\)", body)
+                self.assertIsNotNone(match, f"{file_name}: no collector passed to the gate")
+                collector_var = match.group(1)
+                self.assertIn(f"if {collector_var} is not None:", body)
+                self.assertIn("refusing to send control gestures", body)
+                self.assertIn("raise SystemExit(3)", body)
 
 if __name__ == "__main__":
     unittest.main()

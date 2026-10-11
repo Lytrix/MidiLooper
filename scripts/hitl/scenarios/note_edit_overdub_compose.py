@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from hitl.boot_handoff import wait_for_boot_handoff
 from hitl.context import get_context
 from dataclasses import replace
 
@@ -543,6 +545,20 @@ def run_note_edit_overdub_compose(args: object) -> int:
         abort.serial_collector = serial_collector
         if ns.post_seed_settle_ms > 0:
             time.sleep(ns.post_seed_settle_ms / 1000.0)
+
+        # The scenario's own first gesture must not land inside the device's boot/display handoff
+        # (owner report 2026-10-12). Row evidence, not a sleep; no collector -> skip.
+        if serial_collector is not None:
+            handoff = wait_for_boot_handoff(serial_collector)
+            print(f"[hitl] boot handoff: {handoff}")
+            if handoff == "timeout":
+                print(
+                    "[error] device boot handoff not observed within 30.0s (DisplayManager: Boot "
+                    "setup complete / boot_commit missing): refusing to send control gestures into "
+                    "an unfinished boot",
+                    file=sys.stderr,
+                )
+                raise SystemExit(3)
 
         if not _ensure_transport_running(
             out_port,

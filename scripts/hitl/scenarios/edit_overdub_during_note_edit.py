@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from pathlib import Path
 from typing import Optional
 
+from hitl.boot_handoff import wait_for_boot_handoff
 from hitl.context import get_context
 
 # Baseline-aligned overdub pitch bands (host_midi_automation_baseline defaults).
@@ -169,6 +171,20 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
                 "(after edit record seed; loop reload from SD)"
             )
             time.sleep(ns.post_seed_settle_ms / 1000.0)
+
+        # The scenario's own first gesture must not land inside the device's boot/display handoff
+        # (owner report 2026-10-12). Row evidence, not a sleep; no collector -> skip.
+        if serial_collector is not None:
+            handoff = wait_for_boot_handoff(serial_collector)
+            print(f"[hitl] boot handoff: {handoff}")
+            if handoff == "timeout":
+                print(
+                    "[error] device boot handoff not observed within 30.0s (DisplayManager: Boot "
+                    "setup complete / boot_commit missing): refusing to send control gestures into "
+                    "an unfinished boot",
+                    file=sys.stderr,
+                )
+                raise SystemExit(3)
 
         track_index = ns.track_number - 1
 

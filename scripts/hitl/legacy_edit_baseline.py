@@ -81,6 +81,7 @@ from hitl.edit_controls import (  # noqa: E402
     _send_triple_press,
     _stop_transport_if_running,
 )
+from hitl.boot_handoff import wait_for_boot_handoff  # noqa: E402
 
 DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S = 30.0
 
@@ -5531,6 +5532,24 @@ def run_edit_baseline(
 
     if owns_resources is None:
         owns_resources = opened_ports or opened_serial
+
+    # Mirror of `legacy_record_baseline.run()`'s gate: the edit leg's first control-surface gesture
+    # must not land inside the device's boot/display handoff (the seeded-edit preset
+    # `note_edit_reselect_stacked` hung the display after boot the same way, owner report
+    # 2026-10-12). Row evidence, not a sleep. The collector exists -> gate, none -> skip. The gate
+    # sits after both collector paths (opened by `_open_edit_baseline_serial` or injected by the
+    # caller) and before `RunAbort`/the `try` block that sends the gestures.
+    if serial_collector is not None:
+        handoff = wait_for_boot_handoff(serial_collector)
+        print(f"[hitl] boot handoff: {handoff}")
+        if handoff == "timeout":
+            print(
+                "[error] device boot handoff not observed within 30.0s (DisplayManager: Boot "
+                "setup complete / boot_commit missing): refusing to send control gestures into "
+                "an unfinished boot",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
 
     record_fixture = (
         EDIT_SAME_STEP_CHORD_FIXTURE
