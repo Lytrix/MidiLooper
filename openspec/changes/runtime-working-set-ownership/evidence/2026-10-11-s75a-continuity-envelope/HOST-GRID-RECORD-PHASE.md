@@ -1,8 +1,9 @@
 # The host-grid record phase: the script dictates tick 0
 
-**Status: implemented, host-verified and reviewed; the device leg is owed.** Host tooling only — no
-firmware line, no build, no upload, no SD action, no device run. Nothing here declares a limit, an
-envelope or a qualification, and **S7.5a / S7.5b / S7.5 stay unchecked**.
+**Status: implemented, host-verified, reviewed and **device-verified** (the fix's three readings are
+measured on the board, §3b).** Host tooling only — no firmware line, no build, no upload, no SD action.
+Nothing here declares a limit, an envelope or a qualification, and **S7.5a / S7.5b / S7.5 stay
+unchecked**.
 
 This executes the bounded next step recorded in
 [TEMPO-FADER-AND-300BPM-LEG.md](TEMPO-FADER-AND-300BPM-LEG.md) §14/§17 ("anchor the base record
@@ -137,20 +138,87 @@ The 300 BPM host leg's 33-clock first note was the `RECORDING` wait, not the ori
   convention and the stop-latency model against the firmware, and that the non-host paths are
   unchanged.
 
+## 3b. Device leg — the fix is measured on the board
+
+Owner-authorized run on the canonical entry point, target track 8 / slot 4, **no upload and no
+flash** (the image on the board is the one the earlier legs ran):
+
+```
+host_midi_hitl.py run --preset base --track 8 --loop-slot 4 --midi-channel 8 \
+    --boot-reset --capture-boot-wait 30 --clock-source host --tempo-bpm 300 \
+    --out-dir captures/host-grid-record-t8s4-01
+```
+
+**Preflight (`captures/host-grid-record-preflight-01`, read-only).** A non-reset attach
+(`hitl_boot_census.py --no-reset --settle-s 6 --heap-stats`) shows the device healthy and quiescent:
+transport stopped, `deferred_prewarm_idle=1`, admission/interactive/undo ready, `!HEAP_STATS`
+**granted** (the previous session's `track_work` refusal is gone), `free_chunks=406`, no reconcile
+warnings, `DISP,3,STOPPED` (LOOP_EDIT, stopped — no leftover `ARMED`). **A stale latch was found and
+discharged in the documented order:** `captures/.device-shutdown-incomplete.json` held
+`incomplete_disconnected: transport stop press failed: RuntimeError("No MIDI output port matching
+'Teensy'")` with `drains: 0` — a **host-side** failure from an earlier *test* sweep in which no MIDI
+port existed, so no device save was ever in flight. The device was verified first (above), the payload
+preserved as `captures/host-grid-record-preflight-01/latch-before.json`, and only then was
+`hitl.device_shutdown.clear_latch()` called.
+
+**The three readings this leg exists for, all three from the device's own rows:**
+
+| Reading | Before this change (same preset/tempo/clock) | This leg |
+|---|---|---|
+| committed length | `2304/1536`, `raw 2312` | **`1536/1536`, `raw 1536`**, `bar_aligned 1536` |
+| record first note | **33 clocks** (bound 12, `record_first_note_too_late`) | **1 clock (4.613 ms)**, `timing_warnings []` |
+| grid anchor evidence | (no such field) | `origin_pulse=76`, `first_note_pulse=76`, **`first_note_tick=0`** |
+
+* The device's own stop row: `RECS,stop,3,1536,0,1536,1536,0` with `Recording stopped @ tick 1536
+  (recStart=0 length=1536)` — the press's *effect* landed exactly on the 2-bar boundary (`raw ==
+  1536`, not one tick past), which is the bucket centre the schedule aims at.
+* `stored_record_grid`: 32 note-ons, `first_tick 0`, `last_tick 1488`, `min_delta = max_delta = 48`,
+  `bad_delta_count 0/2` — the recorded content sits exactly on the 1/16 grid from tick 0.
+* `record_phase`: 32 on / 32 off, 0 unmatched, 0 out of range, 0 sequence mismatch; `record_note_span`
+  `raw_span_ok=true`; `stored_overdub_span` and `stored_second_overdub_span` `bars 2/2 span_ok=true`;
+  MIDI-boundary timing `overflow_free=true call_sites=true`; display `overdub_ok=true
+  transport_ok=true`.
+* **Shutdown `complete / drains 2 / ok true`, and no latch was written** — the device is left drained.
+
+**The leg also measures the press lead, which was the modelled term.** The schedule emitted the press at
+grid position `192 - 50 = 142`, i.e. device tick `141 * 8 = 1128`, and the device's own row says the stop
+was applied at tick **1536** — so the bench's lead was **408 ticks = 425 ms** against the modelled
+`press_ms + 300 ms` = **420 ms** (403 ticks, +5 ticks / +5 ms of USB and processing). That is one run's
+observation, not a calibration: it turns "the constant is the repo's model" into "the model was accurate to
+about a percent on this run", and it is also why the effect landed *on* the boundary rather than 5 ms past
+it (`raw == 1536` exactly).
+
+**Named residuals, unchanged by this work and not part of its claim.** The preset's own verdict is
+still `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` with `overall_ok=false`:
+`overdub_unmatched_open_notes` (the **overdub** phase, 1 unmatched note — the dense-generator class the
+skill records as "setup verdict only, unrelated to snapshot content"; the record phase itself is 0/32)
+and `persistence_stage_missing:result` (a report-window gap: three `PERS,result,…,ok` rows are in the
+full session log). Neither is evidence about this change, and no content or timing qualification is
+claimed.
+
+**Named limit of the fix.** It is **host-clock only** (`--clock-source host`): the record stop is
+scheduled on the host grid, so a *device-clock* base run at 300 BPM still ends its stream on the device
+`BAR` probe and presses afterwards, and would still mis-bucket. The generic mechanism for that shape
+already exists (`stop_press_note` + a positive `stop_press_advance_clocks`, which the occupy and
+overdub call sites use), so extending it is a bounded follow-up with its own leg rather than part of
+this request.
+
 ## 4. Owed, named rather than claimed
 
-1. **The device leg.** Nothing here has run against the board: the anchor, the in-stream press and the
-   committed length are host-pinned only. The leg that proves them is the canonical entry point —
-   `host_midi_hitl.py run --preset base --track 8 --loop-slot 4 --midi-channel 8 --clock-source host
-   --tempo-bpm 300 …` — and it **overwrites the content of its target slot**, so it needs the same
-   per-session authorization the earlier legs used. Its readings to check:
-   `record_loop_length.actual_final_length == 1536`, `record_grid_first_note_tick == 0`, and no
-   `record_first_note_too_late`.
-2. **The press lead is a modelled constant.** `press_ms + 300 ms` is the repo's own model of the
-   MIDI-button path; the schedule tolerates a large error (the effect may land anywhere in ± 384 ticks
-   — ± 0.4 s at 300 BPM), but the *measured* lead on this bench is not in this packet because no
-   device leg was run. A leg whose committed length still mis-buckets at the top tempo is the evidence
-   that would turn the model into a measurement.
+1. **~~The device leg~~ — RUN, and all three readings met** (§3b): `actual_final_length 1536/1536`
+   (`raw 1536`), `record_grid_first_note_tick == 0`, first note 1 clock, `timing_warnings []`,
+   `RECS,stop,3,1536,0,1536,1536,0`, shutdown `complete/2/ok` with no latch. The preset's own verdict
+   stays `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` for its two pre-existing residuals (an overdub
+   unmatched note and a report-window gap), so this is a fix verification rather than a baseline pass.
+1b. **The device-clock shape is still unfixed** (named in §3b): a 300 BPM base run on
+   `--clock-source device` keeps the old stop edge (no in-stream press on the host grid). The generic
+   `stop_press_note` + `stop_press_advance_clocks` mechanism already exists for it; extending the base
+   device-clock branch to use it is a bounded follow-up with its own leg.
+2. **The press lead: modelled, and now measured once.** `press_ms + 300 ms` is the repo's own model of
+   the MIDI-button path and the schedule tolerates a large error (the effect may land anywhere in ± 384
+   ticks — ± 0.4 s at 300 BPM); §3b's leg measures the bench at **408 ticks / 425 ms against the modelled
+   403 ticks / 420 ms** on that run. One observation is not a calibration, and a leg whose committed
+   length mis-buckets at the top tempo would still be the evidence that qualifies the constant.
 3. **The phase's own end condition is the host grid, not the device's bar counter.** That is
    deliberate here (the host knows the tick while slaved), but it means a host that loses slaving
    mid-phase would keep streaming its own grid; the device's `BAR` rows stay in the capture as the
