@@ -118,7 +118,8 @@ void DisplayManager::beginBootOled() {
     Serial.println("DisplayManager: Early OLED init for boot load...");
     _display.begin();
     _display.gfx.set_buffer_size(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    clearDisplayBuffer();
+    // drawBootScreen clears the full framebuffer and owns the first submission.
+    // A blank DMA transfer here would make its immediate title submission busy.
 }
 
 void DisplayManager::finishBootSetup() {

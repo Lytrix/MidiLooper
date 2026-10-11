@@ -7,6 +7,15 @@
 
 **Track column (OLED):** One letter per track (`-`, `P`, `O`, `R`, `A`, …). **`M`** if user-muted or hidden by solo on another row; **selected** track still shows real machine state under solo for editing.
 
+## Boot title submission
+
+`DisplayManager::beginBootOled` initializes the panel and framebuffer dimensions without
+submitting a blank frame. The immediately following `drawBootScreen` clears/draws the
+complete title and owns the first transfer, so an in-flight blank DMA frame cannot drop
+the title request. DMA stays enabled; `update` polls completion during the existing boot
+hold. Normal `setup` clearing and transport fallback/retry are unchanged.
+[Regression/build and authorized upload evidence; owner confirmed title and no hang on this boot](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-boot-title-first-frame/EXECUTION.md).
+
 ## Long-loop bounded window
 
 When a loop is **longer than 16 bars**, the detailed piano roll shows at most a **16-bar window** plus a full-width **overview strip** below the roll (window box + playhead on the full loop).
