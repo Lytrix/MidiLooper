@@ -469,6 +469,14 @@ Fixed, each with a fixture and a device observation:
   * Setup latency: the clear no longer waits for the deferred-save idle receipt (120 s configured,
     240 s floored) -- it aborted setup when the boot restore was slow and never made the clear more
     likely to succeed. The device is driven straight after boot; the firmware owns the refusal.
+  * Boot-handoff gate (**amendment, 2026-10-12**, owner-directed): the base leg's first control gesture now
+    waits for the device's own display/boot handoff rows (`DisplayManager: Boot setup complete` and
+    `DIAG,loop_rem,boot_commit`) through `hitl.boot_handoff.wait_for_boot_handoff`, and refuses by name on
+    timeout instead of pressing into an unfinished boot; a run that joined an already-booted device gets
+    `not-fresh-boot` and is not delayed. It never waits for `post_restore_census`, so the restore-load
+    argument above still holds. The edit-mode proof also waits for an already-arriving session ack before
+    pressing. Raw evidence:
+    `openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-base-leg-boot-handoff-gate/EXECUTION.md`.
   * Setup latency (PX1, 2026-09-29): the *boot wait itself* is gone. `capture_session.py` takes
     `--boot-reset-mode auto|force|never` and, in `auto`, asks the device read-only whether it is
     already stopped: a stopped device is attached with **no** reset and the settle ends on that

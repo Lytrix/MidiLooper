@@ -82,6 +82,7 @@ from hitl.verify.midi_boundary_timing import (
     midi_boundary_timing_issues,
     summarize_midi_boundary_timing,
 )
+from hitl.boot_handoff import wait_for_boot_handoff
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     DEFAULT_LONG_RUN_BAR_THRESHOLD,
@@ -5559,7 +5560,7 @@ _STUCK_CAPTURE_STATES = frozenset({"RECORDING", "OVERDUBBING"})
 
 @contextmanager
 def _managed_record_evidence_cleanup(out_port, result: dict):
-    """Keep MIDI open through end-of-run retrieval, including a failed leg."""
+    """Keep MIDI/capture open through Record retrieval and verified persistence before reporting."""
     from hitl.managed_capture import active_managed_capture
 
     session = active_managed_capture()
@@ -5573,6 +5574,26 @@ def _managed_record_evidence_cleanup(out_port, result: dict):
             except Exception as exc:
                 # Preserve the original leg exception; retrieval failure is explicit.
                 result.update(complete=False, reason=f"Record evidence cleanup failed: {exc}")
+            # Record-family retrieval does not attest persistence. Finish the
+            # canonical drain here, before the report snapshots this same log.
+            # The outer managed session still owns its every-exit safety drain.
+            try:
+                from hitl.device_shutdown import DeviceSession
+                log = session.session_log
+                if log is None:
+                    raise RuntimeError("managed persistence log unavailable")
+                with DeviceSession(
+                    capture_log_getter=lambda: session.session_log,
+                    send_transport_stop=lambda: out_port.send(mido.Message("stop")),
+                    out_dir=Path(log).parent, context="baseline-report-cleanup",
+                ) as shutdown:
+                    pass
+                result["persistence_shutdown"] = shutdown.result.as_dict()
+                if not shutdown.result.ok:
+                    result.update(complete=False, reason=shutdown.result.detail)
+            except Exception as exc:
+                result.update(complete=False, reason=(
+                    f"{result.get('reason', '')}; persistence cleanup failed: {exc}"))
             print(f"[hitl-capture] {result.get('reason', 'Record evidence drain incomplete')}")
 
 
@@ -6267,6 +6288,25 @@ def run() -> int:
         print(f"Serial follow enabled: {follow_path}")
     else:
         print("Serial capture disabled (no #CAP assertions).")
+
+    # The device's own boot handoff must finish before the first control-surface gesture. The leg
+    # starts while a fresh boot is still inside its display/loop handoff (first host press at
+    # ~7.4 s, `DisplayManager: Boot setup complete` ~15-17 s, `boot_commit` ~17.5 s in
+    # `captures/i3a-edge-effect-boot-rerun-t8s4-03`), and gesturing into the unfinished boot is
+    # what the owner saw as the display hanging after boot. Row evidence, not a sleep; the gate
+    # reads the captured lines only (see `hitl.boot_handoff`) and returns immediately for a run
+    # that attached to an already-booted device.
+    if serial_collector is not None:
+        handoff = wait_for_boot_handoff(serial_collector)
+        print(f"[hitl] boot handoff: {handoff}")
+        if handoff == "timeout":
+            print(
+                "[error] device boot handoff not observed within 30.0s (DisplayManager: Boot "
+                "setup complete / boot_commit missing): refusing to send control gestures into "
+                "an unfinished boot",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
 
     run_started = datetime.now()
     run_deadline = (
@@ -7098,6 +7138,7 @@ def run() -> int:
                             "track_index": idx,
                             "record_notes_sent": rec_notes,
                             "record_cc_sent": rec_cc,
+                            "record_clock_pulses_seen": rec_clock_count,
                             FIRST_NOTE_INTENT_ROW_KEYS["record"]: _declared_intent_clocks(
                                 rec_timing.get("first_note_intent_clocks")
                             ),

@@ -50,3 +50,59 @@ Owner approved upload only. Existing managed capture (`boot_reset=never`) and `D
 - `pio run -e teensy41-capture-serial -t upload`: SUCCESS/exit0, 13.804s. HEX hash before/after exactly `29b62f4d…`; RAM1 variables96192/code392360/padding856, floor840 unchanged. `/dev/cu.usbmodem154944801` reconnected.
 - Postflight: `captures/edge-effect-boot-upload-post/shutdown-result.json`, capture `session_20261010_164046.log`: fresh `DIAG,boot_reset,crash=0` at3005005us; `DIAG,loop_rem,boot_commit` at14168747us; 0 cancellation/drop-warning rows, 151 LED rows, 1 DISP and8 DFRAME rows. Fenced stats at9541450us: attempts113/ok113, shed0/Tier-A eviction0/overflow0/critical rejection0. This stats sample precedes boot_commit, not a terminal full-window loss guarantee.
 - Outcome: upload/reconnect/responsive stopped firmware and bounded fresh-boot smoke verified. The previous repeated invalid-record drain did not recur in this capture. Physical display illumination, all-restored-content integrity and ordinary current-boot queued effects under a registered stimulus were NOT tested; hardware task remains unchecked. No commit/push/PR.
+
+## I3a hardware qualification on the pinned image (2026-10-12)
+
+**Packet I3a of the iterative closeout plan, executed on hardware; the clause is qualified on the pinned
+image `e6c1118f` / HEX `7678b719…`.** G2 packet and frozen oracle:
+[`I3A-QUALIFICATION-PACKET.md`](I3A-QUALIFICATION-PACKET.md). Owner authorizations for this session:
+flash the pinned hex; overwrite/clear only track 8 slots 4–5; owner watches the panel.
+
+**Runs and what each contributed.**
+
+| Run | Image | Outcome |
+|---|---|---|
+| `captures/i3a-edge-effect-boot-preflight-01` (`hitl_boot_census --no-reset`) | `1f9282b6…` | read-only attach: device alive, display frames advancing, DMA clean, no crash rows, no latch present |
+| `captures/i3a-edge-effect-boot-postflash-01` (census re-upload, authorized) | `1f9282b6…` | fresh `DIAG,boot_reset,crash=0`, `boot_commit` 10.39 s, `post_restore_census` all readiness fields `1` (`free_chunks=403`), **0** invalid rows; the tool itself then died at its later `!HEAP_STATS` write (port vanished) and wrote no `census.json` — named, the rows stand |
+| `captures/i3a-edge-effect-boot-t8s4-01` (registered `STIM-BASE-2-2-01@v1` via the `base` preset) | `1f9282b6…` | **PASS**, full leg (record + 2 overdubs + undo/redo), 0 invalid rows — the boot/edge-effect half, on the image the owner then replaced |
+| owner re-pinned the image mid-session (`e6c1118f`, boot-title fix) and asked for a rerun | — | — |
+| `…-rerun-t8s4-02` | `7678b719…` | abort `recording not confirmed before note stream`: the leg pressed during an unfinished boot and its `LOOP_EDIT` proof raced the boot's own ack → the device read the press as 1 ms and cycled `LOOP_EDIT → NOTE_EDIT` |
+| `…-rerun-t8s4-03` | `7678b719…` | abort `second overdub start refused: no stop-completion receipt` (the pre-existing S7.5b.5 class); its baseline-report cleanup left an **incomplete-shutdown latch** |
+| `captures/i3a-latch-discharge-01` | `7678b719…` | latch discharged in the documented order: read-only attach, `drains=2`, `complete`/`ok true`, payload preserved, latch cleared |
+| **`captures/i3a-edge-effect-boot-t8s4-04`** (same registered stimulus, `--clock-source host --tempo-bpm 300` after the owner-directed stimulus fix) | `7678b719…` | **the qualification run**: handoff gate honoured, no edit-mode press, every phase completed, all seven cases below hold |
+
+**Case-by-case, on `…-t8s4-04` (metadata: `git_commit e6c1118f…`, `firmware_hex_sha256 7678b719…`,
+preset `base`, track 8 / slot 4):**
+
+1. **Fresh pinned-image boot** — `#CAP,854542…`-style banner `DIAG,boot_reset,crash=0` twice (direct +
+   ring), `crash=1` never, capture fresh.
+2. **No pre-publication invalid edge-effect rows** — `LoopEnd playback commit cancelled` **0** occurrences
+   (the pre-flash defect produced 60: `track=33 target=3` ×30 and `track=12 target=194` ×30 in
+   `captures/edge-effect-boot-upload-pre`).
+3. **No unsolicited drain effect** — `Edge effects dropped` **0**; ring `shed`/`overflow`/`tierA_evict`
+   show no content loss.
+4. **Boot restore completion** — `DIAG,loop_rem,boot_commit` present; `DIAG,post_restore_census` with
+   `admission_complete=1 interactive_ready=1 undo_hydrated=1 transport_stopped=1 deferred_prewarm_idle=1`.
+5. **Live UI handoff** — 69 `,DISP,` and 38 `DFRAME` rows after boot, display states advancing through
+   `STOPPED → ARMED → RECORDING → PLAYING`; owner, watching the panel: *"Normal — no display hang after
+   boot this time"*.
+6. **Ordinary deferred effects** — the leg drove the whole ordinary path (record, two overdubs, undo/redo,
+   transport stops) with zero invalid or unsolicited queue rows, and the LED/display half of those effects
+   is the owner's panel observation above — observed, not inferred.
+7. **Canonical teardown** — managed `shutdown-result.json` `complete` / `drains 2` / `ok true`; no
+   incomplete-shutdown latch written.
+
+**Named, not smoothed.** (a) The run's own verdict is **`FAIL (FIRMWARE_CONTRADICTION)`** on content
+scoring — `overdub_stored_span_too_short`, `second_overdub_stored_span_too_short` (stored spans
+`last=2241`, `min_span=1296`, `bars=3/2` in a 1536-tick loop) — a stored-span/wrap **content** finding
+outside I3a's five items; it is handed over, never used to fail or to pass I3a. (b) The two aborted reruns
+are recorded above with their causes rather than dropped. (c) The qualification rides on the owner-directed
+host fix in
+[`evidence/2026-10-12-base-leg-boot-handoff-gate/EXECUTION.md`](../2026-10-12-base-leg-boot-handoff-gate/EXECUTION.md),
+which deliberately amends the recorded PX1 boot-wait policy under the owner's authority. (d) Physical-panel
+observation is a single owner report on this boot; it is not a pixel-timing or deadline claim (S7.5b.6
+stays open).
+
+**Checkoff:** `tasks.md` — *Qualify repaired edge-effect boot on hardware* is checked on this evidence
+(its own criterion, on the current pinned image). S7.5a/S7.5b/S7.5, the display-continuity and content
+gates are untouched by it.

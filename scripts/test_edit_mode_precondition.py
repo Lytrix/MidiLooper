@@ -50,6 +50,34 @@ class _FakePort:
             self.collector.lines.append(self.ack)
 
 
+class _LateAckCollector(_FakeCollector):
+    """Ack that the device emits late: it appears only after ``after_calls`` snapshots."""
+
+    def __init__(self, lines: list[str], ack: str, *, after_calls: int) -> None:
+        super().__init__(lines)
+        self.ack = ack
+        self.after_calls = after_calls
+        self.calls = 0
+
+    def snapshot(self) -> list[str]:
+        self.calls += 1
+        if self.calls > self.after_calls:
+            return list(self.lines) + [self.ack]
+        return list(self.lines)
+
+
+class _PressRecordingPort(_FakePort):
+    """Records every message type, so a press is visible as a note_on/note_off pair."""
+
+    def __init__(self, collector: _FakeCollector, ack: str | None) -> None:
+        super().__init__(collector, ack)
+        self.events: list[str] = []
+
+    def send(self, message) -> None:
+        self.events.append(str(getattr(message, "type", "")))
+        super().send(message)
+
+
 class LoopEditPreconditionTests(unittest.TestCase):
     def test_last_edit_session_kind_from_tail(self) -> None:
         lines = [_LOOP_ACK, _NOTE_ACK]
@@ -165,6 +193,58 @@ class LoopEditPreconditionTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(sent_notes), 1)
         self.assertEqual(sent_notes[0], 38)
+
+    def test_boot_ack_arriving_inside_the_wait_window_needs_no_press(self) -> None:
+        # The boot's own `Edit session: LOOP_EDIT` ack lands while the run is already set up: it
+        # arrives inside the bounded window, so the edit button must not be pressed at all.
+        # `captures/i3a-edge-effect-boot-rerun-t8s4-02` is the press this wait replaces.
+        collector = _LateAckCollector(["boot: no edit session yet"], _LOOP_ACK, after_calls=3)
+        port = _FakePort(collector, ack=None)
+        with patch("hitl.edit_mode_precondition.time.sleep"):
+            self.assertTrue(
+                ensure_loop_edit_before_record(
+                    port, collector, phase_wait_ms=50, timeout_s=0.5
+                )
+            )
+        self.assertEqual(port.notes, [])
+        self.assertGreater(collector.calls, 3, "the ack must arrive after a few polls")
+
+    def test_a_genuinely_unproven_mode_gets_exactly_one_long_press(self) -> None:
+        collector = _FakeCollector(["boot: no edit session yet"])
+        port = _PressRecordingPort(collector, ack=None)
+        with patch("hitl.edit_mode_precondition.time.sleep"):
+            self.assertFalse(
+                ensure_loop_edit_before_record(
+                    port, collector, phase_wait_ms=50, timeout_s=0.01
+                )
+            )
+        # One press = one note_on/note_off pair; the wait window must not add a second press.
+        self.assertEqual(port.events, ["note_on", "note_off"])
+
+    def test_the_press_handed_to_send_long_press_is_the_configured_exit_press_ms(self) -> None:
+        collector = _FakeCollector(["boot: no edit session yet"])
+        port = _FakePort(collector, ack=None)
+        with patch("hitl.edit_mode_precondition.time.sleep"), patch(
+            "hitl.midi_io._send_long_press"
+        ) as send_long_press:
+            ensure_loop_edit_before_record(
+                port, collector, phase_wait_ms=50, exit_press_ms=700, timeout_s=0.01
+            )
+        self.assertEqual(1, send_long_press.call_count)
+        self.assertEqual(700, send_long_press.call_args.kwargs["press_ms"])
+        self.assertEqual(38, send_long_press.call_args.kwargs["note"])
+
+    def test_a_degenerate_press_length_cannot_be_sent_silently(self) -> None:
+        # The device read a 1 ms press as a short press and cycled the mode
+        # (`captures/i3a-edge-effect-boot-rerun-t8s4-02`); the guard refuses it before any send.
+        collector = _FakeCollector(["boot: no edit session yet"])
+        port = _FakePort(collector, ack=_LOOP_ACK)
+        with patch("hitl.edit_mode_precondition.time.sleep"):
+            with self.assertRaises(ValueError):
+                ensure_loop_edit_before_record(
+                    port, collector, phase_wait_ms=50, exit_press_ms=1, timeout_s=0.01
+                )
+        self.assertEqual(port.notes, [])
 
 
 if __name__ == "__main__":

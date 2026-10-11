@@ -22,6 +22,13 @@ is used rather than the short one on purpose: a short press *cycles*, so what it
 the mode the run is trying to prove, while the exit always lands in LOOP_EDIT. It is never pressed
 twice inside the double-tap window, so the load/save overlay cannot open.
 
+The proof is given the boot's own ack a chance first: before any gesture the run waits a bounded
+window for a session ack that is already arriving (a fresh boot emits ``Edit session: LOOP_EDIT``
+while the host leg is already running -- see ``hitl.boot_handoff``), so a boot ack in flight cannot
+become a mode-cycling gesture; only a still-unproven mode gets the long press below.
+``captures/i3a-edge-effect-boot-rerun-t8s4-02`` is the race the wait closes: the device read the
+press through the unfinished boot as 1 ms and cycled LOOP_EDIT -> NOTE_EDIT.
+
 Relying on the boot state is what produced `missing_phase_boundaries` /
 `overdub start refused: no predecessor stop-completion receipt` runs where the record leg completed
 but the successor leg could not be admitted.
@@ -50,6 +57,12 @@ _LOOP_EDIT_DEPARTURE_ACKS = (
 #: ``Edit session:`` rows name the *resulting* mode; the departure rows name the transition.
 _LOOP_EDIT_OPEN_ACK = "Edit session: LOOP_EDIT"
 _NOTE_EDIT_OPEN_ACK = "Edit session: NOTE_EDIT"
+
+#: The firmware's long-press threshold for control-surface buttons: a press at or below this is
+#: read as a *short* press (the cycle action), never the long-press action. Device row from
+#: `captures/i3a-edge-effect-boot-rerun-t8s4-02`: `[BTN] Short press detected: duration=1 <
+#: effectiveLongPress=600`.
+DEVICE_LONG_PRESS_THRESHOLD_MS = 600
 
 
 def last_edit_session_kind(lines: list[str]) -> str | None:
@@ -133,9 +146,10 @@ def ensure_loop_edit_before_record(
     """Return True only when the device's acks show LOOP_EDIT.
 
     * the capture already names ``LOOP_EDIT`` -> proven, no gesture;
-    * otherwise the edit button is held **long** (its exit action) and the ack that press leaves is
-      read: either ``Edit session: LOOP_EDIT`` or the ``exited edit mode`` row, both of which mean
-      the device is in LOOP_EDIT now.
+    * otherwise the run waits up to ``timeout_s`` for an ack that is already arriving (the boot's
+      own session ack -- see the module docstring), then holds the edit button **long** (its exit
+      action) and reads the ack that press leaves: either ``Edit session: LOOP_EDIT`` or the
+      ``exited edit mode`` row, both of which mean the device is in LOOP_EDIT now.
 
     Fails closed (named refusal, with the ``--boot-reset`` remedy) when no ack arrives: an unproven
     mode must not be trusted, because the record/overdub gestures mean something else in NOTE_EDIT.
@@ -159,6 +173,27 @@ def ensure_loop_edit_before_record(
     from hitl.midi_io import _record_control_press, _send_long_press
 
     baseline = len(serial_collector.snapshot())
+    # The boot's own `Edit session: LOOP_EDIT` ack can still be in flight while the host leg runs
+    # (a fresh boot's acks land seconds after the run started; see `hitl.boot_handoff`). Give that
+    # ack the bounded window *before* touching the button: pressing through it was read by the
+    # device as a 1 ms short press that cycled LOOP_EDIT -> NOTE_EDIT
+    # (`captures/i3a-edge-effect-boot-rerun-t8s4-02`).
+    if _wait_for_edit_ack(
+        serial_collector, baseline_line_count=baseline, timeout_s=timeout_s
+    ) == LOOP_EDIT:
+        print("[hitl] LOOP_EDIT proven by the mode ack that arrived inside the wait window")
+        return True
+
+    # The press must stay a *long* press: at or below the device's long-press threshold it is read
+    # as a short press (the cycle action) and the run lands wherever that cycle goes. A degenerate
+    # length must not be sent silently.
+    if exit_press_ms <= DEVICE_LONG_PRESS_THRESHOLD_MS:
+        raise ValueError(
+            f"exit_press_ms={exit_press_ms} is at or below the device's long-press threshold "
+            f"({DEVICE_LONG_PRESS_THRESHOLD_MS}ms): the edit press would be read as a short press "
+            "(cycle) instead of the exit that lands in LOOP_EDIT"
+        )
+
     print("[hitl] edit mode unproven in this capture; long edit press to land in LOOP_EDIT")
     _record_control_press(
         "long_press",
