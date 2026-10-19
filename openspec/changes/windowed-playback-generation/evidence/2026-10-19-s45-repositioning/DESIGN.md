@@ -166,3 +166,34 @@ is green at `215/215` on the focused suite. Three findings are load-bearing and 
    (`coverage.startPhase`, `requestedPhase`, `deadlineTick`, `work.deadlineTick`, `clockEpoch`) and call
    `requestCommittedPlaybackWindow`; keep `active`, source identity, `operationGeneration` and `loopLengthTicks`.
 3. Build the RED at the freeze boundary (finding 3), then the ordered-receipt assertion.
+
+## 9. Second attempt — the measured blocker is *re-entry*, not the guard
+
+Implemented the revised step 1 (predicate split, retained-record mirror, positional replacement, lane re-position) and got
+as far as a working refusal-then-reposition transition. Two measurements decide the remaining design:
+
+1. **The lane does re-position once** (`win_repositioned` emitted, `startPhase` moved, deadline advanced past the refused
+   position, `refusedHandoffValid` set) — the predicate split, the reading mirror and the strict-advance rule all work.
+2. **The re-request leaves no owed demand.** After `requestCommittedPlaybackWindow(...)` returns
+   `DeferredSourceQualification` from the re-position site, the recorded state is
+   `pendingViewRequest_.active == 0`, `coveragePreparation == Idle`, `rolling.phase == Requested` — and it stays there:
+   no build, no `win_ready`, no `win_serving`. `requestCommittedPlaybackWindow` returns the deferred result
+   unconditionally for a valid call (`TrackPlaybackWindowBuild.cpp:4198`–`4205`), so the return value cannot be used to
+   tell "retained" from "retention declined", and the lane's post-retire state does not re-arm preparation.
+
+So the open question is **how a re-positioned interval re-enters preparation**, and there are two candidates:
+
+- **(A) Reset to the creation path.** On a lead-only refusal, set `frame.phase = Idle` but keep
+  `refusedHandoffValid/Phase`, and let the existing creation branch (which already emits `win_requested` and drives
+  preparation) re-request with `boundary` forced past the refused handoff. Uses the proven path; needs the boundary
+  comparison expressed in phase space (`boundary % loopLength` vs `refusedHandoffPhase`).
+- **(B) Re-arm preparation explicitly from the lane.** Call the preparation entry (`beginCoverageQualification` /
+  `retainRefusedPlaybackViewRequest`) for the new interval before returning `Requested`. Fewer moving parts in the frame,
+  but it re-implements the creation branch's ordering.
+
+**Rejected: in-place reposition at `AwaitAdmission`.** Moving `request.coverage` on a demand whose coverage source was
+already counted for the old span mismatches the counted units with the new interval — the build would be priced and read
+from the wrong events. The re-position must start a fresh qualification for the new interval.
+
+Branch reverted to green (`215/215`) after this measurement; the two candidate implementations are the next step, with
+(A) preferred because it reuses the path the device already exercises (`win_requested` at every new demand).
