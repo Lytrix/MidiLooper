@@ -13412,6 +13412,17 @@ void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
   }
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_repositioned"),
                                           "the refusal is still a position refusal and still re-positions");
+  {
+    uint32_t maxOrdinal = 0;
+    for (size_t i = 0; i < RollingGateRows::count && i < 512; ++i) {
+      const auto& row = RollingGateRows::rows[i];
+      if (row.track == 0 && row.slot == 2 && row.exit != nullptr &&
+          std::strcmp(row.exit, "win_repositioned") == 0 && row.requestResult > maxOrdinal)
+        maxOrdinal = row.requestResult;
+    }
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(1u, maxOrdinal,
+                                            "the re-position ordinal must accumulate across the traversal");
+  }
   TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(active.loopLengthTicks / span),
                                            static_cast<uint32_t>(ourRows("win_repositioned")),
                                            "but only one attempt per span: a whole traversal is the budget");

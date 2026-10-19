@@ -130,6 +130,30 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--phase-wait-ms", type=int, default=500)
     parser.add_argument("--freeze-wait-ms", type=int, default=8000)
     parser.add_argument("--hold-track-ms", type=int, default=4000)
+    parser.add_argument(
+        "--adoption-hold-s",
+        type=float,
+        default=0.0,
+        help=(
+            "Keep the transport running this many seconds immediately after the leg starts it, while the take "
+            "already in the slot plays back. This is where the rolling lane's demand is created without a record "
+            "window bound (`rw=0`), so it is the only place in this leg where a `win_ready` successor can reach its "
+            "own adoption boundary: measured 2026-10-19, the ready at 3399.8 s was cancelled 13.5 s later when the "
+            "leg cleared and re-recorded, before its boundary. Zero keeps the leg's behaviour unchanged"
+        ),
+    )
+    parser.add_argument(
+        "--display-hold-s",
+        type=float,
+        default=0.0,
+        help=(
+            "Keep the transport running this many seconds after NOTE_EDIT exits, before the capture is read. The "
+            "rolling lane's readiness receipt is delivered when a successor is adopted at its own span boundary, and a "
+            "re-positioned demand can land late in a long loop's traversal: without a hold the leg stops before that "
+            "boundary and the serving receipt is never reachable (measured 2026-10-19: ready at 2162.7 s, stop at "
+            "2176.2 s, three 2-bar boundaries short of adoption)"
+        ),
+    )
     parser.add_argument("--start-transport", action="store_true", default=True)
     parser.add_argument("--clear-before-record", action="store_true", default=True)
     parser.add_argument("--clear-press-ms", type=int, default=900)
@@ -276,6 +300,15 @@ def run_long_loop_display_window(args: object) -> int:
                 serial_collector=serial_collector,
                 transport_args=ns,
             )
+
+        if ns.adoption_hold_s > 0:
+            print(
+                f"[long-loop-display-hitl] adoption hold {ns.adoption_hold_s:.1f}s on the slot's existing take "
+                "(the lane's demand is live here with no record window bound)"
+            )
+            ctx.markers.append("phase:adoption_hold_start")
+            time.sleep(ns.adoption_hold_s)
+            ctx.markers.append("phase:adoption_hold_end")
 
         print(
             f"[long-loop-display-hitl] select track {ns.track_number} "
@@ -651,6 +684,15 @@ def run_long_loop_display_window(args: object) -> int:
         )
         ctx.markers.append("exited edit mode")
 
+        if ns.display_hold_s > 0:
+            print(
+                f"[long-loop-display-hitl] display hold {ns.display_hold_s:.1f}s with the transport running "
+                "(the lane's adoption boundary must fall inside it)"
+            )
+            ctx.markers.append("phase:display_hold_start")
+            time.sleep(ns.display_hold_s)
+            ctx.markers.append("phase:display_hold_end")
+
         if serial_collector is not None:
             setattr(args, "phase_markers", list(ctx.markers))
             setattr(args, "hold_track_ms", ns.hold_track_ms)
@@ -683,6 +725,8 @@ def run_long_loop_display_window(args: object) -> int:
                         "record_bars": ns.record_bars,
                         "freeze_wait_ms": ns.freeze_wait_ms,
                         "hold_track_ms": ns.hold_track_ms,
+                        "display_hold_s": ns.display_hold_s,
+                        "adoption_hold_s": ns.adoption_hold_s,
                         "serial_verification": check,
                         "markers": ctx.markers,
                     },

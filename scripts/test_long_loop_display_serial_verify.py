@@ -12,6 +12,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from hitl.scenarios.long_loop_display_window import _parse_common_args
 from hitl.verify.display_window import (
     verify_follow_window_readiness,
     verify_long_loop_display_window,
@@ -208,6 +209,24 @@ class FollowWindowReadinessVerifyTests(unittest.TestCase):
         result = verify_follow_window_readiness(lines)
         self.assertTrue(result["ok"], result.get("issues"))
         self.assertEqual(result["stale_holds"], [])
+
+    def test_display_hold_defaults_to_none(self) -> None:
+        """The adoption hold is opt-in: an ordinary run must not silently run a longer transport."""
+        ns = _parse_common_args(SimpleNamespace(legacy_args=[]))
+        self.assertEqual(ns.display_hold_s, 0.0)
+        self.assertEqual(ns.adoption_hold_s, 0.0)
+
+    def test_adoption_hold_is_forwarded_through_the_legacy_args(self) -> None:
+        """The opening playback hold is a separate knob: it must not be confused with the display hold."""
+        ns = _parse_common_args(SimpleNamespace(legacy_args=["--adoption-hold-s", "90"]))
+        self.assertEqual(ns.adoption_hold_s, 90.0)
+        self.assertEqual(ns.display_hold_s, 0.0)
+
+    def test_display_hold_is_forwarded_through_the_legacy_args(self) -> None:
+        """The preset's own parser does not know the flag, so the runner hands it down as a legacy arg."""
+        ns = _parse_common_args(SimpleNamespace(legacy_args=["--record-bars", "32", "--display-hold-s", "90"]))
+        self.assertEqual(ns.record_bars, 32)
+        self.assertEqual(ns.display_hold_s, 90.0)
 
 
 if __name__ == "__main__":

@@ -151,3 +151,71 @@ a serving image.
 
 The ring check's single `wiped` row is a capture-evidence condition (one Tier-A row overwritten before the drain), not a
 lane verdict; it is recorded here rather than worked around, and the run's lane rows are otherwise complete.
+
+## Attempt 6 — the ordered chain closes on a flashed image: `win_ready → win_serving` (2026-10-20)
+
+**Why this attempt exists, and what it corrects.** Attempts 5 and the runs after it were launched with `--build-env` but
+**without `--build-upload`**, and the runner only flashes with `--build-upload`
+(`scripts/hitl/runner.py`, `maybe_build_upload`). Those runs therefore measured whatever image was already on the board,
+which is why a 572-reposition run appeared to contradict the span budget that the native fixture and the code both
+enforce: the board was running the **first form**, whose tick-based bound allows hundreds of attempts. Two rules follow,
+and they are now part of the recipe:
+
+1. **A device claim names the image that was flashed, and the run that produced it used `--build-upload`.** A run without
+   it is evidence about the board's existing image only.
+2. **The take must be in RAM for a play-only opening.** A fresh flash loses the in-RAM take; with no content the opening
+   playback raises no demand (`win_track_not_playing`/`win_not_servable` only). The sequence used here is: flash + record
+   (`captures/i5-s64-f9-markprobe2-32bar-01`, aborted on a leg check but recording `length=24576`), re-record on the same
+   image to land exactly 32 bars in RAM (`captures/i5-s64-f9-rearm-32bar-01`,
+   `Recording stopped @ tick 667, length=24576`), then the measured run with **no** upload and `--no-boot-reset`.
+
+**The measured run:** `captures/i5-s64-f9-adoption4-32bar-01`, `--preset windowed_content_parity --track 8 --loop-slot 4
+--midi-channel 8 --no-boot-reset --record-bars 32 --adoption-hold-s 130`. The hold keeps the transport running for 130 s
+immediately after the leg starts it, while the slot's own take plays back with **no record window bound** (`rw=0`) — the
+only shape in this leg where a rolling demand and its adoption boundary can both fall inside one continuous run.
+
+**The ordered receipts, as emitted:**
+
+```
+win_requested   (pl=1, rw=0, sv=0, rt=1, rl=1, ow=0, dm=1)   rq=12
+win_waiting
+win_repositioned ×45   (ordinal 1..13, one attempt per span)
+win_ready       1261.252 s   (sv=0, rl=0, ow=1, dm=0)
+win_serving     1324.060 s   (sv=1, rl=1, ow=0)      <- 62.8 s later, one traversal
+win_ready       1329.167 s   (sv=1, rl=0, ow=1)      <- the next successor is prepared while serving
+win_serving     1388.073 s
+win_ready       1393.189 s
+```
+
+**Verifier — lane section, all green (first time):**
+
+| check | verdict |
+|---|---|
+| `capture_evidence_ring_intact` | **ok** — `critical_rejected=0, overflow=0, tier_a_evicted=0, wiped=0` |
+| `window_demand_observed` | **ok** — `win_requested=48, win_repositioned=45, win_ready=3, win_serving=2`, 169 gap blocks with eligible/progress turns, 32 readiness receipts |
+| `readiness_receipts_under_transport` | **ok** — 32 receipts, all under transport, 88 of 464 frozen receipts source-qualified |
+| `windowed_service_coverage_under_transport` | **ok** — 273 blocks, 201 under transport with opportunities, `permitted=64` |
+| `no_windowed_overrun_under_transport` | **ok** — 0 overruns |
+| `window_boundaries_crossed_under_transport` | **ok** — 115 `build_complete` under transport |
+
+`lane.ok = true`, `leg.ok = true`, `oracle_complete = false` (4.5 and 6.4 stay open).
+
+### What the timings settle
+
+**Adoption is once per traversal, at the ready window's own start phase** — not at the next 2-bar boundary. The 62.8 s
+between `win_ready` and `win_serving` is one loop length (24,576 ticks at 384 ticks/s); `rollingCandidateReadyAtBoundary`
+requires `phase == frame.startPhase`, and the start phase is the span the successor was built for. Attempt 5's
+"ready, then cancelled 13.5 s later" was therefore never an adoption failure: the boundary was a traversal away, and the
+leg's clear/record stopped the transport first. **A serving receipt needs the transport to run at least one loop after
+readiness, with no stop in between.**
+
+**The re-position cadence is one attempt per span.** Ordinals advance 1..13 across ~30 s of the hold (≈2.3 s per span,
+the 2-bar span at this tempo) and the budget for a 32-bar loop is `24,576 / 1,536 = 16`. The earlier runs' "231 in
+15.7 s" and "572 in 30 s" are the first form's tick-bounded retry, not this one.
+
+### Evidence hygiene
+
+`win_pre_guard` (a temporary unconditional row) and the `0x80 | ordinal` marker on `win_repositioned` were probes for
+this run and are removed in the commit that records it. The permanent diagnostics are the `rq` fields already carried:
+`win_repositioned` → the attempt ordinal, `win_retry_ordinal` → the guard's input (once per distinct value),
+`win_blocked_by_request` → the ordinal it decided on.

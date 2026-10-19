@@ -4739,7 +4739,8 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
         request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
         request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved)) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
-      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0);
+      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0, /*reprojectedTick=*/false,
+                                   frame.refusedSpanAttempts);
       return RollingOutcome::Rejected;
     }
     if (frame.phase != LoopPlaybackRuntime::RollingPhase::Ready) {
@@ -4806,13 +4807,21 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   // on device 2026-10-19: 231 re-positions in 15.7 s, none of them reaching a readiness row). The counter saturates at
   // its byte width so a very long loop cannot wrap the budget back to zero.
   const uint32_t spanBudget = loop.loopLengthTicks / span;
+  if (frame.refusedHandoffValid) {
+    // The guard's **input**, not its decision: the ordinal the retry carries into the next creation, reported once per
+    // distinct value (the dedupe is keyed on it). Bounded by the traversal budget, and it is what makes "one attempt
+    // per span" and "the budget was spent" separable on the wire.
+    reportPlaybackRollingGateRow("win_retry_ordinal", clock.epoch != 0, /*reprojectedTick=*/false,
+                                 frame.refusedSpanAttempts);
+  }
   const bool traversalSpent = frame.refusedHandoffValid &&
       frame.refusedSpanAttempts >= (spanBudget > 255u ? 255u : spanBudget);
   if (boundaryOutOfRange || traversalSpent) {
     if (frame.refusedHandoffValid) {
       // A whole traversal of refused spans is a terminal answer, not permission to re-request forever.
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
-      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0);
+      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0, /*reprojectedTick=*/false,
+                                   frame.refusedSpanAttempts);
       return RollingOutcome::Rejected;
     }
     reportPlaybackRollingGateRow("win_boundary_rejected", clock.epoch != 0);
@@ -5439,6 +5448,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
         frame.refusedSpanAttempts = 0;
       if (frame.refusedSpanAttempts != 255)
         ++frame.refusedSpanAttempts;
+      // Read out immediately: the row below must state what *this* refusal computed, not what the frame holds after the
+      // retirement calls that follow.
+      const uint8_t attemptOrdinal = frame.refusedSpanAttempts;
       frame.refusedHandoffPhase = static_cast<uint32_t>(
           (request.coverage.startPhase + spanTicks) % loop.loopLengthTicks);
       frame.refusedHandoffValid = true;
@@ -5450,7 +5462,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
       // rather than inheriting it, so the retained record is released here and re-created at the next span.
       runtime->pendingViewRequest_ = {};
       traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::HandoffUnreachable, dropBefore);
-      reportPlaybackRollingGateRow("win_repositioned", clock.epoch != 0);
+      // The row's `rq` field carries the **attempt ordinal** on this exit: it is the only place the traversal budget is
+      // observable on the wire, and the ordinal at which the retry stops advancing is exactly what distinguishes "the
+      // budget accumulated" from "the frame was re-created between attempts".
+      reportPlaybackRollingGateRow("win_repositioned", clock.epoch != 0, /*reprojectedTick=*/false, attemptOrdinal);
       return PlaybackViewTurnResult::GrainDenied;
     }
     const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);

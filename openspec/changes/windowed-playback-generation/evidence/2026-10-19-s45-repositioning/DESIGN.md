@@ -300,7 +300,20 @@ New fixture: `test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_loop
 a whole episode and asserts one attempt per span, the terminal `win_blocked_by_request` row, frame `Blocked`, and
 `win_serving == 0`. The re-position-success and stale-demand fixtures still pass unchanged.
 
-**What is still not proven on device:** the re-positioned demand reaching `win_ready`/`win_serving`. The corrected image
-has not been flashed yet; the device answer to "does one traversal of spans find an affordable position" is the next
-run, and a terminal block after one traversal is the honest alternative if the 32-bar take's derived cost cannot fit
-any span on this geometry.
+**Measured on the flashed image (2026-10-20, `captures/i5-s64-f9-adoption4-32bar-01`): the chain closes.** 45
+re-positions carried ordinals 1..13 (one attempt per span, ~2.3 s each), then `win_ready` at 1261.252 s and
+`win_serving` at 1324.060 s — 62.8 s later, **one loop length**. The verifier's lane section is green on all six checks,
+including the ring. The intervening runs that showed hundreds of re-positions per half-minute were measuring an
+**unflashed** image (the runner flashes only with `--build-upload`); they are recorded and excluded in
+`EXECUTION-DEVICE.md` attempt 6.
+
+### Adoption cadence — the successor joins at its own start phase, one traversal later
+
+The 62.8 s gap is not a delay defect: `rollingCandidateReadyAtBoundary` admits the successor when
+`phase == frame.startPhase`, and the start phase is the span the window was built for. So readiness and adoption are
+separated by **up to one whole loop**, not by the next two-bar boundary. Two consequences follow for the device recipe:
+
+- a serving receipt requires the transport to run **at least one loop** after `win_ready`, with no stop in between — a
+  stop cancels the prepared successor (`build_drop, window_cancelled`) and the next demand starts a new episode;
+- the re-position's cost and the adoption latency are independent: the retry spends spans to find an affordable
+  position, and that position is then adopted on the **next traversal of the same span**, so a demanding take pays both.

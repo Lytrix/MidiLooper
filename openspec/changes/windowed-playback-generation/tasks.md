@@ -2127,9 +2127,18 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   `test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping` holds the too-close condition for a whole
   episode and asserts the one-attempt-per-span budget, the terminal row, `Blocked`, and `win_serving == 0`; focused
   **218/218**, full native **3,335 / 7 skipped / 3,328 succeeded / 0 failed**; lane image unchanged at
-  `code 392,376 + padding 840` (floor). **Still owed on device:** whether one traversal of spans finds an affordable
-  position for this 32-bar take (the pending run); a terminal block after one traversal is the honest alternative if
-  its derived cost cannot fit any span on this geometry.
+  `code 392,376 + padding 840` (floor). **Device (2026-10-20, flashed image, `captures/i5-s64-f9-adoption4-32bar-01`):
+  the ordered chain closes.** With the slot's own 32-bar take playing and no record window bound (`rw=0`), the lane
+  emitted `win_requested → win_waiting → win_repositioned` (45 rows, ordinals **1..13**, one attempt per span at ~2.3 s)
+  `→ win_ready` (1261.252 s) `→ win_serving` (1324.060 s). The 62.8 s gap is **one loop length**, and it settles the
+  semantics: `rollingCandidateReadyAtBoundary` admits the successor at `phase == frame.startPhase`, so a prepared window
+  is adopted on the **next traversal of its own span**, not at the next two-bar boundary; a transport stop in between
+  cancels it. The verifier's lane section is green on all six checks (`window_demand_observed`, 32 readiness receipts
+  under transport, 201 service blocks with opportunities, 115 boundaries crossed, 0 overruns, ring intact), `leg.ok`,
+  `lane.ok`, `oracle_complete = false`. Two recipe corrections are recorded with the evidence: the runner flashes only
+  with `--build-upload` (runs without it measured the board's existing image, and the "hundreds of re-positions per
+  half-minute" runs were that stale first form), and a fresh flash loses the in-RAM take, so a play-only adoption run
+  needs a rearm leg first.
 
 ## 5. Capacity, envelope and placement
 
