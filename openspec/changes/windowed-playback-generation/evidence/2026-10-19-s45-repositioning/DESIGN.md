@@ -133,3 +133,36 @@ rather than shaving unrelated code.
 2. Keep the existing 24/32-bar high-contention captures as the **refusal control**; do not overwrite them.
 3. With that image, run the 4.4 demoted-length parity sweep (23/24/25/26/32 bars) and record per-length
    `Requested/Ready/Serving` plus content parity.
+
+## 8. Implementation attempt — findings that change step 1 (2026-10-19)
+
+The slice was implemented to a compiling state (fields, predicate split, helper, lane call) and **reverted**; the branch
+is green at `215/215` on the focused suite. Three findings are load-bearing and must be designed in, not discovered again:
+
+1. **The lane reads the retained record, not the priced attempt.** `LoopPlaybackRuntime::pendingViewRequest()` returns
+   `pendingViewRequest_.active ? &pendingViewRequest_ : nullptr` (`include/TrackPlaybackRuntime.h:1321`), while the drop
+   site and the admission price `frozenViewRequest`. `retireCoverageSource()` coalesces **only the deadline** into an
+   already-active retained record (`TrackPlaybackRuntime.cpp:1907`–`1914`): if the retained record was active, the
+   refusal's `reason` (and any eligibility bit) **never reaches the lane**. On device the retained record happened to be
+   inactive, so the whole frozen record was copied — that is why `win_blocked_by_request` appeared there and not in a
+   fixture that opened its own retained demand. Any reposition must **carry the reading explicitly** at the drop site.
+2. **DEC-108 §13(a) re-imposes the refused position.** `retainViewPendingRequest` keeps the **oldest** outstanding
+   deadline, so a re-request made through `requestCommittedPlaybackWindow` coalesces back onto the very deadline that was
+   just measured as unreachable — every retry then fails identically. A reposition must therefore **replace** the
+   positional fields (`coverage`, `requestedPhase`, `deadlineTick`, `work`, `clockEpoch`), not coalesce. Clearing the
+   whole retained record is **wrong**: it broke `test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline`
+   (expected 2, was 0), because the identity/obligation must survive the position change.
+3. **The RED must be built at the freeze boundary, not by forcing every turn.** Holding `deadlineTick = tick + 1` each
+   turn did not produce `handoff_unreachable` inside a 12-bar drive: the qualification completed before the forced
+   deadline was priced, so `refusedHandoffValid` never became true. The deterministic construction is: drive until
+   `frozenViewRequest.active`, overwrite **that** request's `deadlineTick` once (the freeze is the priced attempt), tick
+   once to force the drop, then assert the reposition. This is also the sequence the 38.7 ms device episode shows.
+
+### Revised step 1
+
+1. At the drop site, after the existing reason assignment, mirror `reason` **and** `repositionEligible` into the retained
+   record when it is active — do not rely on `retireCoverageSource()`'s deadline-only coalescing.
+2. In `repositionRollingDemandToNextSpan`, replace only the positional fields on the retained record
+   (`coverage.startPhase`, `requestedPhase`, `deadlineTick`, `work.deadlineTick`, `clockEpoch`) and call
+   `requestCommittedPlaybackWindow`; keep `active`, source identity, `operationGeneration` and `loopLengthTicks`.
+3. Build the RED at the freeze boundary (finding 3), then the ordered-receipt assertion.
