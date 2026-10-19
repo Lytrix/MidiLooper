@@ -156,9 +156,37 @@ another route served it.
 
 **What that means for "the device side can prove the same route selection":**
 
-1. Observing `win_ready → win_serving` needs a configuration where a demand actually **completes** (demoted, span-aligned,
-   with a current source and a free coverage role, and no bound record-return job). No recorded run held that
-   configuration, so this is a run-design question, not a re-read.
+1. Observing `win_ready → win_serving` needs a demand that actually **completes** (demoted, span-aligned, with a current
+   source and a free coverage role, and no bound record-return job). The 32-bar run holds exactly that shape and still
+   blocks — see the follow-up below, which replaces the "run-design question" reading of this paragraph.
 2. The 4.5 predicate itself answers "which route served?" in the hot path and reports nothing. A receipt naming the
    serving **route** would be the direct analogue — but it is a hot-path row, and the lane image sits at **exactly** its
    840-byte floor, so any lane-image growth is a genuine budget boundary rather than a shave.
+
+### Follow-up — the 32-bar run **is** that configuration, and it blocks
+
+`captures/i5-s64-f8-parity-32bar-01/serial.log` (the same day's F-8 32-bar run) holds the **full episode** for
+`t=7,s=3,len=24576,av=1,al=1` — demoted **and** span-aligned, i.e. exactly the shape the paragraph above asks for. It
+still never serves:
+
+| row (in order) | `rl` | `ow` | `dm` | `bld` |
+|---|---|---|---|---|
+| `win_requested` (`rq=12`) | 1 | 0 | 1 | 0 |
+| `win_waiting` | 0 | 1 | 1 | **1** |
+| `win_blocked_by_request` | **0** | 1 | 1 | **0** |
+| `win_blocked` | 1 | 0 | 1 | 0 |
+
+Reading: the demand is admitted and the build is in flight (`bld=1`) while the frame waits; by the time the request
+blocks, the build is no longer active and **no coverage role is free** (`rl=0`) — the completed successor has taken the
+ready role — and the request has been marked `positionInvalidated`/terminal *before* adoption. The row cannot say which
+of the four blocking terms did it (`positionInvalidated`, `CannotCompleteBeforeHandoff`,
+`WindowExceedsRetainedCapacity`, `PinnedEditRowsUnresolved`): all 16 flag bits are already assigned and `rq` carries the
+request's ordinal.
+
+So "needs a configuration where the demand completes" was too weak: **the configuration exists today and the demand is
+killed after its build.** The next step is a **named term**, not a longer run — either the blocking reason gets its own
+field on the row (a lane-image change, and the lane image has **zero** headroom, which is the genuine budget boundary),
+or the invalidation that ends the episode is fixed so the completed successor is adopted.
+
+The native oracle now pins what a successful device episode must read: `win_requested → win_ready → win_serving`, in that
+order, with the serving exit present at all.
