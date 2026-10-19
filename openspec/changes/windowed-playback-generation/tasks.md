@@ -1883,11 +1883,26 @@ suite is not green this turn by design. No Git delivery.
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
   line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. Detail:
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
+  *Device leg crossed 2026-10-19 (the lane's boundary half only; **the F-7 parity verdict is still not
+  claimed**):* the registered `windowed_content_parity` profile ran on the current qualification image
+  (`git a9d41abf`, HEX `6cf5f874…`, track 8 / slot 4) and the lane observed **391** `build_complete`
+  publications **under transport** (`loop_len 768`, revisions {0,1}) with **zero** named overruns — so the
+  boundary crossings this task names are now produced on a device, not only in a fixture. The **parity
+  verdict itself** (the windowed stream equals the whole-loop stream across the boundary, closures included)
+  stays the content pipeline's (`hitl/content_deduction.py`, `scripts/hitl/mixed_content_report.py`) and was
+  **not** taken — the same deferred term the lane records. 4.3 stays open. Detail:
+  [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
   **The floor as a number:** the lead implied by the declaration's arithmetic is 22,272 ticks ≈29 bars, so the floor is exactly 30 bars; loops between the bar cap and that floor have neither representation admissible. The number is pinned from 6.3/3.10 contract fields, not hardcoded.
   **The task stays open** on parity through the content-verification pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with the RAM1 line unchanged; three mutations red-proved with byte-identical restores. The oracle is the policy function itself, so its declared figures remain 3.10/6.3's to own; the absolute floor is cited from `test_playback_prewarm`.
   Detail: [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).
+  *Device leg 2026-10-19 (the residency row set stays unresolved):* the registered profile ran on the current
+  qualification image, but the per-slot **residency row set** remains **unidentified** — the lane records
+  `root_demoted_residency_over_loop_lengths` as `judged: nothing`, with the library-observation path
+  (`!LIB_OBSERVE`) named as the candidate and recorded as **unknown rather than guessed**. 4.4 stays open.
+  Detail:
+  [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
 
 - [ ] 4.5 **Implement second-miss fault containment, the approved last resort, and cross-generation closures**
   (*DEC-108 §13e–g*) — latch a **named deadline-contract fault** on the second miss; continue the last coherent revision
@@ -2268,6 +2283,28 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   idle producer of `s64-trace-01` plus this run's hold and `owes_build` receipt). 6.4/6.5 stay open, F-7/F-8/AC-8 and
   6.5's hardware claims stay **NOT RUN**, and no timing/envelope claim is made. Detail:
   [`2026-10-07-s64-demand-device-run/DEVICE-RUN.md`](evidence/2026-10-07-s64-demand-device-run/DEVICE-RUN.md).
+
+  ***Authorized device leg on the current tree 2026-10-19* (dedicated HITL preset — upload without a
+  prompt; `captures/i5-s64-windowed-parity-01`/`-02`):** the registered `windowed_content_parity` profile was
+  run on the current qualification image (`git a9d41abf`, HEX `6cf5f874…`, RAM1 `96,192 / code 392,376 +
+  padding 840`, track 8 / slot 4 / channel 8, `--record-bars 24`, `--no-boot-reset`). **Run 2 is the clean
+  combined verdict** — `ok: True`, `issues: []`, `leg_exit_code: 0` — with the lane passing all six checks
+  (ring intact; demand 399 blocks / 24 receipts; `readiness_receipts_under_transport` `source_qualified=27 of
+  218` under transport; coverage 425/505 at `permitted=64`; `overrun_rows=0`; `build_complete_under_transport`
+  **391**, `loop_len 768`, revisions {0,1}) and the snapshot passing all three. **Run 1 is kept as the
+  case-1 artifact and diagnosed, not smoothed:** the combined verifier failed on the reused leg's display
+  oracle (`leg_exit_code 2`) while the lane passed; the cause is an **evidence-pairing defect** — the leg
+  verifies inline (pre-drain) and pairs rows by **stream position**, while the retained ring delivers
+  transport-produced rows late, so the complete capture (20 505 lines, 859 DISP rows, 292 bounded) holds rows
+  the inline snapshot (5 053 lines, 0 bounded) does not. The lane oracle already reads device time
+  (`windowed_lane.row_us`); the leg's `display_window.py` is still position-based, and run 2's leg pass rides
+  the `marker_fallback` on the pre-clear take as s39's did. **Acceptance met at the lane:** demand observed,
+  source-qualified frozen readiness under a running transport, ≥2 boundary `build_complete` publications, no
+  named overrun, ring intact. **Not claimed:** the F-7 **parity verdict** (4.3) and the F-8 **residency row
+  set** (4.4) stay deferred; `oracle_complete` stays `False`; no firmware line changed. **6.4 stays open** on
+  those two. Next candidate slice, if wanted: the `hitl/verify/display_window.py` time-based pairing fix
+  (host tooling). Detail:
+  [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
