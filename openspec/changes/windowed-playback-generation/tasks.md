@@ -1878,11 +1878,23 @@ suite is not green this turn by design. No Git delivery.
   OFF in tile 1 (measured: not synthesized at the edge) and the concatenation balanced, so no note-on is left unclosed
   by the transition. **The task stays open** on three named items: its **device leg** (6.4's windowed content-verification
   profile with 6.5's split; `ExecutionBounds.md` row 27 still denies active windowed playback), the **closure obligation
-  at the transition** — the sequence is balanced while either window alone is not, so the closure is the consumer's
-  profile with 6.5's split; `ExecutionBounds.md` row 27 still denies active windowed playback), the **closure obligation at the transition** — either window alone may omit the closure, so the consumer's 3.7a serving handoff must reconcile it with 4.5's ledger — and the **overlap rule** (the interval policy is centred, so arbitrary-phase consecutive windows overlap and the consumer must avoid double-serving). Loop-wrap content is deliberately not in this fixture. Verified: 66/66 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped / 0 failed, true clean rebuild with RAM1 line unchanged; four mutations red-proved and restored byte-identically. Detail:
+  at the transition** — either window alone may omit the closure, so the consumer's 3.7a serving handoff must reconcile
+  it with 4.5's ledger — and the **overlap rule** (the interval policy is centred, so arbitrary-phase consecutive
+  windows overlap and the consumer must avoid double-serving). Loop-wrap content is deliberately not in this fixture.
+  Verified: 66/66 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped /
+  0 failed, true clean rebuild with RAM1 line unchanged; four mutations red-proved and restored byte-identically. Detail:
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
-  line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. Detail:
-  [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
+  *(This note's 2026-10-02 paragraph arrived with a duplicated tail — the device-leg clause restated mid-sentence and a
+  stray "line byte-identical (48 B headroom)" fragment — repaired 2026-10-19; no claim changed.)*
+  *State of the two remaining items after F-7 (device, 2026-10-19):* the **overlap rule**'s consumer obligation is
+  **measured satisfied** on the demoted target — the 1 536-tick span steps 768 ticks (measured `windowStartTick` deltas
+  of 768/1 536 across all three captures), so consecutive windows share a bar, and `content-review.json` reads `extra=0`
+  on **every** cycle at **three** demoted lengths (24, 25 and 32 bars), i.e. the shared bar was served exactly once and
+  no window was double-served. The **closure obligation at the
+  transition** is observed **for the served stream** — per-cycle `inventory_equal` **and** `exact_order` at those three
+  lengths mean the boundary note's ON and its closure appear once each, in `effective`'s order, so no note-on is left
+  unclosed across the handoff — while its **ledger reconciliation** stays with 4.5's cross-generation closures, which is
+  why 4.3 stays open.
   *Device leg crossed 2026-10-19 (the lane's boundary half only; **the F-7 parity verdict is still not
   claimed**):* the registered `windowed_content_parity` profile ran on the current qualification image
   (`git a9d41abf`, HEX `6cf5f874…`, track 8 / slot 4) and the lane observed **391** `build_complete`
