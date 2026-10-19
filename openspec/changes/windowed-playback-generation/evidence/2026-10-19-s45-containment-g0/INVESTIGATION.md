@@ -145,3 +145,42 @@ does not exist in the tree:
 
 Either way the decision is the owner's, and (a) additionally owes a call-site ITCM budget and a native-only evidence
 plan. Not proposed here.
+
+## Addendum — the clear-site prerequisite does not exist as specified (2026-10-19, later the same day)
+
+The owner chose to *land the clear-site prerequisite first*: wire a production clear for the latched fault "at the one
+event that is a real recovery in the shipping image". Design work on that slice found the premise does not hold. Three
+verified facts:
+
+1. **The promise route records no revision.** `noteMissedTraversalForSlot` (`:2228–2251`) sets `missedTraversals`,
+   `breachReported`, `breachReports` and the latch — but never `lagState.desiredRevision`/`servedRevision`, which only
+   `advancePlaybackLagTraversal` writes (`:2202–2203`, flag-reachable). So the lane's recovery test
+   (`published.playbackRevision == desiredRevision`) has no meaning on the shipping image's latch.
+2. **What the promise route does record is the episode's interval** — `lagState.resetEpisode(work.handoffPhase,
+   work.admittedIntervalLength)` (`:2319–2321`) — and `PlaybackViewAdmittedWork` carries no content revision at all
+   (`include/TrackPlaybackRuntime.h:271–299`), only phases, lengths, ticks, epoch and grain counts.
+3. **The recorded rule is boundary-only.** The fixture at
+   `test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:6155` asserts the fault **stays
+   latched** while a current window is published and served, and clears only at `adoptPreparedPlaybackWindow` — i.e.
+   "an eligible boundary is the only thing that ends a latched fault, never a silent reset" (`:2205–2207`). The
+   shipping image has **no adoption boundary**: the lane is the only thing that adopts, and it is compiled out.
+
+So a "state looks recovered now" predicate is not the missing clear site — it is a **different rule**
+(state-vs-episode), and it would flip the fixture above. The bounded alternatives are:
+
+- **(A) Gate the latch to the image that can clear it.** Wrap `deadlineContractFaultLatched = true` (`:2248`) in the
+  same `PLAYBACK_WINDOW_ROLLING_ENABLED` condition as both clear sites. Zero new state, zero pin change, no rule change:
+  a fault is only latched where a boundary exists to end it. The `lag_breach` row and `breachReports` stay as they are,
+  so the *report* is untouched; only the unreadable/unclearable state bit goes. **Changes nothing observable**: neither
+  `containmentForSlot` nor `deadlineContractFaultLatchedForSlot` has a production caller (re-verified). Cheapest, and
+  truthful about today's capability.
+- **(B) Define the served-source catch-up as an eligible boundary.** `playbackWindowSourceIsCurrentForSlot` (`:2907`) is
+  ungated and is the lane's own "the source is current" term (`:4891`). Clearing on its **false→true edge** keeps the
+  rule an *edge*, not a poll, and needs one bit of prior state on the externally allocated runtime — a `sizeof
+  (LoopPlaybackRuntime) == 7888` re-base under 5.3, with its reason recorded. It also needs the containment fixture's
+  step (3) revisited, because that case latches while the source is already current (no edge → stays latched, which is
+  the conservative direction).
+- **(C) Keep the latch and build the owner-level route predicate** — G0's option (a) above — so the shipping image has a
+  real containing *and* clearing owner.
+
+Not chosen here; recorded so the next session starts from the finding rather than from the premise.
