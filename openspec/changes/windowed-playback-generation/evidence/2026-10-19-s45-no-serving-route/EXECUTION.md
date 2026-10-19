@@ -190,3 +190,30 @@ or the invalidation that ends the episode is fixed so the completed successor is
 
 The native oracle now pins what a successful device episode must read: `win_requested → win_ready → win_serving`, in that
 order, with the serving exit present at all.
+
+### The deciding term is already on the wire — `CannotCompleteBeforeHandoff`
+
+Read the two rows the same instant emits, and no new field is needed:
+
+| row | what it names |
+|---|---|
+| `DIAG,win_frozen_readiness,7,3,build_drop,handoff_unreachable,…` | the **site**: `TrackPlaybackWindowBuild.cpp:5399` |
+| `DIAG,win_gate,…,x=win_blocked_by_request,…,rl=0,ow=1,dm=1,bld=0` | the **lane's reading of it** on the next turn |
+
+The site is unambiguous (`:5393`–`:5401`): when the request cannot complete within its lead, **or** admitting its grains
+would break already-admitted deadlines, the owner sets `request.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff`,
+calls `runtime->retireCoverageSource()` (that call *is* the `handoff_unreachable` receipt), and returns `GrainDenied`; the
+lane's own guard then blocks the frame by that reason, which is what `win_blocked_by_request` reports. So the demand is not
+starved, mis-keyed or stranded — it is **refused by design because it cannot finish before the handoff it is positioned
+for**.
+
+Two consequences:
+
+1. **6.4's device proof does not need a new receipt.** `win_gate` + `build_drop` together name the deciding term, and a
+   verifier can pair them. What 6.4 lacks is a **successful** episode to compare against, not a field to explain a failing
+   one.
+2. **The native oracle and the device differ in the right variable.** The native fixture serves grains instantly, so its
+   lead is always sufficient and it reaches `Ready` → `Serving` (now pinned in order). On device a 24-bar window's build
+   competes with already-admitted deadlines, so the same code refuses. The device shape that should reach `Ready` →
+   `Serving` is therefore a demoted, span-aligned target whose window build **fits its lead** — the variable to vary is
+   density/contention, not length or alignment (both of which the 32-bar run already satisfied).
