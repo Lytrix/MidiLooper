@@ -226,3 +226,41 @@ reasons are: `completed_unpublished` 860, `released_without_site` 560, `qualific
 that state (the frame may be Idle or excluded), and `blocked_by_request` can also follow `demand_invalidated` or
 `source_superseded`. Pair them **per episode** (nearest preceding release row for the same track/slot); never infer the
 term from the lane row alone.
+
+### Why no preset variant can produce `win_serving` — the refusal is a *deadline* term, measured
+
+Owner asked for a temporary low-contention variant (same demoted geometry, competing sibling window deadlines removed),
+with per-episode `win_requested → win_ready → win_serving` plus continuity required. Before authoring it, the episode's
+own timestamps were read (`#CAP` stamps are µs):
+
+| µs | row |
+|---|---|
+| 2 369 387 376 | `win_gate … x=win_requested … rl=1, ow=0, dm=1, bld=0, rq=12` |
+| 2 369 402 836 | `win_gate … x=win_waiting … rl=0, ow=1, dm=1, **bld=1**` (15.5 ms later) |
+| 2 369 426 081 | `build_drop, **handoff_unreachable**, …` (**38.7 ms** after the request) |
+| 2 369 435 638 | `win_gate … x=win_blocked_by_request … bld=0` |
+
+So the build was admitted and then refused **38.7 ms** later. At `:5393`–`:5401` the only two predicates that produce
+this drop are `canCompleteWithinLead(handoffLeadTicks(currentPhase, handoffPhase, loopLengthTicks), …)` and
+`playbackViewAdmissionKeepsAdmittedDeadlines(…, clock)` — both functions of the request's **phase against its handoff**,
+neither a load or queue-depth measure. A request refused in 38.7 ms was positioned with essentially no lead, so the
+quantity a variant would have to change is the **phase at which the lane is asked**, and the preset cannot set that:
+`MidiButtonActions.cpp:56` reaches `queuePlayingSlotSwitch` and `ClockManager.cpp:373` makes quantisation true whenever
+the clock runs, so the switch's request is positioned by the firmware's own switch schedule, not by host timing. The
+host's only lever (0.5 s gesture spacing) is an order of magnitude coarser than 38.7 ms.
+
+Two candidate variants were rejected on that reading, both before any device contact:
+
+1. **Silence the source before switching** — the source is the slot the leg just recorded and the transport is running;
+   the only control that disables a sibling (`MidiButtonActions.cpp:44`, `enableOnlySlot`) is slot selection, and the
+   outgoing slot keeps playing until the switch boundary, which is exactly the admitted sibling the term charges.
+2. **Drop quantisation so the switch takes the launch path** (where `!launch && !cold` skips both predicates) — that
+   path requires a stopped clock (`shouldQuantizeRecordStart() == isClockRunning()`), and a record press on a filled
+   slot with the transport stopped **records over it**. The registered 24-bar target is user content; using that lever
+   to make a measurement would destroy the thing being measured.
+
+**Conclusion (6.4).** The device route selection is proven as far as a preset can prove it: the lane is entered, builds,
+and refuses with a named term, and the refusal is reproducible on exactly the demoted+span-aligned geometry. What is not
+reachable is a **successful** episode: `win_serving` requires the lane to be asked with a handoff lead it can meet — a
+firmware-side positioning/retry change (`:5393`), not a preset variant. No run was performed; the high-contention 24/32-bar
+captures remain the refusal control.

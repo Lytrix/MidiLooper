@@ -2090,7 +2090,14 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   flashable — `code 392,376 + padding 840`, the floor; it is the **receipt gap** that blocks it: `win_serving` and
   `win_ready` have **0** occurrences across all 20 446 recorded `win_gate` rows while `win_requested`/`win_waiting`/
   `win_blocked_by_request` form a matched **25/25/25** set, so the lane's frame has never advanced past `Waiting` on
-  device and observing its serving exit needs a demand that *completes*),
+  device). **The requested low-contention preset variant cannot supply a completing demand** (2026-10-19): the refusal is
+  a **deadline** term measured **38.7 ms** after admission (`win_requested` at µs 2 369 387 376 → `handoff_unreachable`
+  at µs 2 369 426 081), so it is a function of the request's phase against its handoff — set by the firmware's own switch
+  schedule (`MidiButtonActions.cpp:56`, quantised whenever the clock runs) — not of load. The two variants that could have
+  removed the competing sibling window each have a blocker: selecting a sibling cannot stop the outgoing slot before the
+  switch boundary, and dropping quantisation to take the launch path requires a stopped clock, where the record press
+  would overwrite the registered target. A firmware positioning/retry change at `:5393` is therefore required; the
+  24/32-bar high-contention captures stay the refusal control,
   3.7b's legacy-emission removal (untouched — the predicate counts those branches rather than requiring their retirement),
   and the moving closure inside a long/demoted slot's serving handoff (3.7a/3.14). Detail:
   [`2026-10-19-s45-no-serving-route/EXECUTION.md`](evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).
