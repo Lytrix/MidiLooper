@@ -186,6 +186,13 @@ inline size_t countOf(const char* exit) {
   }
   return seen;
 }
+/// The position of the **first** row with this exit, or `count` when there is none: the ordered read a device run makes.
+inline size_t indexOf(const char* exit) {
+  for (size_t i = 0; i < count && i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    if (rows[i].exit != nullptr && strcmp(rows[i].exit, exit) == 0) return i;
+  }
+  return count;
+}
 }  // namespace RollingGateRows
 #define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) \
   RollingGateRows::record(track, slot, exit, flags, loopLengthTicks, requestResult)
@@ -13361,6 +13368,18 @@ void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_ch
       RollingGateRows::countOf("win_serving") + RollingGateRows::countOf("win_ready") +
           RollingGateRows::countOf("win_waiting"),
       "the lane's own progress is named as the frame moves, not left implicit");
+  // ---- (W4b) The **ordered** receipt -- what a device run must be able to read. The sum above cannot tell "the lane
+  // advanced to serving" from "the lane only waited", and that ambiguity is exactly what the device census found:
+  // `win_requested` / `win_waiting` / `win_blocked_by_request` matched 25/25/25 while `win_serving` and `win_ready` were
+  // **zero** across all 20 446 recorded rows. Pin the sequence itself, so a regression that leaves the lane waiting is a
+  // failure here rather than silence on the board.
+  const size_t requestedAt = RollingGateRows::indexOf("win_requested");
+  const size_t readyAt = RollingGateRows::indexOf("win_ready");
+  const size_t servingAt = RollingGateRows::indexOf("win_serving");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(RollingGateRows::count, servingAt,
+                                "the serving exit is reported: without it the device cannot prove the lane served");
+  TEST_ASSERT_LESS_THAN_MESSAGE(readyAt, requestedAt, "the demand's creation is reported before its progress");
+  TEST_ASSERT_LESS_THAN_MESSAGE(servingAt, readyAt, "its progress is reported before its serving");
   TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(16u, RollingGateRows::count - rowsAtRequest,
                                        "a state-change bound: not one row per lane turn (measured: 9 over 120 turns)");
 
