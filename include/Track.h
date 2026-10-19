@@ -19,10 +19,12 @@
 #include "TrackState.h"
 #include "TrackDisplayState.h"
 #include "Loop.h"
-#include "LoopEventStore.h"
+#include "Utils/TrackMem.h"
 #include "Utils/RecordSourceStaging.h"
 #include "Utils/RecordPreparationRole.h"
 #include "GlobalUndoStack.h"
+// Included for `TRACK_COLD_MEM` (task 3.15g accessors are defined out of line and FLASH-placed).
+#include "LoopEventStore.h"
 #include "TrackPlaybackRuntime.h"
 #include "Slot.h"
 #include "LoopPool.h"
@@ -125,7 +127,7 @@ public:
   void reanchorPlaybackCycle(uint32_t currentTick);
   
   // Recording control
-  void startRecording(uint32_t startLoopTick);
+  bool startRecording(uint32_t startLoopTick);
   void stopRecording(uint32_t currentTick);
   void stopRecordingToStopped(uint32_t currentTick);  // Stop recording, end in STOPPED (for MIDI Stop)
   /// When set, next stopRecording() bar-aligns event ticks (immediate punch-in pickup).
@@ -340,6 +342,19 @@ public:
   bool playbackViewAdmissionKeepsAdmittedDeadlines(const CoverageServiceContract& contract, uint32_t currentPhase,
                                                    uint32_t loopLengthTicks, uint16_t candidateGrains,
                                                    PlaybackDeadlineClock clock = {}) const;
+  /// DEC-136 — private committed-root preparation before Capture-ready adoption. `true` only for the demand that
+  /// is the **root-backed successor of a bound Record job's frozen return window** for the interval the playhead
+  /// is in: the job's frozen source must qualify, the demand's source must be the current published root, a
+  /// complete non-raw Capture window built from that job's token must be served or owed, and the requested
+  /// coverage must contain the playhead. It is a *classification* only — the route's waiver additionally requires
+  /// `ordinaryAdmissionCannotServeDemand`, and no other demand may take the position-free path.
+  bool rootReturnSuccessorIsOwedForSlot(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
+                                        PlaybackDeadlineClock clock) const;
+  /// DEC-136 — the envelope's own impossibility, as a pure rule: no legal lead admits this demand's own bounded
+  /// work on this loop geometry, because the lead test reserves `leadTicks` *plus* `grains x (denied+1)` turns at
+  /// `maximumPhaseAdvancePerTurn`. `false` for an undeclared contract (an unproven envelope grants nothing) and
+  /// for any loop long enough to serve the cost through the ordinary path.
+  bool ordinaryAdmissionCannotServeDemand(const CoverageServiceContract& contract, uint32_t loopLengthTicks) const;
   /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
   /// refused request left behind -- or null when the slot owes none. **Generation-qualified** (DEC-108 §13(d)): a
   /// record retained under an earlier operation generation is never revived, so a returning slot does not resume a
@@ -401,7 +416,24 @@ public:
   /// handoff). This is the consumer-facing edge task 3.7 calls at an eligible boundary; until then nothing in
   /// production calls it, and a prepared successor sits in the ready role without touching the window that is
   /// being served.
-  bool adoptPreparedPlaybackWindow(uint8_t slotIndex);
+  /// Task 3.15g: `refusalOut` is diagnostics only -- the same checks in the same order, reported instead of hidden.
+  /// 0 adopted, 1 no runtime, 2 no view set, 3 the current role is unset, 4 the ready role is unset, 5 the ready view
+  /// is incomplete, 6 the lifecycle's preparation handoff declined with every readable term holding. A null pointer
+  /// reproduces the previous signature exactly, so no behaviour depends on it.
+  bool adoptPreparedPlaybackWindow(uint8_t slotIndex, uint8_t* refusalOut = nullptr);
+  /// Task 3.15g: the root-return adoption diagnostics, on the existing `win_frozen_readiness` receipt. Cold (flash)
+  /// and transition-cadenced: it emits only when the adoption mask/answer changes for this slot.
+  /// Task 3.15g: `fromRetirementHold` names the observing edge, as a bit rather than a string pointer (a pointer
+  /// argument cost 64 B of ITCM here, and this image has 16 B of headroom).
+  void reportRootReturnAdoptionForSlot(uint8_t slotIndex, const Loop& loop, uint32_t phase,
+                                       uint64_t frozenCaptureToken, bool attempted, bool adopted, uint8_t why,
+                                       bool fromRetirementHold = false);
+  /// The retirement hold's own observation: same receipt family, one-argument call.
+  void reportRootReturnHoldForSlot(uint8_t slotIndex);
+  /// Session-capture observation after a completed immutable-view cursor turn; no serial on the edge.
+  void observePlaybackReadForTurn(uint8_t slotIndex, const FixedPlaybackEventStorage* storage,
+                                  const FixedPlaybackBridgeStorage* bridge = nullptr);
+  void observePlaybackSnapshotAvailability(uint8_t slotIndex, uint32_t tick);
   /// DEC-108 item 1 / task 3.2: the **interval policy** -- which interval a slot's window serves. A pure
   /// resolution from the loop's geometry, its demotion state and the playhead: whole-loop coverage where the
   /// whole-take view is admissible, else the two-bar window at the playhead that the live build already uses
@@ -429,8 +461,70 @@ public:
       const PlaybackCoverageInterval& coverage, PlaybackDeadlineClock clock);
   bool rootQualificationWaitsForCaptureReady(uint8_t slotIndex,
       const LoopPlaybackRuntime& runtime, PlaybackDeadlineClock clock) const;
+  /// Task 3.15g: a retained Committed demand is *for* the current published root, so a stamp captured before that
+  /// root published is never the truth. Refresh its identity fields from the live root (revision, generation,
+  /// published-snapshot identity, loop length) before the retry gate judges it. Identity only: the reason, the
+  /// position and the coverage are untouched.
+  void refreshRetainedDemandIdentityForSlot(uint8_t slotIndex);
   bool committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
   PlaybackViewTurnResult stepCommittedPlaybackRetry(uint8_t slotIndex, PlaybackDeadlineClock clock);
+
+  /// Task 3.15h — **coverage-build drop trace, and why it exists**. The board's stall is the job → `build+job` → `job`
+  /// cycle: the lane hands the coverage work to a builder and the builder disappears again without publishing, so the
+  /// same unsatisfied work returns to the job. The owner-set trace (`refreshRetainedDemandIdentityForSlot`) is
+  /// turn-cadenced, so it can name *that* the builder vanished but never *where* or *why*: the release happens inside a
+  /// turn, at one of the sites below. Each site names itself through this reason, and the row carries the state the
+  /// builder was in when it was released -- whether it had made retryable progress, whether the drop published, and
+  /// which record owns the work afterwards. `RetryableNoProgress` (bit 7 of `adoptResult`) is the falsifiable term:
+  /// a builder that had done work, published nothing, and handed the identical demand back is the defect shape.
+  enum class CoverageBuildDropReason : uint8_t {
+    None = 0,
+    /// `applyPlaybackViewTransition` released the candidate: a slot transition, not a build decision.
+    CandidateReleased,
+    /// `cancelPlaybackLaunchForSlot` released an active launch worker.
+    LaunchCancelled,
+    /// `cancelRollingPlaybackWindow` released a rolling frame's admitted builder.
+    WindowCancelled,
+    /// `stepCommittedPlaybackRetry` invalidated the frozen demand, then coalesced the build back into `pending`.
+    DemandInvalidated,
+    /// The declared contract could not complete before the handoff (`CannotCompleteBeforeHandoff`).
+    HandoffUnreachable,
+    /// The build's own source no longer matched the requested root (current-root path).
+    SourceSuperseded,
+    /// The build's own source no longer matched the requested root (frozen Record-return path).
+    RecordReturnSourceSuperseded,
+    /// A grain was denied while the coverage source was owned: the builder could not continue on its own source.
+    GrainDeniedWhileOwned,
+    /// The overdub lifecycle released the slot's coverage work.
+    OverdubLifecycle,
+    /// Completion adjudication refused publication (a late completion, or a refused role).
+    CompletionAdjudicated,
+    /// The builder finished its last grain and no release site ran: `active()` is false for `Phase::Complete`, so the
+    /// owner set loses the build bit while the obligation is still owed. Named from the ownership transition itself.
+    CompletedUnpublished,
+    /// The build bit cleared with the builder neither active nor complete, so the release happened on a path this trace
+    /// does not cover. The row reports the phase and counts it was left in rather than guessing a site.
+    ReleasedWithoutSite,
+    /// The root-backed qualification was begun for this demand (the build's **creation** transition).
+    QualificationStarted,
+    /// The qualified source was admitted and the build's grains began (the second half of creation).
+    BuildAdmitted,
+    /// A completed build became the slot's **ready successor**.
+    PublishedAsReady,
+    /// A completed build became the slot's **served window**.
+    PublishedAsCurrent,
+    /// A completed build could not become the ready successor -- the ready role already held a complete view.
+    PublishReadyRefused,
+    /// A completed build could not become the served window -- the current role refused the swap.
+    PublishCurrentRefused,
+  };
+  /// The builder's state before a release site runs, packed for one row: bit0 active, bits1-3 `nextGrain()`,
+  /// bit4 coverage-owned, bit5 the build role is the completed destination, bit6 live-capture borrow,
+  /// bits8-15 qualified events (saturated), bits16-23 ordered events (saturated).
+  uint32_t probeCoverageBuildDrop(uint8_t slotIndex) const;
+  /// Emit one `build_drop` row for a release that has just happened. Deduped on (reason, before-state, owner set) so a
+  /// repeating no-progress release reports its first instance and every change, never a flood.
+  void traceCoverageBuildDrop(uint8_t slotIndex, CoverageBuildDropReason reason, uint32_t before);
   /// Task 3.7a (I2): **the window lane's source currency for a slot** -- the current published root, or the retained
   /// revision the slot admitted for exactly the revision it now carries. This is the source a *window* may be built
   /// from; it deliberately does not replace `Loop::publishedSnapshotIsCurrent()` where that answer is the checkpoint /
@@ -524,6 +618,32 @@ public:
       uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
       PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
       const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut);
+#endif
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && (defined(PIO_UNIT_TEST_NATIVE) || \
+    (defined(SESSION_CAPTURE) && PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
+  /// Stack-only, read-only selected-slot receipt. No source owner is borrowed.
+  struct RollingRecordStatus {
+    uint64_t clockTick = 0, boundStorage = 0, currentStorage = 0;
+    uint64_t captureContentToken = 0, liveCaptureToken = 0;
+    uint32_t epoch = 0, framePeriod = 0, sourceGeneration = 0;
+    int32_t frameOrigin = 0;
+    uint32_t coverageStart = 0, coverageLength = 0, coveragePeriod = 0;
+    uint32_t rows = 0, cursor = 0, ledgerCount = 0, rawCount = 0, rawMax = 0;
+    uint32_t firstTick = UINT32_MAX, lastTick = UINT32_MAX;
+    NoteId firstNoteId = kInvalidNoteId, lastNoteId = kInvalidNoteId;
+    uint8_t track = 0, slot = 0, state = 0, rollingPhase = 0;
+    uint8_t boundRole = UINT8_MAX, currentRole = UINT8_MAX, sourceOrigin = UINT8_MAX;
+    bool valid = false, published = false, complete = false;
+    bool recording = false, stopResponsibility = false;
+    uint32_t frameEpoch = 0, requestEpoch = 0;
+    bool requestActive = false, requestInvalidated = false;
+    uint8_t readyRole = UINT8_MAX, buildRole = UINT8_MAX;
+    uint8_t readyFlags = 0, buildFlags = 0, workerFlags = 0;
+  };
+  static RollingRecordStatus readRollingRecordStatus();
+#if defined(SESSION_CAPTURE) && PLAYBACK_WINDOW_ROLLING_QUALIFICATION
+  static void printRollingRecordStatus(uint32_t requestId);
+#endif
 #endif
   /// Task 3.7a (I5)'s ITCM budget slice: **the bridge window's handoff seek, in flash.** The compiled bridge and the
   /// window carry the same cycle stream, so the seek is logarithmic in the window's event count and only has to exclude
@@ -952,6 +1072,13 @@ public:
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
   void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput);
 #if defined(PIO_UNIT_TEST_NATIVE)
+/// **DEC-143's cost criterion, observable from a native suite.** The merged playback fallback may rebuild only when the
+/// published identity it is built from changed; a maintenance turn that finds the same identity must reuse. Counted at
+/// the rebuild point itself so a suite can prove "bounded work", not merely "no silence".
+unsigned playbackMergedRebuildCountForTest();
+void resetPlaybackMergedRebuildCountForTest();
+#endif
+#if defined(PIO_UNIT_TEST_NATIVE)
   /// 3.7a (I4): **the MIDI edge's own record of what committed playback put on the wire.**
   ///
   /// `sendMidiEvent` appends here at the production send point -- after its own gates
@@ -1255,6 +1382,11 @@ public:
     getActiveLoop().invalidatePlaybackCaches();
   }
 
+  /// **DEC-143 — a published Record slice is read material before its root publishes.** True only after this slot's
+  /// take crossed the immutable `RecordPublished` edge and while its presentation owns the reader; a pre-publication
+  /// take still sits behind the matching live finalizer and must not reach the merged playback representation.
+  bool hasPublishedRecordPresentationForSlot(uint8_t slot) const;
+
 private:
   friend class TrackUndo;
 #if defined(PIO_UNIT_TEST_NATIVE)
@@ -1362,7 +1494,59 @@ private:
   using PendingNoteMap = std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash>;
   // The existing worker's stopped interval. Live input never owns this map.
   // Staging/Loop session migration must finish before multiple jobs are admitted.
+  /// Task 3.15g -- the slot-owned presentation record. One per slot, in the externally
+  /// allocated ring storage, so its address is stable for the whole lifetime of the Loop's
+  /// read borrow (`Loop::borrowSealedCaptureRange` keys on the record's own identity).
+  ///
+  /// The sealed raw capture extent lives **here**, not in the interaction job, because the
+  /// two obligations end at different points: the immutable Record slice is finished at
+  /// `RecordPublished` (so the interaction job must be popped and its finalizer role
+  /// released, or the next slice's closure is blocked behind it), while the frozen reader
+  /// is still owed a root-backed successor and must keep serving the same bytes afterwards.
+  /// One record per slot is also the coalescing rule: presentation work is keyed by the
+  /// authoritative generation of the extent that a slot currently owes, never stacked one
+  /// heavyweight job per slice.
+  struct CaptureStopPresentation {
+    /// The sealed extent. Reserved-empty at rest; sealed by the admission that takes the
+    /// slot. Released grain by grain and re-armed by `serviceCaptureStopDescriptorReservations`.
+    LoopEventStore::CaptureRange rawRange;
+    Loop* owner = nullptr;
+    LoopId loopId = kInvalidLoopId;
+    /// The interval this record presents, and the E2 Capture content identity frozen before
+    /// the range cut. Both are copied once at admission and never rewritten afterwards.
+    uint64_t interval = 0;
+    uint64_t frozenCaptureContentGeneration = 0;
+    uint32_t loopLengthTicks = 0;
+    /// The **interval-derived presentation generation**, by contract:
+    ///
+    ///   `generation == presentationGenerationFor(interval)`
+    ///
+    /// It is not an independent counter and must never be stamped from another source (an
+    /// admission's frozen counter, a range generation, a slot generation). Its single job is to
+    /// let a reader that names an interval tell a reused record from the one it was handed:
+    /// `Track::qualifiedFrozenRecordCaptureSourceForSlot` re-derives it from the interval it is
+    /// asked about and refuses any record whose stamp disagrees, so the two sides are one
+    /// derivation rather than two conventions.
+    ///
+    /// The record's own **address** is the Loop's borrow identity: it is allocated once with this
+    /// struct and never moved, which is exactly what `Loop::borrowSealedCaptureRange` needs of its
+    /// `owner` key.
+    uint32_t generation = 0;
+    uint8_t slot = 0;
+    /// True after RecordPublished has released the interaction job and the frozen reader remains
+    /// to be retired by the presentation lane.
+    bool retirementActive = false;
+    bool ownsExtent = false;
+    bool armed = false;
+  };
+  /// The **one** derivation of `CaptureStopPresentation::generation`. The stamping sites (both Record
+  /// admissions) and the reader that validates it (`qualifiedFrozenRecordCaptureSourceForSlot`) call
+  /// this, so "generation" cannot drift back into a second meaning.
+  static constexpr uint32_t presentationGenerationFor(uint64_t interval) {
+    return static_cast<uint32_t>(interval);
+  }
   struct CaptureStopJob {
+    ~CaptureStopJob();
     PendingStopAdmission admission;
     Loop* owner = nullptr;
     LoopId loopId = kInvalidLoopId;
@@ -1371,12 +1555,22 @@ private:
     uint32_t phaseTick = 0;
     uint32_t loopLengthTicks = 0;
     uint64_t interval = 0;
-    /// Job-owned sealed raw capture extent. Ownership transfers from the Loop
-    /// producer at admission; the Loop keeps only a job-identified read borrow.
-    LoopEventStore::CaptureRange rawRange;
-    /// E2: Loop Capture content identity frozen before the admitted range cut.
+    /// Task 3.15g: the slot-owned presentation record holding this interval's sealed
+    /// extent. Armed at admission; deliberately **not** released at `RecordPublished`, so
+    /// the frozen reader keeps serving after this job is popped and the extent's address
+    /// never changes under the Loop's borrow. Null for a take that sealed no extent.
+    CaptureStopPresentation* presentation = nullptr;
+    /// E2: Loop Capture content identity frozen before the admitted range cut. The
+    /// presentation record carries its own copy for reads that outlive this job.
     uint64_t frozenCaptureContentGeneration = 0;
-    bool ownsRawRange = false;
+    /// Task 3.15g: the sealed extent is reached as `presentation->rawRange` at every
+    /// finalization site -- a plain member access, not an accessor: a call at each of the
+    /// ~27 sites measured 784 B of ITCM against the reviewed 840 B padding floor.
+    /// True while the presentation record still owes extent release to the pool.
+    bool ownsRawRange() const { return presentation != nullptr && presentation->ownsExtent; }
+    void clearOwnedRawRange() {
+      if (presentation != nullptr) presentation->ownsExtent = false;
+    }
     /// Job-owned pending note changes (Add/Shorten/Hide intents). Swapped out of
     /// the live session at admission; the Loop keeps a read borrow for display.
     PendingNoteChangeVec pendingChanges;
@@ -1471,9 +1665,18 @@ private:
     /// Default-initialization is value-initialization here: every member has an initializer or a
     /// non-trivial default constructor.
     CaptureStopJobs();
+    ~CaptureStopJobs();
     CaptureStopJob entries[kCapacity];
     size_t head = 0;
     size_t count = 0;
+    /// Task 3.15g: one slot-owned presentation record per slot. Indexed by slot, not by
+    /// ring position, because the obligation is a property of the slot's served interval --
+    /// that is also what makes presentation work coalesce by the authoritative generation
+    /// of the extent the slot currently owes instead of stacking per slice.
+    ///
+    /// Externally allocated with the ring (this struct is EXTRAM and FLASH-constructed), so
+    /// per-slot `CaptureRange` ownership here costs external pool bytes, no DTCM and no RAM1.
+    CaptureStopPresentation presentations[Config::MAX_LOOPS_PER_TRACK];
     /// S4f.1: the track's accepted-but-not-yet-executed interaction. One instance, not a ring
     /// descriptor: it consumes none of `entries`/`count` and is never stacked.
     PendingInteractionLatch interaction;
@@ -1498,7 +1701,7 @@ private:
     void operator()(CaptureStopJobs* jobs) const;
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
-  bool prewarmCaptureStopJobs();
+  bool prewarmCaptureStopJobs(uint8_t captureSlot = UINT8_MAX);
   /// DEC-108 item 1: the window owner's two private halves -- one grain's outcome (and its named row), and
   /// the row itself. Private because the owner's surface is the three calls above; nothing else may advance a
   /// grain or report one.
@@ -1583,11 +1786,14 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    static_assert(sizeof(CaptureStopJobs) == 29032,
-                  "S3.0/S4f.18/E2: target external stop ring 29,032 B, measured "
-                  "from target ABI after Capture source-identity token (+64 B vs "
-                  "the 28,968 B frozen-receipt baseline). Track DTCM is separately pinned; "
-                  "post-link RAM1 remains the placement authority.");
+    // Task 3.15g: re-based 29,064 -> 29,704 (+640 B) for the eight slot-owned presentation
+    // records. Each measures 80 B: the sealed extent's `CaptureRange` plus the record's own
+    // interval/identity scalars. **External pool only** -- `Track` DTCM stays 384 B and the
+    // post-link RAM1 check below stays the placement authority.
+    static_assert(sizeof(CaptureStopJobs) == 29704,
+                  "I5/3.15g: target external stop ring 29,704 B = 29,064 B ring + 640 B "
+                  "(8 x 80 B) slot-owned presentation records. Track DTCM remains 384 B; "
+                  "post-link RAM1 is placement authority.");
 #endif
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
@@ -1625,6 +1831,11 @@ private:
   /// ring entry **without** touching the live interval, so a superseded finalization cannot
   /// resurrect or mutate a successor's content. Returns false while a long extent is still
   /// returning its grains; the prologue re-enters until it is complete.
+  bool serviceCaptureStopPresentations();
+  bool publishRecordPresentation(CaptureStopJob& job);
+  CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot);
+  const CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot) const;
+  bool hasRecordReaderOwnerForSlot(uint8_t slot) const;
   bool supersedeDeferredStopJob(CaptureStopJob& job);
   CaptureStopJob* captureStopJobHead();
   const CaptureStopJob* captureStopJobHead() const;

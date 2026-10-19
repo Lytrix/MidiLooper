@@ -31,6 +31,16 @@
 
 using namespace DisplayManagerInternal;
 
+namespace {
+DISP_COLD_MEM bool displaySourcePublicationPending(const Track& track, const Loop& loop,
+                                                  uint8_t slot) {
+    // A stopped Record obligation owns the source before its worker queues
+    // Snapshot publication. Do not erase the complete frame in that interval.
+    return loop.isPlaybackSessionExitPublicationGap() ||
+        (!track.isRecording() && !loop.publishedSnapshot() && track.hasStopInFlightForSlot(slot));
+}
+}  // namespace
+
 DISP_COLD_MEM void DisplayManagerInternal::filterNotesToFollowWindow(
     const NoteUtils::DisplayNoteVec& source, uint32_t windowStart, uint32_t windowLength,
     uint32_t loopLength, NoteUtils::DisplayNoteVec& outNotes, uint32_t& gatherStart,
@@ -46,7 +56,7 @@ DISP_COLD_MEM void DisplayManagerInternal::filterNotesToFollowWindow(
                                                                        gatherLength, loopLength);
 }
 
-bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t displaySlot,
+DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t displaySlot,
                                              uint32_t currentTick, uint32_t loopLength,
                                              uint32_t& outWindowStart, uint32_t& outWindowLength,
                                              uint8_t& outWindowBars) {
@@ -55,6 +65,24 @@ bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t display
         outWindowLength = loopLength;
         outWindowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
         return false;
+    }
+    const Loop& loop = track.getLoop(displaySlot);
+    const bool sameHeldScope = liveDrawSourceKey_.valid != 0 &&
+        liveDrawSourceKey_.slot == displaySlot &&
+        liveDrawSourceKey_.track == resolveTrackIndex(track) &&
+        livePlaybackDisplaySlot_ == displaySlot &&
+        livePlaybackDisplayTrack_ == liveDrawSourceKey_.track && !liveDisplayNotes.empty();
+    if (sameHeldScope && displaySourcePublicationPending(track, loop, displaySlot) &&
+        liveDrawSourceKey_.windowStart < loopLength && liveDrawSourceKey_.windowLength > 0 &&
+        liveDrawSourceKey_.windowLength <= loopLength - liveDrawSourceKey_.windowStart) {
+        // Content and viewport are one held frame. A new playhead interval may
+        // replace them together only when its complete committed source exists.
+        outWindowStart = liveDrawSourceKey_.windowStart;
+        outWindowLength = liveDrawSourceKey_.windowLength;
+        outWindowBars = static_cast<uint8_t>((outWindowLength + Config::TICKS_PER_BAR - 1) /
+                                             Config::TICKS_PER_BAR);
+        detailedWindowStartTick_[displaySlot] = outWindowStart;
+        return true;
     }
     const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
                                                     DisplayWindowUtils::kMaxDetailedWindowBars);
@@ -687,15 +715,29 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const bool holdSessionExitGapHandoff =
         DisplayWindowUtils::shouldHoldSessionExitPublicationGapHandoff(
             preservedHandoffAuthority, loop.publishedSnapshotIsCurrent(),
-            loop.isPlaybackSessionExitPublicationGap());
+            displaySourcePublicationPending(track, loop, displaySlot));
 
     size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
     DisplayWindowUtils::DrawSourceComposeScratch<DisplayNoteVec> composeScratch(
         liveDisplayPendingPaintNotes_);
     DisplayNoteVec& candidate = composeScratch.notes;
     const uint32_t gatherStartUs = micros();
-    if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
-        canReuseCommittedPrefix) {
+    if (holdSessionExitGapHandoff && (loop.captureActive() || loop.hasOverdubSession()) &&
+        liveDrawSourceKey_.valid != 0 && liveDrawSourceKey_.track == trackIndex &&
+        liveDrawSourceKey_.slot == displaySlot && liveDrawSourceKey_.windowStart == windowStart &&
+        liveDrawSourceKey_.windowLength == windowLength) {
+        // Hold the complete committed base, not the live Capture overlay. No
+        // unpublished root/candidate enters the prefix; accepted preview rows
+        // still refresh through the existing atomic compose/paint handoff.
+        storeCommittedDrawSourcePrefix(liveDisplayNotes, liveDisplayCacheCommittedNoteCount_,
+                                       liveDisplayCommittedPrefix_);
+        reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
+        committedDisplayEnd = candidate.size();
+        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        liveDisplayNotes.swap(candidate);
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+    } else if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
+               canReuseCommittedPrefix) {
         // Reuse the untransformed committed prefix. Overlays stay on compose.
         // Pending/overlay transforms paint on a copy so the next frame cannot
         // reuse a compose source that predates the pending change.

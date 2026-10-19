@@ -15,6 +15,10 @@ ledger owns open identities
 source-view covering identities answer present-at-hold
 ```
 
+## Private append-order evaluation boundary
+
+2026-10-13: `RuntimePlaybackOrderBuilder::extendPrivateOrder` adds bounded suffix ordering/prefix merge-copy-back for caller-certified private fixed storage only. The existing audible comparator remains phase → Off/On kind → raw tick → provenance/index; canonical Capture ordering remains stable raw tick/index. Independent wrap Off768/On0 and same-tick Off20/On20 cases plus270 matrix combinations pass. No overlap participant, source transform, occupy geometry, active ledger, emission or published current/ready behavior changed. Typed view/borrowed-index attempts refuse; raw callers still certify private ownership/source stability. [I5 — delta-order execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/DELTA-ORDER-EXECUTION.md) records245focused/fullnative3131pass7skip and the prefixmerge removalRED/restoration, not an overdub/HITL or running-Capture readiness claim.
+
 ## Current occupy resolve (implemented)
 
 Overdub occupy is **On-primary**. Incoming B is already in `capture.store` before resolve runs. Authoritative Shorten/Hide for notes present at B's On are written by `Loop::resolveOccupancyAtNoteOn`. B's Off does not re-resolve those identities. Off still runs `accumulatePendingNoteChangesForIncomingNote` to Add closed B and to resolve notes whose start is **strictly inside** `(B.startTick, B.endTick)`.

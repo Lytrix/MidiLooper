@@ -176,7 +176,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 15 | `DeferredJobScheduler::runFrame` | `LoadLoopJob` | 250 / 1200 / 5000 µs between steps | **Empirically bounded** |
 | 16 | `enqueueRemainingLoopSlotRestores` | boot fill | 4 entries per turn | **Structurally bounded** |
 | 17 | `reclaimUnreferencedDisabledPasses` | `loop()` at Critical pressure | none | **Unbounded**, not resumable |
-| 18 | `processHitlSerialCommands` | capture builds only | Overall command set remains unbounded. The `!TRACK_STATUS` observation branch snapshots only selected-track/active-slot/state/transport scalars under a saved/restored IRQ mask, then offers one <=96-byte direct response with a TX-room refusal; no allocation, content access, ring drain or deferred work. This is a bounded child, not a timing guarantee for the serial command owner or USB backend. | **Unbounded** |
+| 18 | `processHitlSerialCommands` | capture builds only | Overall command set remains unbounded. `!TRACK_STATUS` snapshots selected-track/active-slot/state/transport under a saved/restored IRQ mask and offers one <=96-byte direct response. `!OVERLAY_STATUS` snapshots main-owned open/mode/row/drilled-or-dirty-target Set/revision/phase and offers one <128-byte direct response. Both refuse TX pressure without ring fallback, allocation, content/SD access, ring drain or deferred work. Main playing <=8 no-USB flush and stopped-only TRACE_DRAIN remain unchanged (DEC-119 — request-only live overlay observation). Capture-journal first-use initialization resets four metadata scalars once per boot; append/replay checks the existing32-row bound and rejects invalid indices before access (DEC-121 — boot-local capture journal initialization). These bounded children do not guarantee timing for the serial command owner, whole capture drain or USB backend. | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. Per-bar membership is bounded by the explicit `kSnapshotMembershipMaxRefsPerBar` design envelope, applied equally to event-bar and note-bar membership; pages stay lazily allocated. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. A failed incorporation discards the partial candidate and leaves authoritative pass-change progress unchanged, so the exact fragment retries. | **Structurally bounded** (page count per unit); bar capacity is the `kSnapshotMembershipMaxRefsPerBar` envelope |
@@ -194,6 +194,33 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 33 | `MidiHandler::processDroidUsbHostOutbound` (drain half; timing-path review, items 2 and 3) | `main.cpp::loop()` at the top of the frame, and once more inside the deferred display frame | At most `MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP` (**4**) USB-host packets plus 4 LED packets per call, and the fader-state coalescing scan is one forward pass of the **published** region (≤ the ring's 256-entry capacity) per sent state entry. The **producer** (`queueDeferredDroidHostEvent`, ISR-reachable) is O(1): one struct store, one masked index publish, no scan, no logging, no telemetry. | **Structurally bounded** (per-call packet cap; the scan is bounded by the ring capacity and runs only for a state entry being sent) |
 
 Thirteen rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+
+DEC-130 — builder-call cancellation and live-source exclusion adds fixed saved-mask
+call metadata and live descriptor/currency/one-row-or-chunk-transition sections inside
+the existing row27 builder. Executing state defers discard; reset refuses before
+destructive work. Filtering and private Fill/Order grains stay outside the mask.
+Native mask/cancellation fixtures qualify this retained-source boundary only; no
+measured IRQ duration/finite whole-owner bound or all-Track adoption proof follows.
+Row27 remains **Unbounded/not admitted**, target borrower disabled. Evidence:
+[I5 — source concurrency execution](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-CONCURRENCY-EXECUTION.md).
+
+DEC-131 — exact Track completion authority adds physical destination-generation
+receipts and short metadata check/rotation sections to the existing owner. Ready
+adoption consumes only ready; explicit preparation-owner publication certifies private
+completion. Sampling/reporting/Fill/Order/seek/projection/retirement drains are not
+enclosed by these sections. Native/build verification is not an IRQ duration, whole
+owner bound or full acquisition/direct-Record protocol. Row27 stays **Unbounded/not
+admitted**, no numeric budget relaxation. [I5 — Track publication evidence](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/TRACK-PUBLICATION-CONCURRENCY.md).
+
+DEC-132 — preparation acquisition and Record exclusion adds non-masking selection/work/
+commit ownership on both existing builders, destructive reset/lease transaction and
+actual queued Record refusal/retry. Bridge metadata receipts preserve independent ready
+adoption and prevent post-cancellation cleanup. Fixed guards do not cover Fill/Order,
+source seeks, raw projection or retirement drains. Native/build/local ABI gates pass;
+default-path Record/Stop compatibility HITL now passes. Row27 remains **Unbounded/not admitted**:
+no finite whole-owner/IRQ cost, calibration, arrival-age or740→768 readiness follows.
+[I5 — acquisition and hardware evidence](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md).
+
 
 ### Resumable playback and deferred-stop admission gates (rows 27–29)
 
@@ -1022,7 +1049,16 @@ class.
 | `legacy_oracle_header` | `writeDeferredLoopHeader` | Every save | Loop header scalars + capture-pass count |
 | `capture_pass_header` / `capture_pass_chunk` | `writeDeferredCapturePassHeader` / `writeDeferredCapturePassChunk` | Per pass, per chunk | One pass header or at most 512 payload bytes per write call; the chunk id remains owned until all serialized bytes are acknowledged |
 | `edit_tail` | `writePersistedEditsTail` | `DeferredLoopWriteStage::EditTail` | One edit/geometry tail write |
-| `lsv1_loop_snapshot_tail` | `stepLoopSnapshotBodyFormatV1SaveTail` (`DeferredLoopWriteStage::LoopSnapshotTail`) | After `edit_tail,done` when LSV1 save | One classified grain (`maxGrains = 1`): membership page gather, ≤16 sort swaps, 512-byte payload IO slice, or section header |
+| `lsv1_loop_snapshot_tail` | `stepLoopSnapshotBodyFormatV1SaveTail` (`DeferredLoopWriteStage::LoopSnapshotTail`) | After `edit_tail,done` when LSV1 save | One classified grain (`maxGrains = 1`): ≤16 membership lookups + at mostone populated page, existing ordering stage, forward≤512-byte payload slice (no prefix replay), or section header; [DEC-118 — bounded forward save serialization](../../DECISION_LOG.md#dec-118--bounded-forward-save-serialization) |
+
+Revision layout no longer serializes loop bodies to measure them: private chunk
+length placeholders are patched from actual emitted bytes before directory/footer
+CRC and validation. One completed body/header patch yields before another body.
+Existing owner/time/SD gates and empirical class stay unchanged; metadata/sort/SD
+step duration and hardware seconds-scale completion are not qualified by byte caps.
+Forward cursors reuse existing scalar scratch; local512-byte output buffer only,
+no new resident cache. Native byte/fault/work-cap evidence and pending device gate:
+[I4 — serializer packet](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/SERIALIZER-OPTIMIZATION.md).
 
 **Save-time migration (no eager owner):** legacy body on disk → load adopts passes →
 `queueLoadedSnapshotPublish` + idle construction → `publishedSnapshotIsCurrent()` →
@@ -1585,3 +1621,72 @@ Header preparation is a separate fixed-object allocation grant into an absent el
 ### NOTE_EDIT live settled-current-root entry preparation
 
 The frozen lane on existing EditManager admits scalar target/source/context/caller intent only, no clears/selection/feedback. A main-loop opportunity advances one installed payload/derived/committed-ID/selection grain or phase; empty singleton reserve is separate and allocator duration/failure unqualified. Qualified final publication installs session/selection/Select coherently without legacy UI inventory scans or nearest reselection. Before target/source/shared-state reuse, cancellation invalidates private work and deferred tails. No full-loop representation or root lease. Compatibility cold/stale/Capture/active/non-null-FSM/debug-bisect entry remains unbounded until its cutover gates; existing preview/feedback wrapper execution, including delay(10), is separate unqualified work, not a new bound from deferral. Actual MIDI gap/readiness/feedback and contention duration require HITL; main service placement is source/build verified unless explicitly measured. [Live entry packet](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/LIVE-CURRENT-ROOT-ENTRY.md).
+
+### Raw-prefix source observation prerequisite
+
+LoopEventStore source-cursor admission/extension/validation are fixed scalar work.
+One step reads one row OR advances one chunk, charging directory transitions without
+at() prefix replay. Per-store destructive invalidation and pool-wide static-alias checks
+are fixed token work, separate from the existing mutator's traversal/cost. These tokens
+do not make old sort/filter/ID/projection/append paths bounded. Caller physically retains
+store/chunks, excludes mutable workers and discards before owner replacement/destruction;
+no new lease/registry or autonomous owner query. Static unrelated reference retirement
+can conservatively invalidate a borrow and must count toward later composed progress.
+The subsequent serialized integration names both Track runtime builders' live borrows
+and validates phase/projection/raw/strict-content currency; cancellation precedes holder
+selection and owner destruction. Row27 remains Unbounded/not admitted: running request,
+coalescing/adoption/stop, ISR/main synchronization, complete source-service and physical
+input-return/readiness bounds remain unqualified. DEC-126 — raw-prefix source stability;
+[I5 — source-stability packet](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-STABILITY-EXECUTION.md).
+
+### Serialized semantic live-source retention prerequisite
+
+DEC-127 — semantic live-source retention adds terminal assignment-qualified phase
+identity and exact projection receipts at live descriptor creation. Fill charges one
+row or chunk; Order/Complete retain strict content/count currency. Both existing runtime
+builders retain named borrows until discard. Local release/composite guards do not query
+source; maintenance cancels stale work before holder selection, Track detaches before
+member LoopPool destruction and runtime discards before destination release. This is
+verified under physically retained/serialized caller preconditions, not an independent
+lease or all-route ISR/main read/cancel/adopt protocol. Internal timer ticks execute Track
+transitions/resets; token checks alone cannot qualify concurrent publication/cancellation.
+No whole-grain unbounded IRQ masking or new numerical timing budget is authorized.
+Default rolling remains OFF/target continuation disabled. Physical PIT resource/shared
+debug policy requires owner decision; counter read/era/correlation/arrival delay and
+whole owner-to-input costs remain unqualified. Row27 status remains unchanged.
+[I5 — live-source integration evidence](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/LIVE-SOURCE-INTEGRATION.md).
+
+### ClockManager PIT elapsed observation prerequisite
+
+DEC-128 — ClockManager PIT elapsed reference extends the existing clock owner with
+cold-only PIT0/PIT1 reservation and fixed scalar state. One hot observation performs a
+fixed, finite PRIMASK-preserving configuration/flag/high-latchedlow validation sequence;
+no retry, allocation, logging, register write, periodic callback or overflow servicing.
+Source status/era refusal is distinct from physical deadline qualification. Cold initial
+module setup requires allfour channels disabled; owned requalification preserves count,
+never disables a running shared module. Source enables the PIT bus gate before inspection.
+Stock FRZ1/Run-mode-only/exclusive configuration policy excludes unmediated debug/sleep
+or later timer allocation; validate known changes and invalidate before future supported
+suspend. Terminal high overflow is never cleared on the hot read. Fixed operation count
+does NOT establish device read latency, oscillator accuracy, correlation/delay or complete
+owner-to-input/IRQ WCET. Source read/cancel/adopt concurrency remains separately unqualified;
+row1 and row27 classes/admission status do not change. No checkpoint dispatch or target
+continuation/rolling activation from this prerequisite. State16B RAM2/linked+32B; no
+numerical timing/RAM1 budget adopted. [I5 — producer execution evidence](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PHYSICAL-PRODUCER-EXECUTION.md).
+
+### 2026-10-19 playback-read witness (session capture only)
+
+`Track::observePlaybackReadForTurn` extends the existing reader's observation child, not its
+preparation/admission behavior. After a Completed cursor turn it validates one exact selected current
+view, prepared pair, or compiled bridge, checks owner generation and coverage, and copies fixed scalar
+metadata. Track-index lookup is capped by the eight Tracks. It performs no content walk, allocation,
+formatting or USB I/O. The producer is structurally bounded and session-capture-gated (native has a sink seam).
+
+`DebugSessionCapture` holds64 fixed RAM2 mailboxes, cold-initialized once per boot. Each slot admits at
+most one observation per250ms and retains an undelivered observation rather than fabricating progress.
+Foreground `flushCaptureBuffer` scans at most64 mailboxes and serializes at most one<=160-byte row.
+Enqueue precedes ring-walk ownership so the existing Tier-A eviction policy can make progress; USB
+delivery guards reentry and occurs only under the existing noncritical flush budget. These are bounded
+metadata/count limits, not a WCET claim for printf/USB or a reclassification of the parent reader/drain.
+The existing <=8 timing-critical flush still performs no USB writes. No envelope or RAM1 budget rebase.
+Evidence: [playback witness](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-18-rolling-base-2bar-rerun/PLAYBACK-WITNESS.md).

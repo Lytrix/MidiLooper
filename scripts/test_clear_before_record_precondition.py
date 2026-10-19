@@ -316,44 +316,23 @@ class EditMinimalSeedOkTests(unittest.TestCase):
     def test_record_only_seed_ignores_playing_transition_fail(self) -> None:
         from hitl.baseline_loop_inventory import base_report_record_seed_ok
 
-        report = {
-            "config": {"record_only": True, "edit_record_fixture": True},
-            "per_track_stats": [
-                {
-                    "record_notes_sent": 9,
-                    "record_clock_pulses_seen": 192,
-                }
-            ],
-            "assertions": {
-                "transition_checks": [
-                    {"from": "ARMED", "to": "RECORDING", "ok": True},
-                    {"from": "RECORDING", "to": "STOPPED_RECORDING", "ok": True},
-                    {"from": "STOPPED_RECORDING", "to": "PLAYING", "ok": False},
-                ]
-            },
-        }
-        self.assertTrue(base_report_record_seed_ok(report))
+        import tempfile
+        from test_hitl_seed_qualification import complete_seed_report
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = complete_seed_report(Path(directory) / "seed.log")
+            self.assertTrue(base_report_record_seed_ok(report))
 
     def test_fixture_seed_ok_without_host_clock_grid(self) -> None:
         from hitl.baseline_loop_inventory import base_report_record_seed_ok
 
-        report = {
-            "config": {"record_only": True, "edit_record_fixture": True},
-            "per_track_stats": [
-                {
-                    "record_notes_sent": 8,
-                    "record_clock_pulses_seen": 177,
-                }
-            ],
-            "assertions": {
-                "transition_checks": [
-                    {"from": "ARMED", "to": "RECORDING", "ok": True},
-                    {"from": "RECORDING", "to": "STOPPED_RECORDING", "ok": True},
-                    {"from": "STOPPED_RECORDING", "to": "PLAYING", "ok": True},
-                ]
-            },
-        }
-        self.assertTrue(base_report_record_seed_ok(report))
+        import tempfile
+        from test_hitl_seed_qualification import complete_seed_report
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = complete_seed_report(Path(directory) / "seed.log")
+            report["per_track_stats"][0]["record_clock_pulses_seen"] = 177
+            self.assertTrue(base_report_record_seed_ok(report))
 
     def test_edit_minimal_parse_ignores_baseline_loop_slot(self) -> None:
         from hitl.scenarios.edit_minimal import _parse_common_args

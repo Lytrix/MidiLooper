@@ -6,6 +6,115 @@ For overdub overlap candidate / classify / resolve / seal, see [`OVERDUB_OVERLAP
 
 ---
 
+## Raw-prefix source cursor prerequisite
+
+`LoopEventStore::beginSourceCursor` freezes the current raw extent in a caller-owned
+`LoopEventStoreSourceCursor`. `stepSourceCursor` returns Row (one copied event), Chunk
+(one charged directory transition), End (frozen extent), or Denied (identity/resource
+refusal). Only Row changes output; `extendSourceCursor` exposes a newer appended
+suffix without resetting coordinates. No at() prefix scan, allocation or reference
+acquisition occurs. Accepted append preserves the prefix, even with out-of-order ticks.
+
+Destructive store writes/cuts and mutable worker grains invalidate a distinct terminal
+prefix token, preserving the worker's separate legacy continuation generation. Static
+ID writes and nonempty static reference-release APIs conservatively stale all cursors
+through a pool-wide alias token; no-op ID filling does not. Exhausted zero tokens never
+resurrect. Denial does not discard accepted content.
+
+The caller retains the physical store/chunks, excludes concurrent mutable workers,
+and discards before owner destruction/replacement. Local cursor methods never query
+the owner; live store methods are the only validators. This is NOT a lifetime lease,
+Capture interval/projection identity, frozen-range mutation prohibition or playback
+currency. The later serialized live-source integration below names a Track borrower;
+it retains strict content-generation semantics. Per-store state adds8B; target/host
+cursor48/64B and actual aggregate/placement price are recorded in
+[I5 — source-stability execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-STABILITY-EXECUTION.md)
+and DEC-126 — raw-prefix source stability. Whole source-service/readiness remains unqualified.
+
+## Semantic live-source and retained Track borrow
+
+DEC-127 — semantic live-source retention adds assignment-qualified Capture phase
+identity (same/self/copy assignments included), separate from content/Track interval
+counters. Live descriptors freeze raw cursor and exact phase/projection identity at
+creation; stale descriptors refuse begin. Fill uses forward Row/Chunk grants and
+requires raw, semantic and strict content/count currency through completion. Append
+coalescing and running requests are not installed by this prerequisite.
+
+Both existing runtime builders name their live borrow until discard, including
+completed-unpublished work. Track composite/release guards refuse it without querying
+the source. Maintenance cancels stale borrows before holder selection; Track destruction
+detaches before member LoopPool destruction, and runtime destruction discards builders
+before destination viewSet release. Standalone callers still retain/discard explicitly.
+These are retained/serialized caller guarantees, NOT ISR/main synchronization: internal
+timer ticks can change Track state/reset it. Qualification of concurrent cancellation,
+read/adoption and complete physical/input return bounds remains required before target
+activation. Default rolling stays OFF; no physical deadline or740→768 readiness claim.
+[I5 — live-source integration evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/LIVE-SOURCE-INTEGRATION.md)
+records controls, one review, full native/build and measured resource costs.
+
+### Builder-call cancellation and short live-source reads
+
+DEC-130 — builder-call cancellation and live-source exclusion adds an executing-call
+boundary to both runtime builders. `discard` during a call is pending/idempotent;
+the call resolves false/Denied and detaches afterward rather than clearing suspended
+Fill/Order fields. Same-builder mutation re-entry refuses. `LoopPlaybackRuntime::reset`
+requests cancellation and returns false/busy before destructive work while either
+builder executes; callers must retain/retry their reset obligation, not infer success.
+Published sibling views, accepted Capture and ledger are not reset by that refusal.
+
+Live descriptor/currency reads and each raw validation+one-row/chunk-transition copy
+save and restore the incoming interrupt mask. Filtering and private multirow Fill/
+Order are outside these short sections. Source lifetime remains caller/Track-owned;
+standalone Fill/direct external candidate writers still require serialization. This
+locally verified boundary is not full Track adoption/publication synchronization or a
+finite IRQ/WCET proof, and does not enable target running borrowers. See
+[I5 — source concurrency evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-CONCURRENCY-EXECUTION.md).
+
+
+### Exact Track completion/publication authority
+
+DEC-131 — exact Track completion authority qualifies each builder destination by its
+physical storageGeneration. Reusing an address does not transfer completion or cleanup
+authority: stale queries deny and stale discard preserves replacement metadata. Track
+coverage completion retains role/storage/operation receipts across its final grain and
+completion-clock sample, verifies before deadline judgement and publication, and rejects
+a cancelled result without modifying replacement work. Short saved-mask sections cover
+fixed publication/adoption metadata; Fill/Order, logging, seeks, projections and retirement
+drains stay outside. Generic publication detaches the completed builder on transfer.
+
+Ready adoption consumes only the existing ready role, never an independently complete
+private build. That completion requires explicit preparation-owner publication. The
+main-owned bridge worker explicitly publishes its detached same-source successor rather
+than relying on generic lifecycle promotion. Current/retained coverage and ledger policy
+are unchanged. DEC-131 — exact Track completion authority supplies commit authority;
+DEC-132 — preparation acquisition and Record exclusion supplies the selected-owner
+boundary below. Neither certifies target timing/readiness.
+
+### Preparation acquisition and Record exclusion
+
+Both existing builders support a scoped non-masking PreparationTurn. Track maintenance
+acquires before private role/source selection; first-bar service/deferred projection also
+acquire before writes. Foreign reset cancels/refuses; destructive reset reserves both
+lanes atomically and retains them through cleanup. Slot retirement uses the same exact
+capabilities through lease release. Only fixed metadata masks IRQs; private Fill/Order,
+content-dependent seeks/projection and retirement drains remain interruptible.
+
+Record start acquires before geometry/timeline/pre-roll mutation and reports actual
+Capture acceptance. The manager retains its queued request on refusal and retries at
+the existing eligible boundary. Direct return reset and retained bind refuse foreign
+ownership. Required frozen release returns completion so retirement cannot drop the
+source/job on busy; best-effort bind still has the existing frozen current-bar fallback.
+Normal qualified ready adoption remains available. Bridge service revalidates selected
+role/storage/context receipts and detaches its exact completed worker without clearing
+the ready/current window an independent adopter made authoritative.
+
+This boundary is native/build verified and its default-path Record/Stop compatibility
+HITL passed on the exact uploaded default-OFF image (registered base8/4/hostUSB300BPM).
+Running request/initial anchor/append coalescing/stop integration and finite owner/IRQ/
+input timing remain separate gates; no full inventory or740→768 readiness claim. Evidence:
+[I5 — acquisition and hardware execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md).
+
+
 ## NOTE_EDIT committed identity preparation prerequisite
 
 Loop's `beginCommittedNoteIdPreparation` / `stepCommittedNoteIdPreparation` now expose the existing in-place missing committed NoteOn-ID policy through explicit single-chunk/pass-transition grants. The caller-owned scalar cursor retains no references and rejects stale canonical/Capture generations or Loop/revision receipt before reading coordinates. Already assigned IDs stay stable on restart; completion queries are read-only, faults do not claim readiness. Chunk/payload/reference and published-root ownership remain unchanged. This prerequisite is native/build verified but **not used by open/reopen/main**; `assignMissingNoteIdsInCommittedCapturePasses` remains the synchronous entry call. Bounds, tests and remaining integration gates: [committed-ID execution packet](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-09-s75b8-note-edit-entry-boundary/COMMITTED-ID-PREPARATION.md).
@@ -150,13 +259,21 @@ not its emptied post-seal directory.
 through a 64-bit generation hook. A private Capture-origin fill/order refuses
 same-count mutation and cannot be mislabeled committed or preview; a frozen
 legacy range cannot be relabeled live Capture. Under the default-disabled
-rolling qualification lane, an empty first Record may also receive Track
-window-owner grants to complete a **private** silent Capture candidate with
-provisional one-bar playback coverage. Its raw first-bar `current/retained`
-remains intact for Record return; accepted input cancels the private builder.
-The Track owner does **not yet** publish or select this candidate as a Record
-`current`, and the raw compatibility path remains active until its separate
-migration gate.
+rolling qualification lane, an empty first Record at native clock epoch 0 may
+receive Track window-owner grants to prepare and publish a complete silent
+Capture `current` with provisional one-bar coverage. The unpublished raw shell
+remains protected during incomplete work, then retires off-clock through the
+existing three-view rotation. The real clock edge selects that physical window
+using local provisional playback geometry; growing Record length remains its
+existing prediction, not the copied window's period. Accepted input does not
+relabel or mutate served content. Running-epoch live preparation and late-input
+successor service remain open; this native cold route is not device readiness.
+A real mismatching two-bar stop invalidates only its old positional frame and
+prepares a qualified frozen successor using the same three roles. Native tests
+cover exact MIDI/ledger, root publication before adoption, source hold and
+release after playback stops. Default rolling remains OFF, all compatibility
+emitters remain live, and no all-route/affected-tick claim follows.
+See [I5 — cold publication evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-capture-publication/EXECUTION.md).
 
 `RuntimePlaybackViewSource::fromFrozenRecordCapture` borrows the job-owned
 sealed range: its Capture content identity is the job-frozen pre-transfer Loop
@@ -191,6 +308,27 @@ job-owned range. A view that merely covers the current phase after its missed
 boundary does not suppress that next-bar obligation or authorize mid-bar
 replay. The default legacy route, root-current handoff and hardware timing
 still have their own migration gates.
+
+The default Record-return compatibility path preserves all three prewarmed
+roles during raw first-bar installation and refresh. A refused stop bind may
+therefore recover the current bar and still prepare subsequent frozen-range
+windows; it does not orphan the spare build slot. `Track::adoptOrServiceOnwardRecordWindow`
+reseeds the order index only on a physical current-window swap, keeping the
+already-served crossing floor. Record-return selection also remains eligible
+during audible overdub states without widening ordinary fixed/bridge selection.
+Record pass publication advances canonical currency, not the qualified job's
+sealed source. Rootless frozen current and private build/ready retain their
+original stamp across publication; the MIDI edge may adopt that complete ready
+after the existing job/LoopId/interval/closure/range/geometry predicate succeeds.
+Track-generation, root-backed or superseded-job candidates gain no exception;
+no frozen view is relabeled as newer canonical content.
+This is a local compatibility repair, not default rolling cutover or a general
+deadline guarantee. [Production regression and verification](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-record-return-recovery/EXECUTION.md).
+`LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow` excludes only the
+last serviced phase when reseeding after a source-identity change. The tick
+currently being processed remains eligible for its due Off/On; a wrap or
+unserviced interval starts without an exclusion floor. This prevents pass
+publication from dropping the current boundary while preserving no-replay.
 
 
 ```mermaid

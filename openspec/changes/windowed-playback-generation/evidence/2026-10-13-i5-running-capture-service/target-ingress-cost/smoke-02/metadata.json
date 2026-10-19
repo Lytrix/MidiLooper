@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-15T15:43:21.835106+00:00",
+  "git_commit": "26125cebb08980342ba56ed2b77e5397783ac8e5",
+  "git_dirty": true,
+  "build_env": "teensy41-capture-serial",
+  "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+  "firmware_hex_sha256": "61a912811bad1fe8cc2a70f5964996dc50ebd011af28cd43f847daa710f26603",
+  "preset": "ingress_cost",
+  "scenario_ids": [
+    "ingress_cost"
+  ],
+  "track_number": 8,
+  "loop_slot": 4,
+  "midi_channel": 8,
+  "record_bars": 2,
+  "overdub_bars": 2,
+  "capture_serial_port": "/dev/cu.usbmodem154944801",
+  "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/i5-ingress-cost-smoke-02/session_20261015_174321.log",
+  "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/i5-ingress-cost-smoke-02"
+}

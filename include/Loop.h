@@ -140,6 +140,10 @@ struct Loop {
   uint16_t captureDisplayRevision = 0;
   /// E2 Record source receipt (not committed revision or display currency).
   uint64_t captureContentGeneration() const { return captureContentGeneration_; }
+  CaptureProjectionIdentity liveCaptureProjectionIdentity() const {
+    return {capture.phase.generation(), startLoopTick, loopStartTick,
+            loopLengthTicks, static_cast<CapturePhase>(capture.phase)};
+  }
   uint32_t captureDedupEventsDropped_ = 0;
 
   LoopId loopId = kInvalidLoopId;
@@ -965,6 +969,8 @@ struct Loop {
     None = 0,
     Snapshot = 1,
     Overlay = 2,
+    /// DEC-143: no published root yet, so the window came from the immutable published Record pass alone.
+    RecordOverlay = 3,
   };
   /// Source that last wrote, or last refused to write, an idle visual-cache slice.
   /// `None` = no accepted fill (including incomplete budget). Overlay is never
@@ -991,15 +997,26 @@ struct Loop {
   /// supplies that window; unpublished session / pending-publish passes and
   /// their companions overlay on top. Returns false only when no published
   /// snapshot exists so the caller can use compatibility gather. `pathOut`
-  /// receives the branch actually taken (`None` / `Snapshot` / `Overlay`).
+  /// receives the branch actually taken (`None` / `Snapshot` / `Overlay` / `RecordOverlay`).
   /// `inspectedEntriesOut`, when supplied, receives the number of snapshot membership references the walk
   /// **looked at** for the window's bars -- including the references it rejected -- which is the inspected work
   /// the window's preparation costs. It depends on the window and on the content *inside* it, never on the
   /// loop's unrelated content (fixture 2.10).
+  ///
+  /// **DEC-143 — a published Record slice is read material before its root publishes.** `publishedRecordOverlay`
+  /// is the caller's own statement that this slot's Record take crossed the immutable `RecordPublished` edge and
+  /// its root has not published yet (Track owns that edge; the Loop cannot see the presentation). While it holds
+  /// and no published snapshot exists, the window is filled from the take's **sealed extent** — the extent this Loop
+  /// already holds a read borrow on, keyed on the presentation record's identity — and reported as `RecordOverlay`.
+  /// A pass's chunk-id list is deliberately not a source: undo/redo re-materialises the pass while the presentation
+  /// is still the active reader, so those ids can already be recycled. Mutable live capture and live overdub content
+  /// are never included by this branch, and once a root supplies the window the branch is `Snapshot` again, so the
+  /// overlay is superseded rather than merged.
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength,
                                                 SnapshotWindowGatherPath* pathOut = nullptr,
-                                                uint32_t* inspectedEntriesOut = nullptr) const;
+                                                uint32_t* inspectedEntriesOut = nullptr,
+                                                bool publishedRecordOverlay = false) const;
   /// Snapshot window plus live `capture.store` events in the same window.
   /// Returns false only when no published snapshot exists. `pathOut` is the
   /// underlying snapshot-window branch (`None` / `Snapshot` / `Overlay`).

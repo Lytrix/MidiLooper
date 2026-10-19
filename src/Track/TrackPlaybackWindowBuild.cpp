@@ -19,6 +19,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/TelemetryCadence.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/PlaybackSourceReadGuard.h"
 // Task 3.7a (I7): the retained revision's own Active Note note-edit rows are resolved per layer, through the shipped
 // owner of that rule (`applyNoteEditPassSequence`), never re-stated here.
 #include "EditApply.h"
@@ -29,6 +30,115 @@
 #include "PlaybackMergedMidiEvents.h"
 
 extern TrackManager trackManager;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && (defined(PIO_UNIT_TEST_NATIVE) || \
+    (defined(SESSION_CAPTURE) && PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
+TRACK_COLD_MEM Track::RollingRecordStatus Track::readRollingRecordStatus() {
+  RollingRecordStatus status;
+  PlaybackSourceReadGuard guard;
+  status.track = trackManager.getSelectedTrackIndex();
+  const Track& track = trackManager.getTrack(status.track);
+  status.slot = track.activeLoopIndex;
+  status.state = static_cast<uint8_t>(track.trackState);
+  status.recording = track.isRecording();
+  const auto clock = clockManager.getPlaybackDeadlineClock();
+  status.clockTick = clock.tick;
+  status.epoch = clock.epoch;
+  // Never allocate a runtime/Loop or ask a borrowed source for its currency.
+  if (!track.loopsAllocated() || status.slot >= Config::MAX_LOOPS_PER_TRACK) return status;
+  const Loop& loop = track.loopForSlot(status.slot);
+  status.liveCaptureToken = loop.captureContentGeneration();
+  status.rawCount = static_cast<uint32_t>(loop.capture.store.size());
+  status.rawMax = loop.captureMaximumTick();
+  status.cursor = loop.nextEventIndex;
+  const auto* runtime = track.playbackRuntime.slotIfAllocated(status.slot);
+  if (!runtime) return status;
+  status.rollingPhase = static_cast<uint8_t>(runtime->rolling.phase);
+  status.frameOrigin = runtime->rolling.projectionStart;
+  status.framePeriod = runtime->rolling.loopLength;
+  status.boundRole = runtime->rolling.boundView;
+  status.boundStorage = runtime->rolling.boundStorageGeneration;
+  status.ledgerCount = static_cast<uint32_t>(runtime->ledger.openCount());
+  status.stopResponsibility = runtime->hasBoundRecordReturnWindowForPendingJob();
+  status.frameEpoch = runtime->rolling.epoch;
+  status.requestEpoch = runtime->pendingViewRequest_.clockEpoch;
+  status.requestActive = runtime->pendingViewRequest_.active;
+  status.requestInvalidated = runtime->pendingViewRequest_.positionInvalidated;
+  const auto* set = runtime->viewSetIfPrewarmed();
+  if (!set) return status;
+  status.readyRole = set->lifecycle.ready;
+  status.buildRole = set->lifecycle.build;
+  // Fixed metadata only: no nextGrain/source-currency query in this receipt.
+  if (status.readyRole < set->views.size()) {
+    const auto& ready = set->views[status.readyRole];
+    status.readyFlags = uint8_t(ready.complete) | (uint8_t(ready.published) << 1) |
+        (uint8_t(ready.rawCoveragePrepared) << 2) |
+        (uint8_t(ready.source == runtime->pendingViewRequest_.source) << 3);
+  }
+  if (status.buildRole < set->views.size()) {
+    const auto& build = set->views[status.buildRole];
+    status.buildFlags = uint8_t(build.complete) | (uint8_t(build.published) << 1) |
+        (uint8_t(build.rawCoveragePrepared) << 2) |
+        (uint8_t(build.source == runtime->pendingViewRequest_.source) << 3);
+  }
+  status.workerFlags = uint8_t(runtime->viewBuild.active()) |
+      (uint8_t(runtime->viewBuild.ownsLiveCaptureBorrow()) << 1);
+  status.currentRole = set->lifecycle.current;
+  if (status.currentRole >= set->views.size()) return status;
+  const auto& current = set->views[status.currentRole];
+  status.valid = true;
+  status.currentStorage = current.storageGeneration;
+  status.published = current.published;
+  status.complete = current.complete;
+  status.sourceOrigin = static_cast<uint8_t>(current.source.origin);
+  status.sourceGeneration = current.source.sourceGeneration;
+  status.captureContentToken = current.source.captureContentGeneration;
+  status.coverageStart = current.coverage.startPhase;
+  status.coverageLength = current.coverage.lengthTicks;
+  status.coveragePeriod = current.coverage.loopLengthTicks;
+  status.rows = static_cast<uint32_t>(current.storage.eventCount);
+  // Exactly two fixed row copies, only from complete immutable current.
+  // Empty/unpublished/unavailable endpoints retain explicit sentinels.
+  if (current.complete && current.published && status.rows &&
+      current.storage.isPrewarmed() && status.rows <= current.storage.capacity) {
+    const auto first = current.storage.order[0];
+    const auto last = current.storage.order[status.rows - 1];
+    if (first < status.rows && last < status.rows) {
+      const MidiEvent firstEvent = current.storage.events[first];
+      const MidiEvent lastEvent = current.storage.events[last];
+      status.firstTick = firstEvent.tick;
+      status.firstNoteId = firstEvent.noteId;
+      status.lastTick = lastEvent.tick;
+      status.lastNoteId = lastEvent.noteId;
+    }
+  }
+  return status;
+}
+
+#if defined(SESSION_CAPTURE) && PLAYBACK_WINDOW_ROLLING_QUALIFICATION
+TRACK_COLD_MEM void Track::printRollingRecordStatus(uint32_t requestId) {
+  const auto s = readRollingRecordStatus(); // Guard restored before formatting/USB.
+  Serial.printf("#CAP,%lu,DIAG,rolling_record,%lu,%u,%u,%u,%llu,%lu,%u,%ld,%lu,%u,%llu,"
+                "%u,%llu,%u,%u,%u,%lu,%llu,%llu,%lu,%lu,%lu,%lu,%lu,%lu,"
+                "%lu,%lu,%lu,%lu,%lu,%lu,%u,%u,%u,%lu,%lu,%u,%u,%u,%u,%u,%u,%u\r\n",
+      static_cast<unsigned long>(micros()), static_cast<unsigned long>(requestId),
+      s.track, s.slot, s.state, static_cast<unsigned long long>(s.clockTick),
+      static_cast<unsigned long>(s.epoch), s.rollingPhase, static_cast<long>(s.frameOrigin),
+      static_cast<unsigned long>(s.framePeriod), s.boundRole, static_cast<unsigned long long>(s.boundStorage),
+      s.currentRole, static_cast<unsigned long long>(s.currentStorage), s.published, s.complete, s.sourceOrigin,
+      static_cast<unsigned long>(s.sourceGeneration), static_cast<unsigned long long>(s.captureContentToken),
+      static_cast<unsigned long long>(s.liveCaptureToken), static_cast<unsigned long>(s.coverageStart),
+      static_cast<unsigned long>(s.coverageLength), static_cast<unsigned long>(s.coveragePeriod),
+      static_cast<unsigned long>(s.rows), static_cast<unsigned long>(s.cursor), static_cast<unsigned long>(s.ledgerCount),
+      static_cast<unsigned long>(s.firstTick), static_cast<unsigned long>(s.firstNoteId),
+      static_cast<unsigned long>(s.lastTick), static_cast<unsigned long>(s.lastNoteId),
+      static_cast<unsigned long>(s.rawCount), static_cast<unsigned long>(s.rawMax),
+      s.recording, s.stopResponsibility, s.valid,
+      static_cast<unsigned long>(s.frameEpoch), static_cast<unsigned long>(s.requestEpoch),
+      s.requestActive, s.requestInvalidated, s.readyRole, s.buildRole, s.readyFlags, s.buildFlags, s.workerFlags);
+}
+#endif
+#endif
+
 
 namespace {
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
@@ -41,24 +151,107 @@ bool coldLayeredSlotFrameForEmission(const LoopPlaybackRuntime* runtime, const L
                                      uint8_t activeLoopIndex);
 #endif
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-// E2 qualification: Record still serves the legacy raw shell. Only its *empty*
-// first interval can prepare a private Capture candidate without competing for
-// a fourth physical view or a second source owner.
-bool coldRecordCaptureShell(const Loop& loop, const LoopPlaybackRuntime& runtime) {
-  const auto* set = runtime.viewSetIfPrewarmed();
-  if (!set || loop.capture.phase != CapturePhase::Record ||
-      loop.loopLengthTicks != 0 || !loop.capture.store.empty() ||
-      loop.hasCommittedPasses() || loop.publishedSnapshotIsCurrent() ||
-      loop.captureContentGeneration() == 0 ||
-      set->lifecycle.current >= set->views.size() ||
-      set->lifecycle.current != set->lifecycle.retained ||
-      set->lifecycle.ready != RuntimePlaybackViewLifecycle::kNoView ||
-      set->lifecycle.build >= set->views.size() ||
-      set->lifecycle.build == set->lifecycle.current) return false;
-  const auto& raw = set->views[set->lifecycle.current];
-  return raw.complete && raw.rawCoveragePrepared && !raw.published &&
-         raw.storage.eventCount == 0 && raw.coverage.startPhase == 0 &&
-         raw.coverage.loopLengthTicks == 0;
+// Live demand belongs to the retained slot/operation, never to its raw shell.
+TRACK_COLD_MEM bool liveRecordCaptureSource(const Loop& loop, const LoopPlaybackRuntime& runtime) {
+  return runtime.viewSetIfPrewarmed() && loop.capture.phase == CapturePhase::Record &&
+      !loop.hasCommittedPasses() && !loop.publishedSnapshotIsCurrent() &&
+      loop.captureContentGeneration() != 0 && loop.capture.phase.generation() != 0;
+}
+
+TRACK_COLD_MEM bool liveRecordRecipeMatches(const PlaybackViewPendingRequest& request, const Loop& loop,
+    const LoopPlaybackRuntime& runtime, uint32_t operation, int32_t origin) {
+  auto projection = loop.liveCaptureProjectionIdentity();
+  // Running Record's predicted length grows for presentation. This recipe
+  // copies raw rows into its explicit coverage; length is not its projection.
+  if (projection.phase == CapturePhase::Record)
+    projection.loopLengthTicks = request.liveCaptureProjection.loopLengthTicks;
+  return request.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture &&
+      request.operationGeneration == operation &&
+      request.liveLeaseGeneration == runtime.workingSetGeneration() &&
+      request.liveProjectionStart == origin &&
+      request.liveCaptureProjection == projection;
+}
+// Entry-operation accounting only, not physical deadline admission. Frozen
+// source extents and the existing order bound charge suffix work explicitly.
+TRACK_COLD_MEM void priceLiveRecordWork(PlaybackViewAdmittedWork& work, size_t extent, size_t frontier,
+    size_t sortedPrefix, size_t capacity) {
+  const size_t rows = extent >= frontier ? extent - frontier : extent;
+  const size_t fillUnits = rows + rows / LoopEventStoreConfig::CHUNK_CAPACITY + 1;
+  const size_t orderUnits = sortedPrefix
+      ? RuntimePlaybackOrderBuilder::extensionWorkEntriesUpperBound(sortedPrefix, rows)
+      : RuntimePlaybackOrderBuilder::workEntriesUpperBound(std::min(extent, capacity));
+  work.sourceEntries = static_cast<uint32_t>(extent);
+  work.retainedEventBound = static_cast<uint32_t>(capacity);
+  work.fillGrains = uint16_t(std::min<size_t>(UINT16_MAX,
+      (fillUnits + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum));
+  work.orderGrains = uint16_t(std::min<size_t>(UINT16_MAX,
+      orderUnits / Track::kPlaybackViewOrderQuantum + (orderUnits % Track::kPlaybackViewOrderQuantum != 0)));
+  work.promotionGrains = 1;
+}
+
+
+TRACK_COLD_MEM void retainLiveRecordDemand(LoopPlaybackRuntime& runtime, const Loop& loop,
+    uint32_t operation, int32_t origin, PlaybackDeadlineClock clock) {
+  auto& request = runtime.pendingViewRequest_;
+  auto* set = runtime.viewSetIfPrewarmed();
+  if (!liveRecordCaptureSource(loop, runtime)) return;
+  const bool same = liveRecordRecipeMatches(request, loop, runtime, operation, origin);
+  if (same && request.positionInvalidated) return; // Rejection is sticky for this interval.
+  if (request.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture &&
+      request.operationGeneration == operation && !same) {
+    request.positionInvalidated = true;
+    request.reason = PlaybackViewPendingReason::DeadlineInvalidatedGeometry;
+    return;
+  }
+  if (request.active && !same) return; // Another owner's obligation is not ours to overwrite.
+  const auto& current = set->views[set->lifecycle.current];
+  const auto& frame = runtime.rolling;
+  const bool serving = frame.phase == LoopPlaybackRuntime::RollingPhase::Serving;
+  // Initial publication is already authoritative. The clock reader must bind
+  // its frame before main can derive a successor's nonzero boundary deadline.
+  // Re-admitting an initial request here can strand a complete ready forever.
+  if (!serving && current.complete && current.published && !current.rawCoveragePrepared &&
+      current.source.origin == PlaybackWindowOrigin::Capture &&
+      current.source.sourceGeneration == operation) return;
+  const uint32_t period = serving ? frame.loopLength : Config::TICKS_PER_BAR;
+  const uint64_t wanted = (uint64_t(loop.captureMaximumTick()) / Config::TICKS_PER_BAR + 1) *
+      Config::TICKS_PER_BAR;
+  const uint32_t desired = wanted <= UINT32_MAX ? uint32_t(wanted) : period;
+  if (!request.active && same && serving && period == Config::TICKS_PER_BAR &&
+      desired <= period && current.source.captureContentGeneration == loop.captureContentGeneration()) return;
+  if (!same || !request.active) {
+    request = {};
+    request.sourceKind = PlaybackViewPendingRequest::SourceKind::LiveCapture;
+    request.operationGeneration = operation;
+    request.liveLeaseGeneration = runtime.workingSetGeneration();
+    request.liveCaptureProjection = loop.liveCaptureProjectionIdentity();
+    request.liveProjectionStart = origin;
+    request.coverage = {0, Config::TICKS_PER_BAR, period};
+    request.clockEpoch = clock.epoch;
+    request.work.admittedTick = clock.tick;
+    request.requestedPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        uint32_t(clock.tick), origin, period);
+    if (serving) {
+      // The physical current names the oldest next distinct interval, even if
+      // service has already passed its edge. New input cannot steal that debt.
+      const uint32_t next = current.coverage.startPhase + Config::TICKS_PER_BAR;
+      request.coverage.startPhase = next < period ? next : 0;
+      const uint64_t cycle = (frame.lastTick - uint32_t(frame.projectionStart)) / period;
+      request.deadlineTick = uint32_t(frame.projectionStart) + cycle * period + next;
+      if (next >= period) request.coverage.loopLengthTicks = std::max(period, desired);
+    }
+  }
+  // Growth can coalesce only a wrap obligation; never replace an owed bar.
+  if (serving && request.coverage.startPhase == 0)
+    request.coverage.loopLengthTicks = std::max(request.coverage.loopLengthTicks, desired);
+  request.loopLengthTicks = request.coverage.loopLengthTicks;
+  request.active = true;
+  request.liveMaximumTick = loop.captureMaximumTick();
+  request.source = {loop.playbackRevision, operation, nullptr,
+                    PlaybackWindowOrigin::Capture, loop.captureContentGeneration()};
+  priceLiveRecordWork(request.work, loop.capture.store.size(), 0, 0,
+                      RuntimePlaybackViewConfig::kWindowAdmissionLimit);
+  request.reason = PlaybackViewPendingReason::AwaitingSourceQualification;
 }
 #endif
 
@@ -137,7 +330,9 @@ uint32_t capturePlaybackStreamPhase(const MidiEvent& evt, const ProjectionContex
   return IntervalProjection::projectPlaybackEventPhase(evt.tick, playbackContext);
 }
 
-uint8_t playbackRebuildTrackIndex(const Track& track) {
+// Cold: every caller is a FLASH helper (readiness/build rows and the witness), so this stays
+// out of ITCM. Emitting it there measured 64 B of qualification padding on the witness image.
+TRACK_COLD_MEM uint8_t playbackRebuildTrackIndex(const Track& track) {
   const uint8_t trackCount = trackManager.getTrackCount();
   for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
     if (&track == &trackManager.getTrack(trackIndex)) {
@@ -244,6 +439,17 @@ void reanchorFixedPlaybackIndex(Loop& loop, const FixedPlaybackEventStorage& sto
   loop.nextEventIndex = static_cast<uint16_t>(idx);
 }
 
+namespace { bool mergedMidiEventsBuildInProgress = false; }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// DEC-143's cost criterion, measurable from a native suite: how many times the merged fallback actually rebuilt. A
+/// maintenance turn that finds the same published identity must not rebuild, so a run of turns costs at most the
+/// transitions, never one rebuild per turn. Test-only; no target code path reads it.
+namespace { unsigned sMergedRebuildsForTest = 0; }
+unsigned playbackMergedRebuildCountForTest() { return sMergedRebuildsForTest; }
+void resetPlaybackMergedRebuildCountForTest() { sMergedRebuildsForTest = 0; }
+#endif
+
 bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick, bool prepareLaunch) {
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
@@ -254,7 +460,6 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // stale-plus-unpublished overlay); otherwise chunk-ref merge of committed passes
   // (DEC-016). Long loops use windowed gather — full-loop gather after
   // LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
-  static bool mergedMidiEventsBuildInProgress = false;
   if (mergedMidiEventsBuildInProgress) {
     return false;
   }
@@ -270,16 +475,35 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     playhead = IntervalProjection::tickPhaseInProjectionCycle(
         currentTick, track.getProjectionCycleStartTick(), loop.loopLengthTicks);
   }
+  // **DEC-143 — the temporary published-record overlay, sourced from the sealed extent.** The Loop fills the window
+  // from the extent it already holds a read borrow on (the slot's `CaptureStopPresentation::rawRange`), so what the
+  // Track contributes is only the **publication edge**: `hasPublishedRecordPresentationForSlot` is `retirementActive`
+  // plus the runtime's presentation owner, i.e. exactly the take that crossed DEC-142's immutable `RecordPublished`
+  // boundary. A still-mutable (pre-publication) take never reaches the branch, and a pass's chunk-id list is not a
+  // source at all -- undo/redo re-materialises the pass while the presentation is still the active reader, which is
+  // what withdrew that form on the device (`captures/i5-dec143-overlay-base-02`). The extent's own address is the
+  // build identity below, so the reuse guard cannot keep serving the empty build it cached before the edge.
+  const uint8_t recordOverlaySlot = playbackRebuildSlotIndex(track, loop);
+  const bool publishedRecordOverlay = !noteEditPreview && loop.hasSealedCaptureBorrow() &&
+                                      track.hasPublishedRecordPresentationForSlot(recordOverlaySlot);
+  // The identity is the **extent's own address** (the slot-owned presentation record's sealed range), which is stable
+  // for the whole borrow lifetime and changes with the record, so the reuse guard cannot keep serving a build it made
+  // before the edge -- the failure the withdrawn form hit. It is reached through the Loop's read borrow, which is the
+  // same object the gather reads, so the key and the source cannot disagree.
+  const void* const recordOverlayIdentity =
+      publishedRecordOverlay ? static_cast<const void*>(loop.captureReadSource().finalizing) : nullptr;
+  const void* const buildIdentity =
+      snapshotIdentity != nullptr ? snapshotIdentity : recordOverlayIdentity;
 
   if (!longLoop) {
     if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
-        runtime.mergedMidiEvents.builtFromSnapshotIdentity == snapshotIdentity) {
+        runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity) {
       DIAG_COUNTER_INC(PlaybackDeferredReuse);
       return false;
     }
   } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
-             runtime.mergedMidiEvents.builtFromSnapshotIdentity == snapshotIdentity &&
-             (snapshotIdentity != nullptr || !runtime.mergedMidiEvents.empty()) &&
+             runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity &&
+             (buildIdentity != nullptr || !runtime.mergedMidiEvents.empty()) &&
              runtime.mergedMidiEvents.windowLengthTicks > 0) {
     const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
     const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
@@ -293,6 +517,14 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 
   if (!noteEditPreview && !longLoop &&
       loop.tryAdmitLastOverdubSealIntoMergedEvents(runtime.mergedMidiEvents)) {
+    // The increment extends **this** window, so it keeps this window's source identity. The Loop's admit stamps a null
+    // identity because it cannot see which source served the window; while the DEC-143 overlay serves it, that null
+    // would make the next maintenance turn rebuild from the sealed extent alone and silently drop the wrap just
+    // admitted (the record take is still pre-root, so a rebuild can only serve the extent). Keep the identity exactly
+    // in that window and leave the root-backed path's stamp untouched.
+    if (recordOverlayIdentity != nullptr) {
+      runtime.mergedMidiEvents.builtFromSnapshotIdentity = buildIdentity;
+    }
     loop.playbackOrderDirty = true;
 #if defined(SESSION_CAPTURE)
     DebugSessionCapture::playbackRebuild(
@@ -306,6 +538,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 
   noteContentSizedPlaybackBuildOnActiveTransport();
   mergedMidiEventsBuildInProgress = true;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++sMergedRebuildsForTest;
+#endif
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
   const uint32_t playbackBuildStartUs = micros();
 #endif
@@ -395,24 +630,32 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents,
-                                                      winStart, winLen, &gatherPath)) {
-      usedSnapshotIdentity = snapshotIdentity;
+                                                      winStart, winLen, &gatherPath, nullptr,
+                                                      publishedRecordOverlay)) {
+      usedSnapshotIdentity = buildIdentity;
     } else {
-      runtime.mergedMidiEvents.mergedEvents.clear();
+      // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
+      // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
+      usedSnapshotIdentity = recordOverlayIdentity;
     }
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
   } else {
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, 0,
-                                                      loop.loopLengthTicks, &gatherPath)) {
-      usedSnapshotIdentity = snapshotIdentity;
+                                                      loop.loopLengthTicks, &gatherPath, nullptr,
+                                                      publishedRecordOverlay)) {
+      usedSnapshotIdentity = buildIdentity;
     } else {
-      runtime.mergedMidiEvents.mergedEvents.clear();
+      // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
+      // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
+      usedSnapshotIdentity = recordOverlayIdentity;
     }
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
+  // DEC-143: the identity is the published root when one supplies the window, and the **sealed extent** while the
+  // published-record overlay serves it. Both are immutable objects, so an unchanged key means an unchanged window.
   runtime.mergedMidiEvents.builtFromSnapshotIdentity = usedSnapshotIdentity;
   loop.playbackOrderDirty = true;
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
@@ -429,8 +672,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                  ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
                  : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
                         ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
-                        : RuntimeTimingTelemetry::PlaybackRebuildPath::
-                              GatherMissHoldEmpty)),
+                        : (gatherPath == Loop::SnapshotWindowGatherPath::RecordOverlay
+                               ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedRecordOverlay
+                               : RuntimeTimingTelemetry::PlaybackRebuildPath::GatherMissHoldEmpty))),
       playbackBuildStartUs, loop.lastTickInLoop, playhead,
       static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()));
   mergedMidiEventsBuildInProgress = false;
@@ -620,6 +864,9 @@ const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
                                                   playbackClosureServeFloor(track, loop, currentTick));
     }
   }
+#if SC_PLAYBACK_READ_WITNESS_ENABLED
+  track.observePlaybackSnapshotAvailability(playbackRebuildSlotIndex(track, loop), currentTick);
+#endif
   return &runtime.mergedMidiEvents.mergedEvents;
 }
 
@@ -841,22 +1088,130 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
     const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut) {
   rollingViewSelectedOut = false;
+  // A qualified live interval is the same immutable fixed-storage reader as
+  // committed playback. Input changes only private demand, never served bytes.
+  if (slotIndex == activeLoopIndex && isRecording() && !isJamPlaybackActive() &&
+      !isJamming() && !hasQueuedPlaybackStart() && !editManager.isNoteEditActive() &&
+      loop.capture.phase == CapturePhase::Record && !loop.hasCommittedPasses()) {
+    auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    auto* set = runtime ? runtime->viewSetIfPrewarmed() : nullptr;
+    const auto clock = clockManager.getPlaybackDeadlineClock();
+    if (set && clock.epoch && clock.tick == currentTick && set->lifecycle.current < set->views.size() &&
+        liveRecordRecipeMatches(runtime->pendingViewRequest_, loop, *runtime,
+                                playbackGeneration, getProjectionCycleStartTick())) {
+      bool missed = false;
+      {
+      PlaybackSourceReadGuard readerGuard;
+      auto& request = runtime->pendingViewRequest_;
+      auto& frame = runtime->rolling;
+      const auto valid = [&](const RuntimePlaybackView& view) {
+        return view.complete && !view.rawCoveragePrepared && !view.firstRecordReturnWindow &&
+            view.storageGeneration && view.source.origin == PlaybackWindowOrigin::Capture &&
+            view.source.sourceGeneration == playbackGeneration && !view.source.snapshotIdentity &&
+            view.source.captureContentGeneration && view.coverage.isValid() &&
+            view.coverage.startPhase % Config::TICKS_PER_BAR == 0 &&
+            view.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+            view.coverage.loopLengthTicks % Config::TICKS_PER_BAR == 0;
+      };
+      const auto& old = set->views[set->lifecycle.current];
+      const bool initial = frame.phase == LoopPlaybackRuntime::RollingPhase::Idle &&
+          (!request.clockEpoch || request.clockEpoch == clock.epoch) && !request.positionInvalidated;
+      const bool serving = frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+          frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
+          frame.loopLength == old.coverage.loopLengthTicks && frame.boundView == set->lifecycle.current &&
+          frame.boundStorageGeneration == old.storageGeneration && currentTick >= frame.lastTick &&
+          frame.projectionStart == getProjectionCycleStartTick();
+      if (valid(old) && old.published && (initial || serving)) {
+        uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+            currentTick, getProjectionCycleStartTick(), old.coverage.loopLengthTicks);
+        const bool boundary = serving && phase % Config::TICKS_PER_BAR == 0 && currentTick > frame.lastTick;
+        bool adopted = false;
+        if (boundary && request.active && !request.positionInvalidated &&
+            request.clockEpoch == clock.epoch && request.deadlineTick && clock.tick >= request.deadlineTick &&
+            phase == request.coverage.startPhase &&
+            (request.coverage.loopLengthTicks == frame.loopLength || phase == 0) &&
+            set->lifecycle.ready < set->views.size()) {
+          const auto& ready = set->views[set->lifecycle.ready];
+          const auto& frozen = runtime->frozenViewRequest;
+          if (valid(ready) && !ready.published && ready.source == request.source &&
+              ready.source.captureContentGeneration == loop.captureContentGeneration() &&
+              ready.coverage.startPhase == request.coverage.startPhase &&
+              ready.coverage.lengthTicks == request.coverage.lengthTicks &&
+              ready.coverage.loopLengthTicks == request.coverage.loopLengthTicks &&
+              frozen.coverage.startPhase == request.coverage.startPhase &&
+              frozen.coverage.loopLengthTicks == request.coverage.loopLengthTicks &&
+              liveRecordRecipeMatches(frozen, loop, *runtime, playbackGeneration, getProjectionCycleStartTick()) &&
+              frozen.work.admittedTick < clock.tick && adoptPreparedPlaybackWindow(slotIndex)) {
+            if (ready.coverage.loopLengthTicks != frame.loopLength) {
+              // New geometry starts at this actual edge, not at an incongruent
+              // former cycle anchor. Raw Record coordinates are untouched.
+              projectionCycleStartTick = static_cast<int32_t>(currentTick);
+              request.liveProjectionStart = projectionCycleStartTick;
+              phase = 0;
+            }
+            getLoop(slotIndex).nextEventIndex = 0;
+            request.active = false;
+            runtime->frozenViewRequest = {};
+            runtime->lagState.missedTraversals = 0;
+            runtime->lagState.breachReported = false;
+            runtime->deadlineContractFaultLatched = false;
+            adopted = true;
+          }
+        }
+        if (boundary && request.active && request.deadlineTick && clock.tick >= request.deadlineTick && !adopted) {
+          const uint64_t misses = 1 + (clock.tick - request.deadlineTick) / frame.loopLength;
+          if (misses > request.countedMisses) {
+            request.countedMisses = uint16_t(std::min<uint64_t>(UINT16_MAX, misses));
+            missed = true;
+          }
+        }
+        const auto& current = set->views[set->lifecycle.current];
+        frame.boundView = set->lifecycle.current;
+        frame.boundStorageGeneration = current.storageGeneration;
+        frame.epoch = clock.epoch;
+        frame.generation = playbackGeneration;
+        frame.loopLength = current.coverage.loopLengthTicks;
+        frame.projectionStart = getProjectionCycleStartTick();
+        frame.startPhase = current.coverage.startPhase;
+        frame.deadlineTick = 0;
+        frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+        frame.lastTick = currentTick;
+        if (current.coverage.contains(phase)) {
+          sourceOut = current.source;
+          bridgeOut = nullptr;
+          viewOut = &current;
+          rollingViewSelectedOut = true;
+        }
+      }
+      } // Fixed reader metadata only; miss reporting remains interruptible.
+      if (missed) noteMissedTraversalForSlot(slotIndex, getLoop(slotIndex));
+      // Retain the next distinct interval at the reader edge itself. Main may
+      // not run before that interval is due; late service must inherit its debt.
+      if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving)
+        retainLiveRecordDemand(*runtime, loop, playbackGeneration, getProjectionCycleStartTick(), clock);
+      if (rollingViewSelectedOut) return;
+    }
+  }
   // E2 qualification: a stopped Record job may own a complete frozen Capture
   // successor while the whole checkpoint is still private. This is the same
   // per-slot window set and MIDI cursor as the committed rolling route; no
   // source read or build runs on this edge. The raw first bar remains the
   // compatibility source until the exact completed successor is eligible.
-  if (eligible && slotIndex == activeLoopIndex && isPlaying() &&
+  // A live successor overdub still reads the published Record base. Its prepared frozen successor
+  // must remain adoptable at the same boundary; OVERDUBBING changes capture ownership, not this reader.
+  if (slotIndex == activeLoopIndex &&
+      (eligible || (isOverdubbing() && !editManager.isNoteEditActive())) &&
+      (isPlaying() || isOverdubbing()) &&
       !isJamPlaybackActive() && !isJamming() && !hasQueuedPlaybackStart()) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-    const CaptureStopJob* job = captureStopJobHead();
-    if (runtime && job && job->mode == CapturePhase::Record &&
-        job->slot == slotIndex && runtime->hasBoundRecordReturnWindowForPendingJob()) {
+    const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+    if (runtime && presentation != nullptr && hasRecordReaderOwnerForSlot(slotIndex) &&
+        presentation->slot == slotIndex && runtime->hasBoundRecordReturnWindowForPendingJob()) {
       RuntimePlaybackViewSource frozen{};
       PlaybackViewSourceIdentity receipt{};
       const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
       if (clock.epoch != 0 && clock.tick == currentTick &&
-          qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, job->interval, frozen, receipt)) {
+          qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) {
         auto* set = runtime->viewSetIfPrewarmed();
         const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
             currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
@@ -872,6 +1227,22 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
               view.source.snapshotIdentity == nullptr &&
               view.coverage.loopLengthTicks == loop.loopLengthTicks;
         };
+        // Task 3.15g: the root-return **adoption diagnostics**, carried on the existing `win_frozen_readiness` receipt
+        // (one family, one Tier-A prefix, no new format). The mask/answer computation lives in a cold (flash) helper so
+        // this clock-path TU costs no ITCM; emission is transition-cadenced inside the helper.
+        const auto reportRootReturnAdoption = [&](bool attempted, bool adopted, uint8_t why) {
+          reportRootReturnAdoptionForSlot(slotIndex, loop, phase, receipt.captureContentGeneration, attempted, adopted,
+                                          why);
+        };
+        // The decision **as it stands**, before any attempt: the stalled state never reaches an attempt, so this row is
+        // what names the standing predicate (transition-cadenced in the helper).
+        reportRootReturnAdoption(false, false, 0);
+        const auto attemptRootReturnAdoption = [&](uint8_t slot) {
+          uint8_t adoptWhy = 0;
+          const bool adopted = adoptPreparedPlaybackWindow(slot, &adoptWhy);
+          reportRootReturnAdoption(true, adopted, adoptWhy);
+          return adopted;
+        };
         if (set && frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
             frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
             frame.loopLength == loop.loopLengthTicks && frame.loopLength != 0 &&
@@ -879,6 +1250,32 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
             frame.boundView == set->lifecycle.current && frame.boundView < set->views.size() &&
             currentTick >= frame.lastTick) {
           const auto& current = set->views[frame.boundView];
+          // The matching live handoff can cover a whole period. It must still
+          // yield at a real boundary to the completed current-root successor;
+          // root publication alone cannot retire the job's source responsibility.
+          if (currentTick > frame.lastTick && loop.publishedSnapshotIsCurrent() &&
+              current.complete && current.published && fromThisFrozenJob(current) &&
+              set->lifecycle.ready < set->views.size()) {
+            const auto& ready = set->views[set->lifecycle.ready];
+            if (ready.complete && !ready.published && !ready.rawCoveragePrepared &&
+                ready.source.origin == PlaybackWindowOrigin::Committed &&
+                ready.source.playbackRevision == loop.playbackRevision &&
+                ready.source.sourceGeneration == playbackGeneration &&
+                ready.source.snapshotIdentity == loop.publishedSnapshotIdentity() &&
+                ready.coverage.loopLengthTicks == loop.loopLengthTicks &&
+                ready.coverage.startPhase == phase && attemptRootReturnAdoption(slotIndex)) {
+              getLoop(slotIndex).nextEventIndex = 0;
+              frame.boundView = set->lifecycle.current;
+              const auto& adopted = set->views[frame.boundView];
+              frame.boundStorageGeneration = adopted.storageGeneration;
+              frame.lastTick = currentTick;
+              sourceOut = adopted.source;
+              bridgeOut = nullptr;
+              viewOut = &adopted;
+              rollingViewSelectedOut = true;
+              return;
+            }
+          }
           if (current.complete && current.published && !current.rawCoveragePrepared &&
               current.storageGeneration == frame.boundStorageGeneration &&
               fromThisFrozenJob(current) && current.coverage.contains(phase)) {
@@ -908,7 +1305,7 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
               ready.storageGeneration != 0 && fromThisFrozenJob(ready) &&
               ready.coverage.loopLengthTicks == loop.loopLengthTicks &&
               ready.coverage.startPhase == phase && ready.coverage.contains(phase) &&
-              adoptPreparedPlaybackWindow(slotIndex)) {
+              attemptRootReturnAdoption(slotIndex)) {
             getLoop(slotIndex).nextEventIndex = 0;
             frame.boundView = set->lifecycle.current;
             frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
@@ -1178,7 +1575,7 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
                                     WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
   }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
-  ok = prewarmCaptureStopJobs() && ok;
+  ok = prewarmCaptureStopJobs(prepareCapture ? slotIndex : Config::MAX_LOOPS_PER_TRACK) && ok;
   ExternalPoolAccounting::endTag();
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
@@ -3050,7 +3447,11 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
   if (effect.candidateReleased) {
     // The candidate's resources are released here, and **only** its own: the served window and the retained source
     // belong to other owners and are untouched by this.
-    runtime->discardCoverageBuild();
+    {
+      const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
+      runtime->discardCoverageBuild();
+      traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::CandidateReleased, dropBefore);
+    }
     // Task 3.7a (I2): a **retained-source gather** is the other half of a candidate's preparation. The obligation it
     // was serving survives the release -- it is coalesced back into the record the lane reads, exactly as
     // `retireCoverageSource` coalesces a frozen root-backed request -- and only the gathered window is released.
@@ -3139,6 +3540,7 @@ TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
   if (hasRetainedPlaybackSourceForSlot(slot)) return false;
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime != nullptr) {
+    if (runtime->ownsLiveCaptureBuildBorrow()) return false;
     if (runtime->ownsCoverageSource() || runtime->ownsLaunchPreparation()) return false;
     // Task 3.7a (I2): a **retained-source gather** holds a window it gathered for a demand not yet admitted, so the
     // slot is owned by name until the gather is discharged or discarded.
@@ -3587,6 +3989,11 @@ TRACK_COLD_MEM uint16_t Track::playbackViewOutstandingGrains(uint8_t excludingSl
           RuntimePlaybackViewConfig::kWindowAdmissionLimit, kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
       total += preparation.requiredGrains() + 2u *
           ((LoopSnapshot::EventWindowCursor::kMaximumReadUnits + kPlaybackViewFillQuantum - 1) / kPlaybackViewFillQuantum) + 2u;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+    } else if (runtime && runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture &&
+               runtime->viewBuild.active()) {
+      total += runtime->frozenViewRequest.work.requiredGrains();
+#endif
     }
   }
   // Saturate rather than wrap: an absurd budget refuses, never admits.
@@ -3634,26 +4041,108 @@ TRACK_COLD_MEM bool Track::qualifiedFrozenRecordCaptureSourceForSlot(
     RuntimePlaybackViewSource& sourceOut,
     PlaybackViewSourceIdentity& identityOut) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return false;
-  const CaptureStopJob* job = captureStopJobHead();
-  if (job == nullptr || job->mode != CapturePhase::Record ||
-      !job->admission.pending || job->slot != slotIndex ||
-      expectedCaptureInterval == 0 || job->interval != expectedCaptureInterval ||
-      job->admission.frozenGeneration != static_cast<uint32_t>(job->interval) ||
-      !job->ownsRawRange || !job->rawRange.ready() ||
-      job->frozenCaptureContentGeneration == 0 ||
-      job->admission.remainingClosureGrains != 0 || !job->pendingNotes.empty()) return false;
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (presentation == nullptr || !hasRecordReaderOwnerForSlot(slotIndex) ||
+      expectedCaptureInterval == 0 || presentation->slot != slotIndex ||
+      presentation->interval != expectedCaptureInterval ||
+      presentation->generation != presentationGenerationFor(presentation->interval) ||
+      !presentation->ownsExtent || !presentation->rawRange.ready() ||
+      presentation->frozenCaptureContentGeneration == 0) return false;
   const Loop& loop = loopForSlot(slotIndex);
-  if (job->owner != &loop || job->loopId == kInvalidLoopId ||
-      job->loopId != loop.loopId || job->loopLengthTicks == 0 ||
-      job->loopLengthTicks != loop.loopLengthTicks) return false;
+  if (presentation->owner != &loop || presentation->loopId == kInvalidLoopId ||
+      presentation->loopId != loop.loopId || presentation->loopLengthTicks == 0 ||
+      presentation->loopLengthTicks != loop.loopLengthTicks) return false;
   const RuntimePlaybackViewSource source = RuntimePlaybackViewSource::fromFrozenRecordCapture(
-      job->rawRange, job->frozenCaptureContentGeneration);
+      presentation->rawRange, presentation->frozenCaptureContentGeneration);
   if (source.context == nullptr || source.origin != PlaybackWindowOrigin::Capture ||
-      source.captureContentToken != job->frozenCaptureContentGeneration) return false;
+      source.captureContentToken != presentation->frozenCaptureContentGeneration) return false;
   sourceOut = source;
   identityOut = {loop.playbackRevision, playbackGeneration, nullptr,
-                 PlaybackWindowOrigin::Capture, job->frozenCaptureContentGeneration};
+                 PlaybackWindowOrigin::Capture, presentation->frozenCaptureContentGeneration};
   return true;
+}
+
+namespace {
+/// DEC-136: the frozen reader a bound Record job's root successor must replace — a complete, non-raw
+/// Capture-origin view built from that job's own frozen content token, for this loop's geometry. A
+/// pre-publication copy keeps its own (older) revision, so revision currency is deliberately not required here;
+/// the job's token is the identity that matters.
+TRACK_COLD_MEM bool isFrozenRecordReturnWindow(const RuntimePlaybackView& view,
+                                               uint64_t frozenCaptureContentGeneration,
+                                               uint32_t loopLengthTicks) {
+  return view.complete && !view.rawCoveragePrepared && view.source.snapshotIdentity == nullptr &&
+      view.source.origin == PlaybackWindowOrigin::Capture &&
+      view.source.captureContentGeneration != 0 &&
+      view.source.captureContentGeneration == frozenCaptureContentGeneration &&
+      view.coverage.loopLengthTicks == loopLengthTicks;
+}
+/// The reader being replaced may be the served window or the one waiting to be adopted. A plain helper rather
+/// than a lambda: this TU's RAM1 bank is tight and a lambda body emitted into ITCM costs padding the build
+/// guards (the same reason the rest of this TU's cold work carries the macro).
+TRACK_COLD_MEM bool frozenRecordReturnWindowIsServedOrOwed(const RuntimePlaybackViewSet& set,
+                                                           uint64_t frozenCaptureContentGeneration,
+                                                           uint32_t loopLengthTicks) {
+  const bool served = set.lifecycle.current < set.views.size() &&
+      isFrozenRecordReturnWindow(set.views[set.lifecycle.current], frozenCaptureContentGeneration, loopLengthTicks);
+  const bool owed = set.lifecycle.ready < set.views.size() &&
+      isFrozenRecordReturnWindow(set.views[set.lifecycle.ready], frozenCaptureContentGeneration, loopLengthTicks);
+  return served || owed;
+}
+}  // namespace
+
+TRACK_COLD_MEM bool Track::rootReturnSuccessorIsOwedForSlot(
+    uint8_t slotIndex, const PlaybackViewPendingRequest& request, PlaybackDeadlineClock clock) const {
+#if !PLAYBACK_WINDOW_ROLLING_ENABLED
+  (void)slotIndex;
+  (void)request;
+  (void)clock;
+  return false;
+#else
+  // DEC-136 item 1: the whole classification, and nothing wider. Every term names an existing owner or state,
+  // so an unrelated demand can never take the position-free route by accident.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated() || clock.epoch == 0) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !request.active) return false;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr || !runtime->hasBoundRecordReturnWindowForPendingJob()) return false;
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (presentation == nullptr || !presentation->retirementActive) return false;
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  if (!qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) return false;
+  const Loop& loop = loopForSlot(slotIndex);
+  if (loop.loopLengthTicks == 0 || !loop.publishedSnapshotIsCurrent()) return false;
+  // The successor must be the **current published root's own content for this loop**: that is the only thing
+  // that can discharge the job's source responsibility (S7.5b.5 reads exactly this identity).
+  if (request.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
+      request.source.origin != PlaybackWindowOrigin::Committed ||
+      request.source.playbackRevision != loop.playbackRevision ||
+      request.source.sourceGeneration != playbackGeneration ||
+      request.source.snapshotIdentity != loop.publishedSnapshotIdentity()) {
+    return false;
+  }
+  if (!request.coverage.isValid() || request.coverage.loopLengthTicks != loop.loopLengthTicks) return false;
+  // The interval must be one the rolling reader's own window grid can adopt and re-serve: the same shape the
+  // window owner prepares everywhere else. A demand raised at phase `p` is the return of the interval that
+  // contained `p`, and its adoption boundary is that interval's next entry, so *timing* is deliberately not
+  // judged here -- the existing boundary adoption (`coverage.startPhase == phase`, or containment on the idle
+  // edge) still decides when the completed window is useful, and an unadoptable window is refused there.
+  if (request.coverage.startPhase % Config::TICKS_PER_BAR != 0 ||
+      request.coverage.lengthTicks != Config::TICKS_PER_BAR ||
+      loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
+    return false;
+  }
+  return frozenRecordReturnWindowIsServedOrOwed(*set, presentation->frozenCaptureContentGeneration, loop.loopLengthTicks);
+#endif
+}
+
+TRACK_COLD_MEM bool Track::ordinaryAdmissionCannotServeDemand(
+    const CoverageServiceContract& contract, uint32_t loopLengthTicks) const {
+  // DEC-136 item 3: the waiver is the envelope's own impossibility, so it is asked of the envelope. An
+  // undeclared contract proves nothing and grants nothing; a loop long enough to serve the cost keeps the
+  // ordinary path (and its named refusal) in charge.
+  if (loopLengthTicks == 0 || !contract.isDeclared()) return false;
+  return !contract.canCompleteWithinLead(loopLengthTicks);
 }
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackWindow(
     uint8_t slotIndex, const PlaybackCoverageInterval& coverage,
@@ -3685,6 +4174,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
   return requestCommittedPlaybackWindow(slotIndex, coverage, phase, clock);
 }
 
+
 TRACK_COLD_MEM void Track::cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool includeBound) {
   auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (!runtime || runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::None ||
@@ -3706,8 +4196,11 @@ TRACK_COLD_MEM void Track::cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool i
   // Completed worker may point at a now-published view. Only discard an active
   // launch worker; publication has already transferred a completed destination.
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Requested ||
-      runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Building)
+      runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Building) {
+    const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
     runtime->discardCoverageBuild();
+    traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::LaunchCancelled, dropBefore);
+  }
   else if (runtime->ownsCoverageSource()) {
     runtime->coverageSource.beginRelease();
     runtime->coveragePreparation = LoopPlaybackRuntime::CoveragePreparation::Retiring;
@@ -3989,7 +4482,25 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
   RollingMetadataGuard guard;
   auto* runtime = playbackRuntime.slotIfAllocated(slot);
-  if (!runtime || runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle) return;
+  if (!runtime) return;
+  const auto& live = runtime->pendingViewRequest_;
+  if (live.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture &&
+      live.liveLeaseGeneration == runtime->workingSetGeneration()) {
+    runtime->cancelLiveCaptureBuildBorrows();
+    auto* set = runtime->viewSetIfPrewarmed();
+    if (set && set->lifecycle.ready < set->views.size()) {
+      const auto& ready = set->views[set->lifecycle.ready];
+      if (!ready.published && ready.source.origin == PlaybackWindowOrigin::Capture &&
+          ready.source.sourceGeneration == live.operationGeneration)
+        (void)set->lifecycle.retireSupersededReady(set->views);
+    }
+    runtime->pendingViewRequest_ = {};
+    if (runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture)
+      runtime->frozenViewRequest = {};
+    runtime->rolling = {};
+    return;
+  }
+  if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle) return;
   const auto frame = runtime->rolling;
   const auto matches = [&](const PlaybackViewPendingRequest& request) {
     return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
@@ -4002,7 +4513,12 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
       runtime->viewBuildWork.clockEpoch == frame.epoch && runtime->viewBuildWork.deadlineTick == frame.deadlineTick;
   if (matches(runtime->pendingViewRequest_)) runtime->clearViewPendingRequest();
   if (frozenOwned) runtime->frozenViewRequest = {};
-  if (frozenOwned || admittedOwned) runtime->discardCoverageBuild();
+  if (frozenOwned || admittedOwned) {
+    // Task 3.15h: a cancelled window releases an admitted builder -- name it and what it had done.
+    const uint32_t dropBefore = probeCoverageBuildDrop(slot);
+    runtime->discardCoverageBuild();
+    traceCoverageBuildDrop(slot, CoverageBuildDropReason::WindowCancelled, dropBefore);
+  }
   auto* set = runtime->viewSetIfPrewarmed();
   if (set && loopsAllocated() && set->lifecycle.current == frame.boundView && frame.boundView < set->views.size() &&
       set->views[frame.boundView].storageGeneration == frame.boundStorageGeneration)
@@ -4036,6 +4552,11 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   return RollingOutcome::Disabled;
 #else
   RollingMetadataGuard guard;
+  // Task 3.15g: refresh a retained Committed demand's identity from the live root on **every** lane turn, before any
+  // selection. It must not sit behind the holder choice: a demand whose identity is stale is exactly one the selector
+  // reports as unable to progress, so a refresh placed after selection would never run in the state that needs it.
+  for (uint8_t refreshSlot = 0; refreshSlot < Config::MAX_LOOPS_PER_TRACK; ++refreshSlot)
+    refreshRetainedDemandIdentityForSlot(refreshSlot);
   // C3 (DEC-116): **selection alone does not cancel an enabled sounding slot.** A non-active slot that still
   // holds its own cold full-loop candidate (`coldRollingShape`) of an enabled, committed one-bar loop keeps
   // it; everything else is released exactly as before -- the demoted two-bar launch of a switch target, a
@@ -4064,7 +4585,29 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   }
   auto& frame = runtime->rolling;
   auto& loop = getActiveLoop();
+  if (isRecording() && liveRecordCaptureSource(loop, *runtime) &&
+      !editManager.isNoteEditActive() && !runtime->previewSourceActive &&
+      !hasQueuedPlaybackStart() && !hasPendingDeferredOverdubStop() &&
+      !isJamPlaybackActive() && !isJamming()) {
+    retainLiveRecordDemand(*runtime, loop, playbackGeneration, getProjectionCycleStartTick(), clock);
+    const auto& request = runtime->pendingViewRequest_;
+    if (request.positionInvalidated || (request.clockEpoch && request.clockEpoch != clock.epoch)) {
+      runtime->cancelLiveCaptureBuildBorrows();
+      auto* set = runtime->viewSetIfPrewarmed();
+      if (set && set->lifecycle.ready < set->views.size()) {
+        const auto& ready = set->views[set->lifecycle.ready];
+        if (!ready.published && ready.source.origin == PlaybackWindowOrigin::Capture &&
+            ready.source.sourceGeneration == request.operationGeneration)
+          (void)set->lifecycle.retireSupersededReady(set->views);
+      }
+      runtime->pendingViewRequest_.positionInvalidated = true;
+      runtime->pendingViewRequest_.active = false;
+      return RollingOutcome::Rejected;
+    }
+    return request.active ? RollingOutcome::Waiting : RollingOutcome::Serving;
+  }
   // An unpositioned cold initial view is prepared while stopped. The main-loop
+
   // selector must not cancel it on the next off-clock service opportunity.
   if (!isPlaying() && !isRecording() && !isOverdubbing() && clock.epoch == 0 &&
       !hasQueuedPlaybackStart() && !isJamPlaybackActive() && !isJamming() &&
@@ -4082,12 +4625,13 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       isPlaying() && !editManager.isNoteEditActive() && !runtime->previewSourceActive &&
       !hasQueuedPlaybackStart() && !isJamPlaybackActive() && !isJamming() &&
       runtime->hasBoundRecordReturnWindowForPendingJob()) {
-    const CaptureStopJob* job = captureStopJobHead();
+    const CaptureStopPresentation* presentation = captureStopPresentationForSlot(activeLoopIndex);
     RuntimePlaybackViewSource frozen{};
     PlaybackViewSourceIdentity receipt{};
     const auto* set = runtime->viewSetIfPrewarmed();
-    if (job && job->mode == CapturePhase::Record && job->slot == activeLoopIndex &&
-        qualifiedFrozenRecordCaptureSourceForSlot(activeLoopIndex, job->interval, frozen, receipt) &&
+    if (presentation != nullptr && hasRecordReaderOwnerForSlot(activeLoopIndex) &&
+        presentation->slot == activeLoopIndex &&
+        qualifiedFrozenRecordCaptureSourceForSlot(activeLoopIndex, presentation->interval, frozen, receipt) &&
         set && frame.boundView == set->lifecycle.current && frame.boundView < set->views.size()) {
       const auto& current = set->views[frame.boundView];
       if (frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
@@ -4095,10 +4639,13 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
           frame.loopLength != 0 &&
           (uint32_t(getProjectionCycleStartTick()) - uint32_t(frame.projectionStart)) % frame.loopLength == 0 &&
           current.published && current.complete &&
-          current.source.origin == PlaybackWindowOrigin::Capture &&
           current.source.sourceGeneration == receipt.sourceGeneration &&
-          current.source.captureContentGeneration == receipt.captureContentGeneration &&
-          current.source.snapshotIdentity == nullptr &&
+          ((current.source.origin == PlaybackWindowOrigin::Capture &&
+            current.source.captureContentGeneration == receipt.captureContentGeneration &&
+            current.source.snapshotIdentity == nullptr) ||
+           (current.source.origin == PlaybackWindowOrigin::Committed && loop.publishedSnapshotIsCurrent() &&
+            current.source.playbackRevision == loop.playbackRevision &&
+            current.source.snapshotIdentity == loop.publishedSnapshotIdentity())) &&
           current.storageGeneration == frame.boundStorageGeneration) {
         const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
             static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
@@ -4107,8 +4654,8 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     }
     cancelRollingPlaybackWindow(activeLoopIndex);
   }
-  if (!isPlaying() || editManager.isNoteEditActive() || hasPendingDeferredOverdubStop() || runtime->previewSourceActive ||
-      runtime->hasBoundRecordReturnWindowForPendingJob()) {
+  if (!isPlaying() || editManager.isNoteEditActive() || hasPendingDeferredOverdubStop() ||
+      runtime->previewSourceActive) {
     cancelRollingPlaybackWindow(activeLoopIndex);
     reportPlaybackRollingGateRow("win_track_not_playing", clock.epoch != 0);
     return RollingOutcome::Excluded;
@@ -4383,11 +4930,12 @@ TRACK_COLD_MEM bool Track::rootQualificationWaitsForCaptureReady(
       request.source.sourceGeneration != playbackGeneration ||
       request.source.snapshotIdentity != loop.publishedSnapshotIdentity() ||
       request.coverage.loopLengthTicks != loop.loopLengthTicks) return false;
-  const CaptureStopJob* job = captureStopJobHead();
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
   RuntimePlaybackViewSource frozen{};
   PlaybackViewSourceIdentity receipt{};
-  if (!job || job->mode != CapturePhase::Record || job->slot != slotIndex ||
-      !qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, job->interval, frozen, receipt)) return false;
+  if (presentation == nullptr || !presentation->retirementActive ||
+      presentation->slot != slotIndex ||
+      !qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) return false;
   const auto* set = runtime.viewSetIfPrewarmed();
   if (!set || set->lifecycle.ready >= set->views.size() ||
       set->lifecycle.build >= set->views.size() ||
@@ -4404,6 +4952,203 @@ TRACK_COLD_MEM bool Track::rootQualificationWaitsForCaptureReady(
       build.coverage.lengthTicks == request.coverage.lengthTicks &&
       build.coverage.loopLengthTicks == request.coverage.loopLengthTicks;
 #endif
+}
+
+/// Task 3.15g: **the retained demand's identity is refreshed from the live root.** The board's stall reads
+/// `revEq = 0` (`captures/i5-rolling-base-2bar-13`): the demand the current-root handoff keeps is judged against a
+/// `source.playbackRevision` captured before the root published, so the retry gate's final equality refuses a demand
+/// that is, by construction, for the root that is now current. Nothing about the demand's *reason*, *position* or
+/// *coverage* is touched here -- only the identity fields the gate compares, and only toward the live root.
+TRACK_COLD_MEM void Track::refreshRetainedDemandIdentityForSlot(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return;
+  // Task 3.15g — **ownership trace, transition-cadenced**. The three records that can own the coverage work are the
+  // retained demand (`pendingViewRequest_`), the frozen obligation (`frozenViewRequest`) and the build (`viewBuild`).
+  // The stall is a race between the code that hands work between them, so this emits only when that ownership set
+  // changes -- one row per transfer, never a per-turn sample. `mask` is the set (bit0 pending, bit1 frozen, bit2 build,
+  // bit3 the Record job still pending) and `why` marks the **illegal** combination the owner named: the job is still
+  // pending while none of the three records owns the work.
+  {
+    DMAMEM static uint8_t sLastOwnerSet[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+    DMAMEM static bool sOwnerSetInitialised = false;
+    const uint8_t traceTrack = resolveTrackIndexForPersistence(*this);
+    if (traceTrack < Config::NUM_TRACKS) {
+      if (!sOwnerSetInitialised) {
+        for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t)
+          for (uint8_t s2 = 0; s2 < Config::MAX_LOOPS_PER_TRACK; ++s2) sLastOwnerSet[t][s2] = 0xFFu;
+        sOwnerSetInitialised = true;
+      }
+      const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+      const bool jobPending = presentation != nullptr && presentation->retirementActive &&
+          presentation->slot == slotIndex;
+      uint8_t set = 0;
+      if (runtime->pendingViewRequest_.active) set |= 1u;
+      if (runtime->frozenViewRequest.active) set |= 2u;
+      if (runtime->viewBuild.active()) set |= 4u;
+      if (jobPending) set |= 8u;
+      if (sLastOwnerSet[traceTrack][slotIndex] != set) {
+        const uint8_t previousOwnerSet = sLastOwnerSet[traceTrack][slotIndex];
+        sLastOwnerSet[traceTrack][slotIndex] = set;
+        const bool ownerless = jobPending && (set & 0x7u) == 0;
+        SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "owner_trace", "transition", loopForSlot(slotIndex).playbackRevision,
+                                   0u, playbackGeneration, 0u, set, 0u,
+                                   loopForSlot(slotIndex).loopLengthTicks, set, ownerless ? 0x80u : 0u, 0u);
+        // Task 3.15h: the build bit can clear **without any release site running**. `RuntimePlaybackViewBuild::active()`
+        // is false for `Phase::Complete`, so a builder that finished its last grain and was neither published nor
+        // discarded leaves the owner set with the bit gone and the obligation still frozen -- the exact
+        // `pending+frozen` state the board alternates into. Name that transition here, through the same probe the
+        // release sites use, so the row says what the builder had done (qualified/ordered counts, phase) instead of
+        // leaving it to be inferred from the absent release.
+        if ((previousOwnerSet & 4u) != 0 && (set & 4u) == 0) {
+          const uint32_t dropped = probeCoverageBuildDrop(slotIndex);
+          const uint8_t phase = static_cast<uint8_t>((dropped >> 1) & 0x7u);
+          traceCoverageBuildDrop(slotIndex,
+              phase == static_cast<uint8_t>(RuntimePlaybackViewBuildGrain::Complete)
+                  ? CoverageBuildDropReason::CompletedUnpublished
+                  : CoverageBuildDropReason::ReleasedWithoutSite,
+              dropped);
+        }
+      }
+    }
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (!loop.publishedSnapshotIsCurrent() || loop.loopLengthTicks == 0) return;
+  auto& demand = runtime->pendingViewRequest_;
+  if (!demand.active || demand.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
+      demand.source.origin != PlaybackWindowOrigin::Committed) {
+    return;
+  }
+  const auto snapshot = loop.publishedSnapshot();
+  if (!snapshot) return;
+  const bool stale = demand.source.playbackRevision != loop.playbackRevision ||
+      demand.source.sourceGeneration != playbackGeneration ||
+      demand.source.snapshotIdentity != loop.publishedSnapshotIdentity() ||
+      demand.loopLengthTicks != loop.loopLengthTicks;
+  if (!stale) return;
+  demand.source.playbackRevision = loop.playbackRevision;
+  demand.source.sourceGeneration = playbackGeneration;
+  demand.source.snapshotIdentity = loop.publishedSnapshotIdentity();
+  demand.loopLengthTicks = loop.loopLengthTicks;
+  reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "retained_identity_refreshed");
+}
+
+namespace {
+/// The reason's own name, so a row states *which site* released the builder rather than only that it went away.
+TRACK_COLD_MEM const char* coverageBuildDropReasonName(Track::CoverageBuildDropReason reason) {
+  switch (reason) {
+    case Track::CoverageBuildDropReason::CandidateReleased: return "candidate_released";
+    case Track::CoverageBuildDropReason::LaunchCancelled: return "launch_cancelled";
+    case Track::CoverageBuildDropReason::WindowCancelled: return "window_cancelled";
+    case Track::CoverageBuildDropReason::DemandInvalidated: return "demand_invalidated";
+    case Track::CoverageBuildDropReason::HandoffUnreachable: return "handoff_unreachable";
+    case Track::CoverageBuildDropReason::SourceSuperseded: return "source_superseded";
+    case Track::CoverageBuildDropReason::RecordReturnSourceSuperseded: return "record_return_superseded";
+    case Track::CoverageBuildDropReason::GrainDeniedWhileOwned: return "grain_denied_while_owned";
+    case Track::CoverageBuildDropReason::OverdubLifecycle: return "overdub_lifecycle";
+    case Track::CoverageBuildDropReason::CompletionAdjudicated: return "completion_adjudicated";
+    case Track::CoverageBuildDropReason::CompletedUnpublished: return "completed_unpublished";
+    case Track::CoverageBuildDropReason::ReleasedWithoutSite: return "released_without_site";
+    case Track::CoverageBuildDropReason::QualificationStarted: return "qualification_started";
+    case Track::CoverageBuildDropReason::BuildAdmitted: return "build_admitted";
+    case Track::CoverageBuildDropReason::PublishedAsReady: return "published_as_ready";
+    case Track::CoverageBuildDropReason::PublishedAsCurrent: return "published_as_current";
+    case Track::CoverageBuildDropReason::PublishReadyRefused: return "publish_ready_refused";
+    case Track::CoverageBuildDropReason::PublishCurrentRefused: return "publish_current_refused";
+    case Track::CoverageBuildDropReason::None: break;
+  }
+  return "none";
+}
+}  // namespace
+
+TRACK_COLD_MEM uint32_t Track::probeCoverageBuildDrop(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return 0;
+  uint32_t packed = 0;
+  if (runtime->viewBuild.active()) packed |= 1u;
+  packed |= (uint32_t(static_cast<uint8_t>(runtime->viewBuild.nextGrain())) & 0x7u) << 1;
+  if (runtime->viewBuild.coverageOwned()) packed |= 1u << 4;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set != nullptr && set->lifecycle.build < set->views.size() &&
+      runtime->viewBuild.completedDestinationIs(set->views[set->lifecycle.build])) packed |= 1u << 5;
+  if (runtime->viewBuild.ownsLiveCaptureBorrow()) packed |= 1u << 6;
+  packed |= (std::min<uint32_t>(runtime->viewBuild.qualifiedEventCount(), 255u) & 0xFFu) << 8;
+  packed |= (std::min<uint32_t>(runtime->viewBuild.privateOrderedEventCount(), 255u) & 0xFFu) << 16;
+  return packed;
+}
+
+/// Task 3.15h — **the release site's own account of itself.** The owner-set trace is turn-cadenced and therefore blind
+/// to anything that opens and closes inside one turn, which is exactly the shape the board's stall takes: the builder is
+/// admitted and released again before the next turn's row is written. This row is written *at* the release, carrying
+/// four things the turn-cadenced row cannot: the site's reason, what the builder had done (`start`: phase, qualified and
+/// ordered counts), who owns the work afterwards (`length`: the same owner bit set the transition row uses), and whether
+/// the release published or prepared a successor (`adoptResult` bit 2/3).
+///
+/// **The falsifiable term is bit 7.** A release that had done work, published nothing, prepared no successor, and handed
+/// the same demand to `pending`/`frozen` is the defect: the same unsatisfied work returned to its owner with no progress.
+/// A release with bit 7 clear is either a real handoff (bits 2-5) or an empty builder (bit 0 clear), and neither is a
+/// defect. The dedupe key includes the before-state and the owner set, so a repeating no-progress cycle reports its
+/// first instance and every change of shape, not one line per release.
+TRACK_COLD_MEM void Track::traceCoverageBuildDrop(uint8_t slotIndex, CoverageBuildDropReason reason, uint32_t before) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const uint8_t traceTrack = resolveTrackIndexForPersistence(*this);
+  if (runtime == nullptr || traceTrack >= Config::NUM_TRACKS) return;
+  const Loop& loop = loopForSlot(slotIndex);
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  const bool jobPending = presentation != nullptr && presentation->retirementActive &&
+      presentation->slot == slotIndex;
+  uint8_t owners = 0;
+  if (runtime->pendingViewRequest_.active) owners |= 1u;
+  if (runtime->frozenViewRequest.active) owners |= 2u;
+  if (runtime->viewBuild.active()) owners |= 4u;
+  if (jobPending) owners |= 8u;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const bool windowServing = set != nullptr && set->lifecycle.current < set->views.size() &&
+      set->views[set->lifecycle.current].complete && set->views[set->lifecycle.current].published;
+  const bool successorPrepared = set != nullptr && set->lifecycle.ready < set->views.size() &&
+      set->views[set->lifecycle.ready].complete && !set->views[set->lifecycle.ready].published;
+  const bool beforeActive = (before & 1u) != 0;
+  const bool progressed = (((before >> 8) & 0xFFu) + ((before >> 16) & 0xFFu)) != 0;
+  uint8_t flags = 0;
+  if (beforeActive) flags |= 1u;
+  if (progressed) flags |= 1u << 1;
+  if (windowServing) flags |= 1u << 2;
+  if (successorPrepared) flags |= 1u << 3;
+  if (runtime->frozenViewRequest.active) flags |= 1u << 4;
+  if (runtime->pendingViewRequest_.active) flags |= 1u << 5;
+  if (jobPending) flags |= 1u << 6;
+  // The defect shape: work was in hand, nothing published, no successor prepared, and the demand went back to an owner.
+  if (beforeActive && !windowServing && !successorPrepared && (owners & 0x3u) != 0) flags |= 1u << 7;
+  // Demand stamp: which record owns the demand and under which reason/position the release happened.
+  uint32_t stamp = 0;
+  if (runtime->pendingViewRequest_.active) stamp |= 1u;
+  if (runtime->frozenViewRequest.active) stamp |= 2u;
+  stamp |= (uint32_t(static_cast<uint8_t>(runtime->pendingViewRequest_.reason)) & 0x3Fu) << 2;
+  if (runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) stamp |= 1u << 8;
+  if (runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture) stamp |= 1u << 9;
+  if (loop.publishedSnapshotIsCurrent()) stamp |= 1u << 10;
+  if (runtime->coverageSource.retiring()) stamp |= 1u << 11;
+  if (runtime->retainedGatherActive()) stamp |= 1u << 12;
+  if (runtime->pagedActive) stamp |= 1u << 13;
+  if (runtime->viewBuild.coverageOwned()) stamp |= 1u << 14;
+  if (runtime->pendingViewRequest_.clockEpoch == 0) stamp |= 1u << 15;
+  if (runtime->pendingViewRequest_.deadlineTick == 0) stamp |= 1u << 16;
+  {
+    DMAMEM static uint32_t sLastKey[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+    DMAMEM static uint8_t sLastSeen[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+    // The key is the *shape* of the release: reason, before-state, who owns it afterwards, and the decided flags.
+    const uint32_t key = (uint32_t(static_cast<uint8_t>(reason)) << 24) ^ (before & 0x00FFFFFFu) ^
+        (uint32_t(owners) << 16) ^ (uint32_t(flags) << 8) ^ (uint32_t(stamp) & 0xFFu);
+    if (sLastSeen[traceTrack][slotIndex] != 0 && sLastKey[traceTrack][slotIndex] == key) return;
+    sLastKey[traceTrack][slotIndex] = key;
+    sLastSeen[traceTrack][slotIndex] = 1;
+  }
+  SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "build_drop", coverageBuildDropReasonName(reason),
+                             loop.playbackRevision, stamp, playbackGeneration,
+                             static_cast<uint64_t>(reinterpret_cast<uintptr_t>(loop.publishedSnapshotIdentity())),
+                             before, owners, loop.loopLengthTicks,
+                             static_cast<uint8_t>(reason), flags, 0u);
 }
 
 TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const {
@@ -4429,17 +5174,49 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
 #else
   const bool cold = false;
 #endif
+  // DEC-136: the bound frozen reader's privately prepared successor is owed **without a deadline**, so an absent
+  // position is not an expired promise here. The structural classification is the only thing that makes this true.
+  const bool privateRootOwed = request != nullptr &&
+      rootReturnSuccessorIsOwedForSlot(slotIndex, *request, clock);
   if (!request || (!launch && request->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) ||
-      request->positionInvalidated || (!launch && !cold && (request->clockEpoch == 0 || clock.epoch != request->clockEpoch ||
-      clock.tick < request->work.admittedTick || clock.tick >= request->deadlineTick)) ||
+      request->positionInvalidated ||
+      (!launch && !cold && !privateRootOwed &&
+       (request->clockEpoch == 0 || clock.epoch != request->clockEpoch ||
+        clock.tick < request->work.admittedTick || clock.tick >= request->deadlineTick)) ||
       request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
-      request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity ||
-      request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved ||
-      request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
-      !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(slotIndex) != 0) return false;
+      // Task 3.15g: these two are **the paged lane's own answer**, so they are terminal only while that lane still says
+      // so. The board showed a demand carrying `ClosuresExceedDeclaredCapacity` at instants where the lane reported
+      // `pagedOutcome = None` twenty microseconds earlier: the stamp outlived its producing outcome, and a terminal
+      // reason is never retried, so the job never retired and the accepted stop waited behind it. A refusal with a name
+      // is an answer *about the live outcome*; once the outcome is gone the demand is owed a re-answer, not silence.
+      // `WindowExceedsRetainedCapacity` stays unconditional: it is a property of the interval's own size, not an
+      // outcome that can clear.
+      (request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity &&
+       runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity) ||
+      (request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved &&
+       runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved) ||
+      (!privateRootOwed && request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff) ||
+      // Task 3.15g: the DEC-136 private route may **keep** the Capture-origin successor that occupies the ready role --
+      // that is what `coverageRoleAvailable(keepCaptureReady)` is for, and it still requires that successor to be an
+      // unpublished Capture window with the build role distinct from it. Passing the default here made the role look
+      // unavailable for exactly the shape the route exists for: the board sits with a complete Capture successor in
+      // `ready`, `roleAvailable(false)` answers 0, `roleAvailable(true)` answers 1, and nothing ever started.
+      !runtime->coverageRoleAvailable(privateRootOwed) || playbackViewOutstandingGrains(slotIndex) != 0) return false;
   const auto& loop = loopForSlot(slotIndex);
-  return request->loopLengthTicks == loop.loopLengthTicks && playbackWindowSourceIsCurrentForSlot(slotIndex) &&
-      request->source.playbackRevision == loop.playbackRevision;
+  if (request->loopLengthTicks != loop.loopLengthTicks || !playbackWindowSourceIsCurrentForSlot(slotIndex)) return false;
+  // Task 3.15g: for a **Committed** demand the cached identity is a cache, not the truth. The board's stall reads
+  // `revEq = 0` at the very instant the offer names this slot progressable, because the retained record flips
+  // active/inactive *inside* a turn: `retireCoverageSource` installs the frozen obligation (with its pre-publication
+  // identity) where the record was empty, so a refresh that runs at the start of a turn misses it and the gate keeps
+  // judging the cached stamp. A Committed window is content **of the published root** -- the build reads that root
+  // through the live snapshot (`beginCoverageQualification`), and the interval/geometry terms above are what actually
+  // decide whether this demand can be served. So when that root is current, the demand is for it, whatever its stamp
+  // says; a genuinely foreign demand is refused by the source/generation/coverage terms, not by this equality.
+  if (request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      loop.publishedSnapshotIsCurrent()) {
+    return true;
+  }
+  return request->source.playbackRevision == loop.playbackRevision;
 }
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
@@ -4482,8 +5259,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     // this current root throughout this non-interleaved main-loop turn.
     const auto snapshot = loopForSlot(slotIndex).publishedSnapshot();
     runtime->pendingViewRequest_.source.snapshotIdentity = snapshot.get();
-    return snapshot && runtime->beginCoverageQualification(*snapshot)
-        ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
+    const uint32_t makeBefore = probeCoverageBuildDrop(slotIndex);
+    const bool qualified = snapshot && runtime->beginCoverageQualification(*snapshot);
+    traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::QualificationStarted, makeBefore);
+    return qualified ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
   auto& request = runtime->frozenViewRequest;
   const auto& loop = loopForSlot(slotIndex);
@@ -4493,9 +5272,16 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
 #else
   const bool cold = false;
 #endif
+  // DEC-136 item 2: the demand is **owed without a deadline** — the frozen reader keeps serving until the
+  // successor is complete and adopted — so the position terms cannot expire it. The structural classification
+  // is re-evaluated every turn and is the only thing that keeps this true.
+  const bool privateRootOwed = request.active &&
+      rootReturnSuccessorIsOwedForSlot(slotIndex, request, clock);
   if (!request.active || request.operationGeneration != playbackGeneration || request.positionInvalidated ||
-      (!launch && !cold && (clock.epoch == 0 || request.clockEpoch != clock.epoch || clock.tick < request.work.admittedTick ||
-      clock.tick >= request.deadlineTick)) || request.loopLengthTicks != loop.loopLengthTicks ||
+      (!launch && !cold && !privateRootOwed &&
+       (clock.epoch == 0 || request.clockEpoch != clock.epoch ||
+        clock.tick < request.work.admittedTick || clock.tick >= request.deadlineTick)) ||
+      request.loopLengthTicks != loop.loopLengthTicks ||
       !playbackWindowSourceIsCurrentForSlot(slotIndex) || request.source.playbackRevision != loop.playbackRevision ||
       (cold && loop.publishedSnapshotIsCurrent() &&
        request.source.snapshotIdentity != loop.publishedSnapshotIdentity())) {
@@ -4516,7 +5302,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
           request.loopLengthTicks != loop.loopLengthTicks || request.clockEpoch != clock.epoch ||
           clock.tick < request.work.admittedTick || clock.tick >= request.deadlineTick;
     }
+    const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
     runtime->retireCoverageSource();
+    traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::DemandInvalidated, dropBefore);
     return PlaybackViewTurnResult::GrainDenied;
   }
   if (runtime->coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Counting)
@@ -4539,15 +5327,41 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   // temporarily owns service; preserve the counted source and retry admission.
   if ((launch || cold) && playbackViewOutstandingGrains(slotIndex) != 0)
     return PlaybackViewTurnResult::GrainDenied;
+  // DEC-136 item 3: the **only** waived term, and only where the envelope itself proves no legal lead exists for
+  // this demand's own derived cost on this loop geometry. The demand is then owed without a deadline: the frozen
+  // reader keeps serving (declared by `ordinaryAdmissionCannotServeDemand`'s own arithmetic, never by a loop
+  // length), a sibling's promise still refuses it below, and any other obstruction merely defers it.
+  const bool privateRootWaived = privateRootOwed && ordinaryAdmissionCannotServeDemand(contract, loop.loopLengthTicks);
+  if (privateRootWaived) {
+    request.reason = PlaybackViewPendingReason::PrivateRootReturnPreparation;
+    request.deadlineTick = 0;
+    request.clockEpoch = 0;
+    request.work.deadlineTick = 0;
+    request.work.clockEpoch = 0;
+    if ((launch || cold) && playbackViewOutstandingGrains(slotIndex) != 0)
+      return PlaybackViewTurnResult::GrainDenied;
+    if (!playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
+        contract.requiredGrains(), clock)) {
+      return PlaybackViewTurnResult::GrainDenied;
+    }
+    const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
+    const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
+    traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
+    return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
+  }
   if ((!launch && !cold && !contract.canCompleteWithinLead(request.deadlineTick - clock.tick, playbackViewOutstandingGrains(slotIndex))) ||
       (!launch && !cold && !playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
           contract.requiredGrains(), clock))) {
     request.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
+    const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
     runtime->retireCoverageSource();
+    traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::HandoffUnreachable, dropBefore);
     return PlaybackViewTurnResult::GrainDenied;
   }
-  return runtime->beginQualifiedCoverageBuild(contract, clock)
-      ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
+  const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
+  const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
+  traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
+  return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
 }
 
 TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
@@ -4601,21 +5415,27 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
     if (runtime == nullptr) continue;
     const auto* pending = pendingViewRequest(slot);
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-    if (slot == activeLoopIndex && isRecording() && clock.epoch == 0 &&
+    if (slot == activeLoopIndex && isRecording() &&
         !hasPendingDeferredOverdubStop() && !hasQueuedPlaybackStart() &&
-        runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle &&
-        !runtime->pendingViewRequest_.active && !runtime->frozenViewRequest.active &&
-        !runtime->ownsCoverageSource() && !runtime->ownsLaunchPreparation() &&
-        trackManager.isSlotEnabled(resolveTrackIndexForPersistence(*this), slot) &&
-        coldRecordCaptureShell(loopForSlot(slot), *runtime)) {
+        !isJamPlaybackActive() && !isJamming() && !editManager.isNoteEditActive() &&
+        liveRecordCaptureSource(loopForSlot(slot), *runtime)) {
+      const auto& request = runtime->pendingViewRequest_;
+      auto& holder = holders[slot];
       const auto* set = runtime->viewSetIfPrewarmed();
-      const auto& candidate = set->views[set->lifecycle.build];
-      if (!candidate.complete &&
-          (!runtime->viewBuild.active() || candidate.source.origin == PlaybackWindowOrigin::Capture)) {
-        holders[slot].eligible = true;
-        holders[slot].canProgress = true;
-        continue;
-      }
+      const bool ready = set->lifecycle.ready < set->views.size() &&
+          set->views[set->lifecycle.ready].complete &&
+          set->views[set->lifecycle.ready].source == request.source &&
+          set->views[set->lifecycle.ready].coverage.startPhase == request.coverage.startPhase &&
+          set->views[set->lifecycle.ready].coverage.loopLengthTicks == request.coverage.loopLengthTicks;
+      const bool adoptedWorker = set->lifecycle.current < set->views.size() &&
+          runtime->viewBuild.completedDestinationIs(set->views[set->lifecycle.current]);
+      holder.eligible = (request.active && !ready) || adoptedWorker;
+      holder.canProgress = holder.eligible && !request.positionInvalidated &&
+          (!request.clockEpoch || request.clockEpoch == clock.epoch);
+      holder.hasDeadline = request.active && request.clockEpoch != 0 && request.deadlineTick != 0;
+      holder.handoffLeadTicks = request.deadlineTick > clock.tick
+          ? uint32_t(std::min<uint64_t>(UINT32_MAX, request.deadlineTick - clock.tick)) : 0;
+      continue;
     }
     if (slotMayOwnColdFullLoopWindow(slot, activeLoopIndex, loopsAllocated(),
                                      trackManager.isSlotEnabled(resolveTrackIndexForPersistence(*this), slot),
@@ -4664,16 +5484,16 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
           pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
           !runtime->ownsCoverageSource() && !runtime->retainedGatherActive() &&
           !runtime->frozenViewRequest.active && clock.epoch != 0) {
-        const CaptureStopJob* job = captureStopJobHead();
-        if (job && job->mode == CapturePhase::Record && job->slot == slot &&
-            job->owner != nullptr && job->owner->publishedSnapshotIsCurrent() &&
+        const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slot);
+        if (presentation != nullptr && presentation->retirementActive && presentation->slot == slot &&
+            presentation->owner != nullptr && presentation->owner->publishedSnapshotIsCurrent() &&
             runtime->hasBoundRecordReturnWindowForPendingJob()) {
           const Loop& rootLoop = loopForSlot(slot);
           const auto* set = runtime->viewSetIfPrewarmed();
           RuntimePlaybackViewSource frozen{};
           PlaybackViewSourceIdentity receipt{};
           if (set && set->lifecycle.ready < set->views.size() &&
-              qualifiedFrozenRecordCaptureSourceForSlot(slot, job->interval, frozen, receipt)) {
+              qualifiedFrozenRecordCaptureSourceForSlot(slot, presentation->interval, frozen, receipt)) {
             const auto& ready = set->views[set->lifecycle.ready];
             if (ready.complete && !ready.published &&
                 ready.source.origin == PlaybackWindowOrigin::Capture &&
@@ -4723,21 +5543,16 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
     // While the root is stale, prepare the next frozen-range bar; once current,
     // prepare the root-backed replacement before Record retirement.
     if (!runtime->coverageBuildNeedsService()) {
-      const CaptureStopJob* recordJob = captureStopJobHead();
+      const CaptureStopPresentation* recordJob = captureStopPresentationForSlot(slot);
       const Loop& recordLoop = loopForSlot(slot);
-      if (recordJob != nullptr && recordJob->mode == CapturePhase::Record &&
-          recordJob->slot == slot && recordJob->ownsRawRange && recordJob->owner != nullptr &&
-          isAudiblePlaybackActive() && runtime->hasBoundRecordReturnWindowForPendingJob() &&
+      if (recordJob != nullptr && hasRecordReaderOwnerForSlot(slot) &&
+          recordJob->slot == slot && recordJob->ownsExtent && recordJob->owner != nullptr &&
+          runtime->hasBoundRecordReturnWindowForPendingJob() &&
           recordLoop.loopLengthTicks != 0) {
         const bool rootCurrent = recordJob->owner->publishedSnapshotIsCurrent();
         PlaybackViewSourceIdentity source{
             recordLoop.playbackRevision, playbackGeneration, recordLoop.publishedSnapshotIdentity()};
-        // Only frozen-range preparation needs the E2 job receipt. Once the
-        // complete root is current, its replacement owner stays independently
-        // eligible even if the old job's range is no longer qualified.
-        if (!rootCurrent && recordJob->frozenCaptureContentGeneration != 0 &&
-            recordJob->admission.pending && recordJob->pendingNotes.empty() &&
-            recordJob->admission.remainingClosureGrains == 0) {
+        if (!rootCurrent && recordJob->frozenCaptureContentGeneration != 0) {
           RuntimePlaybackViewSource frozen{};
           PlaybackViewSourceIdentity receipt{};
           if (!qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval,
@@ -4905,7 +5720,13 @@ static MidiServiceDrain::PlaybackHolderCursor sWithinTrackWindowCursors[Config::
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor, bool transportRunning,
     PlaybackDeadlineClock clock, PlaybackDeadlineClock (*completionClockReader)()) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (isRecording()) (void)serviceRollingPlaybackWindow(clock);
+#endif
   (void)transportRunning;  // Compatibility argument; sampling belongs to the lane dispatcher.
+  // The same Track still owns every Loop. Do this before selection: an inactive
+  // Capture is excluded as a holder but must still have a cancellation producer.
+  playbackRuntime.cancelStaleLiveCaptureBuilds();
   // DEC-108 §13a / task 3.10 (blocker 3, half 2): **the deadlines the admission promised are serviced first**, for every
   // slot holding a live promise -- not only the holder this turn happens to serve, and not only when a build completes.
   // The judgement never depends on the revision currency; the consequence is `noteMissedTraversalForSlot`'s.
@@ -4925,50 +5746,128 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   const uint8_t slot = chosen;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime == nullptr) return PlaybackViewTurnResult::Idle;
+  RuntimePlaybackViewBuild::PreparationTurn primaryTurn(runtime->viewBuild);
+  RuntimePlaybackViewBuild::PreparationTurn bridgeTurn(runtime->bridgeWindowBuild);
+  if (!primaryTurn || !bridgeTurn) return PlaybackViewTurnResult::GrainDenied;
+  // Every early return still reports cancellation of this selected owner's turn.
+  const auto service = [&]() TRACK_COLD_MEM -> PlaybackViewTurnResult {
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-  if (slot == activeLoopIndex && isRecording() && clock.epoch == 0 &&
+  if (slot == activeLoopIndex && isRecording() &&
       !hasPendingDeferredOverdubStop() && !hasQueuedPlaybackStart() &&
-      runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle &&
-      coldRecordCaptureShell(loopForSlot(slot), *runtime)) {
+      liveRecordCaptureSource(loopForSlot(slot), *runtime)) {
     auto& loop = loopForSlot(slot);
     auto* set = runtime->viewSetIfPrewarmed();
+    auto& request = runtime->pendingViewRequest_;
+    if (request.positionInvalidated ||
+        !liveRecordRecipeMatches(request, loop, *runtime, playbackGeneration, getProjectionCycleStartTick()) ||
+        (request.clockEpoch && request.clockEpoch != clock.epoch)) return PlaybackViewTurnResult::GrainDenied;
+    // An adopted completed worker is detached before selecting another physical role.
+    if (set->lifecycle.current < set->views.size() &&
+        runtime->viewBuild.completedDestinationIs(set->views[set->lifecycle.current]))
+      runtime->viewBuild.discard(&set->views[set->lifecycle.current]);
+    if (!request.active) return PlaybackViewTurnResult::Idle;
+    if (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) {
+      auto& ready = set->views[set->lifecycle.ready];
+      if (ready.source == request.source && ready.coverage.startPhase == request.coverage.startPhase &&
+          ready.coverage.loopLengthTicks == request.coverage.loopLengthTicks) return PlaybackViewTurnResult::Idle;
+      PlaybackSourceReadGuard roleGuard;
+      // Reopen only this worker's unpublished private result. Reader/current stays immutable.
+      if (!runtime->viewBuild.completedDestinationIs(ready) || ready.published)
+        return PlaybackViewTurnResult::GrainDenied;
+      std::swap(set->lifecycle.ready, set->lifecycle.build);
+    }
+    if (set->lifecycle.build >= set->views.size()) return PlaybackViewTurnResult::GrainDenied;
     auto& candidate = set->views[set->lifecycle.build];
-    if (!runtime->viewBuild.active()) {
-      if (candidate.complete || candidate.published) return PlaybackViewTurnResult::Idle;
-      const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
-      const PlaybackViewSourceIdentity identity{loop.playbackRevision, playbackGeneration,
-          nullptr, PlaybackWindowOrigin::Capture, loop.captureContentGeneration()};
-      const PlaybackCoverageInterval coverage{0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR};
-      if (!runtime->viewBuild.begin(candidate, source, identity, coverage, {}, {},
+    if (runtime->viewBuild.ownsLiveCaptureBorrow() &&
+        (candidate.coverage.startPhase != request.coverage.startPhase ||
+         candidate.coverage.lengthTicks != request.coverage.lengthTicks ||
+         candidate.coverage.loopLengthTicks != request.coverage.loopLengthTicks))
+      runtime->viewBuild.discard(); // Geometry is never append-certified.
+    if (!runtime->viewBuild.ownsLiveCaptureBorrow()) {
+      if (runtime->viewBuild.active() || candidate.published) return PlaybackViewTurnResult::GrainDenied;
+      runtime->viewBuild.discard();
+      const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop, true);
+      runtime->frozenViewRequest = request;
+      if (!runtime->viewBuild.begin(candidate, source, request.source, request.coverage, {}, {},
                                     RuntimePlaybackViewFillScope::PlaybackCoverage))
         return PlaybackViewTurnResult::GrainDenied;
       return PlaybackViewTurnResult::GrainServed;
     }
-    if (candidate.source.origin != PlaybackWindowOrigin::Capture ||
-        candidate.source.captureContentGeneration != loop.captureContentGeneration()) {
-      runtime->viewBuild.discard();
-      candidate.resetMetadata();
-      return PlaybackViewTurnResult::GrainDenied;
+    auto grain = runtime->viewBuild.nextGrain();
+    if (!(candidate.source == request.source) && grain != RuntimePlaybackViewBuildGrain::Order) {
+      const size_t frontier = runtime->viewBuild.liveCaptureSourceFrontier();
+      const size_t orderedPrefix = runtime->viewBuild.privateOrderedEventCount();
+      if (!runtime->viewBuild.extendLiveCapture(request.source)) {
+        runtime->viewBuild.discard();
+        return PlaybackViewTurnResult::GrainDenied;
+      }
+      runtime->frozenViewRequest = request;
+      priceLiveRecordWork(runtime->frozenViewRequest.work, runtime->viewBuild.liveCaptureSourceExtent(),
+                          frontier, orderedPrefix, candidate.storage.capacity);
+      grain = runtime->viewBuild.nextGrain();
     }
-    const auto grain = runtime->viewBuild.nextGrain();
     const auto result = grain == RuntimePlaybackViewBuildGrain::Fill
         ? runtime->viewBuild.stepFill(kPlaybackViewFillQuantum)
         : grain == RuntimePlaybackViewBuildGrain::Order
-            ? runtime->viewBuild.stepOrder(kPlaybackViewOrderQuantum)
-            : RuntimePlaybackViewBuildGrain::Denied;
+            ? runtime->viewBuild.stepOrder(kPlaybackViewOrderQuantum) : grain;
     if (result == RuntimePlaybackViewBuildGrain::Denied) {
       runtime->viewBuild.discard();
-      candidate.resetMetadata();
       return PlaybackViewTurnResult::GrainDenied;
     }
-    // Do not retire the raw return shell until its frozen-job and one-reader
-    // replacements are linked. This complete copied view remains private.
     if (result == RuntimePlaybackViewBuildGrain::Complete) {
-      // D10 / task 3.9: a completion is one of the two events the readiness receipt names, and this branch returns
-      // before the coverage grain tail that emits it -- so it reports through the **same two existing emitters**,
-      // byte-for-byte the rows the tail writes (the path row from `finishPlaybackViewGrain`, then the receipt). Rows
-      // only: the copied candidate stays private and unpublished, and no result, role or admission changes.
-      const PlaybackViewTurnResult completed = finishPlaybackViewGrain(slot, result);
+      const auto finished = clock.epoch
+          ? (completionClockReader ? completionClockReader() : clockManager.getPlaybackDeadlineClock()) : clock;
+      if (finished.epoch != clock.epoch || finished.tick < clock.tick)
+        return PlaybackViewTurnResult::GrainDenied;
+      const bool initial = runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle &&
+          request.deadlineTick == 0;
+      const uint32_t floor = IntervalProjection::tickPhaseInProjectionCycle(
+          uint32_t(finished.tick), getProjectionCycleStartTick(), candidate.coverage.loopLengthTicks);
+      size_t first = 0, last = initial ? candidate.storage.eventCount : 0;
+      while (first < last) {
+        const size_t middle = first + (last - first) / 2;
+        if (candidate.storage.phases[candidate.storage.order[middle]] <= floor) first = middle + 1;
+        else last = middle;
+      }
+      {
+      PlaybackSourceReadGuard publicationGuard;
+      if (!primaryTurn || !bridgeTurn || !runtime->viewBuild.completedDestinationIs(candidate) ||
+          &set->views[set->lifecycle.build] != &candidate ||
+          candidate.coverage.startPhase != request.coverage.startPhase ||
+          candidate.coverage.lengthTicks != request.coverage.lengthTicks ||
+          candidate.coverage.loopLengthTicks != request.coverage.loopLengthTicks ||
+          !liveRecordRecipeMatches(request, loop, *runtime, playbackGeneration, getProjectionCycleStartTick()))
+        return PlaybackViewTurnResult::GrainDenied;
+      if (initial != (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle &&
+                      request.deadlineTick == 0)) return PlaybackViewTurnResult::GrainServed;
+      if (clock.epoch) {
+        const auto now = clockManager.getPlaybackDeadlineClock();
+        if (now.epoch != finished.epoch || (initial && now.tick != finished.tick))
+          return PlaybackViewTurnResult::GrainServed;
+      }
+      if (candidate.source.captureContentGeneration != loop.captureContentGeneration())
+        return PlaybackViewTurnResult::GrainServed; // Finish frozen order, then extend the bounded suffix.
+      if (initial) {
+        runtime->viewBuild.discard(&candidate);
+        set->lifecycle.retained = RuntimePlaybackViewLifecycle::kNoView;
+        if (set->lifecycle.ready >= set->views.size()) {
+          set->lifecycle.ready = set->lifecycle.idle;
+          if (set->lifecycle.ready < set->views.size())
+            set->views[set->lifecycle.ready].resetMetadata(); // Idle copy is not a successor for this take.
+          set->lifecycle.idle = RuntimePlaybackViewLifecycle::kNoView;
+        }
+        if (!set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views))
+          return PlaybackViewTurnResult::GrainDenied;
+        request.active = false;
+        runtime->frozenViewRequest = {};
+        // Only the precomputed cursor floor is committed under the metadata mask.
+        loop.nextEventIndex = static_cast<uint16_t>(first);
+        loop.lastTickInLoop = floor;
+      } else if (!set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views))
+        return PlaybackViewTurnResult::GrainDenied;
+      if (!initial) runtime->frozenViewRequest.work.admittedTick = finished.tick;
+      }
+      const auto completed = finishPlaybackViewGrain(slot, result);
       reportPlaybackWindowReadinessReceipt(slot, currentPhase);
       return completed;
     }
@@ -5053,16 +5952,21 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     return PlaybackViewTurnResult::GrainServed;
   }
 #endif
-  const CaptureStopJob* recordJob = captureStopJobHead();
-  // Record retirement. A complete old-source view remains served until adoption.
-  if (recordJob != nullptr && recordJob->mode == CapturePhase::Record &&
-      recordJob->slot == slot && recordJob->ownsRawRange && recordJob->owner != nullptr &&
+  const CaptureStopPresentation* recordJob = captureStopPresentationForSlot(slot);
+  // Presentation ownership, not the interaction ring, carries the Record reader obligation.
+  if (recordJob != nullptr && recordJob->retirementActive &&
+      recordJob->slot == slot && recordJob->ownsExtent && recordJob->owner != nullptr &&
       recordJob->owner->publishedSnapshotIsCurrent() && runtime->hasServableDeferredRecordView() &&
-      isAudiblePlaybackActive() && runtime->hasBoundRecordReturnWindowForPendingJob()) {
+      isAudiblePlaybackActive() && runtime->hasBoundRecordReturnWindowForPendingJob() &&
+      !runtime->coverageBuildNeedsService()) {
     const Loop& recordLoop = loopForSlot(slot);
     const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
         currentPhase, projectionCycleStartTick, recordLoop.loopLengthTicks);
-    const bool windowed = recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks);
+    // Rolling Record-return serves the same one-bar intervals the rolling reader
+    // serves: a short take's whole-loop window can never be admitted within the
+    // declared boundary lead, which stranded the held crossing Stop.
+    const bool windowed = PLAYBACK_WINDOW_ROLLING_ENABLED ||
+        recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks);
     const uint32_t targetStart = windowed
         ? (phase / Config::TICKS_PER_BAR) * Config::TICKS_PER_BAR : 0;
     const uint32_t targetLength = windowed
@@ -5077,7 +5981,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         ? &set->views[set->lifecycle.current] : nullptr;
     if (!recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks) && served != nullptr &&
         served->complete && served->source.playbackRevision == source.playbackRevision &&
-        served->source.sourceGeneration == source.sourceGeneration && served->coverage.contains(phase)) {
+        served->source.sourceGeneration == source.sourceGeneration && served->coverage.contains(phase) &&
+        (!PLAYBACK_WINDOW_ROLLING_ENABLED ||
+         (served->source.origin == PlaybackWindowOrigin::Committed &&
+          served->source.snapshotIdentity == source.snapshotIdentity))) {
       return PlaybackViewTurnResult::Idle; // A complete same-revision copy bridges the root identity swap.
     }
     if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
@@ -5089,7 +5996,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
     if (runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
         !(set->views[set->lifecycle.build].source == source)) {
+      const uint32_t dropBefore = probeCoverageBuildDrop(slot);
       runtime->discardCoverageBuild();
+      traceCoverageBuildDrop(slot, CoverageBuildDropReason::SourceSuperseded, dropBefore);
       return PlaybackViewTurnResult::GrainDenied;
     }
     if (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) {
@@ -5168,10 +6077,8 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
   bool frozenRecordJobQualified = true;
-  if (recordJob != nullptr && recordJob->mode == CapturePhase::Record &&
-      recordJob->slot == slot && recordJob->frozenCaptureContentGeneration != 0 &&
-      recordJob->admission.pending && recordJob->pendingNotes.empty() &&
-      recordJob->admission.remainingClosureGrains == 0) {
+  if (recordJob != nullptr && hasRecordReaderOwnerForSlot(slot) &&
+      recordJob->slot == slot && recordJob->frozenCaptureContentGeneration != 0) {
     RuntimePlaybackViewSource frozen{};
     PlaybackViewSourceIdentity receipt{};
     frozenRecordJobQualified = qualifiedFrozenRecordCaptureSourceForSlot(
@@ -5180,20 +6087,68 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // S7.5b.5: frozen Record-range successor preparation is served only after
   // the shared holder selector chooses this slot. The MIDI edge never builds it.
   if (!runtime->coverageBuildNeedsService() && frozenRecordJobQualified &&
-      recordJob != nullptr && recordJob->mode == CapturePhase::Record &&
-      recordJob->slot == slot && recordJob->ownsRawRange && recordJob->owner != nullptr &&
+      recordJob != nullptr && hasRecordReaderOwnerForSlot(slot) &&
+      recordJob->slot == slot && recordJob->ownsExtent && recordJob->owner != nullptr &&
       (!recordJob->owner->publishedSnapshotIsCurrent() ||
-       !runtime->hasServableDeferredRecordView()) && isAudiblePlaybackActive() &&
+       !runtime->hasServableDeferredRecordView()) &&
       runtime->hasBoundRecordReturnWindowForPendingJob() && !runtime->viewBuild.coverageOwned()) {
     const Loop& recordLoop = loopForSlot(slot);
     if (recordLoop.loopLengthTicks == 0) return PlaybackViewTurnResult::GrainDenied;
     const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
         currentPhase, projectionCycleStartTick, recordLoop.loopLengthTicks);
-    const bool missingReturnView = !runtime->hasServableDeferredRecordView();
-    uint32_t nextBar = ((phase / Config::TICKS_PER_BAR) + (missingReturnView ? 0 : 1)) * Config::TICKS_PER_BAR;
+    const auto* returnSet = runtime->viewSetIfPrewarmed();
+    const auto* returnCurrent = returnSet && returnSet->lifecycle.current < returnSet->views.size()
+        ? &returnSet->views[returnSet->lifecycle.current] : nullptr;
+    // A refreshed live interval can remain complete after a refused stop bind. Its old geometry or
+    // token is not evidence that this take's first return interval is already served.
+    const bool staleLiveReturn = returnCurrent && !returnCurrent->firstRecordReturnWindow &&
+        returnCurrent->source.origin == PlaybackWindowOrigin::Capture &&
+        (returnCurrent->coverage.loopLengthTicks != recordLoop.loopLengthTicks ||
+         returnCurrent->source.captureContentGeneration != recordJob->frozenCaptureContentGeneration);
+    // **DEC-136 window progression: the current window first, then forward.** A deferred view merely *existing* is not
+    // coverage of the playhead: the bound first-return window can exist while the playhead's own interval has nothing
+    // served -- measured on the qualification image as `adopt_wait,e2_boundary` with `start=768` while the playhead sat
+    // in bar one of a 1536-tick loop, i.e. 1.7 s of silence before `RecordPublished` (`captures/i5-dec143-phase-seed-base-01`).
+    // So the first window prepared is the one the playhead is **in**, and only an interval that is actually served
+    // advances the demand to the next one. Never a whole-loop expansion.
+    const uint32_t playheadWindowStart = (phase / Config::TICKS_PER_BAR) * Config::TICKS_PER_BAR;
+    const bool playheadWindowServed = returnCurrent != nullptr && returnCurrent->complete &&
+        returnCurrent->published && !returnCurrent->rawCoveragePrepared && !staleLiveReturn &&
+        returnCurrent->coverage.loopLengthTicks == recordLoop.loopLengthTicks &&
+        returnCurrent->coverage.contains(phase);
+    // The pass's own last tick has no forward time left, so the owed successor there is the wrap's first window --
+    // that is the one progression rule this change keeps from the previous form.
+    const bool passEnding = phase + 1 >= recordLoop.loopLengthTicks;
+    uint32_t nextBar = playheadWindowServed ? playheadWindowStart + Config::TICKS_PER_BAR
+        : passEnding ? 0u
+                     : playheadWindowStart;
     if (nextBar >= recordLoop.loopLengthTicks) nextBar = 0;
     PlaybackViewSourceIdentity source{
         recordLoop.playbackRevision, playbackGeneration, recordLoop.publishedSnapshotIdentity()};
+    if (recordJob->owner->publishedSnapshotIsCurrent()) {
+      const bool rootWindowed = PLAYBACK_WINDOW_ROLLING_ENABLED ||
+          recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks);
+      const PlaybackCoverageInterval rootCoverage{
+          rootWindowed ? (phase / Config::TICKS_PER_BAR) * Config::TICKS_PER_BAR : 0u,
+          rootWindowed ? std::min<uint32_t>(Config::TICKS_PER_BAR,
+              recordLoop.loopLengthTicks - ((phase / Config::TICKS_PER_BAR) * Config::TICKS_PER_BAR))
+                       : recordLoop.loopLengthTicks,
+          recordLoop.loopLengthTicks};
+      const auto* pendingRoot = pendingViewRequest(slot);
+      const bool matchingRootDemand = pendingRoot && pendingRoot->active &&
+          pendingRoot->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+          pendingRoot->source == source &&
+          pendingRoot->coverage.startPhase == rootCoverage.startPhase &&
+          pendingRoot->coverage.lengthTicks == rootCoverage.lengthTicks &&
+          pendingRoot->coverage.loopLengthTicks == rootCoverage.loopLengthTicks;
+      // A missing first return view still needs the ordinary root retry grains. Re-requesting the
+      // same demand on every turn starves qualification even when the retained promise is admissible.
+      if (runtime->ownsCoverageSource() || runtime->retainedGatherActive() || matchingRootDemand)
+        return stepCommittedPlaybackRetry(slot, clock);
+      const auto requested = requestCommittedPlaybackWindow(slot, rootCoverage, phase, clock);
+      return requested == PlaybackViewRequestResult::DeferredSourceQualification
+          ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
+    }
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
     if (!recordJob->owner->publishedSnapshotIsCurrent() &&
         recordJob->frozenCaptureContentGeneration != 0) {
@@ -5204,10 +6159,33 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
 #endif
     RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
     if (set == nullptr) return PlaybackViewTurnResult::GrainDenied;
+#if !PLAYBACK_WINDOW_ROLLING_ENABLED
+    // Pass publication changes canonical currency, not this job's sealed range.
+    // Keep private work/ready under its original source stamp until adoption.
+    RuntimePlaybackViewSource frozen{};
+    PlaybackViewSourceIdentity receipt{};
+    if (qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval, frozen, receipt)) {
+      const auto fromFrozenJob = [&](uint8_t index) TRACK_COLD_MEM {
+        if (index >= set->views.size()) return false;
+        const auto& view = set->views[index];
+        return !view.firstRecordReturnWindow && !view.rawCoveragePrepared &&
+            view.source.snapshotIdentity == nullptr &&
+            view.source.origin == PlaybackWindowOrigin::Committed &&
+            view.source.sourceGeneration == playbackGeneration &&
+            view.coverage.loopLengthTicks == recordLoop.loopLengthTicks;
+      };
+      if (fromFrozenJob(set->lifecycle.ready))
+        source = set->views[set->lifecycle.ready].source;
+      else if (runtime->frozenWindowBuildActive() && fromFrozenJob(set->lifecycle.build))
+        source = set->views[set->lifecycle.build].source;
+    }
+#endif
     const uint8_t buildIndex = set->lifecycle.build;
     if (runtime->frozenWindowBuildActive() && buildIndex < set->views.size() &&
         !(set->views[buildIndex].source == source)) {
+      const uint32_t dropBefore = probeCoverageBuildDrop(slot);
       runtime->discardCoverageBuild();
+      traceCoverageBuildDrop(slot, CoverageBuildDropReason::RecordReturnSourceSuperseded, dropBefore);
       return PlaybackViewTurnResult::GrainDenied;
     }
     if (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) {
@@ -5244,8 +6222,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     const bool wasReady = runtime->frozenRecordWindowReady();
     const bool progressed = runtime->serviceFrozenRecordWindow(
         recordJob->rawRange, recordJob->rawRange.generation(), source,
-        recordLoop.loopLengthTicks, nextBar, Config::TICKS_PER_BAR,
-        MidiServiceDrain::kCanonicalPrefixInputQuantum);
+        recordLoop.loopLengthTicks, nextBar, Config::TICKS_PER_BAR);
     if (!progressed) {
       // D10 / task 3.9: the frozen owner's own denial is "a denied grain (whose holder now owes the work)" -- the
       // second event the receipt names -- and this branch reaches no other row. Only the **receipt** is offered here
@@ -5291,6 +6268,21 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // One grain, and only one: the phase decides which, so a turn can never copy source entries *and* merge
   // order entries (the build contract's own rule), and the build's persistent cursor carries the progress
   // to the next turn.
+  // A returned Complete is not authority after an interrupt reset/reused the role.
+  RuntimePlaybackViewSet* completionSet = nullptr;
+  uint8_t completionRole = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t completionStorage = 0;
+  uint32_t completionOperation = 0, completionEpoch = 0;
+  {
+    PlaybackSourceReadGuard receiptGuard;
+    completionSet = runtime->viewSetIfPrewarmed();
+    if (!completionSet || completionSet->lifecycle.build >= completionSet->views.size())
+      return PlaybackViewTurnResult::GrainDenied;
+    completionRole = completionSet->lifecycle.build;
+    completionStorage = completionSet->views[completionRole].storageGeneration;
+    completionOperation = runtime->viewBuildOperationGeneration;
+    completionEpoch = runtime->viewBuildWork.clockEpoch;
+  }
   const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
   RuntimePlaybackViewBuildGrain result = RuntimePlaybackViewBuildGrain::Denied;
   if (grain == RuntimePlaybackViewBuildGrain::Fill) {
@@ -5303,13 +6295,30 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     return PlaybackViewTurnResult::Idle;
   }
   if (result == RuntimePlaybackViewBuildGrain::Complete) {
-    // Preserve the candidate until its actual completion time is qualified. main's
-    // reader uses ClockManager; native fixtures can advance it within the final grain.
-    runtime->completedPromisePendingJudgement = runtime->viewBuildWork.clockEpoch != 0;
+    // Clock sampling and deadline reporting remain outside the fixed metadata commit.
+    const PlaybackDeadlineClock finished = completionEpoch != 0
+        ? (completionClockReader != nullptr ? completionClockReader()
+                                            : clockManager.getPlaybackDeadlineClock()) : clock;
+    {
+      PlaybackSourceReadGuard judgementGuard;
+      if (!primaryTurn || !bridgeTurn || runtime->viewSetIfPrewarmed() != completionSet ||
+          completionSet->lifecycle.build != completionRole ||
+          completionSet->views[completionRole].storageGeneration != completionStorage ||
+          runtime->viewBuildOperationGeneration != completionOperation ||
+          !runtime->viewBuild.completedDestinationIs(completionSet->views[completionRole]))
+        return PlaybackViewTurnResult::GrainDenied;
+      // Completion must remain visible to deadline service after the builder becomes inactive.
+      runtime->completedPromisePendingJudgement = completionEpoch != 0;
+    }
+    if (completionEpoch != 0) serviceAdmittedDeadlineMisses(finished);
+    PlaybackSourceReadGuard publicationGuard;
+    if (!primaryTurn || !bridgeTurn || runtime->viewSetIfPrewarmed() != completionSet ||
+        completionSet->lifecycle.build != completionRole ||
+        completionSet->views[completionRole].storageGeneration != completionStorage ||
+        runtime->viewBuildOperationGeneration != completionOperation ||
+        !runtime->viewBuild.completedDestinationIs(completionSet->views[completionRole]))
+      return PlaybackViewTurnResult::GrainDenied;
     if (runtime->completedPromisePendingJudgement) {
-      const PlaybackDeadlineClock finished = completionClockReader != nullptr
-          ? completionClockReader() : clockManager.getPlaybackDeadlineClock();
-      serviceAdmittedDeadlineMisses(finished);
       const auto& work = runtime->viewBuildWork;
       if (!runtime->admittedPromiseInvalidated && finished.epoch == work.clockEpoch &&
           finished.epoch != 0 && finished.tick >= work.admittedTick &&
@@ -5367,7 +6376,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       runtime->coveragePreparation = LoopPlaybackRuntime::CoveragePreparation::Retiring;
     }
   } else if (result == RuntimePlaybackViewBuildGrain::Denied && runtime->ownsCoverageSource()) {
+    const uint32_t dropBefore = probeCoverageBuildDrop(slot);
     runtime->retireCoverageSource();
+    traceCoverageBuildDrop(slot, CoverageBuildDropReason::GrainDeniedWhileOwned, dropBefore);
   }
   const PlaybackViewTurnResult turnResult = finishPlaybackViewGrain(slot, result);
   if (turnResult == PlaybackViewTurnResult::GrainDenied || turnResult == PlaybackViewTurnResult::BuildComplete) {
@@ -5377,6 +6388,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     reportPlaybackWindowReadinessReceipt(slot, currentPhase);
   }
   return turnResult;
+  };
+  const auto outcome = service();
+  if (isAudiblePlaybackActive()) (void)serviceCaptureStopPresentations();
+  return primaryTurn && bridgeTurn ? outcome : PlaybackViewTurnResult::GrainDenied;
 }
 
 TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,
@@ -5708,19 +6723,203 @@ TRACK_COLD_MEM bool Track::publishedPlaybackWindowIdentityForSlot(uint8_t slotIn
   return true;
 }
 
-TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex) {
+/// Task 3.15g: the root-return adoption mask and answer, on the frozen-readiness receipt. Read-only observations of
+/// the same terms the E2 adoption edge checks, so one device occurrence says *which* one refused. `DMAMEM` cadence state
+/// (RAM2, off the clock path) holds the last answer per slot: a row costs a transition, not a turn.
+DMAMEM static uint16_t sRootReturnAdoptionSignature[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+/// Task 3.15g: the hold's **lane** state, its own cadence (the paged/gather outcome that can repaint a demand's reason).
+DMAMEM static uint8_t sRootReturnLaneSignature[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+DMAMEM static bool sRootReturnLaneInitialised = false;
+DMAMEM static bool sRootReturnAdoptionInitialised = false;
+
+TRACK_COLD_MEM void Track::reportRootReturnAdoptionForSlot(uint8_t slotIndex, const Loop& loop, uint32_t phase,
+                                                          uint64_t frozenCaptureToken, bool attempted, bool adopted,
+                                                          uint8_t why, bool fromRetirementHold) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return;
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const auto& frame = runtime->rolling;
+  // One lookup per role, then plain tests: the same eight terms, written so this cold helper stays small (its first
+  // form cost 64 B of ITCM and pushed the qualification padding under the floor).
+  const auto* cur = (set != nullptr && frame.boundView < set->views.size()) ? &set->views[frame.boundView] : nullptr;
+  const auto* ready = (set != nullptr && set->lifecycle.ready < set->views.size())
+      ? &set->views[set->lifecycle.ready] : nullptr;
+  uint8_t mask = 0;
+  if (cur != nullptr && cur->source.origin == PlaybackWindowOrigin::Capture &&
+      cur->source.sourceGeneration == playbackGeneration &&
+      cur->source.captureContentGeneration == frozenCaptureToken && cur->source.snapshotIdentity == nullptr &&
+      cur->coverage.loopLengthTicks == loop.loopLengthTicks)
+    mask |= 1u << 0;
+  if (loop.publishedSnapshotIsCurrent()) mask |= 1u << 1;
+  if (ready != nullptr) mask |= 1u << 2;
+  if (ready != nullptr && ready->complete) mask |= 1u << 3;
+  if (ready != nullptr && ready->complete && ready->source.origin == PlaybackWindowOrigin::Committed &&
+      ready->source.playbackRevision == loop.playbackRevision &&
+      ready->source.sourceGeneration == playbackGeneration &&
+      ready->source.snapshotIdentity == loop.publishedSnapshotIdentity() &&
+      ready->coverage.loopLengthTicks == loop.loopLengthTicks)
+    mask |= 1u << 4;
+  if (ready != nullptr && ready->complete && ready->coverage.startPhase == phase) mask |= 1u << 5;
+  if (ready != nullptr && ready->coverage.loopLengthTicks == loop.loopLengthTicks) mask |= 1u << 6;
+  if (cur != nullptr && frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+      frame.generation == playbackGeneration && frame.loopLength == loop.loopLengthTicks && frame.loopLength != 0 &&
+      frame.boundView == set->lifecycle.current &&
+      (uint32_t(getProjectionCycleStartTick()) - uint32_t(frame.projectionStart)) % frame.loopLength == 0)
+    mask |= 1u << 7;
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  if (trackIndex >= Config::NUM_TRACKS) return;
+  if (!sRootReturnAdoptionInitialised) {
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t)
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) sRootReturnAdoptionSignature[t][s] = 0xFFFFu;
+    sRootReturnAdoptionInitialised = true;
+  }
+  // The signature deliberately excludes bit5 (the ready view's start phase against the playhead): the two observing
+  // edges sample at different instants, so including it made them alternate forever -- two rows a turn, the cadence trap
+  // the authoring guide names. Every other term is shared, so a genuine change still costs exactly one row.
+  const uint16_t signature = static_cast<uint16_t>((fromRetirementHold ? 0x1000u : 0u) |
+                                                   (static_cast<uint16_t>(mask & 0xDFu) << 4) |
+                                                   (adopted ? 2u : (attempted ? 1u : 0u)) |
+                                                   (fromRetirementHold
+                                                        ? static_cast<uint16_t>(
+                                                              ((static_cast<unsigned>(runtime->pendingViewRequest_.reason) &
+                                                                0x0Fu) << 9) |
+                                                              (runtime->pendingViewRequest_.clockEpoch == 0 ? 0x200u : 0u))
+                                                        : 0u));
+  if (sRootReturnAdoptionSignature[trackIndex][slotIndex] == signature) return;
+  sRootReturnAdoptionSignature[trackIndex][slotIndex] = signature;
+  const char* answer = adopted ? "adopted" : (attempted ? "adopt_refused" : "adopt_wait");
+  // Task 3.15g: a `retire_hold` row has no adoption to report, so its `why` field carries the **demand's own position
+  // stamp** instead -- bit0 the record is active, bits 1-4 its reason (SourceNotCurrent is 7), bit5 clockEpoch == 0
+  // (unpositioned in time), bit6 deadlineTick == 0 (no promised instant). That is the fact the board's stall turns on,
+  // and it costs no call site and no literal.
+  uint8_t reasonCode = why;
+  if (fromRetirementHold) {
+    const auto& demand = runtime->pendingViewRequest_;
+    reasonCode = static_cast<uint8_t>((demand.active ? 1u : 0u) |
+                                      ((static_cast<unsigned>(demand.reason) & 0x0Fu) << 1) |
+                                      (demand.clockEpoch == 0 ? 0x20u : 0u) |
+                                      (demand.deadlineTick == 0 ? 0x40u : 0u));
+  }
+  // Task 3.15g: while the hold is the observing edge, a **second** row carries the lane's own state -- the paged
+  // outcome and the retained-gather refusal, four bits each -- because a sticky outcome there can repaint a demand's
+  // reason without the demand's own content justifying it. Its own cadence, so it cannot ping-pong with the first.
+  if (fromRetirementHold) {
+    const uint8_t lane = static_cast<uint8_t>((static_cast<unsigned>(runtime->pagedOutcome) & 0x0Fu) |
+                                              ((static_cast<unsigned>(runtime->retainedGatherRefusal) & 0x0Fu) << 4));
+    // A zero-initialised array would read "lane 0" as an unchanged answer and never report it; 0xFF means "nothing
+    // reported yet", so the first observation always costs one row.
+    if (!sRootReturnLaneInitialised) {
+      for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t)
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) sRootReturnLaneSignature[t][s] = 0xFFu;
+      sRootReturnLaneInitialised = true;
+    }
+    if (sRootReturnLaneSignature[trackIndex][slotIndex] != lane) {
+      sRootReturnLaneSignature[trackIndex][slotIndex] = lane;
+      // The four remaining gate terms and the frame's own phase ride the two interval fields of this diagnostic-only
+      // row (`start`/`length`): `start` is the packed byte, `length` is the rolling phase. A `hold_lane` row is not a
+      // readiness receipt about an interval, so those two fields are free here — and this is the read that decides
+      // whether the demand or the frame is the blocker.
+      uint32_t gates = 0;
+      if (runtime->coverageRoleAvailable()) gates |= 1u << 0;
+      if (playbackViewOutstandingGrains(slotIndex) != 0) gates |= 1u << 1;
+      if (playbackWindowSourceIsCurrentForSlot(slotIndex)) gates |= 1u << 2;
+      if (runtime->pendingViewRequest_.source.playbackRevision == loop.playbackRevision) gates |= 1u << 3;
+      gates |= (static_cast<uint32_t>(runtime->rolling.phase) & 0x7u) << 4;
+      if (runtime->rolling.epoch == clockManager.getPlaybackDeadlineClock().epoch) gates |= 1u << 7;
+      // Bits 8-15: the **current-root handoff** block's own entry terms (read-only), so one board occurrence says
+      // whether that block is entered and, if not, which term stops it. Bit numbering is documented here and nowhere
+      // else: 8 job owns its raw range, 9 a servable deferred record view exists, 10 the slot is audible, 11 a coverage
+      // build needs service, 12 the served view is a complete same-revision copy containing the playhead, 13 that served
+      // copy is already the current root's own window, 14 the root is current, 15 the return window is bound.
+      const CaptureStopJob* heldJob = captureStopJobHead();
+      const uint32_t phaseNow = loop.loopLengthTicks > 0
+          ? IntervalProjection::tickPhaseInProjectionCycle(
+                static_cast<uint32_t>(clockManager.getCurrentTick()), getProjectionCycleStartTick(),
+                loop.loopLengthTicks)
+          : 0;
+      const RuntimePlaybackView* served = set != nullptr && set->lifecycle.current < set->views.size()
+          ? &set->views[set->lifecycle.current] : nullptr;
+      if (heldJob != nullptr && heldJob->ownsRawRange()) gates |= 1u << 8;
+      if (runtime->hasServableDeferredRecordView()) gates |= 1u << 9;
+      if (isAudiblePlaybackActive()) gates |= 1u << 10;
+      if (runtime->coverageBuildNeedsService()) gates |= 1u << 11;
+      if (served != nullptr && served->complete &&
+          served->source.playbackRevision == loop.playbackRevision &&
+          served->source.sourceGeneration == playbackGeneration && served->coverage.contains(phaseNow))
+        gates |= 1u << 12;
+      if (served != nullptr && served->source.origin == PlaybackWindowOrigin::Committed &&
+          served->source.snapshotIdentity == loop.publishedSnapshotIdentity())
+        gates |= 1u << 13;
+      if (loop.publishedSnapshotIsCurrent()) gates |= 1u << 14;
+      if (runtime->hasBoundRecordReturnWindowForPendingJob()) gates |= 1u << 15;
+      // The **offer** the lane makes for this slot, packed into `length`: bits 0-2 rolling phase (as before), bit3
+      // eligible, bit4 canProgress, bit5 hasDeadline, bits 6-11 the lead in 16-tick units (capped). This is the last
+      // distinction the desk cannot make -- whether the lane declines to offer the slot or offers it and the owner turn
+      // does nothing -- and it needs no new call site.
+      const auto offer = playbackWindowServiceOffer(
+          static_cast<uint32_t>(clockManager.getCurrentTick()), clockManager.getPlaybackDeadlineClock());
+      const uint32_t leadUnits = (offer.handoffLeadTicks / 16u) > 63u ? 63u : (offer.handoffLeadTicks / 16u);
+      const uint32_t offerPacked = (static_cast<uint32_t>(runtime->rolling.phase) & 0x7u) |
+                                   (offer.eligible ? 1u << 3 : 0u) |
+                                   (offer.canProgress ? 1u << 4 : 0u) |
+                                   (offer.hasDeadline ? 1u << 5 : 0u) |
+                                   (leadUnits << 6);
+      // The **frozen** request's own state rides `result` (free on this label): bit0 active, bit1 CommittedSnapshot,
+      // bit2 its identity names the live root, bit3 positionInvalidated, bits 4-7 its reason. After
+      // `beginCoverageQualification` freezes the retained demand, this is the record that actually carries the work --
+      // the pending stamp alone cannot say whether the chain moved or stopped.
+      const auto& frozenReq = runtime->frozenViewRequest;
+      uint32_t frozenPack = (frozenReq.active ? 1u : 0u) |
+                            (frozenReq.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ? 2u : 0u) |
+                            (frozenReq.source.playbackRevision == loop.playbackRevision ? 4u : 0u) |
+                            (frozenReq.positionInvalidated ? 8u : 0u) |
+                            ((static_cast<uint32_t>(frozenReq.reason) & 0x0Fu) << 4);
+      SC_FROZEN_WINDOW_READINESS(trackIndex, slotIndex, "hold_lane", "retire_hold", loop.playbackRevision, 0u,
+                                 playbackGeneration, frozenCaptureToken, gates, offerPacked, loop.loopLengthTicks, mask,
+                                 frozenPack, lane);
+    }
+  }
+  SC_FROZEN_WINDOW_READINESS(trackIndex, slotIndex, answer,
+                             fromRetirementHold ? "retire_hold" : "e2_boundary", loop.playbackRevision,
+                             0u, playbackGeneration, frozenCaptureToken,
+                             ready != nullptr ? ready->coverage.startPhase : 0u,
+                             ready != nullptr ? ready->coverage.lengthTicks : 0u, loop.loopLengthTicks, mask,
+                             adopted ? 1u : (attempted ? 2u : 0u), reasonCode);
+}
+
+TRACK_COLD_MEM void Track::reportRootReturnHoldForSlot(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return;
+  const CaptureStopJob* job = captureStopJobHead();
+  if (job == nullptr || job->mode != CapturePhase::Record) return;
+  reportRootReturnAdoptionForSlot(slotIndex, loopForSlot(slotIndex), 0u, job->frozenCaptureContentGeneration, false,
+                                  false, 0, true);
+}
+
+TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex, uint8_t* refusalOut) {
+  if (refusalOut != nullptr) *refusalOut = 0;
+  PlaybackSourceReadGuard publicationGuard;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr) {
+    if (refusalOut != nullptr) *refusalOut = 1;
     return false;
   }
   RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
   if (set == nullptr) {
+    if (refusalOut != nullptr) *refusalOut = 2;
     return false;
   }
+  // Task 3.15g: name the lifecycle's own refusal terms **read-only** before the atomic handoff, so the receipt can say
+  // which one stands. The handoff below is unchanged; these reads add no state and no branch on its result.
+  uint8_t readable = 0;
+  if (set->lifecycle.current >= set->views.size()) readable = 3;
+  else if (set->lifecycle.ready >= set->views.size()) readable = 4;
+  else if (!set->views[set->lifecycle.ready].complete) readable = 5;
   // The successor lane's adoption: one atomic handoff (`RuntimePlaybackViewLifecycle::handoff`), prepared-mode
   // because a window carries no audible-launch semantics of its own. It refuses unless a **complete** successor
   // is waiting, so a caller can poll it safely.
   if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation)) {
+    if (refusalOut != nullptr) *refusalOut = readable != 0 ? readable : 6;
     return false;
   }
   // Task 3.13: the handoff completes **here**, at the adoption boundary -- the preview window served up to this point
@@ -5778,6 +6977,7 @@ TRACK_COLD_MEM bool Track::revalidateCompletedPlaybackWindow(
 }
 
 TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
+  PlaybackSourceReadGuard publicationGuard;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr || runtime->completedPromisePendingJudgement) {
     return false;
@@ -5790,10 +6990,15 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   // was started under, so a completion arriving after that identity moved is refused here -- and it releases only its
   // own candidate: the served window, the prepared-successor role and the retained source are other owners' state.
   const uint8_t completedBuildRole = set->lifecycle.build;
+  if (completedBuildRole >= set->views.size() ||
+      !runtime->viewBuild.completedDestinationIs(set->views[completedBuildRole])) return false;
   if (completedBuildRole < RuntimePlaybackViewConfig::kViewCount &&
       runtime->viewBuildOperationGeneration != playbackGeneration) {
-    runtime->viewBuild.discard();
-    set->views[completedBuildRole].resetMetadata();
+    {
+      const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
+      runtime->viewBuild.discard(); // Only its generation-qualified private destination.
+      traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::CompletionAdjudicated, dropBefore);
+    }
     runtime->viewBuildOperationGeneration = 0;
     return false;
   }
@@ -5802,7 +7007,13 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
     // A window is being served: this completed build becomes its **ready successor**, and the served window is
     // left exactly as it was -- the replacement's swap is `adoptPreparedPlaybackWindow`'s single handoff, at an
     // eligible boundary (task 3.7). That is F-1's "a consumer read cannot straddle a replacement".
-    return set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views);
+    const uint32_t publishBefore = probeCoverageBuildDrop(slotIndex);
+    const bool publishedReady = set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views);
+    if (publishedReady) runtime->viewBuild.discard(&set->views[completedBuildRole]);
+    traceCoverageBuildDrop(slotIndex, publishedReady ? CoverageBuildDropReason::PublishedAsReady
+                                                    : CoverageBuildDropReason::PublishReadyRefused,
+                           publishBefore);
+    return publishedReady;
   }
   if (!runtime->previewSourceActive) {
     // Task 3.13: with **no** window being served, this committed publication becomes the served window itself, so the
@@ -5810,7 +7021,13 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
     // adoption boundary instead: the preview window keeps serving until the committed successor replaces it.)
     runtime->previewHandoffOwed = false;
   }
-  return set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
+  const uint32_t publishBefore = probeCoverageBuildDrop(slotIndex);
+  const bool publishedCurrent = set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
+  if (publishedCurrent) runtime->viewBuild.discard(&set->views[completedBuildRole]);
+  traceCoverageBuildDrop(slotIndex, publishedCurrent ? CoverageBuildDropReason::PublishedAsCurrent
+                                                    : CoverageBuildDropReason::PublishCurrentRefused,
+                         publishBefore);
+  return publishedCurrent;
 }
 
 namespace {
@@ -6089,6 +7306,82 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::finishPlaybackViewGrain(
   return PlaybackViewTurnResult::Idle;
 }
 
+TRACK_COLD_MEM void Track::observePlaybackSnapshotAvailability(uint8_t slotIndex, uint32_t tick) {
+#if SC_PLAYBACK_READ_WITNESS_ENABLED
+  if (!playbackEmitMidiOutput_ || !isAudiblePlaybackActive() || mergedMidiEventsBuildInProgress ||
+      slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const Loop& loop = loopForSlot(slotIndex);
+  if (runtime == nullptr || !loop.publishedSnapshotIsCurrent() ||
+      loop.publishedSnapshotIdentity() == nullptr || runtime->cachedTrackGeneration != playbackGeneration) return;
+  const auto& cache = runtime->mergedMidiEvents;
+  if (cache.builtFromSnapshotIdentity != loop.publishedSnapshotIdentity() ||
+      cache.builtFromRevision != loop.playbackRevision ||
+      cache.builtFromRevision != loop.publishedSnapshotRevision()) return;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(tick,
+      slotIndex == activeLoopIndex ? projectionCycleStartTick : static_cast<int32_t>(loop.startLoopTick),
+      loop.loopLengthTicks);
+  if (cache.windowLengthTicks == 0 || cache.windowStartTick >= loop.loopLengthTicks ||
+      cache.windowLengthTicks > loop.loopLengthTicks - cache.windowStartTick ||
+      phase < cache.windowStartTick || phase - cache.windowStartTick >= cache.windowLengthTicks) return;
+  PlaybackReadWitness witness{};
+  witness.atUs = micros(); witness.tick = tick;
+  witness.track = playbackRebuildTrackIndex(*this); witness.slot = slotIndex;
+  witness.generation = playbackGeneration;
+  // One-to-one publication revision stamp (including revision0), not a new runtime counter.
+  witness.storageGeneration = uint64_t(loop.publishedSnapshotRevision()) + 1u;
+  witness.origin = static_cast<uint8_t>(PlaybackWindowOrigin::Committed);
+  witness.start = cache.windowStartTick; witness.length = cache.windowLengthTicks;
+  witness.period = loop.loopLengthTicks; witness.phase = phase; witness.availableOnly = true;
+  SC_PLAYBACK_READ_ROW(witness);
+#else
+  (void)slotIndex; (void)tick;
+#endif
+}
+
+TRACK_COLD_MEM void Track::observePlaybackReadForTurn(
+    uint8_t slotIndex, const FixedPlaybackEventStorage* storage, const FixedPlaybackBridgeStorage* bridge) {
+#if SC_PLAYBACK_READ_WITNESS_ENABLED
+  if (!playbackEmitMidiOutput_ || !isAudiblePlaybackActive() ||
+      slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return;
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const PlaybackViewSourceIdentity* source = nullptr;
+  const PlaybackCoverageInterval* coverage = nullptr;
+  uint64_t storageGeneration = 0;
+  if (bridge != nullptr) {
+    if (set == nullptr || set->bridgeLifecycle.selected >= set->bridges.size() ||
+        &set->bridges[set->bridgeLifecycle.selected] != bridge || !bridge->complete ||
+        !bridge->selected || !bridge->streamPrepared) return;
+    source = &bridge->source; coverage = &bridge->coverage;
+    storageGeneration = bridge->storageGeneration;
+  } else if (storage != nullptr) {
+    const auto& pair = runtime->preparedPair;
+    if (pair.ready && pair.storage == storage) {
+      source = &pair.source; coverage = &pair.coverage; storageGeneration = pair.generation;
+    } else if (set != nullptr && set->lifecycle.current < set->views.size()) {
+      const auto& view = set->views[set->lifecycle.current];
+      if (&view.storage != storage || !view.complete || !view.published) return;
+      source = &view.source; coverage = &view.coverage; storageGeneration = view.storageGeneration;
+    }
+  }
+  const uint32_t phase = loopForSlot(slotIndex).lastTickInLoop;
+  if (source == nullptr || coverage == nullptr || source->sourceGeneration != playbackGeneration ||
+      storageGeneration == 0 || !coverage->isValid() || !coverage->contains(phase)) return;
+  PlaybackReadWitness witness{};
+  witness.atUs = micros(); witness.tick = clockManager.getCurrentTick();
+  witness.track = playbackRebuildTrackIndex(*this); witness.slot = slotIndex;
+  witness.generation = source->sourceGeneration; witness.storageGeneration = storageGeneration;
+  witness.origin = static_cast<uint8_t>(source->origin);
+  witness.start = coverage->startPhase; witness.length = coverage->lengthTicks;
+  witness.period = coverage->loopLengthTicks; witness.phase = phase;
+  SC_PLAYBACK_READ_ROW(witness);
+#else
+  (void)slotIndex; (void)storage; (void)bridge;
+#endif
+}
+
 TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop,
                                                             const char* path) {
   // The lane's one row vehicle, reached through the substitutable seam (`SC_PLAYBACK_BUILD_ROW`): byte-for-byte the row a
@@ -6102,6 +7395,12 @@ TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, L
   SC_PLAYBACK_BUILD_ROW(playbackRebuildTrackIndex(*this), playbackRebuildSlotIndex(*this, loop), loop.loopLengthTicks,
                         loop.playbackRevision, path);
 }
+
+/// Task 3.15g: the E2 root-return boundary row's **transition cadence**. The block that calls this runs on every clock
+/// edge that reaches it, so a row per evaluation would evict the evidence it explains (the readiness receipt's own rule);
+/// the state is one scalar per slot, in RAM2 off the clock path, exactly like `LaunchGateLastState`. The signature is the
+/// decision itself — the flag mask plus the wrap marker plus the adoption answer — so a change of *reason* always costs
+/// exactly one row, whatever the turn rate.
 
 namespace {
 

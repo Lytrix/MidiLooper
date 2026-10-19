@@ -25,6 +25,19 @@ from hitl.registry import get_registry, resolve_scenarios
 from hitl.stimuli.cli import add_stimulus_subparser, apply_run_temp_override, run_stimulus_command
 
 
+DEFAULT_BUILD_ENV = "teensy41-capture-serial"
+ROLLING_RECORD_BUILD_ENV = "teensy41-capture-serial-window-qualification"
+
+
+def resolve_build_env(explicit: Optional[str], scenario_ids: list[str] | tuple[str, ...]) -> str:
+    """Use the qualification image for rolling Record; refuse a default-image evidence mismatch."""
+    if "rolling_record" in scenario_ids:
+        if explicit not in (None, ROLLING_RECORD_BUILD_ENV):
+            raise ValueError("rolling_record_requires_qualification_build_env")
+        return ROLLING_RECORD_BUILD_ENV
+    return explicit or DEFAULT_BUILD_ENV
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Modular HITL MIDI automation runner")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -129,8 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--build-env",
-        default="teensy41-capture-serial",
-        help="PlatformIO env for --build-upload (default: teensy41-capture-serial)",
+        default=None,
+        help="PlatformIO env; rolling_record defaults to its qualification env, other scenarios to teensy41-capture-serial",
+    )
+    run_parser.add_argument(
+        "--rolling-record-pass",
+        choices=("all", "growth-empty", "held", "matched", "growth", "empty"),
+        default=None,
+        help="For rolling_record only: bounded pass group; single legs are smoke-only, not full acceptance",
     )
     run_parser.add_argument(
         "--capture-port",
@@ -274,7 +293,7 @@ def _run_with_optional_managed_capture(
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
         arm_snapshot_yield=bool(getattr(args, "arm_snapshot_yield", False)),
         boot_reset=boot_reset_mode_from_args(args),
-        build_env=getattr(args, "build_env", "teensy41-capture-serial"),
+        build_env=getattr(args, "build_env", None) or DEFAULT_BUILD_ENV,
     )
 
     def _legacy_run(_active: HitlConfig) -> int:
@@ -289,7 +308,7 @@ def _run_with_optional_managed_capture(
 def maybe_build_upload(args: argparse.Namespace) -> int:
     if not getattr(args, "build_upload", False):
         return 0
-    env = getattr(args, "build_env", "teensy41-capture-serial")
+    env = getattr(args, "build_env", None) or DEFAULT_BUILD_ENV
     print(
         f"[hitl] build-upload: pio run -e {env} -t upload "
         "(Teensy will reset — managed capture will restart on the next run)"
@@ -407,6 +426,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         if getattr(args, "layered", False):
             from hitl.foundation_runner import run_layered_preset
 
+            if args.rolling_record_pass is not None:
+                print("[hitl] --rolling-record-pass is only valid for the rolling_record scenario")
+                return 2
+            args.build_env = resolve_build_env(args.build_env, ())
             upload_code = maybe_build_upload(args)
             if upload_code != 0:
                 return upload_code
@@ -435,6 +458,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.preset and not args.scenarios:
         args.preset = "base"
         scenario_ids = resolve_scenarios(preset="base", scenario_ids=None)
+    if "rolling_record" in scenario_ids and scenario_ids != ["rolling_record"]:
+        print("[hitl] rolling_record must run alone so its qualification identity is unambiguous")
+        return 2
+    if args.rolling_record_pass is not None and scenario_ids != ["rolling_record"]:
+        print("[hitl] --rolling-record-pass is only valid for the rolling_record scenario")
+        return 2
+    try:
+        args.build_env = resolve_build_env(args.build_env, scenario_ids)
+    except ValueError as exc:
+        print(f"[hitl] {exc}")
+        return 2
     temp_code = apply_run_temp_override(args, scenario_ids)
     if temp_code != 0:
         return temp_code

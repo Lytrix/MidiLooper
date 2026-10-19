@@ -20,4 +20,11 @@ Track::Track() :
   recordAddedNoteOnCount(0) {
 }
 
-Track::~Track() = default;
+#if defined(__IMXRT1062__)
+FLASHMEM
+#endif
+Track::~Track() {
+  // Body runs before LoopPool member destruction: no borrowed live callback may
+  // survive physical source destruction. Cancellation never queries that source.
+  playbackRuntime.cancelLiveCaptureBuilds();
+}

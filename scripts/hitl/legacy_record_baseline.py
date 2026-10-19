@@ -112,6 +112,7 @@ from hitl.midi_io import (
 from hitl.serial_collector import RunAbort, SerialCaptureCollector, _wait_for_serial_line_idle
 from hitl.serial_tick_anchor import (
     TRANSPORT_SHORT_DEBOUNCE_MS,
+    record_button_lead_seconds,
     record_stop_press_advance_clocks as _record_stop_press_advance_clocks,
 )
 from hitl.serial_timing import (
@@ -1178,6 +1179,20 @@ def _fixture_first_note_intent_clocks(fixture: tuple[Any, ...], *, step_clocks: 
     return max(min(steps), 0) * step_clocks if steps else 0
 
 
+def _phase_reached_its_stop(
+    clocks_run: int, *, target_bars: int, advance_clocks: int
+) -> bool:
+    """Did the phase run far enough to have pressed its own record stop?
+
+    The trigger the streamers use: ``target_clocks`` when the advance is negative (the strict mode's
+    boundary press), ``target_clocks - advance`` when it is positive, and a phase that broke out
+    earlier -- clock dropout, tempo guard -- pressed nothing at all.
+    """
+    target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
+    trigger = target_clocks if advance_clocks <= 0 else max(1, target_clocks - advance_clocks)
+    return clocks_run >= trigger
+
+
 def _host_grid_record_stop_advance_clocks(
     *,
     requested: int,
@@ -1639,6 +1654,62 @@ def _stream_fixture_record_bars(
     # stop press 0.5 s later -- a one-bar take instead of the requested two. The receipt path
     # anchors on the firmware's own `RECA` tick, the same evidence every assertion in this file is
     # read against; the modelled path stays as the fallback for a run with no serial capture.
+    # The record phase's stop lead and its take-origin grid: the edit-fixture seed used to take
+    # neither, so the record stop came from the caller *after* the stream plus the post-stream
+    # settle and the device's own press latency
+    # (`captures/i3b-seeded-edit-t8s4-11`: press emitted ~2.12 s into the take, processed at tick
+    # 2436 -- `RECS,stop,3,132,0,2436,2304,0` -- i.e. three bars for a two-bar request), and the
+    # phase origin was "now" rather than the take origin (its fixture landed at ticks 378-1721).
+    # Both are the mechanisms the host-grid record phase already uses:
+    # `_host_grid_record_stop_advance_clocks` for the press lead, and `grid_origin_pulse` / the
+    # reader's own grid for the origin.
+    if require_midi_clock:
+        # Strict MIDI-clock mode keeps the boundary press it has always used.
+        stop_lead_clocks: int = -1
+    else:
+        if master is not None:
+            phase_tempo = float(getattr(args, "tempo_bpm", 120.0) or 120.0)
+        else:
+            learned_tempo = clock.bpm() if clock is not None else None
+            phase_tempo = float(learned_tempo or proxy_bpm or 120.0)
+        stop_lead_clocks, _advance_refusal = _host_grid_record_stop_advance_clocks(
+            requested=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+            bpm=phase_tempo,
+            press_ms=int(getattr(args, "press_ms", 120) or 120),
+            record_bars=target_bars,
+        )
+        if _advance_refusal is not None:
+            # The button's own latency does not fit inside this phase, so there is no lead to take.
+            # Fall back to the in-stream boundary press the strict mode uses rather than refusing a
+            # phase that used to stream: the take's *length* is judged by the record-seed gate,
+            # which is where a length verdict belongs.
+            print(f"[warn] {_advance_refusal}; pressing the record stop on the boundary instead")
+            stop_lead_clocks = -1
+        else:
+            print(
+                f"[info] fixture record stop pressed {stop_lead_clocks} clocks before the "
+                f"{target_bars}-bar boundary ({phase_tempo:.1f} BPM phase tempo)."
+            )
+    grid_origin_index: Optional[int] = None
+    from hitl.legacy_edit_baseline import _master_pump_running
+
+    if _master_pump_running(master):
+        # The pulse the realtime `Start` made device tick 0.
+        grid_origin_index = master.grid_origin_pulse()
+    elif clock is not None and record_schedule_start_mono is not None:
+        # Device clock: the reader's grid position at the take origin. `record_schedule_start_mono`
+        # is the transport *press* instant, and a control-surface press is processed
+        # `record_button_lead_seconds` later -- the same model the stop lead is stated in, and the
+        # interval `captures/i3b-seeded-edit-t8s4-11` pins (press 23.543 s, take origin 23.963 s,
+        # `RECS,stop,...,2436` from the stop at 26.504 s).
+        _period = clock.period()
+        if _period:
+            _take_origin_mono = record_schedule_start_mono + record_button_lead_seconds(
+                press_ms=int(getattr(args, "press_ms", 120) or 120)
+            )
+            _elapsed = max(0.0, time.monotonic() - _take_origin_mono)
+            grid_origin_index = int(round(clock.index_now() - _elapsed / _period))
+
     if using_serial_proxy and serial_collector is not None:
         from hitl.serial_tick_anchor import parse_record_start_tick
 
@@ -1657,13 +1728,13 @@ def _stream_fixture_record_bars(
                 midi_channel_1based=midi_channel_1based,
                 reca_start_tick=reca_start,
                 bpm=proxy_bpm,
-                stop_press_advance_clocks=int(
-                    getattr(args, "stop_press_advance_clocks", 0) or 0
-                ),
+                stop_press_advance_clocks=stop_lead_clocks,
                 press_ms=args.press_ms,
                 abort=abort,
             )
-            return rec_notes, rec_clocks, True, True, rec_intent
+            return rec_notes, rec_clocks, True, _phase_reached_its_stop(
+                rec_clocks, target_bars=target_bars, advance_clocks=stop_lead_clocks
+            ), rec_intent
 
     if (
         clock is None
@@ -1692,9 +1763,7 @@ def _stream_fixture_record_bars(
         fixture=fixture,
         target_bars=target_bars,
         midi_channel_1based=midi_channel_1based,
-        stop_press_advance_clocks=(
-            -1 if require_midi_clock else int(getattr(args, "stop_press_advance_clocks", 0) or 0)
-        ),
+        stop_press_advance_clocks=stop_lead_clocks,
         press_ms=args.press_ms,
         abort=abort,
         wall_clock_tempo_bpm=None if require_midi_clock else wall_clock_tempo,
@@ -1702,12 +1771,18 @@ def _stream_fixture_record_bars(
         stream_start_monotonic=recording_confirmed_at,
         clock=clock,
         master=master,
+        grid_origin_index=grid_origin_index,
     )
     return (
         rec_notes,
         rec_clocks,
         True,
-        require_midi_clock,
+        # Owned only when the phase actually reached its trigger: a phase that broke out early
+        # (clock dropout, guard) pressed nothing, and the caller must still stop the take.
+        (clock is not None or master is not None)
+        and _phase_reached_its_stop(
+            rec_clocks, target_bars=target_bars, advance_clocks=stop_lead_clocks
+        ),
         _fixture_first_note_intent_clocks(fixture, step_clocks=FIXTURE_STEP_CLOCKS),
     )
 

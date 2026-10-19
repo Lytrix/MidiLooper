@@ -35,6 +35,27 @@ Every managed run SHALL perform the existing canonical idempotent Stop/drain on 
 - **WHEN** a composed edit leg restarts playback and then fails or raises
 - **THEN** final canonical Stop/drain executes before capture closes, regardless of any Stop already sent during boot repair or base-leg retrieval
 
+### Requirement: Seeded edit qualification preserves evidence identity and completeness
+
+Host seeded-edit validation SHALL require an applied empty-step deselection, the intended source note moved to the occupied destination, and both expected stacked note identities selected after that deselection. Immediate and deferred twins SHALL represent one event; delayed delivery SHALL NOT reorder the logical gesture sequence or inflate observation counts. Missing or ambiguous identity/ordering SHALL remain unqualified.
+
+Edit seed admission SHALL require complete capture, intended committed content/length and successful cleanup. An inconclusive or aborted seed SHALL NOT be promoted to a passed composed setup merely because notes were sent. Zero-observation optional timing/retention checks SHALL be reported as unmeasured rather than successful qualification.
+
+Fresh-boot app-screen readiness SHALL require a current-boot app-paint witness after handoff; elapsed time or a stale frame SHALL NOT count as observed readiness. A pending stop job SHALL remain a named readiness blocker independently of fence loss; balanced Record counters alone SHALL NOT establish readiness.
+
+#### Scenario: Delayed selection twins do not alter the result
+- **GIVEN** the intended move, an applied empty deselect and both expected stacked selections are observed
+- **WHEN** their deferred twin rows arrive later in the log
+- **THEN** event counts and core proof remain unchanged, and a nonempty selection never substitutes for the deselect
+
+#### Scenario: Incomplete seeds and timer-only boot remain unqualified
+- **WHEN** the seed capture/drain is incomplete, its intended committed shape is missing, or fresh boot has no qualified app-paint witness
+- **THEN** the host refuses dependent edit gestures without relaxing bounds or reporting PASS
+
+#### Scenario: Missing optional observations are explicit
+- **WHEN** core seeded-edit proof exists but optional timing or retention observations are absent
+- **THEN** those optional cases are unmeasured, not successful qualification, and broader acceptance remains open
+
 ### Requirement: Deferred edge effects begin empty after every boot
 
 Before clock-driven edge-effect publication or main-loop consumption begins, the runtime SHALL explicitly initialize the existing edge-effect queue's producer/consumer positions, dropped-effect count and reported-drop baseline, independently of retained or uncleared backing memory. Payload storage SHALL NOT be consumed until a producer publishes a record in the current boot. Initialization SHALL preserve the existing fixed-capacity FIFO, full-queue rejection/counting, interrupt-mask restoration and deferred log/display/LED semantics; it SHALL NOT add allocations or work to the clock edge.

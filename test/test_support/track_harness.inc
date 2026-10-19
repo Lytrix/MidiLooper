@@ -94,8 +94,10 @@
 // retarget entry rather than only moving the fake clock; `setUp` in each suite resets it.
 // `g_nativeSilenceTrackCalls` counts `Track::silenceTrackMidiOutput()`, which `off_path_deps.h`
 // defines as an observable output boundary instead of a fail-closed stub.
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 ClockManager::ClockManager() : pendingStart(false) {}
 ClockManager clockManager;
+#endif
 // The edit-session owner. Most suites only need the global (their fixtures never open a note-edit
 // session), so the constructor and the global stay here. A suite that links the **real** `EditManager`
 // (`src/EditManager.cpp`, e.g. the windowed-preview integration suite, whose subject *is* the edit
@@ -118,10 +120,12 @@ void EditManager::cancelCurrentRootNoteEditEntryForLoop(const Loop& loop) {
 }
 #endif
 LooperStateManager looperState;
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 uint32_t ClockManager::getCurrentTick() const { return currentTick; }
 PlaybackDeadlineClock nativePlaybackDeadlineClock{};
 PlaybackDeadlineClock ClockManager::getPlaybackDeadlineClock() const { return nativePlaybackDeadlineClock; }
 void ClockManager::assignCurrentTickSilently(uint32_t tick) { currentTick = tick; }
+#endif
 // P1 control (DEC-080): the transport-running boundary is test-controlled instead of
 // hardcoded true, so a case can stop the transport and then drive the *production*
 // retarget/epoch entry rather than only moving the fake clock. Reset in setUp.
@@ -135,6 +139,8 @@ unsigned g_nativeSilenceTrackCalls = 0;
 /// so `setUp` can reset it. See `off_path_deps.h`.
 uint32_t g_nativeAdoptedMasterLength = 0;
 unsigned g_nativeAdoptedMasterLengthCalls = 0;
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 bool ClockManager::isTransportRunning() const { return nativeTransportRunning; }
 // Match production: a stopped clock arms; a running clock quantizes the start.
 bool ClockManager::shouldQuantizeRecordStart() const { return isTransportRunning(); }
+#endif

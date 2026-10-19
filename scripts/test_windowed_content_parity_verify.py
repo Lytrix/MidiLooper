@@ -272,6 +272,25 @@ class WindowedLaneTests(unittest.TestCase):
         over = overrun_rows([_overrun(3000, overruns=2, overrun_max=5, running=1)])[0]
         self.assertEqual(("2", "5", "1"), (over["overruns"], over["overrun_max"], over["running"]))
 
+    def test_gap_row_reads_the_service_and_worker_fields_six_point_five_claims(self) -> None:
+        """6.5's hardware claims are these exact fields, so their positions are pinned here.
+
+        Grain duration is the block's worst **worker** span (`maxWorkerUs`, field 13); the maximum service gap is the
+        largest delta whose predecessor was *eligible* (`eligiblePredecessorMax`, field 9) compared against the
+        declaration's own `permittedAdvanceTicks` (field 16). A parser that silently read a neighbouring field would
+        turn both readings into numbers of the wrong quantity, and both would still look plausible.
+        """
+        row = gap_rows([
+            _gap(4000, max_delta=56, discontinuities=2, eligible_max=40, eligible=230, progress=91,
+                 denied=1, worker_us=595, epoch=9, saturated=0, permitted=64, overruns=0, overrun_max=0, schema=3)
+        ])[0]
+        self.assertEqual(
+            ("56", "2", "40", "230", "91", "1", "595", "9", "0", "64", "0", "0"),
+            (row["max_delta_ticks"], row["discontinuities"], row["eligible_predecessor_max"],
+             row["eligible_turns"], row["progress_turns"], row["denied_turns"], row["max_worker_us"],
+             row["epoch"], row["saturated_gaps"], row["permitted"], row["overruns"], row["overrun_max_ticks"]),
+        )
+
     def test_healthy_lane_judges_two_terms_and_names_the_deferred_ones(self) -> None:
         result = verify_windowed_lane(_lane_lines())
         self.assertTrue(result["ok"], result["issues"])

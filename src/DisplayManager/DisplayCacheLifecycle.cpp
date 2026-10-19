@@ -282,7 +282,9 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowGatherValid_ = false;
     liveDisplayCommittedFromWindowGather_ = false;
     liveWindowVisualCacheRevision_ = UINT32_MAX;
-    liveDrawSourceKey_ = {};
+    // A preserved complete frame keeps its interval/source metadata as well.
+    // Clearing the key alone lets auto-follow paint a new interval with old rows.
+    if (!preserveDisplayNotes || liveDisplayNotes.empty()) liveDrawSourceKey_ = {};
     liveCommittedLayerHeldForDirtyCache_ = false;
     liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
     liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);

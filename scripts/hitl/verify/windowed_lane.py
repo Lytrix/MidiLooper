@@ -271,15 +271,30 @@ def gap_rows(lines: list[str]) -> list[dict[str, Any]]:
             {
                 "index": index,
                 "us": row_us(line),
+                # Fields 4/8/9 are the block's own **service** observations: the largest tick delta between two
+                # dispatches, the epochs/tick-rewinds that broke that comparison, and the largest delta whose
+                # predecessor was *eligible*. 12/13 are the calibration turns and the worst **worker** span, which is
+                # the preparation grain's own duration. 14/15 name the era and the instrument's counter overflow.
+                # They are read here rather than re-parsed by a caller because 6.5's hardware claims (grain duration,
+                # maximum service gaps) are exactly these fields -- see
+                # `evidence/2026-10-17-s65-hardware-claims-reading/EVIDENCE.md`.
+                "max_delta_ticks": fields[4],
                 "opportunities": fields[5],
                 "phase": fields[6],
                 "running": fields[7],
+                "discontinuities": fields[8],
+                "eligible_predecessor_max": fields[9],
                 "eligible_turns": fields[10],
                 "progress_turns": fields[11],
+                "denied_turns": fields[12],
+                "max_worker_us": fields[13],
+                "epoch": fields[14],
+                "saturated_gaps": fields[15],
                 # Fields 16/17 are the declaration's own `permittedAdvanceTicks` and that block's `overruns`;
                 # 19 is the literal schema number the emitter writes (3), which is what makes the row self-describing.
                 "permitted": fields[16],
                 "overruns": fields[17],
+                "overrun_max_ticks": fields[18],
                 "schema": fields[19],
             }
         )

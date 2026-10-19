@@ -101,6 +101,18 @@ everything it does not recognise through to the legacy baseline. That is why a
 captured `command.json` (a legacy argv) looks runnable but is not a valid entry
 point on its own.
 
+**Legacy baseline report boundary:** managed baseline cleanup retrieves Record
+evidence, then reuses `DeviceSession` for verified persistence Stop/drain/Stop/drain
+while MIDI and the capture owner remain open, before the report's final same-log
+snapshot. Its receipt travels as `record_evidence_drain.persistence_shutdown`;
+incomplete cleanup still latches and cannot become PASS. The outer managed
+every-exit safety drain remains in place. Non-managed baseline behavior is unchanged.
+Overdub session pairing prefers typed ST/ODUB stop evidence, then explicit overdub
+stop text, with reentry-window text only as a missing-typed-evidence fallback.
+Generic `Reentry released` retires a job, not necessarily the current input
+interval, and is not an overdub boundary. A stop may not cross the next distinct
+machine or human start. [Regression/device evidence](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-record-return-recovery/HOST_REPORT_REPAIR.md).
+
 **Content verification** is a separate procedure over the same capture layer:
 dump `record` / `overdub` / `effective`, capture playback, compare inventory. The
 executable recipe is the `hitl-content-verification` skill; semantics are in

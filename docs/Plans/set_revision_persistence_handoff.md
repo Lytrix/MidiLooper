@@ -21,7 +21,7 @@
 | Task | Deliverable |
 |------|-------------|
 | 1.1 | SD file layouts: `WorkspaceMetaRecord`, `SetCatalogIndex`, `SetMetaRecord`, `EpochFileHeader`; pass header `CapturePassSlotFileHeader` |
-| 1.2 | `SetRevisionCatalog` — `index.bin`, `set.bin`; revision id on COMPLETE only |
+| 1.2 | `SetRevisionCatalog` — current catalog `catalog.bin`, per-Set `set.bin`; legacy SavedSet sequence index retains `index.bin`; revision id on COMPLETE only (DEC-120 — one owner per persisted Set index path) |
 | 1.3 | Monotonic Set id; failed revision reuses id |
 | 1.4 | `RevisionPackedBlob` — **REVPK02**: 128 B header, typed chunk stream (`Transport` / `LoopSlot` / `SlotIndex`), 12 B CRC footer |
 | 1.5 | Native: `test_set_revision_persistence` (28 tests) |
@@ -318,3 +318,10 @@ Or DEC-020 Phase 5: docs/Plans/continuous_runtime_persistence_phase5_recovery_ha
 
 Or #18 Phase 1.3: migrate admitLoopSlotPersist → admitLoopPersist(LoopId) at domain call sites.
 ```
+
+## I4 — playing overlay dirty-Yes regression qualified (2026-10-13)
+
+Registered managed `i4_overlay_load` run06 on approveddefaultHEX8050aabc qualifies freshPLAYINGentry, actualowner-highlightedS0001_v0002, dirtyYes preservingcommitS0001_v0003 beforeexactloadv2, automaticoverlayexit andpost-exitnormaldisplay. Strictcurrent-sessiondrainedreplay pluslegacyoverlay/dirty-YesoraclesPASS. Ownerresponsiveminimalprogress/nofreeze-reboot/autoexit/normalpianorollwithouttrackchange; canonicaldrains2complete/nolatch. Earlieridentitytimeout05/lateapprovalretained, notreused.
+
+This closesoverlayload/dirty-Yes/playingloadmanual6.2–6.4, notNo/Cancel/clean/reopen-midload/defaultTransport/independentfocusrestore/wholehardwarecontentparity. NoSDcleanup/firmwarechange/Gitdelivery; specsync/archive remainseparatelygated byexistingprerequisites.
+[I4 — qualification evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/PLAYING-LOAD-QUALIFICATION.md).

@@ -224,15 +224,17 @@ The restore queue SHALL make progress on every startable request, regardless of 
 
 ### Requirement: The blocking persistence drain preserves and reports the restore it waits on
 
-**Delivered scope of this requirement.** The blocking deferred-save drain SHALL service the restore it waits
-on where the applicable gate admits, using the existing selection and admission, within a declared
-per-iteration budget, and SHALL NOT introduce a second loader, a second queue, or a parallel admission
-policy. The drain SHALL NOT cancel, supersede, or discard the restore in order to complete; where the gate
-denies, it SHALL preserve the request and report the **named** wait. **Not delivered by this requirement:**
-that the drain *advances* a restore that holds the SD session rather than only reporting it. That behavior is
-**deferred** to `runtime-working-set-ownership` S2b.7 and is bound by
-`resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded commit/cleanup); no advancement is
-claimed here.
+**Delivered scope of this requirement.** The blocking deferred-save drain SHALL service and advance the
+restore that holds its SD session where the applicable gate admits, using the existing selection and
+admission, within a declared per-iteration budget, and SHALL NOT introduce a second loader, a second
+queue, or a parallel admission policy. The drain SHALL NOT cancel, supersede, or discard the restore in
+order to complete; where the gate denies, it SHALL preserve the request and report the **named** wait.
+
+**Verification boundary.** Restore advancement was delivered natively by `runtime-working-set-ownership`
+S2b.7 — drain-side restore service. Complete commit/cleanup bounding remains owned by
+`resumable-midi-boundary-playback-maintenance` task3.3 — bounded commit/cleanup; this requirement does
+not authorize bypassing that gate. Device confirmation is tracked separately by the runtime change's
+drain-service acceptance evidence and is not implied by the native implementation or this wording correction.
 
 The drain SHALL derive its admission from the **same actual runtime eligibility** the normal load path
 uses, evaluated across all tracks — it SHALL NOT assume that a CLEAR leaves the runtime non-timing-critical,
@@ -254,10 +256,13 @@ reason instead of spinning its stuck budget and aborting.
 
 - **WHEN** a deferred save is owed, a restore for `(track, slot, requestGeneration, setEpoch)` has started
   and is unresolved at the CLEAR edge, and another track is audibly playing
-- **THEN** the drain completes the owed save by the workspace-save priority path
+- **THEN** the drain services and advances the restore through the shared selection and bounded service
+  path wherever runtime eligibility admits
+- **AND** the owed save completes when the blocking SD ownership is released, or the drain returns the
+  restore's named wait if it reaches a gate the drain must not break
 - **AND** the restore request remains tracked with its identity and named wait, and was not cancelled,
   superseded, or discarded to achieve that
-- **AND** no claim is made that the drain advanced the restore
+- **AND** a denied commit or cleanup remains denied while another track is timing-critical
 
 #### Scenario: A parked job is serviced, not only an active one
 

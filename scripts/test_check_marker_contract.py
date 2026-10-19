@@ -62,6 +62,15 @@ class SourceListTests(unittest.TestCase):
     def test_source_prefixes_are_parsed_and_bounded_to_the_function(self) -> None:
         self.assertEqual(cmc.source_tier_a_prefixes(SOURCE), ["DIAG,win_gap,", "DIAG,launch_gate,"])
 
+    def test_named_flash_prefix_requires_declaration_and_use(self) -> None:
+        source = 'static const char kMotion[] PROGMEM = "DIAG,pit_motion,";\n' + SOURCE.replace(
+            '"DIAG,win_gap,"', 'kMotion')
+        self.assertEqual(cmc.source_tier_a_prefixes(source), ['DIAG,pit_motion,', 'DIAG,launch_gate,'])
+        self.assertEqual(cmc.source_tier_a_prefixes(source.replace(' PROGMEM', '')),
+                         ['DIAG,launch_gate,'])
+        self.assertNotIn('DIAG,pit_motion,', cmc.source_tier_a_prefixes(
+            source.replace('tagStartsWith(line, kMotion)', 'tagStartsWith(line, kUnknown)')))
+
     def test_merged_list_classifies_a_source_only_family(self) -> None:
         accepted, excluded = cmc.tier_a_prefixes(HEADER, SOURCE)
         self.assertEqual(cmc.classify("DIAG,launch_gate,1", accepted, excluded), "DIAG,launch_gate,")
@@ -73,6 +82,7 @@ class SourceListTests(unittest.TestCase):
         self.assertTrue(cmc._is_comment_or_classifier(" *  Wire form: DIAG,x,<slot>."))
         self.assertFalse(cmc._is_comment_or_classifier('  emitCapPrintf("#CAP,%lu,DIAG,x,%u\\r\\n", a, b);'))
 
+        self.assertTrue(cmc._is_comment_or_classifier('static const char kMotion[] PROGMEM = "DIAG,pit_motion,";'))
     def test_real_source_list_is_nonempty(self) -> None:
         self.assertIn("DIAG,win_gap,", cmc.source_tier_a_prefixes())
 

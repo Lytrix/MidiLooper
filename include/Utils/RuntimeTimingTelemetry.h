@@ -39,13 +39,23 @@ enum class PlaybackRebuildPath : uint8_t {
   NoteEditPreview,
   IncrementalOverdubSeal,
   StaleRootOverlay,
+  /// DEC-143: no published root yet, so the window came from the immutable published Record pass alone.
+  PublishedRecordOverlay,
 };
 
 /**
  * Soft ceiling used only to count `overCount` samples in S0 telemetry.
  * Not a runtime-admission contract and not a MIDI Input Gap ceiling.
+ *
+ * Set to **6,250 µs** on 2026-10-11 so the count is read against the declared continuity envelope's
+ * input-service pass line (1/32 beat at the 300 BPM maximum stressed tempo) instead of an independent
+ * 5,000 µs bar — see DEC-117. It stays a **counting-only** field: no control flow reads it. Two things
+ * a reader must not conflate: `overCount` is one global observational bar shared by every
+ * `recordSample` family (so a `disp_*`/`load_frame`/`persist_save` crossing is not "over its declared
+ * limit"), and the `late_*` families do not use this bar at all — `recordLateness` counts every
+ * lateness > 0. Captures recorded before this change carry counts against the 5,000 µs bar.
  */
-constexpr uint32_t kObservationalSoftCeilingUs = 5000u;
+constexpr uint32_t kObservationalSoftCeilingUs = 6250u;
 
 /** One stop-phase aggregate. Deadlines are cadence-derived, not wire timestamps.
  * Every call is counted; start/end/slack describe the maximum-duration call.

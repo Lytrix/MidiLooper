@@ -5,6 +5,12 @@
 **Companion:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) · wrap display: [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md)  
 **Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)
 
+**2026-10-16 — I5 — actual rolling growth HITL evidence:** full07/full08 growth leg verifies ordered USB62/64/60 pairs at98/0, exact6-row record/effective inventory and NoteIds1/2/3 matching source-qualified window endpoints; ledger closes, corrected frozen mismatch verified, critical-loss0. Full recipe NOTpassed: empty reused take stalls, held/no-retrigger and matching physical Stop remain unverified. Visual private-worker cancellation fixed; stale idle-shell fix has focused505/fullnative3281pass7skip/ASan10/build proof only, not device proof. Exact default restored/guard15/two drains/nolatch; retry approval needed. Original metadata hash caveat and upload-chain pins in [I5 — actual execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md); no full ledger/lifecycle/physical timing acceptance from this partial leg.
+
+**2026-10-15 — I5 — growing live Record coverage:** qualified Record windows now rotate across later raw intervals and wrap-only period growth, preserving the same shared ledger/MIDI owner. `applyPlaybackLedgerEvent` uses bounded `isActive(channel,pitch,NoteId)` to suppress only a still-open identity's retriggered On after growth; its original Off in the next interval closes it. Committed/overdub policy and ledger layout unchanged. Normal-maintenance source736/800 emits one On1504, no second On2272, Off2336; withheld-main crossing and matching subinterval/mismatching Stop also pass. Focused500/fullnative3275pass7skip/ASan8, retrigger-removal specificRED; no hardware/physical timing claim. [I5 — current coverage/ledger evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-COVERAGE.md). Supersedes initial-only functional scope in the prior note.
+
+**2026-10-15 — I5 — connected first-bar rolling Record:** `applyPlaybackLedgerEvent` and `sendMidiEvent` admit RECORDING only when `hasAudiblePlaybackSource` qualifies the exact live Capture recipe/current; the global audible-state predicate is unchanged. The existing fixed-view stream remains the ledger/MIDI owner. Real USB/DIN/host cases assert original NoteId/exact scheduled704/736 rows at1472/1504, ledger0→1→0 and duplicate silence; matching Stop768 preserves current/cursor/ledger, existing mismatch/root-lifetime controls remain. ASan5/fullnative3267pass7skip and emission-removalRED pass. Initial[0,768)/period768 only; no general growing/overdub/timing/device qualification. [I5 — evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-VERTICAL.md).
+
 This catalog is every **note evaluation** that decides whether an identity is open in `ActiveNoteLedger` (**open ledger identities**) or whether a committed playback event is applied to the ledger. It is **not** overlap geometry and **not** source-view covering identities.
 
 CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a=` = source-view covering identities (`collectOverdubSourceHoldParticipantIds`). CAP `b=` = prepared LCR present-at-hold (diagnostic only). They are allowed to differ: they answer different questions.
@@ -12,6 +18,31 @@ CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a
 **RC closed (FROZEN).** Gate 5A shipped. D2-D HITL [`174246`](../../captures/session_20260819_174246.log). **`n>a` is diagnostic only** — do not patch occupy collect. Gate 5B **withdrawn**.
 
 **Update this catalog in the same change** if any of these moved: `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, `Track::snapshotOverlapHoldCandidates`, wrap catch-up exclusion.
+
+**2026-10-15 — builder cancellation boundary:** DEC-130 — builder-call cancellation
+and live-source exclusion defers private Fill/Order discard until an executing call
+returns; a busy runtime reset refuses before clearing ledger or published sibling
+views. Both-builder interruption fixtures assert a retained open identity and exact
+accepted source. Ledger evaluation, occupy catch-up and ordering criteria are unchanged;
+this is not all-Track adoption or device timing qualification. See
+[I5 — source concurrency evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-CONCURRENCY-EXECUTION.md).
+
+**Record-return cursor/overdub continuity (2026-10-11).** The default frozen
+Record reader remains eligible while an overdub is audible; physical window
+adoption resets only that window's order index, not the tick crossing floor or
+ledger. Repeated edges cannot retrigger an emitted pair, and accepted live
+Capture keeps its own echo path (not a second committed-ledger writer). The
+shared-finalization regressions assert exact first/second-bar, live overdub and
+wrap MIDI plus zero remaining open ledger notes. Source-current retention does
+not change identity pairing or closure policy. [Evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-record-return-recovery/EXECUTION.md).
+Bound first-bar identity handoff likewise seeks past the last serviced phase,
+not the current tick: the regression preserves Off60 then On61 at tick720,
+rejects a duplicate same-tick emission, and closes the remaining ledger note
+at tick760. This is cursor correctness, not a changed overlap/closure policy.
+Ready-before-pass-publication is covered separately: the qualified frozen ready
+keeps its source stamp through one maintenance turn, then emits its second-bar
+pair during overdub with zero remaining ledger identities. No canonical-revision
+relabel or change to ledger pairing/closure policy is involved.
 
 ---
 
@@ -323,3 +354,18 @@ copy those events again. The existing rank and playback-order passes run only
 after the original deadline/source checks. Dense lifecycle1,226->1,191 turns;
 this remains far above the continuous two-bar service supply.
 Evidence: `evidence/requester-retry-integration/SINGLE_PASS_QUALIFICATION.md`.
+
+## I5 — Track completion authority boundary (2026-10-15)
+
+DEC-131 — exact Track completion authority changes publication authority, not note
+classification or ledger closure policy. A complete private build cannot become ready
+as a side effect of adopting another ready view; the preparation owner must explicitly
+publish it. Destination-generation checks prevent old cleanup from invalidating reused
+metadata. Track final completion receipts reject interrupted/reset work, and fixed
+publication/adoption metadata uses saved-mask guards. Existing exact MIDI/ledger tests
+remain controls in the passing native suite; these new tests do not establish running
+Capture deadline readiness. DEC-132 — preparation acquisition and Record exclusion now
+adds the non-masking preparation/reset/Record boundary and bridge role revalidation,
+without changing ledger closure policy. Registered default-path Record/Stop compatibility
+HITL now passes; finite timing/running-request integration remains open. No deadline
+safety or full content-inventory claim. [I5 — acquisition and hardware evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md).

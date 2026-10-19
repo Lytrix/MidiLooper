@@ -402,13 +402,8 @@ class ReselectStackedHelperTests(unittest.TestCase):
     def test_verify_requires_two_dest_notes_after_deselect(self) -> None:
         from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
 
-        lines = [
-            "Edit session: NOTE_EDIT",
-            "EditSessionAction: type=3 noteId=81",
-            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
-            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
-            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
-        ]
+        from test_hitl_reselect_validation import good_lines
+        lines = good_lines()
         result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
         self.assertTrue(result["ok"], result["issues"])
         self.assertEqual(result["dest_distinct_note_idxs"], [3, 5])
@@ -419,19 +414,147 @@ class ReselectStackedHelperTests(unittest.TestCase):
             verify_note_edit_reselect_stacked,
         )
 
-        self.assertTrue(select_apply_lands_on_step(428, 3, 0, 384, want_note=True))
+        self.assertFalse(select_apply_lands_on_step(428, 3, 0, 384, want_note=True))
         self.assertFalse(select_apply_lands_on_step(384, -1, 1, 384, want_note=True))
         self.assertFalse(select_apply_lands_on_step(432, 3, 1, 384, want_note=True))
-        lines = [
-            "Edit session: NOTE_EDIT",
-            "EditSessionAction: type=3 noteId=81",
-            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
-            "#DBG select_apply selected_tick=196 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
-            "#DBG select_apply selected_tick=220 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
-        ]
-        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        from test_hitl_reselect_validation import good_lines
+        lines = good_lines()
+        lines[5] = lines[5].replace('tick 192', 'tick 196')
+        lines[8] = lines[8].replace('tick 192', 'tick 220')
+        lines[10] = lines[10].replace('64,192,192', '64,220,220')
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace(), dest_note_tick=220)
         self.assertTrue(result["ok"], result["issues"])
         self.assertEqual(result["dest_distinct_note_idxs"], [3, 5])
+
+    def test_direct_select_rows_are_the_live_witness_of_the_same_applies(self) -> None:
+        """The device's direct `Select fader: …` row is the select proof that is on the wire.
+
+        `#DBG select_apply …` is deferred into the capture ring (`Logger.cpp`), and the
+        timing-critical (PLAYING) flush transmits nothing, so a live wait keyed only to it expires
+        (`captures/i3b-seeded-edit-t8s4-04`: the deselect was applied, yet attempts 1/3-3/3 saw no
+        row). Both rows below are verbatim from that capture: the direct one at line 6766 (present
+        at the press) and the deferred one at line 10835 (a drained record).
+        """
+        from hitl.verify.note_edit_reselect_stacked import (
+            direct_select_lands_on_step,
+            parse_direct_select,
+        )
+
+        empty_row = "[75.579] [DEBUG] [MIDI] Select fader: selected empty step at tick 0 (no note)"
+        note_row = (
+            "[75.500] [DEBUG] [MIDI] Select fader: selected note 3 at tick 528 "
+            "(1/2 notes at this position)"
+        )
+        self.assertEqual(parse_direct_select(empty_row), (-1, 0))
+        self.assertEqual(parse_direct_select(note_row), (3, 528))
+        self.assertIsNone(
+            parse_direct_select(
+                "#DBG select_apply selected_tick=0 note_idx=-1 slot=0 prior_slot=-1 apply=1 "
+                "reason=empty_step"
+            )
+        )
+        self.assertTrue(direct_select_lands_on_step(-1, 0, 0, want_note=False))
+        self.assertFalse(direct_select_lands_on_step(-1, 0, 0, want_note=True))
+        self.assertTrue(direct_select_lands_on_step(3, 528, 528, want_note=True))
+        self.assertFalse(direct_select_lands_on_step(3, 528, 48, want_note=True))
+        self.assertFalse(direct_select_lands_on_step(-1, 48, 0, want_note=False))
+
+    # The -07 leg's own snapshot rows, verbatim (`i3b-seeded-edit-t8s4-07`, lines 2199-2318):
+    # the enter, the move, the applied deselect and the two applied stacked reselects. That
+    # snapshot carries the direct channel only -- the `#DBG` family was still in the capture ring
+    # when it was taken -- so a verifier that reads `#DBG` alone called the same leg FAIL
+    # (`deselect_empty_step`, `stacked_reselect_after_deselect`) that the drained session log
+    # passed.
+    _SEVEN_ENTER = "[60.867] [INFO] [MIDI] Edit session: NOTE_EDIT (Program 1, Note 0 trigger)"
+    _SEVEN_MOVE = (
+        "[73.261] [DEBUG] [MIDI] Note movement with overlap handling: from=768 to=528 "
+        "(EditSessionAction: type=3 noteId=3 start=528 end=616 pitch=64)"
+    )
+    _SEVEN_DESELECT = (
+        "[78.998] [DEBUG] [MIDI] Select fader: selected empty step at tick 0 (no note)"
+    )
+    _SEVEN_RESELECT_0 = "[80.758] [DEBUG] [MIDI] Select fader: selected note 1 at tick 528"
+    _SEVEN_RESELECT_1 = "[82.481] [DEBUG] [MIDI] Select fader: selected note 2 at tick 575"
+
+    def _seven_lines(self, *rows: str) -> list[str]:
+        lines = [self._SEVEN_ENTER, self._SEVEN_MOVE, *rows]
+        return lines
+
+    def test_direct_rows_without_focus_geometry_are_unqualified(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(
+            self._SEVEN_DESELECT, self._SEVEN_RESELECT_0, self._SEVEN_RESELECT_1
+        )
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("stacked_note_identity_unproven", result["issues"])
+
+    def test_verify_still_requires_the_deselect_on_the_device_rows(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(self._SEVEN_RESELECT_0, self._SEVEN_RESELECT_1)
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("deselect_empty_step", result["issues"])
+
+    def test_verify_rejects_an_unchanged_empty_step_answer(self) -> None:
+        """`apply=0 reason=empty_step` is a repeat, not an applied deselect."""
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(
+            "#DBG select_apply selected_tick=0 note_idx=-1 slot=0 prior_slot=-1 apply=0 "
+            "reason=empty_step",
+            self._SEVEN_RESELECT_0,
+            self._SEVEN_RESELECT_1,
+        )
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("deselect_empty_step", result["issues"])
+
+    def test_verify_rejects_a_direct_deselect_from_another_sixteenth(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(
+            "[78.998] [DEBUG] [MIDI] Select fader: selected empty step at tick 48 (no note)",
+            self._SEVEN_RESELECT_0,
+            self._SEVEN_RESELECT_1,
+        )
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("deselect_empty_step", result["issues"])
+
+    def test_verify_still_requires_two_distinct_direct_reselects(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(self._SEVEN_DESELECT, self._SEVEN_RESELECT_0)
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("stacked_reselect_after_deselect", result["issues"])
+
+    def test_verify_rejects_a_direct_reselect_on_another_sixteenth(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = self._seven_lines(
+            self._SEVEN_DESELECT,
+            self._SEVEN_RESELECT_0,
+            "[82.481] [DEBUG] [MIDI] Select fader: selected note 2 at tick 768",
+        )
+        result = verify_note_edit_reselect_stacked(
+            lines, SimpleNamespace(), dest_tick=528, empty_tick=0
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("stacked_reselect_after_deselect", result["issues"])
 
     def test_playing_motor_value_only_rejects_timed_burst(self) -> None:
         from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
@@ -454,16 +577,12 @@ class ReselectStackedHelperTests(unittest.TestCase):
     def test_playing_motor_value_only_accepts_value_only(self) -> None:
         from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
 
-        lines = [
-            "Edit session: NOTE_EDIT",
-            "EditSessionAction: type=3 noteId=81",
-            "#CAP,100,ST,Track,STOPPED_RECORDING,PLAYING",
+        from test_hitl_reselect_validation import good_lines
+        lines = good_lines() + [
+            "#CAP,5000000,ST,Track,STOPPED_RECORDING,PLAYING",
             "#DBG select_motor_sync mode=SELECT_SYNC sequence=value_only",
             "#DBG geometry_motor_sync sent=1 bracket_tick=192 pb=0 mode=GEOMETRY_SYNC sequence=value_only",
-            "#CAP,200,DIAG,midi_gap,18420,1",
-            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
-            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
-            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+            "#CAP,5000010,DIAG,midi_gap,18420,1",
         ]
         result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
         self.assertTrue(result["ok"], result["issues"])
@@ -510,15 +629,10 @@ class ReselectStackedHelperTests(unittest.TestCase):
     def test_vcache_drop_after_deselect_fails(self) -> None:
         from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
 
-        lines = [
-            "Edit session: NOTE_EDIT",
-            "EditSessionAction: type=3 noteId=81",
-            "#CAP,1,VCACHE,full,ev,16,notes,8,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0",
-            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
-            "#CAP,2,VCACHE,full,ev,16,notes,7,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0",
-            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
-            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
-        ]
+        from test_hitl_reselect_validation import good_lines
+        lines = good_lines()
+        lines.insert(4, "#CAP,1500000,VCACHE,full,ev,16,notes,8,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0")
+        lines.insert(6, "#CAP,2500000,VCACHE,full,ev,16,notes,7,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0")
         result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
         self.assertFalse(result["ok"])
         self.assertTrue(any("moved_note_dropped_from_vcache=" in issue for issue in result["issues"]))

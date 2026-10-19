@@ -71,27 +71,26 @@ def _resolve_base_seed(
         base_report_usable_for_note_edit_sweep,
         latest_base_report,
         record_layout_for_base_seed,
+        record_seed_qualification_issues,
         serial_log_from_base_report,
     )
 
     def _layout(lines: list[str], config: dict) -> object:
         return record_layout_for_base_seed(lines, config)
 
-    if getattr(ctx, "base_preset_passed", False):
-        seed_path = getattr(ctx, "base_serial_log_path", None)
-        report = getattr(ctx, "base_report", None)
-        if seed_path is not None and seed_path.is_file():
-            lines = seed_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            config = base_preset_config(report)
-            return lines, _layout(lines, config), seed_path
-
-    report = latest_base_report(out_dir)
+    report = getattr(ctx, "base_report", None) if getattr(ctx, "base_preset_passed", False) else None
+    if report is None:
+        report = latest_base_report(out_dir)
     if not base_report_usable_for_note_edit_sweep(report):
+        reasons = record_seed_qualification_issues(report) if base_preset_config(report).get("record_only") else []
         raise RuntimeError(
-            "No usable base loop seed. Run the full preset:\n"
+            "No usable base loop seed. " + "; ".join(reasons) + "\nRun the full preset:\n"
             "  .venv/bin/python scripts/host_midi_hitl.py run --preset edit_minimal ..."
         )
     seed_path = serial_log_from_base_report(report)
+    if (seed_path is None and getattr(ctx, "base_preset_passed", False)
+            and not base_preset_config(report).get("record_only")):
+        seed_path = getattr(ctx, "base_serial_log_path", None)
     if seed_path is None or not seed_path.is_file():
         raise FileNotFoundError("base report has no readable serial_log_path")
     lines = seed_path.read_text(encoding="utf-8", errors="replace").splitlines()

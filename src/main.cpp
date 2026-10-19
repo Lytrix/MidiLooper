@@ -978,32 +978,12 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveStartUs = micros();
 #endif
-  const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-  const bool prioritizeWorkspaceSaveDrain = StorageManager::shouldPrioritizeWorkspaceSaveDrain();
-  // A queued workspace save is urgent only while transport is idle. It must
-  // never bypass record/overdub/playback timing protection (213530).
-  const bool allowPrioritizedWorkspaceSaveDrain =
-      prioritizeWorkspaceSaveDrain && !timingCriticalTrackActive;
-  const bool allowDeferredSaveAfterLoadFrame =
-      allowPrioritizedWorkspaceSaveDrain ||
-      MidiServiceDrain::allowDeferredSaveAfterLoadFrame(timingCriticalTrackActive, loadFrameUs);
-  // A parked workspace save is not the only reason to enter the scheduler: sealed capture chunks
-  // waiting for the incremental flush are, and during a live take that is the *only* reason (the
-  // workspace save is parked, so `deferredSavePending` is false). Entering on queued chunks is bounded
-  // by construction: `processDeferredSaveState` flushes at most one chunk and returns immediately while
-  // the transport is active, so no bundle work can run in a take window.
-  const bool queuedCaptureChunks = StorageManager::hasQueuedCaptureChunksToPersist();
-  const bool runDeferredSaveState =
-      (deferredSavePending &&
-       (allowPrioritizedWorkspaceSaveDrain ||
-        (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
-         deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
-         MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending,
-                                              overdubStoppingForMidiDrain)))) ||
-      queuedCaptureChunks;
-  if (runDeferredSaveState) {
-    StorageManager::processDeferredSaveState(looperState.getLooperState());
-  }
+  // Offer the existing owner for workspace, revision commit/load, or sealed chunks.
+  // The worker retains its own SD/load/capture exclusion and slice budget.
+  (void)MidiServiceDrain::serviceDeferredPersistenceTurn<StorageManager>(
+      looperState.getLooperState(), deferredIdleOwner, deferredIdleOwnerAllowed,
+      timingCriticalTrackActive, loadFrameUs, postOverdubPlayingMidiDrain,
+      overdubStoppingForMidiDrain);
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveUs = micros() - persistSaveStartUs;
   RUNTIME_TIMING_NOTE_PERSIST_SAVE(persistSaveUs);

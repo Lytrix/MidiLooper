@@ -85,6 +85,17 @@ int countNoteOns(const EventVec& flat, uint8_t pitch) {
   return count;
 }
 
+template <typename EventVec>
+int countNoteOffs(const EventVec& flat, uint8_t pitch) {
+  int count = 0;
+  for (const MidiEvent& evt : flat) {
+    if (evt.isNoteOff() && evt.data.noteData.note == pitch) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 void seedCommittedPair(Loop& loop) {
   LoopEventStore store;
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 100)));
@@ -711,6 +722,267 @@ void test_record_wrap_note_publishes_one_reference() {
   TEST_ASSERT_EQUAL_PTR(tail->references[0].get(), head->references[0].get());
   TEST_ASSERT_TRUE(tail->references[0]->isWrap(snapshot->loopLengthTicks()));
 }
+
+/// DEC-143 — a published Record slice is read material before its root publishes.
+///
+/// The device measured the gap directly (`captures/i5-playback-witness-base-05`): after the wrapped record stop the
+/// take was audible nowhere until its snapshot published 3.078 s later, because the merged fallback is committed-only
+/// and refuses outright when no published snapshot exists. The overlay's **source** is the take's sealed extent,
+/// reached through the Loop's own read borrow (keyed on the presentation record's identity) — never a pass's chunk-id
+/// list: that form hung the board (`captures/i5-dec143-overlay-base-02`) because undo/redo re-materialises the pass
+/// while the presentation is still the active reader. These cases pin the contract at the gather the fallback is
+/// built from: the sealed take is readable once the Record has been published, mutable capture never rides along, the
+/// root supersedes the overlay without duplicating a note, a held note is closed once at the loop end, and without
+/// the sealed borrow there is no overlay at all.
+struct PublishedRecordTake {
+  LoopEventStore::CaptureRange sealedExtent;
+  /// Stands in for the slot-owned presentation record: the borrow is keyed on its address.
+  int presentationToken = 0;
+};
+
+/// Seal the take's extent (the production admission cut), borrow it into the Loop exactly as the slot-owned
+/// presentation record does, then commit the same rows so the pass and the extent describe one take.
+void beginPublishedRecordTakeOnly(Loop& loop, PublishedRecordTake& take) {
+  const auto appendTake = [&loop]() {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 60, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60, 0)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(192, 1, 62, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(288, 1, 62, 0)));
+  };
+  TEST_ASSERT_TRUE(take.sealedExtent.reserveTail());
+  loop.beginCapture(CapturePhase::Record);
+  appendTake();
+  uint64_t frozenContentGeneration = 0;
+  TEST_ASSERT_TRUE(loop.sealCaptureRangeForJob(take.sealedExtent, frozenContentGeneration));
+  TEST_ASSERT_TRUE(loop.borrowSealedCaptureRange(take.sealedExtent, &take.presentationToken));
+  // The seal cut moved those rows into the extent and left the producer its pre-reserved successor directory, so the
+  // commit is fed the same take again: pass and extent then describe the same content.
+  appendTake();
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 384));
+  // The record publication is queued, not performed: this is the production shape between `RecordPublished` and
+  // the root's own publication, and the whole point of the decision.
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+}
+
+void test_a_published_record_take_is_readable_before_its_root_publishes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  PublishedRecordTake take;
+  beginPublishedRecordTakeOnly(loop, take);
+
+  // No publication edge this turn: the window stays unavailable exactly as before the decision.
+  SessionMidiEventVec unavailable;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(unavailable, 0, 1536, &path));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::None), static_cast<int>(path));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(unavailable.size()));
+
+  // The Record has crossed `RecordPublished`: its committed pass is read material for this window.
+  SessionMidiEventVec served;
+  path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(served, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(path));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 62));
+}
+
+void test_the_record_overlay_never_serves_mutable_capture_rows() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  PublishedRecordTake take;
+  beginPublishedRecordTakeOnly(loop, take);
+
+  // A live take is appended and never committed: mutable capture must not reach the merged representation.
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(512, 1, 67, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(576, 1, 67, 0)));
+
+  SessionMidiEventVec served;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(served, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(path));
+  TEST_ASSERT_EQUAL(0, countNoteOns(served, 67));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 62));
+}
+
+void test_the_record_overlay_is_superseded_by_the_root_without_duplicates() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  PublishedRecordTake take;
+  beginPublishedRecordTakeOnly(loop, take);
+
+  SessionMidiEventVec overlayServed;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(overlayServed, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(path));
+  const int overlayNoteOns = countNoteOns(overlayServed, 60) + countNoteOns(overlayServed, 62);
+  TEST_ASSERT_EQUAL(2, overlayNoteOns);
+
+  // The root containing that take publishes: the overlay is gone, and the transition doubles nothing.
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec rootServed;
+  path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(rootServed, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot),
+                    static_cast<int>(path));
+  TEST_ASSERT_EQUAL(1, countNoteOns(rootServed, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(rootServed, 62));
+  TEST_ASSERT_EQUAL(overlayNoteOns, countNoteOns(rootServed, 60) + countNoteOns(rootServed, 62));
+}
+
+/// DEC-143 / oracle O3 — a committed pass alone is not read material: without the sealed extent borrowed into the
+/// Loop the overlay refuses. This is the discriminating control for the form the device withdrew, which fed the gather
+/// the pass's chunk-id list and served content (and then hung the board).
+void test_the_record_overlay_needs_the_sealed_extent_not_a_committed_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 384));
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(loop.hasSealedCaptureBorrow());
+
+  SessionMidiEventVec served;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_FALSE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(served, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::None), static_cast<int>(path));
+  TEST_ASSERT_EQUAL(0, static_cast<int>(served.size()));
+}
+
+/// DEC-143 / oracle O5 — the raw extent is longer than the loop (`raw > final`), exactly as a wrapped two-bar take is.
+/// The overlay applies the record stop projection, so an overflowing note-on arrives in-loop and a note left open at
+/// the loop end is closed exactly once at the loop end carrying its own identity. A **partial** window closes nothing:
+/// its off may still be in a later window.
+void test_the_record_overlay_projects_a_wrapped_take_and_closes_a_held_note_once() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  PublishedRecordTake take;
+  TEST_ASSERT_TRUE(take.sealedExtent.reserveTail());
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1600, 1, 64, 100)));  // past the loop
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1700, 1, 64, 0)));   // past the loop
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1400, 1, 65, 100)));  // no off inside the loop
+  uint64_t frozenContentGeneration = 0;
+  TEST_ASSERT_TRUE(loop.sealCaptureRangeForJob(take.sealedExtent, frozenContentGeneration));
+  TEST_ASSERT_TRUE(loop.borrowSealedCaptureRange(take.sealedExtent, &take.presentationToken));
+
+  SessionMidiEventVec served;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(served, 0, 1536, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(path));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOns(served, 65));
+  uint32_t wrappedOnTick = UINT32_MAX;
+  int offsAtLoopEnd = 0;
+  for (const MidiEvent& evt : served) {
+    if (evt.isNoteOn() && evt.data.noteData.note == 64) wrappedOnTick = evt.tick;
+    if (evt.isNoteOff() && evt.tick == 1535) ++offsAtLoopEnd;
+  }
+  // 1600 wraps into the loop, so the take is served in-loop rather than past the end.
+  TEST_ASSERT_EQUAL_UINT32(64u, wrappedOnTick);
+  // Both held lanes are closed exactly once, at the loop end, and 64 keeps its own note identity.
+  TEST_ASSERT_EQUAL(1, countNoteOffs(served, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOffs(served, 65));
+  TEST_ASSERT_EQUAL(2, offsAtLoopEnd);
+
+  // A partial window is not the loop: nothing is closed, because the off may still be in a later window.
+  SessionMidiEventVec partial;
+  path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(partial, 0, 768, &path, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(path));
+  TEST_ASSERT_EQUAL(1, countNoteOns(partial, 64));
+  TEST_ASSERT_EQUAL(0, countNoteOffs(partial, 64));
+}
+
+/// DEC-143 — the overlay is an idempotent read of one immutable take: a maintenance turn that finds the same identity
+/// repeats the same window and duplicates nothing.
+void test_the_record_overlay_serves_the_same_take_on_every_gather() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  PublishedRecordTake take;
+  beginPublishedRecordTakeOnly(loop, take);
+
+  SessionMidiEventVec first;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(first, 0, 1536, &path, nullptr, true));
+  SessionMidiEventVec second;
+  Loop::SnapshotWindowGatherPath secondPath = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(second, 0, 1536, &secondPath, nullptr, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                    static_cast<int>(secondPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(first.size()), static_cast<int>(second.size()));
+  TEST_ASSERT_EQUAL(1, countNoteOns(second, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(second, 62));
+  TEST_ASSERT_EQUAL(1, countNoteOffs(second, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOffs(second, 62));
+}
+ /// DEC-143 — the extent alone is not authority. Undo inside the pre-root window disables the Record pass and bumps the
+ /// revision; serving the still-sealed extent after that would keep an undone take sounding until a root republished
+ /// without it. The overlay therefore refuses a take that is no longer the active Record material, and serves it again
+ /// the moment the pass is active.
+ void test_the_record_overlay_refuses_an_undone_record_pass() {
+   LoopEventStore::resetPoolForTests();
+   LoopEventStore::initPool();
+   Loop loop;
+   loop.loopId = 7;
+   loop.loopLengthTicks = 1536;
+   PublishedRecordTake take;
+   beginPublishedRecordTakeOnly(loop, take);
+   const PassId recordId = loop.passes.recordPass.id;
+
+   TEST_ASSERT_TRUE(loop.setCapturePassState(recordId, CapturePassState::Disabled));
+   SessionMidiEventVec undone;
+   Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+   TEST_ASSERT_FALSE(
+       loop.tryGatherPublishedSnapshotEventsInWindow(undone, 0, 1536, &path, nullptr, true));
+   TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::None), static_cast<int>(path));
+   TEST_ASSERT_EQUAL(0, static_cast<int>(undone.size()));
+
+   TEST_ASSERT_TRUE(loop.setCapturePassState(recordId, CapturePassState::Active));
+   SessionMidiEventVec restored;
+   path = Loop::SnapshotWindowGatherPath::None;
+   TEST_ASSERT_TRUE(
+       loop.tryGatherPublishedSnapshotEventsInWindow(restored, 0, 1536, &path, nullptr, true));
+   TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::RecordOverlay),
+                     static_cast<int>(path));
+   TEST_ASSERT_EQUAL(1, countNoteOns(restored, 60));
+ }
 
 void test_overdub_wrap_does_not_publish_global_snapshot() {
   LoopEventStore::resetPoolForTests();
@@ -6952,6 +7224,12 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_record_stop_publishes_complete_snapshot);
   RUN_TEST(test_record_wrap_note_publishes_one_reference);
   RUN_TEST(test_overdub_wrap_does_not_publish_global_snapshot);
+  RUN_TEST(test_a_published_record_take_is_readable_before_its_root_publishes);
+  RUN_TEST(test_the_record_overlay_never_serves_mutable_capture_rows);
+  RUN_TEST(test_the_record_overlay_is_superseded_by_the_root_without_duplicates);
+  RUN_TEST(test_the_record_overlay_needs_the_sealed_extent_not_a_committed_pass);
+  RUN_TEST(test_the_record_overlay_projects_a_wrapped_take_and_closes_a_held_note_once);
+  RUN_TEST(test_the_record_overlay_serves_the_same_take_on_every_gather);
   RUN_TEST(test_publication_turn_waits_for_admitted_headroom);
   RUN_TEST(test_allocation_failure_parks_publication_until_admission_recovers);
   RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
@@ -6989,6 +7267,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
   RUN_TEST(test_coalesced_snapshot_request_before_construction_is_not_satisfied_early);
   RUN_TEST(test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early);
+   RUN_TEST(test_the_record_overlay_refuses_an_undone_record_pass);
   RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
   RUN_TEST(test_live_record_continues_next_completed_bar);

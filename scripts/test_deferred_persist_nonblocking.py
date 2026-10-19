@@ -129,6 +129,38 @@ class DeferredPersistNonblockingTests(unittest.TestCase):
 
 
 class DeferredPersistLargeLoopBoundsTests(unittest.TestCase):
+    def test_qualified_silent_reader_witness_and_rejection_controls(self) -> None:
+        rows = [
+            "#CAP,1000000,ST,Track,STOPPED,PLAYING",
+            "#CAP,2000000,PERS,work,40,0,0,LoopPersist,slot:7:4,start,ok",
+            "#CAP,2010000,PERS,work,80,0,0,LoopPersist,slot:7:4,payload_slice,ok",
+            "#CAP,2020000,PERS,work,90,0,0,LoopPersist,slot:7:4,payload_done,ok",
+            "#CAP,2030000,PERS,work,70,0,0,LoopPersist,slot:7:4,finalize_slice,ok",
+            "#CAP,2040000,PERS,work,60,0,0,LoopPersist,slot:7:4,done,ok",
+        ]
+        witness = "#CAP,2025000,DIAG,playback_read,1,7,3,1024,5,29,2,768,768,1536,1024"
+        summarize = lambda extra: summarize_deferred_persist_large_loop_bounds(rows + extra)
+        self.assertFalse(summarize([])["active_snapshot_ok"])
+        self.assertTrue(summarize([witness])["active_snapshot_ok"])
+        self.assertTrue(summarize([witness.replace(",5,29,2,", ",0,29,2,")])["active_snapshot_ok"])
+        available = witness.replace("playback_read", "playback_available").replace(",5,29,2,", ",0,2,0,")
+        self.assertTrue(summarize([available])["active_snapshot_ok"])
+        self.assertFalse(summarize([available.replace(",0,2,0,", ",0,2,2,")])["active_snapshot_ok"])
+        for bad in (
+            witness.replace("2025000", "1000000"),
+            witness.replace("playback_read,1,", "playback_read,2,"),
+            witness.replace(",5,29,2,", ",4294967296,29,2,"),
+            witness.replace(",5,29,2,", ",5,0,2,"),
+            witness.replace(",5,29,2,", ",5,29,3,"),
+            witness.replace(",1536,1024", ",1536,64"),
+            witness.replace(",768,768,1536,", ",768,0,1536,"),
+            witness.replace("read,1,7,3,", "read,1,8,3,"),
+            witness + ",extra",
+            witness.rsplit(",", 1)[0],
+        ):
+            with self.subTest(row=bad):
+                self.assertFalse(summarize([bad])["active_snapshot_ok"])
+
     def test_progress_phases_required(self) -> None:
         lines = [
             "#CAP,200,PERS,work,40,0,0,LoopPersist,slot:4:0,start,ok",

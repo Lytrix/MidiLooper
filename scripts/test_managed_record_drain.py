@@ -27,6 +27,8 @@ class Device:
         self.rejected = 0
         self.drop_log = False
         self.no_fence = False
+        self.hold_pending = False
+        self.lose_drain_fence = False
         self.regress = False
         self.flush_after_stats_fence = False
         self.latch_stats = False
@@ -69,14 +71,14 @@ class Device:
         rows = [f"#CAP,1,TRACE_FENCE,{start}"]
         if self.stopped:
             if command == "!STOP_STATUS":
-                rows.append(f"#STOP_STATUS,us=1,state=STOPPED,pending={self.pending},queue={self.pending}/2")
+                rows.append(f"#STOP_STATUS,us=1,state=STOPPED,pending={self.pending},phase={16 if self.pending else 0},queue={self.pending}/2")
             elif command == "!CAP_IDENTITY_STATS":
                 self.in_session_lost += self.grow_shortfall
                 rows += self._family_rows()
                 if self.latch_stats:
                     rows.append("#CAP,1,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0")
             elif command == "!TRACE_DRAIN":
-                if self.pending:
+                if self.pending and not self.hold_pending:
                     self.pending = 0
                     self.enqueued += 1  # a final publication row appears during cleanup
                 count = min(64, self.enqueued - self.tx)
@@ -85,7 +87,7 @@ class Device:
                     rows += ["#CAP,1,RECS,stage,publish,0,0,0,0,0,0,ok"] * count
                 if self.regress:
                     self.enqueued = self.tx = 0
-        if not self.no_fence:
+        if not self.no_fence and not (self.lose_drain_fence and command == '!TRACE_DRAIN'):
             rows.append(f"#CAP,2,TRACE_FENCE,{end}")
         payload = "\n".join(rows) + "\n"
         if self.answer_delay_s and self.clock is not None:
@@ -178,6 +180,27 @@ class DrainTests(unittest.TestCase):
         self.assertTrue(result["complete"], result)
         self.assertEqual(1, result["log_counts"]["RECS"])
         self.assertEqual(1, result["drains"])
+
+    def test_pending_job_is_preserved_even_with_balanced_record_counters(self):
+        self.device.enqueued = self.device.tx = 0
+        self.device.pending = 1
+        self.device.hold_pending = True
+        result = self.drain()
+        self.assertFalse(result['complete'])
+        self.assertEqual('pending', result['stop_job_state'])
+        self.assertIn('phase=16', result['last_stop_status'])
+        self.assertIn('queue=1/2', result['last_stop_status'])
+
+    def test_fence_loss_does_not_hide_the_observed_pending_job(self):
+        self.device.enqueued = self.device.tx = 0
+        self.device.pending = 1
+        self.device.hold_pending = True
+        self.device.lose_drain_fence = True
+        result = self.drain()
+        self.assertFalse(result['complete'])
+        self.assertEqual('pending', result['stop_job_state'])
+        self.assertIn('phase=16', result['last_stop_status'])
+        self.assertIn('response fence missing', result['reason'])
 
     def test_fence_alone_does_not_prove_transport_stopped(self):
         self.device.ignore_stop = True
@@ -323,12 +346,15 @@ class DrainTests(unittest.TestCase):
                 events.append(message.type)
         self_device = self.device
         result = {}
-        with patch("hitl.managed_capture.active_managed_capture", return_value=self.session):
+        with patch("hitl.managed_capture.active_managed_capture", return_value=self.session), \
+             patch("hitl.device_shutdown._wait_for_verified_idle", return_value=True), \
+             patch("hitl.device_shutdown.DeviceSession._capture_heap_observation", return_value=[]):
             with self.assertRaisesRegex(RuntimeError, "leg failed"):
                 with Port() as port, _managed_record_evidence_cleanup(port, result):
                     raise RuntimeError("leg failed")
         self.assertTrue(result["complete"], result)
-        self.assertEqual(["stop", "port_closed"], events)
+        self.assertEqual(["stop", "stop", "stop", "port_closed"], events)
+        self.assertEqual(2, result["persistence_shutdown"]["drains"])
 
     def test_cleanup_failure_preserves_the_original_leg_exception(self):
         session = SimpleNamespace(drain_record_evidence=lambda send: (_ for _ in ()).throw(OSError("pipe closed")))

@@ -112,7 +112,7 @@ def run_stimulus_command(args: argparse.Namespace) -> int:
     if command == "list":
         from hitl.stimuli.registry import format_stimulus_list_lines
 
-        for line in format_stimulus_list_lines():
+        for line in format_stimulus_list_lines(include_temporary=True):
             print(line)
         return 0
     if command == "export-yaml":

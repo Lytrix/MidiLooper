@@ -40,10 +40,13 @@ struct RuntimePlaybackViewSource {
   /// while generationToken continues to protect the sealed range's lifetime.
   uint64_t captureContentToken = 0;
   bool mutableCapture = false;
+  bool appendStableCapture = false;
+  CaptureProjectionIdentity captureProjection{};
+  LoopEventStoreSourceCursor captureCursor;
   /// Borrows the sealed range until fill completion. Never flattens its chunks.
   static RuntimePlaybackViewSource fromCaptureRange(const LoopEventStore::CaptureRange& range);
   /// Borrow the live Loop Capture producer, never a committed root or raw shell.
-  static RuntimePlaybackViewSource fromLiveCapture(const Loop& loop);
+  static RuntimePlaybackViewSource fromLiveCapture(const Loop& loop, bool appendStable = false);
   static RuntimePlaybackViewSource fromFrozenRecordCapture(
       const LoopEventStore::CaptureRange& range, uint64_t frozenContentToken);
 };
@@ -86,7 +89,14 @@ class RuntimePlaybackViewFill {
   /// An immutable frozen source may release after copying. A *live* Capture
   /// borrow remains mutation-sensitive through private ordering/publication.
   bool liveCaptureCurrent() const;
+  /// Preserve a certified private prefix and freeze the newest raw suffix.
+  bool extendLiveCapture(const PlaybackViewSourceIdentity& identity);
+  bool appendStableCapture() const { return appendStableCapture_; }
+  /// Local borrow state only: never dereferences its source owner.
+  bool ownsLiveCaptureBorrow() const { return guardLiveCaptureAfterFill_ && sourceContext_ != nullptr; }
   size_t copiedEventCount() const { return copied_; }
+  size_t frozenSourceExtent() const { return sourceCount_; }
+  size_t sourceFrontier() const { return cursor_; }
   bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }
 
  private:
@@ -106,6 +116,8 @@ class RuntimePlaybackViewFill {
   RuntimePlaybackViewSource::GenerationFn sourceGeneration_ = nullptr;
   const void* sourceContext_ = nullptr;
   uint64_t sourceGenerationToken_ = 0;
+  LoopEventStoreSourceCursor liveCaptureCursor_;
+  CaptureProjectionIdentity liveCaptureProjection_{};
   RuntimePlaybackViewSource::BlockMayIntersectFn blockMayIntersect_ = nullptr;
   bool inspectBlockRows_ = false;
   size_t sourceCount_ = 0;
@@ -114,4 +126,5 @@ class RuntimePlaybackViewFill {
   RuntimePlaybackViewFillScope scope_ = RuntimePlaybackViewFillScope::AllSource;
   bool sourceReadsByCopy_ = false;
   bool guardLiveCaptureAfterFill_ = false;
+  bool appendStableCapture_ = false;
 };

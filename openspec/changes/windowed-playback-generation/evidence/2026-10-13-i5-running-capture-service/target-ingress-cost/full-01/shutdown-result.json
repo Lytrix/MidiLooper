@@ -1,0 +1,6 @@
+{
+  "status": "complete",
+  "drains": 2,
+  "detail": "2 stop+drain cycle(s) reached verified persistence idle",
+  "ok": true
+}

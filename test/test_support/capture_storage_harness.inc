@@ -89,6 +89,10 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 #include "../../src/PersistenceFailurePolicy.cpp"
 #include "../../src/StorageManager/RevisionLoad.cpp"
 #include "../../src/StorageManager/RevisionCommit.cpp"
+// The revision-commit owner now also establishes the catalog index (DEC-120 — one owner per persisted Set
+// index path) and publishes the catalog-change signal the overlay consumes, so both TUs ride with it.
+#include "../../src/StorageManager/SetCatalogIndexEnsure.cpp"
+#include "../../src/StorageManager/Overlay.cpp"
 #include "../../src/StorageManager/MidPassChunkPersist.cpp"
 #include "../../src/StorageManager/WallClockSdSync.cpp"
 #include "../../src/StorageManager/PersistenceWorkItemPersist.cpp"
@@ -210,8 +214,18 @@ void EditManager::emitEditEvent(EditEvent) { A34A_OFF_PATH(); }
 void EditManager::reopenNoteEditSession(Track&) { A34A_OFF_PATH(); }
 void EditManager::persistActiveNoteEditSession(Track&) { A34A_OFF_PATH(); }
 void EditManager::flushDeferredNoteEditDisplayRefresh(Track&) { A34A_OFF_PATH(); }
+// `TrackManager::setSelectedTrack` departs the note-edit session before it moves focus. Note-edit
+// semantics are the edit suites' subject, so this neighbour fails closed by default. A fixture that
+// has to select a **different** Track through the production route opts in with
+// `HARNESS_OBSERVABLE_TRACK_SELECT` (the same switch `test_runtime_working_set_ownership/off_path_deps.h`
+// already honours); nothing is asserted on the no-op, and every other suite keeps the default.
+#if defined(HARNESS_OBSERVABLE_TRACK_SELECT)
+void EditManager::onTrackChanged(Track&) {}
+void EditManager::beforeSelectedTrackChange(Track&) {}
+#else
 void EditManager::onTrackChanged(Track&) { A34A_OFF_PATH(); }
 void EditManager::beforeSelectedTrackChange(Track&) { A34A_OFF_PATH(); }
+#endif
 void EditManager::revertNoteEditSessionForLoopClear(Track&) { ++A34aBoundary::slotMutationCalls; }
 void ClockManager::resetToLoopStart() { A34A_OFF_PATH(); }
 
@@ -220,9 +234,11 @@ void TrackManager::loadTransportSlotIndices(uint8_t, uint8_t, uint8_t) { A34A_OF
 void TrackManager::setPendingEnabledSetReplacement(uint8_t, bool) { ++A34aBoundary::slotMutationCalls; }
 void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { A34A_OFF_PATH(); }
 void DisplayManager::handleLoadSaveOverlayPress(DisplayManager::LoadSaveOverlayPressType) { A34A_OFF_PATH(); }
+#if !defined(HARNESS_LINKS_REAL_DISPLAY_MANAGER)
 void DisplayManager::invalidateLiveDisplayCache(bool) { A34A_OFF_PATH(); }
 void DisplayManager::adjustLoadSaveListSelection(int) { A34A_OFF_PATH(); }
 void DisplayManager::centerDetailedWindowOnPlayhead(Track&, uint8_t, uint32_t) { A34A_OFF_PATH(); }
+#endif
 void LooperStateManager::exitLoadSaveMode() { A34A_OFF_PATH(); }
 void LooperStateManager::enterLoadSaveMode() { A34A_OFF_PATH(); }
 void ControlSurfaceManager::handleExitEditMode(Track&) { A34A_OFF_PATH(); }

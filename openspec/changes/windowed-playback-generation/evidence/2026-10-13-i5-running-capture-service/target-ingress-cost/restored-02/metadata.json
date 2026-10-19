@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-15T15:46:05.242534+00:00",
+  "git_commit": "26125cebb08980342ba56ed2b77e5397783ac8e5",
+  "git_dirty": true,
+  "build_env": "teensy41-capture-serial",
+  "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+  "firmware_hex_sha256": "4d9aa84cf40ab51e0f1354d60104440fa23e5e1dcd21430b3b9b26c65418a9bd",
+  "preset": "pit_clock",
+  "scenario_ids": [
+    "pit_clock"
+  ],
+  "track_number": 8,
+  "loop_slot": 4,
+  "midi_channel": 8,
+  "record_bars": 0,
+  "overdub_bars": 0,
+  "capture_serial_port": "/dev/cu.usbmodem154944801",
+  "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/i5-ingress-cost-restored-02/session_20261015_174604.log",
+  "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/i5-ingress-cost-restored-02"
+}

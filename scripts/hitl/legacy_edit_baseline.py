@@ -82,6 +82,7 @@ from hitl.edit_controls import (  # noqa: E402
     _stop_transport_if_running,
 )
 from hitl.boot_handoff import wait_for_boot_handoff  # noqa: E402
+from hitl.select_mapping import pitchbend_for_step_and_stack  # noqa: E402
 
 DEFAULT_PERSISTENCE_WAIT_TIMEOUT_S = 30.0
 
@@ -370,8 +371,7 @@ def _pb_for_fader_index(index: int, count: int) -> int:
 
 
 def _pb_for_sixteenth_step(step: int, num_steps: int) -> int:
-    step = max(0, min(step, num_steps - 1))
-    return _pb_for_fader_index(step, num_steps)
+    return pitchbend_for_step_and_stack(step, num_steps * TICKS_PER_16TH_STEP, 0, 1)
 
 
 def _extract_revt_notes(lines: list[str]) -> list[tuple[int, int]]:
@@ -659,21 +659,36 @@ def _fader1_select_nav_slot_index(
     serial_collector: Optional[Any] = None,
     expected_tick: Optional[int] = None,
     expected_note_idx: Optional[int] = None,
-) -> None:
-    """Fader 1: select navigation slot by index (supports multi-note steps)."""
+) -> bool:
+    """Select target slot geometry; serial confirms it, no serial is attempt-only."""
     count = layout.nav_slot_count
-    slot_index = max(0, min(slot_index, count - 1))
-    slot = layout.nav_slots[slot_index] if layout.nav_slots else None
-    if expected_tick is None and slot is not None:
+    if not 0 <= slot_index < len(layout.nav_slots):
+        raise ValueError(f"invalid select slot={slot_index} count={len(layout.nav_slots)}")
+    slot = layout.nav_slots[slot_index]
+    if not 0 <= slot.rel_tick < layout.loop_length:
+        raise ValueError(f"invalid select tick={slot.rel_tick} nav={layout.loop_length}")
+    step = slot.rel_tick // TICKS_PER_16TH_STEP
+    stacked_index, stacked_count = 0, 1
+    if slot.note_idx >= 0:
+        step_slots = sorted(
+            (i for i, candidate in enumerate(layout.nav_slots)
+             if candidate.note_idx >= 0 and candidate.rel_tick // TICKS_PER_16TH_STEP == step),
+            key=lambda i: (layout.nav_slots[i].rel_tick,
+                           layout.note_index_to_pitch.get(layout.nav_slots[i].note_idx, 0)),
+        )
+        stacked_index, stacked_count = step_slots.index(slot_index), len(step_slots)
+    # Refuse invalid/unreachable geometry before sending even the program change.
+    pb = pitchbend_for_step_and_stack(step, layout.loop_length, stacked_index, stacked_count)
+    if expected_tick is None:
         expected_tick = slot.rel_tick
     baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
     _send_program_change(out_port, FADER_SELECT_CHANNEL_1BASED, 1)
-    pb = _pb_for_fader_index(slot_index, count)
+    confirmed = True  # Compatibility only: an open-loop attempt is not qualification.
     out_port.send(
         mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=pb)
     )
     if serial_collector is not None and expected_tick is not None:
-        _wait_for_select_stable_at_tick(
+        confirmed = _wait_for_select_stable_at_tick(
             serial_collector,
             int(expected_tick),
             baseline_len=baseline_len,
@@ -686,6 +701,7 @@ def _fader1_select_nav_slot_index(
         f"[edit-hitl] fader1 select slot={slot_index}/{count - 1} pb={pb} "
         f"rel_tick={getattr(slot, 'rel_tick', '?')} note_idx={getattr(slot, 'note_idx', '?')}"
     )
+    return confirmed
 
 
 def _nav_slot_indices_for_fixture_step(layout: RecordLayout, fixture_step: int) -> list[int]:
@@ -865,7 +881,7 @@ def _fader1_select_fixture_note(
         return False
     slot_index, expected_tick, note_idx = target
     target_pitch = _fixture_pitch_for_step(fixture_step, fixture)
-    _fader1_select_nav_slot_index(
+    confirmed = _fader1_select_nav_slot_index(
         out_port,
         layout=layout,
         slot_index=slot_index,
@@ -877,7 +893,7 @@ def _fader1_select_fixture_note(
         f"[edit-hitl] fader1 select fixture_step={fixture_step} "
         f"pitch={target_pitch} tick={expected_tick} note_idx={note_idx} slot={slot_index}"
     )
-    return True
+    return confirmed
 
 
 def _fader1_select_then_wait_for_fader2(
@@ -908,6 +924,7 @@ def _fader2_move_to_sixteenth_step(
     serial_collector: Optional[Any] = None,
     expect_length: bool = False,
     coarse_baseline_len: int = 0,
+    before_send: Optional[Callable[[], None]] = None,
 ) -> None:
     """Fader 2 only: move the currently selected note to target 16th step."""
     sixteenth = layout.sixteenth_step_for(fixture_step)
@@ -923,6 +940,7 @@ def _fader2_move_to_sixteenth_step(
         pb,
         serial_collector=serial_collector,
         baseline_len=coarse_baseline_len,
+        before_send=before_send,
     )
     _after_coarse_fader_move(serial_collector, expect_length=expect_length)
 
@@ -1291,6 +1309,7 @@ def _send_coarse_pitchbend(
     *,
     serial_collector: Optional[Any] = None,
     baseline_len: int = 0,
+    before_send: Optional[Callable[[], None]] = None,
 ) -> None:
     """Send fader2 PB; retry while firmware logs select_dependent_settle_block.
 
@@ -1299,6 +1318,8 @@ def _send_coarse_pitchbend(
     """
     _send_program_change(out_port, FADER_COARSE_CHANNEL_1BASED, 2)
     if serial_collector is None:
+        if before_send is not None:
+            before_send()
         out_port.send(
             mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
         )
@@ -1307,6 +1328,8 @@ def _send_coarse_pitchbend(
     _wait_for_select_dependent_settle_clear(serial_collector)
     for attempt in range(5):
         send_baseline = len(serial_collector.snapshot())
+        if before_send is not None:
+            before_send()
         out_port.send(
             mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
         )
@@ -1443,6 +1466,7 @@ _SELECT_NOTE_TICK_RE = re.compile(
 _SELECT_NOTE_IDX_TICK_RE = re.compile(
     r"(?:Found and selected note|Select fader: selected note) (\d+) at tick (\d+)"
 )
+_SELECT_FINAL_IDX_RE = re.compile(r"Note selection changed: -?\d+ -> (-?\d+)")
 
 
 def _parse_select_note_idx_tick(line: str) -> Optional[tuple[int, int]]:
@@ -1473,16 +1497,41 @@ def _wait_for_select_stable_at_tick(
     quiet_ms: int = SELECT_DEPENDENT_SETTLE_MS,
     timeout_s: float = 4.0,
 ) -> bool:
-    """Wait until selection stays on ``expected_tick`` (and note idx) through motor sweep."""
+    """Wait for the target tick and final selection index through the motor quiet period.
+
+    SelectFaderInput's direct target index is pre-macro-commit; the same operation
+    can reindex the selected NoteId. Its subsequent direct selection-change row
+    names the final index. Pair it only with a target seen in this command window,
+    never with a deferred #DBG row or an index guessed from the NoteId.
+    """
     quiet_s = max(quiet_ms, 0) / 1000.0
     deadline = time.monotonic() + max(timeout_s, 0.0)
     seen = max(baseline_len, 0)
     stable_since: Optional[float] = None
+    pending_target_tick: Optional[int] = None
     while time.monotonic() < deadline:
-        for line in collector.snapshot()[seen:]:
+        snapshot = collector.snapshot()
+        for line in snapshot[seen:]:
+            final_index = _SELECT_FINAL_IDX_RE.search(line)
+            if final_index is not None:
+                note_idx = int(final_index.group(1))
+                matches = (
+                    pending_target_tick is not None
+                    and abs(pending_target_tick - expected_tick) <= tick_tolerance
+                    and note_idx >= 0
+                    and (expected_note_idx is None or note_idx == expected_note_idx)
+                )
+                stable_since = time.monotonic() if matches else None
+                pending_target_tick = None
+                continue
+            if "Select fader: selected empty step at tick" in line:
+                pending_target_tick = None
+                stable_since = None
+                continue
             idx_tick = _parse_select_note_idx_tick(line)
             if idx_tick is not None:
                 note_idx, tick = idx_tick
+                pending_target_tick = tick
                 if expected_note_idx is not None and note_idx != expected_note_idx:
                     stable_since = None
                     continue
@@ -1503,7 +1552,7 @@ def _wait_for_select_stable_at_tick(
                 stable_since = time.monotonic()
             else:
                 stable_since = None
-        seen = len(collector.snapshot())
+        seen = len(snapshot)
         if stable_since is not None and time.monotonic() - stable_since >= quiet_s:
             return True
         time.sleep(0.04)
@@ -1792,6 +1841,16 @@ def _emit_fixture_steps_for_clock(
     return note_on_count, next_emit_step, held
 
 
+def _master_pump_running(master: Any) -> bool:
+    """True only when the master itself states its pump is running.
+
+    A stub that has no such method (or answers with a non-`bool`) keeps the self-scheduled shape
+    below rather than silently being driven as if a pump owned the cadence.
+    """
+    running = getattr(master, "pump_running", None)
+    return bool(callable(running) and running() is True)
+
+
 def _stream_fixture_record(
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
@@ -1809,6 +1868,7 @@ def _stream_fixture_record(
     stream_start_monotonic: Optional[float] = None,
     clock: Optional[Any] = None,
     master: Optional[Any] = None,
+    grid_origin_index: Optional[int] = None,
 ) -> tuple[int, int]:
     """Emit fixture notes on MIDI clock for target_bars.
 
@@ -1819,10 +1879,22 @@ def _stream_fixture_record(
       next pulse (``wait_pulse(origin + 1)``), which is the difference between a first note on the
       downbeat and one ~15 clocks into the take. The phase ends after
       ``target_bars * MIDI_CLOCKS_PER_BAR`` grid positions.
-    * ``master`` (a :class:`hitl.midi_clock.MidiClockMaster`) -- the host is the clock master;
-      one pulse per grid position on one absolute schedule, no realtime Start/Stop here.
+    * ``master`` (a :class:`hitl.midi_clock.MidiClockMaster`) -- the host is the clock master.
+      With the master's **continuous pump running**, the phase *waits* on the pulses the pump owes
+      (one grid covers the whole run, the shape
+      :func:`hitl.transport_clock.stream_pattern_for_bars` documents); a phase that also sent its
+      own pulses would double-drive the device. Without a pump the phase sends its own pulses on one
+      absolute schedule, as before. No realtime Start/Stop here.
     * ``wall_clock_tempo_bpm`` set -- unchanged: pace from wall time.
     * none of them -- unchanged: wait on ``in_port`` clock messages.
+
+    ``grid_origin_index`` names the pacing grid position of the **take origin** (the grid position
+    the device counts its ticks from): the pulse a realtime Start made tick 0, or the reader's grid
+    position at the record start. Every fixture step then keeps its **take-relative** tick -- step
+    ``s`` on grid ``origin + step_clocks * s + 1`` -- so a host that reaches this streamer late
+    emits the already-due steps at once and the rest still land on their own ticks, instead of the
+    whole fixture sliding by the host's delay. Without it the origin is "now" (the previous shape),
+    which is what slides the phase.
 
     ``emit_immediate_first_step`` places step 0 on the first stream tick (tick 0 grid).
     ``stream_start_monotonic`` anchors wall-clock pacing to RECORDING confirmation time.
@@ -1857,12 +1929,22 @@ def _stream_fixture_record(
     clock_origin: Optional[float] = None
     clock_pulse_timeout_s = 0.5
     master_origin: Optional[float] = None
+    master_grid_origin: Optional[int] = None
     master_pulses_sent = 0
     master_bpm = wall_clock_tempo_bpm if (wall_clock_tempo_bpm or 0.0) > 0 else DEFAULT_MASTER_BPM
     if clock is not None:
         # Integer grid position: `origin + 1` is then the very next pulse. A fractional
         # `index_now()` (the phase started mid-interval) would set the first step one pulse late.
-        clock_origin = float(int(clock.index_now()))
+        # `grid_origin_index` is the take origin's grid position when the caller knows it: the
+        # steps then stay on the take's own ticks and the already-due ones go out at once, instead
+        # of the whole fixture sliding by the host's delay
+        # (`captures/i3b-seeded-edit-t8s4-11`: the fixture landed at ticks 378-1721 because the
+        # phase origin was "now", 378 ticks after the take origin of the 1536-tick request).
+        clock_origin = (
+            float(grid_origin_index)
+            if grid_origin_index is not None
+            else float(int(clock.index_now()))
+        )
         # The reader's index keeps moving with time, so a dropout needs no extra budget; this only
         # bounds a clock that stopped for good.
         clock_pulse_timeout_s = max(0.5, 4.0 * (clock.period() or 0.0))
@@ -1905,18 +1987,37 @@ def _stream_fixture_record(
             ):
                 break
         elif master is not None:
-            # Host-paced: pulse `phase_clock + 1` is grid position `clock_origin + phase_clock + 1`,
-            # on one absolute schedule so the per-call send overhead cannot accumulate into drift.
-            if master_origin is None:
-                master_origin = time.perf_counter()
-            master.send_pulses(
-                1,
-                bpm=master_bpm,
-                abort=abort,
-                deadline_origin=master_origin,
-                deadline_index=master_pulses_sent,
-            )
-            master_pulses_sent += 1
+            # Host-paced: pulse `phase_clock + 1` is grid position `origin + phase_clock + 1`, on
+            if _master_pump_running(master):
+                # One grid covers the whole run (the pump's), so the phase **waits** on the pulses
+                # the pump owes: sending its own as well double-drives the device
+                # (`captures/i3b-seeded-edit-t8s4-13` recorded 768 ticks per 0.40 s -- 1 920 ticks/s
+                # against a 300 BPM request -- and stored the fixture at 2x spacing,
+                # `REVT,8/392/776/1160/1736/...`). Waiting is the shape
+                # `hitl.transport_clock.stream_pattern_for_bars` documents for a running pump.
+                if master_grid_origin is None:
+                    master_grid_origin = (
+                        int(grid_origin_index)
+                        if grid_origin_index is not None
+                        else int(master.pulses_sent())
+                    )
+                if not master.wait_pulse(
+                    master_grid_origin + phase_clock + 1,
+                    timeout_s=clock_pulse_timeout_s,
+                    abort=abort,
+                ):
+                    break
+            else:
+                if master_origin is None:
+                    master_origin = time.perf_counter()
+                master.send_pulses(
+                    1,
+                    bpm=master_bpm,
+                    abort=abort,
+                    deadline_origin=master_origin,
+                    deadline_index=master_pulses_sent,
+                )
+                master_pulses_sent += 1
         elif seconds_per_clock is not None:
             time.sleep(seconds_per_clock)
         else:

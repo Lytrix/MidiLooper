@@ -423,6 +423,8 @@ void test_c4_blocked_priority_head_does_not_stall_a_startable_request() {
 
   Track& track = trackManager.getSelectedTrack();
   track.ensureLoopsAllocated();
+  // Build the immutable SD payload before a live capture owner reserves its slot tail.
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 63));
 
   // Establish a genuine slot owner with no committed content: commit once to give slot 1 a playback
   // runtime, open an interval there, then production-reset the loop to empty. The reset clears content
@@ -452,7 +454,6 @@ void test_c4_blocked_priority_head_does_not_stall_a_startable_request() {
   TEST_ASSERT_FALSE_MESSAGE(track.getLoop(2).hasCommittedPasses(),
                             "the startable slot must start empty");
 
-  TEST_ASSERT_TRUE_MESSAGE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 63), setupMsg);
   // Both requests enter through the **forced** boot entry: this fixture is about queue ordering, so its
   // input queue is stated explicitly. A1.2/A1.3 are the payload-admission fixtures.
   TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 1, 0));

@@ -10,7 +10,11 @@ admits the validated job's Track/slot, then wakes the deferred writer. Playing, 
 retargeted raw-only and superseded-causal-base transfers use this boundary; cleanup cannot
 replay it. Live successor capture or UI selection does not redirect the request. Queue admission
 is a request for later serialization, not proof that the committed revision has reached SD.
-Record still uses its synchronous publication route pending the shared-finalization migration.
+Record uses the same deferred chain: `stepDeferredRecordPublication` publishes the immutable
+pass, queues its Snapshot/persistence work, and releases the interaction FIFO synchronously.
+The slot-owned presentation retains frozen-reader/root-return and bounded extent-release duties
+independently; FIFO empty is not a persistence-idle or reader-retirement fence. See
+[Record finalization and presentation lifetimes](../Authority/Architecture/Playback.md#record-finalization-and-presentation-lifetimes).
 
 ---
 
@@ -150,6 +154,43 @@ flowchart TB
 ---
 
 ## Scheduler rules (`processDeferredSaveState`)
+
+### Bounded forward save serialization
+
+The LSV1 tail's existing gather grain now checks at most16 membership buckets/pages
+and processes at mostone populated page. Null buckets no longer require one owner
+opportunity each. `maxGrains=1` and the worker/main cadence and time budgets stay.
+Payload writes resume with existing scalar record/bar/byte cursors, assemble at
+most512 local output bytes and acknowledge cursor progress only after sink success;
+they do not replay the already-emitted prefix. The monolithic writer remains the
+byte-equivalence oracle and compatibility path.
+
+Revision layout records occupied identities without serializing to measure. Private
+LoopSlot lengths are patched from actual output before final SlotIndex/footerCRC
+and validation; one completed body patch yields. Failed patch cannot publish
+catalog/provenance. Format, source admission and streamed CRC convention are unchanged.
+No new resident cache/buffer or scheduler. Local native reduction: sparse24bar
+fixture3102→199turns with identical bytes. Approved optimizedimage is now installed:
+matching41tail/152bar workload Save44.656534→14.862218s (3.0047×faster); owner confirmed
+responsive visible completion and acceptable wait. This is one stopped checkpoint
+workload, not a general deadline or full hardware byte-parity guarantee.
+[I4 — measured hardware comparison](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/OPTIMIZED-HARDWARE.md).
+[DEC-118 — bounded forward save serialization](../DECISION_LOG.md#dec-118--bounded-forward-save-serialization) /
+[I4 — local execution and device gate](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/SERIALIZER-OPTIMIZATION.md).
+
+Main-loop admission uses `MidiServiceDrain::serviceDeferredPersistenceTurn`: workspace
+work **or pending/in-progress revision commit/load** receives the existing guarded
+Persistence owner opportunity. `hasDeferredSaveWork()` remains workspace-only.
+Idle workspace priority, owner rotation, heavy-load-frame, post-overdub/STOPPING
+denials and the sealed-chunk route are unchanged; the worker retains its own
+SD/load/capture gates and budgets. Admission is not job completion.
+
+After revision validation, the header-only patch reopens the validated temp with
+`FILE_WRITE_BEGIN`, checks its unchanged size and seek success, and preserves its
+payload/footer before atomic publication. `openForRewrite` remains destructive
+by design and is never used for that header-only update. The existing streamed
+CRC convention is unchanged; the one-shot buffer helper is not its equivalent.
+[I4 — local checkpoint repair and device gate](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/ADMISSION-FIX.md).
 
 1. **Cooperative budget during capture** — when any track is `RECORDING` or `OVERDUBBING`, persistence runs with `Config::maxPersistenceMicrosActive` (~300 µs) per main-loop call instead of a transport hard block (DEC-020 Phase 3). At most one finite-state-machine sub-step per call while capture is active. A 300 µs budget checked between steps does not bound `LoopPersist` `VerifyAndRename` (`atomicRenameTempFile`).
 1b. **Persist / snapshot same-turn exclusion** — while PLAYING or OVERDUBBING and both persist and first-record snapshot are pending, each main-loop turn runs one owner. Mid-pass chunk persist during capture is unchanged. `VerifyAndRename` stays one SD step.

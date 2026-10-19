@@ -97,7 +97,7 @@ bool TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
     // does not consume it.
     return false;
   }
-  tracks[trackIndex].startRecording(currentTick);
+  if (!tracks[trackIndex].startRecording(currentTick)) return false;
   releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex);
   reclaimUnreferencedDisabledPasses();
   return true;
@@ -233,6 +233,25 @@ bool TrackManager::hasActiveOrPendingCapture() const {
   }
   return false;
 }
+
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#if defined(__IMXRT1062__)
+FLASHMEM
+#endif
+uint8_t TrackManager::physicalMotionGuardForHitl() const {
+  bool captureClear = !hasActiveOrPendingCapture();
+  bool stopped = pendingRecordGeometryMask == 0;
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    const Track& track = tracks[i];
+    if ((!track.isStopped() && !track.isEmpty()) || track.hasStopInFlight() ||
+        track.hasQueuedPlaybackStart() || pendingRecord[i] || pendingStop[i] || hasPendingSlotSwitch(i)) stopped = false;
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (pendingRecordSlot[i][slot]) { captureClear = false; stopped = false; }
+    }
+  }
+  return (captureClear ? 1u : 0u) | (stopped ? 2u : 0u);
+}
+#endif
 
 uint8_t TrackManager::getQueuedRecordingSlot(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS || !pendingRecord[trackIndex]) {

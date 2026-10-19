@@ -74,6 +74,55 @@ is required to enable it. Later lookahead plus fallback gaps is not continuous
 service. Capacity, service constants and fallback-removal prerequisites are unchanged.
 See the window change's `evidence/requester-retry-integration/ROLLING_HANDOFF.md`.
 
+## Native cold live-Capture qualification
+
+The existing Track window owner may publish a complete silent first-Record
+Capture current at native clock epoch 0, replacing only the unpublished empty
+raw shell through the existing three-view lifecycle. The clock reader uses its
+own provisional coverage period without redefining final Loop geometry. Served
+content/token stay immutable across accepted input; a mismatching real stop
+invalidates its positional frame while qualified frozen coverage takes over.
+Source hold and release follow the Track finalizer before publication and the slot-owned
+presentation after publication; see the contract below.
+This is a bounded native qualification increment, not running-epoch preparation,
+late-input service or default/device one-reader enablement. Default rolling
+remains OFF and compatibility emitters remain; existing bound classes and
+capacity/service/retirement gates are unchanged. Evidence:
+[I5 — cold publication and stop handoff](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-capture-publication/EXECUTION.md).
+
+## Record finalization and presentation lifetimes
+
+The stable slot-owned `CaptureStopPresentation` holds the sealed extent from admission.
+Before publication, the matching live Record finalizer authorizes frozen-source preparation
+and the existing playback reader adopts only completed windows. Non-empty `RecordPublished`
+activates the runtime presentation owner, releases the finalizer, and pops the interaction FIFO
+in that same transition. Reader/root-return duties do not keep an immutable slice in the FIFO.
+
+`serviceCaptureStopPresentations` retires through ordinary deferred turns independently of
+window-holder availability. While audible it yields until the matching current-root reader
+has actually taken over; this yield cannot prevent an accepted successor interaction from
+progressing. Stopped successors retain the existing bounded expiry. Partial one-chunk extent
+release remains active/owned until all chunks are returned, then drops the Loop borrow and
+re-arms the descriptor. Dormant boot/load descriptors reserve no pool tails; cold capture
+admission reserves the requested slot's tail. Default rolling remains OFF.
+
+Decision: **DEC-142 — Record presentation lifetime split**. Native/review/resource and device
+evidence: [presentation execution](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-18-rolling-base-2bar-rerun/PRESENTATION-OWNER-NATIVE.md).
+
+
+## Native input-continuation qualification
+
+DEC-122 — native-gated MIDI input continuation keeps one cold-provisioned
+MidiHandler-owned retained batch and routes at most one message per native
+qualified poll, preserving USB/DIN transport grouping and host FIFO. Pending
+input survives transport/epoch changes; this is not a playback publication owner
+or a physical clock-delay budget. `MIDI_INPUT_CONTINUATION_QUALIFICATION` defaults0
+and target activation is compile-time rejected. Default device polling/clock,
+rolling defaultOFF, compatibility readers and their bound classes remain unchanged.
+[I5 — native continuation mechanics](../../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/CONTINUATION-EXECUTION.md)
+records the actual state price, real-input/lifecycle verification and remaining
+main/checkpoint/source/physical timing gates; nativeGREEN is not device readiness.
+
 ## Invariants
 
 1. Sort keys use precomputed `playbackEventPhase` — not allocating projection in comparator.

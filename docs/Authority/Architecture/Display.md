@@ -48,6 +48,25 @@ Display **does not** mutate passes or session store.
 
 Window move should adjust step 2 only when representation revision unchanged.
 
+### Record publication gap with live Capture
+
+The no-published-root session-exit hold retains the complete **committed prefix**
+and its track/slot/interval metadata, not a frozen live overlay. The existing
+draw-source owner reapplies accepted Capture previews into its owned compose
+scratch and atomically publishes the composed frame. Preserving a frame through
+cache invalidation also preserves its source key. While replacement committed
+content is unavailable, the window owner keeps paint on that qualified interval;
+it does not combine an old-window prefix with new-window overlays. Complete root
+handoff permits source and viewport movement together. This is logical content/
+interval coherence, not a measured physical-pixel freshness limit.
+
+The gap includes the corresponding slot's stopped-source obligation before a
+Snapshot request exists, not only the queued Snapshot interval. Display queries
+existing Track stop metadata; it does not read playback-view storage. Live Record
+without such a stopped obligation and already-published sources keep their
+ordinary selection rules.
+[Production regression and verification](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-live-display-regression/EXECUTION.md).
+
 ## Overdub-stop handoff
 
 `Track::stopOverdubbing` publishes the sealed overdub pass before changing to

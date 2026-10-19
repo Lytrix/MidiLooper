@@ -149,13 +149,23 @@ size_t StorageManager::listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolder
 }
 
 size_t StorageManager::listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrowserListEntry* entries,
-                                                     size_t maxEntries) {
+                                                     size_t maxEntries, bool* readOk) {
+    if (readOk != nullptr) {
+        *readOk = false;
+    }
 #if BYPASS_STOP_UNDO_SAVE
     (void)entries;
     (void)maxEntries;
     return 0;
 #else
-    if (entries == nullptr || maxEntries == 0 || !SD.exists(SetRevisionCatalog::kSetsRoot)) {
+    if (entries == nullptr || maxEntries == 0) {
+        return 0;
+    }
+    if (!SD.exists(SetRevisionCatalog::kSetsRoot)) {
+        // A card with no Sets root at all is a successfully read **empty** library, not a failed read.
+        if (readOk != nullptr) {
+            *readOk = true;
+        }
         return 0;
     }
 
@@ -171,6 +181,10 @@ size_t StorageManager::listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrow
             const StorageIo indexIo = storageIoFromFileRead(indexFile);
             const bool indexOk = SetRevisionCatalog::readSetCatalogIndex(indexIo, catalogIndex);
             indexFile.close();
+            // The read completed: leaving this `false` would make the overlay retry an unreadable index.
+            if (readOk != nullptr) {
+                *readOk = indexOk;
+            }
             if (indexOk && catalogIndex.nextSetId > 1U) {
                 for (uint32_t candidateSetId = 1;
                      candidateSetId < catalogIndex.nextSetId && count < capacity; ++candidateSetId) {

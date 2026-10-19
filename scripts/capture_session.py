@@ -23,6 +23,7 @@ ALLOWED_HITL_COMMANDS = frozenset({
     "!LIB_OBSERVE_STATUS",
     "!STOP_STATUS",
     "!TRACK_STATUS",
+    "!OVERLAY_STATUS",
     # Read-only ring flush. The observation family is emitted through the capture
     # ring, so an idle device can hold it unflushed; the drain makes a completed
     # observation visible without mutating content.
@@ -118,6 +119,10 @@ def is_allowed_hitl_command(command: str) -> bool:
     limits = {
         "!SLOT_BYTES": (7, 7, 4294967295),
         "!CAPTURE_CONTENT_SLOT": (7,),
+        "!PIT_OBSERVE": (4294967295,),
+        "!PIT_MOTION": (4294967295,),
+        "!INGRESS_COST": (4294967295,),
+        "!ROLLING_RECORD_STATUS": (4294967295,),
     }.get(parts[0])
     if limits is None or len(parts) != len(limits) + 1:
         return False

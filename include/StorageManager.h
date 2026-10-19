@@ -100,8 +100,10 @@ public:
     static bool consumeAutoSaveBeforeLoadFolder(char* out, size_t outSize);
     static size_t listSavedSetFolderEntries(SavedSetCatalog::SavedSetFolderListEntry* entries,
                                             size_t maxEntries);
+    /// Set browser rows. `readOk` (when given) distinguishes a **completed** read -- including an empty
+    /// catalog -- from a failed one (no readable index), which the overlay must not cache as "no Sets".
     static size_t listSetRevisionBrowserEntries(SetRevisionCatalog::SetBrowserListEntry* entries,
-                                                size_t maxEntries);
+                                                size_t maxEntries, bool* readOk = nullptr);
     static size_t listSetRevisionHistoryEntries(
         uint16_t setId, SetRevisionCatalog::RevisionBrowserListEntry* entries, size_t maxEntries);
     static bool readSetRevisionHistoryBrowserMetadata(
@@ -157,6 +159,9 @@ public:
     static bool isRevisionLoadActive();
     static bool isOverlayCatalogReadAllowed();
     static SetBrowserOverlayPolicy::PersistencePhase getSetBrowserOverlayPersistencePhase();
+    /// True once per catalog publication: the overlay must re-read the Set rows instead of serving a cache
+    /// built before the Save (I4 — Set browser freshness).
+    static bool consumeSetCatalogChangePending();
     static bool consumeRevisionLoadDisplayRefreshPending();
 #if defined(SESSION_CAPTURE)
     static void requestCommitRevisionForHitl();

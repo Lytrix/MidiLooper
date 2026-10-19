@@ -80,9 +80,10 @@ class RunMetadataTests(unittest.TestCase):
                 else:
                     os.environ["PLATFORMIO_BUILD_DIR"] = old
 
-    def test_firmware_hash_from_workspace_local_override(self) -> None:
+    def test_firmware_hash_from_workspace_local_configured_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / 'platformio.ini').write_text('[platformio]\nbuild_dir = .pio-build-local-x\n')
             build = root / ".pio-build-local-x" / "teensy41-capture-serial"
             build.mkdir(parents=True)
             (build / "firmware.hex").write_bytes(b":00000001FF\n")
@@ -108,6 +109,29 @@ class RunMetadataTests(unittest.TestCase):
             self.assertIsNone(commit)
             self.assertIsNone(dirty)
 
+
+    def test_configured_image_beats_stale_default(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=os.environ.get('PI_SCRATCH_DIR')) as tmp, patch.dict(os.environ):
+            os.environ.pop('PLATFORMIO_BUILD_DIR', None)
+            root = Path(tmp)
+            stale = root / '.pio/build/test/firmware.hex'
+            active = root / 'active/test/firmware.hex'
+            for path in (stale, active):
+                path.parent.mkdir(parents=True); path.write_bytes(path.name.encode())
+            (root / 'platformio.ini').write_text('[platformio]\nbuild_dir = active\n')
+            self.assertEqual(firmware_hex_path(root, 'test'), active)
+            active.unlink()
+            self.assertIsNone(firmware_hex_path(root, 'test'))
+
+    def test_missing_explicit_override_does_not_fall_back(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=os.environ.get('PI_SCRATCH_DIR')) as tmp:
+            root = Path(tmp)
+            stale = root / '.pio/build/test/firmware.hex'
+            stale.parent.mkdir(parents=True); stale.write_bytes(b'stale')
+            with patch.dict(os.environ, PLATFORMIO_BUILD_DIR=str(root / 'absent')):
+                self.assertIsNone(firmware_hex_path(root, 'test'))
 
 if __name__ == "__main__":
     unittest.main()

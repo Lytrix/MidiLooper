@@ -2300,6 +2300,102 @@ void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
   releasePersistedLoopSnapshotChunks(oracle);
 }
 
+void test_i4_sparse_tail_batches_empty_buckets_with_bounded_grains() {
+  auto snapshot = LoopSnapshot::createEmpty(3, 24u * Config::TICKS_PER_BAR, 0, 1, 1);
+  std::vector<uint8_t> expected, actual;
+  MemoryStorageIo oracle(&expected), sink(&actual);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(oracle.io(), *snapshot));
+  auto* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  TEST_ASSERT_NOT_NULL(scratch);
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+  unsigned turns = 0;
+  auto result = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  while (result == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork && turns < 4000) {
+    testResetLsv1SaveWorkCounters();
+    const size_t before = actual.size();
+    result = stepLoopSnapshotBodyFormatV1SaveTail(sink.io(), *snapshot, *scratch, 0, 1);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(16, testLsv1SaveMembershipLookups());
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(1, testLsv1SavePopulatedPages());
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(512, actual.size() - before);
+    ++turns;
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, result);
+  printf("I4 sparse 24-bar tail: %u owner turns\n", turns);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(220, turns, "empty buckets must not cost one owner turn each");
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), actual.size());
+  TEST_ASSERT_EQUAL_MEMORY(expected.data(), actual.data(), expected.size());
+}
+
+void test_i4_payload_resumes_forward_and_failure_does_not_acknowledge_bytes() {
+  auto snapshot = buildLsv1SnapshotWithNoteCount(80);
+  std::vector<uint8_t> expected, actual;
+  MemoryStorageIo oracle(&expected), sink(&actual);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(oracle.io(), *snapshot));
+  auto* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+  auto result = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  while (testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(*scratch) == 0 &&
+         result == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork)
+    result = stepLoopSnapshotBodyFormatV1SaveTail(sink.io(), *snapshot, *scratch, 0, 1);
+  const uint32_t before = testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(*scratch);
+  StorageIo failure{[](const void*, size_t) { return false; }, nullptr};
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Failed,
+      stepLoopSnapshotBodyFormatV1SaveTail(failure, *snapshot, *scratch, 0, 1));
+  TEST_ASSERT_EQUAL_UINT32(before, testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(*scratch));
+  unsigned slices = 0;
+  while (result == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
+    testResetLsv1SaveWorkCounters();
+    const size_t sizeBefore = actual.size();
+    result = stepLoopSnapshotBodyFormatV1SaveTail(sink.io(), *snapshot, *scratch, 0, 1);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, testLsv1SaveMonolithicPayloadCalls(),
+                                   "resumed slices must not replay the monolithic serializer");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(512, actual.size() - sizeBefore);
+    TEST_ASSERT_TRUE(++slices < 100);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, result);
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), actual.size());
+  TEST_ASSERT_EQUAL_MEMORY(expected.data(), actual.data(), expected.size());
+}
+
+void test_i4_dense_membership_pages_and_id_array_slices_match_bytes() {
+  auto parent = LoopSnapshot::createEmpty(3, 2u * Config::TICKS_PER_BAR, 0, 257, 1);
+  LoopSnapshotChangeSet changes;
+  for (NoteId id = 1; id <= 256; ++id) {
+    SnapshotNoteChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next = {3, id, 60, 90, 0, 32};
+    changes.notes.push_back(change);
+  }
+  LoopSnapshotConstruction construction(parent, changes);
+  while (!construction.complete()) TEST_ASSERT_TRUE(construction.step(128));
+  auto snapshot = construction.freeze();
+  std::vector<uint8_t> expected, actual;
+  MemoryStorageIo oracle(&expected), sink(&actual);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(oracle.io(), *snapshot));
+  auto* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+  auto result = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  unsigned turns = 0, pages = 0;
+  while (result == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork && turns++ < 400) {
+    testResetLsv1SaveWorkCounters();
+    const size_t before = actual.size();
+    result = stepLoopSnapshotBodyFormatV1SaveTail(sink.io(), *snapshot, *scratch, 0, 1);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(16, testLsv1SaveMembershipLookups());
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(1, testLsv1SavePopulatedPages());
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(512, actual.size() - before);
+    pages += testLsv1SavePopulatedPages();
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32(1, pages);
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, result);
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), actual.size());
+  TEST_ASSERT_EQUAL_MEMORY(expected.data(), actual.data(), expected.size());
+  beginLoopSnapshotBodyFormatV1SaveGather(*parent, *scratch);
+  const size_t before = actual.size();
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Failed,
+      stepLoopSnapshotBodyFormatV1SaveTail(sink.io(), *parent, *scratch, 0, 2));
+  TEST_ASSERT_EQUAL_UINT32(before, actual.size());
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
     return decodeSlotBodyFile(argv[2]);
@@ -2351,6 +2447,9 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);
   RUN_TEST(test_lsv1_stepped_save_tail_resumes_write_payload_without_regather);
   RUN_TEST(test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic);
+  RUN_TEST(test_i4_sparse_tail_batches_empty_buckets_with_bounded_grains);
+  RUN_TEST(test_i4_payload_resumes_forward_and_failure_does_not_acknowledge_bytes);
+  RUN_TEST(test_i4_dense_membership_pages_and_id_array_slices_match_bytes);
   RUN_TEST(test_lsv1_load_commit_rebuilds_undo_and_preserves_root);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);

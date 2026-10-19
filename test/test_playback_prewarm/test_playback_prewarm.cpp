@@ -1,6 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#define PLAYBACK_SOURCE_MASK_QUALIFICATION 1
+#include "../test_support/PlaybackSourceMaskFixture.h"
 #include <unity.h>
 #include <random>
 
@@ -1050,6 +1052,155 @@ void test_order_fill_detects_rank_inversions_at_equal_tick() {
   for (size_t i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = builder.step(1);
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
   TEST_ASSERT_EQUAL_UINT16(1, storage.order[0]);
+}
+
+void test_private_delta_order_freezes_append_waves_without_prefix_replay() {
+  FixedPlaybackEventStorage storage; TEST_ASSERT_TRUE(storage.prewarm(8));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(200, 1, 62, 90)));
+  RuntimePlaybackOrderBuilder builder; TEST_ASSERT_TRUE(builder.begin(storage, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(2));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(10, 1, 60)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, builder.step(1));
+  TEST_ASSERT_EQUAL_UINT16(0, storage.order[0]);
+  TEST_ASSERT_EQUAL_UINT16(1, storage.order[1]);
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(90, 1, 64, 90)));
+  TEST_ASSERT_FALSE(builder.extendPrivateOrder()); // Cannot replace an in-flight frozen suffix.
+  size_t turns = 1;
+  while (!builder.complete() && turns < 30) { TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1)); ++turns; }
+  TEST_ASSERT_TRUE(builder.complete());
+  TEST_ASSERT_EQUAL_UINT32(7, turns); // One suffix fill + three merge writes + three copy-back writes.
+  TEST_ASSERT_EQUAL_UINT32(3, builder.orderedSourceExtent());
+  TEST_ASSERT_EQUAL_UINT32(3, builder.orderedEventCount());
+  const uint16_t first[] = {2, 0, 1}; TEST_ASSERT_EQUAL_UINT16_ARRAY(first, storage.order, 3);
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder());
+  turns = 0;
+  while (!builder.complete() && turns < 30) { TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1)); ++turns; }
+  TEST_ASSERT_TRUE(builder.complete()); TEST_ASSERT_EQUAL_UINT32(9, turns);
+  const uint16_t second[] = {2, 3, 0, 1}; TEST_ASSERT_EQUAL_UINT16_ARRAY(second, storage.order, 4);
+  TEST_ASSERT_EQUAL_UINT32(4, builder.orderedSourceExtent());
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder()); TEST_ASSERT_TRUE(builder.complete());
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(second, storage.order, 4);
+}
+
+void test_private_delta_order_wrap_off_on_and_index_write_quantum() {
+  FixedPlaybackEventStorage storage; TEST_ASSERT_TRUE(storage.prewarm(8));
+  for (size_t i = 0; i < storage.capacity; ++i) storage.order[i] = storage.mergeScratch[i] = UINT16_MAX;
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(0, 1, 60, 90)));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(20, 1, 62, 90)));
+  RuntimePlaybackOrderBuilder builder; TEST_ASSERT_TRUE(builder.begin(storage, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(2));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(20, 1, 62)));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(768, 1, 60)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder());
+  size_t turns = 0;
+  while (!builder.complete() && turns < 60) {
+    uint16_t oldOrder[8], oldScratch[8];
+    memcpy(oldOrder, storage.order, sizeof(oldOrder)); memcpy(oldScratch, storage.mergeScratch, sizeof(oldScratch));
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+    size_t changed = 0;
+    for (size_t i = 0; i < 8; ++i) changed += (oldOrder[i] != storage.order[i]) + (oldScratch[i] != storage.mergeScratch[i]);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(1, changed);
+    ++turns;
+  }
+  TEST_ASSERT_TRUE(builder.complete()); TEST_ASSERT_EQUAL_UINT32(14, turns);
+  const uint16_t expected[] = {3, 0, 2, 1}; // Wrap Off before On; same-tick Off before On.
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(expected, storage.order, 4);
+  TEST_ASSERT_EQUAL_UINT32(0, storage.phases[3]);
+}
+
+void test_private_delta_order_filters_and_refuses_non_private_or_stale_extent() {
+  FixedPlaybackEventStorage storage; TEST_ASSERT_TRUE(storage.prewarm(8));
+  RuntimePlaybackOrderBuilder builder;
+  TEST_ASSERT_FALSE(builder.extendPrivateOrder());
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(builder.begin(storage, 768)); TEST_ASSERT_FALSE(builder.extendPrivateOrder());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(1));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(1, 1, 62, 90))); storage.discardEvent(1);
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(1));
+  TEST_ASSERT_EQUAL_UINT32(1, builder.orderedEventCount()); TEST_ASSERT_EQUAL_UINT32(2, builder.orderedSourceExtent());
+  TEST_ASSERT_EQUAL_UINT16(0, storage.order[0]);
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(20, 1, 60)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrder()); storage.eventCount = 2;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+  TEST_ASSERT_FALSE(builder.extendPrivateOrder());
+  uint16_t indexes[8] = {}, scratch[8] = {};
+  TEST_ASSERT_TRUE(builder.beginIndexes(storage, indexes, scratch, 768, nullptr));
+  while (!builder.complete()) TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(8));
+  TEST_ASSERT_FALSE(builder.extendPrivateOrder());
+  LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
+  auto& view = runtime.viewSetIfPrewarmed()->views[0];
+  TEST_ASSERT_TRUE(view.storage.append(MidiEvent::NoteOn(0, 1, 60, 90)));
+  TEST_ASSERT_TRUE(builder.begin(view, 768)); TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(8));
+  TEST_ASSERT_TRUE(view.complete); TEST_ASSERT_FALSE(builder.extendPrivateOrder()); TEST_ASSERT_TRUE(view.complete);
+}
+
+void test_private_delta_order_matrix_matches_independent_order_and_work_bound() {
+  for (auto mode : {RuntimePlaybackOrderMode::PlaybackPhase, RuntimePlaybackOrderMode::RawPlaybackTick,
+                    RuntimePlaybackOrderMode::CanonicalCaptureTick})
+    for (size_t prefix : {size_t(0), size_t(1), size_t(2), size_t(7), size_t(16)})
+      for (size_t delta : {size_t(0), size_t(1), size_t(2), size_t(3), size_t(9), size_t(33)})
+        for (size_t quantum : {size_t(1), size_t(3), size_t(48)}) {
+          FixedPlaybackEventStorage storage; TEST_ASSERT_TRUE(storage.prewarm(64));
+          uint32_t ranks[64]; for (size_t i = 0; i < 64; ++i) ranks[i] = 64 - i;
+          auto appendRow = [&](size_t i) {
+            const uint32_t tick = i % 4 == 0 ? 768 : (i % 4 == 1 ? 0 : (37 * i) % 769);
+            TEST_ASSERT_TRUE(storage.append(i % 3 == 0 ? MidiEvent::NoteOff(tick, 1, 60 + i % 12)
+                : MidiEvent::NoteOn(tick, 1, 60 + i % 12, 90)));
+            if (i % 5 == 2) storage.discardEvent(i);
+          };
+          RuntimePlaybackOrderBuilder builder;
+          auto assertIndependent = [&](size_t extent) {
+            uint16_t expected[64]; size_t retained = 0;
+            for (size_t i = 0; i < extent; ++i) if (storage.retained[i]) expected[retained++] = i;
+            std::sort(expected, expected + retained, [&](uint16_t a, uint16_t b) {
+              const auto& l = storage.events[a]; const auto& r = storage.events[b];
+              const uint32_t lp = mode == RuntimePlaybackOrderMode::PlaybackPhase ? l.tick % 768 : l.tick;
+              const uint32_t rp = mode == RuntimePlaybackOrderMode::PlaybackPhase ? r.tick % 768 : r.tick;
+              if (lp != rp) return lp < rp;
+              if (mode != RuntimePlaybackOrderMode::CanonicalCaptureTick) {
+                const unsigned lk = l.isNoteOff() ? 0 : 1, rk = r.isNoteOff() ? 0 : 1;
+                if (lk != rk) return lk < rk;
+                if (l.tick != r.tick) return l.tick < r.tick;
+                if (ranks[a] != ranks[b]) return ranks[a] < ranks[b];
+              }
+              return a < b;
+            });
+            TEST_ASSERT_EQUAL_UINT32(retained, builder.orderedEventCount());
+            if (retained != 0) TEST_ASSERT_EQUAL_UINT16_ARRAY(expected, storage.order, retained);
+          };
+          for (size_t i = 0; i < prefix; ++i) appendRow(i);
+          TEST_ASSERT_TRUE(builder.begin(storage, 768, ranks, mode));
+          size_t guard = 0;
+          while (!builder.complete() && guard++ < 200) TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(48));
+          TEST_ASSERT_TRUE(builder.complete());
+          const size_t prefixEvents = builder.orderedEventCount();
+          for (size_t i = prefix; i < prefix + delta; ++i) appendRow(i);
+          TEST_ASSERT_TRUE(builder.extendPrivateOrder());
+          const size_t work = RuntimePlaybackOrderBuilder::extensionWorkEntriesUpperBound(prefixEvents, delta);
+          const size_t limit = work == 0 ? 0 : 1 + (work - 1) / quantum;
+          size_t turns = 0; bool laterWave = false;
+          while (!builder.complete() && turns < limit) {
+            TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(quantum)); ++turns;
+            if (turns == 1 + (prefix + delta) % 7 && !builder.complete()) {
+              for (size_t i = prefix + delta; i < prefix + delta + 3; ++i) appendRow(i);
+              laterWave = true;
+            }
+          }
+          TEST_ASSERT_TRUE(builder.complete()); TEST_ASSERT_EQUAL_UINT32(prefix + delta, builder.orderedSourceExtent());
+          assertIndependent(prefix + delta);
+          if (laterWave) {
+            TEST_ASSERT_TRUE(builder.extendPrivateOrder()); guard = 0;
+            while (!builder.complete() && guard++ < 300) TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+            TEST_ASSERT_TRUE(builder.complete()); assertIndependent(prefix + delta + 3);
+          }
+        }
+  const size_t max = std::numeric_limits<size_t>::max();
+  TEST_ASSERT_EQUAL_UINT64(max, RuntimePlaybackOrderBuilder::extensionWorkEntriesUpperBound(max, 1));
+  TEST_ASSERT_EQUAL_UINT64(max, RuntimePlaybackOrderBuilder::extensionWorkEntriesUpperBound(1, max));
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimePlaybackOrderBuilder::extensionWorkEntriesUpperBound(max, 0));
 }
 
 void test_runtime_order_builder_yields_and_preserves_same_tick_off_before_on() {
@@ -6255,8 +6406,10 @@ void test_shared_lifecycle_retains_return_when_build_already_complete() {
   for (uint32_t bar = 0; bar < 3; ++bar) buildSharedTestBar(set.views[bar], bar);
   TEST_ASSERT_TRUE(set.lifecycle.retainCurrent(set.views));
   TEST_ASSERT_TRUE(set.handoffReadyCoverage());
-  TEST_ASSERT_EQUAL_UINT8(2, set.lifecycle.ready);
-  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, set.lifecycle.build);
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, set.lifecycle.ready);
+  TEST_ASSERT_EQUAL_UINT8(2, set.lifecycle.build);
+  TEST_ASSERT_FALSE(set.handoffReadyCoverage());
+  TEST_ASSERT_TRUE(set.publishCompletedBuildAsReady());
   TEST_ASSERT_TRUE(set.handoffReadyCoverage());
   TEST_ASSERT_EQUAL_UINT8(1, set.lifecycle.build);
   TEST_ASSERT_TRUE(set.views[0].complete);
@@ -6976,6 +7129,8 @@ void test_shared_raw_preparation_rotates_then_returns_only_after_final_binding()
   const auto* first = set.views[0].storage.events;
   TEST_ASSERT_FALSE(set.handoffReadyCoverage());
   TEST_ASSERT_TRUE(set.handoffReadyCoverage(PlaybackViewHandoffMode::Preparation));
+  // Private bar 2 needs its preparation owner's explicit publication.
+  TEST_ASSERT_TRUE(set.publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation));
   for (uint32_t bar = 2; bar <= 7; ++bar) {
     TEST_ASSERT_FALSE(set.handoffReadyCoverage());
     TEST_ASSERT_TRUE(set.handoffReadyCoverage(PlaybackViewHandoffMode::Preparation));
@@ -7468,6 +7623,153 @@ void test_capture_source_identity_distinguishes_same_size_revisions_and_other_or
   TEST_ASSERT_TRUE(capture == capture);
 }
 
+static void beginSmallLiveSource(Loop& loop, RuntimePlaybackView& view,
+                                 RuntimePlaybackViewBuild& build) {
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(view.prewarm(8));
+  const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  TEST_ASSERT_TRUE(build.begin(view, source,
+      {0, 7, nullptr, PlaybackWindowOrigin::Capture, source.captureContentToken},
+      {0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR}, {}, {},
+      RuntimePlaybackViewFillScope::PlaybackCoverage));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(8));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepOrder(8));
+}
+
+struct CapturePhaseStateTestAccess {
+  static void exhaustOnNextWrite(CapturePhaseState& phase) { phase.generation_ = UINT64_MAX; }
+};
+
+void test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin() {
+  for (unsigned action = 0; action < 4; ++action) {
+    Loop loop; loop.beginCapture(CapturePhase::Record);
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+    if (action == 3)
+      TEST_ASSERT_TRUE(loop.capture.store.append(MidiEvent::NoteOn(101, 1, 61, 100)));
+    const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+    if (action == 0) loop.capture.store.shiftAllTicks(5);
+    if (action == 1) loop.capture.phase = CapturePhase::Record;
+    if (action == 2) ++loop.startLoopTick;
+    if (action == 3) {
+      // Static API bypass, same row count and unchanged Loop content generation.
+      LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
+          loop.capture.store.chunkIds().data(), loop.capture.store.chunkIds().size(),
+          [](void*) { return NoteId(77); }, nullptr);
+    }
+    RuntimePlaybackView view; TEST_ASSERT_TRUE(view.prewarm(4));
+    RuntimePlaybackViewBuild build;
+    const PlaybackViewSourceIdentity identity{0, 7, nullptr, PlaybackWindowOrigin::Capture,
+                                              source.captureContentToken};
+    const PlaybackCoverageInterval coverage{0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR};
+    TEST_ASSERT_FALSE(build.begin(view, source, identity, coverage, {}, {}));
+    const auto fresh = RuntimePlaybackViewSource::fromLiveCapture(loop);
+    TEST_ASSERT_TRUE(build.begin(view, fresh, identity, coverage, {}, {}));
+    (void)build.stepFill(4); (void)build.stepOrder(4);
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+    TEST_ASSERT_EQUAL_UINT32(action == 0 ? 105 : 100, view.storage.events[0].tick);
+    build.discard(); loop.discardCapture();
+  }
+}
+
+void test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled() {
+  Loop loop; RuntimePlaybackView view; RuntimePlaybackViewBuild build;
+  beginSmallLiveSource(loop, view, build);
+  CapturePhaseState other; other = CapturePhase::Record;
+  const auto old = loop.capture.phase.generation();
+  loop.capture.phase = other;
+  const auto beforeSelf = loop.capture.phase.generation();
+  loop.capture.phase.operator=(loop.capture.phase);
+  TEST_ASSERT_NOT_EQUAL_UINT64(beforeSelf, loop.capture.phase.generation());
+  TEST_ASSERT_NOT_EQUAL_UINT64(old, loop.capture.phase.generation());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+  build.discard();
+  CapturePhaseStateTestAccess::exhaustOnNextWrite(loop.capture.phase);
+  loop.capture.phase = CapturePhase::Record;
+  TEST_ASSERT_EQUAL_UINT64(0, loop.capture.phase.generation());
+  TEST_ASSERT_NULL(RuntimePlaybackViewSource::fromLiveCapture(loop).context);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(300, 1, 7, 64)));
+  loop.capture.phase = CapturePhase::None; loop.capture.phase = CapturePhase::Record;
+  TEST_ASSERT_EQUAL_UINT64(0, loop.capture.phase.generation());
+  TEST_ASSERT_NULL(RuntimePlaybackViewSource::fromLiveCapture(loop).context);
+  TEST_ASSERT_EQUAL(3, loop.capture.store.size()); loop.discardCapture();
+}
+
+static unsigned liveOrdinalReads;
+static const MidiEvent& observeLiveOrdinalRead(const void* context, size_t row) {
+  ++liveOrdinalReads; return static_cast<const Loop*>(context)->capture.store.at(row);
+}
+void test_live_fill_charges_chunk_transition_and_never_calls_ordinal_reader() {
+  Loop loop; loop.beginCapture(CapturePhase::Record);
+  for (unsigned i = 0; i < 257; ++i)
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(i, 1, 7, 64)));
+  auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  source.eventAt = observeLiveOrdinalRead; liveOrdinalReads = 0;
+  RuntimePlaybackView view; TEST_ASSERT_TRUE(view.prewarm(257));
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(build.begin(view, source,
+      {0, 7, nullptr, PlaybackWindowOrigin::Capture, source.captureContentToken},
+      {0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR}, {}, {}));
+  unsigned grains = 0, advances = 0;
+  while (grains < 260 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) {
+    const size_t before = view.storage.eventCount;
+    (void)build.stepFill(1); ++grains;
+    const size_t after = view.storage.eventCount;
+    TEST_ASSERT_TRUE(after == before || after == before + 1);
+    if (after == before) ++advances;
+  }
+  TEST_ASSERT_EQUAL(258, grains); TEST_ASSERT_EQUAL(1, advances);
+  TEST_ASSERT_EQUAL(0, liveOrdinalReads); TEST_ASSERT_EQUAL(257, view.storage.eventCount);
+  for (unsigned i = 0; i < 257; ++i) TEST_ASSERT_EQUAL_UINT32(i, view.storage.events[i].tick);
+  for (unsigned i = 0; i < 200 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++i)
+    (void)build.stepOrder(64);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_TRUE(build.ownsLiveCaptureBorrow());
+  build.discard(); TEST_ASSERT_FALSE(build.ownsLiveCaptureBorrow()); loop.discardCapture();
+}
+
+void test_live_source_phase_reopen_and_same_phase_assignment_cannot_revive_receipt() {
+  for (unsigned action = 0; action < 2; ++action) {
+    Loop loop; RuntimePlaybackView view; RuntimePlaybackViewBuild build;
+    beginSmallLiveSource(loop, view, build);
+    const auto token = loop.captureContentGeneration();
+    if (action == 0) loop.capture.phase = CapturePhase::None;
+    loop.capture.phase = CapturePhase::Record;
+    TEST_ASSERT_EQUAL_UINT64(token, loop.captureContentGeneration());
+    TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+    TEST_ASSERT_FALSE(view.published);
+    build.discard(); loop.discardCapture();
+  }
+}
+
+void test_live_source_projection_changes_refuse_same_count_completed_candidate() {
+  for (unsigned field = 0; field < 3; ++field) {
+    Loop loop; RuntimePlaybackView view; RuntimePlaybackViewBuild build;
+    beginSmallLiveSource(loop, view, build);
+    const auto token = loop.captureContentGeneration();
+    if (field == 0) ++loop.startLoopTick;
+    if (field == 1) ++loop.loopStartTick;
+    if (field == 2) loop.loopLengthTicks = 2 * Config::TICKS_PER_BAR;
+    TEST_ASSERT_EQUAL_UINT64(token, loop.captureContentGeneration());
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+    TEST_ASSERT_EQUAL_UINT32(100, loop.capture.store.at(0).tick);
+    build.discard(); loop.discardCapture();
+  }
+}
+
+void test_live_source_direct_store_rewrite_refuses_without_loop_token_change() {
+  Loop loop; RuntimePlaybackView view; RuntimePlaybackViewBuild build;
+  beginSmallLiveSource(loop, view, build);
+  const auto token = loop.captureContentGeneration();
+  loop.capture.store.shiftAllTicks(5);
+  TEST_ASSERT_EQUAL_UINT64(token, loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL_UINT32(105, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+  build.discard(); loop.discardCapture();
+}
+
 void test_live_capture_borrow_denies_same_count_sort_and_rebuilds_privately() {
   LoopEventStore::initPool();
   Loop loop;
@@ -7788,8 +8090,32 @@ void test_legacy_record_adopter_cannot_reidentify_frozen_capture_ready() {
 #define INVENTORY_ADOPTION_WORKER_HARNESS 1
 #include "../test_note_edit_entry_boundary/inventory_adoption.inc"
 
+#include "live_source_call.inc"
+#include "destination_reuse_call.inc"
+#include "acquisition_call.inc"
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_record_direct_writers_refuse_executing_builder_before_role_mutation);
+  RUN_TEST(test_bridge_cancelled_preparation_does_not_cleanup_selected_storage);
+  RUN_TEST(test_bridge_service_revalidates_ready_role_after_unmasked_adoption);
+  RUN_TEST(test_preparation_acquires_before_begin_and_busy_reset_cancels_both_lanes);
+  RUN_TEST(test_preparation_cancellation_rejects_completed_destination_and_late_entry);
+  RUN_TEST(test_record_direct_writers_and_lease_release_refuse_preparation_before_begin);
+  RUN_TEST(test_live_build_cancellation_during_begin_is_not_lost);
+  RUN_TEST(test_build_discard_preserves_repurposed_destination_generation);
+  RUN_TEST(test_build_query_rejects_repurposed_destination_generation);
+  RUN_TEST(test_live_build_cancellation_during_fill_keeps_executing_state_retained);
+  RUN_TEST(test_live_build_runtime_reset_during_call_refuses_before_destructive_work);
+  RUN_TEST(test_live_build_order_and_complete_query_cancel_without_publishing);
+  RUN_TEST(test_live_build_repeated_in_call_discard_is_terminal);
+  RUN_TEST(test_live_build_reentry_and_conflicting_preserve_requests_refuse);
+  RUN_TEST(test_live_source_masks_restore_and_private_fill_yields_between_rows);
+  RUN_TEST(test_live_source_row_transaction_defers_rewrite_then_refuses_stale_work);
+  RUN_TEST(test_live_source_descriptor_and_currency_refuse_post_snapshot_mutation);
+  RUN_TEST(test_private_delta_order_freezes_append_waves_without_prefix_replay);
+  RUN_TEST(test_private_delta_order_wrap_off_on_and_index_write_quantum);
+  RUN_TEST(test_private_delta_order_filters_and_refuses_non_private_or_stale_extent);
+  RUN_TEST(test_private_delta_order_matrix_matches_independent_order_and_work_bound);
   RUN_TEST(test_adoption_prepared_real_ready_committed_recycle_owner_refuse);
   RUN_TEST(test_adoption_preserved_full_grant_future_worker_begin_commit);
   RUN_TEST(test_pending_box_admission_qualification_and_row_grains);
@@ -7805,6 +8131,12 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_binding_denies_rebound_cursor_overflow_and_published_destination);
   RUN_TEST(test_snapshot_binding_empty_window_completes_and_costs_saturate);
   RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
+  RUN_TEST(test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin);
+  RUN_TEST(test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled);
+  RUN_TEST(test_live_fill_charges_chunk_transition_and_never_calls_ordinal_reader);
+  RUN_TEST(test_live_source_phase_reopen_and_same_phase_assignment_cannot_revive_receipt);
+  RUN_TEST(test_live_source_projection_changes_refuse_same_count_completed_candidate);
+  RUN_TEST(test_live_source_direct_store_rewrite_refuses_without_loop_token_change);
   RUN_TEST(test_live_capture_borrow_denies_same_count_sort_and_rebuilds_privately);
   RUN_TEST(test_frozen_range_descriptor_cannot_claim_live_capture_origin);
   RUN_TEST(test_live_capture_borrow_rechecks_after_fill_and_completion);

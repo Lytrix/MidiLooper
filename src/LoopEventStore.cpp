@@ -115,6 +115,7 @@ uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COU
 #endif
 bool LoopEventStore::poolReady_ = false;
 uint64_t LoopEventStore::poolLifetime_ = 1;
+uint64_t LoopEventStore::aliasGeneration_ = 1;
 uint8_t LoopEventStore::sdLoadStagingDepth_ = 0;
 uint8_t LoopEventStore::ephemeralSealDepth_ = 0;
 
@@ -167,7 +168,7 @@ void LoopEventStore::initPool() {
 }
 
 void LoopEventStore::resetPoolForTests() {
-  ++poolLifetime_;
+  advanceSourceToken(poolLifetime_);
   for (uint16_t block = 0; block < LoopEventStoreConfig::POOL_BLOCK_COUNT; ++block) {
     if (poolBlocks_[block] != nullptr) {
       poolFree(poolBlocks_[block]);
@@ -265,6 +266,7 @@ void LoopEventStore::releaseChunkReference(uint16_t id) {
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CaptureChunkIdList& refs) {
+  if (!refs.empty()) advanceSourceToken(aliasGeneration_);
   for (uint16_t id : refs) {
     releaseChunkReference(id);
     tryFreeChunk(id);
@@ -272,6 +274,7 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CaptureChu
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CommittedChunkIdList& refs) {
+  if (!refs.empty()) advanceSourceToken(aliasGeneration_);
   for (uint16_t id : refs) {
     releaseChunkReference(id);
     tryFreeChunk(id);
@@ -490,11 +493,66 @@ EventChunk& LoopEventStore::chunk(uint16_t id) { return chunkSlot(id); }
 
 const EventChunk& LoopEventStore::chunk(uint16_t id) const { return chunkSlot(id); }
 
+void LoopEventStore::advanceSourceToken(uint64_t& token) {
+  if (token) token = token == UINT64_MAX ? 0 : token + 1;
+}
+
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::invalidateSourcePrefix() {
+  advanceSourceToken(prefixGeneration_);
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsSourceCursor(
+    const LoopEventStoreSourceCursor& c) const {
+  // Never dereference c.owner_: the caller supplies a physically retained receiver.
+  return c.owner_ == this && c.prefix_ && c.alias_ && c.pool_ &&
+      c.prefix_ == prefixGeneration_ && c.alias_ == aliasGeneration_ &&
+      c.pool_ == poolLifetime_ && c.extent_ <= eventCount_ && c.position_ <= c.extent_ &&
+      (!capturePoolLifetime_ || capturePoolLifetime_ == poolLifetime_);
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginSourceCursor(
+    LoopEventStoreSourceCursor& c) const {
+  if (c.owner_ || !prefixGeneration_ || !aliasGeneration_ || !poolLifetime_ ||
+      (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_) ||
+      (eventCount_ && !poolReady_)) return false;
+  c.owner_ = this; c.prefix_ = prefixGeneration_; c.alias_ = aliasGeneration_;
+  c.pool_ = poolLifetime_; c.extent_ = eventCount_;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::extendSourceCursor(
+    LoopEventStoreSourceCursor& c) const {
+  if (!ownsSourceCursor(c)) return false;
+  c.extent_ = eventCount_;
+  return true;
+}
+
+LoopEventStoreSourceResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepSourceCursor(
+    LoopEventStoreSourceCursor& c, MidiEvent& out) const {
+  using Result = LoopEventStoreSourceResult;
+  if (!ownsSourceCursor(c)) return Result::Denied;
+  if (c.position_ == c.extent_) return Result::End;
+  if (!poolReady_ || c.chunk_ >= chunkIds_.size()) return Result::Denied;
+  const uint16_t id = chunkIds_[c.chunk_];
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+      !poolChunkRefCount_[id]) return Result::Denied;
+  const auto& source = chunk(id);
+  if (source.used > LoopEventStoreConfig::CHUNK_CAPACITY || c.row_ > source.used)
+    return Result::Denied;
+  if (c.row_ == source.used) {
+    ++c.chunk_; c.row_ = 0;
+    return Result::Chunk;
+  }
+  out = source.events[c.row_++]; ++c.position_;
+  return Result::Row;
+}
+
 void LoopEventStore::invalidateChunkCaptureIndex(uint16_t id) {
   chunkSlot(id).captureIndexValid = 0;
 }
 
 void LoopEventStore::invalidateCaptureIndex() {
+  invalidateSourcePrefix();
   for (uint16_t id : chunkIds_) invalidateChunkCaptureIndex(id);
 }
 
@@ -686,6 +744,7 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
   if (!quantum || c.phase_ == Phase::Denied || c.phase_ == Phase::Idle)
     return LoopEventStoreRewriteResult::Denied;
   if (c.phase_ == Phase::Complete) return LoopEventStoreRewriteResult::Complete;
+  invalidateSourcePrefix();
   auto validChunk = [&](size_t i) {
     if (i >= chunkIds_.size()) return false;
     const auto id = chunkIds_[i];
@@ -876,6 +935,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::markPrivateFilterPair(
   auto* a = privateFilterRow(c, first);
   auto* b = privateFilterRow(c, second);
   if (!a || !b) return false;
+  invalidateSourcePrefix();
   a->tick = kPrivateFilterRemovedTick;
   b->tick = kPrivateFilterRemovedTick;
   return true;
@@ -888,6 +948,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::assignPrivateNoteId(
   auto* row = privateFilterRow(c, ordinal);
   if (!row || row->tick == kPrivateFilterRemovedTick) return false;
   if (!row->isNoteOn() || row->noteId != kInvalidNoteId) return false;
+  invalidateSourcePrefix();
   row->noteId = id;
   return true;
 }
@@ -908,6 +969,7 @@ LoopEventStoreFilterResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivate
   if (!quantum || c.phase_ == Phase::Idle || c.phase_ == Phase::Denied) return Result::Denied;
   if (c.phase_ == Phase::Complete) return Result::Complete;
   if (c.phase_ == Phase::Input) return Result::InputReady;
+  invalidateSourcePrefix();
   while (c.lastStepUnits_ < quantum) {
     ++c.lastStepUnits_;
     if (c.phase_ == Phase::Chunks) {
@@ -1001,6 +1063,7 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewrit
     return LoopEventStoreRewriteResult::Denied;
   }
 
+  invalidateSourcePrefix();
   if (cursor.trimming) {
     if (cursor.chunkIndex >= chunkIds_.size()) {
       eventCount_ = sourceCount;
@@ -1110,6 +1173,7 @@ size_t LoopEventStore::firstIndexForBar(uint32_t bar) const {
 }
 
 void LoopEventStore::clear() {
+  invalidateSourcePrefix();
   ++ownershipGeneration_;
   if (!capturePoolLifetime_ || capturePoolLifetime_ == poolLifetime_) {
     for (uint16_t id : chunkIds_) freeChunk(id);
@@ -1123,6 +1187,7 @@ void LoopEventStore::clear() {
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksTo(CaptureChunkIdList& dest) {
+  invalidateSourcePrefix();
   releaseChunkRefs(dest);
   dest.clear();
 
@@ -1160,6 +1225,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginCommittedChunkTransfer(
   cursor.generation_ = &generation;
   cursor.expectedGeneration_ = generation;
   cursor.poolLifetime_ = poolLifetime_;
+  invalidateSourcePrefix();
   cursor.ownershipGeneration_ = ++ownershipGeneration_;
   cursor.remainingChunks_ = chunkIds_.size();
   cursor.remainingEvents_ = eventCount_;
@@ -1178,6 +1244,7 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepCommit
     return LoopEventStoreRewriteResult::Denied;
   if (cursor.complete_) return LoopEventStoreRewriteResult::Complete;
   if (!cursor.active_ || quantum == 0) return LoopEventStoreRewriteResult::Denied;
+  invalidateSourcePrefix();
   auto& destination = *cursor.destination_;
   while (quantum) {
     if (!chunkIds_.empty()) {
@@ -1217,6 +1284,7 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepCommit
 }
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(CommittedChunkIdList& dest) {
+  invalidateSourcePrefix();
   releaseChunkRefs(dest);
   dest.clear();
 
@@ -1285,6 +1353,7 @@ void LoopEventStore::adoptChunkIds(CaptureChunkIdList& ids) {
 }
 
 void LoopEventStore::adoptAll(LoopEventStore& other) {
+  other.invalidateSourcePrefix();
   clear();
   chunkIds_.swap(other.chunkIds_);
   eventCount_ = other.eventCount_;
@@ -1821,7 +1890,9 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInCh
     for (uint16_t j = 0; j < ec.used; ++j) {
       MidiEvent& evt = ec.events[j];
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
-        evt.noteId = supplier(ctx);
+        const NoteId assigned = supplier(ctx);
+        advanceSourceToken(aliasGeneration_);
+        evt.noteId = assigned;
       }
     }
   }
@@ -1844,6 +1915,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::readSealedChunkEvent(
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseLastCommittedChunkRef(
     CommittedChunkIdList& refs) {
   if (refs.empty()) return false;
+  advanceSourceToken(aliasGeneration_);
   const uint16_t id = refs.back();
   refs.pop_back();
   releaseChunkReference(id);
@@ -1902,18 +1974,21 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::resetCaptureExtentPreservingReser
       chunkSlot(id).used != 0) {
     return false;
   }
+  invalidateSourcePrefix();
   barIndexDirty_ = true;
   lastAppendedTick_ = 0;
   return true;
 }
 
-bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::sealCaptureRange(CaptureRange& destination) {
   if (!canSealCaptureRange(destination)) return false;
   auto& next = destination.storage_;
   const uint16_t tail = chunkIds_.back();
   destination.tailEnd_ = chunkSlot(tail).used;
   destination.eventCount_ = eventCount_;
   sealChunk(tail);
+  invalidateSourcePrefix();
+  next.invalidateSourcePrefix();
   ++ownershipGeneration_;
   ++next.ownershipGeneration_;
   chunkIds_.swap(next.chunkIds_);
@@ -2091,6 +2166,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::releaseGrain(si
 
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseCaptureChunkGrain() {
+  invalidateSourcePrefix();
   ++ownershipGeneration_;
   if (!chunkIds_.empty()) {
     const uint16_t id = chunkIds_.back();

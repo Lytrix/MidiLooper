@@ -6,6 +6,15 @@
 #include <cstdio>
 #include <cstring>
 
+// The strict folder parse is cold (boot rebuild only): keep it in flash so the new boot code does not
+// consume the RAM1/ITCM allowance (see `.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`). The Teensy core's
+// `FLASHMEM` attribute is spelled directly so this unit needs no Arduino header.
+#if defined(__IMXRT1062__)
+#define SET_CATALOG_COLD_MEM __attribute__((section(".flashmem")))
+#else
+#define SET_CATALOG_COLD_MEM
+#endif
+
 namespace SetRevisionCatalog {
 namespace {
 
@@ -203,6 +212,37 @@ bool parseSetIdFromFolderName(const char* folderName, uint16_t& setIdOut) {
   setIdOut = static_cast<uint16_t>(value);
   return true;
 }
+SET_CATALOG_COLD_MEM bool parseSetFolderBasename(const char* entryName, uint16_t& setIdOut) {
+  setIdOut = 0;
+  if (entryName == nullptr || entryName[0] == '\0') {
+    return false;
+  }
+  const char* base = entryName;
+  if (const char* slash = std::strrchr(entryName, '/')) {
+    base = slash + 1;
+  }
+  if (base[0] != 'S') {
+    return false;
+  }
+  unsigned value = 0;
+  size_t digits = 0;
+  for (const char* cursor = base + 1; *cursor != '\0'; ++cursor) {
+    if (*cursor < '0' || *cursor > '9') {
+      return false;
+    }
+    value = value * 10U + static_cast<unsigned>(*cursor - '0');
+    if (value > 0xFFFFU) {
+      return false;
+    }
+    ++digits;
+  }
+  if (digits == 0 || value == 0) {
+    return false;
+  }
+  setIdOut = static_cast<uint16_t>(value);
+  return true;
+}
+
 
 bool formatSetFolderPath(char* out, size_t outSize, uint16_t setId) {
   if (out == nullptr || outSize == 0) {

@@ -8,6 +8,11 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
     "test_midi_button_timing",
     "test_shared_capture_finalization",
+    # I5 — rolling Record diagnosis: the matched one-bar RecordPublished retirement reproducer compiles
+    # the finalization suite's real Track/Loop/storage closure with the rolling reader enabled, so it
+    # needs the same Arduino/SD hardware boundaries and the same dead-strip settings.
+    "test_rolling_record_retirement",
+    "test_playback_read_witness",
     # S3 gate: the runtime working-set acceptance suite drives the production admission paths
     # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the
     # same hardware boundaries as the continuous-capture harness it shares.
@@ -35,11 +40,36 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # button action, the real session/feedback seam and the real note-edit owner, so it needs the same
     # Arduino/SD hardware boundaries as the windowed-preview and continuous-capture harnesses.
     "test_note_edit_entry_boundary",
+    "test_live_capture_display_boundary",
+    # runtime-working-set-ownership I4 (Set browser index ownership): the suite links the catalog SD
+    # owners (`SetRevisionCatalog`, the legacy reconcile and the boot ensure) against the in-memory
+    # card, so it needs the same Arduino/SD hardware boundaries.
+    "test_set_catalog_index_ownership",
+    "test_midi_input_clock_integration",
+    "test_midi_ingress_receipts",
+    "test_midi_ingress_cost_probe",
 }
 if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
     env.Append(LINKFLAGS=["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"])
+    if env.get("PIOTEST_RUNNING_NAME") == "test_live_capture_display_boundary":
+        env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_live_capture_display_boundary/firmware"])
+    if env.get("PIOTEST_RUNNING_NAME") == "test_midi_input_clock_integration":
+        env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_midi_input_clock_integration/firmware"])
+    if env.get("PIOTEST_RUNNING_NAME") in {"test_midi_ingress_receipts", "test_midi_ingress_cost_probe"}:
+        env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_midi_ingress_receipts/firmware"])
+
+# Actual pinned transport bodies, generated only under this suite's build dir.
+if env.get("PIOTEST_RUNNING_NAME") == "test_midi_ingress_transport":
+    from pathlib import Path
+    sys.path.insert(0, env.subst("$PROJECT_DIR/scripts"))
+    from midi_ingress_native_fixture import generate
+    framework = Path(os.environ.get("MIDI_INGRESS_FRAMEWORK_ROOT",
+        str(Path.home() / ".platformio/packages/framework-arduinoteensy")))
+    generated = generate(framework, env.subst("$BUILD_DIR"))
+    env.Prepend(CPPPATH=[str(generated), "$PROJECT_DIR/test/test_midi_ingress_transport",
+                        str(framework / "libraries/MIDI/src")])
 
 # DEC-115 (pool containment): a **weak** native default for the projection gate's host symbol.
 # Suites that compile a projection translation unit (`Utils/NoteUtils.cpp`, `Utils/DisplayWindowUtils.cpp`,
@@ -64,4 +94,13 @@ if env.get("PIOTEST_RUNNING_NAME"):
         os.path.join("$BUILD_DIR", "envelope_instr_weak"),
         os.path.join("$PROJECT_DIR", "test", "test_support"),
         src_filter=["+<EnvelopeInstrWeakStub.cpp>"],
+    )
+
+# I5 Capture phase assignment uses the identical production body on host/target.
+# Out-of-line target placement avoids inline-COMDAT .flashmem section conflicts.
+if env.get("PIOTEST_RUNNING_NAME"):
+    env.BuildSources(
+        os.path.join("$BUILD_DIR", "capture_phase_state"),
+        os.path.join("$PROJECT_DIR", "src", "Loop"),
+        src_filter=["+<CapturePhaseState.cpp>"],
     )

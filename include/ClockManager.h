@@ -6,6 +6,15 @@
 
 #include <Arduino.h>
 #include "Utils/PlaybackDeadlineClock.h"
+#include "Utils/PlaybackPhysicalDeadline.h"
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#include "Utils/ClockPhysicalObservation.h"
+#endif
+
+enum class PhysicalClockReferenceStatus : uint8_t {
+  NotStarted, AwaitingMidiTimer, Ready, ResourceBusy, ConfigurationInvalid,
+  MidiTimerUnavailable, CounterExhausted, CounterWentBackwards, Suspended, EraExhausted
+};
 
 enum ClockSource {
   CLOCK_INTERNAL,
@@ -45,6 +54,19 @@ public:
   uint32_t getCurrentTick() const;
   /// Atomically captured extended tick and reset/source identity; preserves interrupt mask.
   PlaybackDeadlineClock getPlaybackDeadlineClock() const;
+  /// Run-mode elapsed observation only: not sender arrival or a qualified deadline.
+  /// Serializes the shared PIT lifetime latch and preserves prior interrupt mask.
+  PhysicalClockStamp getPhysicalClockStamp() const;
+  PhysicalClockReferenceStatus physicalClockReferenceStatus() const;
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+  /// Request-only physical/musical point bracket; not a deadline or wire-age guarantee.
+  ClockPhysicalObservation observePhysicalClockForHitl() const;
+#endif
+  /// Invalidate before any supported suspend/reconfiguration; setup must requalify.
+  void invalidatePhysicalClockReference();
+#if defined(PIO_UNIT_TEST_NATIVE)
+  void setPhysicalClockEraForTests(uint32_t era);
+#endif
   /// Sub-tick phase in [0, 1) from time since last clock pulse; display-only (not for MIDI/scheduling).
   float getDisplayTickPhase() const;
   uint32_t getMicrosPerTick() const;
@@ -65,6 +87,9 @@ private:
   void actuallyTransition(ClockSource from, ClockSource to);
   void advanceCurrentTick(uint32_t amount);
   void invalidateDeadlineClock();
+  void initializePhysicalClockReference(); // Singleton cold bootstrap; initializes NOLOAD state.
+  void preparePhysicalClockReference();
+  void finishPhysicalClockReference(bool midiTimerStarted);
 
   // --- Timing data ---
   uint32_t microsPerTick;

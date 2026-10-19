@@ -1,0 +1,47 @@
+{
+  "preflight": {
+    "selected_track_status": {
+      "us": 61422001,
+      "track": 7,
+      "slot": 3,
+      "state": "STOPPED",
+      "transport": 0
+    },
+    "overlay_status": {
+      "us": 61939151,
+      "open": 0,
+      "mode": 0,
+      "row": 0,
+      "set_id": 0,
+      "revision_id": 0,
+      "phase": 0
+    }
+  },
+  "guard": {
+    "id": 0,
+    "nonce": "ee00ef0ff24a416d9c8e77c969f92ca2",
+    "end_nonce": "4d114028b3fd4ef9ab78a6057987ae9e",
+    "s_ns": 2436208712119250,
+    "r_ns": 2436209185001250,
+    "response_rows": [
+      "#CAP,62459546,DIAG,pit_motion,0,2,2,1283842007,53493413,10,0,1,1050,15,1663,0,0"
+    ],
+    "status": 2,
+    "era": 2,
+    "rawTicks": 1283842007,
+    "beforeUs": 53493413,
+    "widthUs": 10,
+    "musicalTick": 0,
+    "epoch": 1,
+    "periodUs": 1050,
+    "guardBits": 15,
+    "configBits": 1663,
+    "transport": 0,
+    "source": 0,
+    "marker": "#CAP,62459546,DIAG,pit_motion,0,2,2,1283842007,53493413,10,0,1,1050,15,1663,0,0",
+    "capMicros": 62459546
+  },
+  "no_content_gestures": true,
+  "no_reset_requested": true,
+  "ok": true
+}

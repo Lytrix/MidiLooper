@@ -182,6 +182,17 @@ class TrackStatusTests(unittest.TestCase):
         self.assertTrue(is_allowed_hitl_command('!TRACK_STATUS'))
         self.assertFalse(is_allowed_hitl_command('!TRACK_STATUS 7'))
 
+    def test_broker_accepts_only_bounded_pit_request_ids(self):
+        from capture_session import is_allowed_hitl_command, parse_command_request
+        for command in ('!PIT_OBSERVE 0', '!PIT_OBSERVE 4294967295'):
+            self.assertTrue(is_allowed_hitl_command(command))
+            self.assertIsNotNone(parse_command_request('a' * 32 + ' ' + 'b' * 32 + ' ' + command + '\n'))
+        for command in ('!PIT_OBSERVE', '!PIT_OBSERVE ', '!PIT_OBSERVE -1',
+                        '!PIT_OBSERVE 4294967296', '!PIT_OBSERVE 1 2',
+                        '!PIT_OBSERVE 1x', '!PIT_OBSERVE 1\n!REBOOT',
+                        '!PIT_OBSERVE 00000000000'):
+            self.assertFalse(is_allowed_hitl_command(command), command)
+
     def _guard(self, statuses):
         from hitl.scenarios.note_edit_reselect_stacked import _ensure_target_playing
         capture = SimpleNamespace(selected_track_status=lambda **_kw: statuses.pop(0) if statuses else None)
@@ -215,7 +226,13 @@ class TrackStatusTests(unittest.TestCase):
         import io
         import capture_session as broker
         source = (Path(__file__).resolve().parent.parent / 'src/StorageManager/StorageManagerHitlSerial.cpp').read_text()
-        self.assertIn('if (processLiveObservationCommand(sHitlSerialLineBuffer, printSelectedTrackStatusForHitl))', source)
+        self.assertIn('if (processLiveObservationCommand(sHitlSerialLineBuffer, printSelectedTrackStatusForHitl,', source)
+        self.assertIn('printOverlayStatusForHitl, printPitObservationForHitl,', source)
+        dispatch = source.split('if (processLiveObservationCommand(sHitlSerialLineBuffer,', 1)[1].split(')) {', 1)[0]
+        self.assertIn('printPitMotionForHitl,', dispatch)
+        self.assertIn('#if MIDI_INGRESS_COST_QUALIFICATION', dispatch)
+        self.assertIn('printIngressCostForHitl', dispatch)
+        self.assertRegex(dispatch, r'#else\s+nullptr\s+#endif')
         sink = SimpleNamespace(is_open=True, writes=[])
         sink.write = sink.writes.append
         sink.flush = lambda: None

@@ -21,6 +21,8 @@ from hitl.stimuli import (
     stimulus_report_fields,
 )
 from hitl.verify.note_edit_reselect_stacked import (
+    direct_select_lands_on_step,
+    parse_direct_select,
     parse_select_apply,
     pitchbend_for_step_and_stack,
     select_apply_lands_on_step,
@@ -49,6 +51,7 @@ def _parse_scenario_args(args: object) -> argparse.Namespace:
     parser.add_argument("--track-number", type=int, default=5)
     parser.add_argument("--loop-slot", type=int, default=getattr(args, 'loop_slot', None))
     parser.add_argument("--midi-channel", type=int, default=None)
+    parser.add_argument("--record-bars", type=int, default=getattr(args, 'record_bars', None) or 2)
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument("--phase-wait-ms", type=int, default=500)
     parser.add_argument("--final-wait-ms", type=int, default=3000)
@@ -151,9 +154,28 @@ def _wait_select_apply(
     timeout_s: float = 2.0,
     want_note: bool = True,
 ) -> Optional[tuple[int, int]]:
+    """Wait for the device's own **live** select proof at ``expected_tick``.
+
+    The same event has two device rows, and only one of them is on the wire while the target
+    plays. `#DBG select_apply …` is deferred: `Logger.cpp` queues every `#DBG` line into the
+    capture ring, the timing-critical (PLAYING) flush transmits nothing, and `!TRACE_DRAIN` is
+    transport-gated -- so a `#DBG` row is readable only after the transport stops.
+    `captures/i3b-seeded-edit-t8s4-04` is that shape: the deselect's
+    `#DBG select_apply selected_tick=0 note_idx=-1 … apply=1 reason=empty_step` row is a drained
+    record (line 10835) that reaches the log after the leg aborted, while the same apply branch's
+    direct row `[75.579] [DEBUG] [MIDI] Select fader: selected empty step at tick 0 (no note)`
+    (line 6766) is present at the press. Accepting either channel keeps the proof exactly as
+    strict -- both rows are emitted from the same apply branch, so both mean "the device applied
+    this select" -- and neither an absent nor a wrong-tick answer passes.
+    """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         for line in collector.snapshot()[baseline:]:
+            direct = parse_direct_select(line)
+            if direct is not None and direct_select_lands_on_step(
+                direct[0], direct[1], expected_tick, want_note=want_note
+            ):
+                return direct[1], direct[0]
             parsed = parse_select_apply(line)
             if parsed is None:
                 continue
@@ -195,6 +217,109 @@ def _select_step_until_apply(
             return found
         time.sleep(FADER1_FEEDBACK_IGNORE_S)
     return None
+
+
+def _wait_for_expected_move(collector, *, baseline: int, source_tick: int,
+                            expected_tick: int, source_note_id: int, command_pitch: int,
+                            after_us: int, source_pitch: int = 67, timeout_s: float = 2.0) -> bool:
+    """Require current coarse input and its matching Move after the actual-send boundary."""
+    import re
+    from hitl.verify.note_edit_reselect_stacked import MOVE_ACTION_RE, MOVE_GEOMETRY_RE, _row_us
+
+    from hitl.legacy_edit_baseline import FADER_COARSE_CHANNEL_1BASED
+    received = re.compile(rf'Received pitchbend: ch={FADER_COARSE_CHANNEL_1BASED} value=(-?\d+)')
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        movement = command_us = None
+        for line in collector.snapshot()[baseline:]:
+            stamp = _row_us(line)
+            if stamp is None or stamp < after_us:
+                continue
+            command = received.search(line)
+            if command:
+                command_us = stamp if int(command.group(1)) == command_pitch else None
+                movement = None
+                continue
+            if command_us is None or stamp < command_us:
+                continue
+            if 'No note selected for coarse editing' in line:
+                return False
+            trace = MOVE_GEOMETRY_RE.search(line)
+            if trace:
+                movement = tuple(map(int, trace.groups()))
+            action = MOVE_ACTION_RE.search(line)
+            if action:
+                note_id, start, end, pitch = map(int, action.groups())
+                if (movement == (source_tick, expected_tick) and note_id == source_note_id and
+                        start == expected_tick and end > start and pitch == source_pitch):
+                    return True
+                movement = None
+        time.sleep(0.03)
+    return False
+
+
+def _select_source_and_move(out_port, collector, *, layout, source_step: int,
+                            dest_step: int, log_prefix: str) -> bool:
+    """A failed source confirmation cannot drive F2; failed F2 cannot drive deselect."""
+    from hitl.control_constants import SELECT_DEPENDENT_SETTLE_MS, TICKS_PER_16TH_STEP
+    from hitl.legacy_edit_baseline import (
+        EDIT_RECORD_FIXTURE, _fader1_select_fixture_note, _fader2_move_to_sixteenth_step,
+    )
+    from hitl.verify.note_edit_reselect_stacked import FOCUS_NOTE_RE, _row_us
+
+    source_tick = int(layout.step_to_tick.get(SOURCE_STEP, source_step * TICKS_PER_16TH_STEP))
+    source_pitch = next(note.pitch for note in EDIT_RECORD_FIXTURE if note.step == SOURCE_STEP)
+    source_baseline = len(collector.snapshot())
+    try:
+        source_confirmed = _fader1_select_fixture_note(
+            out_port, layout=layout, fixture_step=SOURCE_STEP, serial_collector=collector,
+        )
+    except ValueError as exc:
+        print(f'{log_prefix} source mapping refused: {exc}')
+        return False
+    if not source_confirmed:
+        print(f'{log_prefix} stable source unconfirmed; F2 refused')
+        return False
+    time.sleep(SELECT_DEPENDENT_SETTLE_MS / 1000.0)
+    time.sleep(FADER1_FEEDBACK_IGNORE_S)
+    focus = None
+    for line in collector.snapshot()[source_baseline:]:
+        match = FOCUS_NOTE_RE.search(line)
+        stamp = _row_us(line)
+        if match and stamp is not None and int(match.group(1)) > 0:
+            focus = (int(match.group(1)), stamp)
+    if focus is None:
+        print(f'{log_prefix} fresh source NoteId unconfirmed; F2 refused')
+        return False
+    move_tick = dest_step * TICKS_PER_16TH_STEP + source_tick % TICKS_PER_16TH_STEP
+    sent = None
+
+    def before_send():
+        nonlocal sent
+        snapshot = collector.snapshot()
+        stamps = [_row_us(line) for line in snapshot[source_baseline:]]
+        latest = max((stamp for stamp in stamps if stamp is not None), default=focus[1])
+        # Direct logger rows have millisecond precision; CAP rows have microseconds.
+        sent = (len(snapshot), latest // 1000 * 1000)
+
+    print(f'{log_prefix} F2 move source tick={source_tick} -> step={dest_step} tick={move_tick}')
+    try:
+        command_pitch = pitchbend_for_step_and_stack(dest_step, layout.loop_length, 0, 1)
+        _fader2_move_to_sixteenth_step(out_port, layout=layout, fixture_step=DEST_STEP,
+                                      serial_collector=collector, before_send=before_send)
+    except ValueError as exc:
+        print(f'{log_prefix} F2 mapping refused: {exc}')
+        return False
+    if sent is None:
+        print(f'{log_prefix} F2 send boundary unconfirmed; deselect/reselect refused')
+        return False
+    if not _wait_for_expected_move(collector, baseline=sent[0], source_tick=source_tick,
+                                  expected_tick=move_tick, source_note_id=focus[0],
+                                  after_us=sent[1], command_pitch=command_pitch, source_pitch=source_pitch):
+        print(f'{log_prefix} intended Move receipt missing; deselect/reselect refused')
+        return False
+    time.sleep(FADER1_FEEDBACK_IGNORE_S)
+    return True
 
 
 def _ensure_target_playing(
@@ -393,6 +518,7 @@ def run_note_edit_reselect_stacked(args: object) -> int:
         # helper must not issue a second toggle and stop the state just established.
 
 
+        verification_start = len(collector.snapshot())
         if not _ensure_note_edit_entered(
             out_port,
             collector,
@@ -427,38 +553,11 @@ def run_note_edit_reselect_stacked(args: object) -> int:
             f"dest={dest_step}@{dest_tick} empty={empty_step}@{empty_tick}"
         )
 
-        if not _fader1_select_fixture_note(
-            out_port,
-            layout=record_layout,
-            fixture_step=SOURCE_STEP,
-            serial_collector=collector,
+        if not _select_source_and_move(
+            out_port, collector, layout=record_layout, source_step=source_step,
+            dest_step=dest_step, log_prefix=log_prefix,
         ):
-            source_pb = pitchbend_for_step_and_stack(source_step, nav_length, 0, 1)
-            if (
-                _select_step_until_apply(
-                    out_port,
-                    collector,
-                    pitch=source_pb,
-                    expected_tick=source_tick,
-                    log_prefix=log_prefix,
-                    label=f"source sixteenth={source_step}",
-                    want_note=True,
-                )
-                is None
-            ):
-                print(f"{log_prefix} source select_apply missing")
-                return 1
-        time.sleep(SELECT_DEPENDENT_SETTLE_MS / 1000.0)
-        time.sleep(FADER1_FEEDBACK_IGNORE_S)
-
-        print(f"{log_prefix} F2 move source sixteenth {source_step} -> dest {dest_step}")
-        _fader2_move_to_sixteenth_step(
-            out_port,
-            layout=record_layout,
-            fixture_step=DEST_STEP,
-            serial_collector=collector,
-        )
-        time.sleep(FADER1_FEEDBACK_IGNORE_S)
+            return 1
 
         empty_pb = pitchbend_for_step_and_stack(empty_step, nav_length, 0, 1)
         if (
@@ -524,7 +623,12 @@ def run_note_edit_reselect_stacked(args: object) -> int:
         serial_path.write_text("\n".join(headered) + "\n", encoding="utf-8")
         print(f"{log_prefix} serial log: {serial_path}")
 
-        check = _verify(headered, args, dest_tick=dest_tick, empty_tick=empty_tick)
+        check = _verify(
+            headered, args, dest_tick=dest_tick, empty_tick=empty_tick,
+            source_tick=int(record_layout.step_to_tick.get(SOURCE_STEP, source_tick)),
+            dest_note_tick=int(record_layout.step_to_tick.get(DEST_STEP, dest_tick)),
+            after_index=verification_start + len(headered) - len(lines),
+        )
         report_path = out_dir / f"host_midi_hitl_note_edit_reselect_stacked_{stamp}.json"
         report_path.write_text(
             json.dumps(
@@ -549,7 +653,7 @@ def run_note_edit_reselect_stacked(args: object) -> int:
             )
         )
         if check.get("ok"):
-            print(f"{log_prefix} Result: PASS")
+            print(f"{log_prefix} Result: {check['verdict']}; unmeasured={check['unmeasured_cases']}")
             return 0
         print(f"{log_prefix} Result: FAIL — {check.get('issues', check)}")
         return 1
@@ -562,18 +666,52 @@ def run_note_edit_reselect_stacked(args: object) -> int:
 
 
 def verify_note_edit_reselect_stacked(lines: list[str], args: object) -> dict[str, object]:
+    """Replay the configured musical channel and real seed geometry, never a fallback guess."""
     from hitl.control_constants import TICKS_PER_16TH_STEP
 
-    layout = _layout_from_seed_lines(lines, object(), midi_channel=5)
-    dest_step = int(getattr(layout, "sixteenth_step_for", lambda _step: DEST_STEP)(DEST_STEP))
-    source_step = int(getattr(layout, "sixteenth_step_for", lambda _step: SOURCE_STEP)(SOURCE_STEP))
+    ns = _parse_scenario_args(args)
+    channel = int(getattr(args, "midi_channel", None) or ns.midi_channel or
+                  getattr(args, "track_number", None) or ns.track_number)
+    from hitl.control_constants import TICKS_PER_BAR
+    from host_midi_automation_edit_baseline import (
+        EDIT_RECORD_FIXTURE, _extract_last_recs_stop, _extract_revt_notes,
+    )
+    # Qualify observed rows first: the layout builder itself supplies fallback fixture ticks.
+    observed_lines = []
+    for line in lines:
+        if ',REVT,' in line:
+            parts = line.split(',')
+            try:
+                if len(parts) < 6 or int(parts[4]) != channel:
+                    continue
+            except ValueError:
+                continue
+        observed_lines.append(line)
+    stop = _extract_last_recs_stop(observed_lines)
+    notes = _extract_revt_notes(observed_lines)
+    bars = int(getattr(args, 'record_bars', None) or ns.record_bars)
+    intended_length = bars * TICKS_PER_BAR
+    if (stop is None or stop['final_length'] != intended_length or
+            len(notes) != len(EDIT_RECORD_FIXTURE) or
+            sorted(pitch for _, pitch in notes) != sorted(note.pitch for note in EDIT_RECORD_FIXTURE) or
+            any(tick < 0 or tick >= intended_length for tick, _ in notes)):
+        return {"ok": False, "verdict": "INCONCLUSIVE_CAPTURE",
+                "issues": ["observed_seed_inventory_unproven"], "qualification_complete": False}
+    layout = _layout_from_seed_lines(observed_lines, object(), midi_channel=channel)
+    ticks = getattr(layout, "step_to_tick", {})
+    if (SOURCE_STEP not in ticks or DEST_STEP not in ticks or
+            (ticks[SOURCE_STEP], 67) not in notes or (ticks[DEST_STEP], 64) not in notes):
+        return {"ok": False, "verdict": "INCONCLUSIVE_CAPTURE",
+                "issues": ["seed_layout_unproven"], "qualification_complete": False}
+    dest_step = layout.sixteenth_step_for(DEST_STEP)
+    source_step = layout.sixteenth_step_for(SOURCE_STEP)
     try:
         empty_step = _first_empty_sixteenth(layout, avoid={source_step, dest_step})
     except RuntimeError:
-        empty_step = 2
+        return {"ok": False, "verdict": "INCONCLUSIVE_CAPTURE",
+                "issues": ["seed_empty_step_unproven"], "qualification_complete": False}
     return _verify(
-        lines,
-        args,
-        dest_tick=dest_step * TICKS_PER_16TH_STEP,
+        lines, args, dest_tick=dest_step * TICKS_PER_16TH_STEP,
         empty_tick=empty_step * TICKS_PER_16TH_STEP,
+        source_tick=int(ticks[SOURCE_STEP]), dest_note_tick=int(ticks[DEST_STEP]),
     )

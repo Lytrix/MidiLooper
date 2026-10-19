@@ -3,6 +3,15 @@
 
 #include "SetBrowserOverlayPolicy.h"
 
+// The list-refresh decision runs once per paint frame while the overlay is open -- a UI cadence, not the
+// MIDI hot path -- so it stays in flash and spends no RAM1/ITCM allowance (see
+// `.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`).
+#if defined(__IMXRT1062__)
+#define SET_BROWSER_POLICY_COLD_MEM __attribute__((section(".flashmem")))
+#else
+#define SET_BROWSER_POLICY_COLD_MEM
+#endif
+
 namespace SetBrowserOverlayPolicy {
 
 Mode resolveActiveMode(const NavigationState& nav, bool dirtyPromptActive,
@@ -43,6 +52,35 @@ bool isOverlayLoadRequestBlocked(PersistencePhase phase, bool loadPending,
 
 bool shouldPreserveOverlayNavigationOnEnter(PersistencePhase phase) {
   return phase != PersistencePhase::Idle;
+}
+
+SET_BROWSER_POLICY_COLD_MEM ListRefreshAction resolveListRefreshAction(bool overlayOpen, bool cacheValid,
+                                                                      bool gateAllowed,
+                                          const ListRefreshState& state, uint32_t nowMs) {
+  if (!overlayOpen || cacheValid) {
+    return ListRefreshAction::Idle;
+  }
+  if (!gateAllowed) {
+    return ListRefreshAction::WaitForGate;
+  }
+  if (state.failedAttempts >= kListRefreshMaxFailedAttempts) {
+    return ListRefreshAction::GiveUp;
+  }
+  if (state.lastAttemptMs != 0 && (nowMs - state.lastAttemptMs) < kListRefreshRetryIntervalMs) {
+    return ListRefreshAction::Idle;
+  }
+  return ListRefreshAction::Refresh;
+}
+
+SET_BROWSER_POLICY_COLD_MEM void applyListRefreshResult(ListRefreshState& state, bool readOk, uint32_t nowMs) {
+  state.lastAttemptMs = nowMs;
+  if (readOk) {
+    state.failedAttempts = 0;
+    return;
+  }
+  if (state.failedAttempts < 255) {
+    ++state.failedAttempts;
+  }
 }
 
 void resetNavigation(NavigationState& nav) {

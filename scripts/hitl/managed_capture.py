@@ -200,6 +200,12 @@ class ManagedCaptureSession:
         # One outstanding read-only request at a time: the capture session is the
         # single serial owner, so overlap would make a response window ambiguous.
         self._pending_command_nonce: Optional[str] = None
+        self._deferred_midi_sessions: list[object] = []
+
+    def defer_midi_close(self, session: object) -> None:
+        """Retain ports until the canonical device shutdown and capture stop."""
+        if not any(item is session for item in self._deferred_midi_sessions):
+            self._deferred_midi_sessions.append(session)
 
     @property
     def session_log(self) -> Path | None:
@@ -423,6 +429,16 @@ class ManagedCaptureSession:
         rows = self.fenced_response(nonce, end_nonce, timeout_s=max(0.0, timeout_s))
         return selected_track_status(rows or [])
 
+    def overlay_status(self, *, timeout_s: float = 2.0) -> Optional[dict]:
+        """Fresh request-only overlay scalars; never infer live state from the ring."""
+        from hitl.serial.protocol import overlay_status
+        nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+        accepted, _detail = self.send_command('!OVERLAY_STATUS', nonce=nonce, end_nonce=end_nonce)
+        if not accepted:
+            return None
+        rows = self.fenced_response(nonce, end_nonce, timeout_s=max(0.0, timeout_s))
+        return overlay_status(rows or [])
+
     def drain_record_evidence(self, send_transport_stop: Callable[[], None], *,
                               timeout_s: float = 30.0) -> dict:
         """End-of-leg retrieval, while the same serial owner and MIDI port are open.
@@ -453,7 +469,8 @@ class ManagedCaptureSession:
         """
         result = {"complete": False, "reason": "stopped stats unavailable", "drains": 0,
                   "stopped_confirmed": False, "families": {}, "log_counts": {},
-                  "drain_retries": 0, "stalled_families": {}, "ring_loss": {}}
+                  "drain_retries": 0, "stalled_families": {}, "ring_loss": {},
+                  "stop_job_state": "unobserved", "last_stop_status": None}
         deadline = time.monotonic() + max(timeout_s, 0.0)
         previous = None
         previous_shortfall = None
@@ -520,6 +537,20 @@ class ManagedCaptureSession:
                 if status is None:
                     return result
                 idle = stopped_capture_queue_idle(status)
+                last_status = next((line for line in reversed(status) if line.startswith('#STOP_STATUS,')), None)
+                result['last_stop_status'] = last_status
+                if idle:
+                    result['stop_job_state'] = 'idle'
+                elif last_status is not None:
+                    fields = dict(part.split('=', 1) for part in last_status.split(',')[1:] if '=' in part)
+                    pending = fields.get('pending', '')
+                    queued = fields.get('queue', '').partition('/')[0]
+                    result['stop_job_state'] = (
+                        'pending' if (pending.isdigit() and int(pending) > 0) or
+                        (queued.isdigit() and int(queued) > 0) else 'unproven'
+                    )
+                else:
+                    result['stop_job_state'] = 'unobserved'
                 rows = request("!CAP_IDENTITY_STATS")
                 if rows is None:
                     return result
@@ -678,6 +709,15 @@ class ManagedCaptureSession:
         self.stop()
 
 
+def _retained_midi_output():
+    capture = active_managed_capture()
+    for session in reversed(getattr(capture, '_deferred_midi_sessions', ())):
+        port = getattr(session, 'out_port', None)
+        if port is not None:
+            return port
+    return None
+
+
 def stop_transport_and_observe_heap(
     session: "ManagedCaptureSession", *, midi_out_name: str = "Teensy", timeout_s: float = 8.0
 ) -> list[str]:
@@ -696,11 +736,15 @@ def stop_transport_and_observe_heap(
 
         from hitl.midi_io import _find_midi_port
 
-        out_port = mido.open_output(_find_midi_port(midi_out_name, "output"))
+        out_port = _retained_midi_output()
+        retained = out_port is not None
+        if not retained:
+            out_port = mido.open_output(_find_midi_port(midi_out_name, "output"))
         try:
             out_port.send(mido.Message("stop"))
         finally:
-            out_port.close()
+            if not retained:
+                out_port.close()
         time.sleep(0.5)
         nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
         accepted, detail = session.send_command("!HEAP_STATS", nonce=nonce, end_nonce=end_nonce)
@@ -896,9 +940,14 @@ def transport_stop_sender(config: HitlConfig, sent: dict) -> Callable[[], None]:
             return
         import mido
         from hitl.midi_io import _find_midi_port
-        port_name = _find_midi_port(config.midi_out_name, is_input=False)
-        with mido.open_output(port_name) as port:
-            port.send(mido.Message('stop'))
+        retained = _retained_midi_output()
+        if retained is not None:
+            port_name = config.midi_out_name
+            retained.send(mido.Message('stop'))
+        else:
+            port_name = _find_midi_port(config.midi_out_name, is_input=False)
+            with mido.open_output(port_name) as port:
+                port.send(mido.Message('stop'))
         # Cache only a successful boot-repair Stop. Teardown failures must reach
         # DeviceSession, which records disconnection and latches against reset.
         sent['value'] = True
@@ -966,6 +1015,68 @@ def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float,
     return int(outcome.get("code", 3))
 
 
+def _close_deferred_midi(sessions: list[object], out_dir: Path, *, timeout_s: float = 10.0) -> None:
+    """Only called after verified two-drain shutdown AND capture process closure.
+
+    A native MIDI close can hold the GIL, defeating a Python thread watchdog.
+    faulthandler's native watchdog exits nonzero with stacks in that case. The
+    pending receipt is never promoted to complete by a timeout or exception.
+    """
+    if not sessions:
+        return
+    import faulthandler
+
+    receipt = out_dir / 'midi-cleanup-result.json'
+    result = dict(ok=False, status='closing', completed=0, total=len(sessions))
+    def save():
+        receipt.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    def stage(name):
+        result['stage'] = name
+        save()
+        print(f'[hitl] deferred MIDI close: {name}', flush=True)
+    save()
+    with (out_dir / 'midi-close-stacks.log').open('w') as stacks:
+        faulthandler.dump_traceback_later(timeout_s, file=stacks, exit=True)
+        try:
+            for session in sessions:
+                session.close(on_stage=stage)
+                result['completed'] += 1
+                save()
+            result.update(ok=True, status='complete')
+            save()
+        except BaseException as exc:
+            result.update(status='failed', detail=repr(exc))
+            save()
+            raise
+        finally:
+            faulthandler.cancel_dump_traceback_later()
+
+
+@contextmanager
+def _capture_with_deferred_midi_cleanup(config: HitlConfig) -> Iterator[Path]:
+    capture = None
+    process = None
+    try:
+        with managed_capture_session(config) as log_path:
+            capture = active_managed_capture()
+            try:
+                yield log_path
+            finally:
+                # Keep the actual child handle even if stop clears its field.
+                process = getattr(capture, '_process', None)
+    finally:
+        # If the scenario raises, context exit still stops capture normally.
+        # Confirm the process is gone as well as the durable shutdown receipt;
+        # never arm a fatal host watchdog before device safety is established.
+        if capture is not None and getattr(capture, '_deferred_midi_sessions', None):
+            capture_closed = process is None or process.poll() is not None
+            path = config.out_dir / 'shutdown-result.json'
+            shutdown = json.loads(path.read_text()) if path.is_file() else {}
+            if not capture_closed or not shutdown.get('ok') or shutdown.get('drains') != 2:
+                raise RuntimeError('deferred_midi_close_requires_verified_shutdown_and_capture_stop')
+            _close_deferred_midi(capture._deferred_midi_sessions, config.out_dir)
+
+
 def run_with_managed_capture(
     config: HitlConfig,
     run_fn: Callable[[HitlConfig], int],
@@ -989,7 +1100,7 @@ def run_with_managed_capture(
     """
     from hitl.device_shutdown import DeviceSession
     timeout = resolve_managed_run_timeout(timeout_s)
-    with managed_capture_session(config) as log_path:
+    with _capture_with_deferred_midi_cleanup(config) as log_path:
         def run_attached() -> int:
             nonlocal log_path
             mode = resolve_boot_reset_mode(config.boot_reset)

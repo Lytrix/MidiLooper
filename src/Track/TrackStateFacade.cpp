@@ -141,23 +141,41 @@ bool Track::hasPendingDeferredOverdubStop() const {
   return captureStopJobs_ && captureStopJobs_->count != 0;
 }
 
-bool Track::hasRealtimeDeferredIdleWork() const {
+TRACK_COLD_MEM bool Track::hasRealtimeDeferredIdleWork() const {
   // A stopped Track can still own a committed CaptureStopJob while another
   // Track plays. Keep its existing bounded stop owner reachable on ordinary
   // deferred turns; the job does not grant priority or a second scheduler.
-  return isRecording() || isAudiblePlaybackActive() || isStoppedRecording() ||
-         hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction();
+  if (isRecording() || isAudiblePlaybackActive() || isStoppedRecording() ||
+      hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()) return true;
+  // Publication releases the interaction FIFO before the frozen reader retires. Keep that existing
+  // deferred owner reachable for a stopped/background slot until its presentation is discharged.
+  if (captureStopJobs_ != nullptr) {
+    for (const auto& presentation : captureStopJobs_->presentations)
+      if (presentation.retirementActive) return true;
+  }
+  return false;
 }
 TRACK_COLD_MEM bool Track::canServiceBackgroundSnapshotOwnerTurn() const {
+  // This stopped job's queued Record root is the **sole** source that can discharge its retirement gate
+  // (`stepDeferredRecordRetirement` waits on exactly this predicate), so that turn is owed whenever the job is
+  // pending -- including while a **later capture on the same slot is live**. Refusing it there is a deadlock, not a
+  // deferral: the live interval's own stop is refused by the single-predecessor admission rule ("keeps recording until
+  // the predecessor retires"), so the predecessor can never retire and the overdub can never stop. Measured on
+  // hardware (2026-10-17, rolling qualification image, 2-bar base recipe): `state=OVERDUBBING, pending=1, phase=16`,
+  // the stop press admitted nothing, and the recipe's second overdub and undo/redo steps never ran.
+  if (captureStopJobs_ != nullptr) {
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      const CaptureStopPresentation& presentation = captureStopJobs_->presentations[slot];
+      if (presentation.retirementActive && presentation.owner != nullptr &&
+          presentation.owner->pendingSnapshotSessionExitQueued() &&
+          !presentation.owner->publishedSnapshotIsCurrent())
+        return true;
+    }
+  }
+  // Ordinary background Snapshot work still yields to a live capture, and a job in any other stop phase keeps its
+  // ordinary owner turns.
   if (isRecording() || isOverdubbing()) return false;
-  if (!hasPendingDeferredOverdubStop()) return isPlaying() || isStoppedRecording();
-  const CaptureStopJob* stop = captureStopJobHead();
-  // This stopped job's queued Record root is the sole source that can discharge
-  // its retirement gate. Other in-flight stop phases retain ordinary owner turns.
-  return stop != nullptr && stop->mode == CapturePhase::Record &&
-      stop->admission.phase == PendingStopPhase::RecordPublished &&
-      stop->owner != nullptr && stop->owner->pendingSnapshotSessionExitQueued() &&
-      !stop->owner->publishedSnapshotIsCurrent();
+  return !hasPendingDeferredOverdubStop() && (isPlaying() || isStoppedRecording());
 }
 
 bool Track::isPlaying() const {

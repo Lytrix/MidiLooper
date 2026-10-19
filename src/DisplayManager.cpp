@@ -119,9 +119,8 @@ void DisplayManager::runPaintResolvePhase(uint32_t now) {
             loadSaveListScrollOffset_ = 0;
             invalidateLoadSaveRevisionListCache();
         }
-        if (!loadSaveListCacheValid_ && StorageManager::isOverlayCatalogReadAllowed()) {
-            refreshLoadSaveListCache();
-        }
+        // A fresh overlay session gets a fresh retry budget (I4 — Set browser freshness).
+        loadSaveListRefreshState_ = SetBrowserOverlayPolicy::ListRefreshState{};
         invalidateLoadSaveDetailCache();
     } else if (!loadSaveActive && loadSaveModeWasActive_) {
         if (StorageManager::isRevisionLoadHeldForWorkspaceDirty()) {
@@ -130,6 +129,23 @@ void DisplayManager::runPaintResolvePhase(uint32_t now) {
         StorageManager::resetSetBrowserOverlayNavigation();
         invalidateLoadSaveRevisionListCache();
         invalidateLoadSaveDetailCache();
+    }
+    if (loadSaveActive) {
+        // Cache freshness (I4 — Set browser freshness): a catalog publication invalidates the cached Set
+        // rows, and a refresh the catalog gate skipped -- or one that failed to read the index -- is retried
+        // under a bounded budget instead of being served (or cached) as "no Sets on this card".
+        if (StorageManager::consumeSetCatalogChangePending()) {
+            loadSaveListCacheValid_ = false;
+            invalidateLoadSaveRevisionListCache();
+            loadSaveListRefreshState_ = SetBrowserOverlayPolicy::ListRefreshState{};
+        }
+        const SetBrowserOverlayPolicy::ListRefreshAction listRefreshAction =
+            SetBrowserOverlayPolicy::resolveListRefreshAction(
+                true, loadSaveListCacheValid_, StorageManager::isOverlayCatalogReadAllowed(),
+                loadSaveListRefreshState_, now);
+        if (listRefreshAction == SetBrowserOverlayPolicy::ListRefreshAction::Refresh) {
+            refreshLoadSaveListCache();
+        }
     }
     loadSaveModeWasActive_ = loadSaveActive;
     applyWorkspaceDisplayRefreshPending(currentTick);

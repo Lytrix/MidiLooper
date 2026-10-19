@@ -324,6 +324,15 @@ bool STORAGE_PERSIST_MEM StorageManager::loadState(LooperState& state) {
         StorageManagerInternal::discardIncompleteCurrentWorkspaceTempFilesOnSd();
     }
 
+    // I4 — Set browser index ownership: the catalog's own index is ensured **before** the legacy
+    // SavedSet reconcile below rewrites its separate file, so an intact pre-split index at the legacy
+    // path is adopted rather than overwritten, and a clobbered one is rebuilt from the Set folders.
+    // PROGMEM keeps these literals out of RAM1 (this tree sits on the FlexRAM boundary).
+    const StorageManagerInternal::SetCatalogEnsureOutcome catalogEnsureOutcome =
+        StorageManagerInternal::ensureSetCatalogIndexOnSd();
+    Serial.printf_P(PSTR("[StorageManager] INFO: sets catalog index ensure %s\n"),
+                    StorageManagerInternal::setCatalogEnsureOutcomeName(catalogEnsureOutcome));
+
     const bool hasCurrentWorkspace =
         SD.exists(CurrentSetStorage::kCurrentMetaPath) ||
         SD.exists(CurrentWorkspaceStorage::kWorkspaceMetaPath);

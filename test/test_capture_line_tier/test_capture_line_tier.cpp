@@ -521,8 +521,17 @@ void test_deferred_stop_identity_match_has_no_length_boundary_gap() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,reclaim,1,2,3,4,5,ok,6"));
 }
 
+void test_pit_marker_prefix_is_source_central_and_fits_head_window() {
+  const char* row = "#CAP,4294967295,DIAG,pit_obs,1,2,2";
+  TEST_ASSERT_TRUE(CaptureLineTier::tagStartsWith(row, "DIAG,pit_obs,"));
+  TEST_ASSERT_FALSE(CaptureLineTier::tagStartsWith("#CAP,1,DIAG,pit_obsx,1", "DIAG,pit_obs,"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(row)); // .cpp extends this predicate without header literals
+  TEST_ASSERT_TRUE(16 + strlen("DIAG,pit_obs,") <= 47);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_pit_marker_prefix_is_source_central_and_fits_head_window);
   RUN_TEST(test_tag_is_the_field_after_micros);
   RUN_TEST(test_timing_telemetry_lines_are_tier_a);
   RUN_TEST(test_bridge_begin_denial_is_critical_capture_evidence);

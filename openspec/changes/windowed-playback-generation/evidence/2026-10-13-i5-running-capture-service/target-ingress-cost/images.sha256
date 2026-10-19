@@ -1,0 +1,4 @@
+61a912811bad1fe8cc2a70f5964996dc50ebd011af28cd43f847daa710f26603  captures/i5-ingress-cost-smoke-01/image/upload/firmware.hex
+cf0ef724624229995d41f00ef6c4dc43c665c00aa211ebd5c1b6be7bb1994f73  captures/i5-ingress-cost-smoke-01/image/upload/firmware.elf
+4d9aa84cf40ab51e0f1354d60104440fa23e5e1dcd21430b3b9b26c65418a9bd  captures/i5-ingress-cost-smoke-01/image/restore/firmware.hex
+a7846154ac6adcecb7ef6a5910fabdbc7093a71e0dd45aaf868942ee15b9d51f  captures/i5-ingress-cost-smoke-01/image/restore/firmware.elf

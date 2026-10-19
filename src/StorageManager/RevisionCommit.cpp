@@ -143,10 +143,6 @@ STORAGE_PERSIST_MEM bool prepareRevisionCommitLayout() {
                 loop.passes.overdubPasses.empty()) {
                 continue;
             }
-            const uint32_t bodySize = measureLoopSlotFileBytes(loop);
-            if (bodySize == 0) {
-                continue;
-            }
             if (storageSession.revisionCommit.slotIndexCount >= kMaxRevisionLoopIndexEntries) {
                 return false;
             }
@@ -156,7 +152,8 @@ STORAGE_PERSIST_MEM bool prepareRevisionCommitLayout() {
             entry.trackIndex = trackIndex;
             entry.slotIndex = slotIndex;
             entry.occupied = 1;
-            entry.bodyLength = bodySize;
+            // Private layout placeholder; finalized from the single body write below.
+            entry.bodyLength = 0;
             entry.loopLengthTicks = loop.loopLengthTicks;
             const uint32_t ticksPerBar = Track::getTicksPerBar();
             if (loop.loopLengthTicks > 0 && ticksPerBar > 0) {
@@ -190,11 +187,37 @@ STORAGE_PERSIST_MEM bool beginRevisionCommitSnapshot() {
         return false;
     }
 
-    File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
-    if (indexFile) {
-        const StorageIo indexIo = storageIoFromFileRead(indexFile);
-        (void)SetRevisionCatalog::readSetCatalogIndex(indexIo, storageSession.revisionCommit.catalogIndex);
-        indexFile.close();
+    // I4 — Set browser index ownership: never allocate a Set id from a fabricated index. Read the
+    // catalog's own index; if it cannot be read, ensure it (adopt a pre-split file, else rebuild from
+    // the Set folders) and re-read. If it still cannot be established the commit is refused, because
+    // `allocateNextSetId` would otherwise hand out an id an existing Set folder already owns -- and
+    // COMPLETE publishes whatever index this stage observed.
+    bool catalogIndexReadable = false;
+    {
+        File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+        if (indexFile) {
+            const StorageIo indexIo = storageIoFromFileRead(indexFile);
+            catalogIndexReadable = SetRevisionCatalog::readSetCatalogIndex(
+                indexIo, storageSession.revisionCommit.catalogIndex);
+            indexFile.close();
+        }
+    }
+    if (!catalogIndexReadable) {
+        const SetCatalogEnsureOutcome ensureOutcome = ensureSetCatalogIndexOnSd();
+        if (ensureOutcome != SetCatalogEnsureOutcome::Failed) {
+            File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+            if (indexFile) {
+                const StorageIo indexIo = storageIoFromFileRead(indexFile);
+                catalogIndexReadable = SetRevisionCatalog::readSetCatalogIndex(
+                    indexIo, storageSession.revisionCommit.catalogIndex);
+                indexFile.close();
+            }
+        }
+        if (!catalogIndexReadable) {
+            Serial.printf_P(
+                PSTR("[StorageManager] WARN: Set catalog index unavailable; commit refused\n"));
+            return false;
+        }
     }
 
     storageSession.revisionCommit.setId = workspaceDerivedFromSetId;
@@ -534,8 +557,42 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitWrite() {
                     if (!loopDone) {
                         return true;
                     }
+                    RevisionPackedBlob::RevisionLoopSlotDirectoryEntry& entry =
+                        storageSession.revisionCommit.slotEntries[slotEntryIndex];
+                    File& file = storageSession.revisionCommit.file;
+                    const uint64_t bodyStart = static_cast<uint64_t>(entry.chunkOffset) +
+                                               RevisionPackedBlob::kChunkHeaderByteSize;
+                    const uint64_t appendPosition =
+                        static_cast<uint64_t>(RevisionPackedBlob::kRevisionHeaderByteSize) +
+                        storageSession.revisionCommit.payloadWriteOffset;
+                    const uint64_t headerPosition =
+                        static_cast<uint64_t>(RevisionPackedBlob::kRevisionHeaderByteSize) +
+                        entry.chunkOffset;
+                    if (!file || bodyStart >= storageSession.revisionCommit.payloadWriteOffset ||
+                        appendPosition > UINT32_MAX || file.size() != appendPosition ||
+                        static_cast<uint64_t>(file.position()) != appendPosition ||
+                        !file.seek(static_cast<uint32_t>(headerPosition))) {
+                        return false;
+                    }
+                    RevisionPackedBlob::ChunkHeader chunkHeader{};
+                    chunkHeader.type = static_cast<uint8_t>(RevisionPackedBlob::ChunkType::LoopSlot);
+                    chunkHeader.trackIndex = entry.trackIndex;
+                    chunkHeader.slotIndex = entry.slotIndex;
+                    chunkHeader.bodyLength = static_cast<uint32_t>(
+                        storageSession.revisionCommit.payloadWriteOffset - bodyStart);
+                    // Patch the existing private file, without advancing payload offsets or CRC.
+                    // The final footer reread remains authoritative for these patched bytes.
+                    const StorageIo patchIo = storageIoFromFileWrite(file);
+                    const bool patched = RevisionPackedBlob::writeChunkHeader(patchIo, chunkHeader);
+                    const bool restored = file.seek(static_cast<uint32_t>(appendPosition));
+                    if (!patched || !restored || file.size() != appendPosition ||
+                        static_cast<uint64_t>(file.position()) != appendPosition) {
+                        return false;
+                    }
+                    entry.bodyLength = chunkHeader.bodyLength;
                     storageSession.revisionCommit.loopSlotBodyActive = false;
                     ++storageSession.revisionCommit.copySlotCursor;
+                    return true;  // Yield after at most one completed body/header patch.
                 }
                 storageSession.revisionCommit.copySlotCursor = 0;
                 ++storageSession.revisionCommit.copyTrackCursor;
@@ -740,11 +797,13 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitValidate() {
     header.chunkCount = storageSession.revisionCommit.chunkCount;
     header.payloadSize = static_cast<uint32_t>(payloadSize);
     header.headerCrc32 = RevisionPackedBlob::computeRevisionHeaderChecksum(header);
-    storageSession.revisionCommit.file = CurrentSetStorage::openForRewrite(storageSession.revisionCommit.tempPath);
-    if (!storageSession.revisionCommit.file) {
+    // Patch only the validated header: openForRewrite would delete its payload/footer.
+    storageSession.revisionCommit.file = SD.open(storageSession.revisionCommit.tempPath, FILE_WRITE_BEGIN);
+    if (!storageSession.revisionCommit.file || storageSession.revisionCommit.file.size() != fileSize ||
+        !storageSession.revisionCommit.file.seek(0)) {
+        storageSession.revisionCommit.file.close();
         return false;
     }
-    storageSession.revisionCommit.file.seek(0);
     const StorageIo headerIo = storageIoFromFileWrite(storageSession.revisionCommit.file);
     if (!RevisionPackedBlob::writeRevisionHeader(headerIo, header)) {
         storageSession.revisionCommit.file.close();
@@ -810,6 +869,9 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitCatalogUpdate() {
         return false;
     }
 
+    // I4 — Set browser freshness: the catalog index and Set meta are published, so the open overlay must
+    // re-read its Set rows instead of serving the list it cached before this Save.
+    markSetCatalogChangedForDisplay();
     storageSession.revisionCommit.stage = RevisionCommitStage::Complete;
     return true;
 }

@@ -41,6 +41,17 @@ class RuntimePlaybackOrderBuilder {
   /// and are disjoint from source storage. Does not write source phases/order.
   bool beginCanonicalIndexes(const FixedPlaybackEventStorage& source, uint16_t* order,
                              uint16_t* scratch, size_t indexCapacity);
+  /// Conservative suffix fill/sort plus full prefix-delta merge/copy-back.
+  /// Counts filtered suffix rows too. Not a physical-time/service guarantee.
+  static size_t extensionWorkEntriesUpperBound(size_t prefixEvents, size_t appendedRows);
+  /// Extend a completed raw fixed-storage order after private append only.
+  /// Caller certifies unchanged prefix/retention/projection/provenance and
+  /// storage lifetime; this is not a source receipt or publication operation.
+  /// View-owned and borrowed-index attempts refuse. Capacity <= UINT16_MAX.
+  /// Freeze this suffix; appends during ordering wait for the next extension.
+  bool extendPrivateOrder();
+  /// Frozen source frontier for extendible fixed storage (capacity <= UINT16_MAX).
+  size_t orderedSourceExtent() const { return frozenSourceExtent_; }
   RuntimePlaybackOrderBuildResult step(size_t entryQuantum);
   /// Conservative entry-operation count for this bottom-up merge order. It
   /// includes initial fill, one write per merge level, and at most one final
@@ -53,7 +64,8 @@ class RuntimePlaybackOrderBuilder {
   void discard();
 
  private:
-  enum class Phase : uint8_t { Idle, Fill, Merge, CopyBack, Complete, Denied };
+  enum class Phase : uint8_t { Idle, Fill, Merge, CopyBack, Complete, Denied,
+                               DeltaFill, DeltaMerge, DeltaCopyBack, PrefixMerge, PrefixCopyBack };
 
   const FixedPlaybackEventStorage* storage_ = nullptr;
   uint16_t* orderEntries_ = nullptr;
@@ -68,6 +80,7 @@ class RuntimePlaybackOrderBuilder {
   uint32_t loopLengthTicks_ = 0;
   RuntimePlaybackOrderMode orderMode_ = RuntimePlaybackOrderMode::PlaybackPhase;
   Phase phase_ = Phase::Idle;
+  uint16_t prefixEventCount_ = 0;
   size_t cursor_ = 0;
   size_t runWidth_ = 1;
   size_t runStart_ = 0;
@@ -79,6 +92,7 @@ class RuntimePlaybackOrderBuilder {
   size_t orderedEventCount_ = 0;
   bool orderedDuringFill_ = true;
   bool mergeReadsScratch_ = false;
+  uint16_t frozenSourceExtent_ = 0;
 
   bool startNextMergeRun();
   bool isBefore(uint16_t left, uint16_t right) const;

@@ -16,6 +16,13 @@
 using namespace StorageManagerInternal;
 
 namespace StorageManagerInternal {
+/// One-shot "the Set catalog changed" signal for the display (I4 — Set browser freshness). A file-static
+/// byte: the display reads it once per paint frame while the overlay is open, and nothing else touches it.
+namespace {
+bool setCatalogChangePending = false;
+}  // namespace
+
+void markSetCatalogChangedForDisplay() { setCatalogChangePending = true; }
 
 StorageActivitySnapshot buildStorageActivitySnapshot() {
     StorageActivitySnapshot snapshot{};
@@ -181,6 +188,14 @@ STORAGE_PERSIST_MEM uint16_t StorageManager::getRevisionLoadDisplayTargetRevisio
     }
     return 0;
 #endif
+}
+
+STORAGE_PERSIST_MEM bool StorageManager::consumeSetCatalogChangePending() {
+    if (!setCatalogChangePending) {
+        return false;
+    }
+    setCatalogChangePending = false;
+    return true;
 }
 
 STORAGE_PERSIST_MEM bool StorageManager::consumeRevisionLoadDisplayRefreshPending() {

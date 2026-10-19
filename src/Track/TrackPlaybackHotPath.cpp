@@ -218,6 +218,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // edited playback retain their existing paths until their separate gates.
   const bool fixedViewEligible =
       isActive && isPlaying() && !editManager.isNoteEditActive();
+  // A pending Record source remains the committed base during an accepted
+  // overdub. Ordinary fixed/bridge eligibility stays PLAYING-only above.
+  const bool recordReturnEligible =
+      isActive && isAudiblePlaybackActive() && !editManager.isNoteEditActive();
   // Task 3.7a (I5)'s ITCM budget slice: the identity this turn compares against, and the bridge/view that carry it, are
   // resolved in flash. The clock path keeps three values and the call; the identity is still the turn's own (five later
   // uses depend on it), so it is written back rather than fetched again.
@@ -229,6 +233,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   resolveQualificationPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, currentTick,
                                             expectedFixedSource, fixedBridge, fixedView,
                                             rollingViewSelected);
+  // Live Record never credits a legacy gather as readiness, including a
+  // missing later interval in an otherwise valid multi-bar rolling period.
+  if (isRecording() && !rollingViewSelected) return;
 #else
   resolveFixedPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, expectedFixedSource, fixedBridge,
                                     fixedView);
@@ -260,7 +267,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
-  if (fixedView == nullptr && fixedBridge == nullptr && fixedViewEligible &&
+  if (fixedView == nullptr && fixedBridge == nullptr && recordReturnEligible &&
       (loop.isPlaybackSessionExitPublicationGap() ||
        runtime.hasBoundRecordReturnWindowForPendingJob())) {
     // The first take is not yet backed by a published root: either the session-exit
@@ -278,7 +285,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // unpublished interval is served from a window built over the job's own frozen source,
   // so traversal beyond bar one and a wrap before publication stay audible without a
   // full-take build on the MIDI edge. FLASH-resident: the MIDI edge keeps only the call.
-  if (fixedView == nullptr && fixedBridge == nullptr && fixedViewEligible &&
+  if (fixedView == nullptr && fixedBridge == nullptr && recordReturnEligible &&
       runtime.hasBoundRecordReturnWindowForPendingJob()) {
     fixedView = adoptOrServiceOnwardRecordWindow(loop, runtime, expectedFixedSource, currentTick);
   }
@@ -381,6 +388,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // The context matches the phase above, so the ordering/anchor a consumer reads and the frame this turn
   // emits cannot disagree. (Playback ordering uses `loopLength` only today; this keeps the anchor honest.)
   playbackContext.projectionCycleStartTick = slotCycleStartTick;
+  if (rollingViewSelected && isRecording() && fixedView != nullptr &&
+      fixedView->source.origin == PlaybackWindowOrigin::Capture)
+    playbackContext.loopLength = fixedView->coverage.loopLengthTicks;
 #endif
   if (useMergedFallback && loop.playbackOrderDirty) {
 #if defined(SESSION_CAPTURE)
@@ -399,7 +409,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // *is* the Track anchor for it, so this is the expression it always had); the default image compiles the
   // other branch, which is the original statement verbatim.
   const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
-      currentTick, slotCycleStartTick, loop.loopLengthTicks);
+      currentTick, slotCycleStartTick, playbackContext.loopLength);
 #else
   const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
@@ -415,7 +425,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (fixedBridge != nullptr && bridgeStream == nullptr) return;
 
   const bool wrappedBackward = IntervalProjection::didDisplayPlayheadWrapBackward(
-      tickInLoop, loop.lastTickInLoop, loop.loopStartTick, loop.loopLengthTicks);
+      tickInLoop, loop.lastTickInLoop, loop.loopStartTick, playbackContext.loopLength);
   if (wrappedBackward) {
     if (bridgeStream != nullptr) {
       // Consume the old cycle's remaining due events before rewinding either
@@ -434,8 +444,13 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       ++runtime.bridgeProjectionCycle;
     }
     if (isActive) {
-      projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
-          projectionCycleStartTick, loop.loopLengthTicks);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      // Live Record has its own explicit playback anchor. Only a qualified
+      // full-period growth handoff may replace it; ordinary wraps preserve it.
+      if (!(rollingViewSelected && isRecording()))
+#endif
+        projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
+            projectionCycleStartTick, playbackContext.loopLength);
       loop.nextEventIndex = 0;
       loop.captureNextEventIndex = 0;
       logger.trace("Loop wrapped, resetting index");
@@ -453,7 +468,14 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // other source is refused above this point, so the judgement has to come before it.
 
   if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
+    // The phase was reset (a stop, a queued/grid start or a re-anchored projection) and the playhead is already past
+    // the first bar, so this turn only **establishes** the phase: nothing is emitted and no catch-up burst is made.
+    // Writing the phase back is what makes it exactly one turn. Without it every later turn re-enters this branch
+    // (the previous phase stays unknown) for the remainder of the pass, so the interval is silent until the wrap even
+    // though its content is read material -- measured 3.076 s after the wrapped record stop on the qualification image
+    // (`captures/i5-dec143-sealed-extent-base-01`: first note on the wire 43.216 s, first turn after the wrap).
     loop.nextEventIndex = 0;
+    loop.lastTickInLoop = tickInLoop;
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
 #if RUNTIME_TIMING_ENABLED
     RUNTIME_TIMING_ADD_TRACK_PATH_ORDER(RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(
@@ -518,11 +540,17 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   loop.lastTickInLoop = tickInLoop;
 
   if (!mergedIntervalApplied) {
-    (void)advancePlaybackCursor(
+    const auto readResult = advancePlaybackCursor(
         mergedAdvance, frame, mergedPolicy, committedStream,
         playbackCursorAdvanceSend, this, slotIndex,
         isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr,
         midiChannel, isActive ? playbackCursorAdvanceApplyLedger : nullptr);
+#if SC_PLAYBACK_READ_WITNESS_ENABLED
+    if (readResult == PlaybackAdvanceResult::Completed)
+      observePlaybackReadForTurn(slotIndex, fixedCtx.storage, fixedBridge);
+#else
+    (void)readResult;
+#endif
   }
 
   if (emissionWindow && bridgeStream) bridgeStream->acknowledgeThroughPhase(tickInLoop);
@@ -583,11 +611,70 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
 TRACK_COLD_MEM const RuntimePlaybackView* Track::adoptOrServiceOnwardRecordWindow(
     Loop& loop, LoopPlaybackRuntime& runtime,
     const PlaybackViewSourceIdentity& sourceIdentity, uint32_t currentTick) {
-  const CaptureStopJob* job = captureStopJobHead();
-  if (job == nullptr || job->mode != CapturePhase::Record || !job->ownsRawRange) return nullptr;
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(activeLoopIndex);
+  // The slot record owns the extent before and after publication. A source-matching copied view
+  // remains readable through either phase; only the fallback across revision changes below needs
+  // the published presentation's fully qualified content identity.
+  if (presentation == nullptr || !presentation->ownsExtent ||
+      presentation->owner != &loop || presentation->loopId != loop.loopId) return nullptr;
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       currentTick, projectionCycleStartTick, loop.loopLengthTicks);
-  return runtime.adoptFrozenRecordWindow(sourceIdentity, loop.loopLengthTicks, phase);
+  const RuntimePlaybackViewSet* set = runtime.viewSetIfPrewarmed();
+  const uint8_t previousCurrent = set != nullptr ? set->lifecycle.current
+      : RuntimePlaybackViewLifecycle::kNoView;
+  const RuntimePlaybackView* adopted =
+      runtime.adoptFrozenRecordWindow(sourceIdentity, loop.loopLengthTicks, phase);
+  if (adopted == nullptr && set != nullptr && set->lifecycle.ready < set->views.size()) {
+    const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+    RuntimePlaybackViewSource frozen{};
+    PlaybackViewSourceIdentity receipt{};
+    // A ready copied before pass publication still owes this boundary. Qualify
+    // the live frozen job before adopting, and never relabel it as newer content.
+    // The prepared window is adoptable **mid-window**, not only at the bar boundary that prepared it: the current-window
+    // progression means its coverage already contains the playhead (a boundary would then never come until the next
+    // bar). Two identities are accepted, each kept as its own -- never relabelled:
+    //  * `Committed` (post-publication preparation), unchanged from before;
+    //  * `Capture` (the sealed extent's own frozen token, pre-publication), qualified through the job's presentation so
+    //    a stale or foreign interval can never be adopted. Without this branch the pre-publication window is prepared,
+    //    complete, covers the playhead and is still unservable, which is the silence this slice closes.
+    // Qualification runs **first**: it is what fills `frozen`, so the Capture identity can only be compared after it
+    // (reading the token before this call compares against an empty receipt and silently refuses every frozen window).
+    const bool qualified = qualifiedFrozenRecordCaptureSourceForSlot(
+        presentation->slot, presentation->interval, frozen, receipt);
+    const bool committedReady = ready.source.origin == PlaybackWindowOrigin::Committed &&
+        ready.source.sourceGeneration == sourceIdentity.sourceGeneration;
+    // The view carries the source *identity*; the receipt carries the same frozen content token the preparation
+    // stamped, so a reused or foreign interval cannot match.
+    const bool captureReady = qualified && ready.source.origin == PlaybackWindowOrigin::Capture &&
+        ready.source.captureContentGeneration != 0 &&
+        ready.source.captureContentGeneration == frozen.captureContentToken;
+    if (ready.complete && !ready.published && !ready.rawCoveragePrepared &&
+        !ready.firstRecordReturnWindow && ready.source.snapshotIdentity == nullptr &&
+        ready.coverage.loopLengthTicks == loop.loopLengthTicks && ready.coverage.contains(phase) &&
+        qualified && (committedReady || captureReady)) {
+      adopted = runtime.adoptFrozenRecordWindow(ready.source, loop.loopLengthTicks, phase);
+    }
+  }
+  if (adopted == nullptr && set != nullptr && previousCurrent < set->views.size()) {
+    const RuntimePlaybackView& current = set->views[previousCurrent];
+    RuntimePlaybackViewSource frozen{};
+    PlaybackViewSourceIdentity receipt{};
+    // Record pass publication advances canonical currency, not the sealed
+    // range. Keep its already-served copied interval under the original stamp
+    // until a complete successor takes over; never adopt a stale ready here.
+    if (current.complete && current.published && !current.rawCoveragePrepared &&
+        !current.firstRecordReturnWindow && current.source.snapshotIdentity == nullptr &&
+        current.source.origin == PlaybackWindowOrigin::Committed &&
+        current.source.sourceGeneration == sourceIdentity.sourceGeneration &&
+        current.coverage.loopLengthTicks == loop.loopLengthTicks && current.coverage.contains(phase) &&
+        qualifiedFrozenRecordCaptureSourceForSlot(presentation->slot, presentation->interval, frozen, receipt)) {
+      adopted = &current;
+    }
+  }
+  // Each copied interval has its own order indices. Keep the crossing floor,
+  // but never carry the exhausted previous window's cursor into its successor.
+  if (adopted != nullptr && set->lifecycle.current != previousCurrent) loop.nextEventIndex = 0;
+  return adopted;
 }
 
 // FLASHMEM: the admission check is a cold predicate on the MIDI edge (it is called
@@ -598,6 +685,33 @@ TRACK_COLD_MEM bool Track::hasAudiblePlaybackSource(uint8_t slotIndex) const {
     return false;
   }
   const Loop& loop = getLoop(slotIndex);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (slotIndex == activeLoopIndex && isRecording() && !loop.hasCommittedPasses()) {
+    const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    const auto* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+    if (set && set->lifecycle.current < set->views.size()) {
+      const auto& recipe = runtime->pendingViewRequest_;
+      auto projection = loop.liveCaptureProjectionIdentity();
+      if (projection.phase == CapturePhase::Record)
+        projection.loopLengthTicks = recipe.liveCaptureProjection.loopLengthTicks;
+      if (recipe.sourceKind != PlaybackViewPendingRequest::SourceKind::LiveCapture ||
+          recipe.operationGeneration != playbackGeneration ||
+          recipe.liveLeaseGeneration != runtime->workingSetGeneration() ||
+          recipe.liveProjectionStart != getProjectionCycleStartTick() ||
+          !(recipe.liveCaptureProjection == projection)) return false;
+      const auto& current = set->views[set->lifecycle.current];
+      return current.complete && current.published && !current.rawCoveragePrepared &&
+          !current.firstRecordReturnWindow && loop.capture.phase == CapturePhase::Record &&
+          current.source.origin == PlaybackWindowOrigin::Capture &&
+          current.source.sourceGeneration == playbackGeneration &&
+          current.source.captureContentGeneration != 0 && current.source.snapshotIdentity == nullptr &&
+          current.storageGeneration != 0 && current.coverage.isValid() &&
+          current.coverage.startPhase % Config::TICKS_PER_BAR == 0 &&
+          current.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+          current.coverage.loopLengthTicks % Config::TICKS_PER_BAR == 0;
+    }
+  }
+#endif
   if (loop.loopLengthTicks == 0) {
     return false;
   }
@@ -626,7 +740,11 @@ uint8_t remappedPlaybackChannel(const MidiEvent& evt, uint8_t trackMidiChannel) 
 }  // namespace
 
 bool Track::applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
-  if (!isAudiblePlaybackActive()) {
+  if (!isAudiblePlaybackActive()
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      && !(isRecording() && hasAudiblePlaybackSource(playbackSlotIndex))
+#endif
+      ) {
     return false;
   }
   if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) {
@@ -634,11 +752,21 @@ bool Track::applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotI
   }
   const uint8_t channel = remappedPlaybackChannel(evt, midiChannel);
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(playbackSlotIndex);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // A growing Record period can revisit an On whose matching Off now belongs
+  // to the next interval. Preserve that sounding identity, not a second On.
+  if (runtime && isRecording() && evt.isNoteOn() &&
+      runtime->ledger.isActive(channel, evt.data.noteData.note, evt.noteId)) return false;
+#endif
   return runtime != nullptr && runtime->ledger.applyPlaybackEvent(channel, evt);
 }
 
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
-  if (!isAudiblePlaybackActive()) return;
+  if (!isAudiblePlaybackActive()
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      && !(isRecording() && hasAudiblePlaybackSource(playbackSlotIndex))
+#endif
+      ) return;
   if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
 #if RUNTIME_TIMING_ENABLED
   const uint32_t sendStartUs = micros();

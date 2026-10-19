@@ -14,6 +14,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ClockTransportUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "Utils/MidiIngressReceipt.h"
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 #include "Utils/InvestigationAllocProbe.h"
@@ -86,6 +87,7 @@ ClockManager::ClockManager()
     bpmSmoothed(0.0f)
 {
   deadlineClock = PlaybackDeadlineClockState{};  // DMAMEM is NOLOAD on Teensy.
+  initializePhysicalClockReference(); // Singleton RAM2 extension is NOLOAD on Teensy.
   memset(pulseTimestamps, 0, sizeof(pulseTimestamps));
 }
 
@@ -135,7 +137,12 @@ void ClockManager::setup() {
   MemoryMonitor::heapDiagnosticLastClockUs = 0;
 #endif
   microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
-  clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
+  preparePhysicalClockReference();
+  const bool midiTimerStarted = clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
+  finishPhysicalClockReference(midiTimerStarted);
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+  MidiIngress::setClockSampler([] { return clockManager.getPhysicalClockStamp(); });
+#endif
 }
 
 void ClockManager::setBpm(uint16_t newBpm) {

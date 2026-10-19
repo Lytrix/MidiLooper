@@ -469,14 +469,20 @@ Fixed, each with a fixture and a device observation:
   * Setup latency: the clear no longer waits for the deferred-save idle receipt (120 s configured,
     240 s floored) -- it aborted setup when the boot restore was slow and never made the clear more
     likely to succeed. The device is driven straight after boot; the firmware owns the refusal.
-  * Boot-handoff gate (**amendment, 2026-10-12**, owner-directed): the base leg's first control gesture now
-    waits for the device's own display/boot handoff rows (`DisplayManager: Boot setup complete` and
-    `DIAG,loop_rem,boot_commit`) through `hitl.boot_handoff.wait_for_boot_handoff`, and refuses by name on
-    timeout instead of pressing into an unfinished boot; a run that joined an already-booted device gets
-    `not-fresh-boot` and is not delayed. It never waits for `post_restore_census`, so the restore-load
-    argument above still holds. The edit-mode proof also waits for an already-arriving session ack before
-    pressing. Raw evidence:
-    `openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-base-leg-boot-handoff-gate/EXECUTION.md`.
+  * Boot-handoff gate (**amendment 2026-10-12; witness correction 2026-10-17**, owner-requested): before any
+    control gesture after a fresh boot, `hitl.boot_handoff.wait_for_boot_handoff` requires the fresh
+    `DIAG,boot_reset` window, the timestamped `DIAG,loop_rem,boot_commit`, and a well-formed `DFRAME`
+    whose device timestamp is strictly later than the commit (and not earlier than the timestamped banner).
+    The human-readable `DisplayManager: Boot setup complete` Serial row is diagnostic but not required: it
+    is absent from retained captures that contain the commit and later app-paint frames. This is not a timer
+    bypass: `main` emits `boot_commit` in the same branch as `finishBootSetup`, and `DisplayManager::update`
+    cannot resume app paint until `bootSetupComplete_` is true and the boot-title hold has elapsed; the
+    subsequent `DFRAME` is the existing behavioral witness. It does not prove physical pixels or DMA
+    completion, and shed/malformed/stale frame evidence still fails closed. Attaching runs remain
+    `not-fresh-boot` and are not delayed; the gate still does not wait for `post_restore_census`.
+    Verified: `scripts/test_hitl_boot_handoff.py` **33/33**; retained run
+    `captures/i5-dec138-approved-one-20261017-01/session_20261017_162334.log` replays as
+    `boot_handoff_complete=True` with no synthetic rows. No firmware/build/upload/device action.
   * Setup latency (PX1, 2026-09-29): the *boot wait itself* is gone. `capture_session.py` takes
     `--boot-reset-mode auto|force|never` and, in `auto`, asks the device read-only whether it is
     already stopped: a stopped device is attached with **no** reset and the settle ends on that

@@ -21,14 +21,23 @@ void test_midi_input_gap_recorded_between_handle_midi_input_calls() {
 }
 
 void test_observational_over_count_uses_soft_ceiling() {
+  // The bar has ONE authority: `kObservationalSoftCeilingUs` in the header (the declared envelope's
+  // input-service pass line, DEC-117). Every sample below is derived from it, so changing the declared
+  // value cannot leave this test asserting the old boundary.
+  constexpr uint32_t kBar = RuntimeTimingTelemetry::kObservationalSoftCeilingUs;
+
   RuntimeTimingTelemetry::noteMidiInputEnter(0);
   RuntimeTimingTelemetry::noteMidiInputExit(100);
-  RuntimeTimingTelemetry::noteMidiInputEnter(100 + 6000);  // gap 6000 > soft ceiling
+  RuntimeTimingTelemetry::noteMidiInputEnter(100 + 6000);  // above the former 5,000 bar, below this one
   RuntimeTimingTelemetry::noteMidiInputExit(100 + 6000 + 50);
+  RuntimeTimingTelemetry::noteMidiInputEnter(100 + 6000 + 50 + kBar);  // exactly the bar: strict, not counted
+  RuntimeTimingTelemetry::noteMidiInputExit(100 + 6000 + 50 + kBar + 50);
+  RuntimeTimingTelemetry::noteMidiInputEnter(100 + 6000 + 50 + kBar + 50 + kBar + 1);  // one µs over: counted
+  RuntimeTimingTelemetry::noteMidiInputExit(100 + 6000 + 50 + kBar + 50 + kBar + 1 + 50);
 
   const auto snap = RuntimeTimingTelemetry::peek();
-  TEST_ASSERT_EQUAL_UINT32(6000, snap.midiGapMaxUs);
-  TEST_ASSERT_EQUAL_UINT32(1, snap.midiGapOverCount);
+  TEST_ASSERT_EQUAL_UINT32(kBar + 1, snap.midiGapMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.midiGapOverCount);  // only the one-µs-over gap is counted
 }
 
 void test_clock_and_tracks_accumulate_independently() {
@@ -136,7 +145,7 @@ void test_midi_input_drains_accumulate_independently() {
   RuntimeTimingTelemetry::noteUsbHostTask(1200);
   RuntimeTimingTelemetry::noteUsbHostTask(900);
   RuntimeTimingTelemetry::noteUsbHostDrain(800);
-  RuntimeTimingTelemetry::noteUsbHostDrain(6001);
+  RuntimeTimingTelemetry::noteUsbHostDrain(6350);  // above the DEC-117 bar (6,250 µs)
 
   const auto snap = RuntimeTimingTelemetry::peek();
   TEST_ASSERT_EQUAL_UINT32(221000, snap.usbdevMaxUs);
@@ -145,7 +154,7 @@ void test_midi_input_drains_accumulate_independently() {
   TEST_ASSERT_EQUAL_UINT32(0, snap.dinOverCount);
   TEST_ASSERT_EQUAL_UINT32(1200, snap.hosttaskMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, snap.hosttaskOverCount);
-  TEST_ASSERT_EQUAL_UINT32(6001, snap.hostdrainMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(6350, snap.hostdrainMaxUs);
   TEST_ASSERT_EQUAL_UINT32(1, snap.hostdrainOverCount);
 }
 
@@ -521,7 +530,7 @@ void test_remaining_until_next_playback_service_uses_due_plus_period() {
 
 void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingTelemetry::kEmitIntervalUs);
-  TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
+  TEST_ASSERT_EQUAL_UINT32(6250u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
   TEST_ASSERT_EQUAL_UINT32(50000u, RuntimeTimingTelemetry::kLoopRemainderOneShotUs);
 }
 

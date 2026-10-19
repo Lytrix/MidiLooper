@@ -58,7 +58,9 @@ Guide: [`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/R
 - [x] Cold-boot restore of persisted loop — [`session_20260709_171951.log`](../../../captures/session_20260709_171951.log)
 - [ ] `oldestDirtyChunkAge` bounded under baseline conditions (not extracted from this capture)
 - [x] Update `docs/Runtime/CURRENT_WORK.md`, `PROJECT_STATE.md`
-- [ ] Append DEC-020 to `DECISION_LOG.md`
+- [x] Append DEC-020 — continuous runtime persistence to `DECISION_LOG.md` — **verified 2026-10-11**:
+  the existing *Continuous runtime persistence architecture* entry already satisfies this documentary
+  obligation. No duplicate decision appended; recovery, dirty-age and archive gates remain open.
 - [ ] Archive change when green (`/opsx:archive`)
 
 ## Docs (scaffold)

@@ -901,8 +901,6 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
   // STOPPING owns the active capture and consumes exactly one declared
-  // finalization/order/rewrite/transfer grain after MIDI service. Nothing
-  // else may stack into this owner turn.
   if (hasPendingDeferredOverdubStop()) {
     CaptureStopJob* pendingStop = captureStopJobHead();
     if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot && pendingStop != nullptr &&
@@ -938,7 +936,18 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     return;
   }
-  // S4f.2 (DEC-078): an accepted-but-not-yet-executed interaction gets the deferred drive. It
+  // A presentation-held Record interval still depends on the normal Snapshot owner for
+  // its queued root. Preserve that owner priority; presentation retirement may run only
+  // after the root opportunity has been serviced.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
+      hasSnapshotPublicationBacklogOnAnySlot()) {
+    processSnapshotOwnerTurn(loopWithPendingSnapshotPublish(), snapshotConstructionUnits);
+    return;
+  }
+  // Record finalization is complete once the interaction job is promoted. Its frozen reader
+  // obligation is a presentation-owned descriptor and must be serviced independently of the
+  // FIFO interaction ring, so a successor stop can take the next ring head.
+  if (serviceCaptureStopPresentations()) return;
   // sits immediately after the admitted stop's grain -- which owns the turn whenever a job
   // exists -- and before the owner-specific branches, so the latch is reachable on every
   // deferred owner lane (the VisualCache branch below is focus-track-only).
@@ -984,7 +993,6 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // S4.5: a descriptor the retirement path left un-rearmed is finished here (one bounded grain).
   // It sits above the lower-priority idle owners so a lost re-arm cannot starve behind them, and
   // below the stop and accepted-interaction obligations so a live stop always keeps the turn.
-  (void)serviceCaptureStopDescriptorReservations();
   // One physical-credit refill is one VisualCache owner turn. A full pool
   // leaves other maintenance eligible; it must not create a busy retry loop.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&

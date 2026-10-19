@@ -21,6 +21,12 @@
 #include "Utils/MidiDispatchOrder.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+#include "Utils/MidiInputContinuation.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
+#include <new>
+#endif
+
 namespace {
 
 /// The feedback queue's state (timing-path review, items 2/3). Two placement decisions, both forced by this
@@ -135,6 +141,17 @@ MidiHandler::MidiHandler()
 
 namespace {
 
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+#define INPUT_RECEIPT_ARGUMENT(value) , value
+#define INPUT_RECEIPT_PARAMETER , const MidiIngressReceipt& receipt
+#else
+#define INPUT_RECEIPT_ARGUMENT(value)
+#define INPUT_RECEIPT_PARAMETER
+#endif
+#if defined(PIO_UNIT_TEST_NATIVE) && MIDI_INGRESS_RECEIPTS_ENABLED
+MidiHandler::IngressDispatchObserver ingressDispatchObserver = nullptr;
+#endif
+
 constexpr size_t kMidiInputBatchMax = 128;
 constexpr size_t kPostOverdubDrainMidiInputBatchMax = 32;
 
@@ -144,13 +161,64 @@ struct MidiInputMsg {
   byte data1;
   byte data2;
   InputSource source;
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+  MidiIngressReceipt ingress;
+#endif
 };
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+// One MidiHandler-owned native qualification role; never target DTCM state.
+MidiInputContinuation* qualifiedInput = nullptr;
+bool qualificationPrewarmDenied = false;
+
+void pollQualifiedInput(MidiHandler& owner, bool hostReady, USBHost& host, MIDIDevice_BigBuffer& hostMidi) {
+  auto& state = *qualifiedInput;
+  if (state.acquiring || state.dispatching) return; // Outer poll/handler owns completion.
+  if (!state.active) {
+    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+      const uint8_t route = state.nextRoute;
+      const uint8_t cap = trackManager.anyPlayingMidiDrainAfterOverdubStop()
+          ? kPostOverdubDrainMidiInputBatchMax : kMidiInputBatchMax;
+      if (!state.begin(route, cap, clockManager.getPlaybackDeadlineClock().epoch, micros())) return;
+      state.acquiring = true;
+      if (route == SOURCE_USB) {
+        while (state.count < cap && usbMIDI.read())
+          if (!state.append({usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(), usbMIDI.getData2()}, micros()
+              INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB)))) std::abort();
+      } else if (route == SOURCE_SERIAL) {
+        while (state.count < cap && MIDIserial.read())
+          if (!state.append({MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(), MIDIserial.getData2()}, micros()
+              INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_SERIAL)))) std::abort();
+      } else if (hostReady) {
+        state.acquiringHost = true;
+        host.Task();
+        size_t reads = 0;
+        while (reads < cap && state.count < cap && hostMidi.read()) ++reads;
+        state.acquiringHost = false;
+      }
+      state.acquiring = false;
+      state.active = state.count != 0;
+      if (state.active) break;
+    }
+  }
+  MidiInputContinuation::Row row{};
+  if (state.next(row)) {
+    owner.handleMidiMessage(row.type, row.channel, row.data1, row.data2,
+        static_cast<InputSource>(state.route) INPUT_RECEIPT_ARGUMENT(state.ingressReceiptForDispatch()));
+    state.acknowledge();
+  }
+}
+#endif
+
 
 // External sequencers (e.g. BeatStep Pro) may send NoteOn before MIDI Start on the
 // same downbeat. Process Start/Stop/Continue first within each poll batch so armed
 // recording starts before channel messages in that batch are recorded.
 // Clock stays FIFO with channel messages (RC-C A): Clock, NoteOn, Clock must not
 // become Clock, Clock, NoteOn — note ticks come from getCurrentTick() at process time.
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+// Receipt-profile input work only, never the tick's output path.
+FLASHMEM
+#endif
 void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
   if (count == 0) {
     return;
@@ -163,19 +231,30 @@ void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
   MidiDispatchOrder::planDispatchOrder(types, count, order);
   for (size_t i = 0; i < count; ++i) {
     const MidiInputMsg& msg = batch[order[i]];
-    midiHandler.handleMidiMessage(msg.type, msg.channel, msg.data1, msg.data2, msg.source);
+    midiHandler.handleMidiMessage(msg.type, msg.channel, msg.data1, msg.data2, msg.source INPUT_RECEIPT_ARGUMENT(msg.ingress));
   }
 }
 
 }  // namespace
 
 void MidiHandler::setup() {
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+  MidiIngress::setup(&Serial8, &usbHostMIDI);
+#endif
   Serial8.begin(31250);  // DIN MIDI out/in (explicit before MIDI library wraps Serial8)
   MIDIserial.begin(MidiConfig::CHANNEL_OMNI);  // Listen to all channels
   // Attach the DROID feedback queue's storage once, before any event can be queued (the queue is only
   // reachable while the USB host is ready, which `beginUsbHost` establishes later still).
   gDeferredDroidHostRing.init(gDeferredDroidHostQueue, kDeferredDroidHostCapacity);
   instance = this;  // Set static instance pointer for callbacks
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+  if (qualifiedInput == nullptr) {
+    CommittedChunkIdAllocator<MidiInputContinuation> allocator;
+    if (!qualificationPrewarmDenied)
+      if (auto* memory = allocator.allocate(1)) qualifiedInput = new (memory) MidiInputContinuation;
+  }
+  if (qualifiedInput) qualifiedInput->resetForSetup(); // Explicit cold session, never transport cancellation.
+#endif
 }
 
 /// FLASH-resident: the USB-host bring-up runs from `setup`/the main loop and is never on the tick ISR path,
@@ -215,6 +294,22 @@ FLASHMEM void MidiHandler::beginUsbHost() {
 /// FLASH-resident: every caller is the main loop (`main.cpp`), so this belongs to the headroom half of the
 /// partition rather than to ITCM. The tick ISR reaches this file only through the playback sends, and the
 /// functions it can reach are the ones that stay in ITCM.
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+bool MidiHandler::qualificationInputContinuationReady() const { return qualifiedInput && qualifiedInput->generation != 0; }
+uint16_t MidiHandler::qualificationInputPendingCount() const { return qualifiedInput ? qualifiedInput->pending() : 0; }
+uint64_t MidiHandler::qualificationInputGeneration() const { return qualifiedInput ? qualifiedInput->generation : 0; }
+const void* MidiHandler::qualificationInputStorageIdentity() const { return qualifiedInput; }
+size_t MidiHandler::qualificationInputStateBytes() const { return sizeof(MidiInputContinuation); }
+void MidiHandler::setQualificationInputPrewarmDeniedForTests(bool denied) { qualificationPrewarmDenied = denied; }
+#elif defined(PIO_UNIT_TEST_NATIVE)
+bool MidiHandler::qualificationInputContinuationReady() const { return false; }
+uint16_t MidiHandler::qualificationInputPendingCount() const { return 0; }
+uint64_t MidiHandler::qualificationInputGeneration() const { return 0; }
+const void* MidiHandler::qualificationInputStorageIdentity() const { return nullptr; }
+size_t MidiHandler::qualificationInputStateBytes() const { return 0; }
+void MidiHandler::setQualificationInputPrewarmDeniedForTests(bool) {}
+#endif
+
 FLASHMEM void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
@@ -222,6 +317,13 @@ FLASHMEM void MidiHandler::handleMidiInput() {
   // S7.5a envelope instrument: the playback tick this input service started at. Each captured event compares its
   // own stamped tick with this one (`noteCaptureStampTick`): the capture timestamp error, in ticks.
   RUNTIME_TIMING_NOTE_INPUT_SERVICE_TICK(clockManager.getCurrentTick());
+#endif
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+  if (qualificationInputContinuationReady()) {
+    pollQualifiedInput(*this, usbHostReady_, usbHost, usbHostMIDI);
+    RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(micros());
+    return;
+  }
 #endif
 
   MidiInputMsg batch[kMidiInputBatchMax];
@@ -241,7 +343,7 @@ FLASHMEM void MidiHandler::handleMidiInput() {
 #endif
   while (count < midiInputBatchMax && usbMIDI.read()) {
     batch[count] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
-                    usbMIDI.getData2(), SOURCE_USB};
+                    usbMIDI.getData2(), SOURCE_USB INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB))};
 #if RUNTIME_TIMING_ENABLED
     usbTypes[count] = batch[count].type;
 #endif
@@ -274,7 +376,7 @@ FLASHMEM void MidiHandler::handleMidiInput() {
 #endif
   while (count < midiInputBatchMax && MIDIserial.read()) {
     batch[count++] = {MIDIserial.getType(), MIDIserial.getChannel(), MIDIserial.getData1(),
-                      MIDIserial.getData2(), SOURCE_SERIAL};
+                      MIDIserial.getData2(), SOURCE_SERIAL INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_SERIAL))};
   }
   dispatchMidiBatch(batch, count);
 #if RUNTIME_TIMING_ENABLED
@@ -328,7 +430,29 @@ FLASHMEM void MidiHandler::handleMidiInput() {
   RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(micros());
 }
 
-void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source) {
+#if defined(PIO_UNIT_TEST_NATIVE) && MIDI_INGRESS_RECEIPTS_ENABLED
+void MidiHandler::setIngressDispatchObserverForTests(IngressDispatchObserver observer) {
+  ingressDispatchObserver = observer;
+}
+#endif
+
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+FLASHMEM
+#endif
+void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source INPUT_RECEIPT_PARAMETER) {
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION
+  if (source == SOURCE_USB_HOST && qualifiedInput && qualifiedInput->acquiringHost) {
+    if (!qualifiedInput->append({type, channel, data1, data2}, micros() INPUT_RECEIPT_ARGUMENT(receipt))) std::abort();
+    return; // Real callback data is routed exactly once when the owner resumes it.
+  }
+#endif
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+  MidiIngress::noteDispatch(static_cast<uint8_t>(source), receipt);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (ingressDispatchObserver) ingressDispatchObserver(type, channel, data1, data2, source,
+      MidiIngress::lastDispatchedReceipt(static_cast<uint8_t>(source)));
+#endif
+#endif
   // Clock is high-rate (24 PPQN); skip synchronous capture to keep timing paths lean.
   if (type != midi::Clock) {
     if (source == SOURCE_USB) {
@@ -1104,26 +1228,26 @@ bool MidiHandler::isOutputSerialEnabled() const {
 // --- Static USB Host MIDI Callbacks ---
 void MidiHandler::usbHostNoteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::NoteOn, channel, note, velocity, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostNoteOff(uint8_t channel, uint8_t note, uint8_t velocity) {
   if (instance) {
-    instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::NoteOff, channel, note, velocity, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostControlChange(uint8_t channel, uint8_t control, uint8_t value) {
   if (instance) {
     // Single path: handleControlChange routes to ControlSurfaceManager + track recording (no duplicate CC).
-    instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::ControlChange, channel, control, value, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostProgramChange(uint8_t channel, uint8_t program) {
   if (instance) {
-    instance->handleMidiMessage(midi::ProgramChange, channel, program, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::ProgramChange, channel, program, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
@@ -1135,36 +1259,36 @@ void MidiHandler::usbHostPitchChange(uint8_t channel, int pitch) {
         static_cast<int16_t>(pitch));
     instance->handleMidiMessage(midi::PitchBend, channel,
                                 unsignedPitch & 0x7F, (unsignedPitch >> 7) & 0x7F,
-                                SOURCE_USB_HOST);
+                                SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostAfterTouchChannel(uint8_t channel, uint8_t pressure) {
   if (instance) {
-    instance->handleMidiMessage(midi::AfterTouchChannel, channel, pressure, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::AfterTouchChannel, channel, pressure, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostClock() {
   if (instance) {
-    instance->handleMidiMessage(midi::Clock, 0, 0, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::Clock, 0, 0, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostStart() {
   if (instance) {
-    instance->handleMidiMessage(midi::Start, 0, 0, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::Start, 0, 0, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostStop() {
   if (instance) {
-    instance->handleMidiMessage(midi::Stop, 0, 0, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::Stop, 0, 0, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }
 
 void MidiHandler::usbHostContinue() {
   if (instance) {
-    instance->handleMidiMessage(midi::Continue, 0, 0, 0, SOURCE_USB_HOST);
+    instance->handleMidiMessage(midi::Continue, 0, 0, 0, SOURCE_USB_HOST INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_USB_HOST)));
   }
 }

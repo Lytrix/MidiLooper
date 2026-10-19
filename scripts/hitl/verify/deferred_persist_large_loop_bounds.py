@@ -6,6 +6,7 @@ import re
 from typing import Optional
 
 from hitl.persistence_rows import extract_persistence_work_rows
+from hitl.serial.protocol import parse_playback_read_timestamp as _playback_read_timestamp
 
 _LOOP_PERSIST_WORK_RE = re.compile(
     r"#CAP,(\d+),PERS,work,(\d+),\d+,\d+,LoopPersist,([^,]+),([^,]+),"
@@ -168,6 +169,10 @@ def summarize_deferred_persist_large_loop_bounds(
         has_playback = False
         for line in lines:
             match = _PLAYBACK_SNAPSHOT_RE.search(line)
+            read_ts = _playback_read_timestamp(line)
+            if read_ts is not None and pad_start <= read_ts <= pad_done:
+                has_playback = True
+                break
             if not match:
                 continue
             ts = int(match.group(1))

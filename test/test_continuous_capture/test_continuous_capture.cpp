@@ -217,8 +217,8 @@ struct TrackCaptureStopTestAccess {
     return tail != nullptr && tail->pendingNotes.empty();
   }
   static bool rawExtentSealable(Track& track, uint8_t slot) {
-    Track::CaptureStopJob* tail = track.captureStopJobTail();
-    return tail != nullptr && track.loopForSlot(slot).capture.store.canSealCaptureRange(tail->rawRange);
+    const auto* presentation = track.captureStopPresentationForSlot(slot);
+    return presentation != nullptr && track.loopForSlot(slot).capture.store.canSealCaptureRange(presentation->rawRange);
   }
   static size_t liveStagingEvents(Track& track, uint8_t slot) {
     auto* rt = track.playbackRuntime.slotIfAllocated(slot);
@@ -380,7 +380,10 @@ struct TrackCaptureStopTestAccess {
   static bool admit(Track& track, PendingStopDestination destination, uint32_t tick) {
     return track.beginDeferredOverdubStop(destination, tick);
   }
-  static auto& rawRange(Track& track) { return track.captureStopJob().rawRange; }
+  static auto& rawRange(Track& track) { return track.captureStopJob().presentation->rawRange; }
+  static const auto& slotRawRange(Track& track, uint8_t slot) {
+    return track.captureStopJobs_->presentations[slot].rawRange;
+  }
   /// Published playback root identity, for the 5.3 stale-window assertion.
   static const void* publishedRootIdentity(Track& track) {
     return track.getActiveLoop().publishedSnapshotIdentity();
@@ -389,7 +392,7 @@ struct TrackCaptureStopTestAccess {
     return track.getActiveLoop().publishedSnapshotRevision();
   }
   static uint32_t ownRevision(const Track& track) { return track.getActiveLoop().playbackRevision; }
-  static bool ownsRawRange(Track& track) { return track.captureStopJob().ownsRawRange; }
+  static bool ownsRawRange(Track& track) { return track.captureStopJob().ownsRawRange(); }
   static TrackUndoPublication* undoPublication(Track& track) { return track.protectedUndo(); }
   static GlobalUndoStack& undoStack(Track& track) { return track.getGlobalUndoStack(); }
   static bool appendNoteOffAtPhase(Track& track, uint8_t channel, uint8_t note, uint32_t phase) {
@@ -3413,7 +3416,8 @@ void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
   TEST_ASSERT_EQUAL(TrackCaptureStopTestAccess::queueCapacity(),
                     TrackCaptureStopTestAccess::queueSize(track));
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsRawRange(track));
-  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::rawRange(track).ready());
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::slotRawRange(track, track.getActiveLoopIndex()).ready());
+  TrackCaptureStopTestAccess::setQueueCount(track, 0); // synthetic occupancy owns no jobs
 }
 
 /// Task 2.3 staging ownership: an admitted stop job borrows the frozen admission
@@ -4369,8 +4373,9 @@ void test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve() {
            static_cast<unsigned>(full.freeBeforeProbe));
   TEST_ASSERT_EQUAL_INT32_MESSAGE(expectedPerLoop, chunksPerLoop, message);
 
-  // The reserve set the probe admits is the canonical copy; the pool must still hold it afterwards.
-  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(full.freeBeforeProbe) -
+  // Cold capture admission adds the canonical copy and this slot's one sealed-range tail.
+  // Dormant boot/load descriptors reserve no tails; do not hide that extra admitted chunk.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(full.freeBeforeProbe) - 1u -
                                static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
                            full.freeAfterProbe);
   // And the reason cannot be exhaustion: the pool keeps its own reserve plus the admitted set.

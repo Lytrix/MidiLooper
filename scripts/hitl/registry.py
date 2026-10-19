@@ -24,6 +24,11 @@ class ScenarioSpec:
 
 
 PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
+    "rolling_record": ("rolling_record",),
+    "ingress_cost": ("ingress_cost",),
+    "pit_motion": ("pit_motion",),
+    "pit_clock": ("pit_clock",),
+    "i4_checkpoint": ("i4_checkpoint",),
     "base": ("base",),
     "edit_full": ("edit_record_prelude", "edit_full"),
     "overdub_occupy_paint": ("overdub_occupy_paint",),
@@ -52,6 +57,13 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
 
 
 def _lazy_registry() -> dict[str, ScenarioSpec]:
+    from hitl.scenarios.rolling_record import run_rolling_record
+    from hitl.scenarios.ingress_cost import run_ingress_cost
+    from hitl.scenarios.pit_motion import run_pit_motion
+    from hitl.scenarios.pit_clock import run_pit_clock
+    from hitl.scenarios.i4_checkpoint import run_i4_checkpoint
+    from hitl.scenarios.i4_overlay_load import run_i4_overlay_load
+    from hitl.scenarios.i4_stopped_focus import run_i4_stopped_focus
     from hitl.scenarios.base import run_base_scenario, verify_base_scenario
     from hitl.scenarios.edit_full import run_edit_full_scenario, verify_edit_full_scenario
     from hitl.scenarios.edit_record_prelude import (
@@ -87,6 +99,34 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     )
 
     return {
+        "rolling_record": ScenarioSpec(
+            scenario_id="rolling_record", description="Managed TEMP live rolling Record coverage and Stop evidence",
+            run=run_rolling_record,
+        ),
+        "ingress_cost": ScenarioSpec(
+            scenario_id="ingress_cost", description="Stopped Clock-only conditional instrumented ingress costs",
+            run=run_ingress_cost,
+        ),
+        "pit_motion": ScenarioSpec(
+            scenario_id="pit_motion", description="Temporary guarded internal/external moving PIT observations",
+            run=run_pit_motion,
+        ),
+        "pit_clock": ScenarioSpec(
+            scenario_id="pit_clock", description="Managed stopped-only temporary PIT elapsed-reference qualification",
+            run=run_pit_clock,
+        ),
+        "i4_stopped_focus": ScenarioSpec(
+            scenario_id="i4_stopped_focus", description="Guarded stopped NOTE_EDIT filled-slot focus A/B/A with owner OLED proof",
+            run=run_i4_stopped_focus,
+        ),
+        "i4_overlay_load": ScenarioSpec(
+            scenario_id="i4_overlay_load", description="Managed MIDI-only owner-identified test checkpoint dirty-Yes load",
+            run=run_i4_overlay_load,
+        ),
+        "i4_checkpoint": ScenarioSpec(
+            scenario_id="i4_checkpoint", description="MIDI-only preserving Current checkpoint for I4 setup",
+            run=run_i4_checkpoint,
+        ),
         "base": ScenarioSpec(
             scenario_id="base",
             description="Record/overdub baseline (legacy host_midi_automation_baseline)",

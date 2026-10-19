@@ -17,8 +17,15 @@
 #pragma once
 
 #include "Utils/PlaybackLaneMeasurement.h"
+#include "Utils/MidiIngressCostProbe.h"
 #include <cstddef>
 #include <cstdint>
+#include "Utils/PlaybackReadWitness.h"
+#if defined(SESSION_CAPTURE) || defined(SC_PLAYBACK_READ_ROW)
+#define SC_PLAYBACK_READ_WITNESS_ENABLED 1
+#else
+#define SC_PLAYBACK_READ_WITNESS_ENABLED 0
+#endif
 
 /// Are the **qualification-only diagnostic rows** (`DIAG,launch_gate`, `DIAG,snap_gate`) compiled at all? They are
 /// **qualification-only**: a capture build that also opens the rolling lane's gate, and a native suite, which is where
@@ -34,6 +41,7 @@
 #include "Utils/DiagnosticsTypes.h"
 
 #ifdef SESSION_CAPTURE
+#include "Utils/ClockPhysicalObservation.h"
 
 // Compile-time tag gates. Default on so teensy41-capture-serial keeps the HITL #CAP
 // contract. Set a tag to 0 to drop that family at queue time (investigation builds).
@@ -123,6 +131,8 @@ struct PendingRevt {
 
 /** Allocate the external-memory capture ring (no-op when PSRAM unavailable). */
 SC_MEM_ATTR void initCaptureBuffer();
+/// Bounded scalar mailbox only; foreground flush owns formatting/USB/ring delivery.
+SC_MEM_ATTR void observePlaybackRead(const PlaybackReadWitness& witness);
 
 /** True for ~5s after initCaptureBuffer (legacy; hot-path CAP lines always prefer the ring). */
 bool captureBootGraceActive();
@@ -475,10 +485,20 @@ SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const ch
 /// the covered interval are the receipt's own fields rather than a reader's inference. Entity-shaped and
 /// cadence-bounded by its caller; delivered direct-when-USB-has-room with the ring as its fallback (Tier-A), exactly
 /// as `readinessReceiptImmediate`.
+///
+/// Task 3.15g **appends** three adoption-diagnostic fields (never reordering or re-meaning an existing one, so an older
+/// reader that stops at field 14 is unaffected): `adoptMask` is the read-only term mask of the root-return adoption edge
+/// (bit0 the served view is this job's frozen window, bit1 the root is current, bit2 the ready role is valid, bit3 the
+/// ready view is complete, bit4 it is root-backed, bit5 its start phase is the playhead's, bit6 its loop length is the
+/// loop's, bit7 the rolling frame envelope holds), `adoptResult` is 0 not attempted / 1 adopted / 2 refused, and
+/// `adoptWhy` is the adoption's own refusal code (1 no runtime, 2 no view set, 3 current role unset, 4 ready role unset,
+/// 5 ready incomplete, 6 the preparation handoff declined with every readable term holding). All three are `0` at the
+/// completion transition, where no adoption has been attempted yet.
 SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                                 uint32_t revision, uint32_t leadTicks, uint32_t sourceGeneration,
                                                 uint64_t captureToken, uint32_t start, uint32_t length,
-                                                uint32_t loopLength);
+                                                uint32_t loopLength, uint8_t adoptMask = 0, uint8_t adoptResult = 0,
+                                                uint8_t adoptWhy = 0);
 /// Schema-2 lane measurement, sampled at EVERY dispatch, including idle turns.
 /// Maxima are observations, not guaranteed bounds; eligibility is not continuous
 /// pending-work identity. The Tier-A row is aggregated and queued outside the worker.
@@ -529,10 +549,21 @@ SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEn
 /// "enqueue rejected", "evicted" and "delivered but not parsed". Also emits independent
 /// RING,record_stats rows for RECA and RECS. All counters cover the current boot.
 SC_MEM_ATTR void emitIdentityPathStats();
+SC_MEM_ATTR void physicalClockObservationImmediate(uint32_t id, const ClockPhysicalObservation& observation);
+SC_MEM_ATTR void physicalClockMotionImmediate(uint32_t id, const ClockPhysicalObservation& observation,
+                                             uint32_t guardBits);
+#if MIDI_INGRESS_COST_QUALIFICATION
+SC_MEM_ATTR void ingressCostImmediate(uint32_t id, uint8_t route, uint8_t lane,
+    uint32_t cpuHz, uint32_t guardBits, const MidiIngress::IngressCostStats& stats,
+    uint32_t contractBits);
+#endif
 SC_MEM_ATTR bool emitTraceFence(const char* nonce);
 /// Request-only scalar live observation. No ring fallback; backpressure refuses.
 SC_MEM_ATTR bool emitTrackStatus(uint8_t track, uint8_t slot, const char* state,
                                   bool transportRunning);
+/// Request-only live overlay scalars, <=128-byte direct response, no ring fallback.
+SC_MEM_ATTR bool emitOverlayStatus(bool open, uint8_t mode, uint8_t row,
+                                    uint16_t setId, uint16_t revisionId, uint8_t phase);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
                                    uint32_t undoEntryCount, uint32_t snapshotCount);
@@ -669,9 +700,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 /// window became ready rather than only that the slot's committed readiness is `not_servable`.
 #ifndef SC_FROZEN_WINDOW_READINESS
 #define SC_FROZEN_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks, sourceGeneration, \
-                                   captureToken, start, length, loopLength) \
+                                   captureToken, start, length, loopLength, ...) \
   DebugSessionCapture::frozenReadinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks, \
-                                                       sourceGeneration, captureToken, start, length, loopLength)
+                                                       sourceGeneration, captureToken, start, length, loopLength, \
+                                                       ##__VA_ARGS__)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) \
@@ -691,6 +723,9 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 /// suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` / `SC_WINDOW_READINESS` pattern): without a seam
 /// these rows were emitted under a capture build and **observable nowhere**, so a claim about one of them could only
 /// be asserted as a state, never as the row the claim is about.
+#ifndef SC_PLAYBACK_READ_ROW
+#define SC_PLAYBACK_READ_ROW(witness) DebugSessionCapture::observePlaybackRead(witness)
+#endif
 #ifndef SC_PLAYBACK_BUILD_ROW
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) \
   DebugSessionCapture::playbackBuildRow(track, slot, loopLengthTicks, revision, path)
@@ -899,7 +934,10 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_FROZEN_WINDOW_READINESS
 #define SC_FROZEN_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks, sourceGeneration, \
-                                   captureToken, start, length, loopLength) ((void)0)
+                                   captureToken, start, length, loopLength, ...) ((void)0)
+#endif
+#ifndef SC_PLAYBACK_READ_ROW
+#define SC_PLAYBACK_READ_ROW(witness) ((void)0)
 #endif
 #ifndef SC_PLAYBACK_BUILD_ROW
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)

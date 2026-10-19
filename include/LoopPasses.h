@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <type_traits>
 
 #include "EditPass.h"
 #include "LoopGeometry.h"
@@ -17,6 +18,41 @@ constexpr LoopId kInvalidLoopId = UINT32_MAX;
 
 /// Active capture phase for the unified record/overdub append buffer.
 enum class CapturePhase : uint8_t { None, Record, Overdub };
+
+/// Assignment-qualified Capture interval/phase identity. Public legacy enum
+/// writes retain their meaning, but even same-phase/reopen assignment cannot
+/// resurrect a borrowed receipt. Identity exhaustion never prevents the write.
+class CapturePhaseState {
+ public:
+  operator CapturePhase() const { return value_; }
+  template <typename Integer,
+            typename std::enable_if<std::is_integral<Integer>::value, int>::type = 0>
+  explicit operator Integer() const { return static_cast<Integer>(value_); }
+  uint64_t generation() const { return generation_; }
+  CapturePhaseState& operator=(CapturePhase value);
+  CapturePhaseState& operator=(const CapturePhaseState& other) {
+    return *this = static_cast<CapturePhase>(other);
+  }
+ private:
+#if defined(PIO_UNIT_TEST_NATIVE)
+  friend struct CapturePhaseStateTestAccess;
+#endif
+  uint64_t generation_ = 1;
+  CapturePhase value_ = CapturePhase::None;
+};
+
+/// Raw Capture rows have separate destructive identity. This receipt freezes
+/// semantic phase/interval and exact projection scalars, not physical lifetime.
+struct CaptureProjectionIdentity {
+  uint64_t phaseGeneration = 0;
+  uint32_t startLoopTick = 0, loopStartTick = 0, loopLengthTicks = 0;
+  CapturePhase phase = CapturePhase::None;
+  bool operator==(const CaptureProjectionIdentity& other) const {
+    return phaseGeneration == other.phaseGeneration && phase == other.phase &&
+        startLoopTick == other.startLoopTick && loopStartTick == other.loopStartTick &&
+        loopLengthTicks == other.loopLengthTicks;
+  }
+};
 
 enum class CapturePassState : uint8_t { Active, Disabled };
 
@@ -99,7 +135,7 @@ struct PreparedCapturePassTransfer {
 /// Mutable pre-commit MIDI writer (sole capture buffer for record/overdub).
 struct Capture {
   LoopEventStore store;
-  CapturePhase phase = CapturePhase::None;
+  CapturePhaseState phase;
 };
 
 using CommittedOverdubPassVec =

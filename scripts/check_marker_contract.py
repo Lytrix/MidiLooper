@@ -50,6 +50,8 @@ _FN_START = "inline bool isTierALine("
 _SOURCE_FN_START = "bool isTierATextLine("
 _SOURCE_FN_END = "bool isCriticalTextLine("
 _SOURCE_PREFIX_RE = re.compile(r'tagStartsWith\(\s*line\s*,\s*"([^"]+)"')
+_SOURCE_NAMED_PREFIX_RE = re.compile(r'tagStartsWith\(\s*line\s*,\s*([A-Za-z_]\w*)\s*\)')
+_FLASH_PREFIX_RE = re.compile(r'^(?:static\s+)?const char\s+(\w+)\[\]\s+PROGMEM\s*=\s*"([^"\\]*)"\s*;', re.MULTILINE)
 
 
 def source_tier_a_prefixes(text: Optional[str] = None) -> list[str]:
@@ -65,10 +67,13 @@ def source_tier_a_prefixes(text: Optional[str] = None) -> list[str]:
     end = text.find(_SOURCE_FN_END, start)
     body = text[start:end if end > start else len(text)]
     prefixes: list[str] = []
+    flash_prefixes = dict(_FLASH_PREFIX_RE.findall(text))
     for line in body.splitlines():
         if line.strip().startswith("//"):
             continue
         prefixes.extend(_SOURCE_PREFIX_RE.findall(line))
+        prefixes.extend(flash_prefixes[name] for name in _SOURCE_NAMED_PREFIX_RE.findall(line)
+                        if name in flash_prefixes)
     return prefixes
 
 
@@ -110,7 +115,7 @@ def _is_comment_or_classifier(line: str) -> bool:
     """Doc comments and the tier lists themselves mention a tag without emitting it."""
     stripped = line.strip()
     return (stripped.startswith(("//", "*", "/*")) or "tagStartsWith(" in stripped
-            or "strncmp(tag" in stripped)
+            or "strncmp(tag" in stripped or _FLASH_PREFIX_RE.fullmatch(stripped) is not None)
 
 
 def emitted(tag: str, dirs: Iterable[Path] = SOURCE_DIRS) -> Optional[str]:

@@ -397,6 +397,67 @@ TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination des
       loop.invalidatePlaybackCaches();
     }
   }
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (ownsTrackState && toPlaying && !alignRequested &&
+      RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength) == 0) {
+    auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    const auto* set = runtime ? runtime->viewSetIfPrewarmed() : nullptr;
+    const auto* job = captureStopJobHead();
+    const auto clock = clockManager.getPlaybackDeadlineClock();
+    if (set && job && job->slot == slot && job->mode == CapturePhase::Record &&
+        job->owner == &loop && job->ownsRawRange() && job->pendingNotes.empty() &&
+        set->lifecycle.current < set->views.size()) {
+      const auto& current = set->views[set->lifecycle.current];
+      const auto& frame = runtime->rolling;
+      const auto& recipe = runtime->pendingViewRequest_;
+      const bool matching = frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+          frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
+          frame.boundView == set->lifecycle.current &&
+          frame.boundStorageGeneration == current.storageGeneration &&
+          frame.loopLength == finalLength && finalLength != 0 &&
+          frame.projectionStart == getProjectionCycleStartTick() &&
+          recipe.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture &&
+          recipe.operationGeneration == playbackGeneration &&
+          recipe.liveLeaseGeneration == runtime->workingSetGeneration() &&
+          recipe.liveCaptureProjection.startLoopTick == loop.startLoopTick &&
+          recipe.liveCaptureProjection.loopStartTick == loop.loopStartTick &&
+          recipe.liveProjectionStart == frame.projectionStart &&
+          recipe.liveMaximumTick < finalLength &&
+          current.complete && current.published && !current.rawCoveragePrepared &&
+          !current.firstRecordReturnWindow &&
+          current.source.origin == PlaybackWindowOrigin::Capture &&
+          current.source.sourceGeneration == playbackGeneration && !current.source.snapshotIdentity &&
+          current.source.captureContentGeneration == job->frozenCaptureContentGeneration &&
+          current.coverage.isValid() && current.coverage.lengthTicks == Config::TICKS_PER_BAR &&
+          current.coverage.startPhase % Config::TICKS_PER_BAR == 0 &&
+          current.coverage.loopLengthTicks == finalLength &&
+          current.coverage.contains(IntervalProjection::tickPhaseInProjectionCycle(
+              currentTick, frame.projectionStart, finalLength));
+      if (matching) {
+        // The job now retains the exact source/closure responsibility. No new
+        // publication, cursor rewind, CC123 or ledger reset belongs on this edge.
+        runtime->pendingViewRequest_ = {};
+        runtime->frozenViewRequest = {};
+        invalidatePlaybackCaches();
+        (void)setState(TRACK_STOPPED_RECORDING);
+        (void)setState(TRACK_PLAYING);
+        SC_REC_STOP("stop", slot, currentTick, loop.startLoopTick, rawLength, finalLength, alignRequested);
+        logger.logTrackEvent("Recording stopped", currentTick, "recStart=%lu length=%lu",
+            static_cast<unsigned long>(loop.startLoopTick), static_cast<unsigned long>(finalLength));
+        const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+            currentTick, frame.projectionStart, finalLength);
+        displayManager.refreshViewportAfterRecordStop(*this, slot, phase);
+        return;
+      }
+    }
+  }
+  if (auto* runtime = playbackRuntime.slotIfAllocated(slot)) {
+    if (runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture)
+      runtime->pendingViewRequest_ = {};
+    if (runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture)
+      runtime->frozenViewRequest = {};
+  }
+#endif
   loop.nextEventIndex = 0;
   const uint32_t recordStartTick = loop.startLoopTick;
   uint32_t playbackTick = currentTick;
@@ -444,6 +505,19 @@ TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination des
   sendAllNotesOff();
   resetPlaybackState(playbackTick);
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot)) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+    const auto* set = runtime->viewSetIfPrewarmed();
+    if (set && set->lifecycle.current < set->views.size()) {
+      const auto& current = set->views[set->lifecycle.current];
+      if (current.complete && current.published &&
+          current.source.origin == PlaybackWindowOrigin::Capture) {
+        // The provisional live projection cannot name final stop geometry.
+        // Keep its copied bytes/token immutable; only its positional frame is
+        // invalidated so the frozen successor can bind at its own boundary.
+        runtime->rolling = {};
+      }
+    }
+#endif
     // The final length is known only now. Bind the already prepared bar-1 view before the
     // normal PLAYING transition, so launch stays on this boundary while the deferred worker
     // finalizes the take. (The frozen return window the closure grain binds keeps the interval

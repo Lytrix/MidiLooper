@@ -28,6 +28,7 @@ def run_base_scenario(args: object) -> int:
         base_report_ok,
         base_report_usable_for_note_edit_sweep,
         latest_base_report,
+        record_seed_qualification_issues,
         resolve_base_seed_serial_log,
     )
     from hitl.context import get_context
@@ -65,13 +66,19 @@ def run_base_scenario(args: object) -> int:
 
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     report = latest_base_report(out_dir)
-    seed_ok = (
-        base_report_record_seed_ok(report)
-        if preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked")
-        else False
-    )
-    loop_materialized = base_report_loop_materialized(report)
-    record_seed_ok = base_report_record_seed_ok(report)
+    record_only = bool(base_preset_config(report).get("record_only"))
+    edit_seed_preset = preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked")
+    seed_ok = base_report_record_seed_ok(report) if record_only else False
+    if (record_only or edit_seed_preset) and not seed_ok:
+        reasons = record_seed_qualification_issues(report)
+        if not record_only:
+            reasons.insert(0, "expected Record-only seed configuration missing")
+        print("[hitl] base record seed refused: " + "; ".join(reasons))
+        ctx = get_context(args)
+        ctx.base_preset_passed = False
+        return code if code != 0 else 1
+    loop_materialized = base_report_loop_materialized(report) if not record_only else False
+    record_seed_ok = seed_ok if record_only else base_report_record_seed_ok(report)
     if code != 0 and (loop_materialized or record_seed_ok):
         print(
             "[hitl] base overall_ok=false but loop materialized on device — "

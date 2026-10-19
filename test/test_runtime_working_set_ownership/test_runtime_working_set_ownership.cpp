@@ -1,6 +1,9 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 #define PLAYBACK_WINDOW_ROLLING_ENABLED 1
+#define UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE 1
+#define PLAYBACK_SOURCE_MASK_QUALIFICATION 1
+#include "../test_support/PlaybackSourceMaskFixture.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -219,7 +222,9 @@ inline size_t countOf(const char* exit) {
 SDClass SD;
 
 /// The sketch owns this global; the load path reads it, so the harness provides it.
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 bool sequencerRunning = false;
+#endif
 
 #include "../test_support/track_harness.inc"
 // Task 3.7a (I7): the shared fixtures that build a retained revision's pinned bodies and their note identities
@@ -334,11 +339,22 @@ bool LoopEditManager::hasPendingGeometry() const { return false; }
 struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static uint32_t playbackGenerationOf(const Track& track) { return track.playbackGeneration; }
+  static bool publishCompletedWindow(Track& track, uint8_t slot) {
+    return track.publishCompletedPlaybackWindow(slot);
+  }
   static bool runtimeAllocated(const Track& track, uint8_t slot) {
     return track.playbackRuntime.slotIfAllocated(slot) != nullptr;
   }
   static LoopPlaybackRuntime* runtimeIfAllocated(Track& track, uint8_t slot) {
     return track.playbackRuntime.slotIfAllocated(slot);
+  }
+  static void seedPreRoll(Track& track) {
+    track.armedPreRollNotes[{1,65}] = PendingNote{65,1,120,91};
+  }
+  static size_t preRollCount(const Track& track) { return track.armedPreRollNotes.size(); }
+  static LoopPlaybackRuntime* prewarmLiveSourceRuntime(Track& track, uint8_t slot) {
+    auto* runtime = track.playbackRuntime.trySlot(slot);
+    return runtime && runtime->prewarmRollingViews() ? runtime : nullptr;
   }
   static uint8_t workingSetRoles(const Track& track, uint8_t slot) {
     const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
@@ -352,8 +368,33 @@ struct TrackCaptureStopTestAccess {
     const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr ? rt->workingSetGeneration() : 0;
   }
+   /// DEC-136 — private committed-root preparation before Capture-ready adoption: the classification rule and
+   /// the envelope's own impossibility are the route's whole guard, so the fixtures read them directly.
+   static bool rootReturnSuccessorIsOwedForSlot(const Track& track, const PlaybackViewPendingRequest& request,
+                                                PlaybackDeadlineClock clock) {
+     return track.rootReturnSuccessorIsOwedForSlot(track.activeLoopIndex, request, clock);
+   }
+   static bool ordinaryAdmissionCannotServeDemand(const Track& track, const CoverageServiceContract& contract,
+                                                  uint32_t loopLengthTicks) {
+     return track.ordinaryAdmissionCannotServeDemand(contract, loopLengthTicks);
+   }
+   static CoverageServiceContract declaredCoverageContract(Track& track) {
+     return track.playbackViewCoverageContract();
+   }
   static bool hasLiveCaptureStopJobForSlot(const Track& track, uint8_t slot) {
     return track.hasLiveCaptureStopJobForSlot(slot);
+  }
+  static bool hasRecordReaderObligationForSlot(const Track& track, uint8_t slot) {
+    const auto* runtime = track.playbackRuntime.slotIfAllocated(slot);
+    return runtime != nullptr && runtime->hasBoundRecordReturnWindowForPendingJob();
+  }
+  static uint64_t headCaptureStopInterval(const Track& track) {
+    if (const auto* job = track.captureStopJobHead()) return job->interval;
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      const auto* presentation = track.captureStopPresentationForSlot(slot);
+      if (presentation && presentation->retirementActive) return presentation->interval;
+    }
+    return 0;
   }
   static bool hasAcceptedInteractionForSlot(const Track& track, uint8_t slot) {
     return track.hasAcceptedInteractionForSlot(slot);
@@ -374,17 +415,23 @@ struct TrackCaptureStopTestAccess {
                                uint8_t slot, uint64_t interval) {
     return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
   }
-  static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
-  static bool stepRecordSnapshotPublication(Track& track) {
-    auto* job = track.captureStopJobHead();
-    if (job == nullptr || job->mode != CapturePhase::Record ||
-        job->admission.phase != PendingStopPhase::RecordPublished || job->owner == nullptr ||
-        !job->owner->pendingSnapshotSessionExitQueued() || job->owner->publishedSnapshotIsCurrent()) {
-      return false;
-    }
-    job->owner->stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR);
-    return true;
+  static bool step(Track& track) {
+    if (track.captureStopJobHead() != nullptr) return track.processDeferredOverdubStopGrain();
+    return track.serviceCaptureStopPresentations();
   }
+  static bool stepRecordSnapshotPublication(Track& track) {
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      const auto* presentation = track.captureStopPresentationForSlot(slot);
+      if (presentation && presentation->retirementActive && presentation->owner &&
+          presentation->owner->pendingSnapshotSessionExitQueued() &&
+          !presentation->owner->publishedSnapshotIsCurrent()) {
+        presentation->owner->stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// S4f.3: the real S4f.2 dispatch decision, the same entry `processDeferredIdleMaintenance` calls, so
   /// the accepted stop is driven to admission by the production lane rather than by a test-only path.
   static bool serviceAcceptedInteractionTurn(Track& track) {
@@ -398,6 +445,9 @@ struct TrackCaptureStopTestAccess {
     return track.hasPendingDeferredOverdubStop();
   }
   static bool hasStopInFlight(const Track& track) { return track.hasStopInFlight(); }
+  static void retainGeometryForMotionTest(uint8_t track, uint8_t slot) {
+    trackManager.retainRecordStopGeometryObligation(track, slot);
+  }
   /// S4f.6's slot-scoped predicate: a stop obligation that names **this** slot. The retry fixture needs it
   /// to assert that the refusal it is exercising is the target's own obligation, not another slot's.
   static bool hasStopInFlightForSlot(const Track& track, uint8_t slot) {
@@ -611,6 +661,8 @@ constexpr uint8_t kLiveCaptureBit = static_cast<uint8_t>(WorkingSetRole::LiveCap
 }  // namespace
 
 void setUp() {
+  PlaybackSourceMaskFixture::reset();
+  LoopPool::setDestroyObserverForTests(nullptr);
   nativePlaybackDeadlineClock = {};
   nativeTransportRunning = true;
   g_nativeSilenceTrackCalls = 0;
@@ -620,7 +672,7 @@ void setUp() {
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
 }
-void tearDown() {}
+void tearDown() { LoopPool::setDestroyObserverForTests(nullptr); }
 
 /// **Gate item 1 + control.** Boot/load is an admission boundary (S2b.1, invariant 34): a committed
 /// slot leaves boot with descriptors only -- no working set -- and the *same* slot gains one at the
@@ -10455,6 +10507,15 @@ void test_record_capture_private_initial_build_preserves_raw_return_shell() {
   // the lane's `build_complete` row here. The recorders are cleared so the row is this loop's own.
   PlaybackPathRows::reset();
   MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL(Track::PlaybackViewTurnResult::GrainServed,
+      track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock));
+  ++grants;
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  TEST_ASSERT_FALSE(set->views[privateRole].complete);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
+  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
+  TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
   for (; grants < 16 && !set->views[privateRole].complete; ++grants)
     (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
   TEST_ASSERT_TRUE_MESSAGE(set->views[privateRole].complete,
@@ -10463,13 +10524,15 @@ void test_record_capture_private_initial_build_preserves_raw_return_shell() {
   TEST_ASSERT_TRUE_MESSAGE(PlaybackPathRows::countOf("build_complete") >= 1,
       "the live first-Capture completion must be named by the lane's own build_complete row");
   TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
-  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
-  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
-  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
-  TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
-  TEST_ASSERT_EQUAL_UINT8(privateRole, set->lifecycle.build);
+  // Completion is now the owner-only publication boundary. The old shell was
+  // protected above during private work, then retired without another view.
+  TEST_ASSERT_EQUAL_UINT8(privateRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+  TEST_ASSERT_FALSE(set->views[rawRole].rawCoveragePrepared || set->views[rawRole].published);
+  TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.build);
+  TEST_ASSERT_TRUE(set->lifecycle.ready < set->views.size());
   const auto& privateView = set->views[privateRole];
-  TEST_ASSERT_FALSE(privateView.published);
+  TEST_ASSERT_TRUE(privateView.published);
   TEST_ASSERT_FALSE(privateView.rawCoveragePrepared);
   TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, privateView.source.origin);
   TEST_ASSERT_EQUAL_UINT64(captureToken, privateView.source.captureContentGeneration);
@@ -10485,7 +10548,7 @@ void test_record_capture_private_initial_build_preserves_raw_return_shell() {
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
 }
 
-void test_record_capture_private_build_cancels_on_accepted_input_without_losing_raw_shell() {
+void test_record_capture_append_survives_legacy_turn_without_losing_raw_shell() {
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
@@ -10512,12 +10575,19 @@ void test_record_capture_private_build_cancels_on_accepted_input_without_losing_
   const PlaybackViewSourceIdentity legacySource{loop.playbackRevision,
       TrackCaptureStopTestAccess::playbackGenerationOf(track), loop.publishedSnapshotIdentity()};
   TEST_ASSERT_FALSE(runtime->serviceFirstRecordingBar(loop, legacySource, Config::TICKS_PER_BAR, 1));
-  TEST_ASSERT_FALSE(runtime->viewBuild.active());
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  TEST_ASSERT_TRUE(runtime->viewBuild.liveCaptureCurrent());
   TEST_ASSERT_FALSE(set->views[candidateRole].complete);
   TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
   TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.retained);
   TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
   TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.capture.store.size());
+  loop.capture.phase = CapturePhase::None;
+  TEST_ASSERT_FALSE(runtime->serviceFirstRecordingBar(loop, legacySource, Config::TICKS_PER_BAR, 1));
+  TEST_ASSERT_FALSE(runtime->viewBuild.active());
+  TEST_ASSERT_FALSE(runtime->viewBuild.ownsLiveCaptureBorrow());
+  TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
   TEST_ASSERT_EQUAL_UINT32(1u, loop.capture.store.size());
 }
 
@@ -10600,6 +10670,9 @@ void test_record_capture_initial_window_reaches_unified_reader() {
       current.coverage.loopLengthTicks == Config::TICKS_PER_BAR &&
       current.source.snapshotIdentity == nullptr &&
       current.source.sourceGeneration == TrackCaptureStopTestAccess::playbackGenerationOf(track), detail);
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, current.source.origin);
+  TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), current.source.captureContentGeneration);
+  TEST_ASSERT_FALSE(current.firstRecordReturnWindow);
   const uint8_t servedRole = set->lifecycle.current;
   const uint64_t servedStorage = current.storageGeneration;
   nativePlaybackDeadlineClock = {0, 1};
@@ -10610,6 +10683,14 @@ void test_record_capture_initial_window_reaches_unified_reader() {
   TEST_ASSERT_EQUAL_UINT8(servedRole, runtime->rolling.boundView);
   TEST_ASSERT_EQUAL_UINT64(servedStorage, runtime->rolling.boundStorageGeneration);
   TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  unsigned initialSoundings = 0;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) {
+    ++initialSoundings;
+  });
+  TEST_ASSERT_EQUAL_UINT32(0u, initialSoundings);
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  TEST_ASSERT_EQUAL_UINT64(servedStorage, runtime->rolling.boundStorageGeneration);
   // E2 next-traversal debt: the initial silent current may not be overwritten
   // by an accepted late pair, nor may the one-row candidate survive the Off.
   // The native clock stub only writes currentTick; pair every forward tick with
@@ -10644,12 +10725,18 @@ void test_record_capture_initial_window_reaches_unified_reader() {
       "accepted Off must supersede an earlier one-row Capture candidate");
   const uint8_t successorRole = set->lifecycle.ready;
   const auto& successor = set->views[successorRole];
-  TEST_ASSERT_TRUE(successor.complete);
+  TEST_ASSERT_TRUE_MESSAGE(successor.complete,
+      "EXPECTED RED/prerequisite: epoch-1 live-Capture successor preparation is not linked");
   TEST_ASSERT_FALSE(successor.published);
   TEST_ASSERT_EQUAL_UINT32(0u, successor.coverage.startPhase);
   TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, successor.coverage.lengthTicks);
   TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, successor.coverage.loopLengthTicks);
   TEST_ASSERT_EQUAL_UINT32(2u, successor.storage.eventCount);
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, successor.source.origin);
+  TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), successor.source.captureContentGeneration);
+  TEST_ASSERT_EQUAL_UINT32(TrackCaptureStopTestAccess::playbackGenerationOf(track),
+                           successor.source.sourceGeneration);
+  TEST_ASSERT_FALSE(successor.rawCoveragePrepared || successor.firstRecordReturnWindow);
   // The expected stream comes from input, not from the candidate's order.
   MidiSendCapture::reset();
   const uint32_t nextTicks[] = {768, 1468, 1508};
@@ -10683,8 +10770,354 @@ void test_record_capture_initial_window_reaches_unified_reader() {
     TEST_ASSERT_EQUAL_UINT32(i, MidiSendCapture::count());
   }
 }
+
+// Expected RED until Track publishes live Capture. Never manufacture a current
+// view to skip that prerequisite; later stop/reader assertions are NOT RUN then.
+static void assertLiveCaptureStopHandoff(bool publishRootBeforeEdge) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0, 0};
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(track.isRecording());
+  Loop& loop = track.getLoop(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  for (unsigned turn = 0; turn < 64; ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE(set->lifecycle.current < set->views.size());
+  const uint8_t liveRole = set->lifecycle.current;
+  const auto& live = set->views[liveRole];
+  TEST_ASSERT_TRUE_MESSAGE(live.complete && live.published && !live.rawCoveragePrepared &&
+      !live.firstRecordReturnWindow && live.source.origin == PlaybackWindowOrigin::Capture,
+      "prerequisite: Track-owned live Capture current must publish before stop-handoff oracle");
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR, live.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(0u, live.storage.eventCount);
+  const uint64_t liveToken = live.source.captureContentGeneration;
+  TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), liveToken);
+  const uint64_t liveStorage = live.storageGeneration;
+  nativePlaybackDeadlineClock = {0, 1};
+  MidiSendCapture::reset();
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL(LoopPlaybackRuntime::RollingPhase::Serving, runtime->rolling.phase);
+  TEST_ASSERT_EQUAL_UINT8(liveRole, runtime->rolling.boundView);
+  clockManager.assignCurrentTickSilently(780);
+  nativePlaybackDeadlineClock = {780, 1};
+  track.noteOn(0, 62, 100, 780);
+  (void)track.stepPlaybackViewMaintenance(780, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT8(liveRole, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(liveStorage, live.storageGeneration);
+  TEST_ASSERT_EQUAL_UINT64(liveToken, live.source.captureContentGeneration);
+  TEST_ASSERT_EQUAL_UINT32(0u, live.storage.eventCount);
+  clockManager.assignCurrentTickSilently(1008);
+  nativePlaybackDeadlineClock = {1008, 1};
+  track.noteOff(0, 62, 0, 1008);
+  TEST_ASSERT_EQUAL_UINT32(2u, loop.capture.store.size());
+  const uint64_t frozenToken = loop.captureContentGeneration();
+  TEST_ASSERT_NOT_EQUAL(liveToken, frozenToken);
+  clockManager.assignCurrentTickSilently(1536);
+  nativePlaybackDeadlineClock = {1536, 1};
+  track.stopRecording(1536);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0));
+  TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_EQUAL_UINT32(1536u, loop.loopLengthTicks);
+  // Final geometry differs: the old view cannot be relabeled to the stop token.
+  TEST_ASSERT_EQUAL_UINT64(liveToken, live.source.captureContentGeneration);
+  // Frozen presentation qualification begins at real Record publication, not at the stop admission.
+  for (unsigned turn = 0; turn < 8192 &&
+       TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0); ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordReaderObligationForSlot(track, 0));
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  TEST_ASSERT_TRUE(track.qualifiedFrozenRecordCaptureSourceForSlot(0,
+      TrackCaptureStopTestAccess::headCaptureStopInterval(track), frozen, receipt));
+  TEST_ASSERT_EQUAL_UINT64(frozenToken, receipt.captureContentGeneration);
+  // Recover the missing corrected first interval at its own boundary before asking for bar two.
+  clockManager.assignCurrentTickSilently(1536);
+  nativePlaybackDeadlineClock = {1536, 1};
+  for (unsigned turn = 0; turn < 64 && !runtime->frozenRecordWindowReady(); ++turn)
+    (void)track.stepPlaybackViewMaintenance(1536, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->frozenRecordWindowReady());
+  TEST_ASSERT_EQUAL_UINT32(0, set->views[set->lifecycle.ready].coverage.startPhase);
+  trackManager.updateAllTracks(1536);
+  TEST_ASSERT_FALSE(runtime->frozenRecordWindowReady());
+  clockManager.assignCurrentTickSilently(1632);
+  nativePlaybackDeadlineClock = {1632, 1};
+  MidiSendCapture::reset();
+  for (unsigned turn = 0; turn < 64 && !runtime->frozenRecordWindowReady(); ++turn)
+    (void)track.stepPlaybackViewMaintenance(1632, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->frozenRecordWindowReady(),
+      "mismatching live geometry owes frozen bar-two coverage through the existing owner");
+  TEST_ASSERT_TRUE(set->lifecycle.ready < set->views.size());
+  const uint8_t readyRole = set->lifecycle.ready;
+  const auto& ready = set->views[readyRole];
+  TEST_ASSERT_TRUE(ready.complete && !ready.published);
+  TEST_ASSERT_TRUE(ready.source == receipt);
+  TEST_ASSERT_EQUAL_UINT32(768u, ready.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(768u, ready.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(1536u, ready.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(2u, ready.storage.eventCount);
+  const uint64_t readyStorage = ready.storageGeneration;
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+  TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.ready);
+  TEST_ASSERT_EQUAL_UINT64(readyStorage, ready.storageGeneration);
+  if (publishRootBeforeEdge) {
+    for (unsigned turn = 0; turn < 8192 && !loop.pendingSnapshotSessionExitQueued(); ++turn)
+      (void)TrackCaptureStopTestAccess::step(track);
+    TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+    for (unsigned turn = 0; turn < 4096 && !loop.publishedSnapshotIsCurrent(); ++turn)
+      (void)TrackCaptureStopTestAccess::stepRecordSnapshotPublication(track);
+    TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+    for (unsigned turn = 0; turn < 8; ++turn) {
+      (void)TrackCaptureStopTestAccess::step(track);
+      TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+      TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordReaderObligationForSlot(track, 0));
+      TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.ready);
+      TEST_ASSERT_EQUAL_UINT64(readyStorage, ready.storageGeneration);
+    }
+  }
+  const uint32_t ticks[] = {2304, 2316, 2544};
+  const uint32_t eventTicks[] = {780, 1008};
+  for (unsigned i = 0; i < 3; ++i) {
+    clockManager.assignCurrentTickSilently(ticks[i]);
+    nativePlaybackDeadlineClock = {ticks[i], 1};
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL(LoopPlaybackRuntime::RollingPhase::Serving, runtime->rolling.phase);
+    TEST_ASSERT_EQUAL_UINT8(readyRole, runtime->rolling.boundView);
+    TEST_ASSERT_EQUAL_UINT64(readyStorage, runtime->rolling.boundStorageGeneration);
+    TEST_ASSERT_EQUAL_UINT64(ticks[i], runtime->rolling.lastTick);
+    TEST_ASSERT_EQUAL_UINT32(i, MidiSendCapture::count());
+    if (i != 0) {
+      const auto& event = MidiSendCapture::at(i - 1);
+      TEST_ASSERT_EQUAL_UINT32(eventTicks[i - 1], event.tick);
+      TEST_ASSERT_EQUAL_UINT8(1, event.channel);
+      TEST_ASSERT_EQUAL_UINT8(62, event.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT8(i == 1 ? 100 : 0, event.data.noteData.velocity);
+      TEST_ASSERT_EQUAL(i == 1, event.isNoteOn());
+      TEST_ASSERT_EQUAL(i == 2, event.isNoteOff());
+    }
+    unsigned sounding = 0;
+    runtime->ledger.forEachActive([&](uint8_t channel, uint8_t pitch, const ActiveNoteLedger::Entry&) {
+      ++sounding;
+      TEST_ASSERT_EQUAL_UINT8(1, channel);
+      TEST_ASSERT_EQUAL_UINT8(62, pitch);
+    });
+    TEST_ASSERT_EQUAL_UINT32(i == 1 ? 1u : 0u, sounding);
+    trackManager.updateAllTracks(ticks[i]);
+    TEST_ASSERT_EQUAL_UINT32(i, MidiSendCapture::count());
+    (void)TrackCaptureStopTestAccess::step(track);
+    TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+    TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordReaderObligationForSlot(track, 0));
+  }
+  if (publishRootBeforeEdge) {
+    track.stopPlaying();
+    for (unsigned turn = 0; turn < 64 &&
+         TrackCaptureStopTestAccess::hasRecordReaderObligationForSlot(track, 0); ++turn)
+      (void)TrackCaptureStopTestAccess::step(track);
+    TEST_ASSERT_FALSE(loop.hasSealedCaptureBorrow());
+    TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0));
+  }
+}
+
+void test_live_capture_current_survives_accepted_input_and_is_superseded_by_the_frozen_ready() {
+  assertLiveCaptureStopHandoff(false);
+}
+
+void test_live_capture_frozen_ready_survives_root_publication_and_stop_releases_source() {
+  assertLiveCaptureStopHandoff(true);
+}
+
+// Deliberate non-claim: native epoch-0 private preparation is not evidence that
+// running/device-epoch Record can publish. Keep this as a separate expected RED.
+void test_live_capture_current_at_nonzero_clock_epoch_is_not_claimed() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0, 1};
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(track.isRecording());
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  MidiSendCapture::reset();
+  for (unsigned turn = 0; turn < 64; ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, true, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(track.getLoop(0).capture.store.empty());
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE(set->lifecycle.current < set->views.size());
+  const auto& current = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE_MESSAGE(current.complete && current.published && !current.rawCoveragePrepared &&
+      current.source.origin == PlaybackWindowOrigin::Capture &&
+      current.source.captureContentGeneration == track.getLoop(0).captureContentGeneration(),
+      "EXPECTED RED/non-claim: epoch-0-only live-Capture owner does not qualify epoch 1");
+}
+
+void test_live_capture_reader_survives_production_order_maintenance() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0, 0};
+  track.startRecording(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  for (unsigned turn = 0; turn < 64; ++turn)
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t role = set->lifecycle.current;
+  TEST_ASSERT_TRUE(role < set->views.size());
+  TEST_ASSERT_TRUE(set->views[role].complete && set->views[role].published);
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, set->views[role].source.origin);
+  const uint64_t storage = set->views[role].storageGeneration;
+  const uint64_t token = set->views[role].source.captureContentGeneration;
+  nativePlaybackDeadlineClock = {0, 1};
+  MidiSendCapture::reset();
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+      static_cast<int>(runtime->rolling.phase));
+
+  // main.cpp's window lane order, using the actual production functions. This
+  // is not the full main TU, deferred-owner rotation or a device cadence proof.
+  const auto outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  track.serviceAdmittedDeadlineMisses(nativePlaybackDeadlineClock);
+  MidiServiceDrain::PlaybackHolder offers[Config::NUM_TRACKS] = {};
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i)
+    offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(0, nativePlaybackDeadlineClock);
+  MidiServiceDrain::PlaybackHolderCursor cursor{};
+  uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+  if (MidiServiceDrain::selectPlaybackHolderRoundRobin(cursor, offers, Config::NUM_TRACKS, chosen) ==
+      MidiServiceDrain::PlaybackHolderSelection::Service)
+    (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(0, nullptr, true,
+        nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT8(role, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT64(storage, set->views[role].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT64(token, set->views[role].source.captureContentGeneration);
+  TEST_ASSERT_TRUE(set->views[role].complete && set->views[role].published);
+  TEST_ASSERT_EQUAL_UINT32(0u, set->views[role].storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  char detail[180];
+  snprintf(detail, sizeof(detail),
+      "EXPECTED RED/production order: live Record reader cancelled (outcome=%u frame=%u chosen=%u)",
+      unsigned(outcome), unsigned(runtime->rolling.phase), unsigned(chosen));
+  TEST_ASSERT_TRUE_MESSAGE(outcome == Track::RollingOutcome::Serving &&
+      runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving, detail);
+  TEST_ASSERT_EQUAL_UINT8(role, runtime->rolling.boundView);
+  TEST_ASSERT_EQUAL_UINT64(storage, runtime->rolling.boundStorageGeneration);
+  trackManager.updateAllTracks(0);
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
+  TEST_ASSERT_EQUAL_UINT64(storage, runtime->rolling.boundStorageGeneration);
+}
 #endif
 
+
+// Builder-only measurement: no test-written Track current, synthetic reader or
+// publication. Accepted input goes through Track; observation storage is local.
+void test_live_capture_builder_work_counts_inspected_rows_and_supersession() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0, 1};
+  track.startRecording(0);
+  Loop& loop = track.getLoop(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t rawRole = set->lifecycle.current;
+  const uint64_t rawStorage = set->views[rawRole].storageGeneration;
+  RuntimePlaybackView observation;
+  TEST_ASSERT_TRUE(observation.prewarm(2));
+  RuntimePlaybackViewBuild builder;
+  const PlaybackCoverageInterval coverage{0, Config::TICKS_PER_BAR, 4 * Config::TICKS_PER_BAR};
+  auto begin = [&]() {
+    const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+    const PlaybackViewSourceIdentity identity{loop.playbackRevision,
+        TrackCaptureStopTestAccess::playbackGenerationOf(track), nullptr,
+        PlaybackWindowOrigin::Capture, loop.captureContentGeneration()};
+    TEST_ASSERT_TRUE(builder.begin(observation, source, identity, coverage, {}, {},
+        RuntimePlaybackViewFillScope::PlaybackCoverage));
+  };
+  auto measure = [&](size_t rows, unsigned expectedFills, unsigned expectedOrders) {
+    TEST_ASSERT_EQUAL_UINT32(rows, loop.capture.store.size());
+    begin();
+    unsigned fills = 0, orders = 0;
+    for (unsigned turn = 0; turn < 32 && builder.active(); ++turn) {
+      const auto grain = builder.nextGrain();
+      const auto result = grain == RuntimePlaybackViewBuildGrain::Fill
+          ? (++fills, builder.stepFill(Track::kPlaybackViewFillQuantum))
+          : (++orders, builder.stepOrder(Track::kPlaybackViewOrderQuantum));
+      TEST_ASSERT_FALSE_MESSAGE(result == RuntimePlaybackViewBuildGrain::Denied,
+          "live source measurement must not refuse unchanged accepted content");
+    }
+    TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Complete),
+        static_cast<int>(builder.nextGrain()));
+    TEST_ASSERT_TRUE(observation.complete && !observation.published);
+    TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), observation.source.captureContentGeneration);
+    TEST_ASSERT_EQUAL_UINT32(expectedFills, fills);
+    TEST_ASSERT_EQUAL_UINT32(expectedOrders, orders);
+    TEST_ASSERT_EQUAL_UINT32(rows == 0 ? 0 : 2, observation.storage.eventCount);
+    for (size_t i = 0; i < observation.storage.eventCount; ++i) {
+      const auto& event = observation.storage.events[observation.storage.order[i]];
+      TEST_ASSERT_EQUAL_UINT32(i == 0 ? 700 : 740, event.tick);
+      TEST_ASSERT_EQUAL_UINT8(i == 0 ? midi::NoteOn : midi::NoteOff, event.type);
+      TEST_ASSERT_EQUAL_UINT8(1, event.channel);
+      TEST_ASSERT_EQUAL_UINT8(60, event.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT8(i == 0 ? 100 : 0, event.data.noteData.velocity);
+    }
+    printf("I5 live builder: rows=%u output=%u begin=1 fill=%u order=%u publish=NOT_RUN\n",
+        unsigned(rows), unsigned(observation.storage.eventCount), fills, orders);
+    builder.discard();
+    TEST_ASSERT_EQUAL_UINT8(rawRole, set->lifecycle.current);
+    TEST_ASSERT_EQUAL_UINT64(rawStorage, set->views[rawRole].storageGeneration);
+    TEST_ASSERT_TRUE(set->views[rawRole].rawCoveragePrepared && !set->views[rawRole].published);
+  };
+  measure(0, 1, 0);
+  track.noteOn(0, 60, 100, 700);
+  track.noteOff(0, 60, 0, 740);
+  measure(2, 1, 1);
+
+  // Accept a new token after fill, before order: old useful work is not
+  // publishable, and the current implementation has no incremental reuse.
+  begin();
+  TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Order),
+      static_cast<int>(builder.stepFill(Track::kPlaybackViewFillQuantum)));
+  const uint64_t oldToken = observation.source.captureContentGeneration;
+  track.noteOn(0, 61, 100, 800);
+  TEST_ASSERT_TRUE(oldToken != loop.captureContentGeneration());
+  TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Denied),
+      static_cast<int>(builder.stepOrder(Track::kPlaybackViewOrderQuantum)));
+  TEST_ASSERT_FALSE(observation.complete || observation.published);
+  builder.discard();
+  track.noteOff(0, 61, 0, 804);
+  measure(4, 1, 1);
+  for (unsigned pair = 1; pair < 64; ++pair) {
+    track.noteOn(0, 61, 100, 800 + pair * 8);
+    track.noteOff(0, 61, 0, 804 + pair * 8);
+    if (pair == 31) measure(66, 2, 1);
+  }
+  measure(130, 3, 1);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+}
 
 void test_one_bar_short_loop_does_not_bypass_the_declared_owner_deadline() {
   CoverageServiceContract contract = Track::playbackViewCoverageContract();
@@ -12593,6 +13026,239 @@ void test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_an
                                           "and the boundary it named is ahead of the playhead, where it is adopted");
 }
 
+/// **Task 6.5 — the interval A/B revision trace, on the rolling chain (force 2's rolling half).**
+///
+/// Force 2 asks for two intervals served by the same chain across a **committed-content revision change**: interval A
+/// carries the pre-edit content, interval B the post-edit content, and the boundary must deal with the obligations that
+/// edit created in the order the spec names. It was covered on the shared-view path and named as a **gap** on the rolling
+/// chain, because a window is a *slice* of the loop and a slice's absence is not evidence of removal.
+///
+/// This fixture drives the rolling chain itself -- `serviceRollingPlaybackWindow`, the real builder grains, and the
+/// boundary adoption at the frame's own deadline -- over a demoted 24-bar slot whose **published root is replaced by a
+/// new revision while A serves**, and asserts both halves as the design states them:
+///
+/// 1. **the trace**: A's served interval is r0's content (its bar-spaced notes plus a note whose off lies beyond the
+///    boundary), B's served interval is r1's content (the replacement note, and none of r0's), and nothing of one
+///    revision is emitted inside the other's window;
+/// 2. **the closure rule at the seam**: the sounding note r1 removed is **preserved** by the slice handoff
+///    (`planClosureSettlementForSlot` with `incomingIsWholeLoop=false` -- one preserved, none closed, nothing emitted,
+///    entry still sounding), and it is closed **exactly once** only when the incoming content is authoritative for the
+///    whole loop, discharged through `applyClosureSettlementForSlot` whose assembly order is itself the spec's rule
+///    (closures emitted before the caller's replacement note-ons).
+///
+/// **Not claimed:** no device observation and no NOTE_EDIT integration -- the closure half is asserted at the seam the
+/// rebuild owners call, and a window is documented as *not* removal evidence, which is why the wire deliberately carries
+/// no closure for the slice handoff.
+void test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_revision() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto& loop = track.getLoop(2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  constexpr uint8_t kSlot = 2;
+  constexpr uint8_t kBarPitch = 48;  // the bar-spaced content both revisions keep
+  constexpr uint8_t kHeld = 70;      // r0's obligation, removed by r1
+  constexpr uint8_t kAdded = 72;     // r1's replacement content, inside the later window
+  constexpr uint32_t kBar = 768;
+  const uint64_t origin = clockManager.getCurrentTick();
+  // A's window is the fixture's own projection: two bars starting at the request's start phase (six bars in), so the
+  // A/B boundary is the frame's own deadline. The **later** window is the one the chain itself chose after the edit
+  // (measured: start phase 10,752 = bar fourteen), which is why the fixture drives to it instead of assuming A+2 bars.
+  const uint32_t aStart = 6 * kBar;
+  const uint32_t aEnd = aStart + 2 * kBar;
+  const uint32_t laterIntervalStart = 14 * kBar;
+  const uint32_t laterIntervalEnd = laterIntervalStart + 2 * kBar;
+  const uint32_t heldOn = aEnd - 44;           // inside A
+  const uint32_t heldOff = aEnd + 56;          // beyond A: the obligation the edit strands
+  const uint32_t addedOn = laterIntervalStart + 156;  // inside the later window
+  const uint32_t addedOff = addedOn + 48;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4608u, aStart, "fixture precondition: A starts at bar six");
+  auto addNote = [&](LoopSnapshotChangeSet& changes, uint32_t order, uint16_t noteId, uint8_t pitch,
+                     uint32_t onTick, uint32_t offTick) {
+    SnapshotNoteChange note{};
+    note.kind = SnapshotChangeKind::Add;
+    note.next.loopId = loop.loopId;
+    note.next.noteId = static_cast<NoteId>(noteId);
+    note.next.pitch = pitch;
+    note.next.velocity = 100;
+    note.next.startTick = onTick;
+    note.next.endTick = offTick;
+    changes.notes.push_back(note);
+    SnapshotEventChange on{};
+    on.kind = SnapshotChangeKind::Add;
+    on.next.loopId = loop.loopId;
+    on.next.eventId = static_cast<EventId>(7000 + order * 2);
+    on.next.canonicalOrder = order * 2;
+    on.next.value = MidiEvent::NoteOn(onTick, 1, pitch, 100);
+    on.next.value.noteId = static_cast<NoteId>(noteId);
+    changes.events.push_back(on);
+    SnapshotEventChange off{};
+    off.kind = SnapshotChangeKind::Add;
+    off.next.loopId = loop.loopId;
+    off.next.eventId = static_cast<EventId>(7001 + order * 2);
+    off.next.canonicalOrder = order * 2 + 1;
+    off.next.value = MidiEvent::NoteOff(offTick, 1, pitch, 0);
+    off.next.value.noteId = static_cast<NoteId>(noteId);
+    changes.events.push_back(off);
+  };
+  // One revision of the slot's committed content, published the way a restored slot publishes a root. The two
+  // bar-spaced notes are common to both revisions (an edit changes one note, not the slot); what differs is the
+  // sustained note, which r0 places at `kHeld` across A's boundary and r1 replaces with `kAdded` in the later window.
+  auto publishRevision = [&](bool withHeld) {
+    auto empty = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 10000, 20000);
+    LoopSnapshotChangeSet changes;
+    addNote(changes, 0, 9001, kBarPitch, 6 * kBar, 6 * kBar + 48);
+    addNote(changes, 1, 9002, kBarPitch, 7 * kBar, 7 * kBar + 48);
+    if (withHeld) addNote(changes, 2, 9003, kHeld, heldOn, heldOff);
+    else addNote(changes, 2, 9004, kAdded, addedOn, addedOff);
+    LoopSnapshotConstruction construction(empty, changes);
+    for (unsigned step = 0; step < 4000 && !construction.complete(); ++step)
+      TEST_ASSERT_TRUE(construction.step(64));
+    TEST_ASSERT_TRUE(construction.complete());
+    ++loop.playbackRevision;
+    loop.storePublishedSnapshotForTest(construction.freeze(), loop.playbackRevision);
+  };
+
+  // ---- r0: interval A's revision.
+  publishRevision(/*withHeld=*/true);
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "A's interval opens its demand");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(aStart, runtime->rolling.startPhase, "and A is the two bars from bar six");
+  MidiSendCapture::reset();
+  bool servedA = false;
+  uint8_t viewA = 0xFF;
+  uint32_t adoptedAt = 0;
+  uint32_t emittedAtAdoption = 0;
+  uint32_t endedAt = 0;
+  uint32_t laterAt = 0;
+  uint32_t emittedAtLater = 0;
+  uint32_t laterStartPhase = 0;
+  uint32_t emittedAtEnd = 0;
+  for (uint32_t delta = 1; delta <= laterIntervalEnd + 96; ++delta) {
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    if (!servedA && runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        track.playbackWindowServesSlot(kSlot)) {
+      servedA = true;
+      adoptedAt = delta;
+      viewA = set->lifecycle.current;
+      emittedAtAdoption = static_cast<uint32_t>(MidiSendCapture::count());
+      // The edit lands while A serves: r1 is published, its revision advances, and **the successor already prepared
+      // from r0 is now stale**. That is the rolling chain's own rule, so the fixture follows the chain rather than
+      // wishing the edit had arrived earlier -- what must hold is that r0's content is never re-served as fresh.
+      publishRevision(/*withHeld=*/false);
+      continue;
+    }
+    if (servedA && laterAt == 0) {
+      if (endedAt == 0 && runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving &&
+          delta >= aEnd) {
+        endedAt = delta;
+        emittedAtEnd = static_cast<uint32_t>(MidiSendCapture::count());
+      }
+      if (endedAt != 0 && runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+          set->lifecycle.current != viewA) {
+        laterAt = delta;
+        laterStartPhase = runtime->rolling.startPhase;
+        emittedAtLater = static_cast<uint32_t>(MidiSendCapture::count());
+      }
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(servedA, "A's interval was served on the playing chain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(aStart, adoptedAt, "A is adopted at its own deadline");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(aEnd, endedAt,
+                                   "and the edit ends that episode at its boundary: the successor built from r0 is stale");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(emittedAtAdoption, emittedAtEnd,
+                                          "A's window emitted its own content while it served");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, laterAt, "the chain then demands a later interval");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(aEnd + 2 * kBar, laterStartPhase,
+                                              "which skips at least the interval it could not claim");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(laterIntervalStart, laterStartPhase,
+                                   "the later demand is the aligned window the chain chose");
+
+  // The later demand is aligned to the window grid rather than to the interval the chain could not claim.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, laterStartPhase % (2 * kBar), "the later window is grid-aligned");
+
+  // ---- The trace: A served r0's content, the later interval served r1's, and r0's content was never re-served as
+  // fresh after the edit.
+  const size_t total = MidiSendCapture::count();
+  uint32_t onsHeldA = 0;
+  uint32_t onsHeldLater = 0;
+  uint32_t onsStaleAfterEdit = 0;
+  uint32_t onsAdded = 0;
+  uint32_t offsAdded = 0;
+  uint32_t onsAddedBeforeLater = 0;
+  for (size_t index = 0; index < total; ++index) {
+    const auto event = MidiSendCapture::at(index);
+    if (!event.isNoteOn() && !event.isNoteOff()) continue;
+    const uint8_t note = event.data.noteData.note;
+    if (note == kBarPitch) {
+      // r0's bar-spaced content: it belongs to A, so nothing may articulate it inside the gap or inside the later
+      // interval (r1 keeps those notes at bars 6-7, not where the later window sits).
+      if (event.isNoteOn() && index >= emittedAtEnd) ++onsStaleAfterEdit;
+    } else if (note == kHeld) {
+      if (event.isNoteOn()) {
+        if (index < emittedAtLater) ++onsHeldA;
+        else ++onsHeldLater;
+      }
+    } else if (note == kAdded) {
+      if (event.isNoteOn()) {
+        ++onsAdded;
+        if (index < emittedAtLater) ++onsAddedBeforeLater;
+      } else {
+        ++offsAdded;
+      }
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, onsStaleAfterEdit,
+                                   "r0's committed content is never re-served as fresh after the edit");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, onsHeldA, "A served r0's sustained note exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, onsHeldLater,
+                                   "and r1 removed it: the later interval does not re-articulate it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, onsAddedBeforeLater,
+                                   "r1's replacement content never appears before the interval that serves r1");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, onsAdded, "the later interval served r1's replacement note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(onsAdded, offsAdded, "with its own closure inside that interval");
+
+  // ---- The closure rule at the seam: a slice is not removal evidence, and the discharging authority closes once.
+  const MidiEvent postEdit[2] = {MidiEvent::NoteOn(addedOn, 1, kAdded, 100),
+                                 MidiEvent::NoteOff(addedOff, 1, kAdded, 0)};
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kHeld),
+                           "the obligation r1 removed is still sounding: a window's absence is not evidence");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kAdded),
+                            "and B's own note closed inside B");
+  const ClosureSettlement slice =
+      track.planClosureSettlementForSlot(kSlot, postEdit, 2, /*incomingIsWholeLoop=*/false);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(slice.closureCount),
+                                   "the slice handoff closes nothing");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(slice.preservedCount),
+                                              "and names the obligation it leaves untouched");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0u, static_cast<uint32_t>(track.applyClosureSettlementForSlot(kSlot, slice)),
+      "so nothing is emitted for it at the boundary");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kHeld),
+                           "not silently dropped either: it is preserved, not forgotten");
+  const ClosureSettlement whole =
+      track.planClosureSettlementForSlot(kSlot, postEdit, 2, /*incomingIsWholeLoop=*/true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(whole.closureCount),
+                                   "whole-loop authority is removal evidence, and names exactly one obligation");
+  const size_t beforeClose = MidiSendCapture::count();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1u, static_cast<uint32_t>(track.applyClosureSettlementForSlot(kSlot, whole)),
+      "it closes that obligation once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(beforeClose + 1, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "on the wire, exactly once");
+  TEST_ASSERT_TRUE(MidiSendCapture::at(beforeClose).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(kHeld, MidiSendCapture::at(beforeClose).data.noteData.note);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kHeld),
+                            "the obligation is discharged");
+  const ClosureSettlement again =
+      track.planClosureSettlementForSlot(kSlot, postEdit, 2, /*incomingIsWholeLoop=*/true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(again.closureCount),
+                                   "a second plan finds nothing to close: exactly once, not twice");
+}
 /// **Task 6.4/6.5 -- the rolling demand path's gate row (`DIAG,win_gate`).**
 ///
 /// The lane's own rows (`win_gap`, `playback_build`) say whether it was *dispatched*; nothing said **what its demand
@@ -15202,10 +15868,133 @@ void test_2_11_an_edit_that_moves_events_past_capacity_is_refused_by_name_and_ne
       "and this drive leaves it at the deferred lane's pre-qualification state: no transport runs here, so the "
       "retry's own gate is what this names -- the **named** over-capacity refusal is the requester's, asserted above");
 }
+static LoopPlaybackRuntime* beginTrackLiveSourceBorrow(Track& track, uint8_t slot) {
+  track.ensureLoopsAllocated();
+  auto& loop = track.getLoop(slot);
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  auto* runtime = TrackCaptureStopTestAccess::prewarmLiveSourceRuntime(track, slot);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed(); TEST_ASSERT_NOT_NULL(set);
+  auto& candidate = set->views[set->lifecycle.build];
+  const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  TEST_ASSERT_TRUE(runtime->viewBuild.begin(candidate, source,
+      {loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(track), nullptr,
+       PlaybackWindowOrigin::Capture, source.captureContentToken},
+      {0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR}, {}, {}));
+  TEST_ASSERT_TRUE(runtime->viewBuild.ownsLiveCaptureBorrow());
+  return runtime;
+}
+
+void test_track_live_build_borrow_refuses_release_and_excluded_source_has_cancellation() {
+  auto& track = trackManager.getSelectedTrack();
+  auto* runtime = beginTrackLiveSourceBorrow(track, 1);
+  auto* sibling = TrackCaptureStopTestAccess::prewarmLiveSourceRuntime(track, 2);
+  TEST_ASSERT_NOT_NULL(sibling);
+  auto& current = sibling->viewSetIfPrewarmed()->views[0];
+  TEST_ASSERT_TRUE(current.storage.append(MidiEvent::ControlChange(432, 1, 7, 64)));
+  current.complete = true; current.published = true;
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(1));
+  const auto generation = TrackCaptureStopTestAccess::slotGeneration(track, 1);
+  TEST_ASSERT_EQUAL(WorkingSetOutcome::RefusedBusy,
+      TrackCaptureStopTestAccess::releaseSlot(track, 1, generation));
+  TEST_ASSERT_EQUAL(WorkingSetOutcome::RefusedBusy, runtime->releaseAllWorkingSetLeases());
+  TEST_ASSERT_TRUE(runtime->viewBuild.ownsLiveCaptureBorrow());
+  track.getLoop(1).closeProducerCapturePhase();
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(1)); // stale currency is still a held borrow
+  (void)track.stepPlaybackViewMaintenance(0);
+  TEST_ASSERT_FALSE(runtime->viewBuild.ownsLiveCaptureBorrow());
+  TEST_ASSERT_TRUE(track.noLiveOwnerForSlot(1));
+  TEST_ASSERT_EQUAL(2, track.getLoop(1).capture.store.size());
+  TEST_ASSERT_EQUAL_UINT32(100, track.getLoop(1).capture.store.at(0).tick);
+  TEST_ASSERT_TRUE(current.complete && current.published);
+  TEST_ASSERT_EQUAL_UINT32(432, current.storage.events[0].tick);
+  const auto released = TrackCaptureStopTestAccess::releaseSlot(track, 1, generation);
+  TEST_ASSERT_TRUE(released == WorkingSetOutcome::Released || released == WorkingSetOutcome::NotHeld);
+}
+
+static LoopPlaybackRuntime* beginTrackLiveBridgeBorrow(Track& track, uint8_t slot) {
+  auto* runtime = beginTrackLiveSourceBorrow(track, slot);
+  runtime->viewBuild.discard();
+  const auto& loop = track.getLoop(slot);
+  auto* set = runtime->viewSetIfPrewarmed();
+  const auto source = RuntimePlaybackViewSource::fromLiveCapture(loop);
+  TEST_ASSERT_TRUE(runtime->bridgeWindowBuild.begin(set->views[set->lifecycle.build], source,
+      {loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(track), nullptr,
+       PlaybackWindowOrigin::Capture, source.captureContentToken},
+      {0, Config::TICKS_PER_BAR, Config::TICKS_PER_BAR}, {}, {}));
+  return runtime;
+}
+void test_bridge_live_build_borrow_is_named_and_cancelled_before_slot_release() {
+  auto& track = trackManager.getSelectedTrack();
+  auto* runtime = beginTrackLiveBridgeBorrow(track, 1);
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(1));
+  const auto generation = TrackCaptureStopTestAccess::slotGeneration(track, 1);
+  TEST_ASSERT_EQUAL(WorkingSetOutcome::RefusedBusy,
+      TrackCaptureStopTestAccess::releaseSlot(track, 1, generation));
+  TEST_ASSERT_EQUAL(WorkingSetOutcome::RefusedBusy, runtime->releaseAllWorkingSetLeases());
+  track.getLoop(1).closeProducerCapturePhase();
+  (void)track.stepPlaybackViewMaintenance(0);
+  TEST_ASSERT_FALSE(runtime->ownsLiveCaptureBuildBorrow());
+  TEST_ASSERT_TRUE(track.noLiveOwnerForSlot(1));
+  TEST_ASSERT_EQUAL(2, track.getLoop(1).capture.store.size());
+}
+
+static LoopPlaybackRuntime* observedLiveRuntime;
+static const Loop* observedLiveLoop;
+static unsigned sourceDestructionObservations;
+static bool detachedBeforeSourceDestruction;
+static void observeTrackSourceDestruction(const Loop* loops, size_t count) {
+  if (count <= 1 || &loops[1] != observedLiveLoop) return;
+  ++sourceDestructionObservations;
+  detachedBeforeSourceDestruction = !observedLiveRuntime->ownsLiveCaptureBuildBorrow() &&
+      observedLiveRuntime->viewBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Denied &&
+      observedLiveRuntime->bridgeWindowBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Denied;
+}
+void test_track_destruction_cancels_live_callbacks_before_loop_pool_owner_release() {
+  for (unsigned variant = 0; variant < 4; ++variant) {
+    auto* owner = new Track;
+    observedLiveRuntime = variant < 2 ? beginTrackLiveSourceBorrow(*owner, 1)
+                                     : beginTrackLiveBridgeBorrow(*owner, 1);
+    observedLiveLoop = &owner->getLoop(1);
+    auto& builder = variant < 2 ? observedLiveRuntime->viewBuild : observedLiveRuntime->bridgeWindowBuild;
+    if (variant % 2) {
+      (void)builder.stepFill(4);
+      (void)builder.stepOrder(4);
+      TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, builder.nextGrain());
+    }
+    sourceDestructionObservations = 0; detachedBeforeSourceDestruction = false;
+    LoopPool::setDestroyObserverForTests(observeTrackSourceDestruction);
+    delete owner;
+    LoopPool::setDestroyObserverForTests(nullptr);
+    observedLiveRuntime = nullptr; observedLiveLoop = nullptr; // never query released owners
+    TEST_ASSERT_EQUAL(1, sourceDestructionObservations);
+    TEST_ASSERT_TRUE(detachedBeforeSourceDestruction);
+  }
+}
+
+#include "track_publication_call.inc"
+#include "acquisition_record_call.inc"
+#include "rolling_record_observe.inc"
 int main() {
 
 
   UNITY_BEGIN();
+  RUN_TEST(test_rolling_record_observation_absent_and_empty_preserves_mask);
+  RUN_TEST(test_rolling_record_observation_growth_and_current_is_nonmutating);
+  RUN_TEST(test_rolling_record_observation_playing_stop_responsibility);
+  RUN_TEST(test_queued_record_busy_preparation_preserves_preroll_and_retries_exactly_once);
+  RUN_TEST(test_slot_release_keeps_record_excluded_through_lease_retirement);
+  RUN_TEST(test_reset_transaction_excludes_clock_record_until_destructive_work_finishes);
+  RUN_TEST(test_direct_record_preparation_refusal_preserves_geometry_and_preroll);
+  RUN_TEST(test_track_reset_after_build_completion_rejects_captured_result);
+  RUN_TEST(test_track_ready_adoption_does_not_promote_private_build);
+  RUN_TEST(test_track_adoption_metadata_restores_saved_mask);
+  RUN_TEST(test_track_publication_metadata_restores_saved_mask);
+  RUN_TEST(test_track_live_build_borrow_refuses_release_and_excluded_source_has_cancellation);
+  RUN_TEST(test_bridge_live_build_borrow_is_named_and_cancelled_before_slot_release);
+  RUN_TEST(test_track_destruction_cancels_live_callbacks_before_loop_pool_owner_release);
   RUN_TEST(test_activation_audit_the_production_demand_is_positioned_and_an_unqualified_clock_is_refused);
   RUN_TEST(test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged);
   RUN_TEST(test_committed_retry_eight_tracks_prepare_empty_windows_with_eight_bar_lead);
@@ -15222,11 +16011,16 @@ int main() {
   RUN_TEST(test_window_retry_preserves_borrowed_source_before_gather);
 #if defined(UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE)
   RUN_TEST(test_record_capture_private_initial_build_preserves_raw_return_shell);
-  RUN_TEST(test_record_capture_private_build_cancels_on_accepted_input_without_losing_raw_shell);
+  RUN_TEST(test_record_capture_append_survives_legacy_turn_without_losing_raw_shell);
   RUN_TEST(test_record_stop_during_private_capture_build_keeps_job_and_raw_return_shell);
   RUN_TEST(test_record_capture_initial_window_reaches_unified_reader);
+  RUN_TEST(test_live_capture_current_survives_accepted_input_and_is_superseded_by_the_frozen_ready);
+  RUN_TEST(test_live_capture_frozen_ready_survives_root_publication_and_stop_releases_source);
+  RUN_TEST(test_live_capture_current_at_nonzero_clock_epoch_is_not_claimed);
+  RUN_TEST(test_live_capture_reader_survives_production_order_maintenance);
 #endif
   RUN_TEST(test_one_bar_short_loop_does_not_bypass_the_declared_owner_deadline);
+  RUN_TEST(test_live_capture_builder_work_counts_inspected_rows_and_supersession);
   RUN_TEST(test_short_committed_loop_edge_baseline_preserves_two_wrap_traversals);
   RUN_TEST(test_short_committed_cold_owner_to_reader_survives_unchanged_wrap);
   RUN_TEST(test_short_cold_owner_survives_transport_start_before_ready);
@@ -15297,6 +16091,7 @@ int main() {
   RUN_TEST(test_rolling_path_budget_charges_qualification_and_retirement_work);
   RUN_TEST(test_rolling_path_reuses_the_view_slot_after_a_refused_completion);
   RUN_TEST(test_rolling_path_cancellation_between_every_preparation_grain_recovers);
+  RUN_TEST(test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_revision);
   RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
   RUN_TEST(test_launch_gate_rows_name_the_silent_exits_once_per_state_change);
   RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);

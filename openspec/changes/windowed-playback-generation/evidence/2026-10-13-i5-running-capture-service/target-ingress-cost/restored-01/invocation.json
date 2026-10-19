@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/Users/eelkejager/.pi-desktop/scratch/52b15762-7c14-4ea1-8aa3-ccec042f4b21/i5-ingress-managed-preflight.py"
+  ],
+  "cwd": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41",
+  "written_utc": "2026-10-15T15:45:25.263830+00:00",
+  "git_commit": "26125cebb08980342ba56ed2b77e5397783ac8e5",
+  "note": "evidence only; do not execute. CLI slot/track numbers are 1-based, firmware rows 0-based."
+}

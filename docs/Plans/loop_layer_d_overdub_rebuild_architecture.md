@@ -3,7 +3,7 @@
 **Status:** Visual-cache overdub source device **PASS** — overdub [`045556`](../captures/session_20260814_045556.log) `begin_capture` 2.2 ms; undo [`112909`](../captures/session_20260814_112909.log) 3 ms, no `VCACHE,full`. **Successor:** [`loop_event_sourced_resolution_architecture.md`](loop_event_sourced_resolution_architecture.md) (DEC-037) — do not optimize `materializeToEventVector` again.  
 **Date:** 2026-08-14  
 **Decision:** [DEC-036](../DECISION_LOG.md#dec-036-runtime-effective-event-source-for-overdub)  
-**OpenSpec:** [`openspec/changes/loop-effective-event-source/`](../../openspec/changes/loop-effective-event-source/)  
+**OpenSpec:** [historical loop-effective-event-source archive](../../openspec/changes/archive/2026-10-11-loop-effective-event-source/) — archived without promoting the withdrawn eager-store delta.
 **Parent:** [loop_layer_history_persistence_architecture.md](loop_layer_history_persistence_architecture.md) (DEC-035 Layers C–D)  
 **Supersedes symptom owner:** `LoopUndoHistory` / `UndoStacks` — **closed** Layer A ([`030147`](../captures/session_20260814_030147.log), [`032227`](../captures/session_20260814_032227.log))
 

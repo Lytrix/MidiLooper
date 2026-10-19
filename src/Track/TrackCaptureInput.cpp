@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Globals.h"
+#include "ClockManager.h"
 #include "Logger.h"
 #include "CaptureAppendResult.h"
 #include "LoopEventStore.h"
@@ -370,9 +371,29 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
   }
 }
 
-void Track::startRecording(uint32_t currentTick) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+// A committed demand left by the slot's previous content (DEC-136: the position-free root-return demand
+// outlives its Stop job) belongs to content this take replaces. It can never be served -- the position-free
+// route needs the job that is gone -- and while active it blocks `retainLiveRecordDemand` ("another owner's
+// obligation"), so the take's live rolling frame would never grow. Cold helper, not a lambda: this TU's RAM1
+// bank is tight and a lambda body emitted into ITCM costs padding the build guards.
+TRACK_COLD_MEM __attribute__((noinline)) void dropStaleRecordTakeDemands(LoopPlaybackRuntime& runtime) {
+  const auto stale = [](const PlaybackViewPendingRequest& r) {
+    return r.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture ||
+        (r.active && (r.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
+                      r.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch));
+  };
+  if (stale(runtime.pendingViewRequest_)) runtime.pendingViewRequest_ = {};
+  if (stale(runtime.frozenViewRequest)) {
+    runtime.frozenViewRequest = {};
+    if (runtime.ownsCoverageSource()) runtime.discardCoverageBuild();
+  }
+}
+#endif
+
+bool Track::startRecording(uint32_t currentTick) {
   // A repeated/ineligible start must not reset a live capture before setState rejects it.
-  if (!isValidStateTransition(TRACK_RECORDING)) return;
+  if (!isValidStateTransition(TRACK_RECORDING)) return false;
   // Capture admission, and it sits before every mutation on purpose - including the
   // take reset below, which clears the slot's passes. The required reserves do not
   // depend on the new take's timeline (only their generation stamp does, which the
@@ -382,8 +403,13 @@ void Track::startRecording(uint32_t currentTick) {
   // allocation-free-stop prerequisite for this take has been established.
   if (!prewarmPlaybackForSlot(activeLoopIndex, true)) {
     MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::RecordStart);
-    return;
+    return false;
   }
+  LoopPlaybackRuntime* recordRuntime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (!recordRuntime) return false;
+  RuntimePlaybackViewBuild::PreparationTurn primaryTurn(recordRuntime->viewBuild);
+  RuntimePlaybackViewBuild::PreparationTurn bridgeTurn(recordRuntime->bridgeWindowBuild);
+  if (!primaryTurn || !bridgeTurn) return false;
   Loop& loop = getActiveLoop();
   recordCaptureBaselineGeometry_ = {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
   hasRecordCaptureBaselineGeometry_ = true;
@@ -424,9 +450,10 @@ void Track::startRecording(uint32_t currentTick) {
     // owns releasing it. Not while this track is audible: only the preparation
     // path may retire a window that could still be the sounding source.
     if (!isPlaying()) {
-      (void)runtime->releaseFirstRecordingBarReturnWindow();
+      (void)runtime->releaseFirstRecordingBarReturnWindow(&primaryTurn, &bridgeTurn);
     }
-    const bool firstBarReady = runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR);
+    const bool firstBarReady = runtime->prepareFirstRecordingBar(
+        Config::TICKS_PER_BAR, &primaryTurn, &bridgeTurn);
     // S4f.17: the deferred Record chain needs its private prepared output admitted before
     // the stop edge. Reserve it here, at the record START, so admission itself performs no
     // allocation (the overdub route prewarms its transfer horizon the same way). A denial
@@ -439,9 +466,9 @@ void Track::startRecording(uint32_t currentTick) {
                  runtime->firstRecordingBarDenialLabel());
     }
   }
-  if (!beginCaptureInterval(TRACK_RECORDING)) {
+  if (!primaryTurn || !bridgeTurn || !beginCaptureInterval(TRACK_RECORDING)) {
     armedPreRollNotes = std::move(preRoll);
-    return;
+    return false;
   }
   transportStopOutputBarrier_ = false;
   recordAddedNoteOnCount = 0;
@@ -463,6 +490,13 @@ void Track::startRecording(uint32_t currentTick) {
   // Fresh take: a stale loop-start window (prior loop-start edit or SD restore) must not
   // shift the new notes on the piano roll — playback and grid use raw storage ticks.
   loop.loopStartTick = 0;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // Successful admission starts a new interval even if the Track operation
+  // generation did not move. Never revive the previous take's positional debt.
+  recordRuntime->rolling = {};
+  dropStaleRecordTakeDemands(*recordRuntime);
+  (void)serviceRollingPlaybackWindow(clockManager.getPlaybackDeadlineClock());
+#endif
 
 
   invalidateCaches();
@@ -478,6 +512,7 @@ void Track::startRecording(uint32_t currentTick) {
   }
   logger.logTrackEvent("Recording started", currentTick, "startLoopTick=%lu loopStart=0",
                        static_cast<unsigned long>(loop.startLoopTick));
+  return true;
 }
 
 uint32_t Track::quantizeStart(uint32_t original) const {

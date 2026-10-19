@@ -18,6 +18,12 @@
 
 #if defined(SESSION_CAPTURE)
 #include "Logger.h"
+namespace {
+// Existing direct focus witness; keep its extended format out of RAM1.
+const char kFocusRebuildCaptureFormat[] PROGMEM =
+    "NOTE_EDIT focus rebuild: noteId=%lu presence=%d rowProjectsToStore=%d "
+    "pitch=%u start=%lu end=%lu";
+}
 #endif
 
 using DisplayNote = NoteUtils::DisplayNote;
@@ -166,10 +172,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
             currentRow != nullptr ? static_cast<int>(currentRow->presence) : -1;
         const bool projectsToStore =
             editSession.noteEditCurrentState.rowProjectsToStore(baselineNoteId);
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "NOTE_EDIT focus rebuild: noteId=%lu presence=%d rowProjectsToStore=%d",
+        const NoteBaseline& currentSpan =
+            currentRow != nullptr ? currentRow->currentSpan : editSession.focus.last;
+        logger.log(CAT_MIDI, LOG_DEBUG, kFocusRebuildCaptureFormat,
                    static_cast<unsigned long>(baselineNoteId), presenceValue,
-                   projectsToStore ? 1 : 0);
+                   projectsToStore ? 1 : 0, static_cast<unsigned>(currentSpan.pitch),
+                   static_cast<unsigned long>(currentSpan.startTick),
+                   static_cast<unsigned long>(currentSpan.endTick));
     }
     if (!editSession.noteEditCurrentState.empty()) {
         const NoteIdList overlapIds = collectOverlapParticipantNoteIdsFromCurrentState(

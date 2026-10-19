@@ -364,3 +364,35 @@ def selected_track_status(lines: list[str]) -> Optional[dict]:
     if int(stamp) > 0xffffffff:
         return None
     return dict(us=int(stamp), track=int(track), slot=int(slot), state=state, transport=int(transport))
+
+
+def overlay_status(lines: list[str]) -> Optional[dict]:
+    """One exact scalar snapshot from this caller's fenced !OVERLAY_STATUS window."""
+    rows = [line.strip() for line in lines if line.startswith('#OVERLAY_STATUS,')]
+    if len(rows) != 1:
+        return None
+    match = re.fullmatch(
+        r'#OVERLAY_STATUS,us=([0-9]+),open=([01]),mode=([0-4]),row=([0-9]+),'
+        r'set=([0-9]+),rev=([0-9]+),phase=([0-3])', rows[0])
+    if match is None:
+        return None
+    values = [int(value) for value in match.groups()]
+    stamp, opened, mode, row, sid, rev, phase = values
+    if stamp > 0xffffffff or row > 255 or sid > 65535 or rev > 65535:
+        return None
+    return dict(us=stamp, open=opened, mode=mode, row=row, set_id=sid, revision_id=rev, phase=phase)
+
+
+def parse_playback_read_timestamp(line: str) -> Optional[int]:
+    """Decode a strict schema-1 completed-read or current-root availability receipt."""
+    match = re.fullmatch(r"#CAP,(\d+),DIAG,(?:playback_read|playback_available),1," + r"(\d+)," * 9 + r"(\d+)", line.strip())
+    if match is None:
+        return None
+    ts, track, slot, tick, generation, storage, origin, start, length, period, phase = map(int, match.groups())
+    if (ts > 0xFFFFFFFF or track >= 8 or slot >= 8 or tick > 0xFFFFFFFF
+            or generation > 0xFFFFFFFF or not 0 < storage <= 0xFFFFFFFFFFFFFFFF
+            or origin > 2 or (",playback_available," in line and origin != 0)
+            or not 0 < period <= 0xFFFFFFFF or not 0 < length <= period
+            or start >= period or length > period - start or not start <= phase < start + length):
+        return None
+    return ts

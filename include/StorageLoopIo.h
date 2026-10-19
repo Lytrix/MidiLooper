@@ -227,6 +227,8 @@ bool writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
 /// RC-P1: bounded grains for deferred LSV1 snapshot tail save (ExecutionBounds row 14).
 constexpr uint32_t kLsv1SaveIoChunkBytes = 512u;
 constexpr uint32_t kLsv1SaveOrderingFlushBatch = 16u;
+/// Metadata lookups per gather grain; at most one populated page is processed.
+constexpr uint32_t kLsv1SaveMembershipLookupBatch = 16u;
 
 enum class LoopSnapshotBodyFormatV1SaveStepResult : uint8_t {
   MoreWork = 0,
@@ -289,6 +291,10 @@ void applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
                                    ImmutableLoopSnapshotRef loadedLoopSnapshot);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
+void testResetLsv1SaveWorkCounters();
+uint32_t testLsv1SaveMembershipLookups();
+uint32_t testLsv1SavePopulatedPages();
+uint32_t testLsv1SaveMonolithicPayloadCalls();
 uint32_t testRebuildSlotFromLoopContentCallCount();
 void testResetRebuildSlotFromLoopContentCallCount();
 void testRecordRebuildSlotFromLoopContentCall();

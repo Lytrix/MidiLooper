@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <set>
 
 /// Native observation for storage-grain regressions; inert unless a fixture resets and reads it.
 inline size_t nativeSdMaximumWriteBytes = 0;
@@ -127,9 +128,15 @@ class SDClass {
   std::map<std::string, std::vector<uint8_t>> files;
 
   void reset() { files.clear(); }
-  bool exists(const char* path) const { return files.find(path) != files.end(); }
   bool mkdir(const char*) { return true; }
   bool remove(const char* path) { return files.erase(path) != 0; }
+  /// The device's `SD.exists` answers true for a directory as well as a file. The flat map holds no entry
+  /// for an intermediate directory, so without the second term every production guard of the form
+  /// `if (SD.exists(<dir>))` -- the boot hygiene scan, the Set browser listing, the catalog rebuild --
+  /// silently took the "no sets at all" branch natively.
+  bool exists(const char* path) const {
+    return files.find(path) != files.end() || pathIsDirectory(files, path);
+  }
 
   File open(const char* path, int mode) {
     auto found = files.find(path);
@@ -213,11 +220,21 @@ class SDClass {
       prefix.pop_back();
     }
     prefix += '/';
+    // Direct children only, including **intermediate directories**: the flat path map holds no entry for
+    // `sets/S0001` itself, but the device's `openNextFile()` yields that subdirectory as a directory
+    // entry. Pushing every descendant path instead made a subdirectory invisible to production scans
+    // (`discardIncompleteRevisionTempFilesOnSd`, the catalog rebuild) and reported grandchildren as
+    // children. A `std::set` gives the stable, sorted order the map gave before.
+    std::set<std::string> children;
     for (const auto& entry : files) {
-      if (entry.first.compare(0, prefix.size(), prefix) == 0) {
-        handle.dirEntries.push_back(entry.first);
-      }
+      if (entry.first.compare(0, prefix.size(), prefix) != 0) continue;
+      const std::string rest = entry.first.substr(prefix.size());
+      const size_t slash = rest.find('/');
+      const std::string childName = (slash == std::string::npos) ? rest : rest.substr(0, slash);
+      if (childName.empty()) continue;
+      children.insert(prefix + childName);
     }
+    handle.dirEntries.assign(children.begin(), children.end());
     return handle;
   }
 
@@ -226,24 +243,24 @@ class SDClass {
 };
 
 /// One directory entry per call, mirroring the device: the returned handle is a normal open file (or a
-/// directory, when that entry itself has children) and the caller closes it.
+/// directory, when that entry itself has children) and the caller closes it. `name()` answers the **bare
+/// entry name**, as SdFat does -- the previous full path was an artifact of the flat map, and production
+/// consumers either expect the bare name (`discardIncompleteRevisionTempFilesOnSd`) or strip a path
+/// prefix themselves.
 inline File File::openNextFile() {
   if (!isDir || dirCursor >= dirEntries.size()) return File{};
   const std::string child = dirEntries[dirCursor++];
-  entryName = child;
+  const size_t slash = child.find_last_of('/');
+  const std::string childName = (slash == std::string::npos) ? child : child.substr(slash + 1);
+  entryName = childName;
   if (SDClass::pathIsDirectory(SD.files, child.c_str())) {
-    File nested;
-    nested.isDir = true;
-    nested.isOpen = true;
-    const std::string prefix = child + '/';
-    for (const auto& entry : SD.files) {
-      if (entry.first.compare(0, prefix.size(), prefix) == 0) {
-        nested.dirEntries.push_back(entry.first);
-      }
-    }
+    File nested = SD.open(child.c_str());
+    nested.entryName = childName;
     return nested;
   }
-  return SD.open(child.c_str(), FILE_READ);
+  File handle = SD.open(child.c_str(), FILE_READ);
+  handle.entryName = childName;
+  return handle;
 }
 
 extern SDClass SD;

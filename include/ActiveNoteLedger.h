@@ -35,6 +35,8 @@ class ActiveNoteLedger {
   }
 
   bool overflowed() const { return overflowed_; }
+  /// Constant-time observation; no ledger traversal or mutation.
+  size_t openCount() const { return count_; }
 
   /// Push an open NoteOn. Same identity already open → no-op (catch-up then clock
   /// must not stack a second Entry). Refuses when full — never evicts.
@@ -60,6 +62,10 @@ class ActiveNoteLedger {
 
   bool isActive(uint8_t channel, uint8_t note) const {
     return findNewestIndex(channel, note) >= 0;
+  }
+
+  bool isActive(uint8_t channel, uint8_t note, NoteId identity) const {
+    return identity != kInvalidNoteId && findIndexByNoteId(channel, note, identity) >= 0;
   }
 
   /// Newest open identity on the lane. Compatibility accessor only — not occupy.

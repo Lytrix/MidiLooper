@@ -43,6 +43,7 @@ bool ioPeek(const StorageIo& io, void* data, size_t size) {
 #if defined(PIO_UNIT_TEST_NATIVE)
 size_t g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
 size_t g_lastPersistedCapturePassReadMaxBatchEvents = 0;
+size_t g_loopSlotFullMeasureCalls = 0;
 #endif
 
 constexpr uint32_t MAX_PERSISTED_CAPTURE_PASS_EVENTS =
@@ -206,6 +207,14 @@ size_t getLastPersistedCapturePassReadMaxBatchEvents() {
 void resetPersistedCapturePassWriteStatsForTest() {
   g_lastPersistedCapturePassWriteMaxBatchEvents = 0;
   g_lastPersistedCapturePassReadMaxBatchEvents = 0;
+}
+
+size_t getLoopSlotFullMeasureCallsForTest() {
+  return g_loopSlotFullMeasureCalls;
+}
+
+void resetLoopSlotFullMeasureCallsForTest() {
+  g_loopSlotFullMeasureCalls = 0;
 }
 #endif
 
@@ -1324,6 +1333,9 @@ bool STORAGE_LOOP_IO_MEM writeLoopPersisted(const StorageIo& io, const Loop& loo
 }
 
 size_t STORAGE_LOOP_IO_MEM measureLoopSlotFileBytes(const Loop& loop) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++g_loopSlotFullMeasureCalls;
+#endif
   size_t nbytes = 0;
   StorageIo io{
       [&nbytes](const void* data, size_t size) -> bool {

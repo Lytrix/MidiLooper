@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 try:
     import mido
@@ -23,16 +23,14 @@ class HitlSession:
             return self.collector.snapshot()
         return []
 
-    def close(self) -> None:
-        if self.collector is not None:
-            self.collector.stop()
-            self.collector = None
-        if self.out_port is not None:
-            self.out_port.close()
-            self.out_port = None
-        if self.in_port is not None:
-            self.in_port.close()
-            self.in_port = None
+    def close(self, *, on_stage: Optional[Callable[[str], None]] = None) -> None:
+        for name, method in (('collector', 'stop'), ('out_port', 'close'), ('in_port', 'close')):
+            resource = getattr(self, name)
+            if resource is not None:
+                if on_stage is not None:
+                    on_stage(name)
+                getattr(resource, method)()
+                setattr(self, name, None)
 
 
 def open_midi_session(
@@ -49,11 +47,20 @@ def open_midi_session(
     out_name = _find_midi_port(midi_out_name, is_input=False)
     in_name = _find_midi_port(midi_in_name, is_input=True)
     out_port = mido.open_output(out_name)
-    in_port = mido.open_input(in_name)
+    in_port = None
     collector = None
-    if serial_port:
-        from hitl.serial_collector import SerialCaptureCollector
+    try:
+        in_port = mido.open_input(in_name)
+        if serial_port:
+            from hitl.serial_collector import SerialCaptureCollector
 
-        collector = SerialCaptureCollector(serial_port, serial_baud)
-        collector.start()
-    return HitlSession(out_port=out_port, in_port=in_port, collector=collector)
+            collector = SerialCaptureCollector(serial_port, serial_baud)
+            collector.start()
+        return HitlSession(out_port=out_port, in_port=in_port, collector=collector)
+    except Exception:
+        if collector is not None:
+            collector.stop()
+        if in_port is not None:
+            in_port.close()
+        out_port.close()
+        raise

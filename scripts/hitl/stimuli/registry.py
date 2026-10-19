@@ -429,7 +429,84 @@ STIM_WINDOW_CONTENT_01 = StimulusSpec(
     authorization=_bench_authorization(),
 )
 
+STIM_I4_CHECKPOINT_01 = StimulusSpec(
+    stimulus_id="STIM-I4-CHECKPOINT-01", version=1, kind=KIND_CANONICAL,
+    scenario_id="i4_checkpoint", description="Preserve Current via MIDI overlay Save before I4 scratch edits",
+    generator="scenario:i4_checkpoint", base_bars=0, base_pattern="CURRENT-PRESERVED",
+    base_stimulus_id=None, overdubs=(), interactions=("overlay_enter", "overlay_save"),
+    must_prove=("fresh_save_row", "checkpoint_identity", "overlay_exit"),
+    human_checks=("Save row visible; overlay closes without panel freeze",),
+    authorization=Authorization(track=8, slots=(4, 5),
+        source="owner I4 authorization 2026-10-12: preserving checkpoints; scratch only track8 slots4–5",
+        notes="checkpoint only; no recording, clear, load or cleanup"),
+)
+
+STIM_I4_OVERLAY_LOAD_01 = StimulusSpec(
+    stimulus_id="STIM-I4-OVERLAY-LOAD-01", version=1, kind=KIND_CANONICAL,
+    scenario_id="i4_overlay_load", description="Guarded owner-identified test checkpoint dirty-Yes load while PLAYING",
+    generator="scenario:i4_overlay_load", base_bars=0, base_pattern="TEST-CHECKPOINT-LOAD",
+    base_stimulus_id=None, overdubs=(), interactions=("playing_overlay", "history_identity_proof", "dirty_yes", "load_autoexit"),
+    must_prove=("exact_test_checkpoint", "preserving_commit_then_load", "overlay_autoexit"),
+    human_checks=("highlighted exact test checkpoint", "minimal screen responsive", "normal view resumes"),
+    authorization=Authorization(track=8, slots=(4, 5),
+        source="owner I4 authorization 2026-10-12: scratch8/4–5 and preserving test checkpoints; load only test-created revisions",
+        notes="no record/clear/serial mutation/cleanup in load leg; actual highlighted identity required"),
+)
+
+STIM_I4_STOPPED_FOCUS_01 = StimulusSpec(
+    stimulus_id="STIM-I4-STOPPED-FOCUS-01", version=1, kind=KIND_CANONICAL,
+    scenario_id="i4_stopped_focus", description="Stopped NOTE_EDIT filled-slot A/B/A, distinct pitches60/84, no content edit",
+    generator="scenario:i4_stopped_focus", base_bars=2, base_pattern="qualified-external-two-slot-record-seeds",
+    base_stimulus_id=None,
+    overdubs=(), interactions=("NOTE_EDIT", "slot4_slot5_slot4"),
+    must_prove=("both_seeds_qualified", "stopped_NOTE_EDIT_each_epoch", "display_slot_and_pitch_match", "owner_OLED_each_epoch", "canonical_shutdown"),
+    human_checks=("slot4 pitch60", "slot5 pitch84", "slot4 pitch60 returns without stale content"),
+    authorization=Authorization(track=8, slots=(4, 5), source="owner I4 stopped-focus continuation 2026-10-13",
+        notes="focus leg only; seeds/checkpoint separately qualified; no slot hold/clear/record/edit"),
+)
+
+# Discoverable experiment, deliberately temporary; no canonical recipe is changed.
+STIM_PIT_CLOCK_TEMP_01 = StimulusSpec(
+    stimulus_id="STIM-PIT-CLOCK-TEMP-01", version=1, kind=KIND_TEMPORARY,
+    scenario_id="pit_clock", description="Stopped-only fenced PIT observations; no content authorization or MIDI gestures",
+    generator="scenario:pit_clock", base_bars=0, base_pattern="none", base_stimulus_id=None,
+    overdubs=(), interactions=("managed_PIT_OBSERVE",),
+    must_prove=("fresh_boot_ready", "natural_first_low_carry", "gross_relative_rate", "observed_read_latency", "stopped_point_correlation", "canonical_shutdown"),
+    human_checks=(),
+)
+
+STIM_PIT_MOTION_TEMP_01 = StimulusSpec(
+    stimulus_id="STIM-PIT-MOTION-TEMP-01", version=1, kind=KIND_TEMPORARY,
+    scenario_id="pit_motion", description="Guarded moving PIT internal/external 120/300 BPM; no content gestures; automatic persistence possible",
+    generator="scenario:pit_motion", base_bars=0, base_pattern="none", base_stimulus_id=None,
+    overdubs=(), interactions=("managed_PIT_MOTION", "press_transport", "MidiClockMaster"),
+    must_prove=("fresh_stopped_guard15", "moving_point_correlation", "host_send_pacing_observed", "canonical_shutdown"),
+    human_checks=(),
+)
+
+STIM_INGRESS_COST_TEMP_01 = StimulusSpec(
+    stimulus_id="STIM-INGRESS-COST-TEMP-01", version=1, kind=KIND_TEMPORARY,
+    scenario_id="ingress_cost", description="Stopped Clock-only 120/300 BPM instrumented ingress observations; automatic persistence possible",
+    generator="scenario:ingress_cost", base_bars=0, base_pattern="none", base_stimulus_id=None,
+    overdubs=(), interactions=("managed_INGRESS_COST", "managed_PIT_MOTION", "MidiClockMaster.start_pump"),
+    must_prove=("fresh_stopped_guard15", "Ready_era_continuity_assumption", "complete_12_row_snapshots", "quiescent_macro_ratios", "canonical_shutdown"),
+    human_checks=(),
+)
+
+STIM_ROLLING_RECORD_TEMP_01 = StimulusSpec(
+    stimulus_id="STIM-ROLLING-RECORD-TEMP-01", version=1, kind=KIND_TEMPORARY,
+    scenario_id="rolling_record", description="Live growing Record, empty interval, held identity and Stop handoff, and the non-truncating Stop class, on explicit rolling qualification image",
+    generator="scenario:rolling_record", base_bars=8, base_pattern="sparse_raw_record", base_stimulus_id=None,
+    overdubs=(), interactions=("scoped_record", "MidiClockMaster", "managed_ROLLING_RECORD_STATUS", "record_stop"),
+    must_prove=("live_source_qualified", "scheduled_wire_inventory", "later_and_empty_intervals", "held_identity_no_retrigger", "stop_handoff", "matching_physical_stop", "canonical_shutdown"),
+    human_checks=(), tempo_bpm=120.0,
+    authorization=Authorization(track=8, slots=(4, 5), source="explicit scratch overwrite permission in this conversation; current user requested rolling HITL", notes="no other-slot content gesture or SD cleanup"),
+)
+
 _STIMULI: dict[str, StimulusSpec] = {
+    STIM_I4_STOPPED_FOCUS_01.stimulus_id: STIM_I4_STOPPED_FOCUS_01,
+    STIM_I4_OVERLAY_LOAD_01.stimulus_id: STIM_I4_OVERLAY_LOAD_01,
+    STIM_I4_CHECKPOINT_01.stimulus_id: STIM_I4_CHECKPOINT_01,
     STIM_BASE_2_ONE_OD_01.stimulus_id: STIM_BASE_2_ONE_OD_01,
     STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
     STIM_BASE_2_FIXTURE_01.stimulus_id: STIM_BASE_2_FIXTURE_01,
@@ -445,6 +522,13 @@ _STIMULI: dict[str, StimulusSpec] = {
 }
 
 SCENARIO_STIMULUS: dict[str, str] = {
+    "rolling_record": STIM_ROLLING_RECORD_TEMP_01.stimulus_id,
+    "ingress_cost": STIM_INGRESS_COST_TEMP_01.stimulus_id,
+    "pit_motion": STIM_PIT_MOTION_TEMP_01.stimulus_id,
+    "pit_clock": STIM_PIT_CLOCK_TEMP_01.stimulus_id,
+    "i4_overlay_load": STIM_I4_OVERLAY_LOAD_01.stimulus_id,
+    "i4_stopped_focus": STIM_I4_STOPPED_FOCUS_01.stimulus_id,
+    "i4_checkpoint": STIM_I4_CHECKPOINT_01.stimulus_id,
     "note_edit_overdub_compose": STIM_NE_OD_COMPOSE_02.stimulus_id,
     "note_edit_overdub_compose_last_bar_shorten": STIM_NE_OD_COMPOSE_03.stimulus_id,
     "note_edit_overdub_compose_last_bar_reopen": STIM_NE_OD_COMPOSE_04.stimulus_id,
@@ -471,6 +555,15 @@ def stimulus_for_base_preset(preset: str | None) -> StimulusSpec | None:
 
 
 def get_stimulus(stimulus_id: str) -> StimulusSpec:
+    # Named experiment is discoverable/addressable, not promoted into canonical export.
+    if stimulus_id == STIM_ROLLING_RECORD_TEMP_01.stimulus_id:
+        return STIM_ROLLING_RECORD_TEMP_01
+    if stimulus_id == STIM_INGRESS_COST_TEMP_01.stimulus_id:
+        return STIM_INGRESS_COST_TEMP_01
+    if stimulus_id == STIM_PIT_MOTION_TEMP_01.stimulus_id:
+        return STIM_PIT_MOTION_TEMP_01
+    if stimulus_id == STIM_PIT_CLOCK_TEMP_01.stimulus_id:
+        return STIM_PIT_CLOCK_TEMP_01
     try:
         return _STIMULI[stimulus_id]
     except KeyError as exc:
@@ -504,11 +597,12 @@ def _authorization_text(spec: StimulusSpec) -> str:
     declared = spec.authorization
     return "undeclared" if declared is None else declared.targets_text()
 
-def format_stimulus_list_lines() -> list[str]:
+def format_stimulus_list_lines(*, include_temporary: bool = False) -> list[str]:
+    specs = list_stimuli() + ([STIM_PIT_CLOCK_TEMP_01, STIM_PIT_MOTION_TEMP_01, STIM_INGRESS_COST_TEMP_01, STIM_ROLLING_RECORD_TEMP_01] if include_temporary else [])
     return [
         f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.generator}  "
         f"targets={_authorization_text(spec)}  {spec.description}"
-        for spec in list_stimuli()
+        for spec in sorted(specs, key=lambda spec: spec.stimulus_id)
     ]
 
 

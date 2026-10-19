@@ -17,6 +17,23 @@ enum class RuntimePlaybackViewBuildGrain : uint8_t { Fill, Order, Complete, Deni
 /// merge order entries in the same active-transport turn.
 class RuntimePlaybackViewBuild {
  public:
+  /// Selection-through-publication exclusion; only acquisition/release mask IRQs.
+  /// Cancellation retains the turn until its owning scope unwinds.
+  class PreparationTurn {
+   public:
+    explicit PreparationTurn(RuntimePlaybackViewBuild& builder);
+    ~PreparationTurn();
+    PreparationTurn(const PreparationTurn&) = delete;
+    PreparationTurn& operator=(const PreparationTurn&) = delete;
+    explicit operator bool() const;
+    bool owns(const RuntimePlaybackViewBuild& builder) const;
+   private:
+    RuntimePlaybackViewBuild& builder_;
+    bool acquired_ = false;
+  };
+  bool preparationInProgress() const { return preparing_; }
+  void cancelPreparation();
+  bool preparationCancelled() const { return preparationCancelled_; }
   bool begin(RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
@@ -50,19 +67,45 @@ class RuntimePlaybackViewBuild {
   RuntimePlaybackViewBuildGrain stepFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepOrder(size_t entryQuantum);
   bool active() const;
+  /// Executing state is retained until this public call resolves cancellation.
+  bool callInProgress() const { return executing_; }
+  bool ownsLiveCaptureBorrow() const { return fill_.ownsLiveCaptureBorrow(); }
+  /// Caller retains the physical source; this is currency, never a lifetime test.
+  bool liveCaptureCurrent() const { return fill_.liveCaptureCurrent(); }
+  bool extendLiveCapture(const PlaybackViewSourceIdentity& identity);
+  size_t liveCaptureSourceExtent() const { return fill_.frozenSourceExtent(); }
+  size_t liveCaptureSourceFrontier() const { return fill_.sourceFrontier(); }
+  size_t privateOrderedEventCount() const { return order_.complete() ? order_.orderedEventCount() : 0; }
+  /// Exact physical generation completed by this builder; caller retains storage.
+  bool completedDestinationIs(const RuntimePlaybackView& destination) const;
   // Cancel an in-flight build. When a retained view must survive a runtime
   // reset, pass its address so the borrowed destination metadata is kept.
   void discard(const RuntimePlaybackView* preserveDestination = nullptr);
 
  private:
+  bool enterCall();
+  bool finishCall();
+  void discardNow(const RuntimePlaybackView* preserveDestination);
+  template <typename Work, typename Result>
+  Result execute(Work&& work, Result denied) {
+    if (!enterCall()) return denied;
+    const Result result = work();
+    return finishCall() ? result : denied;
+  }
   enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied, SnapshotFill, SnapshotCanonicalOrder, SnapshotRanks, SnapshotPlaybackOrder, Qualification };
 
   RuntimePlaybackViewFill fill_;
   RuntimePlaybackOrderBuilder order_;
+  uint64_t destinationGeneration_ = 0;
   RuntimePlaybackView* destination_ = nullptr;
-  Phase phase_ = Phase::Idle;
   uint16_t snapshotRankCursor_ = 0;
+  Phase phase_ = Phase::Idle;
   bool coverageOwned_ = false;
+  volatile bool executing_ = false;
+  volatile bool discardRequested_ = false;
+  volatile bool preparing_ = false;
+  volatile bool preparationCancelled_ = false;
+  const RuntimePlaybackView* pendingPreserveDestination_ = nullptr;
 };
 
 /// The proof inputs for one owner-local long-loop refill. The contract does

@@ -5,6 +5,7 @@
 #include "Loop.h"
 #include "Utils/NoteEditMem.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/PlaybackSourceReadGuard.h"
 
 namespace {
 NOTE_EDIT_MEM size_t liveCaptureSize(const void* context) {
@@ -63,9 +64,12 @@ NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromFrozenRec
   return source;
 }
 
-NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromLiveCapture(const Loop& loop) {
+NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromLiveCapture(const Loop& loop, bool appendStable) {
   RuntimePlaybackViewSource source;
-  if (!loop.captureActive() || loop.captureContentGeneration() == 0) return source;
+  PlaybackSourceReadGuard guard;
+  if (!loop.captureActive() || loop.captureContentGeneration() == 0 ||
+      loop.capture.phase.generation() == 0) return source;
+  if (!loop.capture.store.beginSourceCursor(source.captureCursor)) return source;
   source.context = &loop;
   source.size = liveCaptureSize;
   source.eventAt = liveCaptureEventAt;
@@ -75,6 +79,8 @@ NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromLiveCaptu
   source.generationToken = loop.captureContentGeneration();
   source.captureContentToken = source.generationToken;
   source.mutableCapture = true;
+  source.appendStableCapture = appendStable;
+  source.captureProjection = loop.liveCaptureProjectionIdentity();
   return source;
 }
 
@@ -96,7 +102,10 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   sourceGenerationToken_ = 0;
   blockMayIntersect_ = nullptr;
   inspectBlockRows_ = false;
+  appendStableCapture_ = false;
   guardLiveCaptureAfterFill_ = false;
+  liveCaptureCursor_.discard();
+  liveCaptureProjection_ = {};
   sourceCount_ = 0;
   cursor_ = 0;
   copied_ = 0;
@@ -131,6 +140,8 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
+  { // Only fixed live descriptor validation; destination setup is outside.
+  PlaybackSourceReadGuard guard(source.mutableCapture);
   if ((source.origin == PlaybackWindowOrigin::Capture) !=
       (sourceIdentity.origin == PlaybackWindowOrigin::Capture)) return false;
   if (source.origin == PlaybackWindowOrigin::Capture &&
@@ -145,6 +156,13 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
       (source.generation != nullptr && source.generation(source.context) != source.generationToken)) {
     return false;
   }
+  if (source.mutableCapture &&
+      (!source.captureProjection.phaseGeneration || source.captureCursor.position() != 0 ||
+       source.captureCursor.extent() != source.count ||
+       !static_cast<const Loop*>(source.context)->capture.store.sourceCursorCurrent(source.captureCursor) ||
+       !(source.captureProjection == static_cast<const Loop*>(source.context)->liveCaptureProjectionIdentity())))
+    return false;
+  }
   if (!begin(destination, reinterpret_cast<const MidiEvent*>(static_cast<uintptr_t>(1)), source.count, sourceIdentity,
              coverage, cursorAnchor, ledgerBoundary, scope)) return false;
   sourceContext_ = source.context;
@@ -157,6 +175,11 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   blockMayIntersect_ = scope == RuntimePlaybackViewFillScope::RecordCoverage
       ? source.blockMayIntersect : nullptr;
   guardLiveCaptureAfterFill_ = source.mutableCapture;
+  appendStableCapture_ = source.mutableCapture && source.appendStableCapture;
+  if (source.mutableCapture) {
+    liveCaptureCursor_ = source.captureCursor;
+    liveCaptureProjection_ = source.captureProjection;
+  }
   return true;
 }
 
@@ -235,10 +258,16 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     }
     return RuntimePlaybackViewFillResult::Pending;
   }
+  bool sourceCurrent = false;
+  {
+    PlaybackSourceReadGuard guard(guardLiveCaptureAfterFill_);
+    sourceCurrent = liveCaptureCurrent() && (guardLiveCaptureAfterFill_ ||
+        ((sourceContext_ == nullptr || sourceSize_(sourceContext_) == sourceCount_) &&
+         (sourceGeneration_ == nullptr || sourceGeneration_(sourceContext_) == sourceGenerationToken_)));
+  }
   if (destination_->published || !(destination_->source == expected_) ||
       destination_->storage.eventCount != copied_ ||
-      (sourceContext_ != nullptr && sourceSize_(sourceContext_) != sourceCount_) ||
-      (sourceGeneration_ != nullptr && sourceGeneration_(sourceContext_) != sourceGenerationToken_) ||
+      !sourceCurrent ||
       (baseline_ != nullptr && (baseline_->generation() != baselineGeneration_ || !baseline_->uneditedBaseline(expected_)))) {
     if (!destination_->published) { destination_->sourceFilled = false; destination_->passOriginsReady = false; }
     destination_ = nullptr; return RuntimePlaybackViewFillResult::Denied;
@@ -261,7 +290,25 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
       if (!remaining) break;
     }
     MidiEvent event;
-    if (sourceReadsByCopy_) {
+    if (guardLiveCaptureAfterFill_) {
+      LoopEventStoreSourceResult result;
+      { // Validation and one row/charged transition share the same exclusion.
+        PlaybackSourceReadGuard guard;
+        const auto& loop = *static_cast<const Loop*>(sourceContext_);
+        result = liveCaptureCurrent()
+            ? loop.capture.store.stepSourceCursor(liveCaptureCursor_, event)
+            : LoopEventStoreSourceResult::Denied;
+      }
+      if (result == LoopEventStoreSourceResult::Chunk) {
+        --remaining; // A directory advance is charged, never hidden in an ordinal read.
+        continue;
+      }
+      if (result != LoopEventStoreSourceResult::Row) {
+        destination_->sourceFilled = false;
+        destination_ = nullptr;
+        return RuntimePlaybackViewFillResult::Denied;
+      }
+    } else if (sourceReadsByCopy_) {
       if (!sourceReadEventAt_(sourceContext_, cursor_, event)) {
         destination_->sourceFilled = false;
         destination_ = nullptr;
@@ -273,7 +320,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     const bool inRecord = scope_ != RuntimePlaybackViewFillScope::RecordCoverage ||
         LoopEventStore::projectRecordStopTick(event, destination_->coverage.loopLengthTicks);
     const bool retain = inRecord && (scope_ == RuntimePlaybackViewFillScope::AllSource ||
-        (scope_ == RuntimePlaybackViewFillScope::RawCoverage
+        ((scope_ == RuntimePlaybackViewFillScope::RawCoverage || appendStableCapture_)
           ? event.tick >= destination_->coverage.startPhase &&
             event.tick - destination_->coverage.startPhase < destination_->coverage.lengthTicks
           : destination_->coverage.contains(IntervalProjection::playbackEventPhase(
@@ -298,7 +345,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     destination_->passOriginsReady = destination_->canonicalRanksReady = baseline_ != nullptr;
     destination_->passOriginSource = baseline_ != nullptr ? expected_ : PlaybackViewSourceIdentity{};
     destination_->sourceFilled = true;
-    destination_ = nullptr;
+    if (!appendStableCapture_) destination_ = nullptr;
     return RuntimePlaybackViewFillResult::Complete;
   }
   return RuntimePlaybackViewFillResult::Pending;
@@ -306,9 +353,39 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
 
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::liveCaptureCurrent() const {
   if (!guardLiveCaptureAfterFill_) return true;
-  return sourceContext_ != nullptr && sourceSize_ != nullptr && sourceGeneration_ != nullptr &&
-         sourceSize_(sourceContext_) == sourceCount_ &&
-         sourceGeneration_(sourceContext_) == sourceGenerationToken_;
+  PlaybackSourceReadGuard guard;
+  if (sourceContext_ == nullptr || sourceSize_ == nullptr || sourceGeneration_ == nullptr)
+    return false;
+  const auto& loop = *static_cast<const Loop*>(sourceContext_); // retained by caller/Track
+  auto projection = loop.liveCaptureProjectionIdentity();
+  // Explicit raw-coverage Record builds do not use the advisory growing length.
+  if (appendStableCapture_ && projection.phase == CapturePhase::Record)
+    projection.loopLengthTicks = liveCaptureProjection_.loopLengthTicks;
+  return liveCaptureProjection_.phaseGeneration &&
+      liveCaptureProjection_ == projection &&
+      loop.capture.store.sourceCursorCurrent(liveCaptureCursor_) &&
+      (appendStableCapture_
+        ? sourceSize_(sourceContext_) >= sourceCount_ && sourceGeneration_(sourceContext_) != 0
+        : sourceSize_(sourceContext_) == sourceCount_ &&
+          sourceGeneration_(sourceContext_) == sourceGenerationToken_);
+}
+
+NOTE_EDIT_MEM bool RuntimePlaybackViewFill::extendLiveCapture(const PlaybackViewSourceIdentity& identity) {
+  PlaybackSourceReadGuard guard;
+  if (!appendStableCapture_ || !destination_ || destination_->published || !liveCaptureCurrent() ||
+      identity.origin != PlaybackWindowOrigin::Capture || identity.snapshotIdentity != nullptr ||
+      identity.playbackRevision != expected_.playbackRevision ||
+      identity.sourceGeneration != expected_.sourceGeneration ||
+      identity.captureContentGeneration != sourceGeneration_(sourceContext_)) return false;
+  const auto& loop = *static_cast<const Loop*>(sourceContext_);
+  if (!loop.capture.store.extendSourceCursor(liveCaptureCursor_)) return false;
+  sourceCount_ = liveCaptureCursor_.extent();
+  sourceGenerationToken_ = identity.captureContentGeneration;
+  expected_ = identity;
+  destination_->source = identity;
+  destination_->sourceFilled = cursor_ == sourceCount_;
+  destination_->complete = false;
+  return true;
 }
 
 NOTE_EDIT_MEM void RuntimePlaybackViewFill::discard() {

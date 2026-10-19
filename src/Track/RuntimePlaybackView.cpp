@@ -724,7 +724,10 @@ bool RuntimePlaybackViewLifecycle::publishCompletedBuildAsReadySuccessor(
   if (ready < views.size() && views[ready].complete) {
     return false;
   }
-  const uint8_t shell = ready;
+  // Reclaim the retired idle view when ready has no placeholder shell. Losing
+  // this role would leave subsequent live/frozen preparation only two views.
+  const uint8_t shell = ready < views.size() ? ready : idle;
+  if (shell == idle) idle = kNoView;
   ready = build;
   build = (shell < views.size() && shell != ready) ? shell : kNoView;
   if (build != kNoView) {
@@ -740,13 +743,17 @@ bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
       retained != kNoView) {
     return false;
   }
+  const uint8_t spareBuild = build;
   const uint8_t oldCurrent = current;
   current = ready;
   views[current].published = false;
   retained = current;
   ready = kNoView;
   build = oldCurrent;
-  idle = kNoView;
+  // Raw preparation retains current, but the third prewarmed view must remain
+  // available. A refused stop bind needs it for successive frozen windows.
+  idle = spareBuild < views.size() && spareBuild != current && spareBuild != build
+             ? spareBuild : kNoView;
   views[build].resetMetadata();
   return true;
 }
@@ -758,13 +765,15 @@ bool RuntimePlaybackViewLifecycle::replaceRetainedWithReady(
       !views[ready].complete || !views[ready].rawCoveragePrepared) {
     return false;
   }
+  const uint8_t spareBuild = build;
   const uint8_t oldCurrent = retained;
   current = ready;
   retained = current;
   views[current].published = false;
   ready = kNoView;
   build = oldCurrent;
-  idle = kNoView;
+  idle = spareBuild < views.size() && spareBuild != current && spareBuild != build
+             ? spareBuild : kNoView;
   views[build].resetMetadata();
   return true;
 }
@@ -800,16 +809,9 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewLifecycle::handoff(
   current = ready;
   views[current].published = true;
 
-  // A build that completed before the handoff can immediately become the next
-  // successor.  Only then may the retired current view begin a new build.
-  if (build != kNoView && views[build].complete &&
-      (!views[build].rawCoveragePrepared || mode == PlaybackViewHandoffMode::Preparation)) {
-    ready = build;
-    build = retiredCurrent == retained ? kNoView : retiredCurrent;
-    idle = kNoView;
-    if (build != kNoView) views[build].resetMetadata();
-    return true;
-  }
+  // Only the preparation owner may certify and publish a private completion.
+  // Adoption consumes exactly the ready role; complete is not publication authority.
+  // In particular an interrupted main completion must not be promoted by the clock.
 
   // Keep the retired current intact and idle while the successor remains
   // pending.  Reusing it here would require a fourth buffer.

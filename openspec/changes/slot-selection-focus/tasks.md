@@ -59,6 +59,7 @@
 - [x] 7.5 Repeated slot 1↔2 stress — no pass mutation, no stale cache / leaked bindings
 - [x] 7.6 Footer round-trip both index arrays
 - [x] 7.7 Run `pio test -e native`
+- [x] 7.8 **I4 — production missing-Transport fallback (native only):** realcreatedrevision withoutTransport→productionValidate/Write/ReloadRam/Complete; runtimeactive/selected firstoccupiedslot1 (priorruntime7, alternateoccupied3), emptytracks0/0. Newretainedstoragefixture/23focusedPASS/fullnative3099pass7skip/25hostPASS. Does notclosecompound8.5 ordevicepixel/reboot/independentrestorecriteria. [I4 — fallback validation evidence](../runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/FOCUS-RESTORE-VALIDATION.md).
 
 ## 8. Verification
 

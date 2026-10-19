@@ -1,7 +1,9 @@
 // Fail closed when the fixture accidentally enters an unrelated route.
 #define OFF_PATH() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)
+#if !defined(HARNESS_LINKS_REAL_DISPLAY_MANAGER)
 DisplayManager::DisplayManager() {}
 DisplayManager displayManager;
+#endif
 void ClockManager::toggleTransport() { OFF_PATH(); }
 // ---------------------------------------------------------------------------------------------
 // Boundary families. This header's stand-ins were originally gated by ONE macro
@@ -34,11 +36,13 @@ void ClockManager::toggleTransport() { OFF_PATH(); }
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT) && !defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT)
 void TrackManager::forceMidiLedUpdate(uint32_t) {}
 #endif
+#if !defined(HARNESS_LINKS_REAL_DISPLAY_MANAGER)
 void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t) {}
 void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {}
 // Display is a boundary, never the behaviour under test. The real stop TU reaches this one, so it is a
 // stand-in like its overdub sibling above rather than a fail-closed route.
 void DisplayManager::refreshViewportAfterRecordStop(Track&, uint8_t, uint32_t) {}
+#endif
 #if !defined(A34A_LINKS_REAL_TRACK_STOP_TELEMETRY)
 void emitOverdubStopDisplaySnapshot(Track&, uint8_t, uint32_t) {}
 void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
@@ -134,12 +138,14 @@ uint8_t resolveTrackIndexForPersistence(const Track& track) {
 void EditManager::onSelectedSlotChanged(Track&, uint8_t) { OFF_PATH(); }
 void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 #endif
+#if !defined(HARNESS_LINKS_REAL_DISPLAY_MANAGER)
 // A switch that commits invalidates the display cache. The display is not the behavior under test, so
 // suites that assert a committed switch keep this observable.
 #if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {}
 #else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+#endif
 #endif
 // A suite that links the real StorageManager load path (which defines these two) opts out with
 // `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.

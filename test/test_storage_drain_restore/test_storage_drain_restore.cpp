@@ -11,6 +11,7 @@
 #include "../test_support/firmware/Arduino.h"
 #include "../test_support/firmware/SD.h"
 
+#include "Utils/MidiServiceDrain.h"
 SDClass SD;
 
 /// The sketch owns this global; the load path reads it, so the harness provides it.
@@ -40,6 +41,12 @@ bool sequencerRunning = false;
 #include "../../src/PersistenceFailurePolicy.cpp"
 #include "../../src/StorageManager/RevisionLoad.cpp"
 #include "../../src/StorageManager/RevisionCommit.cpp"
+#include "../../src/StorageManager/Overlay.cpp"
+#include "../../src/StorageManager/StorageActivitySnapshot.cpp"
+// The offline boot wrapper supplies this TU after including the shared harness.
+#ifndef RECOVERY_BOOT_SUITE
+#include "../../src/SetBrowserOverlayPolicy.cpp"
+#endif
 #include "../../src/StorageManager/MidPassChunkPersist.cpp"
 #include "../../src/StorageManager/WallClockSdSync.cpp"
 #include "../../src/StorageManager/PersistenceWorkItemPersist.cpp"
@@ -55,6 +62,9 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/CurrentSetBootLoad.cpp"
 #include "../../src/StorageManager/LegacyMonolithLoad.cpp"
 #include "../../src/StorageManager/SavedSetIo.cpp"
+// I4 -- Set browser index ownership: the catalog's own index owner and the browser listing it feeds.
+#include "../../src/StorageManager/SetCatalogIndexEnsure.cpp"
+#include "../../src/StorageManager/SetBrowserRead.cpp"
 #include "../../src/Loop/LoopContentHistory.cpp"
 #include "../../src/StorageManager/LoadedTrackStateApply.cpp"
 #include "../../src/Track/TrackDisplayState.cpp"
@@ -1313,11 +1323,502 @@ void test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact() {
   StorageManagerInternal::resetDeferredLoopWriteState();
 }
 
+// I4: drive the SAME admission boundary main uses, not a direct worker-only call.
+// Native-only instrumentation deliberately stays off the shared firmware header.
+size_t getLoopSlotFullMeasureCallsForTest();
+void resetLoopSlotFullMeasureCallsForTest();
+
+void prepareRevisionOnlyCurrent() {
+  SD.reset();
+  S41Footer::resetPersistenceSessionForS41();
+  for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t)
+    trackManager.getTrack(t).forceSetState(TRACK_STOPPED);
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+  StorageManagerInternal::workspaceDerivedFromSetId = 0;
+  StorageManagerInternal::workspaceDerivedFromRevisionId = 0;
+  StorageManagerInternal::workspaceLastCommittedRevisionId = 0;
+  TEST_ASSERT_FALSE(StorageManager::hasDeferredSaveWork());
+  TEST_ASSERT_FALSE(StorageManager::hasQueuedCaptureChunksToPersist());
+}
+
+bool revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner owner =
+                           MidiServiceDrain::DeferredIdleOwner::Persistence,
+                       bool allowed = true, bool timingCritical = false,
+                       uint32_t loadFrameUs = 0, bool postOverdub = false,
+                       bool stopping = false) {
+  return MidiServiceDrain::serviceDeferredPersistenceTurn<StorageManager>(
+      looperState.getLooperState(), owner, allowed, timingCritical,
+      loadFrameUs, postOverdub, stopping);
+}
+
+void test_i4_revision_only_save_dispatches_and_completes_through_main_admission() {
+  prepareRevisionOnlyCurrent();
+  const auto sourceFiles = SD.files;
+  StorageManager::beginOverlaySaveRowCommit();
+  TEST_ASSERT_TRUE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_FALSE(StorageManager::hasDeferredSaveWork());
+  TEST_ASSERT_FALSE(revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner::Snapshot));
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.pending);
+  resetLoopSlotFullMeasureCallsForTest();
+  TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(),
+      "a revision-only request must admit the existing persistence owner");
+  TEST_ASSERT_FALSE(storageSession.revisionCommit.pending);
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.inProgress);
+  TEST_ASSERT_EQUAL(static_cast<int>(RevisionCommitStage::Write),
+                    static_cast<int>(storageSession.revisionCommit.stage));
+  TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, getLoopSlotFullMeasureCallsForTest(),
+      "Snapshot must not serialize loop bodies to measure them");
+  TEST_ASSERT_EQUAL_UINT16(2, storageSession.revisionCommit.slotIndexCount);
+  for (uint16_t i = 0; i < storageSession.revisionCommit.slotIndexCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT8(1, storageSession.revisionCommit.slotEntries[i].occupied);
+    TEST_ASSERT_EQUAL_UINT32(0, storageSession.revisionCommit.slotEntries[i].bodyLength);
+  }
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "in-progress-only commit must retain admission");
+  }
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasRevisionCommitWork(), "real revision FSM must finish");
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromRevisionId);
+  char revisionPath[64];
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatRevisionPath(revisionPath, sizeof(revisionPath), 1, 1, false));
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(revisionPath), "only COMPLETE publishes the immutable revision");
+  const auto& revisionBytes = SD.files.at(revisionPath);
+  RevisionPackedBlob::RevisionHeader header;
+  RevisionPackedBlob::RevisionFooter footer;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::parseRevisionHeaderFromBytes(
+      revisionBytes.data(), revisionBytes.size(), header));
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionFooterAtOffset(
+      revisionBytes.data(), revisionBytes.size(), footer));
+  // Preserve the existing streamed on-disk CRC convention used by commit/load;
+  // the one-shot buffer helper uses a different continuation convention.
+  uint32_t expectedStreamedCrc = 0;
+  bool crcSeeded = false;
+  for (size_t offset = 0; offset < header.payloadSize;) {
+    const size_t remaining = header.payloadSize - offset;
+    const size_t quantum = storageSession.revisionCommit.copyBuffer.size();
+    const size_t count = remaining < quantum ? remaining : quantum;
+    const uint8_t* bytes = revisionBytes.data() + RevisionPackedBlob::kRevisionHeaderByteSize + offset;
+    expectedStreamedCrc = crcSeeded ? PersistenceSchema::crc32Continue(expectedStreamedCrc, bytes, count)
+                                  : PersistenceSchema::crc32(bytes, count);
+    crcSeeded = true;
+    offset += count;
+  }
+  TEST_ASSERT_EQUAL_UINT32(expectedStreamedCrc, footer.payloadCrc32);
+  TEST_ASSERT_EQUAL_UINT16(1, header.setId);
+  TEST_ASSERT_EQUAL_UINT16(1, header.revisionId);
+  uint16_t directoryCount = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(
+      revisionBytes.data(), revisionBytes.size(), header, directoryCount));
+  TEST_ASSERT_EQUAL_UINT16(2, directoryCount);
+  TEST_ASSERT_EQUAL_UINT32(0, getLoopSlotFullMeasureCallsForTest());
+  unsigned checkedSlots = 0;
+  for (uint8_t slot : {S41Footer::kSlotA, S41Footer::kSlotB}) {
+    char slotPath[64];
+    TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(slotPath, sizeof(slotPath), S41Footer::kTrack, slot));
+    TEST_ASSERT_TRUE(sourceFiles.find(slotPath) != sourceFiles.end());
+    TEST_ASSERT_TRUE_MESSAGE(sourceFiles.at(slotPath) == SD.files.at(slotPath), "Current payload is preserved");
+    uint32_t offset = 0, length = 0;
+    TEST_ASSERT_TRUE(RevisionPackedBlob::findChunkBodyInRevisionBytes(revisionBytes.data(),
+        revisionBytes.size(), header, RevisionPackedBlob::ChunkType::LoopSlot, S41Footer::kTrack,
+        slot, offset, length));
+    TEST_ASSERT_GREATER_THAN_UINT32(0, length);
+    RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry{};
+    TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryFromRevisionBytes(
+        revisionBytes.data(), revisionBytes.size(), header, checkedSlots, entry));
+    TEST_ASSERT_EQUAL_UINT8(S41Footer::kTrack, entry.trackIndex);
+    TEST_ASSERT_EQUAL_UINT8(slot, entry.slotIndex);
+    TEST_ASSERT_EQUAL_UINT8(1, entry.occupied);
+    TEST_ASSERT_EQUAL_UINT32(length, entry.bodyLength);
+    TEST_ASSERT_EQUAL_UINT32(RevisionPackedBlob::kRevisionHeaderByteSize + entry.chunkOffset +
+        RevisionPackedBlob::kChunkHeaderByteSize, offset);
+    std::vector<uint8_t> oracle;
+    const StorageIo oracleIo{[&oracle](const void* data, size_t size) {
+      const auto* bytes = static_cast<const uint8_t*>(data);
+      oracle.insert(oracle.end(), bytes, bytes + size);
+      return true;
+    }, nullptr};
+    TEST_ASSERT_TRUE(writeLoopPersisted(oracleIo,
+        trackManager.getTrack(S41Footer::kTrack).getLoop(slot)));
+    TEST_ASSERT_EQUAL_UINT32(oracle.size(), length);
+    TEST_ASSERT_EQUAL_MEMORY(oracle.data(), revisionBytes.data() + offset, length);
+    ++checkedSlots;
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, checkedSlots);
+  const auto committedFiles = SD.files;
+  TEST_ASSERT_FALSE_MESSAGE(revisionOwnerTurn(), "completed revision must not be committed twice");
+  TEST_ASSERT_TRUE(committedFiles == SD.files);
+  StorageManager::requestLoadRevision(1, 1);
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::hasRevisionLoadWork(), "clean load must queue the exact fixture checkpoint");
+  TEST_ASSERT_FALSE(StorageManager::hasDeferredSaveWork());
+  TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "load-only work must dispatch through main admission");
+  TEST_ASSERT_FALSE(storageSession.revisionLoad.pending);
+  TEST_ASSERT_TRUE(storageSession.revisionLoad.inProgress);
+  turns = 0;
+  while (StorageManager::hasRevisionLoadWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "load-only continuation stays admitted");
+  }
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasRevisionLoadWork(), "real load must finish, not retain a stuck pipeline");
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromRevisionId);
+  TEST_ASSERT_TRUE(storageSession.revisionLoad.completedAtMs > 0);
+}
+
+void test_i4_revision_only_request_survives_denial_and_worker_holdoff() {
+  prepareRevisionOnlyCurrent();
+  StorageManager::beginOverlaySaveRowCommit();
+  const auto sourceFiles = SD.files;
+  TEST_ASSERT_FALSE(revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner::Persistence, false));
+  TEST_ASSERT_FALSE(revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner::Persistence, true, true, 15000));
+  TEST_ASSERT_FALSE(revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner::Persistence, true, true, 0, true));
+  TEST_ASSERT_FALSE(revisionOwnerTurn(MidiServiceDrain::DeferredIdleOwner::Persistence, true, true, 0, false, true));
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.pending);
+  TEST_ASSERT_TRUE(sourceFiles == SD.files);
+  StorageManagerInternal::armPostLoadCommitSaveHoldoff(LoadLoopBudget::PostLoadCommitSaveHoldoffMs);
+  TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "admission does not bypass the worker's holdoff");
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.pending);
+  TEST_ASSERT_FALSE(storageSession.revisionCommit.inProgress);
+  TEST_ASSERT_TRUE(sourceFiles == SD.files);
+  nativeMillisAdvance(LoadLoopBudget::PostLoadCommitSaveHoldoffMs + 1u);
+  TEST_ASSERT_TRUE(revisionOwnerTurn());
+  TEST_ASSERT_FALSE(storageSession.revisionCommit.pending);
+  TEST_ASSERT_TRUE(storageSession.revisionCommit.inProgress);
+  StorageManagerInternal::resetRevisionCommitJobState();
+}
+
+void test_i4_revision_body_header_patch_failure_does_not_publish_and_retries() {
+  prepareRevisionOnlyCurrent();
+  const auto sourceFiles = SD.files;
+  const uint32_t sourceEpoch = StorageManagerInternal::currentWorkspaceEpoch;
+  size_t expectedBodyBytes = 0;
+  const StorageIo oracleIo{[&expectedBodyBytes](const void*, size_t size) {
+    expectedBodyBytes += size;
+    return true;
+  }, nullptr};
+  TEST_ASSERT_TRUE(writeLoopPersisted(oracleIo,
+      trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotA)));
+  bool armed = false;
+  unsigned partialPatchWrites = 0;
+  uint32_t placeholderAtPatch = UINT32_MAX;
+  nativeSdAfterMutation = [&]() {
+    auto& job = storageSession.revisionCommit;
+    if (!job.loopSlotBodyActive || !job.file || job.slotIndexCount == 0) return;
+    const auto& entry = job.slotEntries[0];
+    const size_t bodyEnd = RevisionPackedBlob::kRevisionHeaderByteSize + entry.chunkOffset +
+        RevisionPackedBlob::kChunkHeaderByteSize + expectedBodyBytes;
+    if (!armed && job.file.size() == bodyEnd &&
+        static_cast<size_t>(job.file.position()) == bodyEnd) {
+      // Last real body write succeeded. Only the subsequent private header patch fails.
+      armed = true;
+      nativeSdWriteBudget = 0;
+      nativeSdPartialWrite = true;
+    } else if (armed && static_cast<size_t>(job.file.position()) ==
+        RevisionPackedBlob::kRevisionHeaderByteSize + entry.chunkOffset +
+        RevisionPackedBlob::kChunkHeaderByteSize / 2) {
+      ++partialPatchWrites;
+      placeholderAtPatch = entry.bodyLength;
+    }
+  };
+  StorageManager::beginOverlaySaveRowCommit();
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    revisionOwnerTurn();
+  }
+  nativeSdAfterMutation = {};
+  nativeSdWriteBudget = -1;
+  nativeSdPartialWrite = false;
+  TEST_ASSERT_TRUE_MESSAGE(armed, "inject failure only after the first complete body");
+  TEST_ASSERT_EQUAL_UINT32(1, partialPatchWrites);
+  TEST_ASSERT_EQUAL_UINT32(0, placeholderAtPatch);
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_EQUAL_UINT32(sourceEpoch, StorageManagerInternal::currentWorkspaceEpoch);
+  TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::workspaceDerivedFromRevisionId);
+  TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::workspaceLastCommittedRevisionId);
+  // I4 — the catalog ensure now runs before the allocation decision, so the catalog index file can exist
+  // after a failed commit. A failed commit still publishes **no Set**: the index must describe none.
+  TEST_ASSERT_TRUE(SD.exists(SetRevisionCatalog::kSetIndexPath));
+  {
+    SetRevisionCatalog::SetCatalogIndex indexAfterFailure{};
+    File indexFile = SD.open(SetRevisionCatalog::kSetIndexPath, FILE_READ);
+    TEST_ASSERT_TRUE(static_cast<bool>(indexFile));
+    const StorageIo indexIo = StorageManagerInternal::storageIoFromFileRead(indexFile);
+    TEST_ASSERT_TRUE(SetRevisionCatalog::readSetCatalogIndex(indexIo, indexAfterFailure));
+    indexFile.close();
+    TEST_ASSERT_EQUAL_UINT32(0, indexAfterFailure.setCount);
+    TEST_ASSERT_EQUAL_UINT32(1, indexAfterFailure.nextSetId);
+  }
+  char revisionPath[64], metaPath[64];
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatRevisionPath(revisionPath, sizeof(revisionPath), 1, 1, false));
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatSetMetaPath(metaPath, sizeof(metaPath), 1));
+  TEST_ASSERT_FALSE(SD.exists(revisionPath));
+  TEST_ASSERT_FALSE(SD.exists(metaPath));
+  for (const auto& source : sourceFiles) {
+    TEST_ASSERT_TRUE(SD.files.find(source.first) != SD.files.end());
+    TEST_ASSERT_TRUE(source.second == SD.files.at(source.first));
+  }
+  resetLoopSlotFullMeasureCallsForTest();
+  StorageManager::beginOverlaySaveRowCommit();
+  turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE(revisionOwnerTurn());
+  }
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_EQUAL_UINT32(0, getLoopSlotFullMeasureCallsForTest());
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::workspaceDerivedFromRevisionId);
+  TEST_ASSERT_TRUE(SD.exists(revisionPath));
+  TEST_ASSERT_TRUE(SD.exists(metaPath));
+  TEST_ASSERT_TRUE(SD.exists(SetRevisionCatalog::kSetIndexPath));
+  const auto& bytes = SD.files.at(revisionPath);
+  RevisionPackedBlob::RevisionHeader header{};
+  RevisionPackedBlob::RevisionFooter footer{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::parseRevisionHeaderFromBytes(bytes.data(), bytes.size(), header));
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionFooterAtOffset(bytes.data(), bytes.size(), footer));
+  TEST_ASSERT_EQUAL_UINT32(bytes.size(), footer.fileSize);
+  uint32_t offset = 0, length = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::findChunkBodyInRevisionBytes(bytes.data(), bytes.size(), header,
+      RevisionPackedBlob::ChunkType::LoopSlot, S41Footer::kTrack, S41Footer::kSlotA, offset, length));
+  TEST_ASSERT_EQUAL_UINT32(expectedBodyBytes, length);
+}
+
+struct SeededSetOne {
+  std::string metaPath;
+  std::vector<uint8_t> metaBytes;
+  std::string revisionOnePath;
+  std::vector<uint8_t> revisionOneBytes;
+  std::string revisionTwoPath;
+  std::vector<uint8_t> revisionTwoBytes;
+};
+
+/// A card that already holds Set 1 with two committed revisions -- the state the device's Set folder is in
+/// after the earlier checkpoint runs -- and no catalog index.
+SeededSetOne seedExistingSetOneWithTwoRevisions() {
+  SeededSetOne seeded{};
+  SetRevisionCatalog::SetMetaRecord meta{};
+  meta.setId = 1;
+  meta.latestRevisionId = 2;
+  meta.revisionCount = 2;
+  meta.createdUnix = 1700000000ull;
+  meta.updatedUnix = 1700000100ull;
+  char metaPath[64];
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatSetMetaPath(metaPath, sizeof(metaPath), 1));
+  File metaFile = CurrentSetStorage::openForRewrite(metaPath);
+  TEST_ASSERT_TRUE_MESSAGE(static_cast<bool>(metaFile), "the existing Set meta must open");
+  const StorageIo metaIo = StorageManagerInternal::storageIoFromFileWrite(metaFile);
+  TEST_ASSERT_TRUE(SetRevisionCatalog::writeSetMetaRecord(metaIo, meta));
+  metaFile.close();
+  seeded.metaPath = metaPath;
+  seeded.metaBytes = SD.files.at(metaPath);
+
+  char revisionOne[80], revisionTwo[80];
+  TEST_ASSERT_TRUE(
+      SetRevisionCatalog::formatRevisionPath(revisionOne, sizeof(revisionOne), 1, 1, false));
+  TEST_ASSERT_TRUE(
+      SetRevisionCatalog::formatRevisionPath(revisionTwo, sizeof(revisionTwo), 1, 2, false));
+  SD.writeFile(revisionOne, std::vector<uint8_t>(48, 0x11));
+  SD.writeFile(revisionTwo, std::vector<uint8_t>(48, 0x22));
+  seeded.revisionOnePath = revisionOne;
+  seeded.revisionOneBytes = SD.files.at(revisionOne);
+  seeded.revisionTwoPath = revisionTwo;
+  seeded.revisionTwoBytes = SD.files.at(revisionTwo);
+  return seeded;
+}
+
+/// I4 — the observed device card: a legacy `sets/index.bin`, `sets/S0001/` populated and no catalog index.
+/// The catalog/boot owners are pinned in `test_set_catalog_index_ownership`; this case pins the **browser
+/// row** the owner could not see (0 rows before the fix).
+void test_i4_a_clobbered_catalog_index_still_lists_the_set_in_the_browser() {
+  SD.reset();
+  seedExistingSetOneWithTwoRevisions();
+  SavedSetCatalog::SetIndex legacy{};
+  legacy.nextSequence = 1;
+  TEST_ASSERT_TRUE(StorageManagerInternal::writeSetIndexToSd(legacy));
+  TEST_ASSERT_FALSE(SD.exists(SetRevisionCatalog::kSetIndexPath));
+
+  const auto outcome = StorageManagerInternal::ensureSetCatalogIndexOnSd();
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::SetCatalogEnsureOutcome::Rebuilt),
+                        static_cast<int>(outcome));
+
+  SetRevisionCatalog::SetBrowserListEntry rows[4] = {};
+  const size_t rowCount = StorageManager::listSetRevisionBrowserEntries(rows, 4);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1, static_cast<uint32_t>(rowCount),
+      "the browser must list the Set whose validated folder exists");
+  TEST_ASSERT_EQUAL_STRING("S0001", rows[0].folderName);
+  TEST_ASSERT_EQUAL_UINT16(1, rows[0].setId);
+  TEST_ASSERT_EQUAL_UINT16(2, rows[0].latestRevisionId);
+}
+
+/// I4 — a commit from a workspace with no derived Set must never allocate over an existing one: with
+/// `sets/S0001/` on the card and only a legacy index, the rebuilt catalog hands out id 2 and Set 1's
+/// metadata and revision bodies stay byte-identical (before the fix the commit reused id 1).
+void test_i4_a_commit_never_reuses_an_existing_set_id() {
+  prepareRevisionOnlyCurrent();
+  const SeededSetOne seeded = seedExistingSetOneWithTwoRevisions();
+
+  StorageManager::beginOverlaySaveRowCommit();
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "in-progress-only commit must retain admission");
+  }
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+      2, StorageManagerInternal::workspaceDerivedFromSetId,
+      "a commit must not reuse a Set id whose folder already exists");
+  TEST_ASSERT_TRUE_MESSAGE(seeded.metaBytes == SD.files.at(seeded.metaPath),
+                           "the existing Set's metadata must not be rewritten");
+  TEST_ASSERT_TRUE(seeded.revisionOneBytes == SD.files.at(seeded.revisionOnePath));
+  TEST_ASSERT_TRUE(seeded.revisionTwoBytes == SD.files.at(seeded.revisionTwoPath));
+  char newRevisionPath[64];
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatRevisionPath(newRevisionPath, sizeof(newRevisionPath), 2, 1,
+                                                          false));
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(newRevisionPath), "the new Set's revision must be published");
+}
+
+/// I4 — the display handshake for a catalog publication: exactly one pending change is published by the
+/// commit, and the display's consume clears it (so the open overlay re-reads the Set rows once).
+void test_i4_a_completed_commit_publishes_one_catalog_change_for_the_display() {
+  prepareRevisionOnlyCurrent();
+  // Test hygiene: earlier cases in this suite publish catalogs too, and the signal is process-global (the
+  // display consumes it on device). Start from a consumed state and assert the transition below.
+  (void)StorageManager::consumeSetCatalogChangePending();
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::consumeSetCatalogChangePending(),
+                            "no change is pending before a Save");
+
+  StorageManager::beginOverlaySaveRowCommit();
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE(revisionOwnerTurn());
+  }
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::consumeSetCatalogChangePending(),
+                           "a published catalog must invalidate the overlay's Set list");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::consumeSetCatalogChangePending(),
+                            "the change is consumed exactly once");
+}
+
+/// I4 — "read failed" must not look like "read empty": a Sets root with no readable catalog index reports a
+/// failed read (the overlay retries), while a card with no Sets root at all reports a completed empty read.
+void test_i4_an_unreadable_index_is_not_an_empty_catalog() {
+  SD.reset();
+  seedExistingSetOneWithTwoRevisions();
+  TEST_ASSERT_FALSE(SD.exists(SetRevisionCatalog::kSetIndexPath));
+  SetRevisionCatalog::SetBrowserListEntry rows[4] = {};
+  bool readOk = true;
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(
+                                  StorageManager::listSetRevisionBrowserEntries(rows, 4, &readOk)));
+  TEST_ASSERT_FALSE_MESSAGE(readOk, "an unreadable index is not a successfully read empty catalog");
+
+  SD.reset();
+  readOk = false;
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(
+                                  StorageManager::listSetRevisionBrowserEntries(rows, 4, &readOk)));
+  TEST_ASSERT_TRUE_MESSAGE(readOk, "a card with no Sets root is a completed empty read");
+}
+
+void test_i4_revision_without_transport_restores_first_occupied_runtime_indices() {
+  prepareRevisionOnlyCurrent();
+  StorageManager::beginOverlaySaveRowCommit();
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < S41Footer::kTurnBudget) {
+    TEST_ASSERT_TRUE(revisionOwnerTurn());
+  }
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+  TEST_ASSERT_EQUAL_UINT16(1, workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(1, workspaceDerivedFromRevisionId);
+
+  char path[64];
+  TEST_ASSERT_TRUE(SetRevisionCatalog::formatRevisionPath(path, sizeof(path), 1, 1, false));
+  auto& revision = SD.files.at(path);
+  RevisionPackedBlob::RevisionHeader header{};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::parseRevisionHeaderFromBytes(
+      revision.data(), revision.size(), header));
+  uint16_t count = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryCountFromRevisionBytes(
+      revision.data(), revision.size(), header, count));
+  TEST_ASSERT_EQUAL_UINT16(2, count);
+  for (uint16_t i = 0; i < count; ++i) {
+    RevisionPackedBlob::RevisionLoopSlotDirectoryEntry entry{};
+    TEST_ASSERT_TRUE(RevisionPackedBlob::readRevisionLoopSlotDirectoryEntryFromRevisionBytes(
+        revision.data(), revision.size(), header, i, entry));
+    TEST_ASSERT_EQUAL_UINT8(S41Footer::kTrack, entry.trackIndex);
+    TEST_ASSERT_EQUAL_UINT8(i == 0 ? S41Footer::kSlotA : S41Footer::kSlotB, entry.slotIndex);
+    TEST_ASSERT_EQUAL_UINT8(1, entry.occupied);
+  }
+  uint32_t transportOffset = 0, transportLength = 0;
+  TEST_ASSERT_TRUE(RevisionPackedBlob::findChunkBodyInRevisionBytes(
+      revision.data(), revision.size(), header, RevisionPackedBlob::ChunkType::Transport,
+      0, 0, transportOffset, transportLength));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, transportLength);
+  // Native card only: rename the chunk type, keeping every body/directory offset.
+  revision[transportOffset - RevisionPackedBlob::kChunkHeaderByteSize] =
+      static_cast<uint8_t>(RevisionPackedBlob::ChunkType::Global);
+  uint32_t absentOffset = 0, absentLength = 0;
+  TEST_ASSERT_FALSE(RevisionPackedBlob::findChunkBodyInRevisionBytes(
+      revision.data(), revision.size(), header, RevisionPackedBlob::ChunkType::Transport,
+      0, 0, absentOffset, absentLength));
+  uint32_t crc = 0;
+  bool seeded = false;
+  for (size_t offset = 0; offset < header.payloadSize;) {
+    const size_t remaining = header.payloadSize - offset;
+    const size_t quantum = storageSession.revisionCommit.copyBuffer.size();
+    const size_t bytes = remaining < quantum ? remaining : quantum;
+    const uint8_t* data = revision.data() + RevisionPackedBlob::kRevisionHeaderByteSize + offset;
+    crc = seeded ? PersistenceSchema::crc32Continue(crc, data, bytes)
+                 : PersistenceSchema::crc32(data, bytes);
+    seeded = true;
+    offset += bytes;
+  }
+  RevisionPackedBlob::RevisionFooter footer{};
+  footer.payloadCrc32 = crc;
+  footer.fileSize = static_cast<uint32_t>(revision.size());
+  std::vector<uint8_t> footerBytes;
+  const StorageIo footerIo{[&footerBytes](const void* data, size_t bytes) {
+    const auto* begin = static_cast<const uint8_t*>(data);
+    footerBytes.insert(footerBytes.end(), begin, begin + bytes);
+    return true;
+  }, nullptr};
+  TEST_ASSERT_TRUE(RevisionPackedBlob::writeRevisionFooter(footerIo, footer));
+  TEST_ASSERT_EQUAL_UINT32(RevisionPackedBlob::kRevisionFooterByteSize, footerBytes.size());
+  revision.resize(revision.size() - footerBytes.size());
+  revision.insert(revision.end(), footerBytes.begin(), footerBytes.end());
+
+  for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+    trackManager.loadTransportSlotIndices(t, 7, 7);
+    TEST_ASSERT_EQUAL_UINT8(7, trackManager.getTrack(t).getActiveLoopIndex());
+    TEST_ASSERT_EQUAL_UINT8(7, trackManager.getSelectedSlotIndex(t));
+  }
+  StorageManager::requestLoadRevision(1, 1);
+  TEST_ASSERT_TRUE(StorageManager::hasRevisionLoadWork());
+  bool observedDefault = false;
+  turns = 0;
+  while (StorageManager::hasRevisionLoadWork() && turns++ < S41Footer::kTurnBudget) {
+    TEST_ASSERT_TRUE_MESSAGE(revisionOwnerTurn(), "real load continuation must retain admission");
+    observedDefault = observedDefault || storageSession.revisionLoad.usedDefaultTransport;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(observedDefault, "production Validate must detect Transport absence");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasRevisionLoadWork(), "real missing-Transport load must complete");
+  TEST_ASSERT_TRUE(storageSession.revisionLoad.completedAtMs > 0);
+  TEST_ASSERT_EQUAL_UINT16(1, workspaceDerivedFromSetId);
+  TEST_ASSERT_EQUAL_UINT16(1, workspaceDerivedFromRevisionId);
+  for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+    const uint8_t expected = t == S41Footer::kTrack ? S41Footer::kSlotA : 0;
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(expected, trackManager.getTrack(t).getActiveLoopIndex(),
+                                  "runtime active must be first occupied, or zero for an empty track");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(expected, trackManager.getSelectedSlotIndex(t),
+                                  "runtime selected must independently match the fallback slot");
+  }
+  TEST_ASSERT_TRUE(trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotA).hasCommittedPasses());
+  TEST_ASSERT_TRUE(trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotB).hasCommittedPasses());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_drain_suite_links_the_closed_import_set);
   RUN_TEST(test_a35_drain_reports_the_holdoff_by_name_instead_of_waiting_it_out);
-  RUN_TEST(test_a35_holdoff_remaining_reader_does_not_clear_the_holdoff);
   // A3.6 — preserve DEC-081 and the capture behavior.
   RUN_TEST(test_a36_audible_playback_is_not_a_persistence_gate);
   RUN_TEST(test_a36_a_recording_track_parks_the_multi_frame_writers);
@@ -1335,5 +1836,13 @@ int main(int, char**) {
   RUN_TEST(test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact);
   // F4 / DEC-091 -- a failed workspace completion must not hold the queue.
   RUN_TEST(test_f4_a_failed_completion_is_discharged_and_releases_the_queue);
+  RUN_TEST(test_i4_revision_only_save_dispatches_and_completes_through_main_admission);
+  RUN_TEST(test_i4_revision_only_request_survives_denial_and_worker_holdoff);
+  RUN_TEST(test_i4_revision_body_header_patch_failure_does_not_publish_and_retries);
+  RUN_TEST(test_i4_a_clobbered_catalog_index_still_lists_the_set_in_the_browser);
+  RUN_TEST(test_i4_a_commit_never_reuses_an_existing_set_id);
+  RUN_TEST(test_i4_a_completed_commit_publishes_one_catalog_change_for_the_display);
+  RUN_TEST(test_i4_an_unreadable_index_is_not_an_empty_catalog);
+  RUN_TEST(test_i4_revision_without_transport_restores_first_occupied_runtime_indices);
   return UNITY_END();
 }

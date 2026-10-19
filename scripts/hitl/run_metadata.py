@@ -59,21 +59,18 @@ def _platformio_build_dir(repo_root: Path) -> Optional[Path]:
 
 
 def firmware_hex_path(repo_root: Path, build_env: str) -> Optional[Path]:
-    candidates: list[Path] = []
+    # An explicit/configured root is authoritative. Falling through to any
+    # older .pio or local-cache image silently attributes a run to stale code.
     override = os.environ.get("PLATFORMIO_BUILD_DIR")
-    if override:
-        candidates.append(Path(override) / build_env / "firmware.hex")
-    candidates.append(repo_root / ".pio" / "build" / build_env / "firmware.hex")
     configured = _platformio_build_dir(repo_root)
-    if configured is not None:
-        candidates.append(configured / build_env / "firmware.hex")
-    # Workspace-local build-cache overrides used when the default cache is not
-    # writable (see .gitignore: .pio-build-local*/).
-    candidates.extend(sorted(repo_root.glob(f".pio-build-local*/{build_env}/firmware.hex")))
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
+    root = Path(override) if override else configured
+    if root is None:
+        root = repo_root / ".pio" / "build"
+    root = Path(os.path.expandvars(str(root))).expanduser()
+    if not root.is_absolute():
+        root = repo_root / root
+    candidate = root / build_env / "firmware.hex"
+    return candidate if candidate.is_file() else None
 
 
 def _sha256(path: Path) -> str:

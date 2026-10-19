@@ -1,0 +1,13 @@
+Processing teensy41-capture-serial (platform: teensy; board: teensy41; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+Configuring upload protocol...
+AVAILABLE: jlink, teensy-cli, teensy-gui
+CURRENT: upload_protocol = teensy-gui
+Uploading /Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex
+========================= [SUCCESS] Took 9.58 seconds =========================
+
+Environment              Status    Duration
+-----------------------  --------  ------------
+teensy41-capture-serial  SUCCESS   00:00:09.575
+========================= 1 succeeded in 00:00:09.575 =========================

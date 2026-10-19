@@ -4,6 +4,8 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
+#include "Utils/PlaybackPhysicalDeadline.h"
 
 /// Gated MIDI polls around deferred remainder. Not a scheduler and not all-PLAYING drain.
 /// Capture uses the existing after-display poll (RC-C C). Post-overdub PLAYING adds polls
@@ -194,6 +196,57 @@ inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwner owner,
   DeferredIdleOwnerCursor cursor;
   cursor.owner = owner;
   return selectDeferredIdleOwner(cursor, snapshotBacklogPending, sessionExitDrainPending);
+}
+
+// Caller-owned checkpoint opportunity state, not a queue of domain jobs.
+struct InputCheckpointCursor {
+  DeferredIdleOwner owedNormal = DeferredIdleOwner::Snapshot;
+  bool normalPending = false;
+};
+using CheckpointCostTable = std::array<PhysicalCheckpointCost, kDeferredIdleOwnerCount>;
+struct InputCheckpointDecision {
+  bool dispatchOwner = false;
+  DeferredIdleOwner owner = DeferredIdleOwner::Snapshot; // Ignored unless dispatchOwner.
+  bool insertedWindow = false;
+  PhysicalCheckpointResult admission = PhysicalCheckpointResult::ReferenceUnavailable;
+};
+
+// Preview selection and the actual chosen owner's cost, then commit both cursors
+// only if its single grain can finish before independent physical/logical bounds.
+// This does not run a grain, grant readiness, or establish the supplied bounds.
+inline InputCheckpointDecision selectInputCheckpointOwner(
+    DeferredIdleOwnerCursor& normal, InputCheckpointCursor& checkpoint,
+    bool urgentWindowCanProgress, bool snapshotBacklogPending, bool sessionExitDrainPending,
+    const PlaybackPhysicalDeadline& deadline, PlaybackDeadlineClock clock,
+    PhysicalClockStamp now, const CheckpointCostTable& costs) {
+  auto proposedNormal = normal;
+  auto proposedCheckpoint = checkpoint;
+  InputCheckpointDecision decision;
+  bool proposedInsertion = false;
+  if (proposedCheckpoint.normalPending) {
+    decision.owner = proposedCheckpoint.owedNormal;
+    proposedCheckpoint.normalPending = false;
+  } else {
+    const auto selected = selectDeferredIdleOwner(proposedNormal, snapshotBacklogPending, sessionExitDrainPending);
+    if (urgentWindowCanProgress && selected != DeferredIdleOwner::PlaybackViewMaintenance) {
+      proposedCheckpoint.owedNormal = selected;
+      proposedCheckpoint.normalPending = true;
+      decision.owner = DeferredIdleOwner::PlaybackViewMaintenance;
+      proposedInsertion = true;
+    } else decision.owner = selected;
+  }
+  const auto index = static_cast<uint8_t>(decision.owner);
+  if (index >= costs.size()) {
+    decision.admission = PhysicalCheckpointResult::CostUnavailable;
+    return decision;
+  }
+  decision.admission = deadline.admit(clock, now, costs[index]);
+  if (decision.admission != PhysicalCheckpointResult::Allowed) return decision;
+  normal = proposedNormal;
+  checkpoint = proposedCheckpoint;
+  decision.dispatchOwner = true;
+  decision.insertedWindow = proposedInsertion;
+  return decision;
 }
 
 inline bool deferredIdleOwnerDependsOnVisualCacheWrap(
@@ -400,6 +453,32 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
   // heavy. This keeps save work resumable and avoids avoidable load+save stacking gaps.
   constexpr uint32_t kActiveLoadFrameSaveDeferThresholdUs = 15000u;
   return !timingCriticalTrackActive || loadFrameDurationUs < kActiveLoadFrameSaveDeferThresholdUs;
+}
+
+/// Main's persistence admission boundary. Storage owns requests and worker state;
+/// this function only offers the existing guarded owner turn (no new scheduler).
+/// The template lets native SD/clock fixtures call the same production boundary.
+template <typename Storage, typename State>
+bool serviceDeferredPersistenceTurn(const State& state, DeferredIdleOwner owner,
+                                    bool ownerAllowed, bool timingCriticalTrackActive,
+                                    uint32_t loadFrameUs, bool postOverdubPlayingDrain,
+                                    bool overdubStopping) {
+  const bool persistencePending = Storage::hasDeferredSaveWork() ||
+      Storage::hasRevisionCommitWork() || Storage::hasRevisionLoadWork();
+  const bool allowPrioritizedWorkspaceSaveDrain =
+      Storage::shouldPrioritizeWorkspaceSaveDrain() && !timingCriticalTrackActive;
+  const bool allowAfterLoadFrame = allowPrioritizedWorkspaceSaveDrain ||
+      allowDeferredSaveAfterLoadFrame(timingCriticalTrackActive, loadFrameUs);
+  const bool queuedCaptureChunks = Storage::hasQueuedCaptureChunksToPersist();
+  const bool admitted =
+      (persistencePending &&
+       (allowPrioritizedWorkspaceSaveDrain ||
+        (owner == DeferredIdleOwner::Persistence && ownerAllowed && allowAfterLoadFrame &&
+         allowDeferredSave(postOverdubPlayingDrain, persistencePending, overdubStopping)))) ||
+      queuedCaptureChunks;
+  if (!admitted) return false;
+  Storage::processDeferredSaveState(state);
+  return true;
 }
 
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after

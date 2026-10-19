@@ -25,6 +25,47 @@ It is a *representation/parity* check, not a timing or musicality check. A
 `content-review.json` verdict is about **inventory** (which rows, how many);
 order and timing are reported separately.
 
+## Playback-read evidence during persistence
+
+The active-persistence verifier accepts existing MIDI-out/snapshot-build observations and the
+session-capture-only `DIAG,playback_read` receipt. Schema1 is:
+
+`#CAP,<read_us>,DIAG,playback_read,1,<track>,<slot>,<tick>,<source_generation>,<storage_or_publication_generation>,<origin>,<start>,<length>,<period>,<phase>`
+
+The Track reader records this only after a Completed cursor turn over the exact selected immutable
+view, prepared pair or complete compiled bridge. Silent intervals qualify; preparation/transport state
+alone does not. Generation0 is legal when it matches the owner. Storage/publication identity must be
+nonzero, origin must be defined, and the observed phase must lie in coverage. No content is relabeled.
+
+Production stores only scalar observations on the playback edge, rate-limited to4Hz per slot. The
+foreground capture drain serializes at most one mailbox per call, with Tier-A ring retention and
+direct delivery only when the existing noncritical USB budget permits it. The timestamp is observation
+time, not later delivery time. The central protocol decoder rejects malformed/version-unknown rows.
+The verifier uses the unchanged ±500ms persistence witness window. This proves a qualified read near
+the save, not exact audible inventory, deadline safety, or continuous service across every tick.
+
+Execution and image-qualified results: [playback witness packet](../../openspec/changes/windowed-playback-generation/evidence/2026-10-18-rolling-base-2bar-rerun/PLAYBACK-WITNESS.md).
+
+## Managed MIDI close safety
+
+The rolling Record scenario retains its MIDI session until the existing managed
+`DeviceSession` completes both Stop/drain cycles and capture exits. Shutdown Stop
+and final heap observation borrow that retained output, so native port destruction
+cannot delay the safety drains. Serial stays open throughout content dumps and drains.
+
+Only after a durable successful two-drain receipt and confirmed capture-child exit,
+deferred MIDI closure runs under a10s native `faulthandler` watchdog. A stuck backend
+close exits the host nonzero, leaves `midi-cleanup-result.json` nonpassing, and writes
+thread stacks to `midi-close-stacks.log`; it is not a successful test or a firmware
+fault diagnosis. The receipt names collector/out_port/in_port stage and completed
+session count. Check it alongside `shutdown-result.json` and the scenario verdict.
+Python thread watchdogs alone cannot cover a native call that retains the GIL.
+
+This ordering mitigates the observed close hang without claiming its backend root
+cause. Do not raise the scenario timeout, close serial before drains, clear a latch,
+or reset to force the next attempt. A successful persistence drain is not proof of
+all-track idle health. [I5 — implementation and partial device evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md#managed-close-repair-and-approved-attempt4-2026-10-16).
+
 ## The device boots into LOOP_EDIT — set it explicitly
 
 **The Teensy always starts in `LOOP_EDIT` after a reboot.** That is a boot-state fact and it is

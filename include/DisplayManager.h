@@ -149,6 +149,7 @@ public:
     void drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
+    friend struct DisplayCaptureTestAccess;  // native observation of production frame/phase state
     void adoptComposedDisplayNotesIfAuthoritative(Loop& loop);
     void syncLiveDisplayComposeCounts();
     void resizeLiveDisplayNotesNoGrow(size_t requestedCount);
@@ -336,6 +337,9 @@ private:
     uint8_t loadSaveListSelection_ = 0;
     uint8_t loadSaveListScrollOffset_ = 0;
     bool loadSaveListCacheValid_ = false;
+    /// Bounded retry state for the Set list cache: a refresh the catalog gate skipped, or a read that
+    /// failed, is retried under a budget instead of being cached as "no Sets" (I4 — Set browser freshness).
+    SetBrowserOverlayPolicy::ListRefreshState loadSaveListRefreshState_{};
     bool loadSaveRevisionListCacheValid_ = false;
     bool loadSaveModeWasActive_ = false;
     bool workspaceDisplayRefreshPending_ = false;

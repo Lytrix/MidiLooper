@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <limits>
 #include <new>
+#include <optional>
 
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/InternalHeapFirstAllocator.h"
@@ -322,7 +323,28 @@ void LoopPlaybackRuntime::syncRevision(uint32_t loopRevision, uint32_t trackGene
   cachedTrackGeneration = trackGeneration;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLedger) {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(
+    bool preserveLedger, const RuntimePlaybackViewBuild::PreparationTurn* primary,
+    const RuntimePlaybackViewBuild::PreparationTurn* bridge) {
+  std::optional<RuntimePlaybackViewBuild::PreparationTurn> localPrimary, localBridge;
+  bool preparationBusy = false;
+  {
+    PlaybackSourceReadGuard guard;
+    preparationBusy = viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+        (primary && !primary->owns(viewBuild)) || (bridge && !bridge->owns(bridgeWindowBuild)) ||
+        (viewBuild.preparationInProgress() && (!primary || !primary->owns(viewBuild))) ||
+        (bridgeWindowBuild.preparationInProgress() && (!bridge || !bridge->owns(bridgeWindowBuild)));
+    if (preparationBusy) {
+      viewBuild.cancelPreparation();
+      bridgeWindowBuild.cancelPreparation();
+      viewBuild.discard();
+      bridgeWindowBuild.discard();
+    } else {
+      // Reserve both lanes before restoring IRQs; destruction itself stays unmasked.
+      if (!primary) { localPrimary.emplace(viewBuild); primary = &*localPrimary; }
+      if (!bridge) { localBridge.emplace(bridgeWindowBuild); bridge = &*localBridge; }
+    }
+  }
   if (captureStopOwner && captureStopOwner->pending) {
     captureStopOwner->requestTransportStop();
     if (auto* staging = captureStagingIfPrewarmed()) {
@@ -331,6 +353,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
     }
     return false;
   }
+  // A refused reset must not clear an executing builder or its private view.
+  // Cancellation completes at that call's boundary; the reset caller retries.
+  if (preparationBusy) return false;
   retireCoverageSource();
   // Task 3.7a (I2): the retained-source gather is this lane's other half-owned work, so a reset drops it too -- its
   // buffer is per-slot external memory and must not outlive the operation that owed it. Task 3.7a (I3b): the page ring
@@ -415,10 +440,18 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
   if (!preserveLedger) {
     ledger.clear();
   }
-  return true;
+  PlaybackSourceReadGuard completionGuard;
+  const bool completed = primary->owns(viewBuild) && bridge->owns(bridgeWindowBuild);
+  // Resolve cancellation and release locally-owned turns atomically at the end
+  // of destruction. A releaseSlot caller retains its supplied pair for retirement.
+  localBridge.reset();
+  localPrimary.reset();
+  return completed;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime::~LoopPlaybackRuntime() {
+  viewBuild.discard(); // Detach source and destination before either can be released.
+  bridgeWindowBuild.discard();
   canonicalCaptureOutput.store.clear();
   releaseRuntimePlaybackViewSet(viewSet);
 }
@@ -1538,89 +1571,179 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView* LoopPlaybackRuntime::
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceBridgeWindow(
     uint32_t currentPhase, uint32_t windowTicks, size_t quantum) {
-  auto* set = viewSetIfPrewarmed();
-  if (!set || !windowTicks || !quantum || set->bridgeLifecycle.selected >= set->bridges.size()) return false;
-  const auto index = set->bridgeLifecycle.selected;
-  const auto& bridge = set->bridges[index];
-  const auto* base = fullLoopBridgeBase(bridge, bridge.coverage.loopLengthTicks);
-  if (!base || !bridge.complete || !bridge.selected || !bridge.streamPrepared ||
-      currentPhase >= bridge.coverage.loopLengthTicks) return false;
-  const uint32_t length = bridge.coverage.loopLengthTicks;
-  const uint32_t width = std::min(windowTicks, length);
-  if (bridgeWindowContextIndex != index || bridgeWindowContextGeneration != bridge.storageGeneration) {
-    bridgeWindowBuild.discard();
-    bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
-    // A source handoff invalidates old emission windows, never the selected
-    // immutable bridge/base. That compiled stream covers refill immediately.
-    for (auto& view : set->views) view.resetMetadata();
-    set->lifecycle.reset();
-    bridgeWindowContextIndex = index;
-    bridgeWindowContextGeneration = bridge.storageGeneration;
-    return true;
+  RuntimePlaybackViewBuild::PreparationTurn primary(viewBuild), bridgeTurn(bridgeWindowBuild);
+  if (!primary || !bridgeTurn || !windowTicks || !quantum) return false;
+  RuntimePlaybackViewSet* set = nullptr;
+  uint8_t index = RuntimePlaybackBridgeLifecycle::kNoBridge;
+  uint64_t bridgeGeneration = 0;
+  uint32_t length = 0, projectionCycle = 0;
+  {
+    PlaybackSourceReadGuard guard;
+    set = viewSetIfPrewarmed();
+    if (!primary || !bridgeTurn || !set || set->bridgeLifecycle.selected >= set->bridges.size()) return false;
+    index = set->bridgeLifecycle.selected;
+    const auto& bridge = set->bridges[index];
+    if (!bridge.complete || !bridge.selected || !bridge.streamPrepared ||
+        currentPhase >= bridge.coverage.loopLengthTicks) return false;
+    bridgeGeneration = bridge.storageGeneration;
+    length = bridge.coverage.loopLengthTicks;
+    projectionCycle = bridgeProjectionCycle;
   }
-  auto& life = set->lifecycle;
-  const uint64_t now = uint64_t(bridgeProjectionCycle) * length + currentPhase;
-  const auto endOf = [length](const RuntimePlaybackView& view) {
+  const auto& bridge = set->bridges[index];
+  // The base query may inspect content; it never runs inside the metadata guard.
+  const auto* base = fullLoopBridgeBase(bridge, length);
+  if (!base) return false;
+  const auto selectedCurrent = [&]() TRACK_PLAYBACK_RUNTIME_COLD_MEM {
+    return primary && bridgeTurn && viewSetIfPrewarmed() == set &&
+        set->bridgeLifecycle.selected == index && bridge.storageGeneration == bridgeGeneration &&
+        bridge.complete && bridge.selected && bridge.streamPrepared &&
+        bridge.coverage.loopLengthTicks == length && bridgeProjectionCycle == projectionCycle;
+  };
+  const auto contextCurrent = [&]() TRACK_PLAYBACK_RUNTIME_COLD_MEM {
+    return selectedCurrent() && bridgeWindowContextIndex == index &&
+        bridgeWindowContextGeneration == bridgeGeneration;
+  };
+  const uint32_t width = std::min(windowTicks, length);
+  const uint64_t now = uint64_t(projectionCycle) * length + currentPhase;
+  const auto endOf = [length](const RuntimePlaybackView& view) TRACK_PLAYBACK_RUNTIME_COLD_MEM {
     return uint64_t(view.cursorAnchor.projectionCycle) * length +
         view.coverage.startPhase + view.coverage.lengthTicks;
   };
-  if (life.ready < set->views.size() && set->views[life.ready].complete) {
-    const auto& ready = set->views[life.ready];
-    if (ready.cursorAnchor.projectionCycle == bridgeProjectionCycle && ready.coverage.contains(currentPhase)) {
-      (void)set->handoffReadyCoverage();
-      return true;
-    }
-    if (endOf(ready) <= now) {
-      set->views[life.ready].resetMetadata();
-      if (bridgeWindowBuildIndex == life.ready) {
-        bridgeWindowBuild.discard(); bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
-      }
-      return true;
-    }
-  }
-  if (bridgeWindowBuildIndex < set->views.size()) {
-    auto& target = set->views[bridgeWindowBuildIndex];
-    if (endOf(target) <= now) {
-      bridgeWindowBuild.discard(); target.resetMetadata();
+  uint8_t targetIndex = RuntimePlaybackViewLifecycle::kNoView;
+  uint8_t previousBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t targetGeneration = 0, start = 0;
+  uint32_t completed = UINT32_MAX;
+  bool existing = false;
+  RuntimePlaybackViewLifecycle selectedRoles;
+  RuntimePlaybackViewBuildGrain grain = RuntimePlaybackViewBuildGrain::Denied;
+  {
+    PlaybackSourceReadGuard guard;
+    if (!selectedCurrent()) return false;
+    if (bridgeWindowContextIndex != index || bridgeWindowContextGeneration != bridgeGeneration) {
+      bridgeWindowBuild.discard();
       bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+      // Fixed three-view metadata only; never a content or retirement loop.
+      for (auto& view : set->views) view.resetMetadata();
+      set->lifecycle.reset();
+      bridgeWindowContextIndex = index;
+      bridgeWindowContextGeneration = bridgeGeneration;
       return true;
     }
-    const auto grain = bridgeWindowBuild.nextGrain();
+    auto& life = set->lifecycle;
+    // Select and inspect ready in the same guard. An independent ready adopter
+    // remains allowed between our unmasked worker calls.
+    if (life.ready < set->views.size() && set->views[life.ready].complete) {
+      const auto& ready = set->views[life.ready];
+      if (ready.cursorAnchor.projectionCycle == projectionCycle && ready.coverage.contains(currentPhase)) {
+        if (bridgeWindowBuildIndex == life.ready &&
+            bridgeWindowBuild.completedDestinationIs(ready)) {
+          bridgeWindowBuild.discard(&ready);
+          bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+        }
+        (void)set->handoffReadyCoverage();
+        if (bridgeWindowBuildIndex == RuntimePlaybackViewLifecycle::kNoView &&
+            life.build < set->views.size() && set->views[life.build].complete &&
+            !set->views[life.build].published && set->views[life.build].source == bridge.source &&
+            set->views[life.build].coverage.loopLengthTicks == length)
+          (void)set->publishCompletedBuildAsReady();
+        return true;
+      }
+      if (endOf(ready) <= now) {
+        const uint8_t expired = life.ready;
+        if (bridgeWindowBuildIndex == expired) {
+          bridgeWindowBuild.discard();
+          bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+        }
+        set->views[expired].resetMetadata();
+        return true;
+      }
+    }
+    previousBuildIndex = bridgeWindowBuildIndex;
+    existing = previousBuildIndex < set->views.size();
+    if (existing) {
+      targetIndex = previousBuildIndex;
+      auto& target = set->views[targetIndex];
+      // A clock-edge adopter may consume this exact completed ready while the
+      // preparation turn is unmasked. Detach its worker, never reset current.
+      if (targetIndex == life.current && target.published &&
+          bridgeWindowBuild.completedDestinationIs(target)) {
+        bridgeWindowBuild.discard(&target);
+        bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+        return true;
+      }
+      if (targetIndex == life.current || targetIndex == life.retained) return false;
+      if (endOf(target) <= now) {
+        bridgeWindowBuild.discard();
+        target.resetMetadata();
+        bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+        return true;
+      }
+      grain = bridgeWindowBuild.nextGrain();
+    } else {
+      targetIndex = life.ready < set->views.size() && !set->views[life.ready].complete
+          ? life.ready : life.build;
+      if (targetIndex >= set->views.size() || set->views[targetIndex].complete ||
+          targetIndex == life.current || targetIndex == life.retained) return false;
+      start = uint64_t(projectionCycle) * length + currentPhase / width * width;
+      if (life.ready < set->views.size() && set->views[life.ready].complete)
+        start = endOf(set->views[life.ready]);
+      else if (publishedBridgeWindow(bridge.source, currentPhase))
+        start = endOf(set->views[life.current]);
+      const uint32_t cycle = start / length;
+      completed = cycle == bridge.cursorAnchor.projectionCycle && bridge.preparedAdmissionPhase
+          ? bridge.preparedAdmissionPhase - 1 : UINT32_MAX;
+    }
+    selectedRoles = life;
+    targetGeneration = set->views[targetIndex].storageGeneration;
+  }
+  const auto rolesCurrent = [&]() TRACK_PLAYBACK_RUNTIME_COLD_MEM {
+    const auto& life = set->lifecycle;
+    return contextCurrent() && bridgeWindowBuildIndex == previousBuildIndex &&
+        life.current == selectedRoles.current && life.ready == selectedRoles.ready &&
+        life.build == selectedRoles.build && life.retained == selectedRoles.retained &&
+        life.idle == selectedRoles.idle;
+  };
+  auto& target = set->views[targetIndex];
+  if (existing) {
     if (grain == RuntimePlaybackViewBuildGrain::Fill) bridgeWindowBuild.stepFill(quantum);
     else if (grain == RuntimePlaybackViewBuildGrain::Order) bridgeWindowBuild.stepOrder(quantum);
-    else if (grain == RuntimePlaybackViewBuildGrain::Complete) {
-      if (life.ready == RuntimePlaybackViewLifecycle::kNoView)
+    PlaybackSourceReadGuard guard;
+    if (!rolesCurrent() || target.storageGeneration != targetGeneration) return false;
+    if (grain == RuntimePlaybackViewBuildGrain::Complete) {
+      if (!bridgeWindowBuild.completedDestinationIs(target)) return false;
+      if (set->lifecycle.ready == RuntimePlaybackViewLifecycle::kNoView)
         (void)set->publishCompletedBuildAsReady();
-      // Ready/build successors are complete but not yet published. Release
-      // only the worker; clearing the destination rebuilds it forever and
-      // starves snapshot-receipt cleanup (and therefore overdub reentry).
       bridgeWindowBuild.discard(&target);
       bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
-    } else {
-      bridgeWindowBuild.discard(); target.resetMetadata();
+    } else if (grain == RuntimePlaybackViewBuildGrain::Denied) {
+      // Cancellation is checked above before any direct cleanup or index write.
+      bridgeWindowBuild.discard();
+      target.resetMetadata();
       bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
     }
     return true;
   }
-  const uint8_t destination = life.ready < set->views.size() && !set->views[life.ready].complete
-      ? life.ready : life.build;
-  if (destination >= set->views.size() || set->views[destination].complete ||
-      destination == life.current || destination == life.retained) return false;
-  uint64_t start = uint64_t(bridgeProjectionCycle) * length + currentPhase / width * width;
-  if (life.ready < set->views.size() && set->views[life.ready].complete)
-    start = endOf(set->views[life.ready]);
-  else if (publishedBridgeWindow(bridge.source, currentPhase))
-    start = endOf(set->views[life.current]);
   const uint32_t phase = start % length;
   const uint32_t cycle = start / length;
-  const uint32_t completed = cycle == bridge.cursorAnchor.projectionCycle && bridge.preparedAdmissionPhase
-      ? bridge.preparedAdmissionPhase - 1 : UINT32_MAX;
   if (!bridgeWindowSource.selectAfterPhase(*base, bridge, cycle, completed)) return false;
+  {
+    PlaybackSourceReadGuard guard;
+    if (!rolesCurrent() || target.storageGeneration != targetGeneration) return false;
+  }
   const PlaybackCoverageInterval coverage{phase, std::min(width, length - phase), length};
   const EmissionCursor anchor{cycle, phase, 0, 0, bridge.source.sourceGeneration};
-  if (!bridgeWindowBuild.begin(set->views[destination], bridgeWindowSource.source(), bridge.source,
+  if (!bridgeWindowBuild.begin(target, bridgeWindowSource.source(), bridge.source,
       coverage, anchor, bridge.ledgerBoundary, RuntimePlaybackViewFillScope::PlaybackCoverage)) return false;
-  bridgeWindowBuildIndex = destination;
+  PlaybackSourceReadGuard guard;
+  // begin resets exactly this destination's metadata once. Independent ready
+  // adoption may rotate unrelated roles, but cannot replace this private role.
+  const auto& life = set->lifecycle;
+  const bool sameDestinationRole = targetIndex == selectedRoles.ready
+      ? life.ready == targetIndex : life.build == targetIndex;
+  if (!contextCurrent() || bridgeWindowBuildIndex != previousBuildIndex ||
+      !sameDestinationRole || targetIndex == life.current || targetIndex == life.retained ||
+      target.storageGeneration != targetGeneration + 1) return false;
+  bridgeWindowBuildIndex = targetIndex;
   return true;
 }
 
@@ -1729,11 +1852,19 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
       frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
       frozenViewRequest.operationGeneration == frame.generation &&
       frozenViewRequest.clockEpoch == 0 && frozenViewRequest.deadlineTick == 0;
+  // DEC-136: a demand the caller waived the lead test for (the bound frozen reader's privately prepared
+  // root successor) is owed **without a deadline**, so it has no position to check and no promise to keep --
+  // the frozen reader serves until this build is complete and adopted. Every other requirement below still
+  // applies, so the window is only ever prepared privately and never served before it is valid.
+  const bool privateRootReturn =
+      frozenViewRequest.reason == PlaybackViewPendingReason::PrivateRootReturnPreparation;
   if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSource.complete() ||
       !frozenViewRequest.active || frozenViewRequest.positionInvalidated ||
-      (!launch && !cold && (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
-      clock.tick < frozenViewRequest.work.admittedTick || clock.tick >= frozenViewRequest.deadlineTick ||
-      !contract.canCompleteWithinLead(frozenViewRequest.deadlineTick - clock.tick)))) return false;
+      (!launch && !cold && !privateRootReturn &&
+       (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
+        clock.tick < frozenViewRequest.work.admittedTick ||
+        clock.tick >= frozenViewRequest.deadlineTick ||
+        !contract.canCompleteWithinLead(frozenViewRequest.deadlineTick - clock.tick)))) return false;
   auto* set = viewSetIfPrewarmed();
   // Qualification may run privately beside a Capture ready, but admission
   // cannot discharge that request until the single successor role is free.
@@ -1799,7 +1930,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepCoverageSourceReti
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingBar(
-    uint32_t ticksPerBar) {
+    uint32_t ticksPerBar, const RuntimePlaybackViewBuild::PreparationTurn* primary,
+    const RuntimePlaybackViewBuild::PreparationTurn* bridge) {
+  RuntimePlaybackViewBuild::PreparationTurn localPrimary(viewBuild), localBridge(bridgeWindowBuild);
+  const auto& primaryTurn = primary ? *primary : localPrimary;
+  const auto& bridgeTurn = bridge ? *bridge : localBridge;
+  if (!primaryTurn.owns(viewBuild) || !bridgeTurn.owns(bridgeWindowBuild) ||
+      viewBuild.callInProgress() || bridgeWindowBuild.callInProgress()) return false;
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr) {
     firstRecordingBarDenial_ = "no_prewarmed_view_set";
@@ -1839,6 +1976,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingB
     firstRecordingBarDenial_ = "fill_grain_denied";
     return false;
   }
+  PlaybackSourceReadGuard publicationGuard;
+  if (!primaryTurn || !bridgeTurn || !viewBuild.completedDestinationIs(destination)) return false;
   if (!set->lifecycle.installPreparedCurrent(set->views)) {
     viewBuild.discard();
     firstRecordingBarDenial_ = "lifecycle_install_denied";
@@ -1853,7 +1992,16 @@ LoopPlaybackRuntime::firstRecordingBarDenialLabel() const {
   return firstRecordingBarDenial_ != nullptr ? firstRecordingBarDenial_ : "unknown";
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseFirstRecordingBarReturnWindow() {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseFirstRecordingBarReturnWindow(
+    const RuntimePlaybackViewBuild::PreparationTurn* primary,
+    const RuntimePlaybackViewBuild::PreparationTurn* bridge) {
+  PlaybackSourceReadGuard guard;
+  if ((primary && !primary->owns(viewBuild)) ||
+      (bridge && !bridge->owns(bridgeWindowBuild))) return false;
+  if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+      (viewBuild.preparationInProgress() && (!primary || !primary->owns(viewBuild))) ||
+      (bridgeWindowBuild.preparationInProgress() && (!bridge || !bridge->owns(bridgeWindowBuild))))
+    return false;
   // A stop job that is still retiring owns the record-session lifecycle; do not
   // release a window under it.
   if (captureStopOwner && captureStopOwner->pending) {
@@ -1912,15 +2060,17 @@ LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
   }
   if (!(window.source == sourceIdentity)) {
     window.source = sourceIdentity;
-    // The bundle includes its cursor. The launch phase is where the live take
-    // stopped, so the notes below it were already heard: select the first event
-    // after it instead of letting the emission replay the window as a loop-start
-    // catch-up (which dumped the already-played prefix in bursts). This mirrors
-    // `reanchorPlaybackIndex` for the merged path at the same boundary.
+    // The previous serviced phase, not this turn's phase, is the exclusion
+    // floor. Publication can change identity on a tick whose Off/On are due;
+    // seeking past that current tick would omit both edges. A wrap or an
+    // unserviced interval has no exclusion floor in the new traversal.
+    const uint32_t servedThroughPhase = phase < loop.lastTickInLoop
+        ? UINT32_MAX : loop.lastTickInLoop;
     size_t cursor = 0;
     while (cursor < window.storage.eventCount) {
       const MidiEvent& event = window.storage.events[window.storage.order[cursor]];
-      if (IntervalProjection::playbackEventPhase(event.tick, loopLengthTicks) > phase) {
+      if (servedThroughPhase == UINT32_MAX ||
+          IntervalProjection::playbackEventPhase(event.tick, loopLengthTicks) > servedThroughPhase) {
         break;
       }
       ++cursor;
@@ -1939,6 +2089,9 @@ LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
     uint32_t loopLengthTicks, const Loop* recordedLoop) {
+  PlaybackSourceReadGuard guard;
+  if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+      viewBuild.preparationInProgress() || bridgeWindowBuild.preparationInProgress()) return false;
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView ||
       set->lifecycle.retained >= set->views.size()) {
@@ -1961,6 +2114,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordReturnWindow(
     const LoopEventStore::CaptureRange& range, uint64_t expectedGeneration,
     uint32_t loopLengthTicks, const uint64_t* openAtStopLanes) {
+  RuntimePlaybackViewBuild::PreparationTurn primary(viewBuild), bridgeTurn(bridgeWindowBuild);
+  if (!primary || !bridgeTurn) return false;
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || loopLengthTicks == 0 || !range.ready() ||
       range.generation() != expectedGeneration) {
@@ -1986,6 +2141,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordRetu
     return false;
   }
   RuntimePlaybackView& retained = set->views[set->lifecycle.retained];
+  const uint64_t retainedGeneration = retained.storageGeneration;
   if (!retained.complete || !retained.rawCoveragePrepared) {
     return false;
   }
@@ -1997,6 +2153,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordRetu
   if (!retained.projectRawCoverageToLoopLength(loopLengthTicks, openAtStopLanes)) {
     return false;
   }
+  PlaybackSourceReadGuard guard;
+  if (!primary || !bridgeTurn || viewSetIfPrewarmed() != set ||
+      set->lifecycle.retained >= set->views.size() ||
+      &set->views[set->lifecycle.retained] != &retained ||
+      retained.storageGeneration != retainedGeneration || !range.ready() ||
+      range.generation() != expectedGeneration) return false;
   return retained.bindRawCoverage(loopLengthTicks) &&
       set->lifecycle.handoffToRetained(set->views);
 }
@@ -2019,15 +2181,11 @@ LoopPlaybackRuntime::hasServableDeferredRecordView() const {
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool
 LoopPlaybackRuntime::hasBoundRecordReturnWindowForPendingJob() const {
-  if (captureStopOwner == nullptr || !captureStopOwner->pending) {
-    return false;
-  }
-  // A pending job owns the unpublished interval for its whole life, not only while the
-  // bar-1 window is the served view. Once an onward window is handed off the bar-1
-  // window is no longer current, and a later bar (or a wrap back to bar one) must still be
-  // built from the job's frozen source -- so eligibility is the ownership, and the adopt
-  // paths themselves decide what they can serve.
-  return viewSetIfPrewarmed() != nullptr;
+  // The finalizer owns the reader until publication; the presentation owns it afterward. A ring
+  // job at RecordPublished (notably an empty result) must never impersonate a published reader.
+  const bool finalizing = captureStopOwner != nullptr && captureStopOwner->pending &&
+      captureStopOwner->phase != PendingStopPhase::RecordPublished;
+  return (presentationOwner != nullptr || finalizing) && viewSetIfPrewarmed() != nullptr;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFrozenRecordWindow(
@@ -2061,13 +2219,36 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFrozenRecordWin
       return false;
     }
   }
+  const uint8_t completedRole = set->lifecycle.build;
+  if (completedRole >= set->views.size()) return false;
+  const uint64_t completedGeneration = set->views[completedRole].storageGeneration;
   const RuntimePlaybackViewBuildGrain grain = viewBuild.nextGrain();
   if (grain == RuntimePlaybackViewBuildGrain::Fill) {
     if (viewBuild.stepFill(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
   } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
     if (viewBuild.stepOrder(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
   }
+  if (viewBuild.preparationCancelled() || bridgeWindowBuild.preparationCancelled()) return false;
   if (viewBuild.nextGrain() != RuntimePlaybackViewBuildGrain::Complete) return true;
+  PlaybackSourceReadGuard publicationGuard;
+  if (viewBuild.preparationCancelled() || bridgeWindowBuild.preparationCancelled() ||
+      viewSetIfPrewarmed() != set || set->lifecycle.build != completedRole ||
+      set->views[completedRole].storageGeneration != completedGeneration ||
+      !viewBuild.completedDestinationIs(set->views[completedRole])) return false;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // Cold live-Capture promotion reclaimed the raw retained shell and restored
+  // the third prewarmed view as an incomplete ready shell. Its mismatching-stop
+  // successor uses the ordinary current/ready/build rotation, not raw prepare.
+  if (set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView &&
+      set->lifecycle.current < set->views.size() &&
+      set->lifecycle.ready < set->views.size()) {
+    const auto& current = set->views[set->lifecycle.current];
+    if (current.complete && current.published &&
+        current.source.origin == PlaybackWindowOrigin::Capture &&
+        sourceIdentity.origin == PlaybackWindowOrigin::Capture)
+      return set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views);
+  }
+#endif
   if (!set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation)) {
     viewBuild.discard();
     return false;
@@ -2084,6 +2265,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenRecordWindowRead
 TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView*
 LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& sourceIdentity,
                                              uint32_t loopLengthTicks, uint32_t phase) {
+  PlaybackSourceReadGuard guard;
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || loopLengthTicks == 0) return nullptr;
   const auto covers = [&](const RuntimePlaybackView& window) {
@@ -2140,11 +2322,14 @@ LoopPlaybackRuntime::frozenWindowBuildGrain() const {
   return viewBuild.nextGrain();
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseFrozenRecordWindow() {
-  if (ownsLaunchPreparation() || (viewBuild.coverageOwned() && (viewBuild.active() || completedPromisePendingJudgement))) return;
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseFrozenRecordWindow() {
+  PlaybackSourceReadGuard guard;
+  if (ownsLaunchPreparation() || (viewBuild.coverageOwned() && (viewBuild.active() || completedPromisePendingJudgement))) return true;
+  if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+      viewBuild.preparationInProgress() || bridgeWindowBuild.preparationInProgress()) return false;
   viewBuild.discard();
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
-  if (set == nullptr) return;
+  if (set == nullptr) return true;
   const auto clearOnward = [&](uint8_t index) {
     if (index >= set->views.size()) return;
     RuntimePlaybackView& window = set->views[index];
@@ -2153,12 +2338,21 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseFrozenRecordWin
   };
   clearOnward(set->lifecycle.current);
   clearOnward(set->lifecycle.ready);
+  return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {
+  RuntimePlaybackViewBuild::PreparationTurn primary(viewBuild), bridgeTurn(bridgeWindowBuild);
+  if (!primary || !bridgeTurn) return false;
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::LiveCapture) {
+    // VisualCache must not restart or discard the rolling owner's valid private
+    // append work. Only destructive/semantic staleness may cancel its borrow.
+    cancelStaleLiveCaptureBuildBorrows();
+    return false;
+  }
   if (auto* candidateSet = viewSetIfPrewarmed()) {
     const uint8_t index = candidateSet->lifecycle.build;
     if (index < candidateSet->views.size() &&
@@ -2198,13 +2392,22 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingB
                          EmissionCursor{}, LedgerBoundarySummary{},
                          RuntimePlaybackViewFillScope::RawCoverage)) return false;
   }
+  const uint8_t completedRole = set->lifecycle.build;
+  if (completedRole >= set->views.size()) return false;
+  const uint64_t completedGeneration = set->views[completedRole].storageGeneration;
   const RuntimePlaybackViewBuildGrain grain = viewBuild.nextGrain();
   if (grain == RuntimePlaybackViewBuildGrain::Fill) {
     if (viewBuild.stepFill(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
   } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
     if (viewBuild.stepOrder(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
   }
+  if (!primary || !bridgeTurn) return false;
   if (viewBuild.nextGrain() != RuntimePlaybackViewBuildGrain::Complete) return true;
+  PlaybackSourceReadGuard publicationGuard;
+  if (!primary || !bridgeTurn || viewSetIfPrewarmed() != set ||
+      set->lifecycle.build != completedRole ||
+      set->views[completedRole].storageGeneration != completedGeneration ||
+      !viewBuild.completedDestinationIs(set->views[completedRole])) return false;
   if (!set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation) ||
       !set->lifecycle.replaceRetainedWithReady(set->views)) {
     viewBuild.discard();
@@ -2575,6 +2778,32 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM uint16_t TrackPlaybackRuntime::slotGeneration(
   return rt ? rt->workingSetGeneration() : 0;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::ownsLiveCaptureBuildBorrow() const {
+  return viewBuild.ownsLiveCaptureBorrow() || bridgeWindowBuild.ownsLiveCaptureBorrow();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::cancelLiveCaptureBuildBorrows() {
+  if (viewBuild.ownsLiveCaptureBorrow() || viewBuild.callInProgress()) viewBuild.discard();
+  if (bridgeWindowBuild.ownsLiveCaptureBorrow() || bridgeWindowBuild.callInProgress()) bridgeWindowBuild.discard();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::cancelStaleLiveCaptureBuildBorrows() {
+  if (viewBuild.ownsLiveCaptureBorrow() && !viewBuild.liveCaptureCurrent()) viewBuild.discard();
+  if (bridgeWindowBuild.ownsLiveCaptureBorrow() && !bridgeWindowBuild.liveCaptureCurrent())
+    bridgeWindowBuild.discard();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::cancelLiveCaptureBuilds() {
+  for (auto& runtime : runtimeBySlot_)
+    if (runtime) runtime->cancelLiveCaptureBuildBorrows();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::cancelStaleLiveCaptureBuilds() {
+  // All source Loops are still physically retained by this runtime's Track.
+  for (auto& runtime : runtimeBySlot_)
+    if (runtime) runtime->cancelStaleLiveCaptureBuildBorrows();
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM WorkingSetOutcome TrackPlaybackRuntime::releaseSlot(
     uint8_t slotIndex, uint16_t generation, bool preserveLedger) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return WorkingSetOutcome::NotHeld;
@@ -2582,11 +2811,21 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM WorkingSetOutcome TrackPlaybackRuntime::releaseS
   if (!rt) return WorkingSetOutcome::NotHeld;
   // Identity first: a stale generation is a rejected no-op, and this is the check that makes a late
   // release on a reused slot harmless (S4.2). The release call itself re-validates and bumps.
-  if (rt->workingSetGeneration() != generation) return WorkingSetOutcome::StaleGeneration;
-  // The slot runtime's own refusal is preserved, not discarded.
-  if (rt->ownsLaunchPreparation() || !rt->reset(preserveLedger) || rt->ownsCoverageSource()) return WorkingSetOutcome::RefusedBusy;
-  const WorkingSetOutcome released = rt->releaseAllWorkingSetLeases();
-  return released == WorkingSetOutcome::Released ? released : WorkingSetOutcome::NotHeld;
+  std::optional<RuntimePlaybackViewBuild::PreparationTurn> primary, bridge;
+  {
+    PlaybackSourceReadGuard guard;
+    if (rt->workingSetGeneration() != generation) return WorkingSetOutcome::StaleGeneration;
+    if (rt->ownsLiveCaptureBuildBorrow() || rt->viewBuild.callInProgress() ||
+        rt->bridgeWindowBuild.callInProgress() || rt->viewBuild.preparationInProgress() ||
+        rt->bridgeWindowBuild.preparationInProgress()) return WorkingSetOutcome::RefusedBusy;
+    primary.emplace(rt->viewBuild);
+    bridge.emplace(rt->bridgeWindowBuild);
+  }
+  // The same exact capabilities span reset and lease retirement, with IRQs restored.
+  if (rt->ownsLaunchPreparation() || !rt->reset(preserveLedger, &*primary, &*bridge) ||
+      rt->ownsCoverageSource()) return WorkingSetOutcome::RefusedBusy;
+  const WorkingSetOutcome released = rt->releaseAllWorkingSetLeases(&*primary, &*bridge);
+  return released;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime* TrackPlaybackRuntime::trySlot(
@@ -2691,10 +2930,18 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // the window). Measured by the compiler on this ABI, not estimated.
 // E2 Capture source receipt plus bounded source-index fill state; externally
 // allocated per slot, not a Track DTCM field.
-static_assert(sizeof(LoopPlaybackRuntime) == 7632,
-              "E2: target per-slot runtime 7,632 B with source-index fill receipt");
-static_assert(sizeof(Loop) == 992,
-              "S3.0/E2: LoopPool shell 984 B baseline + 8 B Capture-content generation "
+// I5 raw-prefix token: compiler-measured +8 B in each embedded store.
+// Price: SOURCE-STABILITY-EXECUTION.md; no cursor embedded or RAM1 budget change.
+// Exact destination generations add16 external runtime bytes across two builders.
+// Live recipe receipts add64 external bytes across pending/frozen requests.
+// Measured ARM ABI; no Track field or RAM1 budget change.
+// DEC-136 completion (S7.5b.5 release edge): the root-return retirement hold's identity key
+// and grain count add 8 B (u32 key + u16 grains, this ABI's padding). Externally allocated
+// per-slot runtime state; no Track field or RAM1 budget change.
+static_assert(sizeof(LoopPlaybackRuntime) == 7888,
+              "I5: target per-slot runtime measured after presentation owner");
+static_assert(sizeof(Loop) == 1008,
+              "I5: LoopPool shell 1,008 B including Capture phase identity "
               "(external-first, eight shells per allocated Track)");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2719,7 +2966,12 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Task 3.7a (I7) re-base: +24 B for the same layer scratch on this ABI (9,528 -> 9,552). Compiler-measured here too.
 // E2 source-index fill receipt adds 32 B to the host per-slot runtime
 // (9,736 -> 9,768); no Track member or additional view.
-static_assert(sizeof(LoopPlaybackRuntime) == 9768,
-              "E2: host per-slot runtime 9,768 B with source-index fill receipt");
+// Call cancellation fits target padding; two host preserve pointers add16 B.
+// Exact destination generations add16 host bytes across the two builders.
+// Live recipe receipts add64 host bytes; compiler measured with production headers.
+// DEC-136 completion (S7.5b.5 release edge): root-return retirement hold key + grains add 8 B
+// on this ABI as well (10,056 -> 10,064); compiler measured, same external-pool caveat.
+static_assert(sizeof(LoopPlaybackRuntime) == 10072,
+              "I5: host per-slot runtime measured after presentation owner");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -135,6 +136,68 @@ class EditSelectWaitTests(unittest.TestCase):
             pairs,
             [(46, 60), (238, 64), (430, 67), (622, 60)],
         )
+
+class FinalSelectIndexTests(unittest.TestCase):
+    def wait(self, rows, *, baseline=0):
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        with patch("hitl.legacy_edit_baseline.time.monotonic", side_effect=lambda: now[0]), \
+             patch("hitl.legacy_edit_baseline.time.sleep", side_effect=sleep):
+            return _wait_for_select_stable_at_tick(
+                _FakeCollector(rows), 392, expected_note_idx=2,
+                baseline_len=baseline, quiet_ms=80, timeout_s=.2,
+            )
+
+    def test_current_fader_commit_reindexes_same_target(self):
+        self.assertTrue(self.wait([
+            "[65.021] Select fader: selected note 3 at tick 392",
+            "[65.022] NOTE_EDIT focus rebuild: noteId=3 presence=0 rowProjectsToStore=1",
+            "[65.023] Note selection changed: 4 -> 2",
+        ]))
+
+    def test_delayed_precommit_twin_does_not_undo_final_index(self):
+        self.assertTrue(self.wait([
+            "[65.021] Select fader: selected note 3 at tick 392",
+            "[65.023] Note selection changed: 4 -> 2",
+            "#DBG select_apply selected_tick=392 note_idx=3 slot=2 apply=1 reason=note_changed",
+        ]))
+
+    def test_final_wrong_index_overrides_matching_precommit_index(self):
+        self.assertFalse(self.wait([
+            "[65.021] Select fader: selected note 2 at tick 392",
+            "[65.023] Note selection changed: 4 -> 3",
+        ]))
+
+    def test_final_index_cannot_repair_wrong_tick(self):
+        self.assertFalse(self.wait([
+            "[65.021] Select fader: selected note 3 at tick 336",
+            "[65.023] Note selection changed: 4 -> 2",
+        ]))
+
+    def test_final_index_without_current_target_is_not_proof(self):
+        self.assertFalse(self.wait(["[65.023] Note selection changed: 4 -> 2"]))
+
+    def test_target_before_command_boundary_cannot_pair_with_final_index(self):
+        self.assertFalse(self.wait([
+            "[65.021] Select fader: selected note 3 at tick 392",
+            "[65.023] Note selection changed: 4 -> 2",
+        ], baseline=1))
+
+    def test_deselect_overrides_matching_precommit_index(self):
+        self.assertFalse(self.wait([
+            "[65.021] Select fader: selected note 2 at tick 392",
+            "[65.023] Note selection changed: 2 -> -1",
+        ]))
+
+    def test_later_target_supersedes_matching_final_selection(self):
+        self.assertFalse(self.wait([
+            "[65.021] Select fader: selected note 3 at tick 392",
+            "[65.023] Note selection changed: 4 -> 2",
+            "[65.024] Select fader: selected note 6 at tick 584",
+            "[65.025] Note selection changed: 2 -> 2",
+        ]))
+
 
 
 class TestLengthEditHelpers(unittest.TestCase):

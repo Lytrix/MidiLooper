@@ -198,6 +198,23 @@ enum class LoopEventStoreAppendDeny : uint8_t {
   TickOutOfRange,
 };
 
+/// A raw-prefix observation, not a physical lease or playback currency receipt.
+/// Caller retains the store and excludes mutable workers for the borrow. Discard
+/// before destroying/replacing that owner; local observations never dereference it.
+enum class LoopEventStoreSourceResult : uint8_t { Row, Chunk, End, Denied };
+class LoopEventStoreSourceCursor {
+ public:
+  size_t extent() const { return extent_; }
+  size_t position() const { return position_; }
+  void discard() { *this = LoopEventStoreSourceCursor{}; }
+ private:
+  friend class LoopEventStore;
+  const LoopEventStore* owner_ = nullptr;
+  uint64_t prefix_ = 0, alias_ = 0, pool_ = 0;
+  size_t extent_ = 0, position_ = 0, chunk_ = 0;
+  uint16_t row_ = 0;
+};
+
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
   friend class LoopEventStoreOrderCursor;
@@ -308,6 +325,22 @@ class LoopEventStore {
   size_t size() const { return eventCount_; }
   bool empty() const { return size() == 0; }
   const MidiEvent& at(size_t globalIndex) const;
+
+  /// O(1) raw-prefix borrow. No allocation/refcount acquisition; the caller
+  /// retains this physical owner and separately qualifies interval/projection.
+  /// Refuses an already-bound cursor and terminal mutation tokens.
+  bool beginSourceCursor(LoopEventStoreSourceCursor& cursor) const;
+  /// Expose the latest appended suffix without resetting forward coordinates.
+  /// Destructive mutation, ownership cut or pool reset refuses unchanged.
+  bool extendSourceCursor(LoopEventStoreSourceCursor& cursor) const;
+  /// Copies one row OR charges one chunk advance. Never scans a directory prefix.
+  /// End is the frozen extent, not current size. Non-Row leaves out untouched.
+  /// Read-only qualification against this physically retained receiver.
+  bool sourceCursorCurrent(const LoopEventStoreSourceCursor& cursor) const {
+    return ownsSourceCursor(cursor);
+  }
+  LoopEventStoreSourceResult stepSourceCursor(LoopEventStoreSourceCursor& cursor,
+                                             MidiEvent& out) const;
 
   /// Start replacing this store's fixed rows from an immutable source. The
   /// source count may shrink this store but never grow it. Shrinking releases
@@ -498,6 +531,13 @@ class LoopEventStore {
                                                       NoteIdSupplier supplier, void* ctx);
 
  private:
+#if defined(PIO_UNIT_TEST_NATIVE)
+  friend struct LoopEventStoreSourceTestAccess;
+#endif
+  bool ownsSourceCursor(const LoopEventStoreSourceCursor& cursor) const;
+  void invalidateSourcePrefix();
+  static void advanceSourceToken(uint64_t& token);
+  static uint64_t aliasGeneration_;
   bool ownsPrivateFilter(const LoopEventStoreFilterCursor& cursor) const;
   bool privateFilterChunkReady(const LoopEventStoreFilterCursor& cursor, size_t index) const;
   const MidiEvent* privateFilterRow(const LoopEventStoreFilterCursor& cursor, size_t ordinal) const;
@@ -510,6 +550,7 @@ class LoopEventStore {
   CaptureChunkIdList chunkIds_;
   uint64_t capturePoolLifetime_ = 0;
   uint64_t ownershipGeneration_ = 1;
+  uint64_t prefixGeneration_ = 1;
   size_t eventCount_ = 0;
   mutable BarIndexVec barFirstIndices_;
   mutable bool barIndexDirty_ = true;
@@ -635,7 +676,9 @@ void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) 
     for (uint16_t i = 0; i < ec.used; ++i) {
       MidiEvent& evt = ec.events[i];
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
-        evt.noteId = assignNoteId();
+        const NoteId assigned = assignNoteId();
+        invalidateSourcePrefix();
+        evt.noteId = assigned;
       }
     }
   }
@@ -657,7 +700,9 @@ void LoopEventStore::assignMissingNoteIdsToNoteOnsInTickWindow(size_t beginIndex
         return;
       }
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
-        evt.noteId = assignNoteId();
+        const NoteId assigned = assignNoteId();
+        invalidateSourcePrefix();
+        evt.noteId = assigned;
       }
     }
   }

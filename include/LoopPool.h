@@ -52,6 +52,10 @@ class LoopPool {
 
   /// Assign stable 1:1 ids (pool index == LoopId) after allocation or load.
   void assignStableIds1To1();
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Allocator/lifetime observation only; called before any Loop destructor/free.
+  static void setDestroyObserverForTests(void (*observer)(const Loop*, size_t));
+#endif
 
  private:
   Loop* loops_ = nullptr;

@@ -145,9 +145,13 @@ void DisplayManager::refreshLoadSaveListCache() {
     if (!StorageManager::isOverlayCatalogReadAllowed()) {
         return;
     }
+    bool readOk = false;
     loadSaveListCount_ = StorageManager::listSetRevisionBrowserEntries(loadSaveListEntries_,
-                                                                       kLoadSaveListCapacity);
-    loadSaveListCacheValid_ = true;
+                                                                      kLoadSaveListCapacity, &readOk);
+    // A failed read is not an empty catalog (I4 — Set browser freshness): keep the cache invalid so a later
+    // frame may retry, and let the bounded retry state count the attempt.
+    loadSaveListCacheValid_ = readOk;
+    SetBrowserOverlayPolicy::applyListRefreshResult(loadSaveListRefreshState_, readOk, millis());
 }
 
 void DisplayManager::invalidateLoadSaveRevisionListCache() {

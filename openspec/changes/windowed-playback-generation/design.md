@@ -1,3 +1,9 @@
+**Latest hardware gate (2026-10-16): I5 — dedicated rolling HITL is partial, not acceptance.** [I5 — actual execution and continuation](evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md). Device growth/source/wire/content/frozen-mismatch checks pass; following empty take fails and held/matching Stop are unverified. Fixed real Visual-owner private cancellation; latest stale completed idle→ready shell correction passes native3281/7skip/focused505/ASan10/host46/builds but is NOTuploaded. Added qualification-only fixed read snapshot, no resident state or budget changes; original metadata hash defect retained/corrected locally. Retry cap reached; exact pretest OFF image restored/postflightguard15/two drains/nolatch. Earlier no-device statements below describe prior local increments, not current evaluation status. Parents remain unchecked29/60.
+
+## Current implementation increment — growing live Record coverage
+
+DEC-134 — growing live Record coverage extends the existing Track request/three-view owner/reader to later bars, superseding DEC-133 — connected first-bar Record's initial-only implementation limit. [I5 — current contract, verification and remaining gates](evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-COVERAGE.md): monotonic accepted-extent period grows only at a complete full-wrap handoff with explicit playback-origin reanchor; raw Capture coordinates unchanged, owed distinct next interval retained, same-geometry append work preserved, changed geometry rebuilt, and no legacy live fallback. Complete empty intervals, held NoteIds/no retrigger, nonzero origin, late-ready and matching subinterval/mismatching frozen Stop pass. Idle-role retention keeps all three views available. Fullnative3275pass7skip/focused500/ASan8/three controls/default+enabled buildsPASS/padding1160/952≥840/ABI unchanged/no fields. Total raw-source inspection remains extent-dependent and physical input-return/owner-IRQ/arrival/dense enabled-device gates remain unqualified; no hardware/upload/defaultactivation/parentcheckoff. Historical first-bar-only and earlier RED statements below are not current limitations for this functional increment.
+
 ## Context
 
 Motivation and scope live in `proposal.md`; the decisions below are recorded as **DEC-108**, and the trigger analysis
@@ -561,6 +567,35 @@ optimization, not the serving authority. Widening every physical window alone in
 fix missed adoption. See [DEC-116 — one rolling path per sounding slot](../../../docs/DECISION_LOG.md#dec-116--one-rolling-playback-path-per-sounding-slot)
 and the [reassessment addendum](ARCHITECTURE-REASSESSMENT.md#2026-10-07-addendum--one-path-for-all-scheduled-loop-playback).
 
+### I5 — running-Capture request and composed service draft (2026-10-13)
+
+Owner-approved document capture only: [I5 — request/lifetime/service draft](evidence/2026-10-13-i5-running-capture-service/CONTRACT.md) grounds a live source recipe in existing Track pending/frozen/admitted records and three views, preserving oldest qualified position, useful work, source lifetimes and main's production service ordering. It is not firmware approval or a G1/G2 pass. The legal adoption boundary before the earliest changed event is the preparation deadline: the existing Off740 → boundary768 → On1468 oracle has **28 ticks for adoption**, not 728 ticks of freely usable preparation lead; mid-traversal replacement remains prohibited. Current full-restart measurements cannot stand in for the normative useful-progress requirement. Incremental certification, overlap/coalescing representation, initial running-epoch anchor and composed numeric service remain BLOCKED; no guard, lead, arbitration, envelope, requirement or task-checkoff change is made here.
+
+The separately owner-approved [I5 — source-progress proposal](evidence/2026-10-13-i5-running-capture-service/SOURCE-PROGRESS.md) specifies Loop-owned append stability, frozen private extents and bounded prefix/delta sorting and merge/copy-back within the existing arrays. Ordinary append preserves raw prefix rows, but same-count sorting, ID mutation, removal/projection, transfer and reset invalidate that guarantee. Current fill/order APIs do not support the proposed extension. Exact new scalar-state cost against Loop992/runtime7632 target pins, exhaustive mutator coverage and stop/lifetime equivalence must be resolved; no size-neutrality, pin rebase, implementation approval or28tick service guarantee is conferred by saving it.
+
+[I5 — owner/input timing reassessment](evidence/2026-10-13-i5-running-capture-service/OWNER-SERVICE-REASSESSMENT.md) records a further structural input-batch counterexample: externally aligned Off736 followed by four FIFO Clocks reaches768 inside one valid five-message batch, before main can prepare. More urgent main-only opportunities are therefore insufficient. Preferred next design work is transport-preserving resumable dispatch plus main-owned checkpoints/bounded owner arbitration; the timing model, continuation state/resource/lifetime and physical-clock health contract require explicit approval and proof before firmware changes. No smaller batch cap, clock delay, cross-track EDF replacement or inline build is approved.
+
+User-approved [I5 — concrete timing-contract draft](evidence/2026-10-13-i5-running-capture-service/TIMING-CONTRACT.md) fixes a single MidiHandler route continuation preserving USB/DIN transport grouping and USB-host FIFO, main-owned checkpoints with mandatory normal-owner turns, candidate1080B continuation/checkpoint payload and conditional2*H*G sufficiency. Host model19,531traces/fivefocusednative599pass is not production continuation/WCET evidence. Extra turns may not hold Clocks until a virtual deadline passes: independent physical reference/input/clock budgets and enforced child costs remain gates. Next is a separately scoped fixture-first qualification measurement slice; no firmware timing/quanta/budget approval or parent checkoff from this draft.
+
+**I5 — local building-block status (2026-10-13):** [I5 — native continuation](evidence/2026-10-13-i5-running-capture-service/CONTINUATION-EXECUTION.md) delivers native-gated retained-batch mechanics only, actual1056B/no target enablement. [I5 — checkpoint verification](evidence/2026-10-13-i5-running-capture-service/CHECKPOINT-EXECUTION.md) delivers passive caller-owned saved-normal arbitration and selected-owner cost preview/commit under DEC-123 — checkpoint arbitration and deadline admission. PhysicalClockStamp requires extended64bit microseconds plus nonzero producer era; a fullwrap regression disproved the earlier micros32 half-range guard. Logical/physical expiry, invalidity and overflow refuse without spending cursor/debt. Actual owed-owner cursor2B, deadline48B/stamp16B/cost12B/decision4B/table84B on bothABIs; draft1080B is not an implemented aggregate. Focused69/qualified16/fullnative3127pass7skip/defaultcaptureSUCCESS/RAM1unchanged; one focusedreview/two coverage omissions closed and removalcontrolsRED/restored. No main execution wiring, real physical producer or measured/enforced owner cost, source-progress implementation, target continuation activation or readiness/HITL claim. The conditional service bound remains unqualified; preserving debt on refusal does not prove useful progress or28tick adoption readiness.
+
+**I5 — physical-reference contract draft captured (2026-10-13; proposed, not accepted/implemented):** [I5 — physical-reference draft](evidence/2026-10-13-i5-running-capture-service/PHYSICAL-REFERENCE-CONTRACT.md) records user-authorized installed framework1.159.0 timer/transport inspection. Preferred candidate is ClockManager-owned hardware-chained PIT elapsedtime with cold pair reservation, finite coherent reads/nonrecycled era; exact hardware semantics/resource/sharedPIT debugpolicy remain unqualified. RawRTC is reset by existing RtcTime corrections; micros32/DWT/SysTick do not supply unlimited elapsedtime. USB-device/host/DIN queues carry payload without arrivalstamps, so elapsedsource and ingressdeadline provenance are separate proofs. Proposal preserves existing queue/content/tick ownership and requires receipt lifetime/correlation/transport-rate invalidation plus complete owner-to-input costs. No timer reservation, transport hook/fork, metadata layout, numericbudget, reference invalidation change or targetenablement accepted; G1 — architecture stays open. Capture only/no newDEC, firmware/dependency/build/device/SD/Git/taskcheckoff; progress29/60 unchanged.
+
+**I5 — private delta ordering implemented (2026-10-13):** Owner subsequently approved firmware/native implementation toward the named running-Capture criterion. [I5 — delta-order execution](evidence/2026-10-13-i5-running-capture-service/DELTA-ORDER-EXECUTION.md) closes the specified rawprivate order prerequisite under DEC-124 — bounded private append ordering, using frozen suffixes and existing phase/order/scratch arrays; no new view or source currency. Caller certifies unchanged prefix/projection/provenance/retention/lifetime; typedview/borrowedindex extensions refuse. Suffix work and full merge/copyback are quantum-limited and separately priced in entry operations. Fourcases/270matrix/focused245/fullnative3131pass7skip/defaultcaptureSUCCESS; builder72target/136host/runtime7632/9768/padding1000unchanged, one review no defects/removalcontrolRED-restored. Track live source receipts/request/initialanchor/stopclosure and actual physical producer/ingress/owner-return costs remain unimplemented/unqualified. Installeddependency edits remain prohibited; supportedreceivehook or project-owned maintainedtransport receipt integration/support policy must be selected before all-route physicalprovenance claim. No defaultgate/targetactivation, device/SD/Git or parent checkoff.
+
+**I5 — ingress correspondence implementation (2026-10-13):** Subsequent owner approval selects DEC-125 — pinned receiver ingress receipts, superseding the prior unselected integration policy. Existing queues own exact-slot metadata and MidiHandler acquired/native-retained copies; insertion-only hash-pinned generated sources preserve installed files/licenses/payload order. DefaultOFF/no new payload queue or hot metadata allocation. Reset/DINoverflow/hostdisconnect/samplerreplacement invalidate currency, not accepted payload; lateFIFO/completing-byte observations are not whole-frame/sender arrival. [I5 — ingress execution](evidence/2026-10-13-i5-running-capture-service/INGRESS-EXECUTION.md) records actual-body/parser and all-dispatch correspondence fixtures/controls, one focused review/coverage correction, fullnative3154pass7skip118suites/default+ingressSUCCESS. Receipt32/cell40/State19168target19192host/enabledcontinuation5152B; ordinary128batch adds4096Bstackpayload/input5352compilerframe. FLASH-placement preserves existing floor840; numeric budgets/pins unchanged. No physical source/era lifecycle/correlation/arrival bounds, whole execution/return costs, live source receipt/request/anchor/stop/readiness, targetactivation/device/SD/Git or parentcheckoff. Progress29/60 and defaultrollingOFF/nativeonlycontinuation remain.
+
+**I5 — raw-prefix source-stability prerequisite (2026-10-13):** DEC-126 — raw-prefix source stability implements distinct terminal LoopEventStore destructive-prefix and pool-owned static-alias tokens, caller-owned frozen extent/forward coordinates, one-row-or-chunk step and explicit suffix extension. Accepted append preserves earlier raw rows; destructive instance operations/grains and static ID/reference-release aliases invalidate independently of legacy worker generations. Caller retains physical store/chunks/excludes mutable workers/discards before destruction; raw-prefix token is not Loop interval/phase/projection, physical lease or playback currency. No Track borrower or changed live adapter/publication. Measured store+8B/targetcursor48/hostcursor64/Loop1000target/runtime7640target/stopring29064target/Track384unchanged; pins measured, numericalRAM1budgetunchanged. Source15/fullnative3169pass7skip119suites/defaultcaptureSUCCESS/padding1016≥840/controls8-3RED-restored/onefocusedreview no concrete defect under preconditions. [I5 — source-stability packet and evidence](evidence/2026-10-13-i5-running-capture-service/SOURCE-STABILITY-EXECUTION.md). Next Loop semantic identity and Track cancellation/retention before adapter/fill integration, accounting for conservative unrelated static-retirement invalidation; request/anchor/coalescing/adoption/stop and physical/input costs remain open. No740→768 readiness, targetactivation/upload/device/SD/Git/parentcheckoff; progress29/60/defaultrollingOFF unchanged.
+
+**I5 — semantic live-source retention integration (2026-10-13):** DEC-127 — semantic live-source retention extends existing owners with terminal assignment-qualified phase identity and exact projection/raw receipts frozen at descriptor creation. Live fill advances Row/Chunk rather than ordinal replay and preserves strict content/count currency through completion. Both runtime builders name borrows until discard; release/composite guards refuse locally, maintenance cancels stale work before holder selection, and Track/runtime destructors detach before source/destination destruction. Standalone callers retain/discard explicitly; no new lease registry/view/queue/publisher. [I5 — integration evidence](evidence/2026-10-13-i5-running-capture-service/LIVE-SOURCE-INTEGRATION.md) records focused418/fullnative3178passed7skipped119suites/defaultcaptureSUCCESS/padding1720≥840/controls3-2-1RED-restored and one focused review. Target Loop1008/runtime7792/Track384/stopring29064; incremental64shells+8runtimes1728B payload plus other Capture/descriptor stack costs, no numeric budget relaxation. These are serialized/retained guarantees, NOT ISR/main synchronization: internal timer ticks can transition/reset Track. Before target activation qualify shared read/cancel/adopt protocol and complete owner/IRQ return costs. Running request/initial anchor/append coalescing/adoption/stop and physical/input bounds still gate740→768 readiness. Proposed two-channel PIT/resource/shared-debug policy needs owner decision before target producer; ingress permission is resolved, counter alone does not bound sender delay/external pacing. No parentcheckoff/upload/HITL/device/SD/Git/default activation;29/60/defaultrollingOFF/targetcontinuationdisabled.
+
+**I5 — ClockManager PIT elapsed-reference prerequisite (2026-10-13):** Subsequent user approval resolves the resource/sharedpolicy choice under DEC-128 — ClockManager PIT elapsed reference. [I5 — physical producer execution](evidence/2026-10-13-i5-running-capture-service/PHYSICAL-PRODUCER-EXECUTION.md) pins NXP RM exact0/1pair/start/highthenlatchedlow/stickyhighflag and implements coldallfourdisabled reservation before real MIDI timerbegin, result-qualified availability, fixed masked reads, nonrecycled era/terminaloverflow/backwards/configuration refusal. StockFRZ1/Runmodeonly; debugger/sleep/unseenstop-restore unsupported, explicitinvalidationfuture. Optional existing ingress sampler timestamps observations, notsenderarrival/deadline. State16BRAM2/linked+32B/no DTCMmember/pin/numericbudget change; ordinary24/ingress28/combinedcontinuation30/fullnative3188passed7skipped119suites/default+ingressSUCCESS/padding1688-1912≥840. Controls1/1/1specificRED restoredbyteidentical; one focused review no concrete defect under contract. Countermechanics locallyverified only; device start/latch/flags/accuracy/latency/errata/correlation/delay/pacing/completecost and sourceISR/mainprotocol remain open. No checkpointdispatch/740→768readiness/parentcheckoff/rollingactivation/upload/HITL/device/SD/Git;29/60/defaultrollingOFF/targetcontinuationdisabled/receiptsdefaultOFF.
+
+**I5 — stopped-only PIT hardware qualification (2026-10-14):** [I5 — hardware qualification](evidence/2026-10-13-i5-running-capture-service/PHYSICAL-HARDWARE-QUALIFICATION.md) delivers request-only capture-gated ClockManager observations via existing serial/capture/managed lifecycle owners, no state/queue/hotpoll. Dedicated TEMP preset210s/full01/211matchedpoints PASS through natural first lowcarry, Readyera2/configqualified/MIDIch2/highTIFclear. Owner approved DEC-129 — Run-mode physical-clock debug admission after runningboardC_DEBUGEN1/S_HALT0/S_SLEEP0; C_DEBUGEN diagnostic, actualhalt/sleeprefuse, FRZ1/unsupported unseeninterruptioncontinuity unchanged. Hostrelative23.967714–24.058948MHz grossinterval, observedDWTread11.970–34.090µs/median29.555 and stoppedtick0epoch1physicalbrackets7–22µs do not imply calibration/WCET/movingclock/deadline. Focused84/ingressnative33/host102/fullnative3196pass7skip119suites/defaultSUCCESS/padding1688≥840; one focused review fenceordering repair retested. Qualifieduploaded9b50680a…b770c/2drains/postflightcomplete/nolatch; latercachedf3d02128…d9581NOTuploaded. No content/SDcleanup/destructive commands/Git/parentcheckoff;29/60/defaultrollingOFF/targetcontinuationdisabled/receiptsdefaultOFF. Further movingcorrelation/arrivalage/pacing/wholecost/errata/concurrency/runningrequest/adoption gates remain separate.
+
+**I5 — guarded moving observations (2026-10-14):** [I5 — motion qualification](evidence/2026-10-13-i5-running-capture-service/PHYSICAL-MOTION-QUALIFICATION.md) extends existing snapshot/serial/capture/managed owners, stack-only period field/unchanged56BABI/no new residentstate or hot probe. Separate motion schema leaves stopped `pit_obs` intact; all-track Capture/pending action and storage guard before every Start.51Readyera2rows/15movingpoints/internal+USB-device120/300BPM establish sampled point consistency only; internalperiod residual and hostsend catch-up distributions are not calibratedaccuracy/due-time/wireage/WCET. Exact retained/uploaded96e4160aHEX/c801239eELF; canonical2drains/postflightcomplete/no latch. Native3203pass7skip119suites/host105/defaultSUCCESS/padding1688unchanged; one focusedreview2findings fixed/retested. [I5 — complete owner/IRQ qualification gates](evidence/2026-10-13-i5-running-capture-service/OWNER-IRQ-QUALIFICATION.md) enumerates actual shared/multitrack/conditionalpoll/TX/SD/allocator/mask/IRQ costs; finite admission remainsNOTREADY. No independent calibrated reference/onlyhostUSB-deviceinput; no calibration/arrivalage proof or policy/default/parentcheckoff change,29/60/rollingOFF/targetcontinuationdisabled/receiptsdefaultOFF.
+
+
 ## Open Questions (deferrable; they do not change the specs or the task order)
 
 - How the owner's turn is wired into the existing deferred owner enumeration (a turn kind versus a service point inside
@@ -634,23 +669,29 @@ Advance `windowed-playback-generation` **3.15a–f — one reader per sounding s
 
 #### S2 — firmware: stop handoff and the single release point
 
-**State table (every row is a code site, not a proposal).** Owner: `Track::stepDeferredRecordRetirement(job)`; entry refusal `Denied` unless `stop.pending && job.mode == Record && captureStopJobs_ && stop.phase == RecordPublished && slot < MAX_LOOPS_PER_TRACK` (`TrackOverdubLifecycle.cpp:1902-1906`).
+**Current contract (2026-10-18): DEC-142 — Record presentation lifetime split.** The earlier ring-owned
+retirement table is superseded: the slot-owned presentation holds the stable extent from admission; real
+pre-publication Record finalization can prepare/serve frozen onward coverage. At nonempty `RecordPublished`,
+`publishRecordPresentation` activates the runtime presentation role, clears the finalizer and pops the FIFO
+synchronously. Reader/root-return completion is independent of the next interaction's admission/service.
 
-| State | Condition (code) | Result / next |
-|---|---|---|
-| Frozen build borrowing the range | `runtime->frozenWindowBuildActive() && loop.loopLengthTicks != 0` (`:1923-1938`) | `Pending`; bounded escape via `frozenWindowStallGrain/Grains` vs `kFrozenWindowStallGrainLimit` → `frozenWindowStallExpired` → `releaseFrozenRecordWindow()` |
-| Session-exit root queued, not current | `loop.hasCommittedPasses() && loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent()` (`:1945-1952`) | `Pending` (+ the escape release) |
-| Complete unpublished frozen `ready` | `publishedSnapshotIsCurrent() && job.frozenCaptureContentGeneration != 0` and `views[ready].complete && !published && origin == Capture && sourceGeneration == playbackGeneration && captureContentGeneration == job.frozenCaptureContentGeneration` (`:1957-1970`) | `Pending` — the job owes that successor |
-| **Live** Capture `current` (pre-transfer token) | matches neither `currentRootWindowServed` (`servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity()`) nor `frozenCaptureServed` (`:1980-1994`) | **today: falls through to `releaseFrozenRecordWindow()` (`:2005`)** — the hazard S2 closes: the *live* `current` must be retired by the promotion that creates the frozen `ready` (S1b/S2 ordering), and `frozenCaptureServed` is the acknowledgement surrogate |
-| Frozen Capture `current` serving | `frozenCaptureServed` (`:1991`) | `Pending` — range retained |
-| Root-backed window adopted | `sameCommittedRevision && currentRootWindowServed` | release path proceeds |
-| Empty take / no geometry | `loop.loopLengthTicks == 0` (`:1921`, `:1945`) | immediate retirement (unchanged) |
-| Release | `releaseFrozenRecordWindow()` (`TrackPlaybackRuntime.cpp:2142`; clears `current`/`ready` except `firstRecordReturnWindow`) then `retireJobCaptureSourceGrain` (`TrackOverdubLifecycle.cpp:426-445`) | one grain + borrow release; `reserveTail()` failure deferred to `serviceCaptureStopDescriptorReservations` |
-| Job teardown | `:2026-2045` | `owner=nullptr; loopId=kInvalidLoopId; mode=None; head++; --count; stop.reset()` |
-| Mismatched stop | `Track::qualifiedFrozenRecordCaptureSourceForSlot` (`include/Track.h:393`) refuses wrong interval/slot/LoopId/geometry/pending closure/token | no publication, no identity relabel (existing guard) |
+| State | Owner and next transition |
+|---|---|
+| Real admitted Record, before publication | Matching live finalizer + slot presentation extent; production holders prepare frozen windows off-clock; reader adopts complete work only |
+| Nonempty Record publication | Stable extent stays in place; runtime presentation owner activated; finalizer/FIFO released in the same transition |
+| Root queued/stale or frozen reader still served | Existing Snapshot and window owners progress independently; presentation retains source; accepted interactions remain serviceable |
+| Root-backed window actually adopted | Ordinary deferred maintenance services presentation retirement even after window holder has no further work |
+| Stopped complete-unadopted successor | Existing bounded expiry through build discard/release; never an unbounded FIFO hold |
+| Partial extent release | One chunk per turn; presentation stays active and extent-owned until release completes |
+| Release complete | Drop matching Loop borrow, re-arm descriptor, clear generation-qualified runtime presentation owner and presentation identity |
+| Empty take | No presentation promoted; existing RecordPublished ring dispatch finishes bounded release and pops the job |
+| Dormant boot/load descriptor | Stable descriptor only, no reserved tail; cold capture admission reserves the requested slot tail |
 
-- **Single release point:** `releaseFrozenRecordWindow` + `retireJobCaptureSourceGrain`, each reached only through the table above; `retireJobCaptureSourceGrain` verifies the job identity before dropping the borrow.
-- **Oracle:** flagged real-stop cases in `test/test_shared_capture_finalization` (`-DUNIFIED_RECORD_RETURN_READER_ORACLE`); new assertion that the live `current` is retired exactly once, the frozen `ready` survives the intervening owner turn, and the extent is released only after `frozenCaptureServed`/`currentRootWindowServed`. **RED control:** force the pre-fix order (promote-after-stop without the interim acknowledgement) → assertion RED on premature `ready` discard.
+Source qualification checks interval-derived presentation generation, slot/LoopId/owner/geometry/content identity
+and matching reader owner (live finalizer or published presentation). Copied coverage under default compatibility
+is Committed-origin/token-zero; rolling qualification is Capture-origin with the frozen content token.
+Verification, negative controls and remaining device gates:
+[`PRESENTATION-OWNER-NATIVE.md`](evidence/2026-10-18-rolling-base-2bar-rerun/PRESENTATION-OWNER-NATIVE.md).
 
 #### S3 — firmware: two sounding slots, existing gesture semantics
 
@@ -707,3 +748,131 @@ Highest risk is S1b's raw-shell retirement — mitigated by the S1a fixture (iv)
 ### 7. Closeout impact (later, not now)
 
 Newest-first entries in `docs/Runtime/PROJECT_STATE.md` and `docs/Runtime/CURRENT_WORK.md` (ID + short name), `docs/DELIVERABLE_TRACKING.md`, `openspec/changes/windowed-playback-generation/tasks.md` (3.15a–f only with their own gate evidence), a packet under `evidence/<date>-s315…/EXECUTION.md`, and `docs/Authority/Architecture/Playback.md`/`ExecutionBounds.md` only if one-reader serving is actually enabled. A `DEC-###` only if an owner/contract/representation changes. If this plan is persisted, the repo convention is `docs/Plans/<main>_<sub>_<kind>.md`. No file was written by this investigation.
+
+## I5 — native ingress-hook/mask qualification follow-up (2026-10-14)
+
+[I5 — native complete-hook evidence](evidence/2026-10-13-i5-running-capture-service/INGRESS-MASK-QUALIFICATION.md) supplies controllable production-path mask/sampler/receiver boundaries before target cost probes: defaultOFF/nativeonly/targetrejected seam, no target PRIMASK/state/payload/owner/pin/transform change. Actualreceiver packet/burst frequency/refusal/pressure/FIFO, real physical sampler and receipt/dispatch nesting are independently asserted on incoming0/1. Baseline13RED/restore10RED/frequency3RED restored; review2oracle gaps fixed/retested; native3207pass7skip119suites/ingress45/receiver18/receipt9/ASan18/host30/defaultSUCCESS/sameRAM1. Upstream unconditional DIN enable is observed, not repaired or used to claim whole-driver preservation. Target duration/IRQ-off/overhead, finite completeowner/IRQ bounds, calibration/arrival/sourceISR-main protocol remain open. No upload/device/SD/Git/defaultactivation/readiness or parentcheckoff;29/60. Next gated duration recipe builds on these fixtures, not on standalone sampler maxima.
+
+### I5 — ingress-cost arithmetic prerequisite (2026-10-14)
+
+[I5 — cost arithmetic packet](evidence/2026-10-13-i5-running-capture-service/INGRESS-COST-QUALIFICATION.md)
+fixes the conditional full-wrap/refusal/saturation oracle before target instrumentation.
+The arithmetic header is passive/caller-owned; subsequent gated target callers are
+described below. No new owner/producer/resource. Separate hook-call, conservative
+mask-bracket, publication and empty-probe lanes cannot be combined into whole-IRQ
+cost or a subtractive WCET claim. Enclosing extended-time brackets and whole-interval
+continuous-counter/rate-bound contract are prerequisites, not facts inferred from
+matching endpoint configuration. Native arithmetic acceptance alone is not target
+producer/measurement qualification. Finite owner bounds/source concurrency and
+740→768 readiness remain open after the conditional observations below.
+No parent checkoff;29/60/rollingOFF/targetcontinuationdisabled/receiptsdefaultOFF unchanged.
+
+### I5 — gated target ingress-cost observations (2026-10-15)
+
+[I5 — target execution/evidence](evidence/2026-10-13-i5-running-capture-service/TARGET-INGRESS-COST-EXECUTION.md)
+implements opt-in diagnostics within the default capture environment, extending existing
+MidiIngress State by gated384B aggregate payload (ARM19552B/host19576B), fixed384B snapshots
+and local40B tokens; no manager/queue/hot allocation/source transform/installed edit.
+Saved-mask protected publication/snapshot, strict low-rate12row read-only command and
+named central Tier-A emitter leave default-OFF behavior intact. Endpoints reuse the
+existing PIT sampler around DWT, supplying enclosing brackets and a conditional1.2GHz
+gross rate premise for600MHz Run-mode, explicitly not calibrated or endpoint-proven.
+Hook includes inner instrumentation; mask is conservative/nonexclusive; publication
+self-accounting tail unmeasured; empty probe separate with no subtractive correction.
+Smoke02/full01 stopped Clock-only120/300BPM PASS each8complete snapshots/6Readyera2guard15;
+full USB hook deltas239/598/exact1:1:3:1/no new rejection/no saturation. Lifetime hook
+21699..33039/mask5895..15983cycles are observations, not WCET/full receiverIRQ/admission.
+Native3228passed7skipped121suites/host112/ASan8/ON+OFFbuilds/one repaired focused review;
+unchanged floor840. Exact enabled HEX+ELF preserved/verified no-build upload, then exact
+default-OFF HEX+ELF restored/verified; restored02 stopped/idle/guard15/two drains/postflight/
+no latch. Boot/storage preflight refusals retained. No Start/content/slot/SD-cleanup
+gestures; automatic persistence occurred. No new decision/defaultactivation/parentcheckoff/
+Git;29/60 unchanged. Complete finite owner/IRQ bounds/calibration/wirearrival/sourceISR-main
+and running request/anchor/coalescing/adoption/stop remain separate open gates.
+
+### I5 — builder-call cancellation and atomic live-source reads (2026-10-15)
+
+DEC-130 — builder-call cancellation and live-source exclusion extends DEC-127's
+retained-source boundary: public builder mutation calls retain their Fill/Order/private
+candidate state, refuse re-entry and resolve pending discard at the call boundary.
+Runtime reset during either executing builder returns false/busy before destructive
+retirement; callers still own retry. Fixed saved-mask descriptor/currency/one-row or
+charged chunk-transition reads exclude source check/use gaps, never whole-grain work.
+Both builders, published sibling/ledger/accepted Capture preservation, cancellation
+before and during call, reset retry, preserve conflicts and incoming masks0/1 have
+production-body fixtures. Baseline lost-begin cancellation and Fill SIGSEGV discriminate;
+focused477 and ASan/UBSan9 plus original4case witness PASS; one focused review approved.
+Compiler-measured ARM builder256/runtime7792 unchanged; host400/9976 (+8/+16).
+[I5 — source concurrency packet/evidence](evidence/2026-10-13-i5-running-capture-service/SOURCE-CONCURRENCY-EXECUTION.md)
+owns broad-check completion and exact remaining gates. Standalone Fill/direct candidate
+writers remain serialized; all Track role/publication/adoption writers, running request/
+anchor/coalescing/stop and finite physical/input/owner/IRQ timing are NOT qualified.
+No target activation/upload/device/SD/Git or parentcheckoff; progress29/60 unchanged.
+
+### I5 — exact Track completion authority (2026-10-15)
+
+DEC-131 — exact Track completion authority extends the existing builders with physical
+destination-generation receipts, so old queries/cleanup cannot claim reused storage.
+Track coverage maintenance retains role/storage/operation receipt across final grain and
+clock sampling; qualification before judgement and before short masked publication rejects
+cancelled completions without cleaning up replacement work. Generic publication detaches
+the transferred builder. Cold live completion checks exact completed destination/role.
+Ready adoption consumes only ready, never promotes a private completion; the existing
+main bridge worker explicitly publishes its detached same-source successor. No fourth
+view/new owner/queue/transport change. Target264/7808 and host408/9992 builder/runtime
+sizes measured (+16/runtime), Track/Loop target pins unchanged, numeric RAM1floor unchanged.
+Six new registered cases, four baselineREDs, focused468/fullnative3243passed7skipped121suites,
+ASan6 and wrong-mask2RED/liveheader unchanged; one focused review approved and coverage
+gaps added/retested. DefaultcaptureSUCCESS/padding1368≥840/margin528/no upload.
+[I5 — Track publication packet/evidence](evidence/2026-10-13-i5-running-capture-service/TRACK-PUBLICATION-CONCURRENCY.md)
+records exact gates and continuation: acquisition-before-builder-entry/direct Record
+release/start/bind/seek/projection still open; worker execution still excludes direct
+external candidate writers. Running request/anchor/coalescing/stop and finite owner/IRQ/
+calibration/wirearrival also open; no740→768readiness/parentcheckoff/targetactivation,
+29/60/rollingOFF/targetcontinuationdisabled/receiptsdefaultOFF.
+
+### I5 — preparation acquisition and Record exclusion (2026-10-15)
+
+DEC-132 — preparation acquisition and Record exclusion extends the existing two builders
+with non-masking scoped preparation ownership before role/source selection. Cancelled
+turns cannot begin another call or certify completion. Foreign reset cancels/refuses;
+reset itself reserves both lanes atomically through unmasked destruction, and slot
+release carries the same exact capabilities through lease retirement. No reset queue.
+Record admission acquires before geometry/timeline/pre-roll mutation and returns real
+Capture acceptance; manager pending Record consumes only that success. Direct retained
+reset/bind, first-bar service and deferred projection participate, while content work
+stays unmasked. Required frozen release refuses without losing source/job retirement.
+
+Qualified ready adoption is still allowed: bridge service snapshots/revalidates physical
+context, storage and role metadata, rejects cleanup after cancellation, and detaches its
+exact completed worker while preserving a ready/current window independently adopted.
+No implicit private promotion, fourth view, new Track field, manager or hot allocation.
+Flags fit existing layout after cursor/phase reorder: targetbuilder264/runtime7808,
+host408/9992; targetTrack384/Loop1008 unchanged, no pin or numeric budget relaxation.
+
+Eleven newcases/focused479/fullnative3254passed7skipped121suites/ASan12/four scratch controls
+specificRED/live source hashes unchanged. One focused review found two concrete defects,
+fixed/retested without a repeat review; bridge progress regression fixed by preserving
+and detaching the exact completed worker during ready adoption. DefaultcaptureSUCCESS
+41.065s/RAM1padding1160≥840/margin320. [I5 — final acquisition evidence](evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md)
+supersedes the prior acquisition/direct-Record continuation notes above for these paths.
+Required next gate: registered managed default-path Record/Stop compatibility HITL;
+no upload/device/SD/Git/defaultactivation/checkoff performed. Parents29/60 unchanged.
+Running request/initial anchor/append coalescing/stop integration and finite owner/IRQ/
+calibration/wirearrival remain open; no740→768 readiness is claimed.
+
+### I5 — acquisition/Record hardware compatibility closeout (2026-10-15)
+
+The compatibility gate named above now PASS: owner-approved scratch8/4–5 only,
+exact retained default-OFF HEXf48aca66…b0068/ELF7cd88398…a3563 verified no-build upload,
+registered STIM-BASE-2-2-01@v1/base8/4/channel8/hostUSB300BPM livePASS/overall_oktrue/
+cap_full/issuesempty/critical-loss0. Record/two overdubs/undo-redo/geometry/grid/span/
+cleanup/persistence checks pass. Advisory second-overdub lateness retained; no deadline
+safety proof. Fingerprinted replay02 passes header/must-prove without skips; raw-session
+legacy replay limitation retained. Parallel native3254passed7skipped121suites. No firmware
+edit; initial postflash storage-work refusal retained, settled/finalpostflight guard15/
+STOPPED/closedoverlay/two drains/nolatch. Newdefault-OFF image remains installed, scratch
+content retained; no SDcleanup/Git/defaultactivation/parentcheckoff,29/60 unchanged.
+[I5 — hardware execution evidence](evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md#current-session-hardware-compatibility-execution-2026-10-15).
+This supersedes only the prior pending-compatibility status, not the remaining running
+request/initial anchor/append coalescing/stop/finite owner-IRQ/calibration/wirearrival gates.

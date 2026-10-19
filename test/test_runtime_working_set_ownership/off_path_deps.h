@@ -2,7 +2,9 @@
 #define OFF_PATH() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)
 DisplayManager::DisplayManager() {}
 DisplayManager displayManager;
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 void ClockManager::toggleTransport() { OFF_PATH(); }
+#endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void TrackManager::forceMidiLedUpdate(uint32_t) {}
 #endif
@@ -215,6 +217,7 @@ void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
 #endif
 #include "BarStepButtonHandler.h"
+#if !defined(HARNESS_LINKS_REAL_BAR_STEP_HANDLER)
 BarStepButtonHandler::BarStepButtonHandler() {}
 BarStepButtonHandler barStepButtonHandler;
 bool BarStepButtonHandler::isBarStepButtonNote(uint8_t channel, uint8_t) const {
@@ -222,6 +225,7 @@ bool BarStepButtonHandler::isBarStepButtonNote(uint8_t channel, uint8_t) const {
   return false;
 }
 void BarStepButtonHandler::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { OFF_PATH(); }
+#endif
 #if !defined(A34A_LINKS_REAL_MIDI_BUTTONS)
 MidiButtonProcessor::MidiButtonProcessor() {}
 MidiButtonManager::MidiButtonManager() {}
@@ -237,11 +241,13 @@ void ControlSurfaceManager::onEditEvent(EditEvent) { OFF_PATH(); }
 #endif
 void ControlSurfaceManager::handleMidiCC(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
 void ControlSurfaceManager::handleMidiPitchbend(uint8_t, int16_t) { OFF_PATH(); }
+#if !defined(HARNESS_LINKS_REAL_CLOCK_MANAGER)
 void ClockManager::onMidiStart() { OFF_PATH(); }
 void ClockManager::onMidiStop() { OFF_PATH(); }
 void ClockManager::onMidiClockPulse() { OFF_PATH(); }
 void ClockManager::requestTransitionTo(ClockSource) { OFF_PATH(); }
 uint32_t ClockManager::setLastMidiClockTime(uint32_t) { OFF_PATH(); return 0; }
+#endif
 #if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 void TrackManager::handleTransportStop() { OFF_PATH(); }
 #endif

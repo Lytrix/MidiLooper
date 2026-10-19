@@ -101,6 +101,7 @@ struct LoopSnapshotBodyFormatV1SaveWriteState {
     Events = 2,
     PitchMembership = 3,
     EventMembership = 4,
+    Done = 5,
   };
   PayloadWriteSubphase payloadSubphase = PayloadWriteSubphase::RootHeader;
   uint32_t emitIndex = 0;
@@ -120,6 +121,11 @@ struct LoopSnapshotBodyFormatV1SaveScratch {
 };
 
 namespace {
+#if defined(PIO_UNIT_TEST_NATIVE)
+uint32_t gLsv1SaveMembershipLookups = 0;
+uint32_t gLsv1SavePopulatedPages = 0;
+uint32_t gLsv1SaveMonolithicPayloadCalls = 0;
+#endif
 
 constexpr char kLoopSnapshotBodyFormatIdentifier[4] = {'L', 'S', 'V', '1'};
 constexpr uint16_t kLoopSnapshotBodyFormatVersion = 1;
@@ -324,6 +330,9 @@ bool writeLoopMetadataPayload(const StorageIo& io, const PersistedLoopSnapshot& 
 
 bool writeLoopSnapshotPayloadToIo(const StorageIo& io,
                                   const Lsv1GatheredLoopSnapshotPayload& payload) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gLsv1SaveMonolithicPayloadCalls;
+#endif
   if (!lsv1IoWrite(io, &payload.loopId, sizeof(payload.loopId))) return false;
   if (!lsv1IoWrite(io, &payload.loopLengthTicks, sizeof(payload.loopLengthTicks))) return false;
   if (!lsv1IoWrite(io, &payload.loopStartTick, sizeof(payload.loopStartTick))) return false;
@@ -885,6 +894,9 @@ LSV1_SAVE_STEP_MEM void advanceNoteGatherCursor(LoopSnapshotBodyFormatV1SaveWrit
 
 LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotNoteRef>* noteMembershipPageAt(
     const LoopSnapshot& snapshot, const LoopSnapshotBodyFormatV1SaveWriteState& state) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gLsv1SaveMembershipLookups;
+#endif
   const SnapshotMembershipRef<LoopSnapshotNoteRef> membership =
       snapshot.noteMembership(static_cast<uint8_t>(state.pitch), state.barIndex);
   const SnapshotMembership<LoopSnapshotNoteRef>* page = membership.get();
@@ -896,6 +908,9 @@ LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotNoteRef>* noteMembership
 
 LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotEventRef>* eventMembershipPageAt(
     const LoopSnapshot& snapshot, const LoopSnapshotBodyFormatV1SaveWriteState& state) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gLsv1SaveMembershipLookups;
+#endif
   const SnapshotMembershipRef<LoopSnapshotEventRef> membership =
       snapshot.eventMembership(state.barIndex);
   const SnapshotMembership<LoopSnapshotEventRef>* page = membership.get();
@@ -908,6 +923,7 @@ LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotEventRef>* eventMembersh
 LSV1_SAVE_STEP_MEM bool gatherOneNoteMembershipPage(const LoopSnapshot& snapshot,
                                  Lsv1GatheredLoopSnapshotPayload& payload,
                                  LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  for (uint32_t lookup = 0; lookup < kLsv1SaveMembershipLookupBatch; ++lookup) {
   if (state.barCount == 0) {
     state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherEventPage;
     state.barIndex = 0;
@@ -924,8 +940,11 @@ LSV1_SAVE_STEP_MEM bool gatherOneNoteMembershipPage(const LoopSnapshot& snapshot
   const SnapshotMembership<LoopSnapshotNoteRef>* page = noteMembershipPageAt(snapshot, state);
   if (page == nullptr) {
     advanceNoteGatherCursor(state);
-    return true;
+    continue;
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gLsv1SavePopulatedPages;
+#endif
 
   Lsv1PitchMembership* pitchMembership = nullptr;
   Lsv1NoteMembershipBar* barEntry = nullptr;
@@ -960,11 +979,14 @@ LSV1_SAVE_STEP_MEM bool gatherOneNoteMembershipPage(const LoopSnapshot& snapshot
     advanceNoteGatherCursor(state);
   }
   return true;
+  }
+  return true;
 }
 
 LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapshot,
                                   Lsv1GatheredLoopSnapshotPayload& payload,
                                   LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  for (uint32_t lookup = 0; lookup < kLsv1SaveMembershipLookupBatch; ++lookup) {
   if (state.barCount == 0) {
     state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortNotes;
     return true;
@@ -979,8 +1001,11 @@ LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapsho
   if (page == nullptr) {
     state.membershipPageIndex = 0;
     ++state.barIndex;
-    return true;
+    continue;
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gLsv1SavePopulatedPages;
+#endif
 
   Lsv1EventMembershipBar* barEntry = nullptr;
   for (uint8_t index = 0; index < page->count; ++index) {
@@ -1012,6 +1037,8 @@ LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapsho
   } else {
     state.membershipPageIndex = 0;
     ++state.barIndex;
+  }
+  return true;
   }
   return true;
 }
@@ -1063,6 +1090,161 @@ LSV1_SAVE_STEP_MEM size_t measureGatheredLoopSnapshotPayloadBytes(
       },
       nullptr};
   return writeLoopSnapshotPayloadToIo(io, payload) ? nbytes : 0;
+}
+
+// Describe only the current record/span. Existing scalar cursors never revisit
+// an emitted prefix; nestedRefIndex is the byte offset within that record.
+LSV1_SAVE_STEP_MEM bool currentPayloadSpan(const Lsv1GatheredLoopSnapshotPayload& payload,
+    LoopSnapshotBodyFormatV1SaveWriteState& state, uint8_t* header,
+    const uint8_t*& data, size_t& available, size_t& recordBytes) {
+  using Subphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase;
+  static_assert(sizeof(LoopId) + 5u * sizeof(uint32_t) <= 64u &&
+                sizeof(NoteId) + 12u <= 64u &&
+                sizeof(EventId) + sizeof(uint32_t) + kLsv1LoopSnapshotMidiEventBytes <= 64u,
+                "LSV1 scalar record must fit fixed header scratch");
+  size_t headerBytes = 0;
+  const uint8_t* refs = nullptr;
+  size_t refBytes = 0;
+  auto pack = [&](const auto& value) {
+    std::memcpy(header + headerBytes, &value, sizeof(value));
+    headerBytes += sizeof(value);
+  };
+  switch (state.payloadSubphase) {
+    case Subphase::RootHeader: {
+      pack(payload.loopId); pack(payload.loopLengthTicks); pack(payload.loopStartTick);
+      pack(payload.nextNoteId); pack(payload.nextEventId);
+      const uint32_t count = static_cast<uint32_t>(payload.notes.size()); pack(count);
+      break;
+    }
+    case Subphase::Notes:
+      if (state.emitIndex > payload.notes.size()) return false;
+      if (state.emitIndex == payload.notes.size()) {
+        const uint32_t count = static_cast<uint32_t>(payload.events.size()); pack(count);
+      } else {
+        const auto& note = payload.notes[state.emitIndex];
+        pack(note.noteId); pack(note.pitch); pack(note.velocity);
+        const uint16_t padding = 0; pack(padding); pack(note.startTick); pack(note.endTick);
+      }
+      break;
+    case Subphase::Events:
+      if (state.emitIndex > payload.events.size()) return false;
+      if (state.emitIndex == payload.events.size()) {
+        const uint32_t count = static_cast<uint32_t>(payload.pitchMembership.size()); pack(count);
+      } else {
+        const auto& event = payload.events[state.emitIndex];
+        pack(event.eventId); pack(event.canonicalOrder);
+        std::memcpy(header + headerBytes, &event.value, kLsv1LoopSnapshotMidiEventBytes);
+        headerBytes += kLsv1LoopSnapshotMidiEventBytes;
+      }
+      break;
+    case Subphase::PitchMembership:
+      if (state.emitIndex > payload.pitchMembership.size()) return false;
+      if (state.emitIndex == payload.pitchMembership.size()) {
+        const uint32_t count = static_cast<uint32_t>(payload.eventMembership.size()); pack(count);
+      } else {
+        const auto& pitch = payload.pitchMembership[state.emitIndex];
+        if (state.nestedIndex == 0) {
+          pack(pitch.pitch);
+          const uint32_t count = static_cast<uint32_t>(pitch.bars.size()); pack(count);
+        } else {
+          if (state.nestedIndex > pitch.bars.size()) return false;
+          const auto& bar = pitch.bars[state.nestedIndex - 1];
+          pack(bar.barIndex);
+          const uint32_t count = static_cast<uint32_t>(bar.noteIds.size()); pack(count);
+          refs = reinterpret_cast<const uint8_t*>(bar.noteIds.data());
+          refBytes = bar.noteIds.size() * sizeof(NoteId);
+        }
+      }
+      break;
+    case Subphase::EventMembership:
+      if (state.emitIndex > payload.eventMembership.size()) return false;
+      if (state.emitIndex == payload.eventMembership.size()) {
+        state.payloadSubphase = Subphase::Done;
+        data = nullptr; available = recordBytes = 0;
+        return true;
+      } else {
+        const auto& bar = payload.eventMembership[state.emitIndex];
+        pack(bar.barIndex);
+        const uint32_t count = static_cast<uint32_t>(bar.eventIds.size()); pack(count);
+        refs = reinterpret_cast<const uint8_t*>(bar.eventIds.data());
+        refBytes = bar.eventIds.size() * sizeof(EventId);
+      }
+      break;
+    case Subphase::Done:
+      data = nullptr; available = recordBytes = 0;
+      return true;
+  }
+  recordBytes = headerBytes + refBytes;
+  if (state.nestedRefIndex >= recordBytes) return false;
+  if (state.nestedRefIndex < headerBytes) {
+    data = header + state.nestedRefIndex;
+    available = headerBytes - state.nestedRefIndex;
+  } else {
+    const size_t offset = state.nestedRefIndex - headerBytes;
+    data = refs + offset;
+    available = refBytes - offset;
+  }
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM void advancePayloadRecord(const Lsv1GatheredLoopSnapshotPayload& payload,
+    LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  using Subphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase;
+  state.nestedRefIndex = 0;
+  switch (state.payloadSubphase) {
+    case Subphase::RootHeader:
+      state.payloadSubphase = Subphase::Notes; state.emitIndex = 0; break;
+    case Subphase::Notes:
+      if (state.emitIndex++ == payload.notes.size()) {
+        state.payloadSubphase = Subphase::Events; state.emitIndex = 0;
+      }
+      break;
+    case Subphase::Events:
+      if (state.emitIndex++ == payload.events.size()) {
+        state.payloadSubphase = Subphase::PitchMembership; state.emitIndex = 0;
+      }
+      break;
+    case Subphase::PitchMembership:
+      if (state.emitIndex == payload.pitchMembership.size()) {
+        state.payloadSubphase = Subphase::EventMembership; state.emitIndex = state.nestedIndex = 0;
+      } else if (++state.nestedIndex > payload.pitchMembership[state.emitIndex].bars.size()) {
+        ++state.emitIndex; state.nestedIndex = 0;
+      }
+      break;
+    case Subphase::EventMembership:
+      ++state.emitIndex;
+      if (state.emitIndex == payload.eventMembership.size()) state.payloadSubphase = Subphase::Done;
+      break;
+    case Subphase::Done: break;
+  }
+}
+
+LSV1_SAVE_STEP_MEM bool writeForwardPayloadSlice(const StorageIo& io,
+    const Lsv1GatheredLoopSnapshotPayload& payload, LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  using Subphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase;
+  auto next = state;
+  uint8_t output[kLsv1SaveIoChunkBytes];
+  size_t written = 0;
+  while (written < sizeof(output) && next.payloadSubphase != Subphase::Done) {
+    uint8_t header[64];
+    const uint8_t* data = nullptr;
+    size_t available = 0, recordBytes = 0;
+    if (!currentPayloadSpan(payload, next, header, data, available, recordBytes)) return false;
+    if (next.payloadSubphase == Subphase::Done) break;
+    const size_t count = std::min(available, sizeof(output) - written);
+    if (count == 0) return false;
+    std::memcpy(output + written, data, count);
+    written += count;
+    next.nestedRefIndex += static_cast<uint32_t>(count);
+    if (next.nestedRefIndex == recordBytes) advancePayloadRecord(payload, next);
+  }
+  if (state.writePayloadOffset > state.writePayloadBytes ||
+      written > state.writePayloadBytes - state.writePayloadOffset) return false;
+  if (written && !lsv1IoWrite(io, output, written)) return false;
+  next.writePayloadOffset += static_cast<uint32_t>(written);
+  if (next.payloadSubphase == Subphase::Done && next.writePayloadOffset != next.writePayloadBytes) return false;
+  state = next;
+  return true;
 }
 
 LSV1_SAVE_STEP_MEM bool writeLoopSnapshotPayloadByteSlice(const StorageIo& io,
@@ -1300,18 +1482,15 @@ LSV1_SAVE_STEP_MEM LoopSnapshotBodyFormatV1SaveStepResult stepLoopSnapshotBodyFo
       break;
 
     case LoopSnapshotBodyFormatV1SaveWriteState::Phase::WritePayload: {
-      size_t payloadOffset = state.writePayloadOffset;
-      if (payloadOffset >= state.writePayloadBytes) {
+      if (state.writePayloadOffset >= state.writePayloadBytes) {
         state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::Done;
         stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Completed;
         break;
       }
-      if (!writeLoopSnapshotPayloadByteSlice(io, payload, payloadOffset,
-                                             kLsv1SaveIoChunkBytes)) {
+      if (!writeForwardPayloadSlice(io, payload, state)) {
         stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
         break;
       }
-      state.writePayloadOffset = static_cast<uint32_t>(payloadOffset);
       if (state.writePayloadOffset >= state.writePayloadBytes) {
         state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::Done;
         stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Completed;
@@ -1670,4 +1849,12 @@ bool testWriteLoopSnapshotGatheredPayloadByteSlice(const StorageIo& io,
   }
   return writeLoopSnapshotPayloadByteSlice(io, payload, byteOffset, maxBytes);
 }
+#endif
+#if defined(PIO_UNIT_TEST_NATIVE)
+void testResetLsv1SaveWorkCounters() {
+  gLsv1SaveMembershipLookups = gLsv1SavePopulatedPages = gLsv1SaveMonolithicPayloadCalls = 0;
+}
+uint32_t testLsv1SaveMembershipLookups() { return gLsv1SaveMembershipLookups; }
+uint32_t testLsv1SavePopulatedPages() { return gLsv1SavePopulatedPages; }
+uint32_t testLsv1SaveMonolithicPayloadCalls() { return gLsv1SaveMonolithicPayloadCalls; }
 #endif

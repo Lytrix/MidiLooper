@@ -13,8 +13,13 @@
 namespace SetRevisionCatalog {
 
 inline constexpr const char* kSetsRoot = PersistenceLayout::kSetsRoot;
-inline constexpr const char* kSetIndexPath = "/MidiLooper/sets/index.bin";
-inline constexpr const char* kSetIndexTempPath = "/MidiLooper/sets/index.bin.tmp";
+/// The catalog's **own** index path. This used to be `sets/index.bin`, which the legacy SavedSet
+/// sequence index (`CurrentSetStorage::kSetIndexPath`) also owns in a different, 8-byte layout: the boot
+/// reconcile always rewrote that file in the legacy layout, so the 16-byte catalog index never survived
+/// a reboot, the browser listed no Sets at all, and a commit could allocate set id 1 over an existing
+/// Set (I4 — Set browser index ownership). One owner per persisted index path.
+inline constexpr const char* kSetIndexPath = "/MidiLooper/sets/catalog.bin";
+inline constexpr const char* kSetIndexTempPath = "/MidiLooper/sets/catalog.bin.tmp";
 inline constexpr const char* kRevisionFileExtension = PersistenceLayout::kRevisionFileExtension;
 inline constexpr const char* kRevisionTempSuffix = PersistenceLayout::kRevisionTempSuffix;
 
@@ -80,6 +85,11 @@ void applyValidatedRevisionToSetMeta(SetMetaRecord& meta, uint16_t revisionId,
 /// Parse `S####` catalog folder basename; false for legacy SavedSet folder names.
 bool parseSetIdFromFolderName(const char* folderName, uint16_t& setIdOut);
 
+/// Strict catalog Set-folder basename for the boot rebuild's scan: an optional path prefix is dropped at
+/// the last `/`, then the name must be `S` + 1..5 digits with an all-digit tail. Deliberately stricter
+/// than `parseSetIdFromFolderName`, which accepts a trailing suffix: a rebuild must never adopt an id
+/// from a name like `S0001_backup`.
+bool parseSetFolderBasename(const char* entryName, uint16_t& setIdOut);
 bool formatSetFolderPath(char* out, size_t outSize, uint16_t setId);
 bool formatSetMetaPath(char* out, size_t outSize, uint16_t setId);
 bool formatRevisionPath(char* out, size_t outSize, uint16_t setId, uint16_t revisionId,

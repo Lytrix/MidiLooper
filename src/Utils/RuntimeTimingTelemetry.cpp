@@ -343,6 +343,17 @@ void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t t
 }
 
 RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
+  // DEC-143's overlay label is answered **before** the dense switch on purpose: a seventh case grows the compiler's
+  // jump table by four bytes, and four bytes of `.data` here crossed the linker's alignment edge and snapped the RAM1
+  // `variables` figure by 4,096 B (measured on the qualification image: `variables` 96,192 -> 100,288 with `code`
+  // unchanged). The label is one branch, not one table slot, so the qualification budget is untouched.
+  if (path == PlaybackRebuildPath::PublishedRecordOverlay) {
+#if defined(__IMXRT1062__)
+    return PSTR("record_overlay");
+#else
+    return "record_overlay";
+#endif
+  }
 #if defined(__IMXRT1062__)
   switch (path) {
     case PlaybackRebuildPath::PublishedSnapshot:
@@ -357,6 +368,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return PSTR("incremental");
     case PlaybackRebuildPath::StaleRootOverlay:
       return PSTR("overlay");
+    case PlaybackRebuildPath::PublishedRecordOverlay:
+      break;  // Answered above; kept so the switch stays exhaustive without a table slot.
   }
   return PSTR("unknown");
 #else
@@ -373,6 +386,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return "incremental";
     case PlaybackRebuildPath::StaleRootOverlay:
       return "overlay";
+    case PlaybackRebuildPath::PublishedRecordOverlay:
+      break;  // Answered above; kept so the switch stays exhaustive without a table slot.
   }
   return "unknown";
 #endif

@@ -25,6 +25,7 @@
 #include "RuntimeCanonicalPassInputs.h"
 #include "RuntimeNotePairLookup.h"
 #include "Utils/WorkingSetLease.h"
+#include "Utils/PlaybackSourceReadGuard.h"
 
 class Loop;
 
@@ -332,8 +333,15 @@ enum class PlaybackViewPendingReason : uint8_t {
   /// **by name** and establishes no ring. Terminal for the lane's retry, exactly as the two refusals above: a refusal
   /// with a name is an answer, not a demand to re-page every turn.
   PinnedEditRowsUnresolved,
+  /// DEC-136 — private committed-root preparation before Capture-ready adoption: the demand is the **root-backed
+  /// successor** a bound Record job's frozen return window needs, and the ordinary rolling envelope can never
+  /// admit its own bounded work on this loop geometry (`leadTicks + grains x (denied+1) x advance` exceeds a whole
+  /// traversal, so no legal lead exists). It is therefore prepared **privately** behind the still-served frozen
+  /// reader and is **owed without a deadline**: no promise is fabricated, the served window is never torn, and
+  /// adoption happens only at a real boundary where the completed window covers the playhead. This reason is the
+  /// route's whole mark -- the position gates tolerate it only while `rootReturnSuccessorIsOwedForSlot` holds.
+  PrivateRootReturnPreparation,
 };
-
 /// DEC-108 §13(c) / task 3.10 (increment 24): **the retained pending preparation request** -- the demand a refused
 /// request leaves behind, so `PlaybackViewRequestResult::TrackInterferenceBudgetExceeded` is a *promise* and not a
 /// dropped request. It stores the demand, never the events: the identity the request was made against, the interval
@@ -344,9 +352,14 @@ struct PlaybackViewPendingRequest {
   /// The slot owes a demand whose last attempt was refused. Cleared by an admission and by a coalescing successor
   /// request -- **never** by an epoch or geometry change, which void the deadline, not the obligation.
   bool active = false;
-  enum class SourceKind : uint8_t { Borrowed, CommittedSnapshot, CommittedLaunch };
+  enum class SourceKind : uint8_t { Borrowed, CommittedSnapshot, CommittedLaunch, LiveCapture };
   SourceKind sourceKind = SourceKind::Borrowed;
   bool positionInvalidated = false;
+  /// Replayable live recipe; token is content currency, not source lifetime.
+  CaptureProjectionIdentity liveCaptureProjection{};
+  int32_t liveProjectionStart = 0;
+  uint32_t liveMaximumTick = 0;
+  uint16_t liveLeaseGeneration = 0;
   uint16_t countedMisses = 0;
   /// The **operation generation** the demand was retained under (DEC-108 §13(d)): a returning slot must not revive
   /// an earlier operation, so a record whose generation has moved is stale, and a demand made under the new
@@ -400,11 +413,26 @@ struct LoopPlaybackRuntime {
   // no DTCM (a field in the 8-way `Track` array would cost 8x).
   WorkingSetOutcome acquireWorkingSetLease(WorkingSetRole role) { return lease_.acquire(role); }
   WorkingSetOutcome releaseWorkingSetLease(WorkingSetRole role) {
+    PlaybackSourceReadGuard guard;
+    if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+        viewBuild.preparationInProgress() || bridgeWindowBuild.preparationInProgress())
+      return WorkingSetOutcome::RefusedBusy;
     return lease_.release(lease_.generation(), role);
   }
   /// The slot runtime leaves the active set: bump the generation so a late release carrying the
   /// previous generation is reported as `StaleGeneration` (S4.2) instead of clearing a successor.
-  WorkingSetOutcome releaseAllWorkingSetLeases() { return lease_.releaseAll(lease_.generation()); }
+  WorkingSetOutcome releaseAllWorkingSetLeases(
+      const RuntimePlaybackViewBuild::PreparationTurn* primary = nullptr,
+      const RuntimePlaybackViewBuild::PreparationTurn* bridge = nullptr) {
+    PlaybackSourceReadGuard guard;
+    if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+        (primary && !primary->owns(viewBuild)) || (bridge && !bridge->owns(bridgeWindowBuild)) ||
+        (viewBuild.preparationInProgress() && (!primary || !primary->owns(viewBuild))) ||
+        (bridgeWindowBuild.preparationInProgress() && (!bridge || !bridge->owns(bridgeWindowBuild))))
+      return WorkingSetOutcome::RefusedBusy;
+    if (ownsLiveCaptureBuildBorrow()) return WorkingSetOutcome::RefusedBusy;
+    return lease_.releaseAll(lease_.generation());
+  }
 
   /// S4.1: clear **this slot's** open-note ledger. The per-slot form of
   /// `TrackPlaybackRuntime::clearAllLedgers()`; an interval's stop must not clear a sibling slot's
@@ -434,6 +462,21 @@ struct LoopPlaybackRuntime {
     captureStopOwnerGeneration = 0;
     return true;
   }
+  /// Slot-owned RecordPublished presentation identity. Unlike captureStopOwner this
+  /// survives FIFO job release and is cleared only after the frozen reader is retired.
+  void setPresentationOwner(const void* owner, uint32_t generation) {
+    presentationOwner = owner;
+    presentationOwnerGeneration = generation;
+  }
+  bool clearPresentationOwner(const void* owner, uint32_t generation) {
+    if (presentationOwner != owner || presentationOwnerGeneration != generation) return false;
+    presentationOwner = nullptr;
+    presentationOwnerGeneration = 0;
+    return true;
+  }
+  const void* presentationOwner = nullptr;
+  uint32_t presentationOwnerGeneration = 0;
+
   /// A prepared playback handover still being *built* owns this slot's scratch. The published pair
   /// is deliberately not a term: it is the slot's playback authority and stays valid while the slot
   /// sounds, so counting it would make release unreachable for every sounding slot. S4b.2's switch
@@ -859,6 +902,16 @@ struct LoopPlaybackRuntime {
   /// `Track`, because `Track` is the pinned eight-way DTCM array (`sizeof(Track) == 384`).
   uint16_t frozenWindowStallGrains = 0;
   uint8_t frozenWindowStallGrain = 0;
+  /// DEC-136 completion (S7.5b.5 release edge): grains the `RecordPublished` retirement hold
+  /// has spent on an **unchanged** owed root-return successor, and that successor's identity
+  /// key -- the owed ready view's storage generation, or zero while the private build is still
+  /// in flight. A change (the build advancing, the successor being adopted or replaced)
+  /// restarts the count; the bound is the frozen lane's own stall budget, so a successor
+  /// nothing can advance still releases the job instead of parking it forever. The same
+  /// reason this lives here and not on `Track`: externally allocated per-slot runtime state,
+  /// no RAM1 cost (`sizeof(Track) == 384` is untouched).
+  uint32_t rootReturnHoldKey = 0;
+  uint16_t rootReturnHoldGrains = 0;
   /// Orders only a frozen capture candidate. It owns no event memory and can
   /// never touch the current/ready audible views.
   RuntimePlaybackOrderBuilder frozenCaptureOrder;
@@ -1009,7 +1062,12 @@ struct LoopPlaybackRuntime {
   void syncRevision(uint32_t loopRevision, uint32_t trackGeneration);
 
   /// False while accepted capture owns scratch; retargets it to STOPPED recovery.
-  bool reset(bool preserveLedger);
+  bool reset(bool preserveLedger,
+      const RuntimePlaybackViewBuild::PreparationTurn* primary = nullptr,
+      const RuntimePlaybackViewBuild::PreparationTurn* bridge = nullptr);
+  bool ownsLiveCaptureBuildBorrow() const;
+  void cancelLiveCaptureBuildBorrows();
+  void cancelStaleLiveCaptureBuildBorrows();
 
   /// Cold/boot or STOPPED-only allocation. Never call from a MIDI tick.
   /// `companionRowCapacity` is the derived companion-row reserve for this slot
@@ -1149,14 +1207,18 @@ struct LoopPlaybackRuntime {
                           const LedgerBoundarySummary& ledgerBoundary);
   // Establish an empty raw bar-1 view before first-record input. This uses the
   // same fill/order/lifecycle buffers as ordinary playback.
-  bool prepareFirstRecordingBar(uint32_t ticksPerBar);
+  bool prepareFirstRecordingBar(uint32_t ticksPerBar,
+      const RuntimePlaybackViewBuild::PreparationTurn* primary = nullptr,
+      const RuntimePlaybackViewBuild::PreparationTurn* bridge = nullptr);
   /// Retire the record-session return window so the next take can establish its
   /// own bar 1. A take that ends without the record-stop handoff (transport Stop
   /// during RECORDING, empty/skipped commit) leaves a raw window held, and a take
   /// that did hand off leaves the bound window held until a root replaces it.
   /// The preparation boundary for the next take owns both releases. A window
   /// whose stop job is still retiring is never released.
-  bool releaseFirstRecordingBarReturnWindow();
+  bool releaseFirstRecordingBarReturnWindow(
+      const RuntimePlaybackViewBuild::PreparationTurn* primary = nullptr,
+      const RuntimePlaybackViewBuild::PreparationTurn* bridge = nullptr);
   /// Select the bound record-stop return window as the audible source while the
   /// first root is still publishing. Stamps the launch source identity (the
   /// window was filled during RECORDING under the pre-stop identity) and marks it
@@ -1229,7 +1291,7 @@ struct LoopPlaybackRuntime {
   /// Drop the range-derived onward window (and any in-flight frozen build) once a matching
   /// committed replacement exists. Idempotent; the bar-1 return window is left alone because
   /// it is served until a replacement view is handed off.
-  void releaseFrozenRecordWindow();
+  bool releaseFrozenRecordWindow();
   /// Only an admitted coverage build belongs to this lane. Generic shared-builder
   /// owners are excluded; snapshot qualification and retirement are classified
   /// separately by the Track holder scan.
@@ -1316,6 +1378,11 @@ class TrackPlaybackRuntime {
   /// Non-allocating peek. nullptr if this slot has no runtime yet.
   LoopPlaybackRuntime* slotIfAllocated(uint8_t slotIndex);
   const LoopPlaybackRuntime* slotIfAllocated(uint8_t slotIndex) const;
+  /// Owner is the live Track; all source Loops remain in its fixed LoopPool.
+  /// No allocation or source query during unconditional teardown cancellation.
+  void cancelLiveCaptureBuilds();
+  /// Cancel semantic/raw-stale private work even if holder selection excludes it.
+  void cancelStaleLiveCaptureBuilds();
 
   /// S4.1/S4.2: release one slot's runtime working set under its `(slot, generation)` identity.
   ///

@@ -210,6 +210,17 @@ struct CaptureRing {
 
 SC_JOURNAL_MEM_ATTR CriticalJournal sCriticalJournal{};
 CaptureRing sCaptureRing;
+// Ordinary .bss is cleared by Teensy startup; the DMAMEM journal is not.
+bool sCriticalJournalInitialized = false;
+struct PlaybackReadMailbox {
+  PlaybackReadWitness witness{};
+  uint32_t lastUs = 0;
+  uint32_t lastTick = 0;
+  bool seen = false;
+  bool pending = false;
+};
+SC_JOURNAL_MEM_ATTR PlaybackReadMailbox sPlaybackReads[8][8];
+uint8_t sPlaybackReadScan = 0;
 
 /// True while `flushCaptureBuffer` is walking the ring. `Serial` output can re-enter this module
 /// through the Teensy `yield()`, and a nested append that evicts would move the head under the
@@ -218,6 +229,39 @@ bool sFlushInProgress = false;
 
 SC_MEM_ATTR void incrementSaturated(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
+}
+
+SC_JOURNAL_COLD_ATTR void resetCriticalJournalMetadata() {
+  sCriticalJournal.count = 0;
+  sCriticalJournal.dumpIndex = 0;
+  sCriticalJournal.dropped = 0;
+  sCriticalJournal.dumpStarted = false;
+  for (auto& track : sPlaybackReads) for (auto& slot : track) slot = PlaybackReadMailbox{};
+  sPlaybackReadScan = 0;
+}
+
+SC_JOURNAL_COLD_ATTR void ensureCriticalJournalInitialized() {
+  if (sCriticalJournalInitialized) return;
+  resetCriticalJournalMetadata();
+  sCriticalJournalInitialized = true;
+}
+
+SC_JOURNAL_COLD_ATTR bool validateCriticalJournalMetadata() {
+  ensureCriticalJournalInitialized();
+  if (sCriticalJournal.count <= kCriticalJournalCapacity &&
+      sCriticalJournal.dumpIndex <= sCriticalJournal.count &&
+      (sCriticalJournal.dumpIndex == 0 || sCriticalJournal.dumpStarted)) {
+    return true;
+  }
+  // Unknown journal loss is one reported integrity incident, not a trusted row
+  // count. Reset scalars only; never walk payload using a corrupted index.
+  resetCriticalJournalMetadata();
+  sCriticalJournal.dropped = 1;
+  if (sCaptureRing.criticalRejectedPending == 0)
+    sCaptureRing.criticalFirstRejectedUs = micros();
+  incrementSaturated(sCaptureRing.criticalRejectedPending);
+  incrementSaturated(sCaptureRing.criticalRejectedTotal);
+  return false;
 }
 
 SC_MEM_ATTR RecordFamilyStats* recordFamilyStats(const char* line) {
@@ -232,6 +276,7 @@ void readBytesAt(size_t index, void* dest, size_t len);
 bool serialWriteRoom(size_t bytesNeeded);
 SC_JOURNAL_COLD_ATTR void journalCriticalLine(const char* line) {
   if (line == nullptr) return;
+  if (!validateCriticalJournalMetadata()) return;
   if (sCriticalJournal.count >= kCriticalJournalCapacity) {
     incrementSaturated(sCriticalJournal.dropped);
     return;
@@ -243,6 +288,7 @@ SC_JOURNAL_COLD_ATTR void journalCriticalLine(const char* line) {
 }
 
 SC_JOURNAL_COLD_ATTR void journalCriticalHeadRecord() {
+  if (!validateCriticalJournalMetadata()) return;
   if (sCriticalJournal.count >= kCriticalJournalCapacity) {
     incrementSaturated(sCriticalJournal.dropped);
     return;
@@ -261,6 +307,7 @@ SC_JOURNAL_COLD_ATTR void journalCriticalHeadRecord() {
 }
 
 SC_JOURNAL_COLD_ATTR void emitCriticalJournal() {
+  if (!validateCriticalJournalMetadata()) return;
   if (sCriticalJournal.dumpIndex == 0 && sCriticalJournal.count == 0 &&
       sCriticalJournal.dropped == 0) {
     return;
@@ -274,6 +321,7 @@ SC_JOURNAL_COLD_ATTR void emitCriticalJournal() {
     sCriticalJournal.dumpStarted = true;
   }
   while (sCriticalJournal.dumpIndex < sCriticalJournal.count) {
+    if (!validateCriticalJournalMetadata()) return;
     const char* line = sCriticalJournal.lines[sCriticalJournal.dumpIndex];
     const size_t bytes = strnlen(line, kMaxCaptureTextBytes - 1) + 2;
     if (!serialWriteRoom(bytes)) return;
@@ -283,9 +331,18 @@ SC_JOURNAL_COLD_ATTR void emitCriticalJournal() {
   if (!serialWriteRoom(96)) return;
   Serial.printf_P(SC_FMT("#CAP,%lu,EVIDENCE,critical_journal_end\r\n"),
                   static_cast<unsigned long>(micros()));
-  sCriticalJournal = CriticalJournal{};
+  resetCriticalJournalMetadata();
 }
 
+static const char kPitMotionTierPrefix[] PROGMEM = "DIAG,pit_motion,";
+#if MIDI_INGRESS_COST_QUALIFICATION
+static const char kIngressCostTierPrefix[] PROGMEM = "DIAG,ingress_cost,";
+#endif
+#if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
+static const char kRollingRecordTierPrefix[] PROGMEM = "DIAG,rolling_record,";
+#endif
+static const char kPlaybackReadTierPrefix[] PROGMEM = "DIAG,playback_read,";
+static const char kPlaybackAvailableTierPrefix[] PROGMEM = "DIAG,playback_available,";
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // The window lane's **service-gap sample** (task 3.10) is Tier-A, and its tag is classified **here** rather than in
   // `CaptureLineTier.h`: that list is an inline header function, so every literal in it is instantiated in every
@@ -307,7 +364,17 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // Measured: the first device runs of the launch row carried it in the firmware and delivered **none** of them.
   // (A duplicated `launch_gate` clause used to sit after the `return` here, unreachable; removed 2026-10-05.)
   return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,pit_obs,") ||
+         CaptureLineTier::tagStartsWith(line, kPitMotionTierPrefix) ||
+#if MIDI_INGRESS_COST_QUALIFICATION
+         CaptureLineTier::tagStartsWith(line, kIngressCostTierPrefix) ||
+#endif
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,") ||
+         CaptureLineTier::tagStartsWith(line, kPlaybackReadTierPrefix) ||
+         CaptureLineTier::tagStartsWith(line, kPlaybackAvailableTierPrefix) ||
+#if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
+         CaptureLineTier::tagStartsWith(line, kRollingRecordTierPrefix) ||
+#endif
          CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,") ||
@@ -937,6 +1004,7 @@ void restartCaptureBootGrace() {
 }
 
 SC_MEM_ATTR void initCaptureBuffer() {
+  ensureCriticalJournalInitialized();
   (void)ensureCaptureRingAllocated();
   markCaptureBootUs();
 }
@@ -1172,6 +1240,19 @@ SC_MEM_ATTR bool emitTrackStatus(uint8_t track, uint8_t slot, const char* state,
   Serial.printf_P(SC_FMT("#TRACK_STATUS,us=%lu,track=%u,slot=%u,state=%s,transport=%u\r\n"),
                   static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
                   static_cast<unsigned>(slot), state, transportRunning ? 1u : 0u);
+  return true;
+}
+
+SC_MEM_ATTR bool emitOverlayStatus(bool open, uint8_t mode, uint8_t row,
+                                    uint16_t setId, uint16_t revisionId, uint8_t phase) {
+  // Request-only scalar observation. Never drain or queue a stale response.
+  // Maximum-width output including CRLF is <128 bytes.
+  if (!serialWriteRoom(128)) return false;
+  Serial.printf_P(SC_FMT("#OVERLAY_STATUS,us=%lu,open=%u,mode=%u,row=%u,set=%u,rev=%u,phase=%u\r\n"),
+                  static_cast<unsigned long>(micros()), open ? 1u : 0u,
+                  static_cast<unsigned>(mode), static_cast<unsigned>(row),
+                  static_cast<unsigned>(setId), static_cast<unsigned>(revisionId),
+                  static_cast<unsigned>(phase));
   return true;
 }
 
@@ -1429,6 +1510,48 @@ SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessU
                 (unsigned long)micros(), midiClass, (unsigned long)latenessUs,
                 (unsigned long)tick, (unsigned long)sendUs, (unsigned long)dueUs,
                 (unsigned long)deadlineUs);
+}
+
+SC_MEM_ATTR void observePlaybackRead(const PlaybackReadWitness& witness) {
+  if (witness.track >= 8 || witness.slot >= 8 ||
+      witness.storageGeneration == 0 || witness.origin > 2 || (witness.availableOnly && witness.origin != 0) || witness.length == 0 ||
+      witness.start >= witness.period || witness.length > witness.period - witness.start ||
+      witness.phase < witness.start || witness.phase - witness.start >= witness.length) return;
+  ensureCriticalJournalInitialized();
+  auto& box = sPlaybackReads[witness.track][witness.slot];
+  if (box.pending || (box.seen && (box.lastTick == witness.tick ||
+      uint32_t(witness.atUs - box.lastUs) < 250000u))) return;
+  box.witness = witness; box.lastUs = witness.atUs; box.lastTick = witness.tick;
+  box.seen = true; box.pending = true;
+}
+
+SC_MEM_ATTR void flushPlaybackReadWitness(bool allowUsb) {
+  if (!sCriticalJournalInitialized) return;
+  // Fixed 64-descriptor scan, at most one bounded row per foreground flush.
+  for (unsigned n = 0; n < 64; ++n) {
+    const uint8_t index = sPlaybackReadScan;
+    sPlaybackReadScan = (sPlaybackReadScan + 1u) % 64u;
+    auto& box = sPlaybackReads[index / 8][index % 8];
+    if (!box.pending) continue;
+    const auto& w = box.witness;
+    char row[160];
+    const char* format = w.availableOnly
+        ? SC_FMT("#CAP,%lu,DIAG,playback_available,1,%u,%u,%lu,%lu,%llu,%u,%lu,%lu,%lu,%lu")
+        : SC_FMT("#CAP,%lu,DIAG,playback_read,1,%u,%u,%lu,%lu,%llu,%u,%lu,%lu,%lu,%lu");
+    snprintf(row, sizeof(row), format,
+        (unsigned long)w.atUs, w.track, w.slot, (unsigned long)w.tick,
+        (unsigned long)w.generation, (unsigned long long)w.storageGeneration, w.origin,
+        (unsigned long)w.start, (unsigned long)w.length, (unsigned long)w.period, (unsigned long)w.phase);
+    if (allowUsb && serialWriteRoom(sizeof(row))) {
+      box.pending = false; // before Serial can yield/reenter the producer
+      sFlushInProgress = true;
+      Serial.println(row);
+      sFlushInProgress = false;
+    } else if (queueCaptureTextLine(row)) {
+      box.pending = false;
+    }
+    return;
+  }
 }
 
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
@@ -1776,6 +1899,77 @@ SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint3
       static_cast<unsigned long>(epoch));
 }
 
+static const char kPhysicalClockObservationFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,pit_obs,%lu,%u,%lu,%llu,%llu,%lu,%llu,%lu,%lu,%lu,%lu,%u,%u\r\n";
+SC_MEM_ATTR void physicalClockObservationImmediate(uint32_t id, const ClockPhysicalObservation& o) {
+  // The worst-case scalar row is <192 bytes, the capture text cap.
+  if (serialWriteRoom(192)) {
+    Serial.printf(kPhysicalClockObservationFormat, static_cast<unsigned long>(micros()),
+        static_cast<unsigned long>(id), static_cast<unsigned>(o.status),
+        static_cast<unsigned long>(o.era), static_cast<unsigned long long>(o.rawTicks),
+        static_cast<unsigned long long>(o.beforeUs), static_cast<unsigned long>(o.widthUs),
+        static_cast<unsigned long long>(o.musicalTick), static_cast<unsigned long>(o.epoch),
+        static_cast<unsigned long>(o.readCycles), static_cast<unsigned long>(o.cpuHz),
+        static_cast<unsigned long>(o.configBits), static_cast<unsigned>(o.transport), static_cast<unsigned>(o.source));
+    return;
+  }
+  emitCapPrintf(kPhysicalClockObservationFormat, static_cast<unsigned long>(micros()),
+      static_cast<unsigned long>(id), static_cast<unsigned>(o.status),
+      static_cast<unsigned long>(o.era), static_cast<unsigned long long>(o.rawTicks),
+      static_cast<unsigned long long>(o.beforeUs), static_cast<unsigned long>(o.widthUs),
+      static_cast<unsigned long long>(o.musicalTick), static_cast<unsigned long>(o.epoch),
+      static_cast<unsigned long>(o.readCycles), static_cast<unsigned long>(o.cpuHz),
+      static_cast<unsigned long>(o.configBits), static_cast<unsigned>(o.transport), static_cast<unsigned>(o.source));
+}
+
+static const char kPhysicalClockMotionFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,pit_motion,%lu,%u,%lu,%llu,%llu,%lu,%llu,%lu,%lu,%lu,%lu,%u,%u\r\n";
+SC_MEM_ATTR void physicalClockMotionImmediate(uint32_t id, const ClockPhysicalObservation& o, uint32_t guardBits) {
+  if (serialWriteRoom(192)) {
+    Serial.printf(kPhysicalClockMotionFormat, static_cast<unsigned long>(micros()),
+        static_cast<unsigned long>(id), static_cast<unsigned>(o.status),
+        static_cast<unsigned long>(o.era), static_cast<unsigned long long>(o.rawTicks),
+        static_cast<unsigned long long>(o.beforeUs), static_cast<unsigned long>(o.widthUs),
+        static_cast<unsigned long long>(o.musicalTick), static_cast<unsigned long>(o.epoch),
+        static_cast<unsigned long>(o.periodUs), static_cast<unsigned long>(guardBits),
+        static_cast<unsigned long>(o.configBits), static_cast<unsigned>(o.transport), static_cast<unsigned>(o.source));
+    return;
+  }
+  emitCapPrintf(kPhysicalClockMotionFormat, static_cast<unsigned long>(micros()),
+      static_cast<unsigned long>(id), static_cast<unsigned>(o.status),
+      static_cast<unsigned long>(o.era), static_cast<unsigned long long>(o.rawTicks),
+      static_cast<unsigned long long>(o.beforeUs), static_cast<unsigned long>(o.widthUs),
+      static_cast<unsigned long long>(o.musicalTick), static_cast<unsigned long>(o.epoch),
+      static_cast<unsigned long>(o.periodUs), static_cast<unsigned long>(guardBits),
+      static_cast<unsigned long>(o.configBits), static_cast<unsigned>(o.transport), static_cast<unsigned>(o.source));
+}
+
+#if MIDI_INGRESS_COST_QUALIFICATION
+static const char kIngressCostFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,ingress_cost,%lu,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu,%llu,%u,%lu\r\n";
+SC_MEM_ATTR void ingressCostImmediate(uint32_t id, uint8_t route, uint8_t lane,
+    uint32_t cpuHz, uint32_t guardBits, const MidiIngress::IngressCostStats& s,
+    uint32_t contractBits) {
+  if (serialWriteRoom(192)) {
+    Serial.printf(kIngressCostFormat, static_cast<unsigned long>(micros()),
+        static_cast<unsigned long>(id), static_cast<unsigned>(route), static_cast<unsigned>(lane),
+        static_cast<unsigned long>(cpuHz), static_cast<unsigned long>(guardBits),
+        static_cast<unsigned long>(s.accepted), static_cast<unsigned long>(s.rejected),
+        static_cast<unsigned long>(s.minimumCycles), static_cast<unsigned long>(s.maximumCycles),
+        static_cast<unsigned long long>(s.sumCycles), static_cast<unsigned>(s.saturated),
+        static_cast<unsigned long>(contractBits));
+    return;
+  }
+  emitCapPrintf(kIngressCostFormat, static_cast<unsigned long>(micros()),
+      static_cast<unsigned long>(id), static_cast<unsigned>(route), static_cast<unsigned>(lane),
+      static_cast<unsigned long>(cpuHz), static_cast<unsigned long>(guardBits),
+      static_cast<unsigned long>(s.accepted), static_cast<unsigned long>(s.rejected),
+      static_cast<unsigned long>(s.minimumCycles), static_cast<unsigned long>(s.maximumCycles),
+      static_cast<unsigned long long>(s.sumCycles), static_cast<unsigned>(s.saturated),
+      static_cast<unsigned long>(contractBits));
+}
+#endif
+
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                            uint32_t revision, uint32_t leadTicks) {
   if (serialWriteRoom(96)) {
@@ -1805,7 +1999,7 @@ SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const ch
 /// literal already travels to FLASH because `SC_FMT` is `PSTR` on this target; this is the same treatment for the
 /// ring path, so no linker-script carve-out and no budget re-base is needed.
 static const char kFrozenReadinessRowFormat[] PROGMEM =
-    "#CAP,%lu,DIAG,win_frozen_readiness,%u,%u,%s,%s,%lu,%lu,%lu,%llu,%lu,%lu,%lu\r\n";
+    "#CAP,%lu,DIAG,win_frozen_readiness,%u,%u,%s,%s,%lu,%lu,%lu,%llu,%lu,%lu,%lu,%u,%u,%u\r\n";
 
 /// The frozen Record-return's **source-qualified** readiness receipt. Same two delivery rules as
 /// `readinessReceiptImmediate` -- direct when USB has room, ring otherwise -- so a receipt produced under transport is
@@ -1815,7 +2009,8 @@ static const char kFrozenReadinessRowFormat[] PROGMEM =
 SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                                 uint32_t revision, uint32_t leadTicks, uint32_t sourceGeneration,
                                                 uint64_t captureToken, uint32_t start, uint32_t length,
-                                                uint32_t loopLength) {
+                                                uint32_t loopLength, uint8_t adoptMask, uint8_t adoptResult,
+                                                uint8_t adoptWhy) {
   if (serialWriteRoom(160)) {
     // `.progmem` is memory-mapped on this target, so the FLASH-resident format is read directly -- the same
     // treatment `SC_FMT` (`PSTR`) already gives the sibling receipt's direct path.
@@ -1825,7 +2020,9 @@ SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, co
                   holder == nullptr ? "?" : holder, static_cast<unsigned long>(revision),
                   static_cast<unsigned long>(leadTicks), static_cast<unsigned long>(sourceGeneration),
                   static_cast<unsigned long long>(captureToken), static_cast<unsigned long>(start),
-                  static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength));
+                  static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength),
+                  static_cast<unsigned>(adoptMask), static_cast<unsigned>(adoptResult),
+                  static_cast<unsigned>(adoptWhy));
     return;
   }
   emitCapPrintf(kFrozenReadinessRowFormat,
@@ -1834,8 +2031,11 @@ SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, co
                 holder == nullptr ? "?" : holder, static_cast<unsigned long>(revision),
                 static_cast<unsigned long>(leadTicks), static_cast<unsigned long>(sourceGeneration),
                 static_cast<unsigned long long>(captureToken), static_cast<unsigned long>(start),
-                static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength));
+                static_cast<unsigned long>(length), static_cast<unsigned long>(loopLength),
+                static_cast<unsigned>(adoptMask), static_cast<unsigned>(adoptResult),
+                static_cast<unsigned>(adoptWhy));
 }
+
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
@@ -2044,6 +2244,9 @@ void flushCaptureBuffer(size_t maxRecords) {
   if (sFlushInProgress) {
     return;
   }
+  // Enqueue before owning the ring walk, so a full ordinary ring can apply normal Tier-A eviction.
+  // The direct USB path guards its own yield/reentry interval.
+  flushPlaybackReadWitness(maxRecords > 8);
   sFlushInProgress = true;
   struct FlushGuard {
     ~FlushGuard() { sFlushInProgress = false; }

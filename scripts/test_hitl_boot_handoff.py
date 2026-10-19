@@ -33,8 +33,11 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.boot_handoff import (  # noqa: E402
+    APP_SCREEN_RELEASE_HOLD_MS,
+    APP_SCREEN_WITNESS_ROW,
     BOOT_BANNER_MARKER,
     BOOT_COMMIT_ROW,
+    BOOT_SCREEN_EXTRA_HOLD_MS,
     BOOT_SETUP_COMPLETE_ROW,
     boot_handoff_complete,
     fresh_boot_in_window,
@@ -44,6 +47,10 @@ from hitl.boot_handoff import (  # noqa: E402
 _BANNER = "#CAP,2164003,DIAG,boot_reset,crash=0"
 _SETUP = "DisplayManager: Boot setup complete"
 _COMMIT = "#CAP,17838519,DIAG,loop_rem,boot_commit,387560,255,255,255,0"
+#: An app-paint-path witness, not proof of physical pixels or completed DMA.
+_DFRAME = "#CAP,19300000,DFRAME,8,18000,30,100,600,40"
+_COMMIT_US = 17838519
+_HOLD_US = APP_SCREEN_RELEASE_HOLD_MS * 1000
 
 
 class _FakeCollector:
@@ -68,23 +75,94 @@ class WindowSemanticsTests(unittest.TestCase):
         self.assertTrue(fresh_boot_in_window(lines))
         self.assertFalse(boot_handoff_complete(lines))
 
-    def test_both_rows_after_the_banner_complete_the_handoff(self) -> None:
-        lines = ["[Memory] heap", _BANNER, _SETUP, _COMMIT]
+    def test_boot_commit_plus_app_frame_completes_without_setup_text(self) -> None:
+        lines = ["[Memory] heap", _BANNER, _COMMIT, _DFRAME]
         self.assertTrue(fresh_boot_in_window(lines))
+        self.assertFalse(any(_SETUP in line for line in lines))
         self.assertTrue(boot_handoff_complete(lines))
 
-    def test_one_handoff_row_alone_is_not_complete(self) -> None:
-        self.assertFalse(boot_handoff_complete([_BANNER, _SETUP]))
+    def test_boot_commit_without_app_frame_is_not_complete(self) -> None:
+        # The owner commit alone does not prove that display painting resumed.
         self.assertFalse(boot_handoff_complete([_BANNER, _COMMIT]))
 
+    def test_app_frame_without_boot_commit_is_not_complete(self) -> None:
+        self.assertFalse(boot_handoff_complete([_BANNER, _DFRAME]))
+
     def test_no_banner_is_not_a_fresh_boot(self) -> None:
-        self.assertFalse(fresh_boot_in_window(["#CAP,1,BPM,120", _SETUP, _COMMIT]))
+        self.assertFalse(fresh_boot_in_window(["#CAP,1,BPM,120", _SETUP, _COMMIT, _DFRAME]))
 
     def test_a_banner_handoff_pair_outside_the_examined_window_is_not_complete(self) -> None:
         # A second boot banner restarts the handoff window: the first boot's rows no longer count.
-        lines = [_BANNER, _SETUP, _COMMIT, "#CAP,99,DIAG,boot_reset,crash=1"]
+        lines = [_BANNER, _SETUP, _COMMIT, _DFRAME, "#CAP,99,DIAG,boot_reset,crash=1"]
         self.assertTrue(fresh_boot_in_window(lines))
         self.assertFalse(boot_handoff_complete(lines))
+
+    def test_a_witness_from_an_earlier_boot_does_not_count(self) -> None:
+        # The earlier boot painted; the new boot's window holds no witness of its own yet.
+        lines = [
+            _BANNER,
+            _SETUP,
+            _COMMIT,
+            _DFRAME,
+            "#CAP,99,DIAG,boot_reset,crash=1",
+            _SETUP,
+            "#CAP,25000000,DIAG,loop_rem,boot_commit,387560,255,255,255,0",
+        ]
+        self.assertTrue(fresh_boot_in_window(lines))
+        self.assertFalse(boot_handoff_complete(lines))
+
+    def test_elapsed_hold_without_a_frame_never_completes(self) -> None:
+        for offset in (_HOLD_US - 1, _HOLD_US, _HOLD_US + 100000000):
+            with self.subTest(offset=offset):
+                row = f"#CAP,{_COMMIT_US + offset},DIAG,idle_maint,0,0"
+                self.assertFalse(boot_handoff_complete([_BANNER, _SETUP, _COMMIT, row]))
+
+    def test_delayed_stale_witness_after_commit_is_rejected(self) -> None:
+        stale = "#CAP,1000000,DFRAME,8,18000,30,100,600,40"
+        self.assertFalse(boot_handoff_complete([_BANNER, _SETUP, _COMMIT, stale]))
+
+    def test_witness_timestamp_must_be_strictly_after_commit(self) -> None:
+        for stamp in (_COMMIT_US - 1, _COMMIT_US):
+            with self.subTest(stamp=stamp):
+                row = f"#CAP,{stamp},DFRAME,8,18000,30,100,600,40"
+                self.assertFalse(boot_handoff_complete([_BANNER, _SETUP, _COMMIT, row]))
+        row = f"#CAP,{_COMMIT_US + 1},DFRAME,8,18000,30,100,600,40"
+        self.assertTrue(boot_handoff_complete([_BANNER, _SETUP, _COMMIT, row]))
+
+    def test_witness_before_timestamped_banner_is_rejected(self) -> None:
+        banner = "#CAP,20000000,DIAG,boot_reset,crash=0"
+        self.assertFalse(boot_handoff_complete([banner, _SETUP, _COMMIT, _DFRAME]))
+
+    def test_app_frame_must_follow_the_timestamped_commit(self) -> None:
+        self.assertFalse(boot_handoff_complete([_BANNER, _DFRAME, _COMMIT]))
+        self.assertTrue(boot_handoff_complete([_BANNER, _COMMIT, _DFRAME]))
+
+    def test_unstamped_commit_cannot_qualify_a_witness(self) -> None:
+        self.assertFalse(boot_handoff_complete([_BANNER, _SETUP, BOOT_COMMIT_ROW, _DFRAME]))
+
+    def test_unstamped_banner_still_requires_timestamped_commit_and_witness(self) -> None:
+        self.assertTrue(boot_handoff_complete([BOOT_BANNER_MARKER, _SETUP, _COMMIT, _DFRAME]))
+
+    def test_malformed_witness_rows_fail_closed(self) -> None:
+        rows = (
+            "DFRAME,8,18000,30,100,600,40",
+            "mentioned " + _DFRAME,
+            "#CAP,invalid,DFRAME,8,18000,30,100,600,40",
+            "#CAP,19300000,DFRAME,",
+            "#CAP,19300000,DFRAME,8,18000,30,100,600",
+            "#CAP,19300000,DFRAME,8,18000,30,100,600,bad",
+            "#CAP,19300000,DFRAME,8,18000,30,100,600,40,trailing",
+            "#CAP,19300000,DFRAME_FAKE,8,18000,30,100,600,40",
+        )
+        for row in rows:
+            with self.subTest(row=row):
+                self.assertFalse(boot_handoff_complete([_BANNER, _SETUP, _COMMIT, row]))
+
+    def test_witness_and_hold_constants_pin_the_measured_firmware_hold(self) -> None:
+        self.assertEqual("DFRAME", APP_SCREEN_WITNESS_ROW)
+        self.assertEqual(2000, BOOT_SCREEN_EXTRA_HOLD_MS)
+        self.assertEqual(2500, APP_SCREEN_RELEASE_HOLD_MS)
+        self.assertGreaterEqual(APP_SCREEN_RELEASE_HOLD_MS, BOOT_SCREEN_EXTRA_HOLD_MS)
 
 
 class WaitForBootHandoffTests(unittest.TestCase):
@@ -99,11 +177,39 @@ class WaitForBootHandoffTests(unittest.TestCase):
         self.assertGreater(collector.snapshot_calls, 1, "the gate must poll for the handoff rows")
         self.assertEqual([], collector.writes, "the gate must never write to the device")
 
-    def test_both_rows_complete_immediately_without_writing(self) -> None:
-        collector = _FakeCollector([_BANNER, _SETUP, _COMMIT])
+    def test_handoff_rows_with_the_witness_complete_immediately_without_writing(self) -> None:
+        collector = _FakeCollector([_BANNER, _COMMIT, _DFRAME])
         self.assertEqual("complete", wait_for_boot_handoff(collector))
         self.assertEqual(1, collector.snapshot_calls)
         self.assertEqual([], collector.writes)
+
+    def test_handoff_rows_without_the_witness_time_out_and_never_write(self) -> None:
+        # The new RED against the pre-witness predicate: banner + both handoff rows is not enough.
+        collector = _FakeCollector([_BANNER, _SETUP, _COMMIT])
+        started = time.monotonic()
+        result = wait_for_boot_handoff(collector, timeout_s=0.2, poll_s=0.05)
+        elapsed_s = time.monotonic() - started
+        self.assertEqual("timeout", result)
+        self.assertGreaterEqual(elapsed_s, 0.15)
+        self.assertLess(elapsed_s, 2.0)
+        self.assertGreater(collector.snapshot_calls, 1, "the gate must poll for the witness")
+        self.assertEqual([], collector.writes, "the gate must never write to the device")
+
+    def test_elapsed_hold_without_a_witness_times_out_without_writing(self) -> None:
+        hold_row = f"#CAP,{_COMMIT_US + _HOLD_US},DIAG,idle_maint,0,0"
+        collector = _FakeCollector([_BANNER, _SETUP, _COMMIT, hold_row])
+        self.assertEqual("timeout", wait_for_boot_handoff(collector, timeout_s=0.02, poll_s=0.01))
+        self.assertGreater(collector.snapshot_calls, 1)
+        self.assertEqual([], collector.writes)
+
+    def test_stale_witness_times_out_without_writing(self) -> None:
+        stale = "#CAP,1000000,DFRAME,8,18000,30,100,600,40"
+        collector = _FakeCollector([_BANNER, _SETUP, _COMMIT, stale])
+        self.assertEqual("timeout", wait_for_boot_handoff(collector, timeout_s=0.02, poll_s=0.01))
+        self.assertEqual([], collector.writes)
+
+    def test_default_timeout_remains_thirty_seconds(self) -> None:
+        self.assertEqual(30.0, wait_for_boot_handoff.__kwdefaults__["timeout_s"])
 
     def test_handoff_rows_that_arrive_while_waiting_complete(self) -> None:
         collector = _FakeCollector([_BANNER])
@@ -113,7 +219,7 @@ class WaitForBootHandoffTests(unittest.TestCase):
         def snapshot() -> list[str]:
             lines = original_snapshot()
             if collector.snapshot_calls >= 3:
-                lines.extend([_SETUP, _COMMIT])
+                lines.extend([_COMMIT, _DFRAME])
             return lines
 
         collector.snapshot = snapshot  # type: ignore[method-assign]

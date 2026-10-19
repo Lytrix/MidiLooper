@@ -7,6 +7,17 @@
 #include <Arduino.h>
 #include "MidiEvent.h"
 #include <USBHost_t36.h>
+#include "Utils/MidiIngressReceipt.h"
+
+#ifndef MIDI_INPUT_CONTINUATION_QUALIFICATION
+#define MIDI_INPUT_CONTINUATION_QUALIFICATION 0
+#endif
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION != 0 && MIDI_INPUT_CONTINUATION_QUALIFICATION != 1
+#error "input continuation qualification must be zero or one"
+#endif
+#if MIDI_INPUT_CONTINUATION_QUALIFICATION && !defined(PIO_UNIT_TEST_NATIVE)
+#error "input continuation qualification is native-only until target timing/main integration is approved"
+#endif
 
 enum InputSource {
   SOURCE_USB,
@@ -49,7 +60,23 @@ public:
 
   // --- Input Handling ---
   void handleMidiInput();
-  void handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source);
+  void handleMidiMessage(byte type, byte channel, byte data1, byte data2, InputSource source
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+                        , const MidiIngressReceipt& receipt = {}
+#endif
+                        );
+#if defined(PIO_UNIT_TEST_NATIVE)
+  bool qualificationInputContinuationReady() const;
+  uint16_t qualificationInputPendingCount() const;
+  uint64_t qualificationInputGeneration() const;
+  const void* qualificationInputStorageIdentity() const;
+  size_t qualificationInputStateBytes() const;
+  void setQualificationInputPrewarmDeniedForTests(bool denied); // Native allocator fault boundary only.
+#if MIDI_INGRESS_RECEIPTS_ENABLED
+  using IngressDispatchObserver = void (*)(byte, byte, byte, byte, InputSource, const MidiIngressReceipt&);
+  void setIngressDispatchObserverForTests(IngressDispatchObserver observer);
+#endif
+#endif
 
   // --- MIDI Output ---
   // Use the new MidiEvent constructors for all MIDI output

@@ -22,6 +22,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/StoppedHeapDiagnostics.h"
 #include "Utils/InvestigationCaptureLog.h"
+#include "Utils/MidiIngressCostProbe.h"
 
 #if defined(__IMXRT1062__)
 #define CAPTURE_HITL_MEM FLASHMEM
@@ -32,6 +33,7 @@
 #endif
 
 #include "HitlLiveObservationCommands.h"
+#include "HitlMotionGuard.h"
 
 using namespace StorageManagerInternal;
 
@@ -42,7 +44,55 @@ CAPTURE_HITL_DATA HitlRevisionCommitBackup hitlRevisionCommitBackup{};
 }  // namespace StorageManagerInternal
 
 namespace {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION
+const char kRollingRecordStatusCommand[] PROGMEM = "!ROLLING_RECORD_STATUS ";
+#endif
 
+CAPTURE_HITL_MEM void printPitObservationForHitl(uint32_t id) {
+    const auto observation = clockManager.observePhysicalClockForHitl();
+    DebugSessionCapture::physicalClockObservationImmediate(id, observation);
+}
+
+CAPTURE_HITL_MEM void printPitMotionForHitl(uint32_t id) {
+    // Main-owned scalar predicates only; never perform I/O or drain work here.
+    const bool idle = physicalMotionStorageIdleForHitl<StorageManager>(
+        trackManager.hasPendingDeferredPlaybackPrewarm());
+#if defined(__IMXRT1062__)
+    uint32_t savedMask;
+    __asm__ volatile("mrs %0, primask" : "=r"(savedMask));
+    __asm__ volatile("cpsid i" ::: "memory");
+#endif
+    const uint32_t guard = physicalMotionGuardBitsForHitl(
+        trackManager.physicalMotionGuardForHitl(), clockManager.pendingStart, idle);
+    const auto observation = clockManager.observePhysicalClockForHitl();
+#if defined(__IMXRT1062__)
+    __asm__ volatile("msr primask, %0" :: "r"(savedMask) : "memory");
+#endif
+    DebugSessionCapture::physicalClockMotionImmediate(id, observation, guard);
+}
+
+#if MIDI_INGRESS_COST_QUALIFICATION
+CAPTURE_HITL_MEM void printIngressCostForHitl(uint32_t id) {
+    MidiIngress::IngressCostAggregate costs[3]{};
+    const bool idle = physicalMotionStorageIdleForHitl<StorageManager>(
+        trackManager.hasPendingDeferredPlaybackPrewarm());
+#if defined(__IMXRT1062__)
+    uint32_t savedMask;
+    __asm__ volatile("mrs %0, primask\n\tcpsid i" : "=r"(savedMask) :: "memory");
+#endif
+    const uint32_t guard = physicalMotionGuardBitsForHitl(
+        trackManager.physicalMotionGuardForHitl(), clockManager.pendingStart, idle);
+    const bool present = MidiIngress::snapshotCosts(costs);
+    const uint32_t contract = MidiIngress::costContractBits() & (present ? 7u : 5u);
+    const uint32_t cpu = MidiIngress::CostPlatform::cpuHz();
+#if defined(__IMXRT1062__)
+    __asm__ volatile("msr primask, %0" :: "r"(savedMask) : "memory");
+#endif
+    // Fixed snapshot only under mask; all USB output follows restoration.
+    for (uint8_t route = 0; route < 3; ++route) for (uint8_t lane = 0; lane < 4; ++lane)
+        DebugSessionCapture::ingressCostImmediate(id, route, lane, cpu, guard, costs[route].lanes[lane], contract);
+}
+#endif
 
 CAPTURE_HITL_MEM void printSelectedTrackStatusForHitl() {
     // Snapshot only scalar getters while the tick ISR cannot switch the active slot.
@@ -60,6 +110,22 @@ CAPTURE_HITL_MEM void printSelectedTrackStatusForHitl() {
     __asm__ volatile("msr primask, %0" :: "r"(savedMask) : "memory");
 #endif
     (void)DebugSessionCapture::emitTrackStatus(trackIndex, slot, state, transportRunning);
+}
+
+CAPTURE_HITL_MEM void printOverlayStatusForHitl() {
+    // Overlay navigation/persistence scalars are main-loop owned. No SD, cache
+    // refresh, ring traversal or state mutation; this is not a pixel witness.
+    const bool open = looperState.isLoadSaveModeActive();
+    const auto mode = StorageManager::getSetBrowserOverlayMode();
+    const bool dirty = mode == StorageManager::SetBrowserOverlayMode::DirtyPrompt;
+    const uint8_t row = dirty ? StorageManager::getRevisionLoadDirtyPromptSelection()
+                              : displayManager.getLoadSaveListSelection();
+    const uint16_t setId = dirty ? storageSession.revisionLoad.requestedSetId
+                                : StorageManager::getSetBrowserOverlayDrilledSetId();
+    const uint16_t revisionId = dirty ? storageSession.revisionLoad.requestedRevisionId : 0;
+    const auto phase = StorageManager::getSetBrowserOverlayPersistencePhase();
+    (void)DebugSessionCapture::emitOverlayStatus(open, static_cast<uint8_t>(mode), row,
+                                               setId, revisionId, static_cast<uint8_t>(phase));
 }
 
 // Serial line accumulator must live in RAM: processHitlSerialCommands is FLASHMEM and cannot
@@ -677,8 +743,29 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
         }
         if (ch == '\n') {
             sHitlSerialLineBuffer[sHitlSerialLineLength] = '\0';
-            if (processLiveObservationCommand(sHitlSerialLineBuffer, printSelectedTrackStatusForHitl)) {
+            if (processLiveObservationCommand(sHitlSerialLineBuffer, printSelectedTrackStatusForHitl,
+                                               printOverlayStatusForHitl, printPitObservationForHitl,
+                                               printPitMotionForHitl,
+#if MIDI_INGRESS_COST_QUALIFICATION
+                                               printIngressCostForHitl
+#else
+                                               nullptr
+#endif
+                                               )) {
                 // Request-only scalar observations, live and backpressure-safe.
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION
+            } else if (std::strncmp(sHitlSerialLineBuffer, kRollingRecordStatusCommand, 23) == 0) {
+                const char* cursor = sHitlSerialLineBuffer + 23;
+                uint32_t id = 0;
+                bool valid = *cursor != '\0';
+                for (; valid && *cursor; ++cursor) {
+                    if (*cursor < '0' || *cursor > '9') { valid = false; break; }
+                    const uint32_t digit = static_cast<uint32_t>(*cursor - '0');
+                    if (id > (UINT32_MAX - digit) / 10u) { valid = false; break; }
+                    id = id * 10u + digit;
+                }
+                if (valid) Track::printRollingRecordStatus(id);
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CRASH_LOG") == 0 &&
                        !clockManager.isTransportRunning()) {
                 printCrashLogTailForHitl();

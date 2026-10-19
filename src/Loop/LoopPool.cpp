@@ -15,6 +15,9 @@ static_assert(LoopPoolConfig::MAX_LOOPS_PER_TRACK == Config::MAX_LOOPS_PER_TRACK
 #endif
 
 namespace {
+#if defined(PIO_UNIT_TEST_NATIVE)
+void (*loopPoolDestroyObserver)(const Loop*, size_t) = nullptr;
+#endif
 
 void destroyLoopArray(Loop* loops, size_t count) {
   if (loops == nullptr || count == 0) {
@@ -62,9 +65,19 @@ void freeLoopArray(Loop* loops, size_t count) {
 LoopPool::LoopPool() = default;
 
 LoopPool::~LoopPool() {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (loops_ && loopPoolDestroyObserver)
+    loopPoolDestroyObserver(loops_, LoopPoolConfig::MAX_LOOPS_PER_TRACK);
+#endif
   freeLoopArray(loops_, LoopPoolConfig::MAX_LOOPS_PER_TRACK);
   loops_ = nullptr;
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+void LoopPool::setDestroyObserverForTests(void (*observer)(const Loop*, size_t)) {
+  loopPoolDestroyObserver = observer;
+}
+#endif
 
 void LoopPool::ensureInitialized() {
   if (loops_ != nullptr) {

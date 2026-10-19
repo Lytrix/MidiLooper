@@ -94,6 +94,29 @@ enum class SetIndexReconcileOutcome : uint8_t {
     /// The repair was needed but could not be written.
     Failed = 2,
 };
+/// I4 — Set browser index ownership: the catalog index is **ensured once per boot**, before the legacy
+/// SavedSet reconcile repairs its own, separate index. The two owners used to share
+/// `sets/index.bin`/`sets/index.bin.tmp`, so the reconcile's unconditional rewrite of the legacy layout
+/// destroyed the 16-byte catalog index on every boot: the browser listed no Sets and a commit could
+/// allocate set id 1 over an existing Set.
+/// Set once when the catalog index/meta are published, and consumed by the display so the open overlay
+/// re-reads the Set rows instead of serving a stale list (I4 — Set browser freshness).
+void markSetCatalogChangedForDisplay();
+enum class SetCatalogEnsureOutcome : uint8_t {
+    /// The catalog index read back; nothing was written.
+    Ok = 0,
+    /// A still-intact 16-byte index at the legacy path was copied onto the catalog path.
+    Adopted = 1,
+    /// The index was rebuilt from the validated Set folders.
+    Rebuilt = 2,
+    /// The index could not be established; the previous catalog file, if any, is untouched.
+    Failed = 3,
+};
+
+const char* setCatalogEnsureOutcomeName(SetCatalogEnsureOutcome outcome);
+/// Idempotent, bounded (one entry per Set folder, no revision payload opened) and interruption-safe
+/// (temp + rename): `Ok` never writes, and `Failed` never leaves a half-written index.
+SetCatalogEnsureOutcome ensureSetCatalogIndexOnSd();
 
 const char* setIndexReconcileOutcomeName(SetIndexReconcileOutcome outcome);
 /// The named-outcome entry point. `reconcileSetIndexOnSd` remains the compatibility wrapper, returning

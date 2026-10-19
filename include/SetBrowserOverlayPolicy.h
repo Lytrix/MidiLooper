@@ -54,6 +54,38 @@ bool isOverlayLoadRequestBlocked(PersistencePhase phase, bool loadPending,
 /// True when overlay enter should preserve drill navigation (pipeline still running).
 bool shouldPreserveOverlayNavigationOnEnter(PersistencePhase phase);
 
+/// The Set list cache is read through the catalog gate, which can be closed on the frame the overlay opens,
+/// and the catalog can change while the overlay stays open. This is the bounded decision that keeps a
+/// *failed* read from being cached as a successfully read **empty** catalog (I4 — Set browser freshness).
+struct ListRefreshState {
+  /// Attempts that failed to read the catalog, since the last success or catalog change.
+  uint8_t failedAttempts = 0;
+  /// `millis()` of the last attempt; 0 when no attempt has been made.
+  uint32_t lastAttemptMs = 0;
+};
+
+enum class ListRefreshAction : uint8_t {
+  /// Nothing to do: the cache is valid, the overlay is closed, or the retry interval has not elapsed.
+  Idle = 0,
+  /// Read the catalog now.
+  Refresh,
+  /// The catalog gate is closed; wait for a later frame.
+  WaitForGate,
+  /// The attempt budget is exhausted; stop until the catalog changes or the overlay reopens.
+  GiveUp,
+};
+
+/// Failed attempts allowed before a browser session stops retrying an unreadable catalog.
+constexpr uint8_t kListRefreshMaxFailedAttempts = 4;
+/// Minimum spacing between attempts, so a retry never becomes a per-frame SD read.
+constexpr uint32_t kListRefreshRetryIntervalMs = 250;
+
+ListRefreshAction resolveListRefreshAction(bool overlayOpen, bool cacheValid, bool gateAllowed,
+                                          const ListRefreshState& state, uint32_t nowMs);
+
+/// Record an attempt and its result; a successful read resets the budget.
+void applyListRefreshResult(ListRefreshState& state, bool readOk, uint32_t nowMs);
+
 void resetNavigation(NavigationState& nav);
 
 void setEntryKind(NavigationState& nav, EntryKind kind);

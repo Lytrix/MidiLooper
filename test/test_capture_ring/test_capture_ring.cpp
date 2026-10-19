@@ -1,5 +1,7 @@
 // Exercise the production ring, emitters and drain. Only USB serial is substituted.
 #define SESSION_CAPTURE 1
+#define MIDI_INGRESS_RECEIPTS_ENABLED 1
+#define MIDI_INGRESS_COST_QUALIFICATION 1
 #include <Arduino.h>
 #include <cstdarg>
 #include <cstdio>
@@ -9,6 +11,7 @@
 struct CaptureSerial {
   std::string output;
   int room = 4096;
+  int remainingLines = -1; // native I/O pressure after a chosen transmitted row
   int availableForWrite() const { return room; }
   void printf(const char* fmt, ...) {
     char line[512];
@@ -19,7 +22,10 @@ struct CaptureSerial {
     output += line;
   }
   template<class... A> void printf_P(const char* fmt, A... args) { printf(fmt, args...); }
-  void println(const char* line) { output += line; output += "\n"; }
+  void println(const char* line) {
+    output += line; output += "\n";
+    if (remainingLines > 0 && --remainingLines == 0) room = 0;
+  }
 } captureSerial;
 #define Serial captureSerial
 #include "../../src/Utils/DebugSessionCapture.cpp"
@@ -35,11 +41,13 @@ static uint8_t backing[1024];
 void setUp() {
   sCaptureRing = {};
   sCriticalJournal = CriticalJournal{};
+  sCriticalJournalInitialized = false; // model a new boot; poisoned tests overwrite RAM2 below
   sCaptureRing.data = backing;
   sCaptureRing.capacity = sizeof(backing);
   sFlushInProgress = false;
   captureSerial.output.clear();
   captureSerial.room = 4096;
+  captureSerial.remainingLines = -1;
 }
 void tearDown() {}
 
@@ -432,6 +440,13 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                            "the named overrun row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap_overrunx,1"),
                             "and a longer subtag is not swept in");
+  // ...and task 3.15g: the frozen Record-return receipt now carries the root-return adoption diagnostics, so it must
+  // survive the timing-critical flush like the family it appends to.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,1,DIAG,win_frozen_readiness,7,3,adopt_wait,e2_boundary,4,0,2,900000001,0,0,1536,255,0,0"),
+      "the frozen Record-return adoption receipt survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_frozen_readiness_partial,1"),
+                            "and a longer subtag is not swept in");
   // ...and the launch path's **gate row** with them, for the same reason and by its own boundary: the launch's decision
   // is taken under transport (a queued switch is prepared by the off-clock `SlotProvision` turn while the track plays),
   // so a non-Tier-A gate row is shed exactly where it is needed. Measured on device before this entry: the build carried
@@ -552,8 +567,422 @@ void test_live_fence_dispatch_refuses_backpressure_and_invalid_tokens() {
   TEST_ASSERT_TRUE(captureSerial.output.empty());
 }
 
+void test_live_overlay_command_is_recognized_without_track_status_side_effect() {
+  using StorageManagerInternal::processLiveObservationCommand;
+  static bool trackCalled;
+  trackCalled = false;
+  const auto trackReply = [] { trackCalled = true; };
+  TEST_ASSERT_TRUE_MESSAGE(processLiveObservationCommand("!OVERLAY_STATUS", trackReply),
+                           "live overlay scalar command must be recognized");
+  TEST_ASSERT_FALSE(trackCalled);
+  TEST_ASSERT_FALSE(processLiveObservationCommand("!OVERLAY_STATUS 1", trackReply));
+}
+
+void test_live_overlay_snapshot_is_direct_framed_and_preserves_retained_ring() {
+  using StorageManagerInternal::processLiveObservationCommand;
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  const auto trackReply = [] {};
+  const auto overlayReply = [] { (void)emitOverlayStatus(true, 2, 0, 1, 0, 0); };
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", trackReply));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!OVERLAY_STATUS", trackReply, overlayReply));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", trackReply));
+  const size_t start = captureSerial.output.find("TRACE_FENCE,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  const size_t status = captureSerial.output.find("#OVERLAY_STATUS,");
+  const size_t end = captureSerial.output.find("TRACE_FENCE,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  TEST_ASSERT_TRUE(start < status && status < end && end != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("open=1,mode=2,row=0,set=1,rev=0,phase=0") != std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStart.transmitted);
+  flushCaptureBuffer(8);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+}
+
+void test_live_overlay_snapshot_refuses_pressure_then_reports_current_scalars() {
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  captureSerial.room = 127;
+  TEST_ASSERT_FALSE(emitOverlayStatus(true, 2, 0, 1, 0, 0));
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 128;
+  TEST_ASSERT_TRUE(emitOverlayStatus(true, 1, 0, 1, 2, 0));
+  TEST_ASSERT_TRUE(captureSerial.output.find("open=1,mode=1,row=0,set=1,rev=2,phase=0") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("mode=2") == std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+}
+
+void test_live_overlay_snapshot_maximum_fields_fit_declared_tx_cap() {
+  captureSerial.room = 128;
+  TEST_ASSERT_TRUE(emitOverlayStatus(true, 255, 255, 65535, 65535, 255));
+  TEST_ASSERT_LESS_THAN_UINT32(128, captureSerial.output.size() + 10); // micros() may use all 10 digits
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+}
+
+void test_boot_init_clears_poisoned_journal_metadata_without_serial_output() {
+  sCriticalJournal.count = 28374339;
+  sCriticalJournal.dumpIndex = 28374338;
+  sCriticalJournal.dropped = 123;
+  sCriticalJournal.dumpStarted = true;
+  initCaptureBuffer();
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dumpIndex);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dropped);
+  TEST_ASSERT_FALSE(sCriticalJournal.dumpStarted);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+}
+
+void test_repeated_init_keeps_early_rejected_record_journal() {
+  sCriticalJournal.count = 28374339;
+  sCriticalJournal.dumpIndex = 28374338;
+  sCriticalJournal.dumpStarted = true;
+  sCaptureRing.capacity = 1;
+  recStop("stop", 3, 800, 0, 800, 768, false);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.count);
+  initCaptureBuffer();
+  sessionHeader();
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.count);
+  TEST_ASSERT_NOT_NULL(std::strstr(sCriticalJournal.lines[0], ",RECS,stop,3,800,0,800,768,0"));
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RECS,stop,3") != std::string::npos);
+}
+
+void test_bad_journal_metadata_is_refused_and_reported_without_ring_mutation() {
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  initCaptureBuffer();
+  sCriticalJournal.count = 33;
+  sCriticalJournal.dumpIndex = 0;
+  captureSerial.room = 0; // pre-fix path cannot dereference an out-of-range row
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dumpIndex);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.dropped);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedPending);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedTotal);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedTotal);
+  captureSerial.room = 4096;
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,critical_rejected,1,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("critical_journal_begin,count=0,dropped=1") != std::string::npos);
+}
+
+void test_first_stopped_flush_initializes_poisoned_ram2_journal() {
+  sCriticalJournal.count = 28374339;
+  sCriticalJournal.dumpIndex = 28374338;
+  sCriticalJournal.dumpStarted = true;
+  sCriticalJournal.dropped = UINT32_MAX;
+  flushCaptureBuffer(8);
+  TEST_ASSERT_TRUE(captureSerial.output.empty()); // playing path stays no-USB
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dumpIndex);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dropped);
+  TEST_ASSERT_TRUE(sCriticalJournalInitialized);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+}
+
+void test_bad_dump_indices_are_refused_before_reading_a_row() {
+  for (unsigned sample = 0; sample < 3; ++sample) {
+    setUp();
+    initCaptureBuffer();
+    sCriticalJournal.count = sample == 2 ? 28374339 : 1;
+    sCriticalJournal.dumpIndex = sample == 2 ? 28374338 : sample == 0 ? 2 : 1;
+    sCriticalJournal.dumpStarted = sample != 1;
+    captureSerial.room = 0;
+    flushCaptureBuffer(8);
+    TEST_ASSERT_TRUE(captureSerial.output.empty());
+    flushCaptureBuffer(64);
+    TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+    TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dumpIndex);
+    TEST_ASSERT_FALSE(sCriticalJournal.dumpStarted);
+    TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedPending);
+    TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedTotal);
+  }
+}
+
+void test_corrupt_journal_append_and_eviction_refuse_without_indexing() {
+  initCaptureBuffer();
+  sCriticalJournal.count = 1;
+  sCriticalJournal.dumpIndex = 2;
+  journalCriticalLine(reinterpret_cast<const char*>(1)); // refused before even reading input
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.criticalRejectedTotal);
+  recStart(3, 0);
+  const size_t retained = sCaptureRing.used;
+  sCriticalJournal.count = 33;
+  journalCriticalHeadRecord();
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(retained, sCaptureRing.used);
+  TEST_ASSERT_EQUAL_UINT32(2, sCaptureRing.criticalRejectedTotal);
+  journalCriticalHeadRecord();
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.count);
+  TEST_ASSERT_NOT_NULL(std::strstr(sCriticalJournal.lines[0], ",RECA,3,0"));
+}
+
+static size_t occurrences(const std::string& text, const char* needle) {
+  size_t count = 0, pos = 0;
+  while ((pos = text.find(needle, pos)) != std::string::npos) { ++count; ++pos; }
+  return count;
+}
+
+void test_partial_journal_replay_and_reinitialization_preserve_exactly_once_rows() {
+  journalCriticalLine("#CAP,1,RECA,3,0");
+  journalCriticalLine("#CAP,2,RECS,stop,3,768,0,768,768,0");
+  captureSerial.remainingLines = 1;
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.dumpIndex);
+  TEST_ASSERT_EQUAL_UINT32(2, sCriticalJournal.count);
+  TEST_ASSERT_TRUE(sCriticalJournal.dumpStarted);
+  initCaptureBuffer();
+  initCaptureBuffer();
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.dumpIndex);
+  TEST_ASSERT_EQUAL_UINT32(2, sCriticalJournal.count);
+  captureSerial.room = 4096;
+  captureSerial.remainingLines = -1;
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(1, occurrences(captureSerial.output, "#CAP,1,RECA,3,0"));
+  TEST_ASSERT_EQUAL_UINT32(1, occurrences(captureSerial.output, "#CAP,2,RECS,stop,3"));
+  TEST_ASSERT_EQUAL_UINT32(1, occurrences(captureSerial.output, "critical_journal_begin"));
+  TEST_ASSERT_EQUAL_UINT32(1, occurrences(captureSerial.output, "critical_journal_end"));
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.dumpIndex);
+}
+
+void test_full_journal_capacity_and_drop_survive_reinitialization() {
+  for (size_t i = 0; i < kCriticalJournalCapacity; ++i) {
+    journalCriticalLine("#CAP,1,RECA,3,0");
+  }
+  journalCriticalLine("#CAP,2,RECA,3,0");
+  TEST_ASSERT_EQUAL_UINT32(32, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.dropped);
+  initCaptureBuffer();
+  TEST_ASSERT_EQUAL_UINT32(32, sCriticalJournal.count);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.dropped);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(32, occurrences(captureSerial.output, "#CAP,1,RECA,3,0"));
+  TEST_ASSERT_EQUAL_UINT32(0, occurrences(captureSerial.output, "#CAP,2,RECA,3,0"));
+  TEST_ASSERT_TRUE(captureSerial.output.find("critical_journal_begin,count=32,dropped=1") != std::string::npos);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(32, occurrences(captureSerial.output, "#CAP,1,RECA,3,0"));
+}
+
+void test_pit_observation_delivery_tier_and_command_boundaries() {
+  ClockPhysicalObservation observation{};
+  observation.status = 2; observation.era = 2; observation.rawTicks = 4294967300ULL;
+  observation.beforeUs = 178956970; observation.widthUs = 1; observation.cpuHz = 600000000;
+  observation.configBits = 767; observation.epoch = 3; observation.readCycles = 100;
+  physicalClockObservationImmediate(42, observation);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,pit_obs,42,2,2,4294967300,178956970,1,0,3,100,600000000,767,0,0") != std::string::npos);
+  TEST_ASSERT_TRUE(isTierATextLine(captureSerial.output.c_str()));
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,pit_obs,42"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,pit_obsx,42"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,pit_obs,42")); // source-central extension
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+  captureSerial.output.clear(); captureSerial.room = 0;
+  physicalClockObservationImmediate(43, observation);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  TEST_ASSERT_TRUE(sCaptureRing.used > 0);
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,pit_obs,43,") != std::string::npos);
+  captureSerial.output.clear();
+  observation.rawTicks = observation.beforeUs = observation.musicalTick = UINT64_MAX;
+  observation.era = observation.widthUs = observation.epoch = observation.readCycles = observation.cpuHz = UINT32_MAX;
+  observation.configBits = 8191; observation.status = 9; observation.transport = true; observation.source = 1;
+  physicalClockObservationImmediate(UINT32_MAX, observation);
+  TEST_ASSERT_TRUE(captureSerial.output.size() + 9 < 192); // micros=1 fixture vs10digit target maximum
+  TEST_ASSERT_TRUE(captureSerial.output.find(",8191,1,1\r\n") != std::string::npos);
+
+  static uint32_t seen, calls;
+  seen = calls = 0;
+  const auto reply = [](uint32_t id) { seen = id; ++calls; };
+  const auto noTrack = [] { TEST_FAIL_MESSAGE("PIT command must not query Track"); };
+  using StorageManagerInternal::processLiveObservationCommand;
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!PIT_OBSERVE 4294967295", noTrack, nullptr, reply));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, seen); TEST_ASSERT_EQUAL_UINT32(1, calls);
+  for (const char* bad : {"!PIT_OBSERVE ", "!PIT_OBSERVE 4294967296", "!PIT_OBSERVE -1", "!PIT_OBSERVE 1x", "!PIT_OBSERVE 1 "}) {
+    TEST_ASSERT_TRUE(processLiveObservationCommand(bad, noTrack, nullptr, reply));
+    TEST_ASSERT_EQUAL_UINT32(1, calls);
+  }
+}
+
+void test_pit_ring_fallback_can_follow_end_fence_without_losing_request_identity() {
+  using StorageManagerInternal::processLiveObservationCommand;
+  const auto noTrack = [] { TEST_FAIL_MESSAGE("PIT request must not observe Track"); };
+  const auto reply = [](uint32_t id) {
+    ClockPhysicalObservation o{};
+    o.status = 2; o.era = 2;
+    physicalClockObservationImmediate(id, o);
+  };
+  captureSerial.room = 128; // Both96B fences fit;192B PIT row is ring-delayed.
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", noTrack));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!PIT_OBSERVE 17", noTrack, nullptr, reply));
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!TRACE_FENCE bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", noTrack));
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,pit_obs,") == std::string::npos);
+  captureSerial.room = 4096;
+  flushCaptureBuffer(64);
+  const auto end = captureSerial.output.find("TRACE_FENCE,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  const auto row = captureSerial.output.find("DIAG,pit_obs,17,2,2,");
+  TEST_ASSERT_TRUE(end != std::string::npos && row != std::string::npos && end < row);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+}
+
+void test_pit_motion_delivery_tier_parser_and_fit() {
+  ClockPhysicalObservation o{};
+  o.status = 2; o.era = 2; o.periodUs = 2604; o.transport = true;
+  physicalClockMotionImmediate(42, o, 9);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,pit_motion,42,2,2,0,0,0,0,0,2604,9,0,1,0") != std::string::npos);
+  TEST_ASSERT_TRUE(isTierATextLine(captureSerial.output.c_str()));
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,pit_motion,42"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,pit_motionx,42"));
+  captureSerial.output.clear(); captureSerial.room = 128;
+  physicalClockMotionImmediate(43, o, 15);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,pit_motion,43,") != std::string::npos);
+  captureSerial.output.clear();
+  o.rawTicks = o.beforeUs = o.musicalTick = UINT64_MAX;
+  o.era = o.widthUs = o.epoch = o.periodUs = UINT32_MAX;
+  o.configBits = 8191; o.status = 9; o.source = 1;
+  physicalClockMotionImmediate(UINT32_MAX, o, 15);
+  TEST_ASSERT_TRUE(captureSerial.output.size() + 9 < 192);
+  static uint32_t seen, calls;
+  seen = calls = 0;
+  const auto reply = [](uint32_t id) { seen = id; ++calls; };
+  const auto forbidden = [] { TEST_FAIL_MESSAGE("motion must not query selected track"); };
+  using StorageManagerInternal::processLiveObservationCommand;
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!PIT_MOTION 4294967295", forbidden, nullptr, nullptr, reply));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, seen); TEST_ASSERT_EQUAL_UINT32(1, calls);
+  for (const char* bad : {"!PIT_MOTION ", "!PIT_MOTION 4294967296", "!PIT_MOTION -1", "!PIT_MOTION 1x", "!PIT_MOTION 1 "}) {
+    TEST_ASSERT_TRUE(processLiveObservationCommand(bad, forbidden, nullptr, nullptr, reply));
+    TEST_ASSERT_EQUAL_UINT32(1, calls);
+  }
+}
+
+void test_ingress_cost_delivery_tier_parser_and_fit() {
+  MidiIngress::IngressCostStats stats{};
+  stats.accepted = 3; stats.minimumCycles = 10; stats.maximumCycles = 20; stats.sumCycles = 45;
+  ingressCostImmediate(42, 0, 1, 600000000, 15, stats, 7);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,ingress_cost,42,0,1,600000000,15,3,0,10,20,45,0,7\r\n") != std::string::npos);
+  TEST_ASSERT_TRUE(isTierATextLine(captureSerial.output.c_str()));
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,ingress_cost,42"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,ingress_costx,42"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,ingress_cost,42")); // source-central extension
+  captureSerial.output.clear(); captureSerial.room = 128;
+  ingressCostImmediate(43, 2, 3, 600000000, 15, stats, 7);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,ingress_cost,43,2,3,") != std::string::npos);
+  captureSerial.output.clear();
+  stats.accepted = stats.rejected = stats.minimumCycles = stats.maximumCycles = UINT32_MAX;
+  stats.sumCycles = UINT64_MAX; stats.saturated = true;
+  ingressCostImmediate(UINT32_MAX, 2, 3, UINT32_MAX, UINT32_MAX, stats, UINT32_MAX);
+  TEST_ASSERT_TRUE(captureSerial.output.size() + 9 < 192);
+  static uint32_t seen, calls;
+  seen = calls = 0;
+  const auto reply = [](uint32_t id) { seen = id; ++calls; };
+  const auto forbidden = [] { TEST_FAIL_MESSAGE("cost command must not query selected Track"); };
+  using StorageManagerInternal::processLiveObservationCommand;
+  TEST_ASSERT_TRUE(processLiveObservationCommand("!INGRESS_COST 4294967295", forbidden, nullptr, nullptr, nullptr, reply));
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, seen); TEST_ASSERT_EQUAL_UINT32(1, calls);
+  for (const char* bad : {"!INGRESS_COST ", "!INGRESS_COST 4294967296", "!INGRESS_COST -1", "!INGRESS_COST 1x", "!INGRESS_COST 1 "}) {
+    TEST_ASSERT_TRUE(processLiveObservationCommand(bad, forbidden, nullptr, nullptr, nullptr, reply));
+    TEST_ASSERT_EQUAL_UINT32(1, calls);
+  }
+  TEST_ASSERT_FALSE(processLiveObservationCommand("!INGRESS_COSTX 1", forbidden, nullptr, nullptr, nullptr, reply));
+}
+
+void test_rolling_record_tier_exact_prefix_and_max_timestamp_fit() {
+  const char* row = "#CAP,4294967295,DIAG,rolling_record,4294967295,0,0,1";
+  TEST_ASSERT_TRUE(isTierATextLine(row));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(row)); // .cpp extension, no header literal.
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,rolling_recordx,1"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,rolling_record"));
+  TEST_ASSERT_FALSE(isTierATextLine("DIAG,rolling_record,1"));
+  char head[48]{};
+  std::memcpy(head, row, 47);
+  TEST_ASSERT_TRUE(isTierATextLine(head)); // Actual ring classification head bound.
+}
+
+void test_playback_read_mailbox_preserves_time_cadence_and_tier_without_usb_on_edge() {
+  PlaybackReadWitness row{};
+  row.atUs = 1000000; row.tick = 100; row.generation = 5; row.storageGeneration = 29;
+  row.start = 768; row.length = 768; row.period = 1536; row.phase = 1024;
+  row.track = 7; row.slot = 3; row.origin = 2;
+  observePlaybackRead(row);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used); // scalar mailbox, not formatting or allocation
+  flushCaptureBuffer(8);
+  TEST_ASSERT_TRUE(captureSerial.output.empty()); // timing-critical foreground budget never writes USB
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.used);
+  flushCaptureBuffer(64);
+  const auto first = captureSerial.output;
+  TEST_ASSERT_TRUE(first.find("#CAP,1000000,DIAG,playback_read,1,7,3,100,5,29,2,768,768,1536,1024") != std::string::npos);
+  row.atUs += 100000; ++row.tick;
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_STRING(first.c_str(), captureSerial.output.c_str());
+  row.atUs = 1250000; ++row.tick;
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.size() > first.size());
+  const auto second = captureSerial.output;
+  row.atUs += 250000; // a repeated tick is not reader progress
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_STRING(second.c_str(), captureSerial.output.c_str());
+  ++row.tick; row.storageGeneration = 0;
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_STRING(second.c_str(), captureSerial.output.c_str());
+  row.storageGeneration = 29; row.generation = 0; row.origin = 3;
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_STRING(second.c_str(), captureSerial.output.c_str());
+  row.origin = 2;
+  for (unsigned i = 0; i < 100; ++i)
+    queueCaptureTextLine("#CAP,1,DIAG,win_gap,full,full,full,full,full,full,full,full");
+  observePlaybackRead(row);
+  TEST_ASSERT_TRUE(sPlaybackReads[7][3].pending);
+  flushCaptureBuffer(8); // pre-walk enqueue must progress even with a retained Tier-A head
+  TEST_ASSERT_FALSE(sPlaybackReads[7][3].pending);
+  TEST_ASSERT_FALSE(sFlushInProgress);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("#CAP,1500000,DIAG,playback_read,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find(",0,29,2,768,768,1536,1024") != std::string::npos);
+  const char* prefix = "#CAP,4294967295,DIAG,playback_read,1,7,3,1";
+  TEST_ASSERT_TRUE(isTierATextLine(prefix));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,playback_reader,1"));
+  char head[48]{}; std::memcpy(head, prefix, std::min<size_t>(47, std::strlen(prefix)));
+  TEST_ASSERT_TRUE(isTierATextLine(head));
+  row.atUs += 250000; ++row.tick; row.availableOnly = true;
+  observePlaybackRead(row); flushCaptureBuffer(64); // Capture origin cannot claim current-root availability
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,playback_available,") == std::string::npos);
+  row.origin = 0; row.storageGeneration = 2;
+  observePlaybackRead(row); flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("#CAP,1750000,DIAG,playback_available,1,") != std::string::npos);
+  const char* availablePrefix = "#CAP,4294967295,DIAG,playback_available,1,7,3";
+  TEST_ASSERT_TRUE(isTierATextLine(availablePrefix));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,playback_availables,1"));
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_playback_read_mailbox_preserves_time_cadence_and_tier_without_usb_on_edge);
+  RUN_TEST(test_rolling_record_tier_exact_prefix_and_max_timestamp_fit);
+  RUN_TEST(test_ingress_cost_delivery_tier_parser_and_fit);
+  RUN_TEST(test_pit_motion_delivery_tier_parser_and_fit);
+  RUN_TEST(test_pit_ring_fallback_can_follow_end_fence_without_losing_request_identity);
+  RUN_TEST(test_pit_observation_delivery_tier_and_command_boundaries);
+  RUN_TEST(test_first_stopped_flush_initializes_poisoned_ram2_journal);
+  RUN_TEST(test_bad_dump_indices_are_refused_before_reading_a_row);
+  RUN_TEST(test_corrupt_journal_append_and_eviction_refuse_without_indexing);
+  RUN_TEST(test_partial_journal_replay_and_reinitialization_preserve_exactly_once_rows);
+  RUN_TEST(test_full_journal_capacity_and_drop_survive_reinitialization);
+  RUN_TEST(test_boot_init_clears_poisoned_journal_metadata_without_serial_output);
+  RUN_TEST(test_repeated_init_keeps_early_rejected_record_journal);
+  RUN_TEST(test_bad_journal_metadata_is_refused_and_reported_without_ring_mutation);
+  RUN_TEST(test_live_overlay_snapshot_is_direct_framed_and_preserves_retained_ring);
+  RUN_TEST(test_live_overlay_snapshot_refuses_pressure_then_reports_current_scalars);
+  RUN_TEST(test_live_overlay_snapshot_maximum_fields_fit_declared_tx_cap);
+  RUN_TEST(test_live_overlay_command_is_recognized_without_track_status_side_effect);
   RUN_TEST(test_production_live_dispatch_frames_stopped_and_playing_status_without_ring_flush);
   RUN_TEST(test_live_fence_dispatch_refuses_backpressure_and_invalid_tokens);
   RUN_TEST(test_live_track_status_is_direct_and_does_not_flush_retained_evidence);

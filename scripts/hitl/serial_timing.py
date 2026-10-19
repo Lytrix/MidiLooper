@@ -208,6 +208,7 @@ def _pair_overdub_sessions(
 
     human_overdub_starts: list[int] = []
     human_overdub_stops: list[int] = []
+    reentry_window_stops: list[int] = []
     odub_enter_stops: list[int] = []
     for index, line in enumerate(lines):
         if index < start_index:
@@ -220,29 +221,36 @@ def _pair_overdub_sessions(
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
                 human_overdub_stops.append(ts)
-        # The production overdub stop is a **deferred** job, so it never logs `Overdubbing stopped`:
-        # it admits the stop (`Reentry window open slot=`) and completes it when the retiring owner
-        # releases the canonical capture (`Reentry released slot=N generation=G`). Those are the ends
-        # of the phase window in the shape the device actually emits, and `_next_unused_stop` takes
-        # the earliest match, so the admission line is the precise one. Without them a run whose
-        # `#CAP,ST,Track,OVERDUBBING,OVERDUB_STOPPING` / `…,OVERDUB_STOPPING,PLAYING` rows were
-        # dropped by the capture ring had no overdub stop at all, which surfaced as
-        # `missing_phase_boundaries` and then as a firmware contradiction once the transition counts
-        # were read correctly (`captures/s4f22-base-device-14`).
-        if "Reentry window open slot=" in line or "Reentry released slot=" in line:
+        # A generic release retires Record or an earlier overdub job; it does not
+        # close the current input interval. Reentry-window text is only a fallback
+        # when typed ST/ODUB or explicit overdub-stop evidence is unavailable.
+        if "Reentry window open slot=" in line:
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
-                human_overdub_stops.append(ts)
+                reentry_window_stops.append(ts)
         if "#CAP," in line and ",ODUB,stop,enter" in line:
             ts = _cap_ts(line)
             if ts is not None:
                 odub_enter_stops.append(ts)
 
-    overdub_stops = sorted(set(st_overdub_stops + human_overdub_stops + odub_enter_stops))
+    typed_stops = sorted(set(st_overdub_stops + odub_enter_stops))
+    explicit_stops = sorted(set(human_overdub_stops))
+    fallback_stops = sorted(set(reentry_window_stops))
+    overdub_stops = sorted(set(typed_stops + explicit_stops))
+    def matching_stop(start_ts: int) -> Optional[int]:
+        # Bound both machine and human starts; near-duplicate markers belong
+        # to the same session under the existing phase-session slop.
+        next_start = min((ts for ts in st_overdub_starts + human_overdub_starts
+                          if ts > start_ts + _PHASE_SESSION_SLOP_US), default=None)
+        for candidates in (typed_stops, explicit_stops, fallback_stops):
+            stop_ts = _next_unused_stop(start_ts, candidates, used_overdub_stops)
+            if stop_ts is not None and (next_start is None or stop_ts < next_start):
+                return stop_ts
+        return None
     overdub_sessions: list[tuple[int, int]] = []
     used_overdub_stops: set[int] = set()
     for start_ts in st_overdub_starts:
-        stop_ts = _next_unused_stop(start_ts, overdub_stops, used_overdub_stops)
+        stop_ts = matching_stop(start_ts)
         if stop_ts is None:
             continue
         overdub_sessions.append((start_ts, stop_ts))
@@ -250,7 +258,7 @@ def _pair_overdub_sessions(
     for start_ts in human_overdub_starts:
         if _session_covers_start(start_ts, overdub_sessions):
             continue
-        stop_ts = _next_unused_stop(start_ts, overdub_stops, used_overdub_stops)
+        stop_ts = matching_stop(start_ts)
         if stop_ts is None:
             continue
         overdub_sessions.append((start_ts, stop_ts))

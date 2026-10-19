@@ -15,8 +15,10 @@ from hitl.control_constants import (
     EDIT_BUTTON_NOTE,
     PLAY_STOP_BUTTON_NOTE,
     RECORD_BUTTON_NOTE,
+    GLOBAL_TRANSPORT_NOTE,
+    TRACK_BUTTON_NOTE,
 )
-from hitl.midi_io import _send_multi_short_press, _send_short_press
+from hitl.midi_io import _send_long_press, _send_multi_short_press, _send_short_press
 
 
 def _press_kind(count: int) -> str:
@@ -84,3 +86,29 @@ def press_undo(action_ctx: ActionContext, *, count: int = 1, press_ms: int | Non
     )
     record_send(correlate, note=RECORD_BUTTON_NOTE, kind=_press_kind(count),
                 before_device_us=before_device_us)
+
+
+def press_edit_double(action_ctx: ActionContext) -> None:
+    """Double EDIT: toggle load/save overlay; caller proves the precondition."""
+    _send_multi_short_press(action_ctx.out_port, note=EDIT_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED, press_ms=action_ctx.config.press_ms,
+        count=2, gap_ms=80)
+
+
+def press_overlay_up(action_ctx: ActionContext) -> None:
+    """Global TRACK short: scroll overlay upward, clamped at row zero."""
+    _send_short_press(action_ctx.out_port, note=TRACK_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED, press_ms=action_ctx.config.press_ms)
+
+
+def press_transport(action_ctx: ActionContext) -> None:
+    """Global transport toggle; caller must prove current running state first."""
+    _send_short_press(action_ctx.out_port, note=GLOBAL_TRANSPORT_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED, press_ms=action_ctx.config.press_ms)
+
+
+def press_edit_long(action_ctx: ActionContext) -> None:
+    """Global EDIT long: exit note edit if closed, or overlay history/back; caller proves context."""
+    from hitl.actions.slots import DEFAULT_LONG_PRESS_MS
+    _send_long_press(action_ctx.out_port, note=EDIT_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED, press_ms=DEFAULT_LONG_PRESS_MS)

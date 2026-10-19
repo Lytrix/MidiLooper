@@ -1,0 +1,40 @@
+{
+  "ok": false,
+  "verdict": "FAIL",
+  "limitations": {
+    "scope": "Conditional instrumented observations only: not uninstrumented time, WCET, full receiver/IRQ cost or target readiness",
+    "hook": "Includes enabled inner probes and their first publication; excludes wrapper prologue/epilogue and final publication",
+    "publication": "Publication self-accounting tail excluded/unmeasured; additional overhead remains",
+    "mask": "Conservative bracket includes endpoint/sampling/preemption costs, not exclusive IRQ-off cycles",
+    "continuity": "Continuous Run-mode/DWT and gross rate bound are an ASSUMPTION; matching Ready/era endpoints cannot establish unseen continuity",
+    "host": "Absolute-deadline helper records host send calls only; no wire-arrival/pacing guarantee, calibrated ppm or independent calibration",
+    "statistics": "Lifetime min/max only, never subtracted; only counts/sums are per-leg deltas. Packet count is not Clock count",
+    "routes": "DIN and USB-host NOT RUN: no physical fixture, not qualified",
+    "persistence": "Automatic persistence possible; no content/Start/slot/save/load/delete gestures; no SD byte-immutability claim",
+    "shutdown": "Outer managed DeviceSession owns serial, two Stops/drains, postflight and safety latch; scenario verdict is conditional on outer success",
+    "delivery": "Exact fences plus available request tail checked; future delivery beyond bounded observation window is unproven"
+  },
+  "legs": [
+    {
+      "bpm": 120
+    }
+  ],
+  "issues": [
+    "RuntimeError: fresh_stopped_status_missing"
+  ],
+  "observations": [],
+  "guards": [],
+  "preflights": [],
+  "stimulus": "STIM-INGRESS-COST-TEMP-01@v1",
+  "other_routes": {
+    "1": "NOT RUN: no DIN fixture; not qualified",
+    "2": "NOT RUN: no USB-host fixture; not qualified"
+  },
+  "options": {
+    "ingress_cost_mode": "smoke",
+    "ingress_cost_settle_s": 0.2,
+    "ingress_cost_stable_budget_s": 6,
+    "ingress_cost_max_run_s": 60
+  },
+  "duration_s": 2
+}

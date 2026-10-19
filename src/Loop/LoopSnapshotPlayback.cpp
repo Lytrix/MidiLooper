@@ -4,6 +4,8 @@
 #include "Loop.h"
 
 #include "CommittedEventRange.h"
+#include <array>
+#include "LoopInternal.h"
 #include "EditApply.h"
 #include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
@@ -179,9 +181,64 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
 
 }  // namespace
 
+namespace {
+
+/// DEC-143 -- the record stop closure policy, applied only where the served window **is** the loop. Inside a
+/// whole-loop window a note-on with no off genuinely has no off left in the loop, so it is closed with one synthetic
+/// off at the loop end carrying the on's own identity: the same rule
+/// `RuntimePlaybackView::projectRawCoverageToLoopLength` applies to a Record window, so the overlay and the frozen
+/// reader cannot disagree about what a held note means. A partial window closes nothing -- its off may still be in a
+/// later window, exactly as committed content is treated there.
+void closeRecordOverlayLanesAtLoopEnd(SessionMidiEventVec& events, uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  constexpr size_t kOverlayChannels = 16;
+  constexpr size_t kOverlayNotes = 128;
+  constexpr size_t kOverlayLaneWords = (kOverlayChannels * kOverlayNotes) / 64;
+  static_assert(kOverlayLaneWords * 64 >= kOverlayChannels * kOverlayNotes,
+                "the overlay lane map covers the MIDI domain");
+  std::array<uint64_t, kOverlayLaneWords> closed{};
+  SessionMidiEventVec closures;
+  for (size_t i = events.size(); i-- > 0;) {
+    const MidiEvent& event = events[i];
+    if (!event.isNoteOn() && !event.isNoteOff()) {
+      continue;
+    }
+    if (event.channel == 0 || event.channel > kOverlayChannels ||
+        event.data.noteData.note >= kOverlayNotes) {
+      continue;
+    }
+    const size_t lane =
+        static_cast<size_t>(event.channel - 1) * kOverlayNotes + event.data.noteData.note;
+    const uint64_t bit = static_cast<uint64_t>(1) << (lane & 63u);
+    uint64_t& word = closed[lane >> 6];
+    if (event.isNoteOff()) {
+      word |= bit;
+      continue;
+    }
+    if ((word & bit) != 0) {
+      word &= ~bit;
+      continue;
+    }
+    MidiEvent terminal =
+        MidiEvent::NoteOff(loopLengthTicks - 1, event.channel, event.data.noteData.note, 0);
+    terminal.noteId = event.noteId;
+    closures.push_back(terminal);
+    word |= bit;
+  }
+  if (closures.empty()) {
+    return;
+  }
+  events.insert(events.end(), closures.begin(), closures.end());
+}
+
+}  // namespace
+
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
-    SnapshotWindowGatherPath* pathOut, uint32_t* inspectedEntriesOut) const {
+    SnapshotWindowGatherPath* pathOut, uint32_t* inspectedEntriesOut,
+    bool publishedRecordOverlay) const {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   if (!gatherDestinationIsWritable(this, out, "snapshot_window")) {
     if (pathOut != nullptr) {
@@ -192,13 +249,107 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
 #endif
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
   if (!snapshot) {
-    if (pathOut != nullptr) {
-      *pathOut = SnapshotWindowGatherPath::None;
+    // **DEC-143 — a published Record slice is read material before its root publishes.** The caller has stated that
+    // this slot's Record take crossed the immutable `RecordPublished` edge (Track owns that edge; the Loop sees only
+    // the extent it is already required to read). The window is then filled from that take's **sealed extent** alone:
+    // never from mutable `capture.store` rows -- the mutability rule 224719 protects, which this branch does not touch
+    // -- and never from a pass's chunk-id list, whose ids undo/redo can recycle while the presentation is still the
+    // active reader (the form withdrawn on the device). The extent arrives as this Loop's own read borrow, keyed on
+    // the presentation record's identity, and `CaptureRange::read` revalidates the generation, the pool occupant and
+    // the seal on every row, so a read here cannot follow a recycled chunk. The branch reports `RecordOverlay` so
+    // callers and telemetry can tell it from a published root, and it is superseded the moment a root supplies the
+    // same window (`Snapshot` below), so nothing is ever merged twice.
+    const LoopEventStore::CaptureRange* publishedRecordExtent = nullptr;
+    if (publishedRecordOverlay) {
+      const CaptureReadSource readSource = captureReadSource();
+      if (readSource.finalizingReady()) {
+        publishedRecordExtent = readSource.finalizing;
+      }
     }
+    // The extent is not the only gate: **undo inside this window disables the pass** (`setCapturePassState`) and bumps
+    // the revision, so an extent that is still sealed would keep an undone take sounding until a root republished
+    // without it. The publication state cannot express that -- the pass state can -- so a take that is no longer the
+    // active Record material is refused here and the caller keeps its own miss.
+    const bool recordTakeStillCurrent =
+        !passes.hasRecordPass() || passes.recordPass.state == CapturePassState::Active;
+    if (publishedRecordExtent != nullptr && !recordTakeStillCurrent) {
+      publishedRecordExtent = nullptr;
+    }
+    if (publishedRecordExtent == nullptr) {
+      if (pathOut != nullptr) {
+        *pathOut = SnapshotWindowGatherPath::None;
+      }
+      if (inspectedEntriesOut != nullptr) {
+        *inspectedEntriesOut = 0;
+      }
+      return false;
+    }
+    out.clear();
+    uint32_t overlayStart = windowStart;
+    uint32_t overlayLength = windowLength;
+    if (loopLengthTicks == 0 || overlayLength == 0) {
+      if (pathOut != nullptr) {
+        *pathOut = SnapshotWindowGatherPath::None;
+      }
+      return false;
+    }
+    const bool wholeLoopWindow = overlayLength >= loopLengthTicks;
+    if (wholeLoopWindow) {
+      overlayStart = 0;
+      overlayLength = loopLengthTicks;
+    }
+    const uint32_t overlayEnd = overlayStart + overlayLength;
+    // Row by row through the sealed descriptor -- the access the frozen Record window and the settled-capture readers
+    // already use, bounded by the captured end of the extent rather than by a live extent. The record stop projection
+    // is the same one the canonical Record window applies, so a wrapped take cannot arrive out of the loop.
+    const uint64_t extentGeneration = publishedRecordExtent->generation();
+    const size_t extentChunks = publishedRecordExtent->chunkCount();
+    bool extentReadable = true;
+    for (size_t chunkIndex = 0; chunkIndex < extentChunks && extentReadable; ++chunkIndex) {
+      for (uint16_t eventIndex = 0;; ++eventIndex) {
+        MidiEvent event{};
+        bool atEnd = false;
+        if (!publishedRecordExtent->read(extentGeneration, chunkIndex, eventIndex, event, atEnd)) {
+          extentReadable = false;
+          break;
+        }
+        if (atEnd) break;
+        if (!LoopEventStore::projectRecordStopTick(event, loopLengthTicks)) continue;
+        if (event.tick < overlayStart || event.tick >= overlayEnd) continue;
+        out.push_back(event);
+      }
+    }
+    if (!extentReadable) {
+      // A row that cannot be read (the extent was released, its generation moved, a chunk left the pool) makes the
+      // whole window a miss rather than a truncated success: half a take is worse than holding the miss until the root
+      // publishes.
+      out.clear();
+      if (pathOut != nullptr) {
+        *pathOut = SnapshotWindowGatherPath::None;
+      }
+      return false;
+    }
+    if (out.empty()) {
+      // An empty extent is not a served window; the caller keeps its own miss rather than a silent success.
+      if (pathOut != nullptr) {
+        *pathOut = SnapshotWindowGatherPath::None;
+      }
+      return false;
+    }
+    sortSessionEventsByTick(out);
+    if (wholeLoopWindow) {
+      closeRecordOverlayLanesAtLoopEnd(out, loopLengthTicks);
+      sortSessionEventsByTick(out);
+    }
+    // No snapshot membership was walked, so nothing is charged to the window-preparation inspection bound: the
+    // overlay's own cost is the extent walk over this take's rows, which is the subject of that bound.
     if (inspectedEntriesOut != nullptr) {
       *inspectedEntriesOut = 0;
     }
-    return false;
+    if (pathOut != nullptr) {
+      *pathOut = SnapshotWindowGatherPath::RecordOverlay;
+    }
+    return true;
   }
 
   gatherPublishedSnapshotMembership(*snapshot, out, windowStart, windowLength, inspectedEntriesOut);

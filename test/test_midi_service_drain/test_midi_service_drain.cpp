@@ -760,6 +760,79 @@ void test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_b
                              "the more urgent holder has the *larger* handoff phase: phase order is not urgency");
   }
 }
+// Boundary seam only: query answers and worker-call count, no modelled persistence FSM.
+struct PersistenceAdmissionProbe {
+  inline static bool workspace = false, commit = false, load = false, chunks = false, priority = false;
+  inline static unsigned calls = 0;
+  static bool hasDeferredSaveWork() { return workspace; }
+  static bool hasRevisionCommitWork() { return commit; }
+  static bool hasRevisionLoadWork() { return load; }
+  static bool hasQueuedCaptureChunksToPersist() { return chunks; }
+  static bool shouldPrioritizeWorkspaceSaveDrain() { return priority; }
+  static void processDeferredSaveState(int) { ++calls; }
+  static void reset() { workspace = commit = load = chunks = priority = false; calls = 0; }
+};
+
+void test_revision_commit_and_load_each_admit_the_existing_persistence_owner() {
+  using namespace MidiServiceDrain;
+  for (unsigned source = 0; source < 3; ++source) {
+    PersistenceAdmissionProbe::reset();
+    PersistenceAdmissionProbe::workspace = source == 0;
+    PersistenceAdmissionProbe::commit = source == 1;
+    PersistenceAdmissionProbe::load = source == 2;
+    TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Snapshot, true, false, 0, false, false));
+    TEST_ASSERT_TRUE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, true, false, 0, false, false));
+    TEST_ASSERT_EQUAL_UINT32(1, PersistenceAdmissionProbe::calls);
+  }
+  PersistenceAdmissionProbe::reset();
+  TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+      0, DeferredIdleOwner::Persistence, true, false, 0, false, false));
+  TEST_ASSERT_EQUAL_UINT32(0, PersistenceAdmissionProbe::calls);
+}
+
+void test_revision_admission_keeps_timing_denials_and_chunk_route() {
+  using namespace MidiServiceDrain;
+  for (unsigned source = 0; source < 3; ++source) {
+    PersistenceAdmissionProbe::reset();
+    PersistenceAdmissionProbe::workspace = source == 0;
+    PersistenceAdmissionProbe::commit = source == 1;
+    PersistenceAdmissionProbe::load = source == 2;
+    TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, false, false, 0, false, false));
+    TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, true, true, 15000, false, false));
+    TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, true, true, 0, true, false));
+    TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, true, true, 0, false, true));
+    TEST_ASSERT_EQUAL_UINT32(0, PersistenceAdmissionProbe::calls);
+    TEST_ASSERT_TRUE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+        0, DeferredIdleOwner::Persistence, true, true, 14999, false, false));
+  }
+  PersistenceAdmissionProbe::reset();
+  PersistenceAdmissionProbe::chunks = true;
+  TEST_ASSERT_TRUE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+      0, DeferredIdleOwner::Snapshot, false, true, 15000, true, true));
+  TEST_ASSERT_EQUAL_UINT32(1, PersistenceAdmissionProbe::calls);
+}
+
+void test_only_idle_workspace_priority_bypasses_owner_gate() {
+  using namespace MidiServiceDrain;
+  PersistenceAdmissionProbe::reset();
+  PersistenceAdmissionProbe::workspace = PersistenceAdmissionProbe::priority = true;
+  PersistenceAdmissionProbe::commit = PersistenceAdmissionProbe::load = true;
+  TEST_ASSERT_TRUE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+      0, DeferredIdleOwner::Snapshot, false, false, 15000, true, true));
+  TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+      0, DeferredIdleOwner::Snapshot, false, true, 15000, true, true));
+  PersistenceAdmissionProbe::reset();
+  PersistenceAdmissionProbe::commit = true;
+  TEST_ASSERT_FALSE(serviceDeferredPersistenceTurn<PersistenceAdmissionProbe>(
+      0, DeferredIdleOwner::Snapshot, false, false, 0, false, false));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_prework_prioritizes_runnable_visual_work);
@@ -806,5 +879,8 @@ int main() {
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
   RUN_TEST(test_allow_snapshot_construction_start_before_first_root_session_exit);
   RUN_TEST(test_visual_cache_reconstruct_slice_off_during_overdub);
+  RUN_TEST(test_revision_commit_and_load_each_admit_the_existing_persistence_owner);
+  RUN_TEST(test_revision_admission_keeps_timing_denials_and_chunk_route);
+  RUN_TEST(test_only_idle_workspace_priority_bypasses_owner_gate);
   return UNITY_END();
 }

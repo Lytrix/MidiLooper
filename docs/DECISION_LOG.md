@@ -14,6 +14,14 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-143](#dec-143--a-published-record-slice-is-read-material-before-its-root-publishes) | 2026-10-19 | A published Record slice is read material before its root publishes: temporary overlay keyed to the publication edge, sourced from the presentation's sealed extent; mutable capture still excluded | Accepted; implemented and native/build verified, device half open |
+| [DEC-142](#dec-142--record-presentation-lifetime-split) | 2026-10-19 | Record presentation lifetime split: immutable publication releases interaction FIFO, frozen readers retire independently | Accepted owner-approved implementation; native/review/resource evidence recorded, latest device gate pending |
+| [DEC-141](#dec-141--the-matched-terminals-two-unsatisfiable-terms-are-replaced-by-measured-ones-and-the-leg-passes-on-hardware) | 2026-10-17 | The matched terminal's two unsatisfiable terms are replaced by measured ones, and the leg passes on hardware | Accepted and implemented — leg PASSES on the device; supersedes DEC-138's era and live-token terms |
+| [DEC-140](#dec-140--the-unadopted-frozen-capture-successor-is-bounded-the-matched-recordpublished-stall-is-found-and-fixed) | 2026-10-17 | The unadopted frozen-Capture successor is bounded: the matched `RecordPublished` stall is found and fixed | Accepted and implemented — native RED→GREEN and device-verified; supersedes DEC-139's "cause unknown" |
+| [DEC-139](#dec-139--the-matched-one-bar-recordpublished-retirement-is-sound-in-isolation-the-device-stall-needs-state-this-shape-does-not-carry) | 2026-10-17 | The matched one-bar `RecordPublished` retirement is sound in isolation: the device stall needs state this shape does not carry | Accepted as a diagnostic exclusion — reproducer green and red-proved; no firmware change, device cause still unknown |
+| [DEC-138](#dec-138--the-non-truncating-stop-terminal-is-the-preserved-reader-and-the-recipe-covers-each-stop-class-from-its-own-leg) | 2026-10-17 | The non-truncating Stop terminal is the preserved reader (the equality form was unsatisfiable on hardware), and the recipe's coverage is leg-attributed with a matched leg | Accepted — host tooling implemented, red-proved and sweep-baselined; the matched leg's device run is owed |
+| [DEC-137](#dec-137--the-held-leg-stop-oracle-is-dec-136-aware-the-frozen-serving-phase-the-root-return-and-the-release-edge) | 2026-10-17 | The held-leg Stop oracle is DEC-136 aware: the frozen serving phase, the root return, the release edge, and the stranding signature kept as its discriminator | Accepted — host tooling implemented, red-proved and sweep-baselined; device evidence unchanged |
+| [DEC-136](#dec-136--private-committed-root-preparation-before-capture-ready-adoption) | 2026-10-16 | Private committed-root preparation before Capture-ready adoption: a position-free route for the one demand the ordinary envelope can never admit | Accepted implementation decision; native gate open, device gate open |
 | [DEC-117](#dec-117--the-s75a-continuity-envelope-declared-limits-the-three-level-input-criterion-and-the-declared-active-set) | 2026-10-11 | S7.5a continuity envelope: signed limits, the p99-per-five-second-window input criterion, and the declared active set | Accepted — owner-signed criterion; no qualifying run, S7.5a unchecked |
 | [DEC-116](#dec-116--one-rolling-playback-path-per-sounding-slot) | 2026-10-07 | One rolling playback path per sounding slot; source-specific inputs, one window owner/reader | Accepted design target — supersedes DEC-108 item 2 / D6 representation split; implementation and device gates open |
 | [DEC-096](#dec-096--slot-gestures-during-pending-overdub-finalization-select-instead-of-undo-or-clear) | 2026-09-30 | During pending overdub finalization, a slot gesture selects/queues a populated target or arms an empty one; it never clears or undoes | Accepted; host/native/build verified; device attempts SETUP_INCOMPLETE; S4f.22 open |
@@ -6685,6 +6693,8 @@ Extend the **existing** `Track`/`LoopPlaybackRuntime` playback owner and fixed v
 
 [`windowed-playback-generation`](../openspec/changes/windowed-playback-generation/) owns the playback builder/reader migration, source-specific adapters, role transitions, parity and timing gates; [`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/) owns active-role lease scaling and end-to-end continuity under contention. The companion [`architecture reassessment`](../openspec/changes/windowed-playback-generation/ARCHITECTURE-REASSESSMENT.md) records the changed scope. Use fixture-first slices: freeze identical ordered MIDI/ledger traces for short and long loops, Record return, overdub, layered/jam and NOTE_EDIT (including preview undo/exit); migrate source adapters and one reader through production entry/owner/edge; prove clock/tempo/phase deadlines and RAM1/PSRAM/LoopPool envelope on device; only then retire old pair/fixed/merged/paged **reader branches**, keeping a cold parity oracle. Temporary adapters must have one owner and an explicit removal trigger. The prior 3.7a production integration and 3.7c first-window code are transitional evidence, not proof that this target has shipped. **No task checkbox, bound-class reclassification, device acceptance or fallback removal is conferred by this decision.**
 
+---
+
 ## DEC-117 — The S7.5a continuity envelope: declared limits, the three-level input criterion and the declared active set
 
 **Date:** 2026-10-11; representation corrected on owner request after I2 — timing-table review.
@@ -6732,3 +6742,1472 @@ The numerical/workload decision is recorded; **qualification is not complete**. 
 - DEC-100 — reported envelope; DEC-108 — window scheduling/clock assumptions; DEC-043 — execution-bound classification.
 
 ---
+
+## DEC-118 — Bounded forward save serialization
+
+**Date / owner:** 2026-10-12 — StorageManager / existing LSV1 save continuation
+**Status:** Accepted; stopped checkpoint workload hardware timing/cohort verified with owner-acceptable wait; broader envelope unqualified
+
+### Problem
+
+I4 checkpoint02 took44.656534s;41LSV1 tails consumed40.289918s. Full pitch/bar scanning spent19,456visits in20,566servicecalls, including null buckets. Revision layout serialized all included loops to measure, and512-byte tail writes replayed their emitted prefix. See [I4 — trace](Runtime/I4_SLOW_SAVE_TRACE.md).
+
+### Decision
+
+Extend existing save owners only. One LSV1 gather grain may inspect at most16 membership buckets/pages and process at mostone populated page; maxGrains1, main-owner cadence and time budgets remain unchanged. This fixed metadata cap changes the row14 indivisible unit, not its empirical bound class or timing guarantees. Reuse existing scalar payload phase/record/bar/byte cursors for a forward-only≤512-byte slice; local fixed output storage, no new resident buffer/cache. A failed sink does not acknowledge logical cursor/byte progress.
+
+Revision layout keeps occupied identities with private length placeholders; actual body serialization establishes each length, patches its private chunk header, restores append position and yields. Directory/footerCRC/validate/catalog/COMPLETE run only afterward. CRC conventions, source admission, published state and storage format remain unchanged. No corrupted/partial private body is publication.
+
+### Rationale / alternatives
+
+Fixed metadata batching eliminates empty-bucket owner-turn amplification without an unbounded scan. Persistent scalar traversal eliminates prefix replay. Backpatching lengths eliminates serialize-to-measure duplication without changing format or introducing a second gathered cache. Raising slice budgets, removing yields, omitting snapshot tails or copying an unqualified persisted source are not this implementation: they would weaken MIDI bounds or source correctness.
+
+### Affected modules and constraints
+
+StorageLoopIoBodyFormatV1, RevisionCommit, existing native storage fixtures; ExecutionBounds row14 updated in the same slice. Existing shared scratch owns progress and is reset at loop/job boundaries. Header-patch failure must not publish catalog/provenance; exact old monolithic bytes, source identities, streamed CRC and commit/load parity are required. Native work reduction is not device latency qualification; no seconds target declared here.
+
+### Related OpenSpec / migration
+
+set-revision-persistence — immutable packed revision / same deferred FSM. No SD migration/new Manager/new queue. [I4 — execution packet](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/SERIALIZER-OPTIMIZATION.md).
+
+### Hardware observation (2026-10-12)
+
+Approvedcdfe4b51 upload and checkpoint03 qualify one stoppedworkload: all41orderedtail
+shapes/152bars/256129payloadbytes matchreference02; Save44.656534→14.862218s,
+3.0047×faster/66.7188%elapsedreduction, exactS0001_v0002/live+drainedoracle/two-drainsPASS.
+Owner confirms responsive visiblecompletion andacceptablewait. No change to this
+decision's budgets/caps/source/format; no general deadline, fullhardwarebyteparity
+or broaderI4acceptance inferred. [I4 — hardware evidence](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/OPTIMIZED-HARDWARE.md).
+
+## DEC-119 — Request-only live overlay observation
+
+**Date:** 2026-10-12
+**Owner:** StorageManager capture-only command dispatch / DebugSessionCapture; host managed serial owner
+**Status:** Accepted — owner-approved narrow observation fix, locally verified and separately uploaded; playing-load qualification open
+
+### Problem
+Guarded playing overlay load run01 opened the overlay but could not see its queued LDSV receipt before the live guard expired. `!TRACE_DRAIN` is stopped-only, and the playing <=8 flush deliberately performs no USB write because the backend can block in yield. Broker command acceptance is not firmware drain execution.
+
+### Decision
+Reuse the existing TRACK_STATUS direct scalar observation pattern for exact request-only `!OVERLAY_STATUS`. Read existing open/mode/list-or-dirty row/drilled-or-requested Set/requested revision/persistence phase scalars without SD/cache refresh, allocation, ring traversal or mutation. Emit one <128-byte direct response only when TX room admits128 bytes; pressure refuses with no queued/stale reply. Keep main playing no-USB flush and stopped-only TRACE_DRAIN unchanged. Managed host uses unique fenced requests and strict parsing/freshness, plus exact next-row transitions and immediate preconfirm guards. Actual highlighted checkpoint still requires nonce/session/label-bound owner OLED proof. Final ordered dirtyYes/preservingcommit/exactload/autoexit receipts remain mandatory; snapshot alone cannot qualify load.
+
+### Rationale
+Live navigation needs current state, not replay of retained capture history. Existing owners and scalar-query extension suffice; no new runtime state, queue, ownership or persistence representation. Response work is fixed-size; USB backend/whole serial owner remains outside a structural timing guarantee (ExecutionBounds row18).
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Allow playing TRACE_DRAIN64 | Reintroduces blocking USB record walking expressly excluded by the playing flush; callback TX room is not a backend timing guarantee. |
+| Stop transport to recover navigation receipts | Changes the playing test condition and instrument behavior instead of observing it. |
+| Treat teardown LDSV as live-navigation or load PASS | The live guard already refused; history/owner identity/Load were never reached. |
+| Use scalar Set/row as highlighted revision proof | Does not attest actual displayed pixels/revision; owner proof remains required. |
+
+### Affected modules
+Capture-only live command/emitter; read-only capture broker allowlist; managed query/protocol; guarded i4_overlay_load and existing native/host fixtures.
+
+### Constraints created
+No autonomous USB telemetry or ring fallback for this response. Missing/duplicate/malformed/stale/wrong snapshots refuse; never fabricate CAP receipts. No change to persistence/undo/navigation or broad serial timing claims. Hardware pixels/USB timing/load acceptance require separate pinned-image qualification.
+
+### Related OpenSpec
+load-save-overlay-display-regression tasks6.2–6.4 remain open; local observation prerequisite only. [Execution and verification](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/PLAYING-OBSERVATION-FIX.md).
+
+### Migration notes
+No SD/content migration. Current installedcdfe4b51 lacks this command; new host guard refuses before gestures on that image. Candidatec455babb requires separate upload approval. No device/reset/load/dismissal/SD/Git action in this slice.
+
+**2026-10-12 upload follow-up:** Ownerapproveddefaultc455babb flashedSUCCESS/hashunchanged; managedpre/postdrains2complete/nolatch/newqueryclosedidle/settledheapinspectioncomplete. Ownernormalpanel/nofourdot overlayproblem. No playingnavigation/Load/content/SDdestructive/Git action or hardwareloadclaim. [Upload evidence](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/OBSERVATION-UPLOAD.md).
+
+## DEC-120 — One owner per persisted Set index path
+
+**Date:** 2026-10-12
+**Owner:** `StorageManager` boot recovery (`StorageManagerInternal::ensureSetCatalogIndexOnSd`) / `SetRevisionCatalog`
+**Status:** Accepted — implemented and natively verified; device leg owed (needs upload approval)
+
+### Problem
+`/MidiLooper/sets/index.bin` (and its temp `sets/index.bin.tmp`) was written by **two owners in two
+incompatible layouts**: the Set revision catalog's 16-byte `SetCatalogIndex` (written at commit
+`CatalogUpdate`) and the legacy SavedSet sequence index's 8 bytes (`nextSequence` + the `"SAVE"` token
+`0x45564153`, written by `writeSetIndexToSd`). `BootRecovery::loadState` reconciles that path on every
+boot that has a current workspace, and `reconcileSetIndexOnSdWithOutcome` rewrites any file it cannot
+read in the *legacy* layout -- which the catalog's 16-byte form never can (its token slot lands on
+`reserved`+`nextSetId`). Every boot therefore destroyed the catalog index: `listSetRevisionBrowserEntries`
+failed its 16-byte read, the browser showed **no Sets at all**, and a commit could allocate set id 1 over
+an existing `sets/S0001/` folder. Cause, evidence and the review that endorsed it:
+[`SET-BROWSER-EMPTY-CATALOG-DIAGNOSIS.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/SET-BROWSER-EMPTY-CATALOG-DIAGNOSIS.md).
+
+### Decision
+1. The catalog owns its **own** path: `SetRevisionCatalog::kSetIndexPath` → `/MidiLooper/sets/catalog.bin`,
+   `kSetIndexTempPath` → `catalog.bin.tmp`. The legacy SavedSet index keeps `sets/index.bin[.tmp]`
+   (`CurrentSetStorage::kSetIndexPath` / `kSetIndexTempPath` are unchanged), so no final *or* temporary
+   path is shared.
+2. Boot recovery `ensureSetCatalogIndexOnSd()` runs **before** the legacy reconcile (all boot paths, not
+   only those with a current workspace). It is idempotent and bounded (one entry per Set folder, meta only,
+   no revision payload opened) and reports `Ok` / `Adopted` / `Rebuilt` / `Failed`:
+   `Ok` never writes; `Adopted` copies a still-intact 16-byte index found at the legacy path (the window
+   between a commit and the next boot); `Rebuilt` derives the index from the validated Set folders with
+   `nextSetId = max(strictly-parsed folder id) + 1` and `setCount = accepted rows`.
+3. The legacy reconcile is deliberately **unchanged**: with the catalog's file elsewhere and the ensure
+   ordered first, its rewrite is harmless, and a failed ensure is still recoverable from the folders on
+   the next boot. No layout check is added to it.
+4. The commit path (`beginRevisionCommitSnapshot`) establishes the index before allocating: an unreadable
+   index is repaired and re-read, and if it still cannot be established the commit is **refused** through
+   the stage machine's existing failure path rather than allocating from a fabricated `nextSetId = 1`.
+5. `SetRevisionCatalog::parseSetFolderBasename` (strict `S` + 1..5 digits, bare name or path) is the only
+   folder-name parser the rebuild accepts; the laxer `parseSetIdFromFolderName` keeps its existing callers.
+
+### Rationale
+One path, one owner is the smallest change that removes the defect class instead of masking it; the folder
+scan is the only recovery that works for a card the reconcile already clobbered (a re-read of the old path
+cannot). Recovery stays in `StorageManager` boot recovery -- the owner that already walks this tree in
+`discardIncompleteRevisionTempFilesOnSd` -- so no display-path SD scan is introduced. Record layouts,
+schema version, CRC conventions, commit stage order and revision formats are untouched.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Read the legacy path as the catalog's fallback only | Does not recover an already-clobbered card; it is a migration aid, kept as `Adopted`, not the fix |
+| Folder-scan fallback inside `listSetRevisionBrowserEntries` | Masks the ownership defect and puts an SD folder scan on the display path |
+| Retire the legacy reconcile instead of splitting paths | Loses the legacy repair for its own index and would clobber the catalog again if an older image is flashed |
+| Keep a silent default `nextSetId = 1` | Reallocates an existing Set id and overwrites its revision bodies |
+
+### Affected modules
+`include/SetRevisionCatalog.h`, `src/SetRevisionCatalog.cpp`, `include/StorageManagerInternal.h`,
+`src/StorageManager/SetCatalogIndexEnsure.cpp` (new, flash-placed), `src/StorageManager/BootRecovery.cpp`,
+`src/StorageManager/RevisionCommit.cpp`, `src/StorageManager/SetBrowserRead.cpp` + `WallClockSdSync.cpp`
+(constant-driven path only). Tests: `test/test_set_catalog_index_ownership` (new), `test/test_storage_drain_restore`,
+`scripts/test_boot_catalog_order.py` (source-scan tripwire for the boot order), plus the native SD card
+boundary (`test/test_support/firmware/SD.h`): directory entries are now direct children incl. intermediate
+directories and `name()` answers the bare entry name, and `exists()` answers true for a directory.
+
+### Constraints created
+The catalog index path and its temp path are the catalog's alone; the legacy index path and its temp path
+are the legacy owner's alone. No other owner may write either. `ensureSetCatalogIndexOnSd` must stay
+idempotent, bounded and temp+rename-based, and must run before the legacy reconcile at boot. Nothing in
+this decision deletes user data: an unreadable index is metadata, and the folders are the source of truth.
+
+### Related OpenSpec
+`runtime-working-set-ownership` I4 — UI/storage; the browser/load legs stay unchecked until the device leg
+is run. Execution packet: [`SET-BROWSER-INDEX-SPLIT-EXECUTION.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/SET-BROWSER-INDEX-SPLIT-EXECUTION.md).
+
+### Migration notes
+On the first boot after flashing, a card whose `sets/index.bin` still holds a valid 16-byte index has it
+copied to `catalog.bin` (`Adopted`); a card whose index was overwritten is rebuilt from its Set folders
+(`Rebuilt`). No file is deleted and no revision payload is rewritten. An older image flashed afterwards
+will clobber `sets/index.bin` again but can no longer touch `catalog.bin`; the browser on that older image
+still lists nothing (it reads the old path), and upgrading again re-adopts/rebuilds.
+
+## DEC-121 — Boot-local capture journal initialization
+
+**Date:** 2026-10-13
+**Owner:** DebugSessionCapture
+**Status:** Accepted — owner-approved repair; native/build verified, separately uploaded with bounded boot recovery qualified
+
+### Problem
+The capture critical journal is DMAMEM (`.bss.dma` NOLOAD), outside Teensy's startup-cleared ordinary .bss. Static field initializers therefore do not initialize it at reboot. Five repeatable faults in strnlen and a production poisoned-init failure exposed stale metadata; the native fixture's explicit journal reset hid the missing production initialization.
+
+### Decision
+Keep the existing journal in RAM2 and use one ordinary-bss boot-cleared initialization flag. Initialize only metadata on first journal use or initCaptureBuffer, including early rejected append/eviction/stopped flush before sessionHeader. Repeated initialization preserves current-boot rows and partial replay. Validate count<=32, index<=count and nonzero index=>dumpStarted before array access. Invalid metadata is discarded without payload traversal; one unknown-loss incident is reported via existing criticalRejectedPending/Total and the journal dropped sentinel, not a fabricated lost-row count. No new marker, buffer, allocation or SD operation. Playing<=8 flush remains noUSB; stopped emission retains backpressure/refusal semantics.
+
+### Rationale / alternatives
+Existing-owner lifecycle repair; no persistence/undo/content migration. Reinitializing on every sessionHeader would erase early boot evidence and partial replay. Moving the 6KB journal to ordinary .bss would spend scarce RAM1. Broadly clearing NOLOAD RAM2 would change unrelated owners. Deleting/re-saving a Set would not fix capture metadata initialization and is not authorized.
+
+### Affected modules and constraints
+DebugSessionCapture initialization/append/eviction/replay and real capture-ring native tests. Reset scalar metadata only, cap unchanged, first-use work fixed-size/flash-placed; whole USB drain backend is not a timing guarantee. Corruption counters denote an integrity incident, not an exact number of lost rows. No claim that bounds validation detects every arbitrary RAM corruption or proves the exact hardware caller.
+
+### Related OpenSpec / migration
+Local prerequisite for load-save-overlay-display-regression; device6.2–6.4 remain blocked. No SD migration or cleanup. Installedecd4f671 still faultloops until separately approved upload/boot qualification. [Execution/results](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/BOOT-JOURNAL-FIX.md).
+
+**2026-10-13 recovery follow-up:** Approved8050aabc/defaultuploadSUCCESS/hashunchanged; managedboot handoff/censusready, earlyquery01FAIL preserved, settled90s02/16validpairs/no newreset/reconnect/loss/fullheap/drains2/nolatchPASS. OwnernormalstableOLED/no rebootloop. NoLoad/content/SDcleanup/Gitaction; fullplayingLoadremainsopen. [Recovery evidence](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-12-i4-ui-storage/BOOT-JOURNAL-RECOVERY.md).
+
+## DEC-122 — Native-gated MIDI input continuation
+
+**Date:** 2026-10-13
+**Owner:** MidiHandler; ClockManager/TrackManager retain transport/tick orchestration and Track retains playback publication.
+**Status:** Accepted for native qualification mechanics only; not target activation or physical timing qualification.
+
+### Problem
+The linked real-input oracle accepts Off736 and four queued Clocks before returning, reaching768 without a main preparation opportunity. Current default input behavior is verified compatibility, not new-reader readiness. The concrete timing draft's physical reference/owner arbitration/WCET requirements are not implemented or measured.
+
+### Decision
+Implement one fixed MidiHandler-owned retained route batch only behind a native qualification gate. Target enablement of that gate is rejected at compile time; default target/native polling stays unchanged. Cold setup prewarms the non-aborting state allocation; polls never allocate. USB-device/DIN preserve transport-first grouping and Clock/channel FIFO, USB-host preserves callback FIFO and signed PitchBend conversion. Host callbacks capture into the batch only during owned acquisition. Each qualified poll inspects at most16 stored types and routes at most one complete message. Copied data survives epoch/Start/Stop/Continue until its real handler runs exactly once. Reentrant polls wait on the outer acquisition/dispatch owner; no hidden work loop, new scheduler, publisher, or input/clock-edge builder. Missing prewarm retains legacy input without claiming qualification ready.
+
+### Rationale and alternatives
+Existing-owner extension creates the semantics needed for a measurable future main checkpoint without pretending to close timing. Main-only urgency cannot interrupt current batch dispatch. EDF across tracks conflicts with retained fairness and does not solve the batch gap; inline Clock/ingress builds violate the edge contract. Changing a batch cap alone can change transport grouping. No physical limit is reduced and no queued Clock is held until window readiness in this mechanics-only prototype.
+
+### Constraints and migration
+Native receipt/pending/generation observations must be pure. Setup is the cold-session reset, not runtime cancellation; active input is not dropped on transport/source changes. Fixed capacity and generation exhaustion fail qualification safely; no accepted callback truncation. New state/cardinality and actual ABI are measured separately from earlier candidate prices. No main-owner priority, target buffer placement, source-progress receipt, running-epoch initial window, SD schema or undo change. Existing timing reassessment remains required before target-capable integration. Default rolling/legacy emitters remain unchanged and parent gates remain open.
+
+### Validation / related OpenSpec
+[I5 — continuation execution packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/CONTINUATION-EXECUTION.md): fixture-first three independent real-input REDs→GREEN, ordinary compatibility/native/lifecycle controls, exact state price, default capture build/RAM1 with no rebase and one focused review. No device or upload permission conferred by this decision. Wider timing contract remains unqualified until production target integration and registered hardware gates pass.
+
+## DEC-123 — Checkpoint arbitration and deadline admission
+
+**Date:** 2026-10-13
+**Owner:** Existing main/deferred-owner policy (MidiServiceDrain); ClockManager remains logical clock owner.
+**Status:** Accepted as bounded building-block mechanics with native verification; not target integration, physical budget or timing qualification.
+
+### Problem
+The native continuation exposes cooperative input boundaries but cannot justify delaying clocks or starving normal owners. Current H8/Delta64 service fails the28tick lead; actual physical reference/cost enforcement remains unavailable. A semantic selector must preserve normal-owner order and refuse unqualified extra work rather than invent available time.
+
+### Decision
+Add caller-owned saved-normal-owner/pending state alongside the existing normal cursor. A qualified urgent Window may be inserted once before a non-Window selected normal turn; the saved normal is mandatory next. Preserve Snapshot extras, cross-track round-robin and within-track earliest slot. Preview selection on cursor copies and use the chosen owner's established indivisible grain/return bounds; commit selection/debt only after independent physical and logical deadline admission. Missing provenance/reference/bounds, stale epoch/position, physically expired time despite lagging ticks, invalid/wrapped spans and insufficient budget refuse with a local named outcome and leave cursor/debt untouched. No second clock, publisher, scheduler or automatic zero margin.
+
+### Constraints / rationale
+Physical deadline record is a passive immutable snapshot supplied by an independently verified clock/arrival producer; no current-dispatch-micros restamping. No producer or measured deployment cost is introduced by this building-block slice. Explicit per-owner bounds prevent cheap Window assumptions from admitting an expensive saved Snapshot turn. Selection-count fairness does not establish WCET or guarantee progress after repeated physical refusal; that remains a service failure to report/qualify, not a passing clock-delay fallback. No src/main.cpp/ClockManager wiring or native-continuation target activation in this slice.
+
+### Related OpenSpec and validation
+[I5 — checkpoint execution packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/CHECKPOINT-EXECUTION.md): fixture-first preview/commit/debt, all ordinary-owner/Snapshot/urgency sequences, per-owner cost refusal, wall/logical stale/expired/overflow/boundary tests, real ClockManager/Track offers, removal controls, exact ABI and default build/native/review evidence. All parent tasks and target physical producer/integration gates remain open; no new budget or SD/undo schema.
+
+**DEC-123 — implementation refinement:** Native regression demonstrated that merely restricting a micros32 lead to a half-range cannot prevent an old expired reference from appearing fresh after a full counter wrap with paused logical ticks. The passive reference/observation therefore use extended64bit microseconds and nonzero producer-era identity; reject backwards time, recycled/unknown era and anchor+lead beyond the extended counter end. No physical producer or new budget adopted. Per-owner preview/commit remains unchanged.
+
+## DEC-124 — Bounded private append ordering
+
+**Date:** 2026-10-13
+**Owner:** RuntimePlaybackOrderBuilder, existing private playback-order stage
+**Status:** Accepted bounded implementation extension; live source reuse/publication and target timing not admitted.
+
+### Problem
+Running-Capture readiness needs useful certified prefix work to survive append growth. The existing order builder could only restart complete fill/order, and had no frozen suffix/prefix-merge continuation. Source stability/lifetime and physical readiness are separate missing premises; the order primitive must not invent either.
+
+### Decision
+Following owner-authorized firmware/native implementation, extend completed raw fixed-storage ordering with a frozen appended source extent, suffix-only fill/sort, bounded prefix-delta merge into existing scratch and bounded copy-back. Retain the existing comparator and arrays. Typed views and borrowed indexes refuse; raw callers certify private ownership, unchanged prefix/retention/projection/provenance and lifetime. Later append waves wait for a subsequent extension. Keep legacy entry paths and publication ownership. Add conservative saturating extension work counts, not numeric WCET.
+
+### Rationale
+This closes an independently testable source-progress prerequisite without a new publisher/store/queue or coupling ordinary append to stale-token publication. Compact frontiers fit existing padding; target/native builder and runtime sizes remain pinned. Exact ordered-index and per-quantum oracles discriminate dropped prefix/delta work; removal control fails.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Full sort/restart on every append | Replays certified prefix fill/order; does not satisfy useful-work preservation. |
+| Monotonic append-order shortcut | Lower ticks and same-phase wrap Off/On still need the existing comparator. |
+| Extend a published/current/ready view or borrowed immutable indexes | Mutates consumer-owned results; a private prefix is not complete current content. |
+| New delta buffer/fourth view | Existing phase/order/scratch arrays suffice; duplicates resident working content. |
+
+### Affected modules / constraints
+RuntimePlaybackOrderBuilder header/implementation, existing playback-prewarm tests. No Loop/Track fields, role/pin rebase, main/ClockManager integration or default gate change. Private raw API cannot infer publication role of an aliased storage pointer; caller preconditions are not a Loop stability receipt. Future Track live reuse still requires exhaustive mutation/lifetime/stop and source/projection currency checks. No changed overlap/ledger policy.
+
+### Related OpenSpec / migration notes
+windowed-playback-generation; [I5 — delta-order execution](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/DELTA-ORDER-EXECUTION.md). No persistent format/data migration, dependency edit or hardware action. Parent readiness and physical ingress/budget gates stay open.
+
+## DEC-125 — Pinned receiver ingress receipts
+
+**Date:** 2026-10-13
+**Owner:** Existing transport queues / MidiHandler acquired copies
+**Status:** Accepted (owner-approved implementation; defaultOFF)
+
+### Problem
+Stock USB-device/DIN/USB-host queues discard receive observations. Dequeue/handler timestamps cannot establish input age; an independent elapsed counter alone does not fix that. Installed framework edits are prohibited and would be overwritten by package updates.
+
+### Decision
+Use minimal project-owned insertion-only transforms, pinned to Teensyduino1.159.0 source hashes/unique anchors, to generate build-directory copies. Exact existing queue slots own cold external-first sidecar receipts; no payload queue/order change. MidiHandler copies receipts into ordinary/native-retained rows. DefaultOFF; opt-in ingress profile uses unchanged capture numerical RAM1 limits. Reset/overflow/disconnect/sampler replacement invalidate currency without erasing accepted payload/observations. Unsupported capacity/owner/missing hook/provisioning denial and terminal identities refuse provenance. Preserve incoming IRQ mask; no hook allocation.
+
+### Rationale
+Receiver observations survive backlog and transport grouping instead of becoming fresh at dispatch. Project-maintained, fail-closed source pins expose dependency drift without installed writes. Native actual-body/parser fixtures and ordered real-handler oracles qualify correspondence only. DIN uses completing-byte observation; directFIFO/peek is explicitly late. No production independent sampler, arrival-delay bound or physical deadline predicate exists here.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Handler/dequeue restamping | Erases backlog age and fabricates a fresh observation. |
+| Hand-edited installed drivers | Package replacement loses hooks; violates approved read-only dependency boundary. |
+| Full fork/new input payload queue | Duplicates driver maintenance/storage/order when exact-slot metadata hooks suffice. |
+| Treat micros32 or a counter observation as arrival proof | SysTick/wrap and unknown IRQ/FIFO/USB delay remain; completing-byte time is not first-byte/sender time. |
+
+### Affected modules and constraints created
+MidiIngress hooks/store, MidiHandler batches/native continuation, project source transforms/build middleware/native fixtures. Receipt32B, cells40B, cold State19168target/19192host; native enabled continuation5152B, ordinary batch adds4096B stack payload. Pointer4B startup BSS, not NOLOAD DMAMEM. Enabled input-only dispatch helpers flash-placed to preserve floor840; no numeric/pin rebase. Counter sampler must be bounded/nonallocating and supply a nonrecycled era before installation. Source-pin upgrades require source-boundary requalification, never an automatic hash rebase.
+
+### Related OpenSpec
+[I5 — ingress execution](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/INGRESS-EXECUTION.md), [receiver guide](Guides/MIDI_INGRESS_RECEIPTS.md). DEC-122 — native-gated MIDI input continuation and DEC-123 — checkpoint arbitration/deadline admission remain native/passive prerequisites, not target activation. Physicalproducer/arrival correlation/delay and complete owner-to-input bounds, live Capture source/lifetime/request/initialanchor and740→768 readiness remain open.
+
+### Migration notes
+No persistent format, user data, installed dependency edit, default rolling change, upload/HITL/SD or Git action. Parent progress29/60 unchanged. Local verification: store9/actualbody-parser14/ordinary17/retained19/host30, fullnative3154pass7skip118suites; default/ingress builds pass identical numeric RAM1 limits. One focused review's coverage gap repaired and controlled; no production defect found.
+
+## DEC-126 — Raw-prefix source stability
+
+**Date:** 2026-10-13
+**Owner:** LoopEventStore mutation; caller-owned non-owning forward cursor
+**Status:** Accepted — existing-owner prerequisite locally implemented/verified; no Track borrower installed
+
+### Problem
+Content tokens change on append and cannot certify reusable prior rows; ownership generations survive same-count rewrites/IDs/sort. Ordinal at() reads replay directory prefixes. Static chunk-ID writes can bypass a store owner's accounting. Physical store lifetime and semantic Capture interval/projection are distinct from raw-prefix identity.
+
+### Decision
+Extend LoopEventStore with an8B terminal destructive-prefix token, separate from legacy worker generations, and caller-owned frozen-extent source cursor. Accepted append preserves prefix; destructive instance operations and deferred mutating grains invalidate before writes/cuts. Static ID writes/nonempty static reference releases conservatively invalidate all new cursors through an8B pool-owned terminal alias token. Pool-reset generation is also terminal. One source step copies one row OR advances one chunk, no directory-prefix replay/allocation/refcount acquisition. Explicit extension alone exposes appended suffix. Denial leaves output/progress unchanged; zero token refuses future observations without refusing accepted input or breaking legacy workers.
+
+### Rationale
+Separate raw-row proof from semantic source currency and physical retention. Live-receiver methods compare the cursor's owner identity without dereferencing it; cursor-local extent/position/discard never query an owner. Caller MUST retain physical store/chunks, exclude concurrent mutable workers, and discard before owner destruction/replacement. No token is a physical lease. Existing Track guards and live callbacks are not qualified for a future borrower by this primitive.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Rename content/ownership generations | Append invalidates content unnecessarily; same-count mutation escapes ownership checks (actual-body shift probe). |
+| Read each ordinal through at() | Replays an unbounded directory prefix instead of charging forward transitions. |
+| Per-chunk owner/borrower registry | Adds ownership bookkeeping/storage absent from this dependency-ready slice; conservative static-alias restart suffices for safety, not readiness. |
+| Dereference old owner to discover stale lifetime | Can query released storage; caller retention/cancellation must precede any store method. |
+
+### Affected modules and constraints created
+Store header/body and native source suite; measured placement pins only in Track runtime/stop-ring declarations. Target/host store64/88, cursor48/64, Loop1000/1592, runtime7640/9776; target Track384 unchanged/stopring29064. Store+8B in every instantiation;64shells+8runtimes+8rings add832B object payload plus8B global token (other stores extra). Mutation helper and affected constant-work seal are flash-placed after padding744<840 refusal; final padding1016≥840, numerical RAM1 budget unchanged. No allocation policy, extra view/queue/publisher or persistence format change. Static unrelated retirement can stale all raw-prefix borrows and must be charged by later source integration.
+
+### Related OpenSpec
+[I5 — source-stability execution](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-STABILITY-EXECUTION.md), windowed-playback-generation 3.15a–b — running Record source qualification. DEC-064 — exclusive raw Capture ranges, DEC-068 — interval-owned session, DEC-072 — interval-owned staged pass, DEC-124 — bounded private append ordering retained.
+
+### Migration notes
+Native source15/15/fullnative3169pass7skip119suites/defaultcaptureSUCCESS; one focused review no concrete defect under preconditions, coverage gap added. Destructive/alias removal8/3specificREDs restored byte-identically. No production borrower integration or740→768 readiness; Loop interval/phase/projection, Track retention/cancellation/stop, request/anchor/coalescing/adoption and physical/input-clock bounds remain open. No upload/HITL/device/SD/Git/parentcheckoff; parent29/60/defaultrollingOFF/targetcontinuation disabled unchanged.
+
+## DEC-127 — Semantic live-source retention
+
+**Date:** 2026-10-13
+**Owner:** Capture/Loop identity; existing Fill/Build private borrow; Track LoopPool/runtime retention
+**Status:** Accepted — locally implemented/verified under retained, serialized caller preconditions; target activation unqualified
+
+### Problem
+Phase close/reopen and projection changes can preserve content/count. Raw-prefix identity is neither semantic interval identity nor physical retention. Completed-unpublished builders still borrow live owners; holder selection may exclude a stale source before reaching cancellation. Default member destruction can free LoopPool before runtime detachment.
+
+### Decision
+CapturePhaseState advances terminal assignment-qualified identity on every phase assignment, including same/self/copy. Live descriptor freezes raw cursor and exact phase/projection at creation; Fill/Order/Complete validate these plus strict content/count currency. Live fill advances one Row or charged Chunk, not ordinal prefix replay. Both existing runtime builders name their borrow until discard; Track composite/runtime release guards refuse without source queries. Cancel stale borrows before holder selection, detach in Track destructor before member source destruction, and discard both builders in runtime destructor before destination release. Standalone callers retain/discard explicitly. No append coalescing or running request installed.
+
+### Rationale
+Keep raw-prefix proof, semantic currency, physical retention and concurrency qualification separate on existing owners. Terminal identity refusal does not suppress accepted phase/payload writes. Same Track retains fixed LoopPool; no new lease registry, queue, view, publisher or timing manager.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Content/count or Track interval alone | Public phase reopen/self assignment and projection changes escape those counters; three genuine stale-completion REDs. |
+| Bind a fresh cursor at begin | Can accept a stale descriptor after direct source rewrite; freeze at descriptor creation instead. |
+| Selected-holder-only cancellation | Closed/excluded source has no selected holder; both-builder removal control produces two REDs. |
+| Discover borrow/lifetime through old source query | May query released storage; ownership predicates and discard are local. |
+| Treat tokens as ISR/main atomicity or mask an unbounded grain | Internal timer transitions/reset remain possible; neither gives qualified concurrency/return bounds. |
+
+### Affected modules and constraints created
+LoopPasses/Loop, shared out-of-line CapturePhaseState production body/native linkage, RuntimePlaybackViewFill/Build, TrackPlaybackRuntime, Track destructor/maintenance and native-only LoopPool destruction observer. Target Loop1008/runtime7792/Track384/stopring29064; host Loop1600/runtime9960. Two builders add72target/88host each plus canonical phase8B;64shells+8runtimes incremental1728B payload, other Capture instances/descriptor stack extra. Final target descriptor128/fill168/build256; no numerical RAM1 floor rebase. Default capture SUCCESS/padding1720≥840/880B margin; no whole-stack or WCET claim.
+
+### Related OpenSpec
+[I5 — live-source integration](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/LIVE-SOURCE-INTEGRATION.md); windowed-playback-generation 3.15a–b — running Record source qualification. DEC-126 — raw-prefix source stability and DEC-124 — bounded private append ordering remain distinct prerequisites.
+
+### Migration notes
+Focused418/fullnative3178passed7skipped119suites; semantic/cancellation/destructor controls3/2/1RED restored byte-identically; one focused review no concrete defect under retained/serialized contract. Internal ClockManager timer ISR calls TrackManager state transitions: all-route read/cancel/adopt synchronization remains unqualified before activation. Source request/initial running anchor/coalescing/adoption/stop and complete physical/input costs remain open. Two-channel PIT resource/shared-debug policy is a proposal requiring owner decision, not accepted by this entry. Parent29/60/defaultrollingOFF/targetcontinuationdisabled/legacy retained; no upload/HITL/device/SD/Git/checkoff.
+
+## DEC-128 — ClockManager PIT elapsed reference
+
+**Date:** 2026-10-13
+**Owner:** ClockManager singleton elapsed state and thin Teensy register boundary
+**Status:** Accepted — owner-approved implementation/native/build verified, not hardware deadline qualification
+
+### Problem
+Passive checkpoint/ingress receipts require an extended physical observation, not widened micros32 or queued musical ticks. Proposed PIT pair consumes two channels and shares module/debug policy with the existing MIDI IntervalTimer. Hardware latch readers can interfere; full-width reload must not resurrect expired lead.
+
+### Decision
+Extend ClockManager with cold PIT0/PIT1 allones/chained lifetime counter, one fixed16B explicitly initialized RAM2/NOLOAD state and nonrecycled era. Initial reservation requires allfour controls disabled; only enable PIT bus gate before inspection, never steal channels/disable foreign timers. Start high before low/TIEoff/no callbacks, then existing MIDI timer starts and its bool qualifies source availability. Failed reservation preserves ordinary startup; failed timerstart leaves physical source unavailable with retained reservation. An intact owned pair is requalified without resetting its running count/shared module.
+
+Preserve stock FRZ1 and support exclusive-configuration Run-mode observations only; observed halt/sleep/configuration/overflow/backwards/era faults refuse. The original C_DEBUGEN-alone refusal was corrected with explicit owner approval after hardware reported C_DEBUGEN1/S_HALT0/S_SLEEP0 on a running board (see the hardware qualification packet); C_DEBUGEN is diagnostic, not halt evidence. Fixed PRIMASK-preserving critical section serializes hardware high/latchedlow readers and pre/post checks. Never clear high timeout on hot reads; low rollover is ordinary. Invert countdown and floor nominal24MHz ticks to64bit microseconds. Explicit invalidation precedes future supported suspend/reconfiguration. Debug/sleep/unseen stop-and-restore intervals remain unsupported; register checks cannot prove their absence. Optional existing ingress sampler installed from ClockManager setup; no deadline/correlation/arrival-health claim or checkpoint activation.
+
+### Rationale
+NXP RT1060 RMRev3 chapter53 fixes exact pair/latch/start/flag semantics; installed stock allocator skips nonzero TCTRL and only clears flags for registered callbacks. Current application has one MIDI timer; source/build inventory finds no Tone/AudioStream/Snooze timer. Existing ClockManager owner/sampler/passive stamp reuse avoids a timing manager or extra interrupt/queue. Source tokens/physical counter cannot substitute for all-route ISR/main source synchronization or complete execution bounds.
+
+### Alternatives considered
+| Alternative | Not selected because |
+|---|---|
+| GPT32 plus software extension | Avoids PIT pair but requires enforced overflow observation/interrupt bound and resource verification; user chose PIT. |
+| Raw RTC/SNVS | Existing wall-clock corrections reset same hardware and stock readers retry indefinitely; needs correction invalidation/bounded reader. |
+| Widen micros32/DWT | Casting does not resolve unobserved wraps, SysTick bookkeeping or CPU-rate/debug obligations. |
+| FRZ0 elapsed continuity through debug | Stock fresh IntervalTimer begin overwrites MCR1; full debug/sleep reference continuity needs separate enforced policy/qualification, not silently global reconfiguration. |
+| Reinitialize shared module on repeated setup | Can stop an existing MIDI/foreign timer; intact owned counter preserves count instead. |
+
+### Affected modules / constraints created
+ClockManager.h/.cpp and new owner TU/platform header/adapter; actual-clock native hardware fixture and optional ingress sampler docs. State16B bothABIs/linkedRAM2+32B; no DTCM/member/Track/Loop/runtime pin changes or numerical budget relaxation. Default RAM1variables96192/code391528/padding1688≥840/locals34880; ingresspadding1912≥840. Channel3 remains provisional spare, not permission for later unmediated stock allocations. Future debug/sleep/timer changes must route through explicit invalidation/requalification.
+
+### Related OpenSpec
+[I5 — physical producer execution](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PHYSICAL-PRODUCER-EXECUTION.md); windowed-playback-generation 3.10 — bounded owner service and3.15a–b — running Record qualification. DEC-123 — checkpoint arbitration and deadline admission, DEC-125 — pinned receiver ingress receipts, DEC-127 — semantic live-source retention remain distinct prerequisites.
+
+### Migration notes
+Initial focused46, ordinary24/ingress28/combinedcontinuation30 PASS; fullnative3188passed7skipped119suites/default+ingressSUCCESS. Config/overflow/timerstart controls eachspecificRED restored byte-identically; one focused review no concrete defect under Run-mode contract. No build uploaded/HITL/device/SD/Git or parentcheckoff;29/60/defaultrollingOFF/targetcontinuationdisabled/receiptsdefaultOFF. Actual hardware latch/start/flags/accuracy/latency/errata, correlation/arrivaldelay/external pacing/complete owner-to-input bounds and shared source read/cancel/adopt protocol remain unqualified. Resource choice is resolved; future qualification is not an excuse to reopen this same choice.
+
+## DEC-129 — Run-mode physical-clock debug admission
+
+**Date:** 2026-10-14
+**Owner:** ClockManager physical reference / thin platform boundary
+**Status:** Accepted — explicit owner approval during hardware qualification
+
+### Problem
+Dedicated startup smoke reported ConfigurationInvalid/era0 before PIT reservation.
+Same-row diagnostics isolated DHCSR C_DEBUGEN1/S_HALT0/S_SLEEP0 on the running board.
+C_DEBUGEN alone does not mean halted; its cause is unknown, not proof of attached
+debugger or bootloader causality. The prior guard prevented all useful observations.
+
+### Decision
+Narrow the unsupported debug-state mask to S_HALT/S_SLEEP. C_DEBUGEN is diagnostic
+only, never cleared by firmware. Preserve stockFRZ1, exclusive configuration and
+Run-mode-only semantics under DEC-128 — ClockManager PIT elapsed reference. Debugger
+halts/sleep/unseen stop-and-restore remain unsupported timing-reference lifetimes;
+no continuity is inferred from a cleared current status. Future supported transitions
+still require explicit invalidation/requalification. No resource choice reopened.
+
+### Rationale
+Observed hardware falsified the C_DEBUGEN-implies-halted assumption. User approved
+the specific correction before code. Genuine actual-owner native RED→GREEN plus
+separate halt/sleep refusals and hardware Ready/carry qualify this narrow admission.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Keep C_DEBUGEN-alone refusal | Running board remains unavailable, as retained smoke04 proves. |
+| Clear DHCSR or disable FRZ | Mutates debug/shared-module policy, unnecessary and not authorized. |
+| Claim debugger/sleep continuity | Current register checks cannot detect invisible interruption. |
+
+### Affected modules / constraints created
+ClockPhysicalReferencePlatform guard constant; actual-clock native fixture and
+capture-gated request-only diagnostics. No resident-state/pin/RAM1 budget change.
+Mandatory configuration oracle unchanged; diagnostic C_DEBUGEN bit10 may be present
+in Ready rows. Existing timer/resource/overflow/backwards/era guards remain active.
+
+### Related OpenSpec
+[I5 — hardware qualification](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PHYSICAL-HARDWARE-QUALIFICATION.md).
+This supersedes only the C_DEBUGEN-alone refusal clause of DEC-128 — ClockManager
+PIT elapsed reference, not its resource/Run-mode/exclusive-configuration contract.
+
+### Migration notes
+Native actual-clock29/ingress33/focused84/host102/fullnative3196passed7skipped119suites;
+defaultbuildSUCCESS/padding1688≥840. One focused qualification review found ringfallback
+can follow its endfence; fixed bounded ID+fence completion and retested. Dedicated
+smoke05/full01 uploaded9b50680a…b770c PASS/211samples/210s/naturalcarry/2drains/nolatch.
+Relative rate and observed latency/stopped point correlation only, not calibration,
+WCET/movingcorrelation/deadline. Parent29/60/defaultrollingOFF/targetcontinuationdisabled.
+
+## DEC-130 — Builder-call cancellation and live-source exclusion
+
+**Date:** 2026-10-15
+**Owner:** RuntimePlaybackViewBuild / existing LoopPlaybackRuntime and Loop source
+**Status:** Accepted — existing-owner running-Capture implementation scope
+
+### Problem
+Serialized currency/retention from DEC-127 — semantic live-source retention does not
+protect a suspended call. Actual runtime cancellation/reset during a native source
+query clears Fill's destination and the resumed cleanup dereferences null; between-call
+tests pass. Actual timer-driven Track transitions can also rewrite producer storage
+between raw cursor validation and event copy.
+
+### Decision
+Each public builder mutation retains its executing state through call completion.
+Re-entry refuses; discard during execution latches an idempotent pending request and
+resolves at the call boundary to false/Denied, preserving only an agreed destination.
+Stale live source always invalidates its private result. Runtime reset during either
+builder call requests cancellation and returns false before destructive retirement;
+false is a busy/refused reset, not completion or an automatically queued reset.
+Existing caller obligations/retry semantics remain required.
+
+Fixed saved/restored PRIMASK sections protect call metadata, live descriptor validation/
+currency and raw cursor validation plus one row or charged chunk transition. Filtering,
+private multirow Fill/Order and runtime/source retirement remain outside. No whole-grain
+mask or new owner/queue/view is introduced. All physical source owners remain retained.
+
+### Rationale
+The actual-body RED and cancellation-before-entry control distinguish in-flight access
+from ordinary stale work. A token recheck after unsafe access cannot repair it; source
+read exclusion alone cannot protect a cleared builder or destination. Both protections
+are needed at this existing-owner boundary.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Add only a null check/token recheck | Does not protect a mid-copy source rewrite or an Order/destination reset. |
+| Mask the whole grain/owner | Maintenance remains Unbounded/not admitted; would hide unqualified IRQ latency. |
+| Move Track transitions off the timer | Changes dispatch/transport timing and exceeds this existing-owner contract. |
+| Treat refusal as a completed reset | Would lose the caller's pending reset/stop obligation. |
+
+### Affected modules / constraints created
+Build/Fill/runtime reset; stateless PlaybackSourceReadGuard; native prewarm mask and
+reentrancy fixtures. Standalone Fill/direct external candidate writers retain serialized
+preconditions. Complete Track read/cancel/adopt/role-publication and finite owner/IRQ
+timing remain unqualified; target borrower stays disabled. A successful builder result
+does not bypass the consumer's atomic final identity/epoch/role check.
+
+### Related OpenSpec
+[I5 — source concurrency execution/evidence](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/SOURCE-CONCURRENCY-EXECUTION.md).
+Extends, not supersedes, DEC-127 — semantic live-source retention.
+
+### Migration notes
+No storage/schema/user-data migration or hot allocation. Field ordering uses target
+padding: builder256B/runtime7792B unchanged; host builder400B/runtime9976B (+8/+16).
+Registered baseline lost-begin cancellation and Fill SIGSEGV; focused477PASS, original
+four-case sanitizer witness and nine new ASan/UBSan tests PASS. One focused review
+approved under the explicit retained/serialized-external-writer contract. Broad build/
+native results and device exclusions are recorded in the linked packet; no upload,
+SD/Git/defaultactivation or parentcheckoff follows this decision.
+
+## DEC-131 — Exact Track completion authority
+
+**Date:** 2026-10-15
+**Owner:** Track / RuntimePlaybackViewBuild / RuntimePlaybackViewLifecycle
+**Status:** Accepted
+
+### Problem
+A returned Complete and a complete bit at a stable view address are not publication authority after an interrupt resets/reuses that storage. Production-path fixtures reproduced stale BuildComplete reporting after runtime reset, adoption implicitly promoting an independently completed private build, and old builder cleanup/query affecting a replacement destination generation.
+
+### Decision
+Each builder retains the destination storageGeneration established by begin. Completion queries and cleanup qualify that exact generation; stale entry detaches before further work, without clearing replacement metadata. Track coverage maintenance retains physical role/storage/operation receipts across the final worker call and completion-clock sample, verifies before deadline judgement and again at publication, and rejects an interrupted result without touching replacement work. Pending completion remains visible to deadline service before judgement. Track generic publication/adoption uses short saved-PRIMASK metadata sections; successful generic publication detaches the completed builder while preserving its transferred view. Cold live completion likewise checks exact builder/role authority under a short commit guard; logging and worker loops remain interruptible.
+
+Ready adoption consumes exactly ready. It never certifies/promotes a complete private build. That build remains for explicit preparation-owner publication. The existing main-owned bridge worker explicitly publishes its detached complete same-source successor after consuming ready; no owner or view is added.
+
+### Rationale
+Extends DEC-108 — windowed playback publication and DEC-130 — builder-call cancellation and live-source exclusion. Generation-qualified cleanup implements the existing epoch-lease invariant; explicit publication keeps source/deadline qualification with the preparation owner rather than the clock reader. No logged ownership or timing policy is superseded.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Trust Complete, address or complete bit | Baseline four-case RED demonstrates cancellation/reuse and private-promotion failures. |
+| Restore implicit lifecycle promotion | Bypasses preparation-owner source/deadline judgement; bridge compatibility instead gets explicit same-source owner publication. |
+| Mask the worker or entire reader | Would enclose content-dependent Fill/Order/seek/projection/retirement and violate the short metadata boundary. |
+| Claim full Track concurrency | Acquisition-before-builder-entry and direct Record reset/bind/seek/projection writers are not closed by completion receipts. |
+
+### Affected modules
+RuntimePlaybackViewBuild, RuntimePlaybackViewLifecycle, Track playback maintenance/publication/adoption, LoopPlaybackRuntime bridge-window worker, existing native ownership/prewarm fixtures.
+
+### Constraints created
+Retain source shells and destination arrays; direct writers remain serialized during builder execution. Destination identity is not lifetime exclusion. No ready adoption through private completion; owners must explicitly publish. Acquisition/direct-Record concurrency, running request/anchor/coalescing/stop and finite physical/input/owner/IRQ bounds remain open. Row27 remains Unbounded/not admitted, parent29/60, rollingOFF/targetcontinuationdisabled/receiptsdefaultOFF. No upload/device/SD/Git action or numeric RAM1 floor relaxation.
+
+### Related OpenSpec
+[I5 — Track publication execution/evidence](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/TRACK-PUBLICATION-CONCURRENCY.md); windowed-playback-generation 3.15a–b — running Record qualification, parents unchecked.
+
+### Migration notes
+No persisted format migration. Callers/tests formerly relying on implicit complete-build promotion must explicitly publish through their preparation owner. Target builder264/runtime7808 and host408/9992 are compiler-measured; +16 bytes per runtime, no new Track/Loop DTCM member. Verification and remaining exclusions live in the linked packet.
+
+## DEC-132 — Preparation acquisition and Record exclusion
+
+**Date:** 2026-10-15
+**Owner:** Track / existing runtime playback builders
+**Status:** Accepted
+
+### Problem
+
+DEC-130 — builder-call cancellation and DEC-131 — exact Track completion authority do not exclude a destructive Record writer between role/source selection and builder entry. The manager also reported success after a refused void Record start. Conversely, reset itself could be interrupted by a successful queued start and then destroy its new first-bar view. A preparation token is not role exclusion: qualified ready adoption remains possible and bridge service must revalidate metadata.
+
+### Decision
+
+Extend each existing builder with a noncopyable scoped PreparationTurn: acquire/release fixed metadata under saved PRIMASK, retain non-masking ownership through selection/work/commit, and deny entry/completion after cancellation. Both runtime lanes participate. Foreign reset cancels/discards and returns busy; destructive reset reserves both lanes atomically, retaining ownership across unmasked cleanup. Slot retirement passes the same exact capabilities through lease release. No implicit reset queue; real callers retry.
+
+Record start acquires both lanes before geometry/timeline/pre-roll mutation and returns actual Capture acceptance. The manager consumes queued Record only on that success. Direct return reset/retained binding refuse foreign ownership; first-bar service/deferred raw projection acquire before selection and qualify final metadata. Frozen release reports completion so required retirement preserves its source/job on refusal. Stop/deferred bind still uses the existing frozen current-bar fallback, not a new projection queue.
+
+Ordinary qualified ready adoption remains available. Bridge service snapshots/revalidates exact physical context/destination/role receipts under fixed guards, never indexes a stale ready selection after unmask, and performs no direct cleanup after cancellation. Its exact completed worker detaches while preserving a ready that main or the clock adopter made current; this is not private-completion promotion. Content-dependent seeks/projection, Fill/Order and retirement drains stay unmasked.
+
+### Rationale
+
+Closes both preparation→reset and reset→Record interleavings on the existing owners without delaying Clock delivery, allocating hot storage, or changing who owns content. Busy is not successful completion. Independent adoption must not freeze progress or invalidate a newly authoritative window.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Mask the complete owner/Record/reset/seek | Content-dependent projection/retirement would create unqualified input/Clock exclusion. |
+| Rely on generation checks alone | Currency cannot prevent an interrupted reset or direct writer from destroying freshly acquired work. |
+| Return busy but keep manager unconditional success | Consumes the only real pending Record retry producer. |
+| Block all ready adoption during preparation | Unnecessarily delays qualified playback; exact role revalidation and completed-worker detachment preserve both progress and ownership. |
+| Add a reset/projection manager or queue | Duplicates existing reset callers, pending Record and frozen source job ownership. |
+
+### Affected modules
+
+RuntimePlaybackViewBuild, LoopPlaybackRuntime / TrackPlaybackRuntime, Track playback maintenance/Record admission and deferred retirement, TrackManager Record queue; existing native production-path fixtures.
+
+### Constraints created
+
+Physical arrays/LoopPool shells remain retained. No fourth view, resident Track field, default activation, Clock reorder or numerical RAM1 floor relaxation. Tokens do not certify whole-owner/IRQ/WCET, wire arrival or running740→768 readiness. Default-path Record/Stop compatibility HITL is required before device acceptance; no hardware run is implied by native success.
+
+### Related OpenSpec
+
+[I5 — acquisition contract and final evidence](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ACQUISITION-CONCURRENCY.md), `windowed-playback-generation` running-Capture prerequisite. Parents remain unchecked29/60.
+
+### Migration notes
+
+No SD/content format migration or new owner. Track::startRecording now returns Boolean actual acceptance; callers that consume a request must honor it. Builder flags fit existing layout after cursor/phase reorder: ARM264/runtime7808 and host408/runtime9992, unchanged. Fullnative3254passed7skipped/focused479/ASan12/four scratch controls; one review's two concrete findings fixed/retested, no repeat review. DefaultcaptureSUCCESS/padding1160≥840; new image NOT uploaded. Hardware recipe and residual gates live in the linked packet.
+
+**DEC-132 — preparation acquisition and Record exclusion, hardware addendum (2026-10-15):** The required default-path compatibility gate now PASS on exact retained/uploaded default-OFF HEXf48aca66…b0068/ELF7cd88398…a3563. Owner approved scratch8/4–5 only; registered base8/4/channel8/hostUSB300BPM liveoverall_oktrue/verdictPASS/cap_full/issuesempty/critical-loss0, fingerprinted replay02PASS/headerpresent/must-prove notskipped, parallel native3254passed7skipped121suites. Early postflash storage refusal retained and settled without reset/guard change; final managedSTOPPED/closedoverlay/guard15/two drains/nolatch. Newdefault-OFF image remains installed/scratchcontent retained, no SDcleanup/Git/defaultactivation/parentcheckoff. Advisory second-overdub first-note lateness and absent deadline-safety proof remain; no740→768/full inventory/all-route claim. Hardware execution details in the existing acquisition packet; no architecture or budget change.
+
+## DEC-133 — Connected first-bar rolling Record
+
+**Date:** 2026-10-15
+**Owner:** Track rolling window owner / Loop Capture
+**Status:** Accepted (functional first-bar increment; not target readiness)
+
+### Problem
+The owner approved actual rolling Record integration, not more default-OFF helper milestones. Running epochs were excluded, main cleared Record frames, accepted append could only invalidate private work, and the MIDI/ledger send gates rejected RECORDING even after a fixed view was selected.
+
+### Decision
+Retain live Capture demand on the existing pending/frozen records, prepare through existing Track offers/arbitration/maintenance and three views, extend certified private raw-prefix Fill/order, and adopt complete current-token successors only at an actual traversal boundary. Consume them through the existing fixed-storage reader and ledger/send route. The initial implemented live coverage is raw[0,768) with period768; later rows remain accepted/frozen Stop content, never folded modulo into this interval.
+
+Only opted-in raw-coverage Record comparisons ignore the advisory predicted loop length: normal Record presentation grows it without changing raw coordinates. Interval phase generation, raw-source destructive/alias currency, start/loop-start, lease, operation and Track origin stay qualified; strict default live factory callers retain exact semantics. Live Record keeps its Capture-start anchor at wrap. Ledger/send exception requires qualified live Record audibility, not a global PLAYING-mode expansion. Matching nonempty Stop preserves served physical/cursor/ledger state only with exact frozen content, geometry and closure; mismatch prepares corrected frozen content. Rejected epoch/origin cancels private borrowed work and stays invalidated for that interval without refreshing owed accounting or touching current.
+
+### Rationale
+Connected real-input/ClockManager tests found advisory-length invalidation, wrap-anchor drift and final Record send refusal that isolated helper tests missed. One focused lifecycle review exposed rejected-epoch borrow retention; fixed/retested with a discriminating removal control. Existing owners and source lifetimes compose without another queue/manager/view/emitter.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Another default-OFF compatibility milestone | Does not exercise the user-requested rolling request→adopt→emit path. |
+| A separate Record emitter or fourth view | Duplicates reader/ledger authority and bypasses the existing three-role lifetime. |
+| Treat predicted Record length as raw projection | Normal first Clock changes0→768 and permanently strands the recipe despite unchanged raw coordinates. |
+| Target input continuation/default activation now | Target continuation is compile-rejected; actual queued Clocks can cross the edge before main, and physical complete-owner/IRQ/arrival bounds remain unqualified. |
+
+### Affected modules
+Track live request, maintenance, Capture start/Stop and playback; RuntimePlaybackView Fill/Build; pending/frozen external runtime recipes; ordinary ownership and real-input tests. No main/Clock/input-dispatch behavior change in this increment.
+
+### Constraints created
+Initial live interval only; growing/subsequent coverage remains open. Keep default rolling OFF, legacy migration fallback and parent tasks unchecked. No numerical budget relaxation, Track DTCM field, hot allocation, Clock delay/reorder or readiness inference from controlled native grants. ARM/host runtime+64B per slot is external state; Track remains384B target.
+
+### Related OpenSpec
+`windowed-playback-generation` 3.15a–c — one-reader migration; [I5 — execution and evidence](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-VERTICAL.md).
+
+### Migration notes
+Fullnative3267pass7skip/ASan5/two specificRED controls/default+explicit enabled buildsPASS; padding1160/1080≥840. Hardware NOT RUN/no upload/installed default unchanged. No general rolling, physical740→768, all-route or legacy-retirement checkoff; next work remains connected rolling coverage and its real target service/device gates.
+
+## DEC-134 — Growing live Record coverage
+
+**Date:** 2026-10-15
+**Owner:** Track rolling request/window/reader and Loop Capture
+**Status:** Accepted (functional extension; physical readiness unqualified)
+
+### Problem
+DEC-133 — connected first-bar rolling Record supplied only raw[0,768). Later accepted bars needed the same owner/reader without whole-take playback storage, lost distinct obligations, changed input coordinates or retriggered held identities.
+
+### Decision
+Keep explicit one-bar raw windows; derive a monotonic live period from bar-rounded accepted maximum tick+1, not advisory presentation length. Only a complete qualified full-wrap handoff grows that period and reanchors playback phase0, updating Track/frame/live recipe together while raw Capture start/timestamps/NoteIds remain unchanged. Within-period next coverage keeps priority and its original deadline while newer input coalesces its source token. Same-coverage certified append work can extend; changed coverage cancels/rebuilds exact private work. Reader retains next demand at its edge; late ready cannot adopt mid-interval and missing live coverage cannot fall through to a legacy emitter.
+
+Matching Stop accepts a complete source-qualified subinterval of a multi-bar final period without comparing its event count to the full raw source; closure/geometry/projection/frozen token still govern. Current physical view/cursor/ledger are preserved. Mismatch prepares corrected frozen coverage. Successor publication retains the retired idle role when no ready shell exists, maintaining all three views for future live/frozen work. Frozen publication supports matching-period Capture current as well as mismatch.
+
+Qualified live Record ledger admission suppresses an On only when that channel/pitch/NoteId is already open, retaining the original matching Off. The bounded ledger identity lookup adds no fields. Committed/overdub emit policy and ledger layout are unchanged.
+
+### Rationale
+Fixture-first period REDs demonstrated missing later coverage. Production Stop controls exposed idle-role loss and matching-period frozen publication restrictions. One focused review's normal-maintenance On736/Off800 witness reproduced a second On at2272 after the original at1504; the identity gate fixes/retests that concrete defect without a separate emitter or broad review loop.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Fold later raw input modulo the first bar | Emits content in a different interval and cannot satisfy exact source/geometry/Stop parity. |
+| Grow geometry mid-interval or against an incongruent old playback origin | Can skip/replay rows; full-wrap exact adoption owns the phase0 handoff. |
+| Replace owed second-bar preparation with newest third-bar request | Loses a distinct already-admitted playback obligation and silently refreshes its deadline. |
+| Whole-take buffer/fourth view/separate Record replay | Violates window-sized existing-role ownership and duplicates emission authority. |
+| Treat controlled native grants as target readiness | Total source inspection remains extent-dependent; queued Clocks can cross edge before main and target continuation is compile-rejected. |
+
+### Affected modules
+TrackPlaybackWindowBuild, TrackPlaybackHotPath, TrackCaptureStopCommit; existing RuntimePlaybackView successor rotation and frozen runtime publication; ActiveNoteLedger identity query; actual input/ClockManager coverage fixtures.
+
+### Constraints created
+No new resident field/Track DTCM allocation/view/manager/queue/hot allocation/input dispatch/Clock delay/budget change. Existing named misses, exact preparation ownership and physical source lifetime remain. Native8owner-turns-perClock is functional only; no finite complete-owner/IRQ/arrival/dense-device claim or global rolling activation.
+
+### Related OpenSpec
+`windowed-playback-generation`, 3.15a–c — one-reader migration; [I5 — coverage execution/verification](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-COVERAGE.md).
+
+### Migration notes
+Eight new ordinary cases/focused500/fullnative3275pass7skip/ASan8/three specificRED controls; default+enabled buildsPASS/padding1160/952≥840/ABI unchanged. Supersedes DEC-133 — connected first-bar Record's implementation limitation, not its ownership/default/timing gates. Hardware NOT RUN/no upload/SD/Git/defaultactivation;29/60 parents unchecked. Continue remaining all-route/content/timing/device gates before legacy retirement.
+
+## DEC-135 — Rolling Record qualification and recycled-shell currency
+
+**Date:** 2026-10-16
+**Owner:** Track rolling playback and managed HITL qualification
+**Status:** Accepted implementation correction; device matrix remains partial
+
+### Problem
+Dedicated rolling-enabled evaluation exposed production VisualCache cancellation of valid live work, then a completed unpublished idle shell carried into a later take's ready role. Host image metadata also selected a stale local artifact instead of the configured build root. Native helper success alone had not exercised these boundaries.
+
+### Decision
+Preserve LiveCapture-owned private work through `serviceFirstRecordingBar`, cancelling only genuinely stale live borrows. Reset recycled unpublished idle-shell metadata at its exact initial ready-role transfer; do not reset current or weaken source, epoch, physical completion or adoption checks. Both corrections require discriminating production-path native RED→GREEN evidence.
+
+Use an explicit qualification-only selected-slot snapshot with fixed coherent metadata and endpoint copies under the existing saved-mask guard; emit serial only after restore. No source walk, periodic emitter, new resident field or alternate playback owner. Full managed acceptance requires ordered actual output, independent accepted-content parity, empty/held coverage and independently proven matching and mismatching physical Stop outcomes.
+
+Firmware provenance selects the explicit override or configured build root exclusively; a missing authoritative artifact yields null, never stale fallback. Preserve original run metadata and attach upload-chain correction evidence separately, without claiming firmware-self-reported identity or retroactive acceptance. Future qualification uses an isolated artifact root.
+
+### Rationale and alternatives
+Real VisualCache interleaving and real-builder recycled-shell fixtures reproduced the two defects. Epoch diagnostics ruled out epoch rejection; an unreproduced geometry hypothesis was not implemented. Relaxed branch gates, stale fallback artifacts, whole-view resets and another emitter would hide the observed failures rather than qualify the existing owner.
+
+### Constraints and verification
+Growth legs in full07/full08 passed functionally, but following empty take failed; held and matching physical Stop remain device-unverified. Latest shell correction is built/retained, NOT uploaded. Focused505, ASan/UBSan10 (leak detection disabled), host46, isolated fullnative3281passed7skipped and default/enabled builds pass; padding1160/952≥840, no layout or budget relaxation. These do not establish timing/WCET/arrival or all-route readiness.
+
+Retry cap reached: exact pre-test default restored and fresh managed stopped/guard15/two-drain postflight passed. Further stimulus requires explicit owner approval; retain authorized scratch content and failed evidence. No default activation, parent checkoff, SD cleanup or Git delivery.
+
+### Related OpenSpec and migration
+`windowed-playback-generation`; [I5 — dedicated rolling HITL execution, exact images and continuation](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md). Extends DEC-134 — growing live Record coverage without closing the full device matrix or legacy-retirement gates.
+
+### Approved-loop follow-up — initial publication/clock admission (2026-10-16)
+
+The approved dedicated run exposed another real ordering gap: after initial current publication, an extra main turn before the first clock reader could recreate an initial request with deadline0. Later source updates completed ready but could never satisfy boundary adoption's nonzero deadline. Production-input/owner fixture reproduced expected768/actual0, then exact960/1056 MIDI/NoteId/ledger after the correction. `retainLiveRecordDemand` now waits for the first reader frame while an immutable nonraw Capture current of the same operation is already published; the ordinary Serving-frame producer then owns next coverage/deadline. No new owner/state/clock delay or relaxed admission. Diagnostic schema43 adds fixed role/worker metadata only (no nextGrain/source-currency/completion callback); no speculative foreign-ready reclamation.
+
+Focused507/fullnative3283pass7skip/host23/default+enabled builds/one reviewPASS; padding1160/952≥840 unchanged. Corrected candidate919e17e6… retained NOTuploaded. Three managed content attempts used correct metadata; diagnostic attempt hung at host session.close and lacks its own shutdown report. Separate non-reset recovery2verified drains/no latch, exact pre-test default restored and fresh postflightPASSguard15/bothheaps/two drains. Stop content testing on unresolved host teardown, not missing owner approval; do not raise timeouts or claim backend cause without evidence. Full matrix/empty/held/matching physical Stop and timing remain unqualified. Exact images, exceptions, reproduction and next bounded prerequisite are in the linked execution packet.
+
+### Managed MIDI close ordering follow-up (2026-10-16)
+
+Following HITL skill guidance, rolling scenario MIDI sessions now remain retained through canonical DeviceSession shutdown and capture-child exit. Teardown Stop sender and final heap helper borrow the retained output, avoiding native temporary-port closes before safety. Only afterward does stage-recorded native closure run with10s faulthandler fatal watchdog; hung native/GIL close exits nonzero with stacks and never promotes pending cleanup receipt. No new device owner, serial path, firmware/default policy, timeout increase or speculative backend diagnosis. One focused review identified the temporary closes; fixed/retested through actual send/helper APIs,94hostPASS including GIL-held native hang injection after two drains/capturestop. Read-only and full attempt4 device cleanup complete normally.
+
+Correctly pinned919e17e6… evaluation verifies growth+empty complete legs and independent live held pair/NoteId/no-retrigger/ledger schedule. Held frozen mismatch Stop fails despite completed successor, subsequent strict idle health refuses; matching physical Stop remains unverified. Focused native same-pair StopGREEN is not a reused/deferred production reproducer; do not patch from an unproven hypothesis or equate live held success with Stop acceptance. Exact default restored/freshpostflightguard15/bothheaps/two drains/portclose/no latch. Fourof6attempts used; stop on concrete health blocker. Details and unchanged exclusions are in the linked execution packet.
+
+## DEC-136 — Private committed-root preparation before Capture-ready adoption
+
+**Date:** 2026-10-16
+**Owner:** Track rolling playback — the held-Record Stop release edge
+**Status:** Accepted and implemented; **native gate GREEN** (focused 57/57, full native 3 294 / 3 287 succeeded / 7 skipped / 0 failed, both builds inside the RAM1 floor, strict OpenSpec valid) — **device gate open**: attempt 5 could not be spent because no Teensy was on USB
+
+### Problem
+The held frozen mismatch Stop never retires its bound `CaptureStopJob`. S7.5b.5 releases the job only once a
+**root-backed** window (Committed origin, the current root's snapshot identity) takes over the physical reader,
+and that successor is unreachable: the ordinary rolling admission cannot express the demand at all on this
+geometry. `CoverageServiceContract::canCompleteWithinLead` charges `requiredGrains() × (maximumConsecutiveDeniedTurns + 1)`
+turns at `maximumPhaseAdvancePerTurn`, on top of the one-bar `leadTicks` reserve — measured for the held
+two-bar take as `5 grains × 8 turns × 64 ticks = 2 560` plus `768 = 3 328 ticks` of lead against a
+`1 536`-tick loop, and even the smallest possible coverage demand needs `1 792`. So **no legal lead admits a
+coverage build on a two-bar loop**. The refusal — the long-recorded 3.15b–c root-current
+`CannotCompleteBeforeHandoff` RED — then discards the qualified candidate and coalesces the obligation, which
+leaves the frozen reader serving, `currentRootWindowServed` unreachable, and the job bound forever. Repairing
+the downstream retry/deadline bookkeeping treats that consequence, not the cause.
+
+### Decision
+Add one **narrow, position-free preparation route** for exactly this obligation. The declared envelope, its
+constants and every other demand's admission are untouched.
+
+1. **Structural classification.** `Track::rootReturnSuccessorIsOwedForSlot` answers whether this demand is the
+   root successor a bound Record job's frozen return window needs: that job's **qualified** frozen source, the
+   **current published root** as the demand's source (revision, generation and the published snapshot
+   identity), an owed or served **complete, non-raw Capture window built from that job's frozen token**, and a
+   requested coverage that **contains the playhead**. Nothing else qualifies.
+2. **The demand is position-free while it is owed.** It is marked
+   `PlaybackViewPendingReason::PrivateRootReturnPreparation`, carries **no deadline** (none is fabricated) and
+   the pre-admission position gates tolerate it *only* while (1) holds. The served frozen reader keeps serving
+   until the successor is complete and adopted, so no promise is broken by the wait.
+3. **Impossibility is the waiver.** The only term waived is the lead test, and only where the envelope itself
+   proves no legal lead exists: `Track::ordinaryAdmissionCannotServeDemand` is
+   `!coverageContract.canCompleteWithinLead(loopLengthTicks)` evaluated against the demand's **own derived**
+   cost. Where any legal lead exists the mark is cleared and the ordinary path runs unchanged — including its
+   `CannotCompleteBeforeHandoff` refusal and its retention, which therefore stay observable.
+4. **Everything else is preserved.** The same candidate validation (source identity, currency, row count, read
+   units), the same grain accounting, the same single successor role, the same atomic adoption at a real
+   boundary where the completed window covers the playhead, and the same S7.5b.5 release edge. No new owner,
+   queue, view, emitter, resident field or scheduler, and no change to `canCompleteWithinLead`, its constants,
+   or another slot's promise.
+5. **Containment.** The served window is never torn, and a refusal for any *other* reason (occupied successor
+   role, sibling promise, candidate identity) **defers** — it does not destroy the qualified candidate.
+
+### Rationale and alternatives
+* **Rejected — change the declared constants.** The advance/denial figures are measurement-backed safety
+  assumptions; loosening them to make one reproducer fit would erase the information the scheduler currently
+  gives for every geometry, and it is a bound-class change needing its own measurement.
+* **Rejected — `loopLength <= N` eligibility.** That bakes today's reproducer into policy. Impossibility is
+  derived from the demand's own cost and the loop, so a short loop is covered because it *is* short, not
+  because it equals the recorded length.
+* **Rejected — prepare after the refusal fires.** The route exists *before* the admission refuses, which is the
+  disposition 3.15b–c itself recorded ("qualify private useful root work before Capture-ready adoption").
+* **Tried and reverted:** neutralising the first admission conjunct (the refusal merely moves to
+  `DeadlineExpired` at the next boundary) and making any unpositioned demand progressable (a general bypass;
+  the qualification is then invalidated). Both leave the job stranded.
+
+### Constraints and verification
+Native evidence only until a device leg: the registered held-mismatch reproducer must go GREEN with the served
+window byte-intact until adoption; the rule gets its own contract test (two-bar eligible, longer loop not
+eligible, no bound frozen job not eligible, non-root-backed demand not eligible); the ordinary refusal stays
+observable where a legal lead exists; ownership and release semantics around S7.5b.5 are unchanged; full
+native, both builds' RAM1 lines and strict OpenSpec validation must pass with no Track/RAM1 layout change.
+Envelope constants, default rolling activation, the installed device image and the SD contents are untouched.
+Task 3.15b–c's remaining device/content gates are not closed by this.
+
+**Completion (2026-10-16, same day): the S7.5b.5 release edge now sees the route's successor.**
+The route's own demand is position-free, and the release edge predates it: while the successor was
+in flight (a coverage-owned build, invisible to the frozen-window stall lane) or complete but
+unadopted (an unpublished Committed ready, invisible to the Capture-origin hold), a retirement grain
+landing where the served-window holds do not apply — the stop-correction transient, a transport
+stop inside the correction window — retired the job mid-owe and stranded the successor. The edge now
+holds the job while that successor is owed **and the reader is not yet root-backed**, counted only
+while no adoption boundary can come, expiring through the build's own discard path so a stuck
+successor still releases the job. Registered reproducer RED→GREEN plus a discriminating
+transport-stop fixture; the first, broader iteration was caught by the existing fixtures (any
+root-backed ready held the job forever; the budget tore a successor mid-wait on a legitimate
+boundary wait) and repaired by the takeover gate and the only-while-no-boundary-can-come count.
+Externally allocated runtime fields only (`rootReturnHoldKey`/`rootReturnHoldGrains`, target runtime
+7,880 B / host 10,064 B pins updated); default build line byte-identical; the device gate stays open.
+
+### Related OpenSpec and migration
+`windowed-playback-generation` (3.15b–c — root-current handoff); [I5 — falsification and the proven
+blocker](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md#the-consumed-work-record-fix-is-falsified-the-blocker-is-the-declared-envelope-2026-10-16)
+and [I5 — private root-return preparation packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PRIVATE-ROOT-RETURN-PREPARATION.md).
+Extends DEC-135 — rolling Record qualification and recycled-shell currency and DEC-134 — growing live Record
+coverage; supersedes nothing.
+
+## DEC-137 — The held-leg Stop oracle is DEC-136 aware: the frozen serving phase, the root return and the release edge
+
+**Date:** 2026-10-17
+**Owner:** Rolling Record HITL verification — the held leg's `stop_handoff` contract
+**Status:** Accepted and implemented — host tooling only; **no firmware, build, upload, SD or device action**
+
+### Problem
+`scripts/hitl/verify/rolling_record.py::stop_handoff` was written against the pre-route world, where the
+frozen-serving-bound state after a mismatching Stop was terminal. DEC-136's device leg (attempt 7) then failed
+that oracle `stop_responsibility_unproven` ×4 on an image whose held leg had already shown the designed
+terminal: the job bound while the frozen Capture window serves — the truncation rewind re-anchors the
+projection, so the frame is reported unbound **in the same physical view** — then the root-backed Committed
+successor serving with the job released (S7.5b.5's release-after-takeover). Every term of the old contract is
+contradicted by that design: it required a bound Serving frame during the bound phase, a changed role/storage
+on the corrected successor (the reuse branch serves in the same view), and `stopJob` truthy in the evaluated
+sample (release is the designed end state). Leaving it red made the full recipe unreachable for reasons that
+carry no information about the firmware; editing it to accept the observed table would have accepted any
+runaway Stop, which is exactly what the no-weakening rule forbids.
+
+### Decision
+The held leg's Stop contract is **sequence-based** and encodes the DEC-136 terminal, with the pre-route
+stranding signature kept as its discriminator.
+
+1. `stop_handoff(before, observations, stop, *, slot)` reads the ordered post-stop sample sequence. The
+   matching-Stop branch is unchanged: one required sample, physical-reader preservation with unchanged
+   `epoch/frameOrigin/framePeriod/boundRole/boundStorage/currentRole/currentStorage/cursor/ledger`.
+2. A mismatching Stop's **frozen serving phase** is accepted when the job is bound, the served window is
+   published, complete, Capture origin, carries **the take's own frozen token**
+   (`captureToken == before['liveToken']`) and the frozen geometry (`period == final`). The frame may be
+   reported unbound (`boundRole == 0xFF`, `boundStorage == 0`, `framePeriod == 0`) — the rewind/reuse shape —
+   while a bound frame must still satisfy the ordinary serving terms (identity, geometry, playhead coverage).
+3. `corrected_frozen_handoff` keeps its exact meaning and is scanned first, so the growth and empty legs pass
+   as before.
+4. Otherwise the leg passes only with `corrected_frozen_root_return`: **after** that frozen phase, a later
+   sample whose job is released serves Committed-origin content (`sourceOrigin == 0`, no Capture token),
+   published, complete, at the frozen geometry, and that released window is **actually being read**
+   (cursor/ledger advances across it). Every other shape is a named refusal:
+   `stop_root_backed_successor_not_observed` (the job is never discharged inside the window),
+   `stop_release_not_terminal`, `stop_early_release_while_frozen_capture_serves` (released while the frozen
+   Capture content still serves — the early-release class), `stop_root_successor_unqualified`,
+   `stop_root_return_not_serving`, `stop_frozen_serving_not_observed`, `stop_snapshot_invalid`,
+   `stop_observation_missing`.
+5. `full_recipe_complete` additionally requires the **held** leg to reach `corrected_frozen_root_return` — the
+   held leg is the only one whose frozen serving uses the reuse branch — so a held leg that degrades to the
+   corrected-role handoff, or strands, cannot pass as a full recipe.
+6. The scenario passes the whole sequence, requires the released samples' served endpoints to be the take's
+   own accepted content (`root_return_serves_foreign_content`) and counts the root return as a mismatching Stop
+   outcome in the report.
+
+### Rationale and alternatives
+* **Discrimination measured in both directions, against retained device evidence.** Replaying the recorded
+   captures: the route images (`captures/i5-dec136-releasefix-attempt7-02`,
+   `captures/i5-dec136-fix-attempt6-02/03`) give growth/empty `corrected_frozen_handoff` and held
+   `corrected_frozen_root_return`, while the pre-route stranding image `919e17e6` stays **RED on all three of
+   its captures** (`captures/i5-rolling-record-approved-full-04`,
+   `captures/i5-dec136-bisect-attempt4image-02/03`) with `stop_root_backed_successor_not_observed`: there the
+   job stays bound for the whole 5.5 s window and no Committed successor ever takes over.
+* **What this oracle cannot see, stated rather than implied.** The pre-completion route image (`f11444ab…`) and
+
+   the route+completion image (`b83c7f6d…`) produce the **same** held-leg table at the harness's sampling
+   resolution (bound for about two samples, then the Committed takeover with the job released). This contract
+   therefore does **not** discriminate the release-edge completion; that discrimination remains the native
+   reproducer `rollingRecordHeldStopHoldsOwedRootSuccessorAcrossTransportStop` and its transport-stop fixture.
+* **Rejected — accept the observed table as-is.** It would also pass the attempt-4 stranding image, removing
+   the only device-level statement the held leg makes about Stop responsibility.
+* **Rejected — keep the old contract and record the held leg as unprovable.** It leaves a red gate no firmware
+   change can clear, and hides a designed terminal behind a pre-route assumption.
+* **Rejected for now — a new tick-resolved device observable.** A stronger device proof of the release edge
+   needs a new marker plus a fresh run on both images; the owner asked for the contract update with its own
+   discriminator first.
+
+### Constraints and verification
+Host tooling only; the device stays on the exact default `f48aca66…` and the held-leg attempt-7 evidence is
+unchanged — this decision governs how that evidence is judged, not what was run. Verification: the DEC-136
+terminal test in `scripts/test_rolling_record.py` pins the route trace, the stranding control and seven named
+refusals (**16/16** focused); the retained traces replay as above; four mutations — stranding accepted, early
+release accepted, progression term dropped, held-leg requirement dropped — each kill exactly their own case(s),
+with the files restored byte-identically (`sha256` verified; the verifier was `55239da8…` at that run and `cac5c35b…` after the review's documentation-only correction); `test_rolling_record` + `test_hitl_import_gate` +
+`test_hitl_stimulus_contract` **54/54**; `test_accepted_sequence` **194/194**; full host sweep **1 818 tests /
+7 failures / 3 errors** against a measured pre-change baseline of **1 817 / 7 / 3** with an **identical**
+failing-test set (the one extra test is the new case), so no regression is attributable to this change.
+
+### Review and recorded limits
+One read-only review pass (three files plus the retained captures; no second review loop) independently decoded
+the recorded rows, confirmed the mismatch classification, the origin constants, the ordering/degenerate-input
+behaviour, the per-sample precondition and the cross-file agreement, and raised five findings, none of which
+changed a verdict: (1) the ordered scan labels a leg by what is seen first, so the *corrected* handoff — which
+never carried discharge evidence, since the pre-route contract required the job still bound there — wins over a
+later release; the docstring was corrected to say so, and growth/empty keep their pre-change labels; (2) two
+false-negative surfaces (**a** release landing before the first post-stop read reports
+`stop_frozen_serving_not_observed`, and a single released sample reports `stop_root_return_not_serving`) are
+kept, because accepting those shapes without the evidence would weaken the terminal — a missed observation
+reads as "not observed", never as a pass; (3) the scenario's post-window drain injects a realtime transport Stop
+the contract cannot see, so a leg that released only on a transport stop would read as stranding — a coverage
+limitation of this leg, not of the DEC-136 reproducer, and extending the window past the drain is a scenario
+redesign; (4) the missing `matching_physical_reader_preserved` coverage cannot be supplied by simply adding a
+fourth leg, because `full_recipe_complete` requires exactly three, and no report field names which coverage is
+missing — so that item must change the leg set and the recipe predicate together; (5) an aborted leg leaves the
+derived report keys absent rather than `False` (pre-existing) and the refusal is one named term (the old list
+was four copies of `stop_responsibility_unproven`), with the full sequence retained in the capture.
+
+### Related OpenSpec and migration
+### Related OpenSpec and migration
+`windowed-playback-generation` (3.15b–c — root-current handoff; the I5 device leg attempt 7);
+[I5 — private root-return preparation packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PRIVATE-ROOT-RETURN-PREPARATION.md).
+Extends DEC-136 — private committed-root preparation before Capture-ready adoption; supersedes nothing.
+
+## DEC-138 — The non-truncating Stop terminal is the preserved reader, and the recipe covers each Stop class from its own leg
+
+**Date:** 2026-10-17
+**Owner:** Rolling Record HITL verification — the matching-Stop terminal and the recipe predicate
+**Status:** Accepted and implemented — host tooling only; **no firmware, build, upload, SD or device action** (no board attached)
+
+### Problem
+`full_recipe_complete` required a `matching_physical_reader_preserved` outcome that **no leg could produce**, and the
+recipe was structurally unable to acquire one. Two independent defects:
+
+1. **The unmatched requirement.** The three recipe legs (growth, empty, held) all record past their own final
+   length, so all 23 recorded device stops across 12 captures are truncating (`raw_length` ≈ 6400/3400 against a
+   `final_length` of 2304/1536); the recipe had no non-truncating Stop at all.
+2. **An unsatisfiable terminal.** The matching branch compared `epoch`, `frameOrigin`, `framePeriod`, `boundRole`,
+   `boundStorage`, `currentRole`, `currentStorage`, `cursor` and `ledger` **for equality** across the Stop. Measured
+   on every recorded Stop: `epoch` advances by one, and `boundRole`/`boundStorage`/`framePeriod`/`frameOrigin` are
+   **cleared** at the Stop (the positional frame is unbound until a successor is adopted); `cursor`/`ledger` reset in
+   the new era. Only the serving view's `(currentRole, currentStorage)` is preserved — in 8 of 9 stops inspected, the
+   exception being a leg whose first post-Stop sample was already past a rebuild. So the "matching physical reader"
+   requirement could never hold on the device, whatever the firmware did: the recipe was unreachable by
+   construction, and the leg count (`len(legs) != 3`) additionally rejected the only way to close it — adding a leg.
+
+### Decision
+Specify the terminal from what the device actually does, and give the recipe a leg that produces the class.
+
+1. **The matching terminal = the preserved reader.** For a non-truncating Stop (`raw_length <= final`,
+   `before.period == final`, `before.rawMax < final`) the contract now asserts: the era **advanced**
+   (`after.epoch != before.epoch`, proving the Stop was processed); the serving view is the **same**
+   `(currentRole, currentStorage)`; the served window is the take's own frozen content (`period == final`,
+   `captureToken == before.liveToken`, Capture origin, published, complete); and the frame is either **cleared**
+   consistently (`boundRole == 0xFF` with `boundStorage == 0` and `framePeriod == 0` — no rebuild) or, if still
+   bound, satisfies the ordinary serving terms. Named refusals: `stop_matching_era_not_advanced`,
+   `stop_matching_reader_not_preserved`, `stop_matching_frame_inconsistent`, `stop_frozen_geometry_or_token_mismatch`,
+   `stop_responsibility_unproven`. Nothing compares the cleared/reset fields any more, so the terminal is reachable
+   exactly when the device keeps the same reader.
+2. **A `matched` leg that produces it.** Recording three bars with the growth fixture (its last note inside bar 3,
+   extent 1832), the leg observes the take's first window and then the **pre-wrap third window** of the same cycle
+   (`1950 <= phase <= 2150` of a 2304-tick loop) and presses the Record stop **there**, before joining the stream,
+   so the take's extent never passes its own bar-aligned loop length. The press-before-join ordering is the whole
+   point: the other legs join first and their ~330-tick join/read latency puts the press past the wrap, which is why
+   they are truncating. The leg's claim is the Stop class only — its replay window is a single cycle, so the
+   scheduled wire inventory and interval rotation stay with growth/empty (recorded explicitly in the report, not
+   silently dropped).
+3. **The predicate is leg-attributed, and the leg set is membership.** `full_recipe_complete` requires the
+   `growth`, `empty`, `held` and `matched` legs to be present and passing; `held` must reach
+   `corrected_frozen_root_return`; `matched` must reach `matching_physical_reader_preserved`; at least one of
+   `growth`/`empty` must reach `corrected_frozen_handoff`. Extra legs are allowed (and must pass), so a coverage gap
+   is closed by adding the producing leg instead of re-labelling an existing one, and no leg can borrow another's
+   terminal. The scenario also records `stop_terminals_by_leg` so a non-PASS names which coverage is missing.
+4. The registered temporary stimulus declares the new claim (`matching_physical_stop`) and its description names the
+   non-truncating Stop class; its authorization (track 8, slots 4–5) is unchanged.
+
+### Rationale and alternatives
+* **The reachability proof is host-side.** Replaying the retained traces is unchanged (growth/empty
+  `corrected_frozen_handoff`, held `corrected_frozen_root_return`, the pre-route stranding image still RED); a
+  designed matched trace built from the measured Stop shape returns `matching_physical_reader_preserved`, while the
+  same trace with a truncating receipt is refused; and a four-leg recipe assembled from the real attempt-7 device
+  evidence plus a matched leg makes `full_recipe_complete` **True** for the first time, while the same recipe without
+  the matched leg is **False**.
+* **Rejected — drop the matching requirement from the recipe.** That is declaring a case out of scope to pass: the
+  coverage is real and reachable, it was only mis-specified and unproduced.
+* **Rejected — accept the recorded truncating stops as "matching".** The classification term is what distinguishes
+  the two designed handoffs; conflating them removes the recipe's ability to say anything about either.
+* **Rejected — keep the equality form and add a leg.** A leg cannot make an unsatisfiable terminal satisfiable.
+* **Residual risk, stated:** if the device rebuilds its reader at a *non-truncating* Stop, the matched leg will
+  refuse by name (`stop_matching_reader_not_preserved`). That would be a design deviation worth knowing rather than a
+  contract that cannot be met, and the run's own naming tells the two apart.
+
+### Constraints and verification
+Host only; the device stays on the exact default `f48aca66…`. Focused suite **18/18** (the matching terminal with
+eight named refusals, the truncating/stranding shapes, the leg-attributed recipe, the leg-order pin); five mutation
+controls — era term, reader-identity term, cleared-frame consistency, matched-leg requirement, held-leg attribution —
+each kill exactly their own case(s) with the files restored byte-identically; `test_rolling_record` +
+`test_hitl_import_gate` + `test_hitl_stimulus_contract` green; full host sweep **1 820 tests / 7 failures / 3 errors**
+with the **same failing set** as the measured pre-change baseline (the two extra tests are the new ones).
+
+### Related OpenSpec and migration
+`windowed-playback-generation` (3.15b–c — root-current handoff; the I5 device leg);
+[I5 — packet § The matching terminal and the matched leg](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/PRIVATE-ROOT-RETURN-PREPARATION.md#the-matching-terminal-and-the-matched-leg-2026-10-17).
+Completes DEC-137 (which left the matching branch untouched) and therefore supersedes its statement that the recipe
+cannot pass for lack of a producing leg; supersedes nothing else.
+
+### Device leg (2026-10-17, same day — six managed runs on the qualification image `b83c7f6d…`, track 8 slot 4)
+The owner asked for the recipe to run on hardware. Six managed content runs found **three real harness defects that no
+host test had caught**, and proved the non-truncating Stop **class** is producible on the device:
+`captures/i5-dec138-matched-attempt8-01…-06`.
+* **8-01** — growth leg `rolling_observation_condition_timeout`: the Stop press had been left **only** in the `matched`
+  branch by the restructure above, so the non-matched legs streamed and then waited for a Stop they never sent (no
+  `Button press: Record/Overdub` row on the wire). Fixed to a single press site on every leg path, pinned by
+  `test_every_leg_path_presses_the_record_stop_once`.
+* **8-02** — all four legs ran: growth/empty/held `corrected_frozen_handoff`, held `root_return_completed=True`;
+  matched **truncating** (raw 5696 → final 2304). A host-observed press lands **270–590 ticks** late (measured), more
+  than the slack left inside a take, so an observation-gated press can only truncate. This run also showed the held leg
+  serving the frozen content through a **corrected-role view first and still completing the release** → the recipe's
+  held requirement became the `root_return_completed` fact rather than the ordered label (DEC-138 item 1 above).
+* **8-03 / 8-04** — growth/empty/held PASS (8-03 held = `corrected_frozen_root_return`). The **grid-scheduled press**
+  (the fixture streamer's own `stop_press_advance_clocks`) works: the matched take stopped at take tick **1360 inside a
+  1536-tick loop**, then at **2080 inside a 2304-tick loop** — both non-truncating. Both runs then failed in the
+  harness's pre-stop observation: 8-03's two-bar design never served the bar-2 window before the Stop, and 8-04 exposed
+  the real constraint — a **growing** take's observed `period` lags (1536 vs final 2304), and the classifier's
+  `before.period == final` term can only hold when the loop length is known before the Stop. Hence the **one-bar**
+  matched take now in the tree (period == final from the start, stop at take tick ~640 inside 768).
+* **8-05** — matched failed `quiet_replay_current_token_stale`: the quiet-replay currency check ran over post-begin
+  reads of a growing take. Fixed by scoping that check to the legs whose claims read the served take.
+* **8-06** — the growth leg timed out with **no rolling window at all** (`period 0`, `lastTick=0xFFFFFFFF` on every
+  sample): the device was degraded after six consecutive runs. Stopped; the exact default image `f48aca66…` was
+  restored and verified healthy (boot banner, reconcile warnings 0, `free=397` with S2b.3 met, readiness attested,
+  read-only library observation complete at 64 slots).
+
+**Net:** the six runs fixed three harness defects and established that the non-truncating Stop class is reachable with a
+grid-scheduled press, but **the recipe has not passed**: the one-bar design has not yet had a clean run (its two runs
+were blocked by a harness check and by the degraded device respectively). Host gates after these fixes: focused
+**20/20**, neighbours **58/58**, full sweep **1 822 tests / 8 failures / 3 errors** — the seven-plus-three known set plus
+the documented real-time `test_midi_clock` flake, which passes when run alone and imports none of this change's modules.
+
+---
+
+## DEC-139 — The matched one-bar `RecordPublished` retirement is sound in isolation: the device stall needs state this shape does not carry
+
+**Date:** 2026-10-17
+**Owner:** Track rolling playback — Record stop retirement and the Snapshot owner's queued root
+**Status:** Accepted as a **diagnostic exclusion** — no firmware change; reproducer green, red-proved by one mutation
+
+### Problem
+The authorized three-pass rolling-Record campaign's `matched` leg failed with the Record job still pending at
+`phase=16` (`RecordPublished`) after a matched, non-truncating one-bar Stop: `#STOP_STATUS ...,pending=1,phase=16,
+queue=1/4`, `#STOP_PREFIX ...,build_active=0,current=0,ready=1,build=2,retained=255`, `#STOP_HISTORY
+...,storage=11,current=11,rows=0,prewarmed=1,pass=0`, and a 60-second read-only postflight that never saw
+`pending=0`. The pending job made the leg's evidence drain incomplete, so the full recipe could not pass. The
+question was whether that is a **production owner/admission defect** or a **missing/inadequate test shape**.
+
+### Decision
+No firmware patch. A production-path reproducer was built first, and it **does not stall**, so the isolated
+owner/admission path is not the defect. `test_rolling_record_retirement` compiles the finalization suite's real
+Track/Loop/storage closure **with `PLAYBACK_WINDOW_ROLLING_ENABLED`** (the qualification image's shape) and drives
+only existing owners: real accepted input -> the VisualCache owner's `serviceFirstRecordingBar` -> `Track::
+stopRecording` at a pre-wrap tick -> the real deferred stop grain to `RecordPublished` -> the real
+`MidiServiceDrain` six-owner selector and `Track::processDeferredIdleMaintenance` -> the window lane's
+`serviceRollingPlaybackWindow` / offer / round-robin / `stepPlaybackViewMaintenance` -> `Track::playMidiEvents` as
+the clock-edge reader. It asserts, and passes:
+
+1. A pre-wrap one-bar stop keeps the take's one-bar geometry.
+2. At `RecordPublished` the pass is committed, the session-exit root is queued, the root is **not** current, the
+   job owns its frozen range, and the Track and global Snapshot gates both admit that stopped job.
+3. With no Snapshot turn the job waits and keeps its own interval and source — the source-lifetime control.
+4. The Snapshot owner receives turns and **publishes the queued root**.
+5. Root currency alone does **not** release the frozen source.
+6. The job then retires within a bounded owner window, and it ends on a **root-backed** reader (`Committed`
+   origin **and** the current published snapshot identity), with the bounded queue empty, the bound return
+   window cleared and the sealed extent returned to the pool — the designed reader handoff, not the
+   `supersedeDeferredStopJob` escape.
+
+**Red-proof (one mutation, byte-identical restore):** forcing
+`Track::canServiceBackgroundSnapshotOwnerTurn()`'s `RecordPublished` term to `false` kills exactly this case at the
+eligibility assertion, and the file is restored to `sha256 7a01e659…`.
+
+### Rationale and alternatives
+* **The recorded stall is not reproducible in this shape.** Everything the device probe showed — job bound,
+  build inactive, root stale — resolves here once the Snapshot owner is actually given its turns. The stall
+  therefore depends on state this fixture does not carry, not on a missing guard in the isolated path.
+* **Rejected — patch the retirement lane to release on a stale root.** That is the exact use-after-free the
+  S4f.19 gate exists to prevent, and the reproducer shows the gate is not what blocks progress.
+* **Rejected — extend the DEC-107 frozen-build stall bound.** `build_active=0` on every device poll rules it out:
+  there was no build to stall.
+* **Rejected — treat the device run as a harness artefact and simply re-run.** The job genuinely stayed pending;
+  re-running without a cause would only re-spend the budget.
+
+### What this does not establish
+The device stall's **cause is still unknown**, and this entry does not close it. Named next diagnostics, in order:
+which resolved track/slot the Snapshot dispatch actually served on the device (`selectedTrackIsRealtime` versus the
+`sStoppedIdleTrackCursor` / `selectStoppedSnapshotTrack` branches in `main.cpp`, neither of which is native-linkable
+here); whether `Loop::hasPendingSnapshotPublish()` was true while `pendingSnapshotSessionExitQueued()` was (an owner
+turn would then be eligible and do nothing); and whether the 20-drain `!TRACE_DRAIN` fence loss and the pending job
+share one cause. The matched leg's device evidence remains **failed**; no recipe `PASS`, no 6.4/3.15f checkoff.
+
+### Constraints and verification
+Host-only. `test_rolling_record_retirement` **1/1 PASSED**; full native `pio test -e native` **3 299 cases / 7
+skipped / 3 292 succeeded / 0 failed** (the measured pre-change figure was 3 298 / 7 / 3 291; the delta is this
+case). The new suite joins `scripts/native_test_link.py`'s firmware-boundary closure so it links the same
+Arduino/SD seams. No production source change, so this slice produced and owed no firmware build, RAM1 line or
+upload; the board stays on the restored default image and **no device/content attempt was made or authorized**.
+
+### Related OpenSpec and migration
+`windowed-playback-generation` — 3.15b–c (root-current handoff) and 6.4/3.15f stay open; DEC-107 (bounded
+retirement wait) and DEC-136 (private committed-root preparation) are unchanged and were reused as the oracle's
+contract. [I5 — matched `RecordPublished` retirement packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/MATCHED-RECORDPUBLISHED-RETIREMENT-PACKET.md).
+
+### Addendum — three shapes asserted, and the gate-level hypotheses closed (same day)
+The single Playing-destination case above was extended before the conclusion was published, and the answer stayed
+the same. **Three** shapes now pass in `test_rolling_record_retirement` (**3/3**):
+(1) Playing destination, ending on the root-backed reader; (2) **STOPPED** destination — the device probe's exact
+`state=STOPPED`, not-audible configuration — also asserting the predicate fact
+`pendingSnapshotSessionExitQueued() ⇒ hasPendingSnapshotPublish()`; (3) an **audible sibling Track** beside the
+stopped job, where `backgroundSnapshotWorkAllowed()` and `canServiceBackgroundSnapshotOwnerTurn()` both stay true
+and the root still publishes; and (4) the **background-only** route — focus moved through the production
+`TrackManager::setSelectedTrack` route so the stalled Track is not selected and `main.cpp`'s selected-realtime
+branch cannot reach it. To express (4) the shared harness now honours `HARNESS_OBSERVABLE_TRACK_SELECT` for the
+note-edit departure inside `setSelectedTrack` (default fail-closed, unchanged for every other suite), and the suite
+opts into the existing `HARNESS_OBSERVABLE_SLOT_CHANGE` for the display invalidation the same route reaches.
+
+Four hypotheses are therefore closed by evidence rather than by argument: the pending-publish/session-exit
+disagreement (the two predicates cannot disagree — `pendingSnapshotSessionExitQueued()` returns
+`hasPendingSessionExitReceipt() || box.sessionExitQueued`, and `hasPendingSnapshotPublish()` is true for both); the
+timing reserve (`allowSnapshotIdleReserve` returns `true` unconditionally when `timingCritical` is false, and
+`timingCritical` is per-Track, false for a stopped non-audible track); cross-track exclusion; and the DEC-107
+frozen-build stall (`build_active=0` on every device poll). Full native with all three cases:
+**3 302 cases / 7 skipped / 3 295 succeeded / 0 failed**.
+
+What is left is the **device's own behaviour**, which cannot be reached from a native fixture at all: `main.cpp`
+owns the branch choice, so even shape (4) reproduces that choice as its predicates rather than as the real
+function. Reading the whole chain end-to-end (the `allowDeferredIdleOwner` gate, the stopped/realtime split, the
+`hasPendingSnapshotPublishOnAnySlot` + `selectStoppedSnapshotTrack` pair, and the per-turn owner gate) leaves only
+device state, and the packet now names the leading candidate as a **structural asymmetry, stated as a candidate and
+not as a cause**: `Track::loopWithPendingSnapshotPublish()` ranks candidates by pending-ness alone while
+`Track::processSnapshotOwnerTurn` judges eligibility for the loop it was handed, with no fallback to another pending
+slot — so a rank-0 loaded-passes loop that can never be stepped would hold the owner while a rank-1 live Record
+session exit on another slot of the same Track is never published, even though the retirement gate reads the job's
+**own** slot. No device evidence yet shows such a loop present; settling it needs a capture that names the Track's
+per-slot publication state while the job is pending. The next observation must be on hardware, with fresh
+authorization: which resolved track/slot the Snapshot dispatch served, whether the Snapshot deferred lane ran at
+all while the job was pending (versus being consumed by persistence/load/visual-cache priority), and whether the
+20-drain `!TRACE_DRAIN` fence loss shares the cause. The exclusion stands as recorded; the device cause does not.
+
+---
+
+## DEC-140 — The unadopted frozen-Capture successor is bounded: the matched `RecordPublished` stall is found and fixed
+
+**Date:** 2026-10-17
+**Owner:** `Track::stepDeferredRecordRetirement` (the hold), `LoopPlaybackRuntime::rootReturnHoldKey` / `rootReturnHoldGrains` (the bound's state, reused)
+**Status:** Accepted and implemented — **native RED→GREEN and device-verified**; supersedes DEC-139's "cause still unknown" clause
+**Follows:** DEC-070 (a predicate that can never become true must not park a job), DEC-107 and DEC-136 (the bounded-wait shape in this same lane)
+
+### Problem
+The matched rolling-Record leg left its `CaptureStopJob` at `phase=16` (`RecordPublished`) forever. Reproduced on hardware
+three times and, finally, natively. The stalled state, identical across two device samples 40 s apart: `pending=1,
+phase=16, queue=1/4`; transport clock frozen; root already current; `currentRole=1 published=1 complete=1`; and
+**`readyRole=0` with `readyFlags=1` — a complete, unpublished successor**.
+
+The gate responsible was:
+
+```cpp
+if (runtime != nullptr && intervalHasGeometry && loop.publishedSnapshotIsCurrent() &&
+    job.frozenCaptureContentGeneration != 0) {
+  ... ready.complete && !ready.published &&
+      ready.source.origin == PlaybackWindowOrigin::Capture &&
+      ready.source.sourceGeneration == playbackGeneration &&
+      ready.source.captureContentGeneration == job.frozenCaptureContentGeneration)
+    return LoopEventStoreRewriteResult::Pending;   // no counter, no expiry
+}
+```
+
+Its own comment states the wait ends "until that ready role is adopted or cancelled by the Track window owner".
+With the transport stopped and no reader frame bound, **no adoption boundary can ever come**, so the predicate can never
+become false: the job, its raw range, its capture-stop owner and its ring slot were held permanently. It also sat
+*above* the DEC-136 hold, so that hold's counter never ran (`hold=0` in the reproduced state).
+
+### Decision
+Bound that wait in DEC-070's established shape, by **reusing the DEC-136 hold's machinery instead of adding a second
+one**: the un-bounded gate is deleted, and its successor becomes a second case of the same `owedSuccessor`
+classification inside the existing bounded block. A complete, unadopted successor is owed by this job whether it is
+
+* the current published root's own window for this loop's geometry (`Committed` + the current published snapshot
+  identity — DEC-136, unchanged), or
+* **this job's own frozen `Capture` successor** built from its frozen token (the gate removed here).
+
+Both need the same reader boundary, so both get the same accounting: while the slot is **audible** the boundary is the
+normal wait and the count stays zero (an audible slot never expires a successor its reader is about to adopt); while
+no boundary can come the count advances, and past `kRootReturnStallGrainLimit` the successor is torn through the
+build's own `discardCoverageBuild()` + `releaseFrozenRecordWindow()` so the job still releases rather than parking its
+raw range, its owner and its ring slot.
+
+Nothing else changes: the served-window holds, the frozen/raw reader release, the private root-return route, the
+adoption edge and the committed-content obligation are untouched. **No new field, queue, view or owner** — the
+`rootReturnHoldKey`/`rootReturnHoldGrains` pins are unchanged, so the fix costs **zero RAM1**.
+
+### Evidence
+* **Native reproducer** `test_unadopted_frozen_capture_successor_does_not_park_the_record_job`: builds the device's
+  exact shape (stopped transport, root current, the job's own frozen `Capture` successor complete and unpublished in
+  ready, no reader frame). Pretend state: `steps=8192 pending=1 phase=16 root=1 exitQueued=0 hold=0 bound=1
+  readyComplete=1 readyPublished=0 readyOrigin=2(Capture)`. After the fix: green, in the same bounded window.
+  That failure-to-pass on one unchanged tree is the red-proof; the other four cases in the suite stay green.
+* **Device:** qualification build `32f6501d2051bc38af046c204d2e38e6773987f2cc3ee36714ada7069e13acaa` (the same source
+  with the fix) uploaded no-build, matched pass re-run on track 8 / slot 4 (`captures/i5-slot45-diagnosis-01/matched-fix-01`):
+  `#STOP_STATUS` now goes `pending=1, phase=16` → **`pending=0, phase=0, queue=0/4`**, and the run-end heap
+  observation is **complete** (`v=1`) instead of `refused=track_work`. The run no longer fails
+  `record_evidence_drain_incomplete`; it now stops on a *different, verification-level* refusal,
+  `stop_handoff_unproven:['stop_matching_era_not_advanced']` (DEC-138's matched terminal), which is not this defect.
+* Host gates: full native **3 303 cases / 7 skipped / 3 296 succeeded / 0 failed**; `teensy41-capture-serial`
+  `variables 96,192 / code 392,136 + padding 1,080` and `-window-qualification` `392,280 + padding 936`, both against
+  the unchanged 840 floor — **byte-identical to the DEC-136 lines**, so no budget re-base.
+* Device restored to the pinned default `08f43e45…` no-build, postflight PASS (`pending=0`, queue `0/4`, STOPPED,
+  heap complete).
+
+### What this does not establish
+The matched leg is still **not accepted**: its terminal now refuses on `stop_matching_era_not_advanced`. The captured
+pair shows why, and it is a **fixture-timing** matter rather than a firmware or contract one: the pre-stop sample is
+at tick 264 and the first post-stop sample at **tick 776 — past the 768 wrap** — while `epoch`/`frameEpoch` stay `4`
+and the frame stays bound (`recording 1→0`, `stopJob 0→1`, `captureToken 2→4`). This fix removed exactly the fast path
+that *preserves* the reader, so the era cannot advance; and the one-bar matched take presses at ~640 on the grid, so
+its post-stop query lands in the next cycle, where the wrap has legitimately rotated `(currentRole, currentStorage)`.
+DEC-138's terms were measured on the three-bar take, whose pre-wrap window leaves far more margin.
+
+**The fixture side is now fixed and it sharpened the picture.** The matched leg's grid press moved from 36 to 46 clocks
+(nominal take tick ~400, measured landing ~560) and the pre-stop sample no longer requires the narrow `256..440` phase
+window — a timing cliff the press could step over, which it did in `matched-fix-02`
+(`rolling_snapshot_not_recording`). With that, `matched-fix-03` samples the post-stop state at **tick 688, inside the
+768 cycle** (raw 560 → final 768, non-truncating), and the preserved-reader fact is finally observable:
+`(currentRole, currentStorage)` = `(0, 7)` → `(0, 7)` — unchanged across the Stop — with `recording 1→0`,
+`stopJob 0→1` and `requestActive 1→0`.
+
+**What still fails, and it is the terminal, not the device:** the clock `epoch` is `8 → 8` in that run too (`4 → 4` in
+the previous one). The clock era therefore **never** changes across a Record stop in either measured take, so
+DEC-138's `stop_matching_era_not_advanced` term is unsatisfiable for this class exactly as DEC-138's own pre-DEC-137
+equality form was: the era advances on transport/source changes, not on a Record stop. The remaining matched terms
+(`captureToken` against the pre-stop *live* token, and the cleared-frame consistency rule) also need re-specification
+from measurement — `matched-fix-03` has `after.captureToken == 7` while `before.liveToken` had already reached `9`.
+
+**Disposition, stated rather than taken:** replacing an acceptance term is a contract change and needs its own measured
+decision (DEC-138's own precedent, one level deeper), so it is **not** done here. The candidate replacement for the era
+term is a Stop-processed term the device actually produces — `recording` true→false **and** `stopJob` false→true, both
+measured — keeping every other term and adding nothing weaker. No recipe `PASS`, no 6.4/3.15f checkoff.
+
+---
+
+## DEC-141 — The matched terminal's two unsatisfiable terms are replaced by measured ones, and the leg passes on hardware
+
+**Date:** 2026-10-17
+**Owner:** `hitl.verify.rolling_record.stop_handoff` (the non-truncating branch) and the `matched` leg's sampling
+**Status:** Accepted and implemented — **host-verified with the leg PASSING on the device**; supersedes DEC-138's `stop_matching_era_not_advanced` term and its `captureToken == before.liveToken` term; supersedes DEC-139's "cause unknown"
+**Follows:** DEC-138 (the preserved-reader terminal), DEC-140 (the retirement stall this leg could not get past)
+
+### Problem
+With DEC-140's stall fixed, the `matched` leg reached DEC-138's terminal and refused `stop_matching_era_not_advanced`.
+Two of that terminal's terms turned out to be as unsatisfiable as the equality form DEC-138 itself had to replace:
+
+1. **The era term.** DEC-138 required `after['epoch'] != before['epoch']`. Measured directly across two different
+   takes: `4 → 4` and `8 → 8`. The clock era advances on transport/source changes, **not** on a Record stop, so this
+   term could never hold for the class it gates.
+2. **The token term.** DEC-138 required `after['captureToken'] == before['liveToken']`, i.e. the served window equals
+   the *pre-Stop live* receipt. The live receipt advances with accepted input — measured serving token `2` while live
+   had reached `4` (and `7` vs `9` in the other take) — so that comparison also failed for a healthy take.
+
+A third factor was fixture timing rather than contract: the leg's post-Stop query landed **past** the take's wrap
+(`matched-fix-01`: before tick 264, after tick 776 of a 768 cycle), where the wrap has legitimately rotated the serving
+view, making the reader-identity term fail for reasons unrelated to the Stop.
+
+### Decision
+Replace both terms with facts the device actually produces, and fix the sampling so the terminal is evaluated on a
+post-Stop sample **inside** the take's cycle:
+
+1. **Stop processed = the take left RECORDING.** `before['recording']` must be true (a pre-Stop sample that is already
+   not recording proves nothing; it refuses `stop_matching_stop_not_processed`). Every post-Stop sample is already
+   required to be non-recording by the existing `stop_snapshot_invalid` guard, and `after['stopJob']` truthy already
+   proves the job took ownership. Together those are a strictly stronger "the Stop was processed" proof than an era
+   bump, which several other causes could also produce.
+2. **Served content = the pre-Stop *serving* generation.** `after['captureToken'] == before['captureToken']` (was
+   `before['liveToken']`). This asserts the served window still carries the frozen content generation that was serving
+   before the Stop, which is what "the take's own frozen content" means for a preserved reader; the live receipt is
+   explicitly *not* the right comparison.
+3. **Sampling.** The `matched` leg's grid press moved from 36 to 46 clocks (measured landing ~560 rather than ~640) so
+   the first post-Stop query lands inside the cycle (~688 of 768), and the narrow `256..440` pre-Stop phase window was
+   dropped — it was a timing cliff the earlier press could step over (`rolling_snapshot_not_recording`), and
+   `recording` + the one-bar geometry + `rawMax >= 200` already prove a valid pre-Stop sample.
+
+Everything else in DEC-138 stands: the same serving `(currentRole, currentStorage)`, the same frozen geometry
+(`period == final`), Capture origin, published+complete, and the cleared-frame consistency rule (or the ordinary
+serving terms when the frame is still bound). The truncating branch and every other leg are untouched.
+
+### Evidence
+* **Device, `captures/i5-slot45-diagnosis-01/matched-fix-04`** (qualification build `32f6501d…`, track 8 / slot 4):
+  `stop_outcome = matching_physical_reader_preserved`, `issues = []`, `functional_legs_ok = true`,
+  `stop_terminals_by_leg = {matched: matching_physical_reader_preserved}`, evidence drain complete and
+  `stop_job_state = idle`. The sampled pair: `epoch 4 → 4`, `frameEpoch 4 → 0`, `framePeriod 768 → 0`,
+  `boundRole 0 → 255`, `currentRole/currentStorage (0,3) → (0,3)`, `captureToken 2 → 2`, `liveToken 4 → 5`,
+  `recording 1 → 0`, `stopJob 0 → 1`, `period 768 == final 768`, `raw 560 → final 768`.
+* **Report verdict `SMOKE_ONLY`, not `PASS`** — correctly: only the `matched` group ran, and the recipe predicate
+  requires the aggregate of `growth-empty` + `held` + `matched`. `full_recipe_complete` remains false by design.
+* Host gates: `test_rolling_record` **20/20**; native `test_rolling_record_retirement` **5/5** (unchanged); import gate
+  and stimulus contract green; strict OpenSpec valid; `git diff --check` clean.
+* Device restored to the pinned default `08f43e45…` no-build, postflight **PASS**.
+
+### What this does not establish
+No recipe `PASS` and no 6.4/3.15f checkoff: the `matched` group alone is a smoke leg, and the aggregate still needs a
+`growth-empty` and a `held` report from the **same qualification image and host-verifier fingerprint** in one campaign.
+That campaign is the remaining work, not a defect.
+
+## DEC-142 — Record presentation lifetime split
+
+**Date:** 2026-10-19
+**Owner:** Track
+**Status:** Accepted owner-approved implementation; latest device qualification pending
+
+### Problem
+
+`CaptureStopJob::admission.pending` conflated mutable slice finalization with a frozen-reader obligation after
+`RecordPublished`. A successor overdub stop waited behind an immutable Record slice, while reader replacement
+required that successor to leave OVERDUBBING. The FIFO head-only dispatcher and sole finalizer role could not
+express a presentation-only job without blocking its successors.
+
+### Decision
+
+Track retains module ownership. A stable slot-owned `CaptureStopPresentation`, in externally allocated
+`CaptureStopJobs`, owns the sealed extent from admission and keys the Loop borrow by its address. The live
+matching Record admission authorizes frozen preparation before publication. Nonempty publication activates
+the runtime presentation owner, clears the finalizer and pops the interaction FIFO synchronously. Empty takes
+promote no presentation and retire through the existing ring dispatch.
+
+Ordinary deferred service keeps the presentation reachable independently of window-holder offers. Audible
+retirement proceeds after actual matching current-root reader takeover; before takeover it yields without
+holding an accepted interaction's turn. Existing stopped-successor expiry remains bounded. Extents release one
+chunk per turn and retain active/owned state across partial release; borrow discharge/re-arm occur only at
+completion. Cold capture admission reserves one requested slot tail; dormant boot/load descriptors reserve none.
+Presentation generation is derived only from the capture interval, separate from range generation/content token.
+
+### Rationale
+
+No move of the non-movable `CaptureRange` is required at publication, no second heavyweight capture owner is
+created, and a published reader can outlive its finalizer without holding the FIFO. The slot address remains
+stable across the borrow. **DEC-136 — private committed-root preparation** and **DEC-140 — bounded unadopted
+successor** keep their admission, takeover and expiry semantics; this decision changes the carrier, not those gates.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Keep a presentation-only FIFO head | The dispatcher services only that head, starving successors |
+| Move the extent at publication | `CaptureRange` is non-movable and the Loop borrow must remain stable |
+| Add a retirement hold / weaken root currency | Neither repairs the conflated interaction lifetime; risks dropping a live reader |
+| Reserve eight slot tails per Track at boot | Consumes 64 pool chunks and violates the existing dense-library admission gate |
+| Lower the RAM1 padding floor | Explicitly forbidden; cold query placement instead restores qualification padding to 856 B |
+
+### Affected modules
+
+Track capture-stop lifecycle, playback runtime/holder/qualification/reader, deferred maintenance, cold slot admission,
+and their native lifecycle fixtures. No storage format, global scheduler, new feature default or target continuation.
+
+### Constraints created
+
+Preparation stays off-clock; E2 only adopts complete qualified work. FIFO empty is not reader retirement or durable
+persistence completion. Default rolling remains OFF, compatibility emitters remain. Track stays 384 B on target;
+runtime/presentation directory size changes are external-pool only. RAM1 floor remains 840 B, not rebased.
+
+### Related OpenSpec
+
+Task **3.15g — wrapped short-loop Record finalization**, `windowed-playback-generation`.
+[Execution and verification](../openspec/changes/windowed-playback-generation/evidence/2026-10-18-rolling-base-2bar-rerun/PRESENTATION-OWNER-NATIVE.md).
+
+### Migration notes
+
+All post-publication reader identity/lifetime consumers use the presentation; live pre-publication readers use
+the matching finalizer. Native tests distinguish both lifetimes. One focused independent review's four concrete
+findings were repaired; disabled-retirement control fails the running, dense and stopped anchors with FIFO empty.
+No SD data migration. Latest candidate HITL remains a separate gate; no all-route cutover/fallback-removal claim.
+
+**Corrective qualification note (2026-10-19).** The first latest-candidate base run rejected its second overdub
+start (`prewarm_failed`), not a parked FIFO. A discriminating native control found that an empty successor
+overdub stop referenced the still-live Record presentation and cleared its extent ownership, leaving a sealed
+range falsely unowned. Empty overdub jobs now reference no range descriptor; the prior presentation keeps its
+own extent/release obligation. This is the same lifetime split, not a new owner or relaxed admission. Device
+gate remains open until the corrected candidate passes; exact prior default restored with healthy postflight.
+
+## DEC-143 — A published Record slice is read material before its root publishes
+
+**Date:** 2026-10-19
+**Owner:** Track / Loop (content resolution)
+**Status:** Accepted owner-approved direction; Loop + Track implemented and native/build verified — **device half open**
+
+### Problem
+
+**DEC-142 — Record presentation lifetime split** made the take immutable at `RecordPublished`. Playback did not follow:
+the merged fallback is committed-only (rule 224719), `tryGatherPublishedSnapshotEventsInWindow` returns `false` when no
+published snapshot exists, and its stale-root branch filters every unpublished pass through
+`if (!isRecordPassId(passes, passId))`. A wrapped two-bar take on an empty slot therefore had **no servable source at
+all** between its publication and its snapshot's publication. Measured on the qualification image
+(`captures/i5-playback-witness-base-05`): record stop at 41.994 s, playback silent for **3.078 s** with the transport
+running, while the snapshot constructed in bounded units and published at 44.733 s. The default image, which publishes
+the root at the stop, resumes in 0.002 s.
+
+### Decision
+
+Read authority follows immutability, not snapshot convenience:
+
+> Merged playback may include **Record passes that have crossed the immutable `RecordPublished` boundary**, even when
+> the containing snapshot/root has not yet published. **Mutable live Capture and live Overdub content remain
+> excluded.**
+
+Three classes, and only these:
+
+| Class | Served |
+|---|---|
+| mutable Capture (recording in progress, unsealed) | never |
+| immutable published Record pass, root not yet published | temporary **published-record overlay** |
+| snapshot-committed content | normal committed fallback |
+
+The overlay is keyed to the pass's own publication identity, so it is superseded — never merged — the moment the root
+that contains it becomes current. Serving it must be **bounded**: a maintenance turn that finds no change in the
+published record identity performs no full-loop gather.
+
+### Rationale
+
+This is a refinement of 224719, not a repeal: that rule exists to keep *mutable* capture state out of the playback
+representation, and DEC-142 removed the mutability that motivated it for a published Record slice. Option (a) —
+widening the retained window to cover the playhead's interval — would have changed DEC-136 coverage semantics, window
+storage and successor adoption to compensate for content that logically already exists. It is rejected as the larger
+change with the larger blast radius.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Widen the retained window to the current interval or the whole loop | Changes DEC-136 coverage/adoption and window memory to work around a read-authority gap |
+| Publish the snapshot earlier (before the slot saves) | Shrinks but does not remove the gap; moves work back onto the stop edge |
+| Overlay every unpublished pass, record included, whenever the root is stale | Cannot prove the stale root lacks the record pass, so it risks the duplicate transition |
+| Serve the raw live capture rows | Reintroduces exactly the mutability 224719 excludes |
+
+### Affected modules
+
+`Loop` content resolution (`LoopSnapshotPlayback`, the published-snapshot gather path), the merged playback fallback
+reuse key, the Record publication edge that stamps the pass, and their native fixtures. No storage format, no
+scheduler, no default change.
+
+### Constraints created
+
+Eligibility requires the immutable publication edge, not a pass merely existing. The no-duplicate transition is
+mandatory: once a root is current the overlay is gone and no note may double or vanish. Rebuild work per unchanged
+published-record identity stays bounded. **DEC-136 — private committed-root preparation** coverage is untouched, the
+RAM1 floor stays 840 B, and rolling stays OFF by default.
+
+### Related OpenSpec
+
+Task **3.15g — wrapped short-loop Record finalization**, `windowed-playback-generation`.
+[Device measurement and the two candidate repairs](../openspec/changes/windowed-playback-generation/evidence/2026-10-18-rolling-base-2bar-rerun/PRESENTATION-OWNER-NATIVE.md).
+
+### Migration notes
+
+None for stored data: the overlay is derived from chunk refs the snapshot will read anyway, so no content moves and no
+format changes. A stale root plus a newer Record pass is deliberately out of scope — absence cannot be proven from pass
+ids alone, so it stays conservatively excluded and must be revisited only with a real membership test, never by
+relaxing the filter.
+
+**Device attempt and withdrawal (2026-10-19).** The first integrated attempt fed the overlay from
+`LoopPasses::recordPass.committedChunkIds`, gated by Track's `hasPublishedRecordPresentationForSlot` and keyed into the
+merged-fallback reuse guard by that chunk list's address. Two device runs on the qualification image
+(`i5-dec143-overlay-base-01`, `i5-dec143-overlay-base-02`) show it is **not** acceptable: the first still measured the
+3.078 s silence, because the reuse guard kept serving the empty build it had cached under `(revision, nullptr)`, and the
+second **hung the firmware** right after the post-stop redo — no serial heartbeat for 20 s, and `!STOP_STATUS` was still
+unanswered after the next boot attempt, so the board needed a physical program-mode reset.
+
+**Why:** `committedChunkIds` is not the object the decision protects. Undo/redo re-materialises the pass while the
+presentation is still the active reader, so the chunk ids that read would follow can already be recycled. Reading them
+is neither safe nor provably current, and no Track-side boolean can express that.
+
+**State left behind:** the wiring is withdrawn — `ensurePlaybackMergedMidiEventsBuilt` passes `publishedRecordOverlay =
+false` and keys the cache on the published root exactly as before, so production behaviour is the pre-decision behaviour
+in both profiles (`variables 96,192`; default `code 392,088 + padding 1,128`; qualification `392,376 + 840`; floor 840).
+What stands from this decision is the **Loop-side contract**: `tryGatherPublishedSnapshotEventsInWindow`'s
+`publishedRecordOverlay` parameter, the `RecordOverlay` path, the supersession/isolation semantics, and three native
+cases in `test_loop_take_survival` (published take readable with no root; mutable capture never served; root supersedes
+without duplicates). Full native GREEN 3,318 cases / 7 skipped / 0 failed.
+
+**Implemented 2026-10-19 — the source is the sealed extent, exactly as required here.** The overlay's read authority is
+now the slot's `CaptureStopPresentation::rawRange`, reached as the Loop's own read borrow (keyed on that record's
+address, so the extent cannot be confused with a successor's) and validated row by row by `CaptureRange::read`
+(generation, pool occupant, seal, captured end), which removes the hazard that withdrew the chunk-list form. Rows pass
+`LoopEventStore::projectRecordStopTick`, are filtered to the half-open window, tick-sorted, and lanes left open are
+closed **once at the loop end only when the window is the loop** — the same rule a Record window uses, and never for a
+partial window whose off may still be a later one. `ensurePlaybackMergedMidiEventsBuilt` contributes only the
+publication edge (`Track::hasPublishedRecordPresentationForSlot`, i.e. `retirementActive` plus the runtime's
+presentation owner) and keys its reuse guard on the extent's own address, so the empty build cached before the edge can
+no longer be served after it (the measured `i5-dec143-overlay-base-01` failure) while an unchanged extent performs no
+gather. Undo is handled by **pass state**, not publication state: a take whose Record pass is no longer `Active` is refused rather
+than re-served from its still-sealed extent, and while the overlay serves an incremental overdub admit keeps the window's
+own identity so the wrap it just admitted is not dropped by the next rebuild. Proven: `test_loop_take_survival`
+(withdrawn form refused; wrapped take projected with one closure; gather idempotence; undone pass refused) and `test_rolling_record_retirement`'s production-path
+`test_the_merged_fallback_serves_a_published_record_slice_before_its_root`, each red-proved by its own mutation; full
+native **3,323 / 7 skipped / 3,316 succeeded / 0 failed**; both firmware builds RAM1-byte-identical
+(`392,088 + 1,128` and `392,376 + 840`, floor 840). **The device half is still owed:** the qualification image must be
+flashed and the registered base 2-bar recipe re-run to show the silence closing with no heartbeat gap. DEC-143's
+problem statement stays open for that reason, and task 3.15g stays unchecked.
+**Device (2026-10-19):** the qualification image `7f48a41b…` ran the registered `STIM-BASE-2-2-01@v1` recipe on track 8 / slot 4. The wrapped take stopped at 40.139 s; the overlay built a full-loop window with 93 events at 41.642 s (`DIAG,playback_build,record_overlay`) and the root's publication at 42.734 s was followed by exactly one `snapshot` rebuild — superseded, nothing doubled. The wire was still silent until 43.216 s (3.076 s, pre-slice 3.078 s, and after the wrap at 43.214 s), so this decision's **read authority is proven and the audible gap is an emission-side gate**. Run verdict `INCONCLUSIVE_CAPTURE` on the unchanged single issue `persistence_active_snapshot_unavailable_during_save` (5/8 windows); default `0cf0f538…` restored with a PASS postflight. **Follow-up (same day):** the surviving 3 s silence was *not* a read-authority gap — it was a latched phase reset in the clock-edge reader (an unknown previous phase plus a playhead past the first bar never wrote the phase back, so the pass stayed silent until the wrap). Fixed and red-proved; on the device the first note now reaches the wire 112 ms after the overlay builds and before the root publishes, and the residual interval is exactly this decision's stop→publication window. **Owner-selected follow-up (2026-10-19): DEC-136's frozen return reader now covers the playhead's own interval.** Its first prepared window is the window the playhead is *in* (current-window, then forward-window progression; the pass's last tick keeps the wrap rule), and a complete frozen ready is adopted mid-window under either the `Committed` identity or the sealed extent's own `Capture` token, qualified before comparison and never relabelled. DEC-143's `RecordPublished` edge is unchanged: the merged fallback still never serves merely sealed-but-unpublished material. Device: the registered base 2-bar recipe now **PASSES** (`captures/i5-frozen-current-window-base-01`, `issues: []`, playback witness 8/8, stop 40.735 s → frozen serving 41.464 s → overlay 42.375 s → root 43.264 s), with the handoff articulating each sounding exactly once (a per-pass recount of the run's `MO` rows shows no duplicate note-ons; the earlier single flag was a coarse-scan artifact). [Execution packet](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-dec143-sealed-extent-overlay/EXECUTION-PACKET.md).
