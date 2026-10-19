@@ -14,6 +14,12 @@ Known residuals are defined in docs/Guides/HITL_CONTENT_VERIFICATION.md:
 loop-boundary Offs (stored with NoteId=0 at the final tick) and coincident
 same-pitch Offs (one emitted for two notes ending on the same tick).
 
+Cycle cuts: the verifier anchors on a signature that occurs **once** in `effective`, which fails on a fully
+periodic loop. When no such signature exists it cuts cycles by **event count** instead -- consecutive chunks of
+one loop's ordered events, phase-aligned by best multiset agreement -- and says so in
+`content-review.json` (`cycle_cut: "event_count"`). The comparison against `effective` is identical either way;
+only the cut differs, and a dropped or inserted event shows up as a difference instead of being absorbed.
+
   .venv/bin/python verify_playback_content.py captures/<run>-playback
 """
 from __future__ import annotations
@@ -44,6 +50,30 @@ def classify_missing(sig: tuple, count: int, occurrences: list[tuple], loop_leng
     by_tick = collections.Counter(tick for tick, _nid in occurrences)
     coincident = sum(c - 1 for c in by_tick.values() if c > 1)
     return min(count, terminal + coincident)
+
+
+def event_count_windows(
+    actual: list[tuple], expected_counts: collections.Counter, per_cycle: int, first: tuple,
+) -> tuple[list[tuple[int, int]], int, int | None]:
+    """Cycle index pairs for a **fully periodic** loop, which has no unique signature to anchor on.
+
+    `effective` is one complete ordered loop, so a cycle is a consecutive chunk of exactly that many events. The
+    cut starts at the first captured event equal to the loop's own first event and then runs **strictly**: no
+    later phase search, because searching for a better alignment on a loop that repeats internally would let a
+    dropped event be re-aligned away instead of reported. This is a different **cut**, not a weaker comparison.
+
+    Returns `(windows, offset, difference)`; `windows` is empty when the capture is shorter than one loop from
+    the cut.
+    """
+    if per_cycle <= 0 or len(actual) < per_cycle:
+        return [], 0, None
+    offset = next((i for i, event in enumerate(actual) if event == first), 0)
+    if len(actual) - offset < per_cycle:
+        return [], offset, None
+    observed = collections.Counter(actual[offset:offset + per_cycle])
+    difference = sum((expected_counts - observed).values()) + sum((observed - expected_counts).values())
+    windows = [(i, i + per_cycle) for i in range(offset, len(actual) - per_cycle + 1, per_cycle)]
+    return windows, offset, difference
 
 
 def main() -> int:
@@ -107,26 +137,40 @@ def main() -> int:
     exp_counts = collections.Counter(sig for sig, _t, _n in expected_full)
     act_counts = collections.Counter(actual)
     anchor = next((sig for sig, _t, _n in expected_full if exp_counts[sig] == 1 and act_counts[sig] >= 2), None)
+    phase = None
     if anchor is None:
-        result = {
-            "result": "INCONCLUSIVE_CAPTURE",
-            "reason": "no unique effective event recurs in the playback window",
-            "effective_rows_all": len(effective),
-        }
-        (p / "content-review.json").write_text(json.dumps(result, indent=2))
-        print(json.dumps(result, indent=2))
-        return 2
-
-    start = next(i for i, (sig, _t, _n) in enumerate(expected_full) if sig == anchor)
-    rotated = expected_full[start:] + expected_full[:start]
+        # A fully periodic loop has no signature unique in `effective`, so there is nothing to anchor on. That is
+        # a property of the content, not of the playback: the loop's own ordered event list still gives the cycle
+        # length, so the cuts come from the event count instead.
+        per_cycle = len(expected_full)
+        first_event = expected_full[0][0] if expected_full else ()
+        windows, phase, _ = event_count_windows(
+            actual, exp_counts, per_cycle, first_event)
+        if not windows:
+            result = {
+                "result": "INCONCLUSIVE_CAPTURE",
+                "reason": ("no unique effective event recurs in the playback window, and the capture holds fewer "
+                           f"than one loop's {per_cycle} events"),
+                "effective_rows_all": len(effective),
+            }
+            (p / "content-review.json").write_text(json.dumps(result, indent=2))
+            print(json.dumps(result, indent=2))
+            return 2
+        cycle_cut = "event_count"
+        rotated = expected_full
+    else:
+        cycle_cut = "anchor"
+        start = next(i for i, (sig, _t, _n) in enumerate(expected_full) if sig == anchor)
+        rotated = expected_full[start:] + expected_full[:start]
+        idx = [i for i, s in enumerate(actual) if s == anchor]
+        windows = list(zip(idx, idx[1:]))
     rotated_counts = collections.Counter(sig for sig, _t, _n in rotated)
     occurrences: dict[tuple, list[tuple]] = collections.defaultdict(list)
     for sig, tick, nid in rotated:
         occurrences[sig].append((tick, nid))
 
-    idx = [i for i, s in enumerate(actual) if s == anchor]
     cycles = []
-    for a, b in zip(idx, idx[1:]):
+    for a, b in windows:
         observed = actual[a:b]
         obs_counts = collections.Counter(observed)
         missing = rotated_counts - obs_counts
@@ -170,7 +214,9 @@ def main() -> int:
     result = {
         "result": verdict,
         "length": length,
-        "anchor": list(anchor),
+        "anchor": list(anchor) if anchor is not None else None,
+        "cycle_cut": cycle_cut,
+        "cycle_phase": phase,
         "raw_counts": {f"{k[0]},{k[1]}": v for k, v in declared.items()},
         "effective_rows_all": len(effective),
         "expected_note_cc_rows": len(expected_full),

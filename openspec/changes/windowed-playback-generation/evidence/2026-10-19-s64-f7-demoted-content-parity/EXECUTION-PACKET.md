@@ -51,9 +51,9 @@ A cycle is only count-able if the capture holds ≥2 anchor occurrences (1 compa
 
 ## Completion record
 
-**Run 2026-10-19 — measured, no verdict.** Residency confirmed (dump `track=8,slot=3,length=19200`, record =
-effective = 1 152 rows, and still present after a cold boot). Playback confirmed repeating (1 307 note_ons on ch 8
-≈ 3.4 × 384 over 170.0 s). Verdict **not** taken: `INCONCLUSIVE_CAPTURE`, because the shipped cycle cut needs a
-signature unique in `effective` and this fixture has 160 signatures each occurring 3 or 32 times. F-7 stays NOT RUN;
-the two named routes are in `EXECUTION.md`. Gates: `scripts.test_dump_and_capture_target` 4 OK; the extension is
-additive (defaults unchanged). No firmware line, no upload, no clear, no record.
+**Run 2026-10-19 — F-7 PASS on the demoted target.** `content-review.json`: `PASS`, 3 cycles of 1 152 events each,
+`inventory_equal` **and** `exact_order` true on all three, `cycle_cut: event_count` (the take is fully periodic and has
+no unique signature), `storage_matches_effective: true`. The window moved during the capture: 80 `playback_build`
+rows for the target, window length 1 536 ticks, 24 distinct starts (`0…17 664`), **79 advances** — ≈12 boundaries per
+cycle. Residency: `track=8,slot=3,length=19200`, record = effective = 1 152 rows, still present after a cold boot.
+Gates: new suites 4 OK + 4 OK; pipeline defaults unchanged. No firmware line, no upload, no clear, no record.

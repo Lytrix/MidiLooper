@@ -1,92 +1,93 @@
-# F-7 attempt — the demoted target is resident and plays, and the shipped verifier cannot slice its cycles
+# F-7 — the demoted target's served stream equals `effective`, cycle by cycle, across advancing window boundaries
 
 **Date:** 2026-10-19 · **Base:** `e625603d` · **Branch:** `feature/unified-rolling-playback-path` · **Task:** 4.3 (F-7) under 6.4
-· **Type:** host tooling + one device read and one device capture. **No firmware line changed**, no upload.
-**Verdict: F-7 stays NOT RUN.** The reason is measured and named, not inferred.
+· **Type:** host tooling + one device read and one device capture. **No firmware line changed**, no upload, no clear, no
+record. **Verdict: F-7 PASS** on the demoted target.
 
-## What this run established
+## Verdict
 
-### 1. The demoted target is resident, and it survives a cold boot
-
-Read-only dump of the registered leg's own authorized target, reached **without a destructive gesture**
-(`--select-track 8 --dump-slot 4 --dump-only`; the track button is a `SELECT_TRACK`, the slot is named in the dump
-request, and the loop button — whose short press is a record toggle — is never pressed):
+`verify_playback_content.py` on `captures/i5-s64-f7-playback-01`:
 
 ```
-[4261.922] [INFO] Button press: Track 8 (short)
-CAPTURE_CONTENT,begin,track=8,slot=3,length=19200
-CAPTURE_CONTENT,rows,record,0,1152
-CAPTURE_CONTENT,rows,effective,0,1152
-CAPTURE_CONTENT,end
+result: PASS        length: 19200        cycle_cut: event_count
+anchor: null        cycle_phase: 0        storage_matches_effective: true
+cycle0: rows=1152 missing=0 (residual=0 unexplained=0) extra=0 inventory_equal=True exact_order=True
+cycle1: rows=1152 missing=0 (residual=0 unexplained=0) extra=0 inventory_equal=True exact_order=True
+cycle2: rows=1152 missing=0 (residual=0 unexplained=0) extra=0 inventory_equal=True exact_order=True
 ```
 
-`slot=3` is 0-based slot 4. `record == effective == 1152` rows, so `storage_matches_effective` holds on the demoted
-target. The playback run re-took the same dump **after a boot** (its log carries rows from ~74 ms device uptime), and
-the take was still there: the restore brings the demoted loop back intact.
+Three complete loop cycles, each **1 152 events** — the whole loop — with nothing missing, nothing extra, and the
+**order identical** to `effective`. `exact_order` is reported separately from the inventory verdict and was true for
+every cycle; on a 1 152-event cycle that is a far stronger statement than the PASS requires.
 
-Evidence: `captures/i5-s64-f7-residency-01/` (dump at line 44 010) and `captures/i5-s64-f7-playback-01/`.
+## The boundaries were crossed, and they advanced
 
-### 2. The demoted target plays, and it plays repeatedly
+The claim is parity *across a window boundary*, so the capture must show the window moving. It does: 80
+`playback_build` rows for this target (`track 7 / slot 3` in the row's 0-based identity = track 8 / slot 4), all with
+reason `snapshot` and **window length 1 536 ticks (2 bars)**, over **24 distinct window starts** (`0 … 17 664`, step
+1 536) and **79 advances** during the capture.
 
-A 170.0 s transport capture (`--capture-seconds 170`) of the same target:
+A 19 200-tick loop served in 1 536-tick windows needs 12.5 windows per cycle, so each compared cycle crossed **≈12
+boundaries** and the three cycles crossed ≈37. The parity is therefore measured across the transitions, not around
+them.
 
-| Reading | Value |
+The gate row for the same target states the premise directly: `win_gate,t=7,s=3,len=19200,av=1` — the loop is
+**demoted**.
+
+## What had to change to measure it (host tooling only)
+
+### 1. Reach the target without a record-toggle gesture
+
+`!CAPTURE_CONTENT` dumps the selected track's **active** slot. The demoted target is not the active slot, and the loop
+button's *short* press is `TOGGLE_RECORD_FOR_SLOT` — pressing it to "select" the slot would record over the take being
+dumped. So `dump_and_capture.py` gained, additively (defaults unchanged):
+
+| Flag | Effect |
 |---|---|
-| MIDI rows in the capture | 7 198 |
-| note_on / note_off on the target channel (ch 8) | **1 307 / 1 306** |
-| CC74 on ch 8 | 1 331 |
-| `effective` note_ons per loop | 384 |
-| observed ratio | **≈ 3.4 loop cycles** |
+| `--select-track N` | Short-presses the track button through `hitl.actions.slots.press_track` (a `SELECT_TRACK`). |
+| `--dump-slot N` | Sends `!CAPTURE_CONTENT_SLOT n-1` — the slot is named in the request, 1-based CLI → 0-based wire. |
+| `--dump-only` | Write the dump and stop (the read-only residency check). |
 
-So the loop is served and repeats; this is not a silent or stalled playback. (The last note-on has no matching
-note-off because the capture ends mid-loop.)
+Pinned by `scripts/test_dump_and_capture_target.py` (**4 OK**), including that no loop-button note is ever sent.
 
-### 3. Why there is no verdict
+### 2. Cut cycles on a loop that has no unique event
 
-`verify_playback_content.py` returned:
+The shipped cut anchors on a signature occurring **exactly once** in `effective`. This take is fully periodic — 1 152
+rows forming **160 distinct signatures that each occur 3 or 32 times** (a 12-pitch ascending pattern ×32, a CC74 0–127
+sweep ×3) — so the anchor rule is unsatisfiable and the first run returned `INCONCLUSIVE_CAPTURE`.
 
-```
-{"result": "INCONCLUSIVE_CAPTURE",
- "reason": "no unique effective event recurs in the playback window",
- "effective_rows_all": 1152}
-```
+`verify_playback_content.py` now falls back to cutting by **event count**: `effective` is one complete ordered loop, so
+a cycle is a consecutive chunk of exactly that many events, starting at the capture's first event equal to the loop's
+own first event and then running **strictly** — no later phase search, because on internals that repeat a search would
+re-align a dropped event away instead of reporting it. `cycle_cut` and `cycle_phase` record which rule was used, and
+the comparison against `effective` is unchanged.
 
-It slices cycles by anchoring on a signature that occurs **exactly once** in `effective`
-(`exp_counts[sig] == 1 and act_counts[sig] >= 2`). This fixture has **no unique signature at all**: `effective` is
-1 152 rows = 384 note_on + 384 note_off + 384 CC74, forming **160 distinct signatures that each occur 3 or 32 times**
-(an ascending 12-pitch pattern repeated 32×, and a CC74 value sweep 0–127 repeated 3×). The anchor rule is therefore
-unsatisfiable by construction, and the tool correctly declines rather than guessing a phase.
+Pinned by `scripts/test_verify_playback_content_cycle_cut.py` (**4 OK**): a clean periodic capture passes on two
+cycles, **a dropped event fails** (the property a phase search would have destroyed), a capture shorter than one loop
+declines, and the cut starts at the loop's first event rather than at a stray prefix.
 
-**This is a fixture/verifier mismatch, not a parity failure.** Nothing in the capture contradicts parity; the capture
-simply cannot be cut into cycles by the shipped rule, so no per-cycle `inventory_equal` exists to read.
+## Residency (recorded beside the verdict)
 
-## What landed (host tooling only)
+The target is **resident and survives a cold boot**: `CAPTURE_CONTENT,begin,track=8,slot=3,length=19200`,
+`record` = `effective` = 1 152 rows, re-read in the playback run whose log carries rows from ~74 ms device uptime. The
+restore returns the demoted loop intact, and `storage_matches_effective` is true.
 
-| File | Change |
+## Gates
+
+| Gate | Result |
 |---|---|
-| `.agents/skills/hitl-content-verification/scripts/dump_and_capture.py` | `--select-track N` (short-presses the track button through the action layer's `slots.press_track`), `--dump-slot N` (sends `!CAPTURE_CONTENT_SLOT n-1`, the firmware's 0-based index), `--select-settle-s`, `--press-ms`, and `--dump-only` (write the dump, skip playback). Defaults are unchanged, so the skill's existing recipe is byte-identical in behaviour. |
-| `scripts/test_dump_and_capture_target.py` | 4 tests: the unnamed request, the 1-based → 0-based conversion, the canonical track note (67 on channel 16 for track 8), and that no loop-button note is ever pressed. |
+| `scripts.test_dump_and_capture_target` | 4 OK |
+| `scripts.test_verify_playback_content_cycle_cut` | 4 OK |
+| affected host batch | recorded in the commit |
+| `content-review.json` | `PASS`, 3 cycles, `inventory_equal` and `exact_order` true on all three |
 
-Host suites: `scripts.test_dump_and_capture_target` **4 OK**. The extension is additive: `--dump-slot` absent keeps
-`!CAPTURE_CONTENT` and the active slot exactly as before.
+## What this does and does not claim
 
-## The two routes to a verdict (neither taken)
-
-1. **Slice by event count instead of by a unique signature.** The loop's `effective` list is complete and ordered, so
-   cycles can be cut as consecutive chunks of `len(expected_full)` events and each chunk compared as a multiset. This
-   is the same comparison — only the cut changes — and it works on a fully periodic fixture. It is a change to a shared
-   verifier, so it wants its own tests and a considered failure mode (a dropped event shifts every later chunk, which
-   fails loudly rather than quietly).
-2. **Give the fixture an anchor**: one distinctive event (unique pitch/velocity) somewhere in the demoted take. That
-   means writing to the authorized target (an overdub), which is a separate authorization step, and it changes the
-   content under test.
-
-Route 1 is preferred: it fixes the tool for the general case (periodic looper content is normal) and needs no device
-run. Route 2 would unblock a verdict in one short session but leaves the verifier unable to read periodic content.
-
-## What must not be claimed
-
-* **F-7 is not passed.** No `content-review.json` with per-cycle `inventory_equal` exists for the demoted target.
-* **F-8 is not advanced into a verdict** by this: content residency after restore is *one* datum, and F-8's required
-  sweep over loop lengths still owes the demoted lengths reached and read per length.
-* `oracle_complete` stays `False`; 6.4 stays open.
+* **Claimed:** on a demoted 24-bar target (track 8 / slot 4) the MIDI actually served by the window lane, captured over
+  three full loop cycles while the window advanced 79 times in 2-bar steps, equals `effective` in inventory **and**
+  order for every cycle.
+* **Not claimed:** F-8's residency **sweep** over loop lengths (the demoted lengths reached and read *per length*) is
+  still owed; 4.3's closure obligation at the transition and its overlap rule are separate open items; 6.5's hardware
+  claims are untouched. `oracle_complete` stays `False` and 6.4 stays open.
+* The board was not flashed in this session; the capture's identity chain is the pinned qualification image from the
+  2026-10-19 device leg (`6cf5f874…`), unchanged since.

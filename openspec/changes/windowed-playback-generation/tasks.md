@@ -1907,19 +1907,19 @@ suite is not green this turn by design. No Git delivery.
   take being dumped. So the recipe reuses `scripts/hitl/actions/`, needs no firmware line and no new oracle; what it
   owes is the host wrapper plus the `--capture-seconds` that a 24-bar loop (48 s at 120 BPM) needs for ≥2 cycles, and
   whether the demoted take is still resident (reuse) or must be re-recorded.
-  *F-7 attempted 2026-10-19 (device, no firmware change) — **no verdict**; the blocker is the verifier's cycle cut, not
-  parity:* the demoted target is **resident and survives a cold boot** (`!CAPTURE_CONTENT_SLOT 3` on track 8 →
-  `CAPTURE_CONTENT,begin,track=8,slot=3,length=19200`, `record` = `effective` = 1 152 rows, the playback run's dump
-  taken after a boot whose log carries rows from ~74 ms uptime), and a 170 s capture shows it **playing repeatedly**
-  (1 307 note_ons on ch 8 ≈ 3.4 × the 384 in `effective`, beside 1 331 CC74 rows). The missing piece is the cut:
-  `verify_playback_content.py` anchors on a signature that occurs **exactly once** in `effective`, and this fixture has
-  **160 distinct signatures that each occur 3 or 32 times** (a 12-pitch ascending pattern ×32, a CC74 0–127 sweep ×3),
-  so it returns `INCONCLUSIVE_CAPTURE` ("no unique effective event recurs") by construction. Two routes are named:
-  **slice by event count** (`len(expected_full)`-sized chunks, the same multiset comparison with a different cut) —
-  preferred, host tooling only and it fixes the tool for the periodic content a looper normally holds — or **overdub
-  one distinctive anchor event** into the authorized target, which is a device write needing its own authorization.
-  The pipeline extension that made the target reachable without a record-toggle gesture (`--select-track`,
-  `--dump-slot`, `--dump-only`, 4 host tests) landed with this attempt. Detail:
+  *F-7 landed 2026-10-19 (device, no firmware change) — **PASS** on the demoted target:* `content-review.json` reports
+  3 cycles of 1 152 events each with `inventory_equal` **and** `exact_order` true on all three (`cycle_cut:
+  event_count`, `storage_matches_effective: true`). The boundaries were **crossed, not avoided**: 80 `playback_build`
+  rows for the target with a 1 536-tick (2-bar) window over **24 distinct window starts** (`0…17 664`) and **79
+  advances** — ≈12 boundaries per 19 200-tick cycle. The premise is stated by the device itself
+  (`win_gate,t=7,s=3,len=19200,av=1` — demoted), and the target is **resident after a cold boot** (`record` =
+  `effective` = 1 152 rows). Two host-tooling gaps closed first: the pipeline can now reach the target **without a
+  record-toggle gesture** (`--select-track`, `--dump-slot`, `--dump-only`; the loop button's short press is
+  `TOGGLE_RECORD_FOR_SLOT` and would record over the take being dumped), and the verifier can now cut cycles on a
+  **fully periodic** loop (event-count cut, starting at the loop's own first event and then strict — a phase search
+  would re-align a dropped event away instead of reporting it; this take has 160 signatures and **none** unique, so the
+  anchor rule could never fire). New suites 4 OK + 4 OK; defaults unchanged. **Still open in 4.3:** the closure
+  obligation at the transition and the overlap rule. **F-8's length sweep is untouched and 6.4 stays open.** Detail:
   [`2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md`](evidence/2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md).
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
@@ -2355,8 +2355,9 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   `insufficient_disp_during_note_edit_freeze count=0` to `ok=True, issues=[], warnings=[]`, and **run 1's combined
   verdict is now `ok=True`, `issues=[]`** (lane and snapshot already green) — the case-1 artifact failed on the
   reading, not on the device. Run 2 keeps `ok=True` and no longer rides `freeze_disp_sparse:marker_fallback`. Host
-  suites 60 OK / 93 OK. **F-7 and F-8 stay deferred, `oracle_complete` stays `False`, and 6.4 stays open** on exactly
-  those two. Detail: [`2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md`](evidence/2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md).
+  suites 60 OK / 93 OK. **F-8 stays deferred, `oracle_complete` stays `False`, and 6.4 stays open** on it — **F-7 has
+  since landed** (4.3, `PASS` on the demoted target; see the 4.3 note). Detail:
+  [`2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md`](evidence/2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

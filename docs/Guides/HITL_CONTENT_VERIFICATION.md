@@ -147,12 +147,21 @@ both readings: `resolved_storage_match` (identical or fully accounted) beside
 
 The playback verifier captures several loop cycles from the MIDI output
 (channel of the selected track) and compares each cycle against `effective`,
-rotated to a repeating anchor event:
+rotated to a repeating anchor event. A **fully periodic** loop has no anchor
+event (every signature recurs), so the verifier cuts cycles by **event count**
+instead — consecutive chunks of one loop's ordered events, starting at the
+capture's first event equal to the loop's own first event and then running
+strictly, with no later phase search (a phase search could re-align a dropped
+event away instead of reporting it). The comparison is identical either way;
+only the cut differs. `cycle_cut` records which rule was used.
 
 | Field | Meaning |
 |---|---|
 | `raw_counts` | The declared per-section row counts from the dump. |
 | `effective_rows_all` | Total effective rows in one loop. |
+| `anchor` | The signature the rotation anchored on; `null` when the loop is periodic. |
+| `cycle_cut` | `anchor` (a unique event exists) or `event_count` (periodic loop). |
+| `cycle_phase` | Index of the first captured event used as the cycle start (`event_count` cut only; `null` otherwise). |
 | `cycles[].rows` | Rows observed in that playback cycle. |
 | `cycles[].missing` / `extra` | Inventory difference vs effective (multiset). |
 | `cycles[].inventory_equal` | No missing and no extra. |
