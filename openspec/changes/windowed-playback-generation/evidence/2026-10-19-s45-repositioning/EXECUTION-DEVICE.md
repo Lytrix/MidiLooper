@@ -37,10 +37,18 @@ stopped).
 
 ## Next move for the device proof
 
-1. Add a settle-and-replay leg to the registered preset (or a temporary variant) that, **after** the restore is
-   complete and the record-return window has retired, selects track 8 and starts the transport with slot 4 playing.
-   The precondition to assert before pressing play: `pl=1` and `rt=1` and `rw=0` in the lane's gate row (a
-   `win_not_servable` with `rt=0`, or any `rw=1`, means the leg ran too early).
+The preset already owns the missing shape, and it was **off** in all three runs: `switch_leg`
+(`scripts/hitl/scenarios/windowed_content_parity.py:206`) exists precisely to "give the window lane a **demand** under
+transport" -- "a plain record-and-play owes no window (measured), while a switching target owes one because the launch
+prepares it" (`switch_target_slot_from`, `:158`). It is driven by `--switch-target-slot N` and is absent by default so
+the base shape stays comparable. The three attempts above are therefore the *base* shape, and their readings agree with
+that comment.
+
+1. Run the same preset with the switch leg enabled (`--switch-target-slot N`) against a filled, demoted, **non-active**
+   slot, so the launch binds a first window for it. Keep `--record-bars 32` and the no-boot-attach shape.
+2. Assert the entry precondition on the wire before reading the outcome: the gate row for the switch target must read
+   `pl=1`, `rw=0`, `rt=1` (the refusal control's `win_requested` row is `pl=1, rw=0, sv=0, rt=1, rl=1, dm=1`). A
+   `win_not_servable` with `rt=0`, or any `rw=1`, means the leg again ran outside the window and is not a result.
 2. Then read, per episode: `win_requested` → `handoff_unreachable` / `build_drop` → `win_repositioned` →
    `win_requested` → `win_ready` → `win_serving`, plus drain continuity.
 3. Keep the 24/32-bar high-contention captures as the refusal control; no new stimulus, no hand-rolled MIDI bytes.
