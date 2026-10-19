@@ -1936,10 +1936,10 @@ suite is not green this turn by design. No Git delivery.
   anchor rule could never fire). New suites 4 OK + 4 OK; defaults unchanged. **Still open in 4.3:** the closure
   obligation at the transition and the overlap rule. **F-8's length sweep is untouched and 6.4 stays open.** Detail:
   [`2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md`](evidence/2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md).
-- [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
+- [x] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
   **The floor as a number:** the lead implied by the declaration's arithmetic is 22,272 ticks ≈29 bars, so the floor is exactly 30 bars; loops between the bar cap and that floor have neither representation admissible. The number is pinned from 6.3/3.10 contract fields, not hardcoded.
-  **The task stays open** on parity through the content-verification pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with the RAM1 line unchanged; three mutations red-proved with byte-identical restores. The oracle is the policy function itself, so its declared figures remain 3.10/6.3's to own; the absolute floor is cited from `test_playback_prewarm`.
+  **The task stayed open** at that point on parity through the content-verification pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps; **the parity term was discharged on 2026-10-20** (see the sweep below), while the retained-source figure and 6.3's sweeps stay with their owners. Verified: 67/67 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with the RAM1 line unchanged; three mutations red-proved with byte-identical restores. The oracle is the policy function itself, so its declared figures remain 3.10/6.3's to own; the absolute floor is cited from `test_playback_prewarm`.
   Detail: [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).
   *Device leg 2026-10-19 (the residency row set is now **identified**):* the registered profile ran on the current
   qualification image, and the per-slot residency statement the lane records as `judged: nothing` is present in
@@ -1988,14 +1988,31 @@ suite is not green this turn by design. No Git delivery.
   `content-review.json`; guide updated), **only when the strict cut does not already fit**, so a genuinely dropped
   event still fails — `scripts.test_verify_playback_content_cycle_cut` **7 OK**, with a trim-must-not-rescue-a-drop
   guard and a served-Off case that keeps the strict cut. Re-running the 32-bar and F-7 captures reproduces `PASS` with
-  `cycle_trimmed: null`. **Remaining in 4.4:** parity stands at **three** demoted lengths (24, 25, 32 bars) against a
-  residency half of five; the axis is `record-bars`, so further lengths are a recipe, not a search. The retained-source figure
+  `cycle_trimmed: null`. **Sweep completed 2026-10-20 (device, owner-authorized; the registered target track 8 / slot 4
+  re-recorded per length; the first leg built and flashed the committed image and no firmware line changed after it —
+  `5df573a2`, the `DEC-147`-second-form lane image with its diagnostics in permanent form): parity stands at all five
+  demoted lengths — 23, 24, 25, 26
+  and 32 bars — matching the residency half exactly.** Each length was recorded through the registered preset and then
+  read by the existing content pipeline (`dump_and_capture.py --select-track 8 --dump-slot 4` +
+  `verify_playback_content.py`), never by a second oracle: **23 bars** (`len=17 664`,
+  `captures/i5-s64-f8-parity-23bar-03-playback`) 1 104 rows per cycle ×3, **24 bars** (`18 432`,
+  `captures/i5-s64-f8-parity-24bar-01`), **25 bars** (`19 200`, `captures/i5-s64-f7-playback-01`), **26 bars**
+  (`19 968`, `captures/i5-s64-f8-parity-26bar-02-playback`) 1 245 rows per cycle ×3, and
+  **32 bars** (`24 576`) all `PASS` with `inventory_equal` **and** `exact_order` true on every cycle and
+  `missing=0 unexplained=0 extra=0`. The lane rows at the same lengths state the residency half: `av=1` **and** `sv=1`
+  at `18 432 / 19 200 / 19 968` (and in the earlier 24/32-bar rows), with **25 bars refused at the demand entry by
+  name** (`al=0`, `19 200 % 1 536 = 768`) while its window still serves — the alignment term gates the demand, not the
+  residency, exactly as the census found. The 23-bar length needed `--stop-press-advance-clocks 33` (the documented
+  one-bar overshoot compensation: the first attempt landed 18 432). The earlier "remaining" statement — parity at
+  three lengths against a residency half of five — is superseded by this sweep. The retained-source figure
   (3.6a) and 6.3's wider sweeps stay with their owners; the gate row fires only at gate **edges** and `LIBOBS` states
-  content, not window residency. 4.4 stays open. No firmware line changed. Detail:
+  content, not window residency. 4.4 closes on this sweep. Detail:
   [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md)
   and [`2026-10-19-s64-f8-residency-and-parity-sweep/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-and-parity-sweep/EXECUTION.md).
   Detail:
-  [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
+  [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md);
+  the 2026-10-20 sweep, with its per-length table:
+  [`2026-10-20-s64-f8-parity-sweep/EXECUTION.md`](evidence/2026-10-20-s64-f8-parity-sweep/EXECUTION.md).*
 
 - [ ] 4.5 **Implement second-miss fault containment, the approved last resort, and cross-generation closures**
   (*DEC-108 §13e–g*) — latch a **named deadline-contract fault** on the second miss; continue the last coherent revision
