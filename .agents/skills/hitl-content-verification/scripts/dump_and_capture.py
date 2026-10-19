@@ -4,6 +4,14 @@
 Stage 2 of the HITL content-verification recipe (see SKILL.md). Run it while the
 device already holds the content under test and transport can be stopped.
 
+By default the target is what the device already has: the **selected** track's
+**active** slot. `--select-track` and `--dump-slot` name a different target
+without a destructive gesture -- the track button is a `SELECT_TRACK`, and
+`--dump-slot` names the slot in the dump request itself, so the loop button
+(whose short press is a record toggle) is never pressed and the active slot is
+never moved. `--dump-only` writes the dump and skips playback, which is the
+read-only residency check.
+
 Writes into --out-dir:
   serial.log         raw USB serial (includes the !CAPTURE_CONTENT dump)
   midi-output.jsonl  every MIDI input message with host_ns
@@ -11,16 +19,46 @@ Writes into --out-dir:
 
 Requires the .venv interpreters (mido, pyserial):
   .venv/bin/python dump_and_capture.py --out-dir captures/<run>-playback
+
+A named target on a non-active slot (the demoted windowed target):
+  .venv/bin/python dump_and_capture.py --out-dir captures/<run>-playback \
+      --select-track 8 --dump-slot 4 --capture-seconds 160
 """
 from __future__ import annotations
 
 import argparse
 import json
 import pathlib
+import sys
 import time
 
 import mido
 import serial
+
+# The action layer owns the track-select note and the press itself. Importing it from the repo keeps this
+# recipe on the canonical gesture instead of re-deriving a note number here.
+_ROOT = pathlib.Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(_ROOT / "scripts"))
+
+from hitl.actions import slots  # noqa: E402
+
+
+class _Ctx:
+    """Minimal ActionContext stand-in: the slot actions only need `out_port` and `config.press_ms`."""
+
+    class _Cfg:
+        press_ms = 120
+
+    def __init__(self, out_port) -> None:
+        self.out_port = out_port
+        self.config = self._Cfg()
+
+
+def dump_command(dump_slot: int | None) -> bytes:
+    """The dump request. A named slot is 1-based on the CLI and 0-based on the wire, as the firmware reads it."""
+    if dump_slot is None:
+        return b"!CAPTURE_CONTENT\n"
+    return f"!CAPTURE_CONTENT_SLOT {dump_slot - 1}\n".encode()
 
 
 def _resolve_port(requested: str, names: list[str], kind: str) -> str:
@@ -51,6 +89,36 @@ def main() -> int:
     parser.add_argument("--capture-seconds", type=float, default=52.0)
     parser.add_argument("--send-clocks", action="store_true", default=True)
     parser.add_argument("--no-send-clocks", dest="send_clocks", action="store_false")
+    parser.add_argument(
+        "--select-track",
+        type=int,
+        choices=range(1, 9),
+        default=None,
+        metavar="N",
+        help="Short-press track N's button (a SELECT_TRACK) before the dump, so a named slot is read on that "
+             "track. Non-destructive: it moves no slot and starts no recording.",
+    )
+    parser.add_argument(
+        "--dump-slot",
+        type=int,
+        choices=range(1, 9),
+        default=None,
+        metavar="N",
+        help="Dump slot N of the selected track via !CAPTURE_CONTENT_SLOT instead of the active slot. Read-only, "
+             "so a populated slot can be inspected without pressing its loop button (a record toggle).",
+    )
+    parser.add_argument(
+        "--select-settle-s",
+        type=float,
+        default=0.6,
+        help="Seconds to let the track selection land before the dump request.",
+    )
+    parser.add_argument("--press-ms", type=int, default=120, help="Track-button hold time.")
+    parser.add_argument(
+        "--dump-only",
+        action="store_true",
+        help="Write the dump and stop; skip playback. Read-only residency check.",
+    )
     args = parser.parse_args()
 
     out = args.out_dir
@@ -85,12 +153,22 @@ def main() -> int:
                         if chunk:
                             log.write(chunk)
 
+                if args.select_track is not None:
+                    # Before the stop/drain protocol: a SELECT_TRACK press is not a transport gesture, and the
+                    # dump is transport-gated, so this must land while the device is still stopped anyway.
+                    slots.press_track(_Ctx(port), args.select_track, press_ms=args.press_ms)
+                    observe(max(args.select_settle_s, 0.0))
+
                 port.send(mido.Message("stop")); observe(1.0)
                 port.send(mido.Message("stop")); observe(1.0)
-                dev.write(b"!CAPTURE_CONTENT\n")
+                dev.write(dump_command(args.dump_slot))
                 observe(args.dump_wait_s)
                 if "CAPTURE_CONTENT,end" not in (out / "serial.log").read_text(errors="replace"):
                     raise SystemExit("No complete canonical dump (device stopped? capture build?)")
+                if args.dump_only:
+                    print(f"Dumped content -> {out}")
+                    (out / "actions.jsonl").write_text("")
+                    return 0
                 actions.append({"event": "start", "host_ns": time.monotonic_ns()})
                 port.send(mido.Message("start"))
                 try:

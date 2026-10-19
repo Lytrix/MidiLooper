@@ -1906,8 +1906,21 @@ suite is not green this turn by design. No Git delivery.
   `SELECT_TRACK`, unlike the loop button, whose **short** press is `TOGGLE_RECORD_FOR_SLOT` and would record over the
   take being dumped. So the recipe reuses `scripts/hitl/actions/`, needs no firmware line and no new oracle; what it
   owes is the host wrapper plus the `--capture-seconds` that a 24-bar loop (48 s at 120 BPM) needs for ≥2 cycles, and
-  whether the demoted take is still resident (reuse) or must be re-recorded. Not taken here: no device run spent and
-  no `content-review.json` exists for a demoted target.
+  whether the demoted take is still resident (reuse) or must be re-recorded.
+  *F-7 attempted 2026-10-19 (device, no firmware change) — **no verdict**; the blocker is the verifier's cycle cut, not
+  parity:* the demoted target is **resident and survives a cold boot** (`!CAPTURE_CONTENT_SLOT 3` on track 8 →
+  `CAPTURE_CONTENT,begin,track=8,slot=3,length=19200`, `record` = `effective` = 1 152 rows, the playback run's dump
+  taken after a boot whose log carries rows from ~74 ms uptime), and a 170 s capture shows it **playing repeatedly**
+  (1 307 note_ons on ch 8 ≈ 3.4 × the 384 in `effective`, beside 1 331 CC74 rows). The missing piece is the cut:
+  `verify_playback_content.py` anchors on a signature that occurs **exactly once** in `effective`, and this fixture has
+  **160 distinct signatures that each occur 3 or 32 times** (a 12-pitch ascending pattern ×32, a CC74 0–127 sweep ×3),
+  so it returns `INCONCLUSIVE_CAPTURE` ("no unique effective event recurs") by construction. Two routes are named:
+  **slice by event count** (`len(expected_full)`-sized chunks, the same multiset comparison with a different cut) —
+  preferred, host tooling only and it fixes the tool for the periodic content a looper normally holds — or **overdub
+  one distinctive anchor event** into the authorized target, which is a device write needing its own authorization.
+  The pipeline extension that made the target reachable without a record-toggle gesture (`--select-track`,
+  `--dump-slot`, `--dump-only`, 4 host tests) landed with this attempt. Detail:
+  [`2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md`](evidence/2026-10-19-s64-f7-demoted-content-parity/EXECUTION.md).
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
   **The floor as a number:** the lead implied by the declaration's arithmetic is 22,272 ticks ≈29 bars, so the floor is exactly 30 bars; loops between the bar cap and that floor have neither representation admissible. The number is pinned from 6.3/3.10 contract fields, not hardcoded.
