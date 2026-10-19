@@ -70,15 +70,21 @@ fixture-state leak that hides a green).
 
 ## Budget
 
+`teensy41-capture-serial` (default):
+
 | Build | code | padding | headroom above the 840 floor |
 |---|---|---|---|
 | HEAD (DEC-145) | 392,088 | 1,128 | 288 B |
 | first inline predicate | 392,280 | 936 | 96 B (**+192 B**) |
 | **landed: cold owner** | **392,216** | **1,000** | **160 B (+128 B)** |
 
+`teensy41-capture-serial-window-qualification` (**the lane image**, measured with the two changed sources at `HEAD~1`
+and again at `HEAD`): `variables 96,192 / code 392,376 + padding 840` **both times** — this slice costs the lane image
+**nothing** (the same code lands where it does not move that image's ITCM end).
+
 The first inline form computed the phase on the MIDI edge. Moving the projection arithmetic (and the merged-window
-coverage test) into the cold owner brought the cost to **+128 B**, below the withdrawn form's +144 B. **No re-base**, and
-no unrelated code was shaved.
+coverage test) into the cold owner brought the default image's cost to **+128 B**, below the withdrawn form's +144 B.
+**No re-base**, and no unrelated code was shaved.
 
 ## Gates
 
@@ -89,8 +95,10 @@ no unrelated code was shaved.
 | `teensy41-capture-serial` | **SUCCESS**, `variables 96,192 / code 392,216 + padding 1,000 / locals 34,880` |
 | `openspec validate --strict`, `git diff --check` | valid, clean |
 
-No upload; the lane-enabled qualification image is still over its own RAM1 budget, so there is no flashable image on which
-this path can be observed on hardware.
+No upload. **Correction (recorded the same day, after the measurement above):** the lane-enabled qualification image is
+**not** over its RAM1 budget — it builds at `code 392,376 + padding 840`, exactly the approved floor, and it is the image
+earlier sessions flashed. So the device leg is **not** blocked by the image; what blocks it is the receipt gap recorded
+below (and the lane image has **zero** headroom, which is the real budget boundary for any further lane work).
 
 ## DEC-145's gate: deliberately **not** lifted
 
@@ -108,3 +116,49 @@ the shipping image's always-selectable merged fallback cannot produce a permanen
 - **3.7b** — the legacy emission branches (including the merged catch-all) are untouched; the predicate works *with* them
   rather than requiring their removal, which is why 3.7b stays a separate stage.
 - The moving closure inside a long/demoted slot's serving handoff (3.7a/3.14).
+
+## Appendix — the 6.4 receipt question, measured (next slice's input)
+
+The owner's order is *4.5 containment → 6.4's missing `win_serving` / `win_ready` receipts → 4.4 parity depth*. The first
+step of the 6.4 half is a census, and it is decisive.
+
+`DIAG,win_gate` is **state-change-emitted** (`Track::reportPlaybackRollingGateRow` compares the exit token, the deciding
+flag bits, the slot, the loop length and the request ordinal against the last row for that track), so an absent exit is a
+fact about the lane's decisions, not a sampling gap. Globbed over **every** log name under `captures/` (the recorded
+lesson: `serial.log` is a subset — `session_*.log` and drain logs carry the decisive rows):
+
+| exit | rows |
+|---|---|
+| `win_track_not_playing` | 18 106 |
+| `win_window_ineligible` | 1 635 |
+| `win_not_servable` | 522 |
+| `win_no_runtime` | 67 |
+| `win_blocked` | 29 |
+| `win_waiting` | 25 |
+| `win_requested` | 25 |
+| `win_blocked_by_request` | 25 |
+| `win_busy` | 5 |
+| **`win_serving`** | **0** |
+| **`win_ready`** | **0** |
+
+Total 20 446 rows.
+
+**The matched 25 / 25 / 25 set is the finding.** Every demand-creation episode that ever reached the row ran: *create*
+(`win_requested`) → *wait* (`win_waiting`) → *block by request* (`win_blocked_by_request`). Not one episode reached
+`win_ready` (the build completed and the successor sits in the ready role) or `win_serving` (the resolver adopted it and
+the slot is served from a window).
+
+So the two rows are not *lost* evidence to be recovered by re-reading or by a longer run: **the lane's own frame has
+never advanced past `Waiting` on device.** The windows that F-7/F-8 did observe being built and served on the demoted
+targets came from a **different producer** — the serving gather / record-return path — which is consistent with those same
+runs' rows reading `av=1, al=0`: the demand lane *excluded* the loop (`al=0`, not span-aligned at that moment) while
+another route served it.
+
+**What that means for "the device side can prove the same route selection":**
+
+1. Observing `win_ready → win_serving` needs a configuration where a demand actually **completes** (demoted, span-aligned,
+   with a current source and a free coverage role, and no bound record-return job). No recorded run held that
+   configuration, so this is a run-design question, not a re-read.
+2. The 4.5 predicate itself answers "which route served?" in the hot path and reports nothing. A receipt naming the
+   serving **route** would be the direct analogue — but it is a hot-path row, and the lane image sits at **exactly** its
+   840-byte floor, so any lane-image growth is a genuine budget boundary rather than a shave.

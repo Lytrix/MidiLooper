@@ -2039,7 +2039,9 @@ silence a sounding another serving route is about to play), the expiry named the
 instead of the one going unserved, and the containment sites' reachability is not established -- the finding list is in the
 evidence. **Still owed:** **production containment / the approved last resort** (an owner-level "no serving route at all"
 predicate, or 3.7b's fallback removal, is required first), **displayed provenance** (the display's, RWO S4e), the device leg
-(the lane-enabled image is over its own RAM1 budget, so it cannot be flashed), the moving closure inside a long/demoted
+(corrected 2026-10-19: the lane-enabled image **is** flashable — it builds at `code 392,376 + padding 840`, exactly the
+approved floor, and the earlier "over its own RAM1 budget" reading predates the 3.7a budget slice that funded it; the leg
+is blocked by the receipt gap, not by the image), the moving closure inside a long/demoted
 slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` route's own boundary. Detail:
 [`evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md).
   *Increment 4.5d landed 2026-10-19 (the latch's capability boundary; the task stays open):* a **G0 investigation**
@@ -2061,7 +2063,7 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   keeps the latch and its boundary clear). Focused **322/322**, full native **3331 / 3324 succeeded / 7 skipped /
   0 failed**, capture build **SUCCESS** with RAM1 **byte-identical to HEAD** (`code 392,088 + padding 1,128`; no
   re-base). **Still owed:** production containment / the approved last resort (the owner-level *"no serving route at
-  all"* predicate, or 3.7b), displayed provenance (RWO **S4e**), the device leg (no flashable image runs the lane), and
+  all"* predicate, or 3.7b), displayed provenance (RWO **S4e**), the device leg (corrected 2026-10-19: the lane image **is** flashable at the 840-byte floor; see 4.5e — it is the receipt gap that blocks it), and
   one recorded precondition — **any image that wires containment must lift the latch gate together with a clear site in
   that same image**. Detail:
   [`2026-10-19-s45-latch-gating/EXECUTION.md`](evidence/2026-10-19-s45-latch-gating/EXECUTION.md).
@@ -2084,7 +2086,11 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   capture build **SUCCESS** with **+128 B of ITCM** (`code 392,216 + padding 1,000`; 160 B above the 840 floor; no
   re-base — the first inline form was +192 B, so the phase arithmetic moved into the cold owner). **DEC-145's latch gate
   is deliberately NOT lifted:** this slice adds no clear boundary, so containment can act only in the lane image, where a
-  fault can exist at all. **Still owed:** displayed provenance (RWO **S4e**), the device leg (no flashable lane image),
+  fault can exist at all. **Still owed:** displayed provenance (RWO **S4e**), the device leg (the lane image **is**
+  flashable — `code 392,376 + padding 840`, the floor; it is the **receipt gap** that blocks it: `win_serving` and
+  `win_ready` have **0** occurrences across all 20 446 recorded `win_gate` rows while `win_requested`/`win_waiting`/
+  `win_blocked_by_request` form a matched **25/25/25** set, so the lane's frame has never advanced past `Waiting` on
+  device and observing its serving exit needs a demand that *completes*),
   3.7b's legacy-emission removal (untouched — the predicate counts those branches rather than requiring their retirement),
   and the moving closure inside a long/demoted slot's serving handoff (3.7a/3.14). Detail:
   [`2026-10-19-s45-no-serving-route/EXECUTION.md`](evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).
