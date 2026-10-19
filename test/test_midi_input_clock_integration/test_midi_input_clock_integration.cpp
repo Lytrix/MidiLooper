@@ -570,6 +570,8 @@ int main(int, char**) {
   RUN_TEST(privateRootReturnClearWhileJobLiveThenNextTakeGrows);
   RUN_TEST(staleCommittedDemandDoesNotBlockNextTakeLiveFrame);
   RUN_TEST(privateRootReturnDemandIsOwedOnlyForTheBoundFrozenReader);
+  RUN_TEST(refusedBindPreSealLiveCopyNamesTheSameTakeOnly);
+  RUN_TEST(refusedBindUnextendedLiveCopyKeepsTheOlderToken);
   RUN_TEST(ordinaryAdmissionCannotServeShortLoopRootReturnWork);
   RUN_TEST(usbQueuedRecordPreparationRetriesAtRealClockBoundary);
   RUN_TEST(helperBoundedScanAndFrozenCapacity);

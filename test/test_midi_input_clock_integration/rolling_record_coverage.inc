@@ -903,6 +903,116 @@ void privateRootReturnDemandIsOwedOnlyForTheBoundFrozenReader() {
 }
 
 namespace {
+struct RefusedBindCopy {
+  bool sameTake = false;
+  bool frozenReader = false;
+  bool bound = false;
+  uint32_t liveRows = 0;
+  uint32_t capturedRows = 0;
+  unsigned servedNoteOns = 0;
+};
+
+/// Build the 3.15g review's shape: a refused stop-edge `bindFirstRecordingBar` with a pre-seal live
+/// rolling copy in the current role. `serviceAfterLateNote` decides whether that copy is extended to
+/// the take's final content generation or keeps the older one.
+RefusedBindCopy refusedBindLiveCopy(bool serviceAfterLateNote) {
+  RollingRecordCoverageFixture f(0, false);
+  Loop& loop = f.track.getLoop(0);
+  f.advance(192, false); f.input(true, 67);
+  for (unsigned i = 0; i < 64; ++i) {
+    f.owner();
+    f.track.updateGrowingRecordLoopLength(clockManager.getCurrentTick());
+    const PlaybackViewSourceIdentity legacySource{loop.playbackRevision,
+        TrackCaptureStopTestAccess::playbackGenerationOf(f.track), loop.publishedSnapshotIdentity()};
+    (void)f.runtime->serviceFirstRecordingBar(loop, legacySource, Config::TICKS_PER_BAR,
+        MidiServiceDrain::kCanonicalPrefixInputQuantum);
+  }
+  f.advance(288); f.input(false, 67);
+  for (unsigned i = 0; i < 64; ++i) f.owner();
+  const uint64_t beforeNoteToken = f.current().source.captureContentGeneration;
+  // A late accepted note advances the content generation after the raw bar's display revision.
+  f.advance(384, false); f.input(true, 69);
+  f.advance(480, false); f.input(false, 69);
+  TEST_ASSERT_EQUAL_UINT32(4, loop.capture.store.size());
+  TEST_ASSERT_GREATER_THAN_UINT64(beforeNoteToken, loop.captureContentGeneration());
+  RefusedBindCopy out;
+  out.capturedRows = static_cast<uint32_t>(loop.capture.store.size());
+  f.advance(768, serviceAfterLateNote);
+  const auto* pre = f.runtime->viewSetIfPrewarmed();
+  const auto& live = pre->views[pre->lifecycle.current];
+  // In the rolling shape the raw-bar role is not populated at this edge, so the stop-edge bind
+  // refuses structurally and leaves this live copy exactly as it stands.
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, pre->lifecycle.retained);
+  TEST_ASSERT_TRUE(live.complete && live.published);
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, live.source.origin);
+  TEST_ASSERT_EQUAL_UINT32(768, live.coverage.loopLengthTicks);
+  out.liveRows = live.storage.eventCount;
+  const uint64_t liveToken = live.source.captureContentGeneration;
+  f.track.stopRecording(768);
+  auto* presentation = TrackCaptureStopTestAccess::presentationForSlot(f.track, 0);
+  TEST_ASSERT_NOT_NULL(presentation);
+  out.bound = f.runtime->hasBoundRecordReturnWindowForPendingJob();
+  const uint64_t frozenToken = presentation->frozenCaptureContentGeneration;
+  TEST_ASSERT_TRUE(frozenToken != 0);
+  out.sameTake = liveToken == frozenToken;
+  // The recorded predicate's whole term set, asked of the pre-seal copy.
+  out.frozenReader = live.complete && !live.rawCoveragePrepared &&
+      live.source.snapshotIdentity == nullptr &&
+      live.source.origin == PlaybackWindowOrigin::Capture && liveToken == frozenToken &&
+      live.coverage.loopLengthTicks == loop.loopLengthTicks;
+  // Production-path consequence: drive one pass of the clock-edge reader after the Stop and count
+  // the take's own note-ons. A copy that names the frozen reader serves the same take; an older
+  // copy is refused, and the sealed extent still serves the take.
+  MidiSendCapture::reset();
+  for (unsigned pulse = 0; pulse < 96; ++pulse) {
+    pulses(0, 1);
+    trackManager.updateAllTracks(clockManager.getCurrentTick());
+    f.owner();
+  }
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const auto& event = MidiSendCapture::at(i);
+    if (event.isNoteOn()) ++out.servedNoteOns;
+  }
+  return out;
+}
+
+/// The recorded risk is real but self-limiting: the frozen content token is the content-generation
+/// identity. A live copy extended to the take's final generation carries the frozen token, satisfies
+/// the frozen-reader predicate, and holds **every accepted row** -- the same take. The unextended
+/// control keeps the older token and a partial row set, the identity refuses it, and the sealed
+/// extent still serves the take. So "a pre-seal live copy can pass as the frozen reader" names the
+/// same take, never stale content: the three outcomes the review named (same take, a successful
+/// bind's view clearing, or no content) all serve this take or nothing, never a foreign one.
+void refusedBindPreSealLiveCopyNamesTheSameTakeOnly() {
+  const auto extended = refusedBindLiveCopy(true);
+  TEST_ASSERT_TRUE_MESSAGE(extended.bound, "the refused bind must leave the job bound");
+  TEST_ASSERT_TRUE_MESSAGE(extended.sameTake,
+      "the serviced pre-seal live copy must carry the job's frozen content token");
+  TEST_ASSERT_TRUE_MESSAGE(extended.frozenReader,
+      "the serviced live copy must satisfy the frozen-reader identity (the recorded over-inclusion)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(extended.capturedRows, extended.liveRows,
+      "token equality must mean the copy holds every accepted row (the same take)");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, extended.servedNoteOns,
+      "the take must stay audible after the Stop when a same-take copy names the frozen reader");
+}
+
+/// Discriminating control, in its own fixture: without the extension the live copy keeps the older
+/// content token and a partial row set, so the frozen-reader identity refuses it.
+void refusedBindUnextendedLiveCopyKeepsTheOlderToken() {
+  const auto unextended = refusedBindLiveCopy(false);
+  TEST_ASSERT_TRUE_MESSAGE(unextended.bound, "the refused bind must leave the job bound");
+  TEST_ASSERT_FALSE_MESSAGE(unextended.sameTake,
+      "an unextended pre-seal live copy must keep an older content token");
+  TEST_ASSERT_FALSE_MESSAGE(unextended.frozenReader,
+      "an older content token must not satisfy the frozen-reader identity");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(unextended.capturedRows, unextended.liveRows,
+      "the unextended control must be measurably older than the take (a partial copy)");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, unextended.servedNoteOns,
+      "with the older copy refused, the sealed extent must still serve the take");
+}
+}
+
+namespace {
 /// DEC-136 — the waiver is the envelope's own impossibility, not a bar count. This is the pure rule: for the
 /// demand's own derived cost, a two-bar loop admits no legal lead while a six-bar loop does.
 void ordinaryAdmissionCannotServeShortLoopRootReturnWork() {

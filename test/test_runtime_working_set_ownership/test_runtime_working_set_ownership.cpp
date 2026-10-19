@@ -388,6 +388,9 @@ struct TrackCaptureStopTestAccess {
     const auto* runtime = track.playbackRuntime.slotIfAllocated(slot);
     return runtime != nullptr && runtime->hasBoundRecordReturnWindowForPendingJob();
   }
+  static Track::CaptureStopPresentation* presentationForSlot(Track& track, uint8_t slot) {
+    return track.captureStopPresentationForSlot(slot);
+  }
   static uint64_t headCaptureStopInterval(const Track& track) {
     if (const auto* job = track.captureStopJobHead()) return job->interval;
     for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {

@@ -7517,6 +7517,17 @@ boundary wait) and repaired by the takeover gate and the only-while-no-boundary-
 Externally allocated runtime fields only (`rootReturnHoldKey`/`rootReturnHoldGrains`, target runtime
 7,880 B / host 10,064 B pins updated); default build line byte-identical; the device gate stays open.
 
+**Settlement (2026-10-19): the classification's one recorded over-inclusion is bounded to the same take.**
+A 3.15g review recorded that the frozen content token is also stamped on live rolling windows, so after a
+*refused* `bindFirstRecordingBar` a pre-seal live copy can pass `isFrozenRecordReturnWindow`. Two native
+fixtures in `test_midi_input_clock_integration` (`refusedBindPreSealLiveCopyNamesTheSameTakeOnly` and its
+discriminating control `refusedBindUnextendedLiveCopyKeepsTheOlderToken`) measure it: the token is the
+take's *content-generation* identity, so a copy that carries the frozen token also holds **every accepted
+row** (the same take) and stays audible, while a copy left at the older token holds a partial row set, the
+identity refuses it, and the sealed extent still serves the same take. The classification therefore never
+names a foreign take; no production change follows. Red-proved by removing the append-time
+`advanceCaptureContentGeneration()` in `LoopCapture.cpp`, restored byte-identically.
+
 ### Related OpenSpec and migration
 `windowed-playback-generation` (3.15b–c — root-current handoff); [I5 — falsification and the proven
 blocker](../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md#the-consumed-work-record-fix-is-falsified-the-blocker-is-the-declared-envelope-2026-10-16)
