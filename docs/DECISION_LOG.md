@@ -8310,3 +8310,58 @@ fault state.
 SUCCESS with RAM1 **byte-identical to HEAD** (`code 392,088 + padding 1,128`, no re-base). Detail:
 [`evidence/2026-10-19-s45-latch-gating/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-latch-gating/EXECUTION.md)
 and [`2026-10-19-s45-containment-g0/INVESTIGATION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-containment-g0/INVESTIGATION.md).
+
+## DEC-146 — Containment asks a cross-route coverage question, after route selection
+
+**Date:** 2026-10-19
+**Owner:** `Track::playCommittedLoopMidi` (the selection) and `Track::containPlaybackTurnIfNoRouteForSlot` (the decision)
+**Status:** Accepted and implemented — native RED→GREEN, full native and capture-build gates green, no upload
+**Follows:** DEC-108 §13f (containment and the approved last resort), DEC-145 (the latch's capability boundary); task 4.5
+**Supersedes:** the withdrawn 2026-10-06 wiring (`eefd90a5`), whose review finding F1 this decision answers structurally
+
+### Problem
+`containmentForSlot` / `applyLastResortForSlot` were implemented but had **no production caller**. The first attempt wired
+them at the serving resolver's rejections and was withdrawn: those rejections are exactly the turns the retained merged
+fallback serves, so the last resort would close a sounding another serving route was about to play (F1). The recorded
+conclusion was that the application needs an owner-level **"no serving route at all"** predicate — and that no owner
+answered it. DEC-145 then removed the configuration defect that made the question urgent (a latch the default image
+could never clear), leaving the predicate itself as the remaining blocker.
+
+### Decision
+**Ask the containment question after route selection, and answer it with coverage of every alternative.**
+
+- Route selection already enumerates the alternatives: the legacy bridge, a bound window (`fixedView`), the prepared pair,
+  the paged delivery, and the merged catch-all. If **any** of the first four is selected, a route serves — containment is
+  not asked at all.
+- Only the merged catch-all remains otherwise, so the cold owner (`containPlaybackTurnIfNoRouteForSlot`, `TRACK_COLD_MEM`)
+  decides whether **its own bounded window covers this phase**: a short loop's store is whole-loop and always covers; a
+  demoted loop serves a window, and a window whose build was refused this turn covers nothing.
+- If it does not cover, `applyLastResortForSlot` is called, which still asks `containmentForSlot`: a published window that
+  covers the phase keeps the slot on `ServeLastCoherentRevision`, and **only** a slot with neither route coverage nor
+  published coverage reaches `LastResortTargetedSilence`.
+
+Two properties are part of the decision, not of the implementation:
+1. **Availability, not content.** An event-empty route is still a route. Silence is never inferred from an empty window.
+2. **Coverage, not freshness.** A stale window that covers still serves — that is what "keep the last coherent revision"
+   means — so it keeps the slot out of containment exactly like a current window.
+
+### Alternatives considered
+1. **Judge at the resolver's rejections** — withdrawn (F1), and wrong in principle: a rejection describes one route.
+2. **Use the published window's coverage alone** (the policy's existing second term) as the gate — also wrong: the merged
+   route serves phases for which no window is published, which is exactly the turn F1 was about.
+3. **Require 3.7b first, so the window lane is the only route** — unnecessary. The predicate works *with* the legacy
+   branches (it counts them), so 3.7b stays a separate stage rather than becoming a prerequisite.
+
+### Consequences
+- The last resort is reachable through the production turn for the first time, in the image where a fault can exist (the
+  lane image; DEC-145's gate is deliberately **not** lifted, because this slice adds no clear boundary).
+- Cost: **+128 B of ITCM** (`code 392,216 + padding 1,000`; 160 B above the approved 840 floor), no re-base. The first
+  inline form cost +192 B by computing the phase on the MIDI edge; moving that arithmetic and the coverage test into the
+  cold owner brought it below the withdrawn form's +144 B. No unrelated code was shaved.
+- One boolean of work on every turn, and one FLASH call on merged-fallback turns only.
+
+### Evidence
+`test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase` (RED exactly on the intended assertion with
+the production change reverted; GREEN after; control turn with a covering merged route silences nothing); focused
+**215/215**; full native **3332 cases, 3325 succeeded, 7 skipped, 0 failed**; capture build **SUCCESS**. Detail:
+[`evidence/2026-10-19-s45-no-serving-route/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).

@@ -15980,6 +15980,62 @@ void test_track_destruction_cancels_live_callbacks_before_loop_pool_owner_releas
 #include "track_publication_call.inc"
 #include "acquisition_record_call.inc"
 #include "rolling_record_observe.inc"
+/// Task 4.5's **containment** gate: the approved last resort is applied only when **no serving route covers the phase**.
+///
+/// 4.5's first form was withdrawn because a window-lane rejection is *not* "nothing can serve": the retained merged
+/// fallback serves that very turn, so silencing there would close a sounding another route is about to play (F1). The
+/// production turn therefore asks containment only after route selection has established that **every** alternative is
+/// out for this phase. This fixture builds that one shape -- no bridge, no bound view, no prepared pair, no paged
+/// delivery, and the merged catch-all's own bounded window not covering the playhead because its build is refused this
+/// turn -- and drives the real MIDI turn through `rollingTestTick`. The control is the same turn with the build allowed:
+/// the merged store then covers, and silence is never opportunistic.
+///
+/// What this pins beyond the policy fixture at `:6155`: the predicate's **reachability through the production path**, and
+/// that "no route" is decided by coverage of all alternatives rather than by any single route's refusal.
+void test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase() {
+  LoopEventStore::initPool();
+  g_nativeSilenceTrackCalls = 0;
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;  // 64 bars: above the 16-bar bound, so the slot is demoted
+  publishBarSpacedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.forceSetState(TRACK_PLAYING);
+  const uint32_t len = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(len), "the fixture's slot is demoted");
+  // A fault through its own owner: two consecutive misses of one interval, the second the named breach.
+  const uint32_t unservedRevision = loop.playbackRevision + 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, unservedRevision, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, unservedRevision, false)));
+  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                           "the fault is latched before the turn is asked to contain it");
+
+  // --- the predicate's true shape: the merged catch-all's build is refused, so its bounded window covers nothing ------
+  mergedMidiEventsBuildInProgress = true;
+  PlaybackPathRows::reset();
+  MidiSendCapture::reset();
+  rollingTestTick(track, 1000, false);
+  // Cleared **before** any assertion: a failing assertion aborts the test function, and a leaked refusal flag would
+  // silently break every later suite case that builds the merged store.
+  mergedMidiEventsBuildInProgress = false;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(PlaybackPathRows::countOf("last_resort_slot_silence")),
+                                   "no serving route covers the phase: the approved last resort closes this slot");
+  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                           "and it is not a recovery: the fault stays latched, so a later covered turn serves again");
+
+  // --- the control: the same turn with the build allowed. The merged store covers, so nothing is silenced ------------
+  PlaybackPathRows::reset();
+  MidiSendCapture::reset();
+  rollingTestTick(track, 2000, false);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("last_resort_slot_silence")),
+                                   "a covering merged route serves the turn; silence is never opportunistic");
+}
+
 int main() {
 
 
@@ -16270,6 +16326,8 @@ int main() {
   RUN_TEST(test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committed);
   // windowed-playback-generation slice 4.5: second-miss fault containment and the approved last resort.
   RUN_TEST(test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global);
+  // windowed-playback-generation slice 4.5: containment is asked only when no serving route covers the phase.
+  RUN_TEST(test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase);
   // windowed-playback-generation slice 4.5: the cross-generation closure reconciliation (\u00a713g).
   RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
   // windowed-playback-generation slice 3.14: the undo/redo audible handoff (\u00a713g).

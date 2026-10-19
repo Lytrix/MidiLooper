@@ -341,6 +341,23 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (useMergedFallback) {
     mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
   }
+
+  // ---- Task 4.5: the owner-level **"no serving route at all"** predicate, beside route selection ---------------------
+  // 4.5's first wiring was withdrawn because a *resolver rejection* is not "nothing can serve this slot": the bridge, a
+  // bound view, the prepared pair, the paged ring and the retained merged fallback may each serve the very same turn. So
+  // containment is asked **only** when every alternative is out for **this phase** -- never inferred from one route's
+  // refusal. Availability, never content: an event-empty source still counts as a route ("no new events" is not silence).
+  //
+  // The predicate costs the MIDI edge **four integer compares and one call**: the phase, the merged catch-all's own
+  // bounded-window coverage and the containment decision all live in FLASH (the first inline form cost +192 B of ITCM,
+  // moving the projection arithmetic into the cold owner brought it back to the budget line below).
+  const bool anyServingRouteSelected =
+      fixedBridge != nullptr || fixedView != nullptr || livePair != nullptr || pagedEmission;
+  if (!anyServingRouteSelected) {
+    // Every reader above is out, so the merged catch-all is the only remaining candidate -- it is the one branch that is
+    // always selectable. The cold owner decides whether *its* window covers this phase and asks containment only if not.
+    (void)containPlaybackTurnIfNoRouteForSlot(slotIndex, currentTick, isActive);
+  }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(micros() - rebuildStartUs);
 #endif

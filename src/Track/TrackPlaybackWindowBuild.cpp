@@ -2345,6 +2345,39 @@ TRACK_COLD_MEM void Track::serviceAdmittedDeadlineMisses(PlaybackDeadlineClock c
   }
 }
 
+TRACK_COLD_MEM Track::LastResortOutcome Track::containPlaybackTurnIfNoRouteForSlot(
+    uint8_t slotIndex, uint32_t currentTick, bool isActiveSlot) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return LastResortOutcome::NotNeeded;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  // A short loop's merged store is the whole loop: it is a route that covers every phase, so nothing to contain.
+  if (!loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+    return LastResortOutcome::NotNeeded;
+  }
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return LastResortOutcome::NotNeeded;
+  }
+  const uint32_t phase =
+      isActiveSlot
+          ? static_cast<uint32_t>(IntervalProjection::tickPhaseInProjectionCycle(
+                currentTick, projectionCycleStartTick, loop.loopLengthTicks))
+          : static_cast<uint32_t>(IntervalProjection::tickPhaseInLoop(
+                currentTick, loop.startLoopTick, loop.loopLengthTicks));
+  // The demoted slot's only remaining candidate is the merged catch-all's own bounded window. Coverage, not freshness:
+  // a window from the previous revision still *serves* (that is what "last coherent revision" means), so a stale window
+  // that covers keeps the slot out of containment exactly like a current one.
+  const auto& mergedWindow = runtime->mergedMidiEvents;
+  const bool mergedCovers = mergedWindow.windowLengthTicks > 0 &&
+                            phase >= mergedWindow.windowStartTick &&
+                            phase - mergedWindow.windowStartTick < mergedWindow.windowLengthTicks;
+  if (mergedCovers) {
+    return LastResortOutcome::NotNeeded;
+  }
+  return applyLastResortForSlot(slotIndex, phase);
+}
+
 TRACK_COLD_MEM Track::LastResortOutcome Track::applyLastResortForSlot(uint8_t slotIndex, uint32_t phase) {
   if (containmentForSlot(slotIndex, phase) != ContinuityContainment::LastResortTargetedSilence) {
     return LastResortOutcome::NotNeeded;

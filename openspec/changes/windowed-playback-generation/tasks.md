@@ -2065,6 +2065,29 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   one recorded precondition — **any image that wires containment must lift the latch gate together with a clear site in
   that same image**. Detail:
   [`2026-10-19-s45-latch-gating/EXECUTION.md`](evidence/2026-10-19-s45-latch-gating/EXECUTION.md).
+  *Increment 4.5e landed 2026-10-19 (**production containment is wired**; the task stays open):* the owner-level
+  **"no serving route at all"** predicate now exists beside route selection, and it is a **coverage** question over
+  **every** alternative — the bridge, a bound view, the prepared pair and the paged delivery are all checked first, and
+  only when none is selected does the cold owner (`Track::containPlaybackTurnIfNoRouteForSlot`) ask whether the merged
+  catch-all's **own bounded window** covers the phase (whole-loop store for a short loop; a demoted loop's window, which
+  covers nothing when its build was refused this turn). A refused window lane is therefore **never** mistaken for "no
+  route" — the F1 defect is answered structurally, not by a narrower site. Two properties are part of the rule:
+  **availability, not content** (an event-empty route is still a route, so a sustained note is never silenced for an
+  empty window) and **coverage, not freshness** (a stale window that covers still serves, i.e. the last coherent
+  revision). `applyLastResortForSlot` still asks `containmentForSlot`, so a slot whose published coverage remains answers
+  `ServeLastCoherentRevision` and is left alone; only a slot with neither reaches `LastResortTargetedSilence`
+  (slot-scoped closures + ledger clear, no rebuild, no transport stop). **DEC-146.** *Verification:* fixture
+  `test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase` — a demoted 64-bar slot, the fault
+  latched through its own owner, no published window and the merged build refused: the real MIDI turn applies the last
+  resort **once**, and the control turn (build allowed) silences nothing; RED when the production change is reverted,
+  with exactly that one failure. Focused **215/215**, full native **3332 / 3325 succeeded / 7 skipped / 0 failed**,
+  capture build **SUCCESS** with **+128 B of ITCM** (`code 392,216 + padding 1,000`; 160 B above the 840 floor; no
+  re-base — the first inline form was +192 B, so the phase arithmetic moved into the cold owner). **DEC-145's latch gate
+  is deliberately NOT lifted:** this slice adds no clear boundary, so containment can act only in the lane image, where a
+  fault can exist at all. **Still owed:** displayed provenance (RWO **S4e**), the device leg (no flashable lane image),
+  3.7b's legacy-emission removal (untouched — the predicate counts those branches rather than requiring their retirement),
+  and the moving closure inside a long/demoted slot's serving handoff (3.7a/3.14). Detail:
+  [`2026-10-19-s45-no-serving-route/EXECUTION.md`](evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).
 
 ## 5. Capacity, envelope and placement
 

@@ -1034,6 +1034,15 @@ public:
   /// through the existing **slot-scoped** primitive. Both halves are slot-scoped by construction, which is why this can
   /// never become a global transport stop; and it rebuilds nothing, so it can never become an unbounded rebuild.
   LastResortOutcome applyLastResortForSlot(uint8_t slotIndex, uint32_t phase);
+  /// Task 4.5 (**DEC-108 §13f**): **the owner-level "no serving route at all" predicate**, asked by the MIDI turn only
+  /// after route selection has ruled out the bridge, a bound view, the prepared pair and the paged ring. What remains is
+  /// the retained merged fallback -- the one always-selectable branch -- so "no route" means **its own bounded window
+  /// does not cover this phase** (a short loop's store is whole-loop and covers by construction; a demoted loop serves a
+  /// window, and a window whose build was refused this turn covers nothing). Containment is then asked as it always was:
+  /// a published window that still covers the phase keeps the slot on `ServeLastCoherentRevision`, and only a slot with
+  /// neither reaches the **approved last resort**. Cold by construction: merged-fallback turns only, and it owns the
+  /// projection arithmetic the MIDI edge must not pay for.
+  LastResortOutcome containPlaybackTurnIfNoRouteForSlot(uint8_t slotIndex, uint32_t currentTick, bool isActiveSlot);
   /// DEC-108 §13(g) / task 4.5: the **off-clock closure reconciliation** for one version handoff. It walks the outgoing
   /// ledger's open notes and the incoming revision's note-ons and writes a fixed-size plan: soundings the replacement
   /// removes (to close at handoff), soundings it re-issues (whose note-ons are suppressed, because an unchanged note is
