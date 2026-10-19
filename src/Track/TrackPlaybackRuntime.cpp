@@ -2938,7 +2938,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // DEC-136 completion (S7.5b.5 release edge): the root-return retirement hold's identity key
 // and grain count add 8 B (u32 key + u16 grains, this ABI's padding). Externally allocated
 // per-slot runtime state; no Track field or RAM1 budget change.
-static_assert(sizeof(LoopPlaybackRuntime) == 7888,
+static_assert(sizeof(LoopPlaybackRuntime) == 7896,
               "I5: target per-slot runtime measured after presentation owner");
 static_assert(sizeof(Loop) == 1008,
               "I5: LoopPool shell 1,008 B including Capture phase identity "
@@ -2971,7 +2971,7 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Live recipe receipts add64 host bytes; compiler measured with production headers.
 // DEC-136 completion (S7.5b.5 release edge): root-return retirement hold key + grains add 8 B
 // on this ABI as well (10,056 -> 10,064); compiler measured, same external-pool caveat.
-static_assert(sizeof(LoopPlaybackRuntime) == 10072,
+static_assert(sizeof(LoopPlaybackRuntime) == 10080,
               "I5: host per-slot runtime measured after presentation owner");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

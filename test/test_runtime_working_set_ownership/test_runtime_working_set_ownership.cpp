@@ -12608,18 +12608,22 @@ void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
   }
   sInterferenceBudgetEnforced = wasEnforced;
 
-  // **The boundary, on the playing path:** the dense interval is never adopted, the served view never moves, and the
-  // obligation is still there afterwards -- on whichever of the episode's two records the freeze left it.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, servingTicks, "the dense shape is never served from the immutable window");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, viewChanges, "and no handoff takes the served view");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedBefore, runtime->viewSetIfPrewarmed()->lifecycle.current,
-                                   "the served view is untouched");
+  // **The boundary, on the playing path (DEC-147):** the dense interval is refused by name and is **never adopted**.
+  // The refusal describes one shape's workload against the lead it was granted, not the size of a supported window --
+  // so the owner re-positions the still-current demand to the next span, which can afford its own (cheap) build. The
+  // served view therefore does move, to a span other than the dense one; that is the new contract, and it is what keeps
+  // a single dense interval from ending playback on the mutable fallback for the whole traversal.
   TEST_ASSERT_TRUE_MESSAGE(sawFrozenDemand, "the shape was prepared for: its demand froze and was priced");
-  const PlaybackViewPendingRequest* pend = track.pendingViewRequest(2);
-  const bool retainedWithItsDeadline =
-      (pend != nullptr && pend->clockEpoch == 1 && pend->deadlineTick == promised) ||
-      (runtime->frozenViewRequest.active && runtime->frozenViewRequest.deadlineTick == promised);
-  TEST_ASSERT_TRUE_MESSAGE(retainedWithItsDeadline, "and the refused demand keeps its original deadline");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                          "the dense interval's refusal is a position refusal");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(6 * 768, runtime->rolling.startPhase,
+                                "and the served demand never targets the dense interval");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks,
+                                          "the re-positioned demand serves a span it can afford");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, viewChanges,
+                                          "the handoff takes the served view to that span");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewSetIfPrewarmed()->lifecycle.current != servedBefore,
+                           "the served view is that span, not the launch's");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
                                    "the refusal is not a crossed promise: nothing is served late");
   // Playback continues through the fallback: the dense root's 600 events (bars 6..7) plus three of the launch's four
@@ -13281,6 +13285,111 @@ void test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_r
 /// The case it is built around is the one the device question now rests on: the demand's **entry** decision, where an
 /// unstamped deadline clock, a loop below the demotion bound and an unaligned length all leave through the *same*
 /// exit -- and `ep`/`av`/`al` tell a reader which of the three refused, so one token cannot hide it.
+/// **DEC-147 -- a demand refused only for its handoff lead is re-positioned, not ended.**
+///
+/// The device episode (`captures/i5-s64-f8-parity-32bar-01`) admitted the demand and dropped it 38.7 ms later as
+/// `handoff_unreachable`: the lead it was positioned against could not fit its own derived build cost. That refusal is a
+/// *position* refusal, so the owner re-requests the still-current demand at the next span instead of ending the episode
+/// at `win_blocked_by_request`. The fixture builds that condition deterministically -- the demand's promise is held one
+/// tick ahead of the playhead until the refusal is answered -- and pins the whole contract: the refused attempt still
+/// reports its own drop, a new demand is created at a strictly later span, and the episode then reaches `win_ready` and
+/// `win_serving` in order.
+void test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  Loop& active = track.getActiveLoop();
+  constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
+  const uint64_t origin = clockManager.getCurrentTick();
+  RollingGateRows::reset();
+  const uint64_t base = origin + 512;
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the demand opens");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, RollingGateRows::countOf("win_requested"), "creation is reported once");
+  const uint32_t startPhaseBefore = runtime->rolling.startPhase;
+
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  uint32_t servingTicks = 0;
+  uint64_t forcedDeadline = 0;
+  for (uint32_t delta = 1; delta <= 12 * 768 + 48; ++delta) {
+    const uint64_t now = base + delta;
+    // Hold the promise one tick ahead of the playhead **until** the refusal is answered: the device's 38.7 ms
+    // condition, reproduced deterministically instead of inferred from one observed window.
+    if (RollingGateRows::countOf("win_repositioned") == 0) {
+      if (runtime->frozenViewRequest.active) {
+        runtime->frozenViewRequest.deadlineTick = now + 1;
+        runtime->frozenViewRequest.work.deadlineTick = now + 1;
+      }
+      if (runtime->pendingViewRequest_.active) {
+        runtime->pendingViewRequest_.deadlineTick = now + 1;
+        runtime->pendingViewRequest_.work.deadlineTick = now + 1;
+        forcedDeadline = now + 1;
+      }
+    }
+    rollingTestTick(track, now, true);
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2))
+      ++servingTicks;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                          "the owner re-positions the still-current demand");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(1u, RollingGateRows::countOf("win_requested"),
+                                          "and re-creates it through the ordinary request path");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(startPhaseBefore, runtime->rolling.startPhase,
+                                "the demand now targets a different span");
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(forcedDeadline, runtime->rolling.deadlineTick,
+                                          "and carries a strictly later handoff than the refused position");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks, "the re-positioned demand serves");
+  const size_t requestedAt = RollingGateRows::indexOf("win_requested");
+  const size_t repositionedAt = RollingGateRows::indexOf("win_repositioned");
+  const size_t readyAt = RollingGateRows::indexOf("win_ready");
+  const size_t servingAt = RollingGateRows::indexOf("win_serving");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(RollingGateRows::count, servingAt, "serving is reported");
+  TEST_ASSERT_LESS_THAN_MESSAGE(repositionedAt, requestedAt, "creation is reported before the refusal");
+  TEST_ASSERT_LESS_THAN_MESSAGE(readyAt, repositionedAt, "the refusal is reported before progress");
+  TEST_ASSERT_LESS_THAN_MESSAGE(servingAt, readyAt, "progress is reported before serving");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(active.loopLengthTicks / span + 1,
+                                       RollingGateRows::countOf("win_repositioned"),
+                                       "strict advancement bounds the episode to one attempt per span");
+}
+
+/// **DEC-147 control -- a stale demand is never re-positioned.** The re-position answers a *position* refusal for a
+/// demand that is still current; a voided position takes the terminal path exactly as before. Same too-close
+/// construction, one variable: the position is already invalidated when the attempt is priced.
+void test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t origin = clockManager.getCurrentTick();
+  RollingGateRows::reset();
+  const uint64_t base = origin + 512;
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  runtime->pendingViewRequest_.positionInvalidated = true;
+  runtime->pendingViewRequest_.deadlineTick = base + 2;
+  runtime->pendingViewRequest_.work.deadlineTick = base + 2;
+  for (uint32_t delta = 1; delta <= 8; ++delta) {
+    if (runtime->frozenViewRequest.active) {
+      runtime->frozenViewRequest.positionInvalidated = true;
+      runtime->frozenViewRequest.deadlineTick = base + delta + 1;
+      runtime->frozenViewRequest.work.deadlineTick = base + delta + 1;
+    }
+    runtime->pendingViewRequest_.positionInvalidated = true;
+    rollingTestTick(track, base + delta, true);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                   "a stale demand is never re-positioned");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_blocked_by_request"),
+                                          "it takes the terminal block path");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
+                    static_cast<int>(runtime->rolling.phase));
+}
+
 void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
@@ -16134,6 +16243,8 @@ int main() {
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
+  RUN_TEST(test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving);
+  RUN_TEST(test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal);
   RUN_TEST(test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change);
   RUN_TEST(test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);

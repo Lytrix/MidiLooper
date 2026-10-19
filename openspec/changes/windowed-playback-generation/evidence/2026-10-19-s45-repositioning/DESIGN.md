@@ -197,3 +197,69 @@ from the wrong events. The re-position must start a fresh qualification for the 
 
 Branch reverted to green (`215/215`) after this measurement; the two candidate implementations are the next step, with
 (A) preferred because it reuses the path the device already exercises (`win_requested` at every new demand).
+
+## 10. Implemented: (A) — the creation path re-requests at the next span
+
+**Shape.** The refusal site still *names* the refusal and still emits `handoff_unreachable`, but the two `:5393`
+predicates are now separate terms:
+
+- `leadTooShort` — this demand's own derived build cost cannot fit the lead it was positioned against. This is the
+  **position** term.
+- `siblingBroken` — `playbackViewAdmissionKeepsAdmittedDeadlines` fails: a window whose deadline is already admitted
+  would be broken. This remains **terminal** and is never repositionable.
+
+When `leadTooShort && !siblingBroken` and the frame is the lane's own `Requested` demand, the refusal:
+
+1. records the spent span on the frame (`refusedHandoffPhase = refusedStart + span`, `refusedHandoffValid = true`),
+2. sets `frame.phase = Idle`,
+3. retires the coverage source and **releases the retained record** (`pendingViewRequest_ = {}`), because
+   DEC-108 §13(a) would otherwise coalesce the oldest (refused) deadline back onto the next request, and
+4. emits `win_repositioned`.
+
+Every other case (any other refusal name, a broken sibling, a non-rolling demand) takes the previous terminal path
+unchanged, so admitted-deadline protection and the refusal receipts are untouched.
+
+**Creation** then pushes its boundary to the first span at or after the recorded handoff:
+
+```cpp
+uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
+if (frame.refusedHandoffValid) {
+  const uint32_t startPhase = static_cast<uint32_t>(boundary % loop.loopLengthTicks);
+  if (startPhase < frame.refusedHandoffPhase) boundary += frame.refusedHandoffPhase - startPhase;
+}
+```
+
+and the existing guard `boundary - phase >= loop.loopLengthTicks` now answers `win_blocked_by_request` instead of
+`win_boundary_rejected` while a refused span is recorded: a **whole traversal of refused spans is terminal**, which is
+the loop bound. `refusedHandoffValid` is cleared on the `win_ready` and `win_serving` exits, and dies with the frame.
+
+**Why (A) and not a lane-side re-request.** Measured in §9: a re-request issued from the lane leaves
+`pendingViewRequest_.active == 0` and `coveragePreparation == Idle`, and the frame waits forever. The creation path is
+the only path proven to arm preparation, and it already emits `win_requested`, so the retry reuses it rather than
+duplicating its ordering.
+
+**Receipts.** `win_requested` (creation) → `handoff_unreachable` + `build_drop` (the refused attempt) →
+`win_repositioned` → `win_requested` (the re-positioned creation) → `win_waiting` → `win_ready` → `win_serving`.
+
+### Native evidence
+
+- Two new fixtures in `test_runtime_working_set_ownership`:
+  - `test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving` — holds the demand's promise one tick
+    ahead of the playhead until the refusal is answered (the device's 38.7 ms condition, made deterministic), then pins
+    ordered receipts (`win_requested` → `win_repositioned` → `win_ready` → `win_serving`), a strictly later span, a
+    strictly later handoff, and `repositions <= loopLength / span`.
+  - `test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal` — the same construction with `positionInvalidated`
+    set: no `win_repositioned`, `win_blocked_by_request`, frame `Blocked`.
+- `test_rolling_path_refused_shape_is_named_retained_and_falls_back` (3.10) changes verdict **by design**: the dense
+  interval is still refused by name and is never adopted, but its demand is now re-positioned to the next span, which
+  can afford its own build, and that span is served. The test now pins the new contract (the dense interval is never the
+  served target; the handoff goes to another span; playback does not end on the mutable fallback for a whole traversal).
+- Suite: focused **217/217**; full native **3,334 cases, 7 skipped, 3,327 succeeded, 0 failed**.
+
+### Budget
+
+- `teensy41-capture-serial-window-qualification`: `code 392,376 + padding 840` — unchanged from the approved floor
+  (padding == floor, no re-base).
+- `teensy41-capture-serial`: `code 392,216 + padding 1,000` — unchanged.
+- `static_assert(sizeof(LoopPlaybackRuntime))` re-based `7888 → 7896` (target) and `10072 → 10080` (host) for the two
+  new frame fields.

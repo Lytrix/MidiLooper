@@ -639,6 +639,10 @@ struct LoopPlaybackRuntime {
     uint64_t deadlineTick = 0;
     uint64_t lastTick = 0;
     uint64_t boundStorageGeneration = 0;
+    /// DEC-147: the span handoff a lead-only refusal already consumed. The next creation pushes its boundary past it,
+    /// so a re-position is always strictly later; dies with the frame (cleared on Ready/Serving and on cancel).
+    uint32_t refusedHandoffPhase = 0;
+    bool refusedHandoffValid = false;
   } rolling;
   // Window-only pins; never a root lease or another event buffer. Destruction on
   // active transport is forbidden until the lane drains explicit retirement.

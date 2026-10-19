@@ -67,6 +67,9 @@ DEMAND_EXITS: frozenset[str] = frozenset(
         "win_blocked",
         "win_blocked_by_request",
         "win_frame_invalidated",
+        # DEC-147: a demand refused only for its handoff lead is re-positioned to the next span; the row is emitted at
+        # the refusal, so its presence proves a demand existed and the owner answered it.
+        "win_repositioned",
     }
 )
 #: What each **refusing** exit means, in the active slot's own terms, so the reader is not left to decode flags.

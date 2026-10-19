@@ -4725,6 +4725,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       return RollingOutcome::Rejected; // Keep the original debt; do not grant a new clock frame.
     }
     if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
+      frame.refusedHandoffValid = false;
       reportPlaybackRollingGateRow("win_serving", clock.epoch != 0);
       return RollingOutcome::Serving;
     }
@@ -4745,6 +4746,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       reportPlaybackRollingGateRow("win_waiting", clock.epoch != 0);
       return RollingOutcome::Waiting;
     }
+    frame.refusedHandoffValid = false;
     reportPlaybackRollingGateRow("win_ready", clock.epoch != 0);
     return RollingOutcome::Ready;
   }
@@ -4783,9 +4785,22 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   const auto contract = playbackViewCoverageContract();
   const uint64_t lookahead = uint64_t(contract.requiredGrains()) *
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
-  const uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
+  uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
+  if (frame.refusedHandoffValid) {
+    // DEC-147: the refused span is spent. Start at or after its handoff, so the retry can never land on the position
+    // that was just measured as unreachable (`boundary` and the mark are both span-aligned).
+    const uint32_t startPhase = static_cast<uint32_t>(boundary % loop.loopLengthTicks);
+    if (startPhase < frame.refusedHandoffPhase)
+      boundary += frame.refusedHandoffPhase - startPhase;
+  }
   if (!lookahead || boundary <= phase || boundary - phase >= loop.loopLengthTicks ||
       clock.tick > UINT64_MAX - (boundary - phase)) {
+    if (frame.refusedHandoffValid) {
+      // A whole traversal of refused spans is a terminal answer, not permission to re-request forever.
+      frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
+      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0);
+      return RollingOutcome::Rejected;
+    }
     reportPlaybackRollingGateRow("win_boundary_rejected", clock.epoch != 0);
     return RollingOutcome::Rejected;
   }
@@ -5390,10 +5405,36 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
     return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
-  if ((!launch && !cold && !contract.canCompleteWithinLead(request.deadlineTick - clock.tick, playbackViewOutstandingGrains(slotIndex))) ||
-      (!launch && !cold && !playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
-          contract.requiredGrains(), clock))) {
+  constexpr uint32_t spanTicks = 2 * Config::TICKS_PER_BAR;
+  const bool leadTooShort = !launch && !cold &&
+      !contract.canCompleteWithinLead(request.deadlineTick - clock.tick,
+                                      playbackViewOutstandingGrains(slotIndex));
+  const bool siblingBroken = !launch && !cold &&
+      !playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
+                                                   contract.requiredGrains(), clock);
+  if (leadTooShort || siblingBroken) {
     request.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
+    // DEC-147: only the **lead** term is a *position* refusal, and only the lane's own demand may be re-positioned.
+    // Record the refused span, retire this attempt and let the creation path re-request at the next span -- a fresh
+    // qualification for the new interval, never a reposition of the already-counted one. A broken sibling promise, and
+    // every non-rolling demand, keeps the terminal path below, so admitted-deadline protection is unchanged.
+    if (leadTooShort && !siblingBroken &&
+        runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested && loop.loopLengthTicks) {
+      auto& frame = runtime->rolling;
+      frame.refusedHandoffPhase = static_cast<uint32_t>(
+          (request.coverage.startPhase + spanTicks) % loop.loopLengthTicks);
+      frame.refusedHandoffValid = true;
+      frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
+      const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
+      runtime->retireCoverageSource();
+      // DEC-108 §13(a) keeps the **oldest** outstanding deadline when a refusal coalesces into the retained record;
+      // that would re-impose the very position just measured as unreachable. The re-position replaces the obligation
+      // rather than inheriting it, so the retained record is released here and re-created at the next span.
+      runtime->pendingViewRequest_ = {};
+      traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::HandoffUnreachable, dropBefore);
+      reportPlaybackRollingGateRow("win_repositioned", clock.epoch != 0);
+      return PlaybackViewTurnResult::GrainDenied;
+    }
     const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
     runtime->retireCoverageSource();
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::HandoffUnreachable, dropBefore);
