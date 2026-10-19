@@ -138,14 +138,36 @@ def main() -> int:
     act_counts = collections.Counter(actual)
     anchor = next((sig for sig, _t, _n in expected_full if exp_counts[sig] == 1 and act_counts[sig] >= 2), None)
     phase = None
+    cycle_period = len(expected_full)
+    cycle_trimmed = None
     if anchor is None:
         # A fully periodic loop has no signature unique in `effective`, so there is nothing to anchor on. That is
         # a property of the content, not of the playback: the loop's own ordered event list still gives the cycle
         # length, so the cuts come from the event count instead.
         per_cycle = len(expected_full)
         first_event = expected_full[0][0] if expected_full else ()
-        windows, phase, _ = event_count_windows(
+        windows, phase, difference = event_count_windows(
             actual, exp_counts, per_cycle, first_event)
+        rotated = expected_full
+        # A loop whose body ends with a **terminal boundary Off** (`length - 1`, NoteId 0) is stored with that Off
+        # but does not serve it: it belongs to the wrap, not to the cycle, so the served loop is one event shorter
+        # than the dump's ordered list. Cutting at the dump's count then drifts by one event per cycle -- one
+        # missing and one extra row in *every* cycle with the order broken, which is exactly what
+        # `captures/i5-s64-f8-parity-24bar-01` showed at 18 432 ticks. Drop only that documented residual, and only
+        # when the strict cut does not already fit; the comparison itself is unchanged.
+        terminal = [i for i, (sig, tick, _nid) in enumerate(expected_full)
+                    if sig[0] == NOTE_OFF and tick == length - 1]
+        if terminal and difference:
+            trimmed = [entry for i, entry in enumerate(expected_full) if i not in set(terminal)]
+            trimmed_counts = collections.Counter(sig for sig, _t, _n in trimmed)
+            trimmed_first = trimmed[0][0] if trimmed else ()
+            trimmed_windows, trimmed_phase, trimmed_difference = event_count_windows(
+                actual, trimmed_counts, len(trimmed), trimmed_first)
+            if trimmed_windows and trimmed_difference == 0:
+                windows, phase, rotated = trimmed_windows, trimmed_phase, trimmed
+                per_cycle = len(trimmed)
+                cycle_period = per_cycle
+                cycle_trimmed = len(terminal)
         if not windows:
             result = {
                 "result": "INCONCLUSIVE_CAPTURE",
@@ -157,7 +179,6 @@ def main() -> int:
             print(json.dumps(result, indent=2))
             return 2
         cycle_cut = "event_count"
-        rotated = expected_full
     else:
         cycle_cut = "anchor"
         start = next(i for i, (sig, _t, _n) in enumerate(expected_full) if sig == anchor)
@@ -217,6 +238,8 @@ def main() -> int:
         "anchor": list(anchor) if anchor is not None else None,
         "cycle_cut": cycle_cut,
         "cycle_phase": phase,
+        "cycle_period_events": cycle_period,
+        "cycle_trimmed": cycle_trimmed,
         "raw_counts": {f"{k[0]},{k[1]}": v for k, v in declared.items()},
         "effective_rows_all": len(effective),
         "expected_note_cc_rows": len(expected_full),

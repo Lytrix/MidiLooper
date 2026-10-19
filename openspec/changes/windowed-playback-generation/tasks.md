@@ -1962,13 +1962,22 @@ suite is not green this turn by design. No Git delivery.
   role-free** slot. The rows refuse all three extra terms: `sv=1` appears at `al=0` (23 and 25 bars) and `al=1`
   (24 and 32 bars), with `rl=0` (today's runs) and `rl=1` (the 25-bar rows), and with `rt=0` as well as `rt=1`. `al`
   gates the demand entry only; neither a free coverage role nor a current root is a precondition of a resident window.
-  *Parity half, second demoted length (device, owner-authorized; the registered target re-recorded twice; no firmware
-  line, no upload):* `--record-bars 23` → `len=17664` and `--record-bars 32` → `len=24576` (the axis is exactly the
-  requested bar count, 768 ticks/bar), with **758** and **1 028** `build_complete` rows naming the target at a
-  1 536-tick span; the content pipeline on the 32-bar take gives `content-review.json` **`PASS`** (3 cycles × 1 536
-  events, `inventory_equal` **and** `exact_order` true on all three, `storage_matches_effective: true`, 31 distinct
-  window starts). **Remaining in 4.4:** parity stands at **two** demoted lengths (25 and 32 bars) against a residency
-  half of five; the axis is `record-bars`, so further lengths are a recipe, not a search. The retained-source figure
+  *Parity half, three demoted lengths (device, owner-authorized; the registered target re-recorded three times; no
+  firmware line, no upload):* `--record-bars 23` → `len=17664`, `--record-bars 24` → `len=18432` and `--record-bars 32`
+  → `len=24576` (the axis is exactly the requested bar count, 768 ticks/bar), with **758**, **344** and **1 028**
+  `build_complete` rows naming the target at a 1 536-tick span; the content pipeline gives `content-review.json`
+  **`PASS`** at **24, 25** (F-7) **and 32 bars**. **The 24-bar take first read `FAIL` — and the defect was the
+  oracle's.** `effective` there ends with `(128,8,49,0) tick=18431 NoteId=0`, the **loop-boundary terminal Off** the
+  guide already documents as an expected residual; because playback does not serve it, the served loop is **1 147**
+  events against `effective`'s **1 148**, so the event-count cut's fixed stride drifted one event per cycle — one
+  missing **and** one extra row in *every* cycle (`missing=[[128,8,49,0,1]]`, `extra=[[144,8,50,98,1]]`, note 51 in
+  cycle 2 as the drift stepped), which reads as a content failure that is not one. The verifier now drops only that
+  documented residual from the reference and cuts at the served period (`cycle_period_events`, `cycle_trimmed` in
+  `content-review.json`; guide updated), **only when the strict cut does not already fit**, so a genuinely dropped
+  event still fails — `scripts.test_verify_playback_content_cycle_cut` **7 OK**, with a trim-must-not-rescue-a-drop
+  guard and a served-Off case that keeps the strict cut. Re-running the 32-bar and F-7 captures reproduces `PASS` with
+  `cycle_trimmed: null`. **Remaining in 4.4:** parity stands at **three** demoted lengths (24, 25, 32 bars) against a
+  residency half of five; the axis is `record-bars`, so further lengths are a recipe, not a search. The retained-source figure
   (3.6a) and 6.3's wider sweeps stay with their owners; the gate row fires only at gate **edges** and `LIBOBS` states
   content, not window residency. 4.4 stays open. No firmware line changed. Detail:
   [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md)

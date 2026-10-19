@@ -155,6 +155,18 @@ strictly, with no later phase search (a phase search could re-align a dropped
 event away instead of reporting it). The comparison is identical either way;
 only the cut differs. `cycle_cut` records which rule was used.
 
+The event-count cut has one correction, because the served period is not always
+the dump's row count. When the loop's body ends with a **loop-boundary terminal
+Off** (`tick == length - 1`, `NoteId = 0`; residual 1 below), playback does not
+serve that Off, so the served loop is **one event shorter** than `effective`.
+Cutting at the dump's count then drifts by one event per cycle — one missing
+**and** one extra row in *every* cycle, with the order broken — which reads as a
+content failure that is not one. The verifier therefore drops that documented
+residual from the reference and cuts at the served period, but **only when the
+strict cut does not already fit**; a dropped event still fails (a genuine drop
+is not periodic, so the trimmed cut cannot absorb it). `cycle_trimmed` records
+whether it happened.
+
 | Field | Meaning |
 |---|---|
 | `raw_counts` | The declared per-section row counts from the dump. |
@@ -162,6 +174,8 @@ only the cut differs. `cycle_cut` records which rule was used.
 | `anchor` | The signature the rotation anchored on; `null` when the loop is periodic. |
 | `cycle_cut` | `anchor` (a unique event exists) or `event_count` (periodic loop). |
 | `cycle_phase` | Index of the first captured event used as the cycle start (`event_count` cut only; `null` otherwise). |
+| `cycle_period_events` | Events cut per cycle — the dump's row count, or one fewer when the terminal boundary Off was trimmed. |
+| `cycle_trimmed` | `null`, or the number of loop-boundary terminal Offs dropped from the reference so the cut follows the served period. |
 | `cycles[].rows` | Rows observed in that playback cycle. |
 | `cycles[].missing` / `extra` | Inventory difference vs effective (multiset). |
 | `cycles[].inventory_equal` | No missing and no extra. |

@@ -71,10 +71,11 @@ def _playback(rows, *, drop=None, prefix=0):
     return messages
 
 
-def _write_capture(directory: pathlib.Path, rows, *, cycles=2, drop=None, prefix=0):
-    served = _playback(rows, drop=drop, prefix=prefix) * cycles
+def _write_capture(directory: pathlib.Path, rows, *, cycles=2, drop=None, prefix=0, served_rows=None):
+    source = rows if served_rows is None else served_rows
+    served = _playback(source, drop=drop, prefix=prefix) * cycles
     if drop is not None:
-        served = _playback(rows, drop=drop) * cycles
+        served = _playback(source, drop=drop) * cycles
     lines = []
     host_ns = 10_000
     for index, (kind, note, velocity) in enumerate(served):
@@ -134,6 +135,48 @@ class PeriodicFixtureTests(unittest.TestCase):
             result = _run(directory)
         self.assertEqual("INCONCLUSIVE_CAPTURE", result["result"], result)
         self.assertIn("fewer than one loop", result["reason"])
+
+
+class TerminalBoundaryOffTests(unittest.TestCase):
+    """A loop stored with a terminal `Off` at `length - 1` does not serve it, so its served period is one shorter."""
+
+    def _with_boundary(self):
+        rows = _effective_rows()
+        boundary = (767, NOTE_OFF, CHANNEL, rows[-1][3], 0, 0)
+        return rows, rows + [boundary]
+
+    def test_the_unserved_boundary_off_does_not_shift_the_cut(self) -> None:
+        rows, dumped = self._with_boundary()
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = pathlib.Path(tmp)
+            _write_capture(directory, dumped, served_rows=rows)
+            result = _run(directory)
+        self.assertEqual("PASS", result["result"], result)
+        self.assertEqual("event_count", result["cycle_cut"])
+        self.assertEqual(1, result["cycle_trimmed"])
+        self.assertEqual(len(rows), result["cycle_period_events"])
+        for cycle in result["cycles"]:
+            self.assertTrue(cycle["inventory_equal"], cycle)
+            self.assertTrue(cycle["exact_order"], cycle)
+
+    def test_a_served_boundary_off_keeps_the_strict_cut(self) -> None:
+        _rows, dumped = self._with_boundary()
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = pathlib.Path(tmp)
+            _write_capture(directory, dumped)
+            result = _run(directory)
+        self.assertEqual("PASS", result["result"], result)
+        self.assertIsNone(result["cycle_trimmed"])
+        self.assertEqual(len(dumped), result["cycle_period_events"])
+
+    def test_a_dropped_event_is_not_rescued_by_the_trim(self) -> None:
+        rows, dumped = self._with_boundary()
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = pathlib.Path(tmp)
+            _write_capture(directory, dumped, served_rows=rows, drop=1)
+            result = _run(directory)
+        self.assertEqual("FAIL", result["result"], result)
+        self.assertGreater(result["cycles"][0]["unexplained_missing_count"], 0)
 
 
 class PhaseAlignmentTests(unittest.TestCase):
