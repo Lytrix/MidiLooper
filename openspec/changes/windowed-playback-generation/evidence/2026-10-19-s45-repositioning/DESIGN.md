@@ -1,0 +1,135 @@
+# S4.5 — owner-level repositioning after a handoff-lead refusal (G2 packet)
+
+Status: **design frozen, implementation not started.** Scope owner: 4.5 / 6.4 (ordered receipts on device).
+
+## 1. Contract
+
+A rolling demand refused because its **handoff lead cannot fit its own derived build cost** is a *position* refusal, not
+a promise refusal. The owner may move that still-current demand to the **next eligible span** and try there. The refused
+attempt keeps its own receipt (`build_drop,handoff_unreachable`, reason `CannotCompleteBeforeHandoff`); nothing about the
+guard is relaxed.
+
+Hard constraints (owner-level, from the approved brief):
+
+1. **Not a deadline-guard relaxation.** `CoverageServiceContract::canCompleteWithinLead` and
+   `playbackViewAdmissionKeepsAdmittedDeadlines` keep their current arithmetic and their current call sites.
+2. **Admitted-deadline protection unchanged.** A refusal caused by the *sibling* term
+   (`playbackViewAdmissionKeepsAdmittedDeadlines` — "admitting would break a promise already made to a window on this
+   track") is **not** repositionable and stays terminal, exactly as today.
+3. **No same-handoff retry loop.** Every reposition advances to a span strictly later than the last refused handoff; a
+   whole-traversal wrap is terminal.
+4. **Staleness suppresses retry.** A demand that is `positionInvalidated`, generation/epoch/geometry-mismatched, or whose
+   source is no longer current is never repositioned; it takes the existing terminal path.
+5. **No new sticky state.** The frame's refused-handoff mark is cleared wherever the frame is re-minted (Idle → Requested
+   at a fresh creation) and by `cancelRollingPlaybackWindow`.
+
+## 2. Seam
+
+`src/Track/TrackPlaybackWindowBuild.cpp`, qualification/admission step (`stepPlaybackView…`, the block beginning at
+`:5393`):
+
+```cpp
+if ((!launch && !cold && !contract.canCompleteWithinLead(request.deadlineTick - clock.tick, outstanding)) ||
+    (!launch && !cold && !playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase,
+        request.loopLengthTicks, contract.requiredGrains(), clock))) { … HandoffUnreachable … }
+```
+
+Today both terms collapse into `request.reason = CannotCompleteBeforeHandoff`, `retireCoverageSource()`, drop, and the
+lane later turns that into `RollingPhase::Blocked` (`win_blocked_by_request`) — terminal for the episode.
+
+**Change:** evaluate the two predicates separately.
+
+| term | meaning | action |
+|---|---|---|
+| `leadTooShort` | the demand's own build cannot finish before **its** handoff | mark `repositionEligible`, keep drop + reason, reposition |
+| `siblingBroken` | admitting would break an **already-admitted** window's deadline | unchanged: drop + terminal reason |
+
+When **both** are true the sibling term wins (unchanged protection): not repositionable.
+
+## 3. State (minimal)
+
+`include/TrackPlaybackRuntime.h`
+
+- `PlaybackViewPendingRequest::repositionEligible` (`bool`, default false) — set only by the lead-only refusal; cleared by
+  any admission, by a new request, and by a reposition.
+- `LoopPlaybackRuntime::RollingFrame::refusedHandoffPhase` (`uint32_t`) + `refusedHandoffValid` (`bool`) — the strictly
+  advancing mark. RAM: ~8 B per allocated slot runtime; no heap.
+
+## 4. Algorithm (all inside the owner, no lane change required)
+
+At the drop site, after `retireCoverageSource()` (the attempt's own receipt is already emitted):
+
+```
+if (leadTooShort && !siblingBroken && demandStillCurrent(request, frame, loop, clock)
+    && repositionToNextSpan(request, frame, loop, clock)) {
+      request.reason = AwaitingSourceQualification;   // not terminal; the obligation survives
+      request.repositionEligible = false;
+      return GrainDenied;                            // next turn re-qualifies with the new position
+}
+request.reason = CannotCompleteBeforeHandoff;        // terminal, as today
+```
+
+`repositionToNextSpan`:
+
+1. `currentPhase = tickPhaseInProjectionCycle(clock.tick, getProjectionCycleStartTick(), loop.loopLengthTicks)`.
+2. `refused = frame.refusedHandoffValid ? frame.refusedHandoffPhase : (request.coverage.startPhase + span) % loopLength`.
+3. `next = ((refused / span) + 1) * span` (strictly later; `span = 2 * TICKS_PER_BAR`).
+4. **Wrap is terminal:** if `next >= loop.loopLengthTicks` (or `next <= refused` after wrap) return false → caller blocks.
+5. New position: `coverage.startPhase = next`, `requestedPhase = currentPhase`,
+   `deadlineTick = clock.tick + delta(currentPhase → next) + span`, `work.deadlineTick` mirrored.
+6. `frame.startPhase = next`, `frame.deadlineTick = request.deadlineTick`,
+   `frame.refusedHandoffPhase = next`, `frame.refusedHandoffValid = true`, `frame.phase` unchanged (`Requested`).
+7. Mirror the position into the retained `pendingViewRequest_` **iff** it is active for the same
+   `operationGeneration`/`loopLengthTicks`/coverage identity (the frozen copy and the retained demand are two views of one
+   debt; repositioning one alone would let the next turn re-freeze the old position).
+
+`demandStillCurrent` is the **same predicate the qualification head already applies** (`request.active`,
+`operationGeneration == playbackGeneration`, `!positionInvalidated`, `clockEpoch == clock.epoch`,
+`loopLengthTicks == loop.loopLengthTicks`, `playbackWindowSourceIsCurrentForSlot`,
+`source.playbackRevision == loop.playbackRevision`, cold snapshot identity where applicable). No new staleness terms.
+
+**Why the wrap is the loop bound.** Each reposition advances the refused handoff by ≥ `span`; `loopLength / span` is the
+maximum number of attempts in one traversal (12 at 24 bars, 16 at 32 bars). A geometry where every span is refused ends
+at the wrap with today's terminal reason, not in an endless retry.
+
+## 5. RED (transition oracle, native)
+
+New fixture `test_a_handoff_shortfall_repositions_the_current_demand_to_the_next_span`:
+
+1. Demoted, span-aligned target (24 bars, `av=1, al=1`) — reuse the lane fixture's own setup
+   (`commitBarSpacedPassIntoTrackSlot` + `publishBarSpacedRootForSlot` + `nativePlaybackDeadlineClock = {tick, 1}`).
+2. Manually retain a **current** pending request positioned with a one-tick lead
+   (`deadlineTick = clock.tick + 1`, `coverage.startPhase = currentPhase + span`, source = published snapshot,
+   `operationGeneration = playbackGeneration`, `clockEpoch = clock.epoch`).
+3. Drive `stepPlaybackViewMaintenance(0, nullptr, true, clock)`:
+   - **first attempt**: `build_drop,handoff_unreachable` emitted, `reason == CannotCompleteBeforeHandoff`,
+     `repositionEligible == true` (RED today: no such field / no reposition, frame goes `Blocked`);
+   - **reposition**: `request.deadlineTick` advanced by ≥ `span`, `coverage.startPhase` on the next span,
+     `frame.refusedHandoffValid == true`, reason no longer terminal;
+   - **progress**: further turns reach `RollingPhase::Ready` then `Serving`, with `RollingGateRows` containing
+     `win_requested → win_ready → win_serving` in that order (the ordered oracle from `8bd4dcf9`).
+4. **Loop prevention**: with a fixture whose every span is refused, assert the number of reposition attempts ≤
+   `loopLength / span` and the final state is `Blocked` with `win_blocked_by_request`.
+5. **Staleness**: repeat (3) with `positionInvalidated = true` and with `operationGeneration - 1`; assert **no** reposition
+   (deadline unchanged, frame `Blocked`).
+
+Controls that must keep passing: `test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change`
+(ordered receipts), the containment/deadline fixtures, and the full native suite (`pio test -e native`).
+
+## 6. Budget
+
+Expected cost: one predicate split (two locals), one owner method, two fields. Estimate **+80…140 B ITCM** on
+`teensy41-capture-serial` (HEAD `392,216 + padding 1,000`) and the same on the qualification image
+(`392,376 + padding 840` → ~`700…760`). Measure both; **no rebase is implied** while padding stays positive, but record
+the number in the slice packet. If the cost pushes the lane image to zero padding, stop and report as a budget boundary
+rather than shaving unrelated code.
+
+## 7. After native green
+
+1. Flash the qualification image (dedicated-preset exception) and run the registered windowed preset: the same 24-bar
+   target that produced the 38.7 ms refusal (`captures/i5-s64-f8-parity-32bar-01`) must now show, in one episode,
+   `win_requested → win_ready → win_serving`, and the drain must show playback continuity (the unmuted row's notes present
+   across the switch).
+2. Keep the existing 24/32-bar high-contention captures as the **refusal control**; do not overwrite them.
+3. With that image, run the 4.4 demoted-length parity sweep (23/24/25/26/32 bars) and record per-length
+   `Requested/Ready/Serving` plus content parity.
