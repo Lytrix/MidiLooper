@@ -165,6 +165,38 @@ class RollingRecordTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'stop_snapshot_invalid'):
             stop_handoff(before, [dict(after, recording=1)], stop, slot=4)
 
+    def test_stop_matching_serves_the_sealed_take_across_the_dec136_handoff(self):
+        """The DEC-136 lag: the pre-Stop window can be empty while the live capture generation holds the take.
+
+        Measured natively and on the `0b4b6fe2` image: `rows 0`, `captureToken 2`, live `4`; the sealed return
+        window then names token `4`, holds `2` rows and is a complete/published Capture window at the final
+        period. The earlier images served that sealed window from the second post-Stop sample, the newer one
+        from the first, so the terminal searches the observed sequence instead of only sample 0 — but it may
+        not accept a sequence that never names the sealed generation, nor one that seals without the rows.
+        """
+        before = sample(rawMax=288, period=768, rows=0, rawCount=2, captureToken=20, liveToken=22)
+        stop = dict(raw_length=560, final_length=768)
+        stale = dict(before, recording=0, stopJob=1, epoch=4, frameEpoch=4)
+        sealed = sample(rawMax=288, period=768, rows=2, rawCount=2, captureToken=22, liveToken=23,
+                        recording=0, stopJob=1, epoch=4, frameEpoch=4,
+                        frameOrigin=0, framePeriod=0, boundRole=255, boundStorage=0)
+        self.assertEqual(stop_handoff(before, [stale, sealed], stop, slot=4),
+                         'matching_physical_reader_preserved')
+        # The first sample may be the new image's already-sealed take.
+        self.assertEqual(stop_handoff(before, [sealed], stop, slot=4), 'matching_physical_reader_preserved')
+        # A sequence that never names the sealed generation (never reaches the live token) is refused.
+        with self.assertRaisesRegex(RuntimeError, 'stop_matching_reader_not_preserved'):
+            stop_handoff(before, [stale, dict(stale, captureToken=21)], stop, slot=4)
+        # Naming the sealed generation is not enough: it must hold the take's rows, not an empty window.
+        for rows in (0, 1):
+            with self.subTest(rows=rows), self.assertRaisesRegex(
+                    RuntimeError, 'stop_matching_take_row_count_mismatch'):
+                stop_handoff(before, [stale, dict(sealed, rows=rows)], stop, slot=4)
+        # A pre-Stop window that was already current must serve the take on its first post-Stop sample.
+        current = sample(rawMax=288, period=768, rows=2, rawCount=2, captureToken=20, liveToken=20)
+        with self.assertRaisesRegex(RuntimeError, 'stop_matching_take_row_count_mismatch'):
+            stop_handoff(current, [dict(stale, rows=0)], stop, slot=4)
+
     def test_root_return_completed_is_a_fact_beside_the_label(self):
         """Attempt 8-02's held leg: same-view frozen, then a corrected-role view, then the release.
 

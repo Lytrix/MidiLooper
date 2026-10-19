@@ -1013,6 +1013,212 @@ void refusedBindUnextendedLiveCopyKeepsTheOlderToken() {
 }
 
 namespace {
+
+/// One served reader, read from the production view set exactly as the hardware receipt reports it
+/// (`RollingRecordStatus`): role, storage generation, frozen content token, rows, coverage and the
+/// two endpoint rows. No parallel model.
+struct ServedReaderSample {
+  uint8_t role = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t storage = 0, token = 0;
+  uint32_t rows = 0, start = 0, length = 0, period = 0;
+  uint32_t firstTick = UINT32_MAX, lastTick = UINT32_MAX;
+  NoteId firstId = kInvalidNoteId, lastId = kInvalidNoteId;
+  bool capture = false, published = false, complete = false;
+};
+
+ServedReaderSample sampleServedReader(const RollingRecordCoverageFixture& f) {
+  ServedReaderSample s;
+  const auto* set = f.runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  s.role = set->lifecycle.current;
+  TEST_ASSERT_TRUE(s.role < set->views.size());
+  const auto& v = set->views[s.role];
+  s.storage = v.storageGeneration;
+  s.token = v.source.captureContentGeneration;
+  s.rows = static_cast<uint32_t>(v.storage.eventCount);
+  s.start = v.coverage.startPhase;
+  s.length = v.coverage.lengthTicks;
+  s.period = v.coverage.loopLengthTicks;
+  s.capture = v.source.origin == PlaybackWindowOrigin::Capture;
+  s.published = v.published;
+  s.complete = v.complete;
+  if (s.rows) {
+    s.firstTick = v.storage.events[v.storage.order[0]].tick;
+    s.lastTick = v.storage.events[v.storage.order[s.rows - 1]].tick;
+    s.firstId = v.storage.events[v.storage.order[0]].noteId;
+    s.lastId = v.storage.events[v.storage.order[s.rows - 1]].noteId;
+  }
+  return s;
+}
+
+/// The matched-Stop state decoded from the hardware campaign (`captures/i5-3g-campaign-01/matched`):
+/// `matched` is a **one-bar** take stopped **inside** the bar, so its pre-Stop served window is the
+/// DEC-136 frozen current-window prepared *before* the take's rows were appended (empty), while the
+/// live capture generation already carries the note's two appends. `stopTick` is a multiple of
+/// `TICKS_PER_CLOCK` so the harness clock stays legal; the hardware lands at ~560 for the same shape.
+struct MatchedStopMeasurement {
+  ServedReaderSample pre, post;
+  uint64_t liveAtStop = 0, presentationToken = 0;
+  uint32_t sealedRows = 0, rawMax = 0, finalLength = 0;
+  bool bound = false;
+  unsigned emittedOns = 0, emittedOffs = 0, foreignRows = 0;
+  uint32_t emittedOnTick = 0, emittedOffTick = 0;
+  uint8_t foreignNote = 0;
+  uint32_t foreignTick = 0;
+  bool foreignOn = false, foreignOff = false;
+};
+
+MatchedStopMeasurement measureMatchedStop(uint32_t stopTick = 576) {
+  RollingRecordCoverageFixture f;
+  Loop& loop = f.track.getLoop(0);
+  f.advance(192); f.input(true, 62);
+  f.advance(288); f.input(false, 62);
+  f.advance(stopTick);
+  MatchedStopMeasurement m;
+  m.pre = sampleServedReader(f);
+  m.liveAtStop = loop.captureContentGeneration();
+  m.sealedRows = static_cast<uint32_t>(loop.capture.store.size());
+  m.rawMax = loop.captureMaximumTick();
+  m.finalLength = loop.loopLengthTicks;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(Config::TICKS_PER_BAR, m.finalLength,
+      "the matched leg is a one-bar take");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(m.finalLength, m.rawMax,
+      "the matched Stop is non-truncating: every accepted row ends before the final length");
+  MidiSendCapture::reset();
+  f.track.stopRecording(stopTick);
+  TEST_ASSERT_TRUE(f.track.isPlaying());
+  const auto* presentation = TrackCaptureStopTestAccess::presentationForSlot(f.track, 0);
+  TEST_ASSERT_NOT_NULL(presentation);
+  m.presentationToken = presentation->frozenCaptureContentGeneration;
+  m.bound = f.runtime->hasBoundRecordReturnWindowForPendingJob();
+  for (unsigned pulse = 0; pulse < 768; ++pulse) {
+    pulses(0, 1);
+    trackManager.updateAllTracks(clockManager.getCurrentTick());
+    f.owner();
+  }
+  m.post = sampleServedReader(f);
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const auto& e = MidiSendCapture::at(i);
+    const bool on = e.isNoteOn();
+    const bool off = e.isNoteOff();
+    if (!on && !off) continue;  // transport/clock is not a take row
+    const bool foreign = e.data.noteData.note != 62 || (on ? e.tick != 192 : e.tick != 288);
+    if (foreign) {
+      if (!m.foreignRows) {
+        m.foreignNote = e.data.noteData.note;
+        m.foreignTick = e.tick;
+        m.foreignOn = on;
+        m.foreignOff = off;
+      }
+      ++m.foreignRows;
+      continue;
+    }
+    if (on) {
+      ++m.emittedOns;
+      if (!m.emittedOnTick) m.emittedOnTick = e.tick;
+    } else {
+      ++m.emittedOffs;
+      if (!m.emittedOffTick) m.emittedOffTick = e.tick;
+    }
+  }
+  return m;
+}
+
+/// The narrow contract the measurement must settle: the reader may hand off generation, but the take
+/// must stay continuously served. It passes when the post-Stop window is the sealed take; it fails
+/// when the handoff loses or duplicates content (the case that would require a route fix).
+void matchedStopServesTheSameTakeAcrossTheGenerationHandoff() {
+  const auto m = measureMatchedStop();
+  char detail[420];
+  snprintf(detail, sizeof detail,
+      "pre role=%u storage=%llu token=%llu rows=%u | live=%llu sealed=%llu | "
+      "post role=%u storage=%llu token=%llu rows=%u first=%lu last=%lu | emitted on=%u@%lu off=%u@%lu "
+      "foreign=%u first=%s note=%u tick=%lu",
+      m.pre.role, (unsigned long long)m.pre.storage, (unsigned long long)m.pre.token, m.pre.rows,
+      (unsigned long long)m.liveAtStop, (unsigned long long)m.presentationToken,
+      m.post.role, (unsigned long long)m.post.storage, (unsigned long long)m.post.token, m.post.rows,
+      (unsigned long)m.post.firstTick, (unsigned long)m.post.lastTick,
+      m.emittedOns, (unsigned long)m.emittedOnTick, m.emittedOffs, (unsigned long)m.emittedOffTick,
+      m.foreignRows, m.foreignOn ? "+" : (m.foreignOff ? "-" : "?"), m.foreignNote,
+      (unsigned long)m.foreignTick);
+  TEST_ASSERT_TRUE_MESSAGE(m.bound, detail);
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(m.liveAtStop, m.presentationToken,
+      "the Stop seals the live content generation");
+  // DEC-136 progression: the pre-Stop served window was prepared before the appends, so it lags both
+  // the live generation and the sealed rows and cannot serve the take.
+  TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(m.presentationToken, m.pre.token, detail);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(m.sealedRows, m.pre.rows, detail);
+  // The post-Stop reader is the sealed take, complete and published, from the Capture origin.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(m.sealedRows, m.post.rows, detail);
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(m.presentationToken, m.post.token, detail);
+  TEST_ASSERT_TRUE_MESSAGE(m.post.capture && m.post.published && m.post.complete, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(m.finalLength, m.post.period, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(Config::TICKS_PER_BAR, m.post.length, detail);
+  // The take itself is emitted continuously and only as the take's own note (no foreign rows).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, m.foreignRows, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, m.emittedOns,
+      "the post-Stop reader must keep the take audible");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(m.emittedOns, m.emittedOffs,
+      "every emitted note-on must close with its note-off");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(192, m.emittedOnTick, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(288, m.emittedOffTick, detail);
+}
+
+/// The realigned contract's discriminator: when the pre-Stop window lags live, the post-Stop reader
+/// must name the **sealed** generation (the pre-Stop live token) and hold the rows the take already
+/// had, never the older served generation. This narrow term replaces DEC-138's unconditional
+/// same-`(currentRole,currentStorage)`/same-token requirement; `rollingRecordMatchingStopKeepsSubintervalCurrent`
+/// guards the same-reader case, which stays required where the pre-Stop window is already current.
+void matchedStopHandoffNamesTheSealedTakeOnly() {
+  const auto m = measureMatchedStop();
+  char detail[320];
+  snprintf(detail, sizeof detail,
+      "pre role=%u storage=%llu token=%llu rows=%u | live=%llu sealed=%llu | "
+      "post role=%u storage=%llu token=%llu rows=%u",
+      m.pre.role, (unsigned long long)m.pre.storage, (unsigned long long)m.pre.token, m.pre.rows,
+      (unsigned long long)m.liveAtStop, (unsigned long long)m.presentationToken,
+      m.post.role, (unsigned long long)m.post.storage, (unsigned long long)m.post.token, m.post.rows);
+  // The handoff is real: the pre-Stop served generation is older than the live content.
+  TEST_ASSERT_LESS_THAN_UINT64_MESSAGE(m.liveAtStop, m.pre.token, detail);
+  // The post-Stop reader names the sealed generation, never the stale served one.
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(m.presentationToken, m.post.token, detail);
+  TEST_ASSERT_NOT_EQUAL_UINT64_MESSAGE(m.pre.token, m.post.token, detail);
+  // It holds every row the take already had, so nothing is lost across the handoff.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(m.sealedRows, m.post.rows, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, m.post.rows, detail);
+}
+
+/// Control: a truncating Stop (accepted content past the final length) must not be read as the
+/// matched class; it takes the corrected frozen handoff instead.
+void truncatingStopDoesNotTakeTheMatchedTerminal() {
+  RollingRecordCoverageFixture f;
+  seedTwoLiveRecordBars(f);
+  f.advance(1536); f.frame(1536, 0, 1536);
+  f.advance(1600); f.input(true, 64);
+  f.advance(2000); f.input(false, 64);
+  f.advance(2304); f.frame(1536, 768, 1536);
+  const Loop& loop = f.track.getLoop(0);
+  const uint32_t rawMax = loop.captureMaximumTick();
+  const auto pre = sampleServedReader(f);
+  f.track.stopRecording(2304);
+  const uint32_t finalLength = loop.loopLengthTicks;
+  TEST_ASSERT_EQUAL_UINT32(2304, finalLength);
+  TEST_ASSERT_TRUE_MESSAGE(pre.period != finalLength || rawMax >= finalLength,
+      "the control Stop is truncating/mismatching: its served interval or content does not match the final length");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(f.track, 0));
+  for (unsigned i = 0; i < 64; ++i) f.owner();
+  TEST_ASSERT_TRUE_MESSAGE(f.runtime->frozenRecordWindowReady(),
+      "the truncating class must take the corrected frozen handoff, not the matched narrow contract");
+  const auto* set = f.runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set->lifecycle.ready < set->views.size());
+  const auto& ready = set->views[set->lifecycle.ready];
+  TEST_ASSERT_TRUE(ready.complete);
+  TEST_ASSERT_EQUAL_UINT32(2304, ready.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, ready.coverage.startPhase);
+}
+}
+
+namespace {
 /// DEC-136 — the waiver is the envelope's own impossibility, not a bar count. This is the pure rule: for the
 /// demand's own derived cost, a two-bar loop admits no legal lead while a six-bar loop does.
 void ordinaryAdmissionCannotServeShortLoopRootReturnWork() {

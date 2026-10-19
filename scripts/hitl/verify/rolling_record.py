@@ -241,11 +241,20 @@ def stop_handoff(before, observations, stop, *, slot):
     final = stop['final_length']
     mismatch = stop['raw_length'] > final or before['period'] != final or before['rawMax'] >= final
     if not mismatch:
-        # A non-truncating Stop must preserve the *same physical reader*. The positional frame may be
-        # cleared (`boundRole`/`boundStorage`/`framePeriod` reset until a successor binds) or still bound
-        # as a serving frame; comparing those fields for equality — the pre-DEC-137 form — was therefore
-        # unsatisfiable on hardware. The contract asserts the reader's identity and the Stop-processed
-        # facts instead (DEC-138, with the two unsatisfiable terms replaced by measured ones in DEC-141):
+        # A non-truncating Stop must keep the take **continuously served**, but it need not keep the same
+        # physical reader on every take. DEC-136's current-window progression prepares the served window
+        # for the interval the playhead is in; that window can predate the take's last accepted appends, so
+        # on a one-bar take stopped inside the bar the pre-Stop reader is **empty** while the live capture
+        # generation already holds the note (measured natively in
+        # `test_midi_input_clock_integration`: `rows 0 -> 2`, `captureToken 2 -> 4` == live 4, no lost row).
+        # The post-Stop frozen return window is then the first view that can serve the sealed take, and
+        # requiring the old `(currentRole,currentStorage)`/token was unsatisfiable for that class.
+        #
+        # The narrowed terminal keeps DEC-138's same-reader term **where it is satisfiable** (the pre-Stop
+        # window was already current), and otherwise requires the handoff to **complete inside the observed
+        # sequence**: some post-Stop sample names the sealed generation (not older than the pre-Stop live
+        # token) and holds at least the take's rows. The positional frame may be cleared or still bound
+        # (DEC-137).
         after = samples[0]
         if not after['stopJob']:
             raise RuntimeError('stop_responsibility_unproven')
@@ -257,21 +266,48 @@ def stop_handoff(before, observations, stop, *, slot):
         # ownership of the interval; those are the facts this branch asserts.
         if not before['recording']:
             raise RuntimeError('stop_matching_stop_not_processed')
-        if ((after['currentRole'], after['currentStorage'])
-                != (before['currentRole'], before['currentStorage'])):
-            raise RuntimeError('stop_matching_reader_not_preserved')
-        # The served window must be the same **frozen content generation** that was serving before the
-        # Stop. Comparing against the pre-Stop *live* token was also unsatisfiable: the live receipt
-        # advances with accepted input (measured: the take was serving token 7 while live had reached 9).
-        if (after['period'] != final or after['captureToken'] != before['captureToken']
-                or after['sourceOrigin'] != CAPTURE_ORIGIN
-                or not after['published'] or not after['complete']):
+        served_was_current = before['captureToken'] == before['liveToken']
+        # The take's row count: the pre-Stop served rows when that window held any (a slice is legitimate),
+        # otherwise the raw accepted rows the take already had (the DEC-136 lag case serves none).
+        take_rows = before['rawCount'] if before['rows'] == 0 else before['rows']
+        if served_was_current:
+            # The pre-Stop window already carried the take's final generation: the reader itself must be
+            # preserved, exactly as DEC-138 required, and its first post-Stop sample must still hold the take.
+            if ((after['currentRole'], after['currentStorage'])
+                    != (before['currentRole'], before['currentStorage'])):
+                raise RuntimeError('stop_matching_reader_not_preserved')
+            if after['captureToken'] != before['captureToken']:
+                raise RuntimeError('stop_frozen_geometry_or_token_mismatch')
+            if not (take_rows > 0 and after['rows'] >= take_rows):
+                raise RuntimeError('stop_matching_take_row_count_mismatch')
+            sealed = after
+        else:
+            # DEC-136 lag: the pre-Stop served window can predate the take's last appends, so the first
+            # post-Stop sample may still be that stale window (the earlier images) or may already be the
+            # sealed take (the new qualification image). The handoff must complete inside the observed
+            # sequence: some sample names the sealed generation (not older than the pre-Stop live token)
+            # and holds at least the take's rows.
+            sealed = None
+            for sample in samples:
+                if (sample['captureToken'] >= before['liveToken']
+                        and sample['period'] == final
+                        and sample['sourceOrigin'] == CAPTURE_ORIGIN
+                        and sample['published'] and sample['complete']):
+                    sealed = sample
+                    break
+            if sealed is None:
+                raise RuntimeError('stop_matching_reader_not_preserved')
+            if not (take_rows > 0 and sealed['rows'] >= take_rows):
+                raise RuntimeError('stop_matching_take_row_count_mismatch')
+        if (sealed['period'] != final
+                or sealed['sourceOrigin'] != CAPTURE_ORIGIN
+                or not sealed['published'] or not sealed['complete']):
             raise RuntimeError('stop_frozen_geometry_or_token_mismatch')
-        if after['boundRole'] == UNBOUND_ROLE:
-            if after['boundStorage'] or after['framePeriod'] != 0:
+        if sealed['boundRole'] == UNBOUND_ROLE:
+            if sealed['boundStorage'] or sealed['framePeriod'] != 0:
                 raise RuntimeError('stop_matching_frame_inconsistent')
         else:
-            qualify(after, slot=slot, recording=False)
+            qualify(sealed, slot=slot, recording=False)
         return 'matching_physical_reader_preserved'
     for sample in samples:
         if not _frozen_capture_serving(sample, before, final, slot=slot):

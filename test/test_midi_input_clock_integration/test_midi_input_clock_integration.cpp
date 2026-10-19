@@ -572,6 +572,9 @@ int main(int, char**) {
   RUN_TEST(privateRootReturnDemandIsOwedOnlyForTheBoundFrozenReader);
   RUN_TEST(refusedBindPreSealLiveCopyNamesTheSameTakeOnly);
   RUN_TEST(refusedBindUnextendedLiveCopyKeepsTheOlderToken);
+  RUN_TEST(matchedStopServesTheSameTakeAcrossTheGenerationHandoff);
+  RUN_TEST(matchedStopHandoffNamesTheSealedTakeOnly);
+  RUN_TEST(truncatingStopDoesNotTakeTheMatchedTerminal);
   RUN_TEST(ordinaryAdmissionCannotServeShortLoopRootReturnWork);
   RUN_TEST(usbQueuedRecordPreparationRetriesAtRealClockBoundary);
   RUN_TEST(helperBoundedScanAndFrozenCapacity);
