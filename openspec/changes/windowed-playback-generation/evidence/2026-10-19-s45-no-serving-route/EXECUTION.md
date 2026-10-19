@@ -217,3 +217,12 @@ Two consequences:
    competes with already-admitted deadlines, so the same code refuses. The device shape that should reach `Ready` →
    `Serving` is therefore a demoted, span-aligned target whose window build **fits its lead** — the variable to vary is
    density/contention, not length or alignment (both of which the 32-bar run already satisfied).
+
+**Caveat on the pairing (measured, so a verifier does not over-read it).** Across all captures the builder-release
+reasons are: `completed_unpublished` 860, `released_without_site` 560, `qualification_started` 40,
+**`handoff_unreachable` 31**, `build_admitted` 29, `published_as_ready` 28, `source_superseded` 8,
+`overdub_lifecycle` 6, `demand_invalidated` 5, `record_return_superseded` 4, `published_as_current` 1 — against **25**
+`x=win_blocked_by_request` lane rows. So the two are **not** 1:1: `handoff_unreachable` can occur without a lane row in
+that state (the frame may be Idle or excluded), and `blocked_by_request` can also follow `demand_invalidated` or
+`source_superseded`. Pair them **per episode** (nearest preceding release row for the same track/slot); never infer the
+term from the lane row alone.
