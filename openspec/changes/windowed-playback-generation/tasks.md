@@ -1957,8 +1957,16 @@ suite is not green this turn by design. No Git delivery.
   qualify for the demand lane are not served, and the demoted length that is served is excluded from it. **What
   remains:** a demoted, **span-aligned** slot (e.g. 64 bars = 49 152 ticks) served with a current root, so `sv=1`
   arrives with `av=1` at one `len` — that is a device-state question (a record/overdub or a switch), not a parser
-  question, and the sweep then varies `len`. The gate row also fires only at gate **edges**, and `LIBOBS` states
-  content, not window residency, so the parity half stays 4.3's pipeline. 4.4 stays open. No firmware line changed.
+  question, and the sweep then varies `len`. *Read-only device check 2026-10-19 (no upload, no write):* the one slot
+  on disk that *was* demoted + aligned + root-current is **empty today** (`dump_and_capture.py --select-track 1
+  --dump-slot 1 --dump-only` → `CAPTURE_CONTENT,begin,track=1,slot=0,length=0`), and a read-only library observation
+  (`hitl_boot_census.py --no-reset --library-observe` → `slots=64 complete=True … committed=22 (pass_backed=22
+  **root_backed=1**)`, `initial_playback=8`) shows why: the library's **only current root is `t=7,s=3`** — the 25-bar
+  target the lane excludes on alignment — and **every other occupied slot has no root at all**, so the aligned 64/66-bar
+  slots have nothing current to serve from. **So F-8's first row cannot be produced read-only:** it needs one write that
+  publishes a root on a demoted *span-aligned* slot. That write has not been made. The gate row also fires only at gate
+  **edges**, and `LIBOBS` states content, not window residency, so the parity half stays 4.3's pipeline. 4.4 stays open.
+  No firmware line changed.
   Detail: [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md).
   Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
