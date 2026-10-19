@@ -1943,31 +1943,36 @@ suite is not green this turn by design. No Git delivery.
   current: the demoted state's content, which is what F-8's parity half reads. **Measured in the recorded capture:**
   `t=7,s=3,len=19200,av=1,al=0` (track 8 / slot 4, 0-based — the 25-bar target, demoted) and
   `t=1,s=3,len=49152,av=1,al=1,pl=1,sv=0,rt=0` (a 64-bar slot refused `win_not_servable`).
-  *Row-set census 2026-10-19 (read-only, every capture on disk; no device run):* the axis is **readable but its first
-  row is not yet observed.** All **71** `win_gate` rows across `captures/*/serial.log` fall into three exits —
-  `win_track_not_playing` 48, `win_window_ineligible` 18, `win_not_servable` 5 — and **none** is
-  `win_serving`/`win_ready`/`win_waiting`, while **no row anywhere reads `sv=1`**. The demotion bound is
-  `16 × TICKS_PER_BAR` = **12 288 ticks (16 bars, 768 ticks/bar)**, so `av=1` means *above* it (F-7's 25-bar target:
-  `19 200 > 12 288`). Four demoted lengths are resident — **20, 25, 64, 66 bars** — and the three span-aligned ones
-  read as clean demotions with no served window: 64 and 66 bars `win_not_servable` (`rt=0`, no current root); 20 bars
-  `win_not_servable` on the earlier capture (`rt=1`); 25 bars is the one actually **playing**, and the demand lane
-  refuses it on alignment (`al=0`, `19 200 % 1 536 = 768`) while the *serving gather* builds its 2-bar windows in
-  1-bar steps — which is what 4.3's F-7 PASS measures (3 cycles × 1 152 events, `inventory_equal` and `exact_order`
-  true). **So "windows resident, root demoted" has never been emitted on this library:** the demoted lengths that
-  qualify for the demand lane are not served, and the demoted length that is served is excluded from it. **What
-  remains:** a demoted, **span-aligned** slot (e.g. 64 bars = 49 152 ticks) served with a current root, so `sv=1`
-  arrives with `av=1` at one `len` — that is a device-state question (a record/overdub or a switch), not a parser
-  question, and the sweep then varies `len`. *Read-only device check 2026-10-19 (no upload, no write):* the one slot
-  on disk that *was* demoted + aligned + root-current is **empty today** (`dump_and_capture.py --select-track 1
-  --dump-slot 1 --dump-only` → `CAPTURE_CONTENT,begin,track=1,slot=0,length=0`), and a read-only library observation
-  (`hitl_boot_census.py --no-reset --library-observe` → `slots=64 complete=True … committed=22 (pass_backed=22
-  **root_backed=1**)`, `initial_playback=8`) shows why: the library's **only current root is `t=7,s=3`** — the 25-bar
-  target the lane excludes on alignment — and **every other occupied slot has no root at all**, so the aligned 64/66-bar
-  slots have nothing current to serve from. **So F-8's first row cannot be produced read-only:** it needs one write that
-  publishes a root on a demoted *span-aligned* slot. That write has not been made. The gate row also fires only at gate
-  **edges**, and `LIBOBS` states content, not window residency, so the parity half stays 4.3's pipeline. 4.4 stays open.
-  No firmware line changed.
-  Detail: [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md).
+  *Row-set census 2026-10-19 (read-only over `captures/*/*.log`; no device run):* **the axis is populated, and an
+  earlier reading of it in this session was wrong.** A first pass globbed only `captures/*/serial.log`, found 71 rows
+  and concluded that "no row anywhere reads `sv=1`" — but the pipeline's captures are mostly `session_*.log` and
+  `host_midi_hitl_*` logs. Over `captures/*/*.log` there are **19 215** `win_gate` rows, and `av=1` **together with**
+  `sv=1` (demoted **and** a complete published current window — F-8's statement) occurs at **five** demoted lengths:
+  **23 bars** (17 664; 1 265 rows, 1 261 `pl=1`, from 2026-10-05), **24 bars** (18 432; 1 447 / 1 439, 2026-10-07),
+  **25 bars** (19 200; 7 756 / 7 728, 2026-10-07), **26 bars** (19 968; 2 / 2, 2026-10-06) and **32 bars** (24 576;
+  11 / 8, 2026-10-19). The demotion bound is `16 × TICKS_PER_BAR` = **12 288 ticks (16 bars at 768 ticks/bar)**, so
+  every one of those lengths is above it. **The residency half therefore needs no device work to be stated** — it has
+  been on disk since 2026-10-05. *What the census does still establish:* **`win_serving` and `win_ready` are absent
+  globally — 0 of 19 215.** A *resident* published window is common; the demand lane's own **serving** exit has never
+  been recorded in this project, which is a real observation about the lane (6.4's receipts territory), not a gap in
+  F-8's row set. `win_busy` occurs **twice, both in today's 32-bar run**; `win_blocked` is **not** new (from
+  `captures/s64-37c-01/`, 2026-10-06). The 25-bar target's alignment refusal (`al=0`, `19 200 % 1 536 = 768`) is real
+  but gates only the *demand* entry: 7 756 rows show `sv=1` at that same length.
+  *Qualifiers withdrawn 2026-10-19:* an earlier note here required a demoted **+ span-aligned + root-current +
+  role-free** slot. The rows refuse all three extra terms: `sv=1` appears at `al=0` (23 and 25 bars) and `al=1`
+  (24 and 32 bars), with `rl=0` (today's runs) and `rl=1` (the 25-bar rows), and with `rt=0` as well as `rt=1`. `al`
+  gates the demand entry only; neither a free coverage role nor a current root is a precondition of a resident window.
+  *Parity half, second demoted length (device, owner-authorized; the registered target re-recorded twice; no firmware
+  line, no upload):* `--record-bars 23` → `len=17664` and `--record-bars 32` → `len=24576` (the axis is exactly the
+  requested bar count, 768 ticks/bar), with **758** and **1 028** `build_complete` rows naming the target at a
+  1 536-tick span; the content pipeline on the 32-bar take gives `content-review.json` **`PASS`** (3 cycles × 1 536
+  events, `inventory_equal` **and** `exact_order` true on all three, `storage_matches_effective: true`, 31 distinct
+  window starts). **Remaining in 4.4:** parity stands at **two** demoted lengths (25 and 32 bars) against a residency
+  half of five; the axis is `record-bars`, so further lengths are a recipe, not a search. The retained-source figure
+  (3.6a) and 6.3's wider sweeps stay with their owners; the gate row fires only at gate **edges** and `LIBOBS` states
+  content, not window residency. 4.4 stays open. No firmware line changed. Detail:
+  [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md)
+  and [`2026-10-19-s64-f8-residency-and-parity-sweep/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-and-parity-sweep/EXECUTION.md).
   Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
 
