@@ -1892,15 +1892,44 @@ suite is not green this turn by design. No Git delivery.
   stays the content pipeline's (`hitl/content_deduction.py`, `scripts/hitl/mixed_content_report.py`) and was
   **not** taken — the same deferred term the lane records. 4.3 stays open. Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
+  *Route identified 2026-10-19 (host reading, no device run):* the parity verdict's owner is the **existing**
+  content-verification pipeline, and it already makes this comparison — `dump_and_capture.py` stops the transport,
+  sends `!CAPTURE_CONTENT` (record / overdub / **`effective`** = `LoopPasses::materializeToEventVector`, the
+  whole-loop merged view) and records several playback cycles, then `verify_playback_content.py` compares **each
+  cycle's inventory against `effective`** (`inventory_equal`, per-bar counts). On a **demoted** target the recorded
+  playback is the window lane's served stream, so "the windowed stream concatenates to the whole-loop stream across
+  the boundary" is read as `content-review.json`'s per-cycle `inventory_equal` — no second oracle, no firmware line.
+  **What the leg still needs:** the demoted target must be the **dump target** (the dump prints one loop, and opening
+  the port resets the board), which is **already possible without a destructive gesture**: `!CAPTURE_CONTENT_SLOT <n>`
+  names the slot (0-based) on the **selected** track, so only the track must be selected — and
+  `scripts/hitl/actions/slots.py::press_track` (short, `TRACK_SELECT_NOTE_BASE + n - 1`) is a non-destructive
+  `SELECT_TRACK`, unlike the loop button, whose **short** press is `TOGGLE_RECORD_FOR_SLOT` and would record over the
+  take being dumped. So the recipe reuses `scripts/hitl/actions/`, needs no firmware line and no new oracle; what it
+  owes is the host wrapper plus the `--capture-seconds` that a 24-bar loop (48 s at 120 BPM) needs for ≥2 cycles, and
+  whether the demoted take is still resident (reuse) or must be re-recorded. Not taken here: no device run spent and
+  no `content-review.json` exists for a demoted target.
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
   **The floor as a number:** the lead implied by the declaration's arithmetic is 22,272 ticks ≈29 bars, so the floor is exactly 30 bars; loops between the bar cap and that floor have neither representation admissible. The number is pinned from 6.3/3.10 contract fields, not hardcoded.
   **The task stays open** on parity through the content-verification pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with the RAM1 line unchanged; three mutations red-proved with byte-identical restores. The oracle is the policy function itself, so its declared figures remain 3.10/6.3's to own; the absolute floor is cited from `test_playback_prewarm`.
   Detail: [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).
-  *Device leg 2026-10-19 (the residency row set stays unresolved):* the registered profile ran on the current
-  qualification image, but the per-slot **residency row set** remains **unidentified** — the lane records
-  `root_demoted_residency_over_loop_lengths` as `judged: nothing`, with the library-observation path
-  (`!LIB_OBSERVE`) named as the candidate and recorded as **unknown rather than guessed**. 4.4 stays open.
+  *Device leg 2026-10-19 (the residency row set is now **identified**):* the registered profile ran on the current
+  qualification image, and the per-slot residency statement the lane records as `judged: nothing` is present in
+  **two already-emitted rows**, on two axes. **Playback representation** —
+  `#CAP,<us>,DIAG,win_gate,t=,s=,x=,len=,ep=,av=,al=,pl=,ed=,od=,pv=,rw=,sv=,rt=,rl=,ow=,dm=,bld=,gr=,rp=,rq=`
+  states, **per slot**, the loop's `len` and its demotion/servability flags: `av=1` is the emitter's own "the loop
+  is demoted", `pl` playing, `sv` a complete published current window, `rt` the published root current, `rl` the
+  coverage role available, `ow` the slot owns a coverage source — so "windows resident, root demoted" reads off one
+  row at one length, and `len=` is the axis a sweep varies. **It is already readable:** the shipped
+  `scripts/hitl/verify/windowed_lane.py::gate_rows` returns each row's `track`, `slot`, `loop_len` and the whole
+  `flags` dict, so no new parser is owed. **Content representation** — `LIBOBS` per-slot `S`
+  records (`scripts/hitl/library_observation.py`) give `k` committed, `kp` pass-backed, `kr` root-backed, `kc` root
+  current: the demoted state's content, which is what F-8's parity half reads. **Measured in the recorded capture:**
+  `t=7,s=3,len=19200,av=1,al=0` (track 8 / slot 4, 0-based — the 24-bar target, demoted) and
+  `t=1,s=3,len=49152,av=1,al=1,pl=1,sv=0,rt=0` (a 64-bar slot refused `win_not_servable`). **What remains:** the gate
+  row fires at gate **edges** (a *serving* slot emits `playback_build`/`win_gap` rows instead) and `LIBOBS` states
+  content, not window residency — so the sweep still owes the demoted lengths *reached and read* per length, and the
+  demoted-state parity is 4.3's pipeline. 4.4 stays open. No firmware line changed.
   Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
 
@@ -2302,9 +2331,19 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   source-qualified frozen readiness under a running transport, ≥2 boundary `build_complete` publications, no
   named overrun, ring intact. **Not claimed:** the F-7 **parity verdict** (4.3) and the F-8 **residency row
   set** (4.4) stay deferred; `oracle_complete` stays `False`; no firmware line changed. **6.4 stays open** on
-  those two. Next candidate slice, if wanted: the `hitl/verify/display_window.py` time-based pairing fix
-  (host tooling). Detail:
+  those two. Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).
+
+  ***Pairing fix landed 2026-10-19* (host tooling, no firmware line, no device run — the two recorded captures are
+  re-derived):** the named candidate slice above is done. `display_window.py` now brackets a phase's rows by
+  **device time** (`_phase_rows`, reusing `windowed_lane.row_us`) with position kept only for markers that carry no
+  stamp, and `verify_windowed_content_parity` re-derives `leg` from the **drained** capture it is handed, carrying
+  the runner's pre-drain report as `leg_run_report` provenance. Measured: run 1's session log went from
+  `insufficient_disp_during_note_edit_freeze count=0` to `ok=True, issues=[], warnings=[]`, and **run 1's combined
+  verdict is now `ok=True`, `issues=[]`** (lane and snapshot already green) — the case-1 artifact failed on the
+  reading, not on the device. Run 2 keeps `ok=True` and no longer rides `freeze_disp_sparse:marker_fallback`. Host
+  suites 60 OK / 93 OK. **F-7 and F-8 stay deferred, `oracle_complete` stays `False`, and 6.4 stays open** on exactly
+  those two. Detail: [`2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md`](evidence/2026-10-19-s64-windowed-leg-pairing-fix/EXECUTION.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

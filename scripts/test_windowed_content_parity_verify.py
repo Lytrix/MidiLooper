@@ -590,15 +590,45 @@ class WindowedLaneTests(unittest.TestCase):
         self.assertFalse(lane_only["ok"], lane_only["issues"])
         self.assertTrue(any(issue.startswith("leg: ") for issue in lane_only["issues"]), lane_only["issues"])
 
-    def test_profile_uses_phase_scoped_leg_report_when_runner_provides_it(self) -> None:
+    def test_the_drained_capture_decides_the_leg_not_the_pre_drain_record(self) -> None:
+        """The ring is retained under transport, so a leg report recorded before the drain cannot be the verdict.
+
+        The combined read is formed from the evidence handed in -- the capture **after** the post-stop drain -- for
+        every component. A report the runner did record before the drain travels as `leg_run_report` provenance.
+        Both directions are pinned: a pre-drain failure is not carried into a drained pass, and a pre-drain pass
+        does not carry a drained run that lacks the rows.
+        """
         args = _leg_args()
         args.track_number = 8
         args.loop_slot = 4
+
+        # A pre-drain report that failed for want of the retained rows must not fail a drained run that has them.
+        args.windowed_leg_run_report = {
+            "ok": False,
+            "issues": ["missing_bounded_window_disp_rows"],
+            "phase_scope": "pre-drain-leg",
+        }
+        drained = verify_windowed_content_parity(
+            _leg_passing_lines() + _snapshot_progress_lines() + _lane_lines(), args)
+        self.assertTrue(drained["ok"], drained["issues"])
+        self.assertTrue(drained["leg"]["ok"], drained["leg"])
+        self.assertEqual("pre-drain-leg", drained["leg_run_report"]["phase_scope"])
+
+        # ... and a pre-drain report that passed must not carry a drained run with no bounded display rows.
         args.windowed_leg_run_report = {"ok": True, "issues": [], "phase_scope": "pre-drain-leg"}
-        report = verify_windowed_content_parity(_snapshot_progress_lines() + _lane_lines(), args)
-        self.assertEqual("pre-drain-leg", report["leg"]["phase_scope"])
-        self.assertTrue(report["snapshot"]["ok"])
-        self.assertTrue(report["lane"]["ok"])
+        empty = verify_windowed_content_parity(_snapshot_progress_lines() + _lane_lines(), args)
+        self.assertFalse(empty["ok"], empty["issues"])
+        self.assertFalse(empty["leg"]["ok"], empty["leg"])
+        self.assertTrue(any(issue.startswith("leg: ") for issue in empty["issues"]), empty["issues"])
+
+    def test_no_runner_report_leaves_no_provenance(self) -> None:
+        """`leg_run_report` names what the leg recorded; a run with nothing recorded does not carry an empty one."""
+        args = _leg_args()
+        args.track_number = 8
+        args.loop_slot = 4
+        report = verify_windowed_content_parity(
+            _leg_passing_lines() + _snapshot_progress_lines() + _lane_lines(), args)
+        self.assertNotIn("leg_run_report", report)
 
 class _StubPort:
     """A MIDI out port that records what it was asked to send (the `test_record_target_precondition` pattern)."""
@@ -923,7 +953,9 @@ class CombinedVerifierArtifactTests(unittest.TestCase):
             reports = list(out_dir.glob("host_midi_hitl_windowed_content_parity_*.json"))
             self.assertEqual(1, len(reports))
             report = json.loads(reports[0].read_text(encoding="utf-8"))
-            self.assertEqual("recorded-leg", report["leg"]["phase_scope"])
+            # The drained capture decides the leg; the report the leg recorded before the drain is provenance.
+            self.assertTrue(report["leg"]["ok"], report["leg"])
+            self.assertEqual("recorded-leg", report["leg_run_report"]["phase_scope"])
             self.assertEqual(str(standalone_leg), report["run"]["standalone_leg_report"])
             self.assertTrue(report["snapshot"]["ok"], report["snapshot"])
             self.assertTrue(report["lane"]["ok"], report["lane"])

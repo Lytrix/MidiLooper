@@ -35,6 +35,20 @@ def _disp_window(
     )
 
 
+def _windowed_args() -> SimpleNamespace:
+    return SimpleNamespace(
+        record_bars=24,
+        hold_track_ms=4000,
+        phase_markers=[
+            "entered note edit mode",
+            "phase:freeze_wait_end",
+            "phase:long_press_snap",
+            "phase:hold_track_start",
+            "phase:hold_track_end",
+        ],
+    )
+
+
 class LongLoopDisplaySerialVerifyTests(unittest.TestCase):
     def test_ok_full_scenario_markers(self) -> None:
         lines = [
@@ -117,6 +131,55 @@ class LongLoopDisplaySerialVerifyTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(
             any("play_stop_hold_did_not_track_playhead" in issue for issue in result["issues"])
+        )
+
+
+class PhasePairingTests(unittest.TestCase):
+    """A row produced under transport is retained and delivered long after the marker that ends its phase.
+
+    Device time decides which phase a row belongs to; stream position would read a retained row as belonging to
+    whatever phase sits where it was delivered.
+    """
+
+    def test_a_freeze_row_delivered_below_the_snap_is_read_into_the_freeze(self) -> None:
+        """The drained capture's shape: the row produced at 100.05 s arrives at line 2, below the 160 s snap.
+
+        By stream position the freeze interval (between the enter line and the snap line) is empty, so the run falls
+        to `freeze_disp_sparse:marker_fallback` and samples whatever retained rows happen to sit there -- whose moved
+        windows then read as "not frozen". By device time the freeze reads exactly the row the device produced in it.
+        """
+        lines = [
+            "[100.000] [INFO] [MIDI] Edit session: NOTE_EDIT (Program 1, Note 0 trigger)",
+            "[160.000] [INFO] Detailed window centered on playhead",
+            _disp_window(100_050_000, window_start=4096),
+            _disp_window(160_500_000, window_start=6144),
+            _disp_window(160_600_000, window_start=6400),
+            _disp_window(160_700_000, window_start=6656),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertNotIn("freeze_disp_sparse:marker_fallback", result["warnings"])
+
+    def test_a_row_produced_after_the_snap_is_not_read_into_the_freeze(self) -> None:
+        """The mirror: a row delivered above the snap but produced after it must not freeze-assert the freeze.
+
+        The freeze is a claim about what the device did between the enter and the snap, so a window the device had
+        already moved cannot answer for it. No row was produced inside the freeze here, and the run says so rather
+        than passing on a row that was merely delivered where the freeze interval sits.
+        """
+        lines = [
+            "[100.000] [INFO] [MIDI] Edit session: NOTE_EDIT (Program 1, Note 0 trigger)",
+            _disp_window(170_000_000, window_start=4352),
+            "[160.000] [INFO] Detailed window centered on playhead",
+            _disp_window(160_500_000, window_start=6144),
+            _disp_window(160_600_000, window_start=6400),
+            _disp_window(160_700_000, window_start=6656),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any("insufficient_disp_during_note_edit_freeze" in issue for issue in result["issues"]),
+            result["issues"],
         )
 
 

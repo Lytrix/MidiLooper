@@ -8,7 +8,7 @@ answer, and *names* -- never restates -- the two whose verdict belongs to anothe
 | `readiness_receipts_under_transport` | **yes** | this module, from `#CAP,<us>,DIAG,win_frozen_readiness,…` inside a running-transport interval (AC-8: the receipt must arrive where it is produced, i.e. before the transport stops). It must be **source-qualified**: the row names the window that became ready, so a generic `win_readiness` row saying `not_servable` does not answer the term (see `frozen_readiness_rows`) |
 | `windowed_service_coverage_under_transport` | **yes** | this module, from `#CAP,<us>,DIAG,win_gap,…` blocks with `running=1`, plus the **named** `win_gap_overrun` row, which fails the check when it is raised under transport |
 | `content_parity_across_window_boundary` | **partly** | the boundary crossings are judged here (`build_complete` publications under transport, so a verdict can be formed); the parity **verdict** is the existing content pipeline's |
-| `root_demoted_residency_over_loop_lengths` | **no** | deferred: the row set that states per-slot residency is not identified, so it is recorded as unknown rather than guessed |
+| `root_demoted_residency_over_loop_lengths` | **no** | deferred: the per-slot rows that state it **are** identified -- `DIAG,win_gate` carries the slot's `len` and `av` ("the loop is demoted") beside the `pl`/`sv`/`rt`/`rl`/`ow` servability flags, and `LIBOBS` per-slot `S` records carry the content representation (`k`/`kp`/`kr`/`kc`) -- but the **sweep over loop lengths** that would read them is not run, so no verdict is claimed |
 
 A run is therefore never reported as F-7/F-8 qualification by this module: `oracle_complete` is always `False` and the
 deferred terms travel with the result, each with the surface to ask.
@@ -126,7 +126,11 @@ DEFERRED_TERMS: tuple[dict[str, str], ...] = (
     {
         "term": "root_demoted_residency_over_loop_lengths",
         "judged": "nothing",
-        "verdict_owner": "unidentified row set: the library-observation path (`!LIB_OBSERVE`) is the candidate, and this is recorded as unknown rather than guessed",
+        "verdict_owner": (
+            "the identified per-slot rows -- `DIAG,win_gate` (`t`,`s`,`len`, `av` = the loop is demoted, plus "
+            "`pl`/`sv`/`rt`/`rl`/`ow`) states the playback representation, and `LIBOBS` per-slot `S` records "
+            "(`k`/`kp`/`kr`/`kc`) state the content representation; the sweep over loop lengths is still owed"
+        ),
     },
 )
 
@@ -691,12 +695,20 @@ def _legacy_int_option(args: object, name: str) -> int | None:
 
 
 def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, Any]:
-    """Combine the legacy leg, lane oracle, target alignment and Record Snapshot progress."""
+    """Combine the legacy leg, lane oracle, target alignment and Record Snapshot progress.
+
+    Every component is read from the evidence handed in -- the capture **after** the post-stop drain. A leg report
+    the runner recorded *before* the drain is not the verdict: the ring is retained under transport, so a pre-drain
+    read is structurally blind to exactly the rows the leg asserts about (this run's freeze row is produced at
+    165.8 s and delivered at line 17 939 of a 20 505-line log). The recorded report travels as `leg_run_report`
+    provenance, and the drained capture decides.
+    """
     from hitl.verify.display_window import verify_long_loop_display_window
     from hitl.verify.record_snapshot import verify_record_snapshot_progress
 
-    leg = getattr(args, "windowed_leg_run_report", None)
-    if not isinstance(leg, dict):
+    leg = verify_long_loop_display_window(lines, args)
+    recorded_leg = getattr(args, "windowed_leg_run_report", None)
+    if not isinstance(recorded_leg, dict):
         import json
         from pathlib import Path
         out_dir = getattr(args, "out_dir", None)
@@ -706,9 +718,7 @@ def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, 
                 standalone = json.loads(reports[-1].read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 standalone = {}
-            leg = standalone.get("serial_verification")
-    if not isinstance(leg, dict):
-        leg = verify_long_loop_display_window(lines, args)
+            recorded_leg = standalone.get("serial_verification")
     track_number = getattr(args, "track_number", None)
     target_slot = getattr(args, "windowed_switch_target_slot", None)
     if target_slot is None:
@@ -727,7 +737,7 @@ def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, 
     issues.extend(f"lane: {issue}" for issue in lane["issues"])
     if snapshot["applicable"]:
         issues.extend(f"snapshot: {issue}" for issue in snapshot["issues"])
-    return {
+    result: dict[str, Any] = {
         "ok": not issues,
         "issues": issues,
         "leg": leg,
@@ -736,6 +746,11 @@ def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, 
         "deferred": lane["deferred"],
         "oracle_complete": False,
     }
+    if isinstance(recorded_leg, dict):
+        result["leg_run_report"] = recorded_leg
+    return result
+
+
 def ring_stats_rows(lines: list[str]) -> list[dict[str, Any]]:
     """Parse stopped-only `RING,stats` counter readbacks."""
     counters = ("tierA_evict", "overflow", "crit_rej", "wipe")

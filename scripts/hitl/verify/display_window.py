@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from hitl.verify.windowed_lane import row_us
+
 TICKS_PER_BAR = 768
 BOUNDED_WINDOW_MIN_BARS = 16
 DEFAULT_WINDOW_BARS = 16
@@ -65,10 +67,6 @@ def _line_index_any(
     return None
 
 
-def _rows_after_line(rows: list[dict[str, object]], line_index: int) -> list[dict[str, object]]:
-    return [row for row in rows if int(row["line_index"]) > line_index]
-
-
 def _rows_between(rows: list[dict[str, object]], start: int, end: Optional[int]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for row in rows:
@@ -79,6 +77,59 @@ def _rows_between(rows: list[dict[str, object]], start: int, end: Optional[int])
             break
         out.append(row)
     return out
+
+
+def _stamp_us(lines: list[str], index: Optional[int]) -> Optional[int]:
+    """The device stamp of the line at `index`, or `None` when it carries none (or does not exist)."""
+    if index is None or index < 0 or index >= len(lines):
+        return None
+    return row_us(lines[index])
+
+
+def _phase_rows(
+    rows: list[dict[str, object]],
+    lines: list[str],
+    start_idx: Optional[int],
+    end_idx: Optional[int],
+) -> list[dict[str, object]]:
+    """The rows *produced* inside a phase, bracketed by **device time** where the markers are stamped.
+
+    Stream position is not the phase. A row produced while a track plays is retained and delivered only once the
+    transport stops (`row_us`), so in a drained capture it lands far below the marker that ends its phase -- the
+    freeze row for a NOTE_EDIT that ended at 165.8 s sat at line 17 939 of a 20 505-line log. Time is the
+    comparison the device itself makes, and the two stamp families (`#CAP,<us>` and `[<s>.<ms>]`) share the clock.
+    Position is kept for the markers that carry no stamp at all (a plain `entered note edit mode` line), and for
+    an open end (`end_idx is None`: everything the device produced after the marker).
+    """
+    if start_idx is None:
+        return []
+    start_us = _stamp_us(lines, start_idx)
+    end_us = _stamp_us(lines, end_idx) if end_idx is not None else None
+    if start_us is None or (end_idx is not None and end_us is None):
+        return _rows_between(rows, start_idx, end_idx)
+    out: list[dict[str, object]] = []
+    for row in rows:
+        us = int(row["timestamp"])
+        if us <= start_us:
+            continue
+        if end_us is not None and us >= end_us:
+            continue
+        out.append(row)
+    return out
+
+
+def _rows_up_to(
+    rows: list[dict[str, object]],
+    lines: list[str],
+    index: Optional[int],
+) -> list[dict[str, object]]:
+    """The rows produced at or before a marker, by device time where the marker is stamped."""
+    if index is None:
+        return []
+    stamp = _stamp_us(lines, index)
+    if stamp is None:
+        return [row for row in rows if int(row["line_index"]) <= index]
+    return [row for row in rows if int(row["timestamp"]) <= stamp]
 
 
 def _find_play_stop_hold_release(
@@ -198,20 +249,12 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
             freeze_end_idx = _line_index(
                 lines, "Button Processor: Ch16 Note40 ON", after=enter_idx
             )
-        freeze_rows = _rows_between(rows, enter_idx, freeze_end_idx)
+        freeze_rows = _phase_rows(rows, lines, enter_idx, freeze_end_idx)
         if len(freeze_rows) < 1:
             # SC_DISP_WINDOW emits on display deltas only — sample bounded rows near NOTE_EDIT.
-            freeze_rows = [
-                row
-                for row in long_loop_rows
-                if enter_idx < int(row["line_index"]) < (snap_idx or 10**9)
-            ]
+            freeze_rows = _phase_rows(long_loop_rows, lines, enter_idx, snap_idx)
         if len(freeze_rows) < 1 and "phase:freeze_wait_end" in phase_markers:
-            freeze_rows = [
-                row
-                for row in long_loop_rows
-                if int(row["line_index"]) <= (enter_idx or 0) + 800
-            ][-3:]
+            freeze_rows = _rows_up_to(long_loop_rows, lines, enter_idx)[-3:]
             if freeze_rows:
                 warnings.append("freeze_disp_sparse:marker_fallback")
         if len(freeze_rows) < 1:
@@ -229,8 +272,8 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
                     break
 
     if snap_idx is not None and enter_idx is not None:
-        freeze_rows_for_snap = _rows_between(rows, enter_idx, snap_idx)
-        after_snap_rows = _rows_after_line(rows, snap_idx)
+        freeze_rows_for_snap = _phase_rows(rows, lines, enter_idx, snap_idx)
+        after_snap_rows = _phase_rows(rows, lines, snap_idx, None)
         if freeze_rows_for_snap and after_snap_rows:
             last_freeze_start = int(freeze_rows_for_snap[-1]["window_start"])
             first_after_snap = int(after_snap_rows[0]["window_start"])
@@ -240,8 +283,8 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
                     f"start={last_freeze_start}"
                 )
     elif snap_from_marker and enter_idx is not None:
-        pre_snap = [row for row in long_loop_rows if int(row["line_index"]) <= enter_idx + 500]
-        post_snap = _rows_after_line(long_loop_rows, enter_idx)[-8:]
+        pre_snap = _rows_up_to(long_loop_rows, lines, enter_idx)
+        post_snap = _phase_rows(long_loop_rows, lines, enter_idx, None)[-8:]
         if pre_snap and post_snap and len(post_snap) >= 2:
             if int(pre_snap[-1]["window_start"]) == int(post_snap[0]["window_start"]) == int(
                 post_snap[-1]["window_start"]
@@ -253,11 +296,11 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
     hold_start_idx = _line_index(lines, "phase:hold_track_start", after=snap_idx)
     hold_end_idx = _line_index(lines, "phase:hold_track_end", after=hold_start_idx)
     if hold_start_idx is not None:
-        hold_rows = _rows_between(rows, hold_start_idx, hold_end_idx)
+        hold_rows = _phase_rows(rows, lines, hold_start_idx, hold_end_idx)
     elif snap_anchor is not None and "phase:hold_track_start" in phase_markers:
-        hold_rows = _rows_after_line(long_loop_rows, snap_anchor)[-20:]
+        hold_rows = _phase_rows(long_loop_rows, lines, snap_anchor, None)[-20:]
     elif snap_idx is not None:
-        hold_rows = _rows_after_line(rows, snap_idx)[-40:]
+        hold_rows = _phase_rows(rows, lines, snap_idx, None)[-40:]
 
     hold_indirect_ok = False
     hold_release_idx: Optional[int] = None
