@@ -24,15 +24,23 @@ every cycle; on a 1 152-event cycle that is a far stronger statement than the PA
 
 The claim is parity *across a window boundary*, so the capture must show the window moving. It does: 80
 `playback_build` rows for this target (`track 7 / slot 3` in the row's 0-based identity = track 8 / slot 4), all with
-reason `snapshot` and **window length 1 536 ticks (2 bars)**, over **24 distinct window starts** (`0 … 17 664`, step
-1 536) and **79 advances** during the capture.
+reason `snapshot`, **`windowLengthTicks` 1 536 (2 bars)** and `windowStartTick` stepping **768 (1 bar)** — the fields
+are the emitter's own (`DebugSessionCapture::playbackRebuild`: `…,<path>,<durationUs>,<windowStartTick>,<windowLengthTicks>,…`).
+Across the capture the start took **24 distinct values** (`0 … 17 664`) with **79 advances**.
 
-A 19 200-tick loop served in 1 536-tick windows needs 12.5 windows per cycle, so each compared cycle crossed **≈12
-boundaries** and the three cycles crossed ≈37. The parity is therefore measured across the transitions, not around
-them.
+Because the step is one bar, a 19 200-tick loop has **25 window positions per cycle** (the 1 536-tick span **overlaps**
+its neighbour by one bar), so each compared cycle crossed **≈25 boundaries** and the three cycles ≈75 — the capture's
+79 advances over its ~3.5 cycles agree. The parity is therefore measured across the transitions, not around them. That
+successive windows overlap is also why `extra = 0` matters: the consumer served the shared bar **once** per cycle, so
+the capture is direct evidence against double-serving at the transition (4.3 still owes that rule its own statement).
 
-The gate row for the same target states the premise directly: `win_gate,t=7,s=3,len=19200,av=1` — the loop is
-**demoted**.
+Two `win_gate` rows for the same target state the premises from the device's own flags
+(`win_gate,t=7,s=3,len=19200,ep=1,av=1,al=0,pl=1,rt=1,rl=1,dm=1`): the loop is **demoted** (`av=1` — bit 1 is
+`shouldAvoidFullVisualRebuild`, i.e. the length is **above the 16-bar bound**, `16 × 768 = 12 288` ticks, and
+`19 200 > 12 288`), the wait is `pl=1` at the sampling instant, and the length is **not span-aligned** (`al=0`:
+`19 200 % 1 536 = 768`), so the *demand* lane excludes the slot (`x=win_window_ineligible`) while the **playback
+gather** is what builds the 1 536-tick windows above. The parity verdict therefore belongs to the serving gather, and
+this capture does not claim a rolling-lane root-return.
 
 ## What had to change to measure it (host tooling only)
 
@@ -83,8 +91,10 @@ restore returns the demoted loop intact, and `storage_matches_effective` is true
 
 ## What this does and does not claim
 
-* **Claimed:** on a demoted 24-bar target (track 8 / slot 4) the MIDI actually served by the window lane, captured over
-  three full loop cycles while the window advanced 79 times in 2-bar steps, equals `effective` in inventory **and**
+* **Claimed:** on a demoted **25-bar** target (track 8 / slot 4: `19 200` ticks at 768 ticks/bar, above the 16-bar
+  demotion bound) the MIDI actually served by the windowed playback gather, captured over three full loop cycles while
+  the window advanced **79 times in 1-bar steps** (1 536-tick span, 25 positions per cycle), equals `effective` in
+  inventory **and**
   order for every cycle.
 * **Not claimed:** F-8's residency **sweep** over loop lengths (the demoted lengths reached and read *per length*) is
   still owed; 4.3's closure obligation at the transition and its overlap rule are separate open items; 6.5's hardware

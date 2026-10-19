@@ -1910,10 +1910,13 @@ suite is not green this turn by design. No Git delivery.
   *F-7 landed 2026-10-19 (device, no firmware change) — **PASS** on the demoted target:* `content-review.json` reports
   3 cycles of 1 152 events each with `inventory_equal` **and** `exact_order` true on all three (`cycle_cut:
   event_count`, `storage_matches_effective: true`). The boundaries were **crossed, not avoided**: 80 `playback_build`
-  rows for the target with a 1 536-tick (2-bar) window over **24 distinct window starts** (`0…17 664`) and **79
-  advances** — ≈12 boundaries per 19 200-tick cycle. The premise is stated by the device itself
-  (`win_gate,t=7,s=3,len=19200,av=1` — demoted), and the target is **resident after a cold boot** (`record` =
-  `effective` = 1 152 rows). Two host-tooling gaps closed first: the pipeline can now reach the target **without a
+  rows for the target with a 1 536-tick (2-bar) window **stepping 768 ticks (1 bar)** over **24 distinct window starts**
+  (`0…17 664`) and **79 advances** — 25 window positions per 25-bar cycle, so ≈25 boundaries per cycle (the span
+  overlaps its neighbour by one bar, and `extra=0` on every cycle is direct evidence the consumer served the shared bar
+  once). The premises come from the device's own gate flags
+  (`win_gate,t=7,s=3,len=19200,av=1,al=0`): **demoted** (`av` = above the 16-bar bound, 12 288 ticks) and **not
+  span-aligned** (`19 200 % 1 536 = 768`), so the *demand* lane excludes the slot while the serving **gather** builds
+  the windows. The target is **resident after a cold boot** (`record` = `effective` = 1 152 rows). Two host-tooling gaps closed first: the pipeline can now reach the target **without a
   record-toggle gesture** (`--select-track`, `--dump-slot`, `--dump-only`; the loop button's short press is
   `TOGGLE_RECORD_FOR_SLOT` and would record over the take being dumped), and the verifier can now cut cycles on a
   **fully periodic** loop (event-count cut, starting at the loop's own first event and then strict — a phase search
@@ -1938,11 +1941,25 @@ suite is not green this turn by design. No Git delivery.
   `flags` dict, so no new parser is owed. **Content representation** — `LIBOBS` per-slot `S`
   records (`scripts/hitl/library_observation.py`) give `k` committed, `kp` pass-backed, `kr` root-backed, `kc` root
   current: the demoted state's content, which is what F-8's parity half reads. **Measured in the recorded capture:**
-  `t=7,s=3,len=19200,av=1,al=0` (track 8 / slot 4, 0-based — the 24-bar target, demoted) and
-  `t=1,s=3,len=49152,av=1,al=1,pl=1,sv=0,rt=0` (a 64-bar slot refused `win_not_servable`). **What remains:** the gate
-  row fires at gate **edges** (a *serving* slot emits `playback_build`/`win_gap` rows instead) and `LIBOBS` states
-  content, not window residency — so the sweep still owes the demoted lengths *reached and read* per length, and the
-  demoted-state parity is 4.3's pipeline. 4.4 stays open. No firmware line changed.
+  `t=7,s=3,len=19200,av=1,al=0` (track 8 / slot 4, 0-based — the 25-bar target, demoted) and
+  `t=1,s=3,len=49152,av=1,al=1,pl=1,sv=0,rt=0` (a 64-bar slot refused `win_not_servable`).
+  *Row-set census 2026-10-19 (read-only, every capture on disk; no device run):* the axis is **readable but its first
+  row is not yet observed.** All **71** `win_gate` rows across `captures/*/serial.log` fall into three exits —
+  `win_track_not_playing` 48, `win_window_ineligible` 18, `win_not_servable` 5 — and **none** is
+  `win_serving`/`win_ready`/`win_waiting`, while **no row anywhere reads `sv=1`**. The demotion bound is
+  `16 × TICKS_PER_BAR` = **12 288 ticks (16 bars, 768 ticks/bar)**, so `av=1` means *above* it (F-7's 25-bar target:
+  `19 200 > 12 288`). Four demoted lengths are resident — **20, 25, 64, 66 bars** — and the three span-aligned ones
+  read as clean demotions with no served window: 64 and 66 bars `win_not_servable` (`rt=0`, no current root); 20 bars
+  `win_not_servable` on the earlier capture (`rt=1`); 25 bars is the one actually **playing**, and the demand lane
+  refuses it on alignment (`al=0`, `19 200 % 1 536 = 768`) while the *serving gather* builds its 2-bar windows in
+  1-bar steps — which is what 4.3's F-7 PASS measures (3 cycles × 1 152 events, `inventory_equal` and `exact_order`
+  true). **So "windows resident, root demoted" has never been emitted on this library:** the demoted lengths that
+  qualify for the demand lane are not served, and the demoted length that is served is excluded from it. **What
+  remains:** a demoted, **span-aligned** slot (e.g. 64 bars = 49 152 ticks) served with a current root, so `sv=1`
+  arrives with `av=1` at one `len` — that is a device-state question (a record/overdub or a switch), not a parser
+  question, and the sweep then varies `len`. The gate row also fires only at gate **edges**, and `LIBOBS` states
+  content, not window residency, so the parity half stays 4.3's pipeline. 4.4 stays open. No firmware line changed.
+  Detail: [`2026-10-19-s64-f8-residency-row-census/EXECUTION.md`](evidence/2026-10-19-s64-f8-residency-row-census/EXECUTION.md).
   Detail:
   [`2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md`](evidence/2026-10-19-s64-windowed-profile-device-leg/EXECUTION-PACKET.md).*
 

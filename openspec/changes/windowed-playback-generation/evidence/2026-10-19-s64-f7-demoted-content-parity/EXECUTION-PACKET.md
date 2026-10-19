@@ -54,6 +54,7 @@ A cycle is only count-able if the capture holds ≥2 anchor occurrences (1 compa
 **Run 2026-10-19 — F-7 PASS on the demoted target.** `content-review.json`: `PASS`, 3 cycles of 1 152 events each,
 `inventory_equal` **and** `exact_order` true on all three, `cycle_cut: event_count` (the take is fully periodic and has
 no unique signature), `storage_matches_effective: true`. The window moved during the capture: 80 `playback_build`
-rows for the target, window length 1 536 ticks, 24 distinct starts (`0…17 664`), **79 advances** — ≈12 boundaries per
+rows for the target, window length 1 536 ticks **stepping 768 (1 bar)**, 24 distinct starts (`0…17 664`), **79
+advances** — 25 window positions per 25-bar cycle (the span overlaps its neighbour by one bar), so ≈25 boundaries per
 cycle. Residency: `track=8,slot=3,length=19200`, record = effective = 1 152 rows, still present after a cold boot.
 Gates: new suites 4 OK + 4 OK; pipeline defaults unchanged. No firmware line, no upload, no clear, no record.
