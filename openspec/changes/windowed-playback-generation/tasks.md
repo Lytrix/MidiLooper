@@ -2101,6 +2101,18 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   3.7b's legacy-emission removal (untouched — the predicate counts those branches rather than requiring their retirement),
   and the moving closure inside a long/demoted slot's serving handoff (3.7a/3.14). Detail:
   [`2026-10-19-s45-no-serving-route/EXECUTION.md`](evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).
+  **DEC-147 landed the positioning change (2026-10-19; native only):** the `:5393` guard's two terms are split, and a
+  demand refused **only** for its handoff lead is re-requested by the same owner at the next span (the admitted-deadline
+  term stays terminal, so that protection is unchanged). Receipts: `win_requested` → `handoff_unreachable` +
+  `build_drop` → `win_repositioned` → `win_requested` → `win_waiting` → `win_ready` →
+  `win_serving`; strict advance plus a whole-traversal `win_blocked_by_request` bounds the episode. Native: two new
+  fixtures plus 3.10's dense-shape fixture re-pinned to the new contract (the dense interval is never adopted, the demand
+  moves to a span it can afford); focused **217/217**, full native **3,334 / 7 skipped / 3,327 succeeded / 0 failed**;
+  lane image `code 392,376 + padding 840` (floor). **The device half is still owed and its blocker is now the fixture,
+  not the firmware:** three managed runs on the flashed image each miss the demand's entry precondition
+  (`pl=1 && rw=0 && rt=1`) — the next leg must start transport **after** the restore completes and the record-return
+  window retires. Detail: [`…/s45-repositioning/DESIGN.md`](evidence/2026-10-19-s45-repositioning/DESIGN.md) §9–§10 and
+  [`…/s45-repositioning/EXECUTION-DEVICE.md`](evidence/2026-10-19-s45-repositioning/EXECUTION-DEVICE.md).
 
 ## 5. Capacity, envelope and placement
 
