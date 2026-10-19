@@ -810,6 +810,83 @@ class WindowedTargetTests(unittest.TestCase):
             self.assertEqual(1, len(rows))
             self.assertIn("win_readiness", rows[0])
 
+    def test_the_post_stop_start_flag_is_taken_out_of_the_legacy_args(self) -> None:
+        from hitl.scenarios.windowed_content_parity import split_post_stop_start_flag
+
+        value, remaining = split_post_stop_start_flag(["--track-number", "8", "--post-stop-start-s", "6.5"])
+        self.assertAlmostEqual(6.5, value)
+        self.assertEqual(["--track-number", "8"], remaining)
+        self.assertEqual((None, ["--track-number", "8"]), split_post_stop_start_flag(["--track-number", "8"]))
+        with self.assertRaises(ValueError):
+            split_post_stop_start_flag(["--post-stop-start-s", "soon"])
+
+    def test_a_replay_run_starts_the_stopped_transport_before_the_drain(self) -> None:
+        """The demand's entry state is a **start after a stop**: the record-return window retires with the stop, so a
+        start during the take's own record leg only ever finds the coverage role bound."""
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            session = out_dir / "session_20260101_000000.log"
+            session.write_text(
+                "[1.000] [INFO] Transport started\n[2.000] [INFO] Transport stopped\n", encoding="utf-8"
+            )
+            (out_dir / ".current_session").write_text(str(session), encoding="utf-8")
+
+            class _Args:
+                serial_port = None
+                legacy_args: list[str] = []
+
+            args = _Args()
+            args.out_dir = out_dir
+
+            class _Port:
+                def send(self, message: object) -> None:
+                    pass
+
+                def close(self) -> None:
+                    pass
+
+            presses: list[str] = []
+
+            def _start(port: object, **kwargs: object) -> None:
+                presses.append("start")
+
+            def _stop(port: object, **kwargs: object) -> None:
+                presses.append("stop")
+
+            with mock.patch("mido.open_output", return_value=_Port()), mock.patch(
+                "hitl.midi_io._find_midi_port", return_value="Teensy"
+            ), mock.patch(
+                "hitl.scenarios.windowed_content_parity.press_global_transport_start", side_effect=_start
+            ), mock.patch(
+                "hitl.scenarios.windowed_content_parity.press_global_transport_stop", side_effect=_stop
+            ):
+                drain = run_post_leg_phase(args, drain_s=0.0, post_stop_start_s=0.01)
+
+            self.assertIsNotNone(drain)
+            self.assertEqual(["start", "stop"], presses)
+
+    def test_a_replay_flag_on_a_running_capture_is_refused(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            (out_dir / "host_midi_hitl_long_loop_display_serial_20260101_000000.log").write_text(
+                "[1.000] [INFO] Transport started\n", encoding="utf-8"
+            )
+
+            class _Args:
+                serial_port = "/dev/cu.stub"
+                legacy_args: list[str] = []
+
+            args = _Args()
+            args.out_dir = out_dir
+            self.assertIsNone(run_post_leg_phase(args, post_stop_start_s=2.0))
+
     def test_the_wrappers_own_flags_never_reach_the_reused_leg(self) -> None:
         """The leg's parser is strict: a wrapper-owned flag forwarded to it aborts the run before it drives anything."""
         slot, remaining = split_loop_slot_flag(["--track-number", "8", "--loop-slot", "6"])

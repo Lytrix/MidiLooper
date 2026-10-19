@@ -112,6 +112,34 @@ def split_switch_settle_flag(legacy: list[str]) -> tuple[float | None, list[str]
     return value, remaining
 
 
+def split_post_stop_start_flag(legacy: list[str]) -> tuple[float | None, list[str]]:
+    """Take `--post-stop-start-s SECONDS` out of the forwarded legacy arguments.
+
+    The replay leg exists because the demand's own entry state -- playing, **no record-return window bound**, published
+    root current -- is only reached by a transport start that happens *after* a stop: the record-return window retires
+    with the stop, so a start during the take's own record leg finds the coverage role still bound (`rw=1`) and the lane
+    can only report `win_blocked`/`win_busy`. A float, refused with the token named, for the same reason as
+    `--switch-settle-s`.
+    """
+    value: float | None = None
+    remaining: list[str] = []
+    index = 0
+    while index < len(legacy):
+        token = legacy[index]
+        if token == "--post-stop-start-s" and index + 1 < len(legacy):
+            if value is None:
+                raw = legacy[index + 1]
+                try:
+                    value = float(raw)
+                except ValueError as error:
+                    raise ValueError(f"--post-stop-start-s {raw!r} is not a number of seconds") from error
+                index += 2
+                continue
+        remaining.append(token)
+        index += 1
+    return value, remaining
+
+
 def select_loop_slot(out_port: Any, slot: int, *, press_ms: int = SLOT_SELECT_PRESS_MS) -> None:
     """Press the slot's own select control, so the leg's clear/record target is the declared one."""
     from hitl.control_constants import CONTROL_CHANNEL_1BASED, LOOP_SELECT_NOTE_BASE
@@ -141,8 +169,7 @@ def last_transport_row_running(lines: list[str]) -> bool | None:
     return running
 
 
-def press_global_transport_stop(out_port: Any, *, press_ms: int = TRANSPORT_STOP_PRESS_MS) -> None:
-    """Short-press the global transport, which toggles it -- called only when the capture says it is running."""
+def _press_global_transport(out_port: Any, *, press_ms: int) -> None:
     from hitl.control_constants import CONTROL_CHANNEL_1BASED, GLOBAL_TRANSPORT_NOTE
     from hitl.midi_io import _send_short_press
 
@@ -153,6 +180,20 @@ def press_global_transport_stop(out_port: Any, *, press_ms: int = TRANSPORT_STOP
         press_ms=press_ms,
         _caller="windowed_content_parity",
     )
+
+
+def press_global_transport_stop(out_port: Any, *, press_ms: int = TRANSPORT_STOP_PRESS_MS) -> None:
+    """Short-press the global transport, which toggles it -- called only when the capture says it is running."""
+    _press_global_transport(out_port, press_ms=press_ms)
+
+
+def press_global_transport_start(out_port: Any, *, press_ms: int = TRANSPORT_STOP_PRESS_MS) -> None:
+    """Short-press the global transport when the capture says it is **stopped**, which starts it.
+
+    The control is a toggle. The direction is named separately from `press_global_transport_stop` so a caller cannot
+    swap them by accident: this one is only ever called with a capture whose last edge is `Transport stopped`.
+    """
+    _press_global_transport(out_port, press_ms=press_ms)
 
 
 def switch_target_slot_from(legacy: list[str]) -> int | None:
@@ -269,6 +310,7 @@ def run_post_leg_phase(
     switch_target_slot: int | None = None,
     drain_s: float = POST_STOP_DRAIN_S,
     switch_settle_s: float = SWITCH_SETTLE_S,
+    post_stop_start_s: float | None = None,
 ) -> Path | None:
     """Everything the driver owes **after** the reused leg: the switch leg (optional), then the stop-and-drain.
 
@@ -284,11 +326,19 @@ def run_post_leg_phase(
         print("[windowed-content-parity] neither a serial port nor a capture log on this run: the retained rows cannot "
               "be drained")
         return None
+    transport_running: bool | None = None
     if edge_log is not None:
         lines = edge_log.read_text(encoding="utf-8").splitlines()
-        if last_transport_row_running(lines) is not True:
+        transport_running = last_transport_row_running(lines)
+        if transport_running is not True and post_stop_start_s is None:
             print("[windowed-content-parity] the capture ends with the transport stopped: neither a switch leg nor a "
                   "drain belongs here")
+            return None
+        if transport_running is True and post_stop_start_s is not None:
+            # The replay leg starts a **stopped** transport: with the transport already running there is nothing to
+            # replay, and pressing the toggle would stop it (the opposite of the leg's purpose).
+            print("[windowed-content-parity] --post-stop-start-s names a start for a stopped transport, but this "
+                  "capture ends with it running")
             return None
 
     import mido
@@ -332,6 +382,12 @@ def run_post_leg_phase(
             raise SystemExit(3)
     out_port = mido.open_output(_find_midi_port("Teensy", False))
     try:
+        if transport_running is False and post_stop_start_s is not None:
+            print("[windowed-content-parity] replay leg: the capture ends with the transport stopped; pressing the "
+                  f"transport once and settling {post_stop_start_s:.1f}s with the take in place "
+                  "(the record-return window retires with the stop, which is the demand's own entry state)")
+            press_global_transport_start(out_port)
+            time.sleep(post_stop_start_s)
         if switch_target_slot is not None:
             if not 1 <= switch_target_slot <= 8:
                 print(f"[windowed-content-parity] --switch-target-slot {switch_target_slot} is outside 1..8")
@@ -370,11 +426,15 @@ def run_windowed_content_parity(args: object) -> int:
     switch_target, remaining = split_switch_target_slot_flag(remaining)
     try:
         switch_settle, remaining = split_switch_settle_flag(remaining)
+        post_stop_start, remaining = split_post_stop_start_flag(remaining)
     except ValueError as error:
         print(f"[windowed-content-parity] {error}")
         return 2
     if switch_settle is not None and not switch_settle > 0:
         print(f"[windowed-content-parity] --switch-settle-s {switch_settle} must be a positive number of seconds")
+        return 2
+    if post_stop_start is not None and not post_stop_start > 0:
+        print(f"[windowed-content-parity] --post-stop-start-s {post_stop_start} must be a positive number of seconds")
         return 2
     if switch_settle is not None and switch_target is None:
         # The wait belongs to the switch leg: without a target there is no switch, so a run that names a settle would
@@ -414,6 +474,7 @@ def run_windowed_content_parity(args: object) -> int:
         args,
         switch_target_slot=switch_target,
         switch_settle_s=switch_settle if switch_settle is not None else SWITCH_SETTLE_S,
+        post_stop_start_s=post_stop_start,
     )
     ring_stats_after = _request_ring_stats_readback("after-stop-drain")
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
