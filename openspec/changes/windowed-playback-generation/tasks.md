@@ -2113,6 +2113,23 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   (`pl=1 && rw=0 && rt=1`) — the next leg must start transport **after** the restore completes and the record-return
   window retires. Detail: [`…/s45-repositioning/DESIGN.md`](evidence/2026-10-19-s45-repositioning/DESIGN.md) §9–§10 and
   [`…/s45-repositioning/EXECUTION-DEVICE.md`](evidence/2026-10-19-s45-repositioning/EXECUTION-DEVICE.md).
+  **DEC-147 second form (device-discovered, 2026-10-19):** the entry precondition was reached — the plain 32-bar run's
+  display leg produced `win_requested` with `pl=1, rw=0, sv=0, rt=1, rl=1, dm=1, rq=12` — and the first form then fired
+  **231 re-positions in 15.7 s** with `win_ready`/`win_serving` still **0** and no terminal row. Two arithmetic defects,
+  both in the retry's own position: (a) the shift to the refused handoff compared **numeric** phases, so once the start
+  wrapped past the loop length the shift was skipped and the retry re-used the same marginal lead (native measurement of
+  the old form: the chosen start advanced ~100 ticks instead of one span per retry); (b) the traversal bound counted
+  elapsed **ticks** via `boundary - phase`, which is re-derived from the moving playhead and at the device's 68 ms
+  refusal cadence allows ~900 attempts per traversal. Corrected: the handoff is measured as a **forward** distance
+  (`(h − phase) mod len`), and the budget is counted in **spans** (`refusedSpanAttempts >= loopLength / span`, one
+  attempt per span, terminal `win_blocked_by_request`). The counter fits the frame's existing padding, so both ABIs stay
+  at 7,896 / 10,080. New fixture
+  `test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping` holds the too-close condition for a whole
+  episode and asserts the one-attempt-per-span budget, the terminal row, `Blocked`, and `win_serving == 0`; focused
+  **218/218**, full native **3,335 / 7 skipped / 3,328 succeeded / 0 failed**; lane image unchanged at
+  `code 392,376 + padding 840` (floor). **Still owed on device:** whether one traversal of spans finds an affordable
+  position for this 32-bar take (the pending run); a terminal block after one traversal is the honest alternative if
+  its derived cost cannot fit any span on this geometry.
 
 ## 5. Capacity, envelope and placement
 

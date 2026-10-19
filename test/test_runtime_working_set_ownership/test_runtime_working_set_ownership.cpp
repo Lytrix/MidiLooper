@@ -13355,6 +13355,75 @@ void test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving
                                        "strict advancement bounds the episode to one attempt per span");
 }
 
+/// **DEC-147 bound -- a traversal of refused spans is terminal, not an endless re-request.**
+///
+/// On device (2026-10-19, `captures/i5-s64-f9-replay-32bar-01`) the re-position fired 462 times in 16 s and never
+/// reached a readiness row: every retry was refused at the same marginal lead, because the creation position is
+/// re-derived from the moving playhead on each attempt, so `boundary - phase` never grows by a traversal and the old
+/// guard could not bound the cycle. The contract this fixture pins is the one the wire needed: the re-positions stay
+/// within one traversal of the phase the first refusal was measured at, and the episode ends `Blocked`
+/// (`win_blocked_by_request`) once every span has been measured -- without inventing a terminal answer for a demand
+/// that was never tried at every position.
+void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  Loop& active = track.getActiveLoop();
+  constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
+  const uint64_t origin = clockManager.getCurrentTick();
+  RollingGateRows::reset();
+  const uint64_t base = origin + 512;
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  // Only **this** track's rows are the fixture's evidence: the harness leaves other tracks playing, and their own
+  // demoted demands emit the same lane rows. Counting globally would let another track's positions stand in for ours.
+  const auto ourRows = [](const char* exit) {
+    size_t seen = 0;
+    for (size_t i = 0; i < RollingGateRows::count && i < 512; ++i) {
+      const auto& row = RollingGateRows::rows[i];
+      if (row.track == 0 && row.slot == 2 && row.exit != nullptr && std::strcmp(row.exit, exit) == 0) ++seen;
+    }
+    return seen;
+  };
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t guardTicks = active.loopLengthTicks + 4 * span;
+  for (uint32_t delta = 1; delta <= guardTicks; ++delta) {
+    const uint64_t now = base + delta;
+    // `updateAllTracks` may re-allocate the prewarmed view set, so the per-slot runtime is re-read every tick rather
+    // than held across the call.
+    auto* live = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+    if (live == nullptr) break;
+    // The same too-close condition, **held for the whole episode**: this demand can never be served from a window at
+    // any position, which is exactly the state in which an unbounded re-position is indistinguishable from progress.
+    if (live->frozenViewRequest.active) {
+      live->frozenViewRequest.deadlineTick = now + 1;
+      live->frozenViewRequest.work.deadlineTick = now + 1;
+    }
+    if (live->pendingViewRequest_.active) {
+      live->pendingViewRequest_.deadlineTick = now + 1;
+      live->pendingViewRequest_.work.deadlineTick = now + 1;
+    }
+    rollingTestTick(track, now, true);
+    runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+    if (runtime == nullptr) break;
+    if (ourRows("win_blocked_by_request") != 0) break;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_repositioned"),
+                                          "the refusal is still a position refusal and still re-positions");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(active.loopLengthTicks / span),
+                                           static_cast<uint32_t>(ourRows("win_repositioned")),
+                                           "but only one attempt per span: a whole traversal is the budget");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_blocked_by_request"),
+                                          "and the episode ends with the terminal row instead of looping");
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ourRows("win_serving"),
+                                   "nothing was served, so nothing claims it was");
+}
+
 /// **DEC-147 control -- a stale demand is never re-positioned.** The re-position answers a *position* refusal for a
 /// demand that is still current; a voided position takes the terminal path exactly as before. Same too-close
 /// construction, one variable: the position is already invalidated when the attempt is priced.
@@ -16244,6 +16313,7 @@ int main() {
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
   RUN_TEST(test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving);
+  RUN_TEST(test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping);
   RUN_TEST(test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal);
   RUN_TEST(test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change);
   RUN_TEST(test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served);

@@ -55,3 +55,99 @@ that comment.
 
 No claim is made that the re-position works on device yet. The native RED is green (217/217 focused; 3,334 full,
 7 skipped, 0 failed) and the image is pinned above.
+
+## Attempt 4 — the demand fires; the retry does not converge (2026-10-19, lane image `8a9ed144…`)
+
+Two runs were added, both on the pinned lane image (`8a9ed144f4d2d84672af1aec1c696d41e306f6721f37901e002aa0f7cac3d1ad`,
+git `7276f652` + dirty):
+
+| run | shape | result |
+|---|---|---|
+| `captures/i5-s64-f9-switch-32bar-01` | `--record-bars 32 --switch-target-slot 4` | no demand: every row with `pl=1` also reads `rw=1` (the record-return window is still bound while the take plays), and the 92 `win_track_not_playing` rows are the stopped stretches. The switch to the **already active** slot queues nothing. |
+| `captures/i5-s64-f9-replay-32bar-01` | `--record-bars 32 --post-stop-start-s 6` | the replay flag refused itself ("this capture ends with it running"), so no extra start was pressed — **and the demand appeared anyway**, inside the display leg. |
+
+The replay run is the one that answers the question. The demand's entry row is exactly the refusal control's shape:
+
+```
+x=win_requested,len=24576,pl=1,rw=0,sv=0,rt=1,rl=1,dm=1,rq=12
+```
+
+and the episode then repeated, 231 times, over 15.7 s (482.725 → 498.414 s device time, one attempt every ~68 ms):
+
+```
+win_requested → win_waiting → handoff_unreachable (build_drop) → win_repositioned → win_busy → …
+```
+
+Census for the run: `win_requested` 232, `win_repositioned` 231, `win_waiting` 231, `win_busy` 232, **`win_ready` 0,
+`win_serving` 0**, `win_blocked` 1 (at the end, when the phase changed and the loop stopped). So the device proved the
+re-position **fires** and the ordered chain is reachable up to the refusal, but the retry never converged: every retry
+was refused with the same ~40 ms signature and no terminal row was emitted while the traversal cycled.
+
+### Why it did not converge
+
+The retry position is computed from the moving playhead on every attempt. The device arithmetic is small enough to
+reproduce natively: with the declared lookahead (`7 grains × 8 denied turns × 64 ticks + 768 = 4,352` ticks) the retry
+is placed at `phase + lookahead` rounded up to the span. The shift to the refused handoff compared **numeric** phases
+(`startPhase < refusedHandoffPhase`), and once `startPhase` wrapped past the loop length that comparison is false while
+the position is still a whole traversal behind the handoff — so the shift was skipped, the retry fell back to the same
+marginal lead, and the cycle repeated. Measured natively (the new fixture, before the fix): 128 re-positions whose
+chosen start advanced ~100 ticks instead of one span each.
+
+The old traversal guard compared `boundary - phase`, which is re-derived from the moving playhead on every retry and
+therefore never grows by a traversal. It can only expire on elapsed **ticks**, which at the device's 68 ms cadence would
+allow ~900 attempts per traversal before the terminal row — the "same-handoff retry loop" the contract forbids.
+
+### Fix applied (DEC-147, second form)
+
+- The shift measures the refused handoff as a **forward** distance from the playhead (`(h − phase) mod len`) instead of
+  comparing numeric phases, so a wrapped start is still placed at the refused span's handoff.
+- The traversal budget is counted in **spans** (`refusedSpanAttempts ≥ loopLength / span`), because that is the quantity
+  the contract is written in. The counter lives in the rolling frame's existing padding (both ABI pins unchanged:
+  7,896 target / 10,080 host).
+- Native RED is green: `test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping` holds the too-close
+  condition for a whole episode and asserts one attempt per span, the terminal `win_blocked_by_request`, `Blocked`, and
+  `win_serving == 0`. The re-position-success and stale-demand fixtures are unchanged and still pass.
+
+## Attempt 5 — the corrected retry converges to `win_ready` (2026-10-19, lane image with the span bound)
+
+Same entry point as attempt 4 (plain `--record-bars 32 --no-boot-reset`, no switch and no replay flag), rebuilt with the
+forward-distance shift and the span budget: `captures/i5-s64-f9-spanbound-32bar-01`, HEX
+`45db64ce7c781c4b9e810ee25e1d5f4dd9402f1a6da9c5b853f708eac27e3942`, git `76392a79` + dirty. The lane image is unchanged on
+RAM1 (`code 392,376 + padding 840`, the floor) and the full native suite is **3,335 / 7 skipped / 3,328 succeeded /
+0 failed**.
+
+The demand opened with the same entry shape and then **converged, for the first time on device**:
+
+```
+win_requested  (pl=1, rw=0, sv=0, rt=1, rl=1, dm=1, rq=12)
+win_waiting    (rl=0, ow=1, bld=1)
+win_repositioned ×20   (one attempt per span, each one span further)
+win_ready      (2162735727 µs; rl=0, ow=1, dm=0)
+```
+
+The verifier's lane section reads, on this run alone:
+
+| check | verdict |
+|---|---|
+| `window_demand_observed` | **ok** (first time) — `win_requested`/`win_waiting`/`win_repositioned`/`win_ready` present |
+| `readiness_receipts_under_transport` | **ok** — 31 receipts, all under transport, 57 of 356 frozen receipts source-qualified |
+| `windowed_service_coverage_under_transport` | **ok** — 519 blocks with opportunities, `permitted=64` |
+| `window_boundaries_crossed_under_transport` | **ok** — 475 `build_complete` under transport |
+| `no_windowed_overrun_under_transport` | **ok** — 0 overruns |
+| `capture_evidence_ring_intact` | **FAIL** — one `wiped` row (`critical_rejected=0, overflow=0, tier_a_evicted=0`) |
+
+### What this proves, and what it does not
+
+**Proves:** the re-position is a real position advance (each retry moves the chosen start one span, so no handoff is
+measured twice), and it terminates in the lane's own readiness receipt rather than looping. The 20 attempts are inside
+the span budget (`24576 / 1536 = 16` per episode; the frame's episode restarted once when the gate re-opened, which is a
+new demand, not a repeated one).
+
+**Does not prove:** `win_serving`. The ready window was prepared at 2162.735 s, the transport ran until 2176.239 s — three
+2-bar adoption boundaries (~4 s each) — and no `win_serving` row was emitted. So the chain is now
+`win_requested → win_waiting → win_repositioned → win_requested → win_ready`, and the missing edge is **adoption of a
+ready successor**, not the demand's position. That is the next slice; the 4.4 demoted-length parity sweep still rides on
+a serving image.
+
+The ring check's single `wiped` row is a capture-evidence condition (one Tier-A row overwritten before the drain), not a
+lane verdict; it is recorded here rather than worked around, and the run's lane rows are otherwise complete.

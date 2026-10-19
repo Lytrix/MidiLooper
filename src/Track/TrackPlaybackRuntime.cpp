@@ -2938,6 +2938,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // DEC-136 completion (S7.5b.5 release edge): the root-return retirement hold's identity key
 // and grain count add 8 B (u32 key + u16 grains, this ABI's padding). Externally allocated
 // per-slot runtime state; no Track field or RAM1 budget change.
+// DEC-147 bound: the refused-span attempt counter fits the rolling frame's existing padding, so both
+// pins are unchanged (7,896 target / 10,080 host); compiler measured, no RAM1 budget change.
 static_assert(sizeof(LoopPlaybackRuntime) == 7896,
               "I5: target per-slot runtime measured after presentation owner");
 static_assert(sizeof(Loop) == 1008,
@@ -2971,6 +2973,7 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Live recipe receipts add64 host bytes; compiler measured with production headers.
 // DEC-136 completion (S7.5b.5 release edge): root-return retirement hold key + grains add 8 B
 // on this ABI as well (10,056 -> 10,064); compiler measured, same external-pool caveat.
+// DEC-147 bound: refused-span attempt counter fits existing padding (10,080 unchanged); compiler measured.
 static_assert(sizeof(LoopPlaybackRuntime) == 10080,
               "I5: host per-slot runtime measured after presentation owner");
 #endif

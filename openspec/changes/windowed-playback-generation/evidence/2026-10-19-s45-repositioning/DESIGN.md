@@ -263,3 +263,44 @@ duplicating its ordering.
 - `teensy41-capture-serial`: `code 392,216 + padding 1,000` — unchanged.
 - `static_assert(sizeof(LoopPlaybackRuntime))` re-based `7888 → 7896` (target) and `10072 → 10080` (host) for the two
   new frame fields.
+
+### Device correction — the shift must be a forward distance, and the budget is spans (2026-10-19)
+
+The first form above was measured on the board (`captures/i5-s64-f9-replay-32bar-01`): the demand fired with the exact
+entry shape (`pl=1, rw=0, sv=0, rt=1, rl=1, dm=1, rq=12`) and the re-position fired **231 times in 15.7 s**, but
+`win_ready`/`win_serving` stayed at 0 and no terminal row was emitted. Two defects, both in the re-position's own
+arithmetic rather than in the refusal contract:
+
+1. **The shift compared numeric phases.** `startPhase < refusedHandoffPhase` is false once `startPhase` has wrapped past
+   the loop length, even though the position is a whole traversal behind the handoff. The shift was then skipped and the
+   retry re-used the natural span at the same marginal lead. Native measurement of the old form: 128 re-positions whose
+   chosen start advanced ~100 ticks instead of one span each.
+2. **The traversal bound counted ticks.** `boundary - phase` is re-derived from the moving playhead on every retry, so it
+   never grows by a traversal; the guard could only expire on elapsed time, which at the device's 68 ms cadence allows
+   ~900 attempts per traversal.
+
+The corrected form, now implemented and pinned:
+
+```cpp
+if (frame.refusedHandoffValid) {
+  const uint32_t handoffAhead = static_cast<uint32_t>(
+      (uint64_t(frame.refusedHandoffPhase) + loop.loopLengthTicks -
+       (phase % loop.loopLengthTicks)) % loop.loopLengthTicks);
+  if (boundary - phase < handoffAhead) boundary = uint64_t(phase) + handoffAhead;
+}
+const bool traversalSpent = frame.refusedHandoffValid &&
+    frame.refusedSpanAttempts >= loop.loopLengthTicks / span;
+```
+
+`refusedSpanAttempts` is incremented on each lead-only refusal, reset when a new refused episode starts, saturates at its
+byte width (so a very long loop cannot wrap the budget back to zero), and dies with the frame (it fits the frame's
+existing padding, so both ABI pins are unchanged at 7,896 / 10,080).
+
+New fixture: `test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping` holds the too-close condition for
+a whole episode and asserts one attempt per span, the terminal `win_blocked_by_request` row, frame `Blocked`, and
+`win_serving == 0`. The re-position-success and stale-demand fixtures still pass unchanged.
+
+**What is still not proven on device:** the re-positioned demand reaching `win_ready`/`win_serving`. The corrected image
+has not been flashed yet; the device answer to "does one traversal of spans find an affordable position" is the next
+run, and a terminal block after one traversal is the honest alternative if the 32-bar take's derived cost cannot fit
+any span on this geometry.

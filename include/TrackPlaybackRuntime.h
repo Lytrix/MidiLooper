@@ -642,6 +642,12 @@ struct LoopPlaybackRuntime {
     /// DEC-147: the span handoff a lead-only refusal already consumed. The next creation pushes its boundary past it,
     /// so a re-position is always strictly later; dies with the frame (cleared on Ready/Serving and on cancel).
     uint32_t refusedHandoffPhase = 0;
+    /// How many spans this demand's re-position has already spent. One attempt per span, and a whole traversal of them
+    /// is the terminal answer: neither `boundary - phase` (re-derived from the moving playhead on every retry) nor the
+    /// playhead's elapsed ticks can bound that cycle -- at the device's 40 ms refusal cadence a tick-based bound allows
+    /// ~1,600 attempts per traversal. Counting spans is the quantity the contract is written in. Valid exactly while
+    /// `refusedHandoffValid`.
+    uint8_t refusedSpanAttempts = 0;
     bool refusedHandoffValid = false;
   } rolling;
   // Window-only pins; never a root lease or another event buffer. Destruction on

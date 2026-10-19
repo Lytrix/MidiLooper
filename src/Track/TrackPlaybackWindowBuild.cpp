@@ -4787,14 +4787,28 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
   uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
   if (frame.refusedHandoffValid) {
-    // DEC-147: the refused span is spent. Start at or after its handoff, so the retry can never land on the position
-    // that was just measured as unreachable (`boundary` and the mark are both span-aligned).
-    const uint32_t startPhase = static_cast<uint32_t>(boundary % loop.loopLengthTicks);
-    if (startPhase < frame.refusedHandoffPhase)
-      boundary += frame.refusedHandoffPhase - startPhase;
+    // DEC-147: start at the refused span's handoff, so the retry can never land on the position that was just measured
+    // as unreachable. The distance is measured **forward** from the playhead: a numeric comparison is wrong across the
+    // loop's wrap -- `boundary % len` can already be numerically past the handoff while still being a whole traversal
+    // behind it -- and that is exactly how the retry fell back to the same marginal lead (measured natively: 128
+    // re-positions whose chosen start advanced 100 ticks instead of one span each).
+    const uint32_t handoffAhead = static_cast<uint32_t>(
+        (uint64_t(frame.refusedHandoffPhase) + loop.loopLengthTicks -
+         (phase % loop.loopLengthTicks)) % loop.loopLengthTicks);
+    if (boundary - phase < handoffAhead)
+      boundary = uint64_t(phase) + handoffAhead;
   }
-  if (!lookahead || boundary <= phase || boundary - phase >= loop.loopLengthTicks ||
-      clock.tick > UINT64_MAX - (boundary - phase)) {
+  const bool boundaryOutOfRange = !lookahead || boundary <= phase ||
+      boundary - phase >= loop.loopLengthTicks || clock.tick > UINT64_MAX - (boundary - phase);
+  // DEC-147: a whole traversal of refused spans is the terminal answer. The budget is counted in **spans**, because
+  // that is the quantity the contract is written in: a tick-based bound is re-derived from the moving playhead and, at
+  // the device's measured ~68 ms refusal cadence, would allow ~900 attempts per traversal before it expired (measured
+  // on device 2026-10-19: 231 re-positions in 15.7 s, none of them reaching a readiness row). The counter saturates at
+  // its byte width so a very long loop cannot wrap the budget back to zero.
+  const uint32_t spanBudget = loop.loopLengthTicks / span;
+  const bool traversalSpent = frame.refusedHandoffValid &&
+      frame.refusedSpanAttempts >= (spanBudget > 255u ? 255u : spanBudget);
+  if (boundaryOutOfRange || traversalSpent) {
     if (frame.refusedHandoffValid) {
       // A whole traversal of refused spans is a terminal answer, not permission to re-request forever.
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
@@ -5421,6 +5435,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     if (leadTooShort && !siblingBroken &&
         runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested && loop.loopLengthTicks) {
       auto& frame = runtime->rolling;
+      if (!frame.refusedHandoffValid)
+        frame.refusedSpanAttempts = 0;
+      if (frame.refusedSpanAttempts != 255)
+        ++frame.refusedSpanAttempts;
       frame.refusedHandoffPhase = static_cast<uint32_t>(
           (request.coverage.startPhase + spanTicks) % loop.loopLengthTicks);
       frame.refusedHandoffValid = true;
