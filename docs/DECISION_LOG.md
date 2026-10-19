@@ -8256,3 +8256,57 @@ The change is a **discriminating tightening**: it refuses a sequence that never 
 
 ### What this does not establish
 This is the **rolling Record route's** device acceptance, not a 6.4/3.15f/S4f.8 checkoff: 3.15f still requires every migrated route (overdub, NOTE_EDIT, switch, undo/redo, internal/external clock) against its own oracle and the cold legacy reference, 6.4 still owes its F-7/F-8/AC-8 hardware legs, and S4f.8's waiting-stop receipts remain with RWO. The native measurement establishes that the rotation is semantically required (the pre-Stop window served no take row); the registered device run above confirms the sealed take is served on hardware.
+
+## DEC-145 — A latching fault is set only where an eligible boundary can clear it
+
+**Date:** 2026-10-19
+**Owner:** `Track::noteMissedTraversalForSlot` (the set) and the lane's adoption boundary (the two clears)
+**Status:** Accepted and implemented — native RED→GREEN, full native and capture-build gates green, no upload
+**Follows:** DEC-108 §13e–g (containment, the approved last resort, cross-generation closures); task 4.5
+**Supersedes:** nothing; it narrows *where* 4.5's latch exists, not what the latch means
+
+### Problem
+4.5's containment clause is blocked (G0, 2026-10-19): `containmentForSlot` / `applyLastResortForSlot` have no production
+caller because *"no coverage"* is not *"no serving route"*. Investigating the prerequisite found a second, sharper defect:
+the fault is **latched on a path that runs in the default image and cleared only on paths that do not**.
+
+- Set: `noteMissedTraversalForSlot` (`TrackPlaybackWindowBuild.cpp:2248`), reached from
+  `serviceAdmittedDeadlineMisses`, called unconditionally from `main.cpp:489` and from
+  `stepPlaybackViewMaintenance`.
+- Clears: `:1157` (inside `#if PLAYBACK_WINDOW_ROLLING_ENABLED`) and `:2210` (called only from `:4907`, inside the same
+  flag).
+
+Benign today only because nothing reads the latch in production. The moment containment is wired, an uncleared latch
+would make the *approved last resort* permanent — the opposite of its intent.
+
+### Decision
+**Set the latch only under the same `PLAYBACK_WINDOW_ROLLING_ENABLED` condition as its clear sites.** A fault is a
+statement about a boundary: it may only be recorded where a boundary exists from which it can be observed to end. The
+image with no adoption boundary reports the breach (`lag_breach`, `breachReports`, `missedTraversals`) and carries no
+fault state.
+
+### Alternatives considered
+1. **Wire a "real recovery" clear in the default image.** Rejected as specified: the promise route records the episode's
+   *interval* but no revision (`PlaybackViewAdmittedWork` has none), so the lane's `servedIsCurrent` test has no meaning
+   there. Clearing on the served-source catch-up (`playbackWindowSourceIsCurrentForSlot`, ungated) would be a **state**
+   rule replacing an **episode** rule, would flip the containment fixture's step 3 (which latches while a current window
+   *is* served), and would cost a bit on the externally allocated runtime — a `sizeof(LoopPlaybackRuntime) == 7888`
+   re-base.
+2. **Build the owner-level "no serving route at all" predicate now.** Still the path for *containment*, and 4.5's
+   remaining clause; not a prerequisite for removing the un-clearable write, and it carries a MIDI-adjacent per-turn cost
+   (the withdrawn wiring measured +144 B of ITCM at its call sites).
+
+### Consequences
+- The default image cannot enter a fault state it cannot leave. Nothing observable changes: neither
+  `containmentForSlot` nor `deadlineContractFaultLatchedForSlot` has a production caller.
+- **Any future image that wires containment must lift this gate together with a clear site** in the same image. That is
+  the recorded precondition for G0 option (a), and it is tested in the direction that matters (a flag-off fixture asserts
+  *no* latch; the flag-on sibling asserts the latch and its boundary clear).
+- The breach report is unchanged in both images, so the fault's *observability* does not depend on this gate.
+
+### Evidence
+`test/test_continuous_capture/test_continuous_capture.cpp::test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it`
+(RED before, GREEN after); focused 322/322; full native **3331 cases, 3324 succeeded, 7 skipped, 0 failed**; capture build
+SUCCESS with RAM1 **byte-identical to HEAD** (`code 392,088 + padding 1,128`, no re-base). Detail:
+[`evidence/2026-10-19-s45-latch-gating/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-latch-gating/EXECUTION.md)
+and [`2026-10-19-s45-containment-g0/INVESTIGATION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-containment-g0/INVESTIGATION.md).

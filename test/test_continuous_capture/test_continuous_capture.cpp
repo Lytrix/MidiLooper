@@ -5603,6 +5603,29 @@ void test_task22_the_consumption_reason_names_the_edge_that_took_it() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(LatchRows::of("consume").size()),
                                    "the obligation is consumed exactly once, so it is reported once");
 }
+// Task 4.5 (DEC-108 §13e–g): **the deadline-contract fault is latched only where a boundary can end it.** Both clear
+// sites belong to the lane's adoption boundary (`TrackPlaybackWindowBuild.cpp:1157`, inside
+// `#if PLAYBACK_WINDOW_ROLLING_ENABLED`, and `:2210`, reached only from the serving resolver that the same flag compiles
+// out), and this image compiles the lane out (`PLAYBACK_WINDOW_ROLLING_ENABLED == 0`). So the breach is still
+// **reported** here -- the decision, the allowance and the named `lag_breach` row are image-independent -- but no state
+// bit is set that nothing in this image could ever clear. The lane image keeps its latch: its sibling fixture
+// `test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global`, in
+// `test_runtime_working_set_ownership`, asserts the latch there.
+void test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it() {
+  Track& track = preparePlayingTrack();
+  constexpr uint32_t kLen = 768;
+  // A revision nothing has published: the served revision is never current, so the rule counts misses.
+  constexpr uint32_t kUnservedRevision = 0xFFFFFFFFu;
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, kLen, kUnservedRevision, false)));
+  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, kLen, kUnservedRevision, false)));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
+                                  "the second consecutive miss is still the named breach in this image");
+  TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                            "no latch is set where this image has no boundary to clear it");
+}
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -5735,5 +5758,7 @@ int main() {
   RUN_TEST(test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal);
   // S1.3 save/restore-survival: the record-stop persistence target follows the recorded slot.
   RUN_TEST(test_record_stop_persist_target_follows_the_recorded_slot);
+  // Task 4.5: the breach is reported in every image; the latch is set only where a boundary can clear it.
+  RUN_TEST(test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it);
   return UNITY_END();
 }

@@ -2245,7 +2245,15 @@ TRACK_COLD_MEM void Track::noteMissedTraversalForSlot(uint8_t slotIndex, Loop& l
     // reads. The previous revision keeps being served and no partial content is published.
     lag.breachReported = true;
     ++lag.breachReports;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+    // Task 4.5: the latch is set **only where a boundary exists to end it**. Every clear site is the lane's adoption
+    // boundary (`:1157` inside this same flag, and `:2210` reached only from the serving resolver the flag compiles in),
+    // so the default image -- which compiles the lane out and serves through the retained/merged routes -- could latch a
+    // fault that nothing there could ever clear. Nothing in that image reads the latch either (`containmentForSlot` and
+    // `deadlineContractFaultLatchedForSlot` have no production caller), so this is the honest capability boundary, not a
+    // behaviour change: the breach row, the episode counters and the decision are untouched in both images.
     runtime->deadlineContractFaultLatched = true;
+#endif
     reportPlaybackViewMaintenanceRow(slotIndex, loop, "lag_breach");
   }
 }

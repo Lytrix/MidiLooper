@@ -2042,6 +2042,29 @@ predicate, or 3.7b's fallback removal, is required first), **displayed provenanc
 (the lane-enabled image is over its own RAM1 budget, so it cannot be flashed), the moving closure inside a long/demoted
 slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` route's own boundary. Detail:
 [`evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md).
+  *Increment 4.5d landed 2026-10-19 (the latch's capability boundary; the task stays open):* a **G0 investigation**
+  ([`2026-10-19-s45-containment-g0/INVESTIGATION.md`](evidence/2026-10-19-s45-containment-g0/INVESTIGATION.md))
+  confirmed the containment blocker above and found a second, sharper defect: the fault is **latched on a path that runs
+  in the default image** (`noteMissedTraversalForSlot` ← `serviceAdmittedDeadlineMisses`, called unconditionally) while
+  **both** clear sites are the lane's adoption boundary (`:1157` inside the flag, `:2210` reached only from `:4907`) — so
+  the image that serves through the retained/merged routes could latch a fault nothing there could ever clear. Benign
+  today only because neither reader (`containmentForSlot`, `deadlineContractFaultLatchedForSlot`) has a production
+  caller, but fatal to the last resort the moment containment is wired. Wiring a "real recovery" clear instead was
+  **rejected as specified**: the promise route records the episode's interval but **no revision**
+  (`PlaybackViewAdmittedWork` has none), so the lane's `servedIsCurrent` test has no meaning there, and clearing on the
+  served-source catch-up (`playbackWindowSourceIsCurrentForSlot`, ungated) would replace an **episode** rule with a
+  **state** rule and flip the containment fixture's step 3. **DEC-145**: the latch is set only under
+  `PLAYBACK_WINDOW_ROLLING_ENABLED` — the same condition as its clears — so a fault is recorded only where a boundary
+  exists to end it; the **breach report is unchanged in both images** (`lag_breach`, `breachReports`,
+  `missedTraversals`), and nothing observable changes. Fixture
+  `test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it` (RED before, GREEN after; flag-on sibling
+  keeps the latch and its boundary clear). Focused **322/322**, full native **3331 / 3324 succeeded / 7 skipped /
+  0 failed**, capture build **SUCCESS** with RAM1 **byte-identical to HEAD** (`code 392,088 + padding 1,128`; no
+  re-base). **Still owed:** production containment / the approved last resort (the owner-level *"no serving route at
+  all"* predicate, or 3.7b), displayed provenance (RWO **S4e**), the device leg (no flashable image runs the lane), and
+  one recorded precondition — **any image that wires containment must lift the latch gate together with a clear site in
+  that same image**. Detail:
+  [`2026-10-19-s45-latch-gating/EXECUTION.md`](evidence/2026-10-19-s45-latch-gating/EXECUTION.md).
 
 ## 5. Capacity, envelope and placement
 
