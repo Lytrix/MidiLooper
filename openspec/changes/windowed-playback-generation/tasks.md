@@ -2284,6 +2284,27 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   oracle weakening" boundary and needs its own scope decision. Lane terms measured under transport: receipts 23–24/24,
   overrun 0, boundaries 206–475, `oracle_complete: false` with the two deferred terms unchanged. **6.4 stays open.**
 
+  *Qualification **re-run 2026-10-20 on a new tree** — the leg half is now read from the device, and the profile passed
+  three consecutive combined greens on one boot (see [`s64-disp-window-receipt`](evidence/2026-10-20-s64-disp-window-receipt/EXECUTION.md)).*
+  The blocker above was the *reading*, not the device: `SC_DISP` is paint-driven and gated on note counters, so a window
+  that keeps painting the same content raises nothing. This slice adds the display window owner's own **transition**
+  receipt — `DIAG,disp_window,t,s,st,ed,es,len,w,b`, Tier-A via `DIAG,disp_`, direct-when-USB-has-room else ring, sampled
+  only while the track plays and keyed on the window start **in whole bars** — and the verifier now merges both families
+  in **device-time order** (**DEC-149**). Cost was measured before it was accepted: the first draft keyed on the raw start
+  and sampled in every state, emitted **2 757** rows and displaced a Tier-A row (`tier_a_evicted=1`); the landed form is
+  **15 rows** for a full 24-bar run with no eviction. Two bracket facts came out of the same runs and are now declared and
+  host-pinned rather than smoothed: the entry sample can land on either side of the `Edit session:` acknowledgement (a
+  10 ms-delayed MIDI ack), so a pre-marker row is only an anchor and only when it already belongs to the overlay's own
+  display state; and the freeze bracket ends at the snap **gesture** (play/stop note-on, ~3 s before the long press is
+  detected, where the window follows by design), with the snap term compared against the frozen start. **Measured:**
+  image `3ef153c5…`, runs `captures/i5-s64-receipt-24bar-01`…`-05` — 01 flood/red, 02 stale-anchor/red (lane already
+  green), **03/04/05 combined green three times consecutively**: leg `ok` with `hold_verify_mode=disp_window_rows`
+  (no indirect witness), all six lane checks, snapshot checks, `critical_evidence_loss_rows=0`, `oracle_complete: false`
+  with the same two deferred terms. Host **27/27** (both counterexamples pinned, including "the window never moved" →
+  fails), neighbours **57/57**, `test_capture_ring` 38/38 with the Tier-A pin, full native **3 338 / 7 skipped /
+  3 331 succeeded**; default `code 392,216 + padding 1,000` (baseline-identical) and lane `392,376 + 840` (floor). **6.4's
+  checkoff stays a separate judgement** — this supplies the leg half only; 3.7d's device read and 4.5 stay open.
+
 
 - [x] 6.4a Stage the I5 rolling-Record HITL into short, independently drivable managed passes without weakening 6.4 or 3.15f.
   `growth` then `empty` SHALL remain one `growth-empty` report/session/boot to preserve the cross-take transition;

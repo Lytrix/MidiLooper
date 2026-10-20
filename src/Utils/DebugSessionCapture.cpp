@@ -2193,6 +2193,34 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
                 windowBars, windowNoteCount);
 }
 
+/// The display window's **transition** receipt (`DIAG,disp_window`). Format kept in `.progmem` for the reason the frozen
+/// receipt's format is: `.rodata` is DTCM in this script, and a few hundred bytes of new literals in this unit can snap
+/// the RAM1 `variables` figure by 4 KB while ITCM `code` is unchanged.
+static const char kDisplayWindowTransitionFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,disp_window,t=%u,s=%u,st=%s,ed=%u,es=%u,len=%lu,w=%lu,b=%u\r\n";
+
+SC_MEM_ATTR void displayWindowTransition(uint8_t track, uint8_t slot, const char* trackState,
+                                        uint8_t noteSessionOpen, uint8_t editSession,
+                                        uint32_t loopLengthTicks, uint32_t windowStartTick,
+                                        uint8_t windowBars) {
+  // Two delivery rules, `readinessReceiptImmediate`'s: direct when USB has room, ring otherwise. The row is raised
+  // while a transport runs, and the ring is retained by design then -- a merely enqueued copy would arrive only after
+  // the stop, after the freeze / snap / hold bracket it explains.
+  if (serialWriteRoom(140)) {
+    Serial.printf(kDisplayWindowTransitionFormat, static_cast<unsigned long>(micros()),
+                  static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                  trackState == nullptr ? "?" : trackState, static_cast<unsigned>(noteSessionOpen),
+                  static_cast<unsigned>(editSession), static_cast<unsigned long>(loopLengthTicks),
+                  static_cast<unsigned long>(windowStartTick), static_cast<unsigned>(windowBars));
+    return;
+  }
+  emitCapPrintf(kDisplayWindowTransitionFormat, static_cast<unsigned long>(micros()),
+                static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                trackState == nullptr ? "?" : trackState, static_cast<unsigned>(noteSessionOpen),
+                static_cast<unsigned>(editSession), static_cast<unsigned long>(loopLengthTicks),
+                static_cast<unsigned long>(windowStartTick), static_cast<unsigned>(windowBars));
+}
+
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx) {
   emitCapPrintf("#CAP,%lu,DNTE,%u,%lu,%lu,%lu,%d\r\n", (unsigned long)micros(), pitch,

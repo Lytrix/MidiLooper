@@ -286,6 +286,12 @@ DISP_COLD_MEM __attribute__((noinline)) void DisplayManager::checkDmaStagingDiag
             static_cast<unsigned long>(
                 DisplayManagerInternal::liveDisplayEventBuffer.capacity()));
     }
+    // The display window's **transition receipt** (`DIAG,disp_window`) samples the display's own state on every update
+    // (4 ms cadence inside the sampler), so a window that stops repainting still reports itself. It rides this
+    // flash-resident per-update capture hook instead of a call site in `update()`: that call measured +16 B of ITCM,
+    // which is exactly the qualification image's padding above the approved 840 B floor (`code 392,376 + padding 840`
+    // -> `392,392 + 824`). Same build set (`SESSION_CAPTURE && ARDUINO`); the sampler is a no-op outside capture builds.
+    observeDetailedWindowTransition();
 }
 #endif
 

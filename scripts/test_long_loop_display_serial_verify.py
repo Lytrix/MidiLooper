@@ -43,6 +43,24 @@ def _disp_window(
     )
 
 
+def _disp_window_transition(
+    timestamp: int,
+    *,
+    window_start: int,
+    track: int = 0,
+    slot: int = 0,
+    state: str = "PLAYING",
+    note_open: int = 0,
+    session: int = 0,
+    loop_len: int = LOOP_LEN,
+    window_bars: int = 16,
+) -> str:
+    return (
+        f"#CAP,{timestamp},DIAG,disp_window,t={track},s={slot},st={state},ed={note_open},"
+        f"es={session},len={loop_len},w={window_start},b={window_bars}"
+    )
+
+
 def _windowed_args() -> SimpleNamespace:
     return SimpleNamespace(
         record_bars=24,
@@ -189,6 +207,143 @@ class PhasePairingTests(unittest.TestCase):
             any("insufficient_disp_during_note_edit_freeze" in issue for issue in result["issues"]),
             result["issues"],
         )
+
+
+class TransitionReceiptTests(unittest.TestCase):
+    """The display window's **transition receipt** (`DIAG,disp_window`) answers the brackets a frozen window hides.
+
+    `SC_DISP` is paint-driven and gated on note counters, so a window that keeps painting the same content raises no
+    row: the 2026-10-20 ten-run campaign had a fully green lane run whose drained set carried no `state=PLAYING` `DISP`
+    row at all. These tests pin that the receipt is read, is read by **device time**, and does not soften the freeze.
+    """
+
+    ENTER = "[100.000] [INFO] [MIDI] Edit session: NOTE_EDIT (Program 1, Note 0 trigger)"
+    SNAP = "[160.000] [INFO] Detailed window centered on playhead"
+
+    def test_a_run_without_any_disp_row_is_judged_from_the_receipts(self) -> None:
+        lines = [
+            self.ENTER,
+            self.SNAP,
+            _disp_window_transition(99_990_000, window_start=4096),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(160_030_000, window_start=6400),
+            _disp_window_transition(160_040_000, window_start=6656),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result["disp_window_transition_row_count"], 4)
+        self.assertGreaterEqual(result["playing_bounded_window_rows"], 1)
+
+    def test_the_entry_receipt_sits_at_or_before_the_enter_marker(self) -> None:
+        """The receipt is emitted on the device clock; the `Edit session:` acknowledgement the marker follows is later."""
+        lines = [
+            self.ENTER,
+            self.SNAP,
+            _disp_window_transition(99_990_000, window_start=4096),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(160_030_000, window_start=6400),
+            _disp_window_transition(160_040_000, window_start=6656),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertIn("freeze_window_rows:entry_anchor_only", result["warnings"])
+
+    def test_a_window_that_moves_inside_the_freeze_still_fails(self) -> None:
+        lines = [
+            self.ENTER,
+            self.SNAP,
+            _disp_window_transition(99_990_000, window_start=4096),
+            _disp_window_transition(120_000_000, window_start=4352),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(160_030_000, window_start=6400),
+            _disp_window_transition(160_040_000, window_start=6656),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any("window_not_frozen_during_note_edit" in issue for issue in result["issues"]),
+            result["issues"],
+        )
+
+    def test_receipts_are_read_in_device_time_order_not_delivery_order(self) -> None:
+        """The families are emitted by different owners; a drained capture delivers them interleaved."""
+        lines = [
+            self.ENTER,
+            self.SNAP,
+            _disp_window_transition(160_040_000, window_start=6656),
+            _disp_window_transition(99_990_000, window_start=4096),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(160_030_000, window_start=6400),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertNotIn("window_not_frozen_during_note_edit", result["issues"])
+
+    BUTTON_ON = "[157.000] [DEBUG] [MIDI] Button Processor: Ch16 Note40 ON (vel 127)"
+
+    def test_the_hold_inside_the_snap_gesture_is_not_read_as_freeze_drift(self) -> None:
+        """The play/stop button is held for 3 s before the long press fires, and the window follows while it is held.
+
+        Measured shape (2026-10-20 rerun): the window holds 4546 through NOTE_EDIT, then 6144 once the button goes down,
+        and the long press re-centres on that same 6144. Both facts are correct behaviour; a bracket that ran to the
+        long-press *release* would read the hold as freeze drift and the snap as a no-op.
+        """
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(99_990_000, window_start=4546),
+            _disp_window_transition(157_500_000, window_start=6144),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(161_000_000, window_start=6912),
+            _disp_window_transition(162_000_000, window_start=7680),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertNotIn(
+            "long_press_snap_did_not_move_window", " ".join(str(i) for i in result["issues"])
+        )
+
+    def test_a_band_row_before_the_entry_is_not_read_as_freeze_drift(self) -> None:
+        """Measured shape of the 2026-10-20 second rerun: a bar-band row (3851) 1.5 s before the entry, the entry row
+        itself (4401) 11 ms *after* the `Edit session:` acknowledgement. Only the row inside the bracket is the entry."""
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(98_500_000, window_start=3851),
+            _disp_window_transition(100_011_000, window_start=4401, note_open=1, session=1),
+            _disp_window_transition(157_500_000, window_start=6144, note_open=1, session=1),
+            _disp_window_transition(160_020_000, window_start=6144),
+            _disp_window_transition(161_500_000, window_start=6912),
+            _disp_window_transition(163_000_000, window_start=7680),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertNotIn("freeze_window_rows:entry_anchor_only", result["warnings"])
+
+    def test_a_snap_that_never_leaves_the_frozen_window_still_fails(self) -> None:
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(99_990_000, window_start=4546),
+            _disp_window_transition(157_500_000, window_start=4546),
+            _disp_window_transition(160_020_000, window_start=4546),
+            _disp_window_transition(161_000_000, window_start=4546),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any("long_press_snap_did_not_move_window" in issue for issue in result["issues"]),
+            result["issues"],
+        )
+
+    def test_the_count_based_readiness_check_keeps_reading_disp_only(self) -> None:
+        """`frame_notes`/`window_note_count` are not carried by the receipt, so it must not answer that check."""
+        split_row = _disp_window_transition(1_000_000, window_start=4096)
+        result = verify_follow_window_readiness([split_row])
+        self.assertEqual(result["playing_moved_window_rows"], 0)
 
 
 class FollowWindowReadinessVerifyTests(unittest.TestCase):

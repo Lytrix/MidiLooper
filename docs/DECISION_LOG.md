@@ -8464,3 +8464,68 @@ batch, a window — under these terms:
 assertion; two mutations red-proved — the plan removed, and the obsolete-closure guard removed — each failing exactly
 that fixture, with byte-identical restores). Detail:
 [`evidence/2026-10-20-s45-moving-closure-demoted/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s45-moving-closure-demoted/EXECUTION.md).
+
+## DEC-149 — A window is observed by its owner on change, and a gesture bracket ends where the gesture starts
+
+**Date:** 2026-10-20
+**Owner:** `DisplayManager::observeDetailedWindowTransition` (the detailed-window owner) and `DebugSessionCapture::displayWindowTransition` (the capture owner); the read side is `scripts/hitl/verify/display_window.py`
+**Status:** Accepted and implemented — device verified (three consecutive combined greens), host tests green, no push
+**Follows:** task 6.4's ten-run record (`s64-multi-run`), which left the qualification "measured, not qualified" because a form of green run had no `state=PLAYING` `DISP` row to read; DEC-108 §13's lane rows (unchanged here)
+**Supersedes:** nothing — this adds a data source and fixes a bracket definition; no oracle term is added, removed or weakened
+
+### Problem
+Two distinct failures met in the same place.
+
+1. **The display window had no row of its own.** `SC_DISP`/`SC_DISP_WINDOW` are raised from the *paint* path and gated
+   on note counters (`maybeEmitDisplayCaptureOnChange`): a frame that keeps painting the same content raises nothing.
+   A frozen window is exactly that case, and the run that motivated this slice drained 448 `DISP` rows — 444
+   `RECORDING`, 4 `STOPPED`, **zero** `PLAYING` — with all six lane checks, the snapshot checks and ring integrity
+   green. The leg's freeze / snap / hold brackets had nothing to read.
+2. **The brackets measured two behaviours at once.** The play/stop button is held for ~3 s before the long press is
+   detected, and the window follows while it is held (`shouldAutoFollowDetailedWindow` includes
+   `isPlayStopButtonHeld()`), so a bracket running to the *long-press log line* read the hold as freeze drift and then
+   read the snap as a no-op.
+
+### Decision
+1. **The window owner reports its own state, on change, from `update()` and never from the paint path.** A new Tier-A
+   row `DIAG,disp_window,t,s,st,ed,es,len,w,b` carries what the display holds (`w`,`b` = the values the next paint
+   resolves from) and what it shows (track state, note-session open, edit session, loop length). Delivery copies
+   `readinessReceiptImmediate`'s two rules — direct when USB has room, ring otherwise — because the row is raised under
+   transport.
+2. **"Change" is coarse where the data is dense.** The dedupe key uses the window start **in whole bars**
+   (`windowBand`), not the raw start: the follow window recentres continuously (measured ~24 ticks per 63 ms sample), so
+   a raw key is a stream. It is sampled only while the track **plays**, plus one closing row when it leaves that state,
+   because loop length changes on nearly every sample while recording. Measured cost: **15 rows** for a full 24-bar run;
+   the first draft's raw/always-on key emitted **2 757** rows and displaced a Tier-A row (`tier_a_evicted=1`) — the very
+   defect this row exists to avoid.
+3. **A gesture bracket ends where the gesture starts.** The freeze term ends at the play/stop button's note-on, and the
+   snap term compares the post-snap window against the **frozen** position. The entry sample may sit on either side of
+   the `Edit session:` acknowledgement (device stamp vs a 10 ms-delayed MIDI ack), so a pre-marker row is only an entry
+   **anchor** — and only when it already belongs to the overlay's own display state, never a bar-band row from earlier
+   playback.
+
+### Alternatives considered
+1. **Make `DISP` itself Tier-A and change-gated on the window** — that is bulk `DISP` streaming: the row is per-paint and
+   carries note counters, so a long run's cost is unbounded exactly where the transport is retaining.
+2. **Flush `DISP` during transport** — the ring is retained for a reason (DEC-108's shed policy); streaming a paint row
+   to keep an oracle fed buys the measurement by disturbing the thing measured.
+3. **Relax the freeze/snap terms to what the data allows** — refused: the terms stay, the *data* and the *bracket* were
+   what was wrong. The counterexamples still fail (a second in-freeze start; a snap that never leaves the frozen
+   position).
+
+### Consequences
+- The playing window is observable whether or not the display repaints, at 15 rows per run: the 6.4 leg half no longer
+  depends on how many rows leak during the run.
+- The hold term is now proved from the row family itself (`hold_verify_mode=disp_window_rows`) rather than the indirect
+  release witness.
+- Cost: no ITCM growth (`DisplayManager::update` would have spent 16 B — exactly the lane image's remaining padding — so
+  the sampler rides the existing per-update capture hook); the DTCM align edge crossed by the sampler's 25 B is answered
+  by a `.rodata` carve-out for `DisplayNoteWindowGather.cpp`, keeping `variables` at 96,192.
+- The lane terms and the `oracle_complete` deferrals are untouched: every run above still reports `oracle_complete:
+  false` with the same two deferred terms.
+
+### Evidence
+[`evidence/2026-10-20-s64-disp-window-receipt/`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s64-disp-window-receipt/EXECUTION.md)
+— five device runs (01 flood → 02 stale anchor → 03/04/05 three consecutive combined greens on image `3ef153c5…`),
+`test_long_loop_display_serial_verify` **27/27** including the two bracket counterexamples, `test_capture_ring` 38/38
+with the Tier-A pin, host **57/57**, full `native` suite on the final tree.

@@ -5,9 +5,12 @@
 #include "DisplayManagerInternal.h"
 
 #include "Globals.h"
+#include "ClockManager.h"
+#include "EditManager.h"
 #include "Loop.h"
 #include "LoopSnapshot.h"
 #include "PendingNoteChange.h"
+#include "TrackManager.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
@@ -102,6 +105,94 @@ DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, u
     }
     detailedWindowStartTick_[displaySlot] = outWindowStart;
     return true;
+}
+
+#if defined(SESSION_CAPTURE)
+namespace {
+
+/// What the display-window receipt is keyed on: the values that decide **what the display holds and shows**, never the
+/// content. A change of any field is one transition row; no change is no row.
+///
+/// `windowBand` is the held window start **in whole bars**, and it is what decides "the window moved". The follow window
+/// recentres continuously (measured on the 2026-10-20 rerun: ~24 ticks per 63 ms sample), so keying on the raw start
+/// emits a row per sample — a stream, not a transition. A band change is the display's own granularity for "it moved";
+/// the emitted row still carries the raw start, so a bracket compares exact positions.
+struct DetailedWindowReceiptKey {
+    uint8_t track = 0xFF;
+    uint8_t slot = 0xFF;
+    uint8_t state = 0xFF;
+    uint8_t noteSessionOpen = 0xFF;
+    uint8_t editSession = 0xFF;
+    uint32_t loopLength = 0xFFFFFFFFu;
+    uint32_t windowBand = 0xFFFFFFFFu;
+    uint32_t windowStart = 0xFFFFFFFFu;
+    uint8_t windowBars = 0xFF;
+};
+
+/// 250 Hz sampling: fine enough that a 2 s freeze / snap / hold bracket cannot lose a transition, and it runs from
+/// `update()` (not from the paint path) precisely so a window that stops repainting keeps being observed.
+constexpr uint32_t kDetailedWindowReceiptSampleMs = 4;
+
+/// Observed only while the track plays (task 6.4 measures the playing window), plus **one closing row** when it leaves
+/// that state. Recording is out of scope on purpose: the loop length grows on nearly every sample, so a recording-time
+/// sampler is a stream by construction (the first rerun emitted 2 757 rows and evicted a Tier-A row).
+constexpr uint8_t kObservedTrackState = static_cast<uint8_t>(TRACK_PLAYING);
+
+DetailedWindowReceiptKey lastDetailedWindowReceipt;
+uint32_t lastDetailedWindowReceiptMs = 0;
+bool detailedWindowReceiptArmed = false;
+
+}  // namespace
+#endif
+
+DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
+#if defined(SESSION_CAPTURE)
+    const uint32_t nowMs = millis();
+    if (detailedWindowReceiptArmed &&
+        static_cast<uint32_t>(nowMs - lastDetailedWindowReceiptMs) < kDetailedWindowReceiptSampleMs) {
+        return;
+    }
+    const uint8_t trackIndex = trackManager.getSelectedTrackIndex();
+    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackIndex);
+    if (displaySlot >= kDisplaySlotCount) {
+        return;
+    }
+    const Track& track = trackManager.getTrack(trackIndex);
+    const uint8_t state = static_cast<uint8_t>(track.getState());
+    // Outside the observed state only a *transition out of it* is worth a row: the verifier reads the last playing row
+    // and the closing row as the interval's ends, and nothing else is sampled.
+    if (state != kObservedTrackState &&
+        !(detailedWindowReceiptArmed && lastDetailedWindowReceipt.state == kObservedTrackState)) {
+        return;
+    }
+    DetailedWindowReceiptKey key{};
+    key.track = trackIndex;
+    key.slot = displaySlot;
+    key.state = state;
+    key.noteSessionOpen = editManager.isNoteEditActive() ? 1 : 0;
+    key.editSession = static_cast<uint8_t>(editManager.getEditSessionType());
+    key.loopLength = resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
+    // The window the display holds for this slot: the values its next paint resolves from. During NOTE_EDIT the follow
+    // decision is off (`shouldAutoFollowDetailedWindow`), so these stay put -- which is exactly the freeze the leg measures.
+    key.windowStart = detailedWindowStartTick_[displaySlot];
+    key.windowBand = key.windowStart / static_cast<uint32_t>(Config::TICKS_PER_BAR);
+    key.windowBars = detailedWindowBars_[displaySlot];
+    lastDetailedWindowReceiptMs = nowMs;
+    if (detailedWindowReceiptArmed && key.track == lastDetailedWindowReceipt.track &&
+        key.slot == lastDetailedWindowReceipt.slot && key.state == lastDetailedWindowReceipt.state &&
+        key.noteSessionOpen == lastDetailedWindowReceipt.noteSessionOpen &&
+        key.editSession == lastDetailedWindowReceipt.editSession &&
+        key.loopLength == lastDetailedWindowReceipt.loopLength &&
+        key.windowBand == lastDetailedWindowReceipt.windowBand &&
+        key.windowBars == lastDetailedWindowReceipt.windowBars) {
+        return;
+    }
+    detailedWindowReceiptArmed = true;
+    lastDetailedWindowReceipt = key;
+    SC_DISP_WINDOW_TRANSITION(key.track, key.slot, TrackStateMachine::toString(track.getState()),
+                              key.noteSessionOpen, key.editSession, key.loopLength, key.windowStart,
+                              key.windowBars);
+#endif
 }
 
 DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(

@@ -132,6 +132,12 @@ SECTIONS
 		   the budget for a 4 KB align step, the rows moved into their own TU, which is carved out here: the literals
 		   stay in memory-mapped FLASH and the approved budget is untouched. Read-only. */
 		*EnvelopeDistRows.cpp.o(.rodata.str* .rodata.*.str*)
+		/* Task 6.4 display-window transition receipt: `DisplayNoteWindowGather.cpp` now hosts the window owner's
+		   sampler (its dedupe key is ~25 B of `.data`), and that TU's ~140 B of read-only strings plus the 25 B crossed
+		   the `_VectorsRam`/periodictable align edge -- `variables` 96,192 -> 100,288. Only read-only literals move; the
+		   sampler's mutable state keeps its placement. (A sampler call in `update()` would also have spent 16 B of ITCM,
+		   exactly the qualification image's padding above the floor; the call rides the existing capture hook instead.) */
+		*DisplayNoteWindowGather*.o(.rodata .rodata.*)
 		. = ALIGN(4);
 	} > FLASH
 

@@ -88,6 +88,14 @@ passed this invariant (`98`/`98` on the first and settled PLAYING frames).
 
 `#CAP DISP` / `SC_DISP` report bounded-window fields for HITL — interval metadata, not a second representation.
 
+`#CAP DIAG,disp_window` / `SC_DISP_WINDOW_TRANSITION` are the **window owner's own transition rows** (`DEC-149`):
+`t,s,st,ed,es,len,w,b` where `w`/`b` are the values the next paint resolves from (`detailedWindowStartTick_`,
+`detailedWindowBars_`). Raised by `DisplayManager::observeDetailedWindowTransition` from the per-update hook — **never from
+the paint path**, so a window that stops repainting is still observed — one row per change of what the display holds and
+shows, sampled only while the track plays (plus one closing row), keyed on the window start **in whole bars**. Tier-A via
+the `DIAG,disp_` family; direct when USB has room, ring otherwise. They supplement `DISP`, which stays paint-driven and
+note-counter-gated: a frozen window raises no `DISP` row by design.
+
 Future long-loop overview strip: binary presence bins per segment (cheap), not full note list per frame — see `openspec/changes/long-loop-piano-roll-window/`.
 
 ---

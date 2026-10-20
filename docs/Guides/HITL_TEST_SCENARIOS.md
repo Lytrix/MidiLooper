@@ -274,6 +274,18 @@ Loop must be **> 16 bars** for bounded detailed window.
 requires the `Edit session: NOTE_EDIT` ack to enter and the `Edit session: LOOP_EDIT` ack to exit.
 `--long-press-ms` is accepted but unused by the overlay exit.
 
+The freeze / snap / hold terms read **two** row families, merged in device-time order: `#CAP,DISP` (paint-driven) and
+`#CAP,DIAG,disp_window` (the window owner's transition rows, `DEC-149`). The second is what makes a frozen window visible
+at all — a window that keeps painting the same content raises no `DISP` row by design. Two bracket rules follow from the
+device behaviour and are pinned by host tests:
+
+- **The freeze ends at the snap gesture**, the play/stop button's note-on — not at the `Detailed window centered on
+  playhead` line. The button is held ~3 s before the long press fires, and the window follows while it is held, so a
+  bracket running to the long-press line measures the hold as freeze drift.
+- **The entry sample may sit on either side of the `Edit session:` ack** (device stamp vs a 10 ms-delayed MIDI ack). A
+  pre-marker row is used only as an entry anchor, and only when it already belongs to the overlay's own display state; a
+  bar-band row from earlier playback is not an entry sample.
+
 Host unit test: `scripts/test_long_loop_display_serial_verify.py`.
 
 ### `edit_full` / `edit_minimal`

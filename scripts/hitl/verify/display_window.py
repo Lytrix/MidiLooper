@@ -41,11 +41,73 @@ def extract_disp_window_rows(lines: list[str]) -> list[dict[str, object]]:
                     "window_start": int(parts[11]),
                     "window_bars": int(parts[12]),
                     "window_note_count": int(parts[13]),
+                    "note_session_open": None,
+                    "edit_session": None,
+                    "source": "disp",
                 }
             )
         except ValueError:
             continue
     return rows
+
+
+_DISP_WINDOW_TRANSITION_TAG = ",DIAG,disp_window,"
+
+
+def extract_disp_transition_rows(lines: list[str]) -> list[dict[str, object]]:
+    """Parse the display window's **transition receipts** (`DIAG,disp_window`) into the DISP-shaped row.
+
+    `SC_DISP` is raised from the paint path and gated on note counters, so a window that keeps painting the *same*
+    content raises nothing: the 2026-10-20 ten-run campaign produced a fully green lane run whose drained set held no
+    `state=PLAYING` `DISP` row at all. The receipt is raised by the window owner on every **change** of what the display
+    holds — track state, edit-session mode, loop length, window start, window bars — so it answers the freeze / snap /
+    hold brackets from the same fields with at most one row per transition instead of one per frame.
+
+    Wire form: `#CAP,<us>,DIAG,disp_window,t=<track>,s=<slot>,st=<state>,ed=<0|1>,es=<session>,len=<ticks>,w=<start>,b=<bars>`.
+    `frame_notes`/`window_note_count` are reported as `0` on purpose: this family carries interval metadata, not counts,
+    and the count-based readiness check (`verify_follow_window_readiness`) keeps reading `DISP` only.
+    """
+    rows: list[dict[str, object]] = []
+    for line_index, line in enumerate(lines):
+        if _DISP_WINDOW_TRANSITION_TAG not in line:
+            continue
+        fields: dict[str, str] = {}
+        for token in line.split(","):
+            name, sep, value = token.partition("=")
+            if sep:
+                fields[name.strip()] = value.strip()
+        try:
+            rows.append(
+                {
+                    "line_index": line_index,
+                    "timestamp": int(line.split(",")[1]),
+                    "slot": int(fields["s"]),
+                    "state": fields["st"],
+                    "loop_len": int(fields["len"]),
+                    "frame_notes": 0,
+                    "window_start": int(fields["w"]),
+                    "window_bars": int(fields["b"]),
+                    "window_note_count": 0,
+                    "note_session_open": int(fields.get("ed", -1)),
+                    "edit_session": int(fields.get("es", -1)),
+                    "source": "disp_window",
+                }
+            )
+        except (KeyError, IndexError, ValueError):
+            continue
+    return rows
+
+
+def extract_all_window_rows(lines: list[str]) -> list[dict[str, object]]:
+    """Both row families, in **device-time order**.
+
+    The families are emitted by different owners (paint path vs window owner), so a drained capture interleaves them in
+    delivery order, not production order. Every bracket below is decided on device time, which is the same comparison the
+    device makes; ordering the merged list by `(timestamp, line_index)` keeps "the row before" meaning "the earlier one".
+    """
+    rows = extract_disp_window_rows(lines) + extract_disp_transition_rows(lines)
+    return sorted(rows, key=lambda row: (int(row["timestamp"]), int(row["line_index"])))
+
 
 
 def _line_index(lines: list[str], needle: str, *, after: Optional[int] = None) -> Optional[int]:
@@ -68,13 +130,15 @@ def _line_index_any(
 
 
 def _rows_between(rows: list[dict[str, object]], start: int, end: Optional[int]) -> list[dict[str, object]]:
+    """Rows whose stream position fell inside a phase. Collected without an early break: the merged row list is in
+    device-time order, so a stream-position bracket is a *fallback* and must not depend on the list's ordering."""
     out: list[dict[str, object]] = []
     for row in rows:
         idx = int(row["line_index"])
         if idx <= start:
             continue
         if end is not None and idx >= end:
-            break
+            continue
         out.append(row)
     return out
 
@@ -222,7 +286,7 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
     hold_track_ms = int(getattr(args, "hold_track_ms", 4000) or 4000)
     expected_loop_len = record_bars * TICKS_PER_BAR
 
-    rows = extract_disp_window_rows(lines)
+    rows = extract_all_window_rows(lines)
     long_loop_rows = [row for row in rows if int(row["loop_len"]) > bounded_threshold]
 
     if not long_loop_rows:
@@ -243,16 +307,42 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
 
     snap_anchor = snap_idx if snap_idx is not None else enter_idx
 
+    # The snap **gesture** starts at the play/stop button's note-on, three seconds before the long press fires: while the
+    # button is held the window follows by design (`shouldAutoFollowDetailedWindow` includes `isPlayStopButtonHeld()`).
+    # The freeze bracket therefore ends where the gesture begins, not where the long press is detected; the 2026-10-20
+    # rerun made the difference visible (window 4546 held through NOTE_EDIT, 6144 once the button went down).
+    gesture_idx = _line_index(lines, "Button Processor: Ch16 Note40 ON", after=enter_idx)
+
     if enter_idx is not None and snap_anchor is not None:
-        freeze_end_idx = snap_idx
+        freeze_end_idx = gesture_idx if gesture_idx is not None else snap_idx
         if freeze_end_idx is None and snap_from_marker:
-            freeze_end_idx = _line_index(
-                lines, "Button Processor: Ch16 Note40 ON", after=enter_idx
-            )
-        freeze_rows = _phase_rows(rows, lines, enter_idx, freeze_end_idx)
-        if len(freeze_rows) < 1:
-            # SC_DISP_WINDOW emits on display deltas only — sample bounded rows near NOTE_EDIT.
-            freeze_rows = _phase_rows(long_loop_rows, lines, enter_idx, snap_idx)
+            freeze_end_idx = gesture_idx
+        freeze_inside = _phase_rows(rows, lines, enter_idx, freeze_end_idx)
+        # The entry sample sits **at or before** the enter marker: the window owner's receipt for the mode change is
+        # emitted on the device's own clock, and the `Edit session: NOTE_EDIT` acknowledgement the marker follows lands
+        # ~10 ms later (the MIDI ack carries a 10 ms delay) — so the entry row can fall on either side of the marker.
+        # It is only a **fallback** when nothing landed inside: the last row before the marker can be a bar-band row
+        # from up to a bar earlier (2026-10-20 rerun: 3851 at 108.4 s, 4401 at the 109.9 s entry), and comparing it with
+        # the entry row would read ordinary playback drift as freeze drift.
+        freeze_before = _rows_up_to(rows, lines, enter_idx)
+        if not freeze_inside:
+            freeze_anchor = freeze_before[-1:]
+            if freeze_anchor:
+                warnings.append("freeze_window_rows:entry_anchor_only")
+        elif freeze_before and freeze_before[-1].get("note_session_open") is not None and (
+            freeze_before[-1].get("note_session_open"),
+            freeze_before[-1].get("edit_session"),
+        ) == (
+            freeze_inside[0].get("note_session_open"),
+            freeze_inside[0].get("edit_session"),
+        ):
+            # The row before the marker is the overlay's own entry sample (same display state as the bracket): it is
+            # the window as it was when the overlay opened, so a move between it and the next row is drift.
+            freeze_anchor = freeze_before[-1:]
+        else:
+            # A row from the pre-entry state (a bar-band row from earlier playback) is not an entry sample.
+            freeze_anchor = []
+        freeze_rows = freeze_anchor + freeze_inside
         if len(freeze_rows) < 1 and "phase:freeze_wait_end" in phase_markers:
             freeze_rows = _rows_up_to(long_loop_rows, lines, enter_idx)[-3:]
             if freeze_rows:
@@ -272,7 +362,10 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
                     break
 
     if snap_idx is not None and enter_idx is not None:
-        freeze_rows_for_snap = _phase_rows(rows, lines, enter_idx, snap_idx)
+        # The snap must leave the **frozen** position: during the gesture's hold the window already tracks the playhead,
+        # so comparing against the row just before the snap line would measure the hold, not the snap.
+        freeze_rows_for_snap = (_rows_up_to(rows, lines, gesture_idx) if gesture_idx is not None
+                                else _phase_rows(rows, lines, enter_idx, snap_idx))
         after_snap_rows = _phase_rows(rows, lines, snap_idx, None)
         if freeze_rows_for_snap and after_snap_rows:
             last_freeze_start = int(freeze_rows_for_snap[-1]["window_start"])
@@ -349,6 +442,10 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
         "warnings": warnings,
         "disp_window_row_count": len(rows),
         "long_loop_disp_row_count": len(long_loop_rows),
+        "disp_window_transition_row_count": len(
+            [row for row in rows if row.get("source") == "disp_window"]
+        ),
+        "playing_bounded_window_rows": len(playing_rows),
         "enter_note_edit_line": enter_idx,
         "snap_line": snap_idx,
         "hold_start_line": hold_start_idx,

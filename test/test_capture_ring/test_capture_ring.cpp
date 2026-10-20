@@ -440,6 +440,12 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                            "the named overrun row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap_overrunx,1"),
                             "and a longer subtag is not swept in");
+  // Task 6.4: the **display window's transition receipt** is raised under transport like the rows above (a frozen window
+  // reports itself while the track plays), so the ring's shed path must not take the only copy that says what the display
+  // held. It is classified by the header's `DIAG,disp_` family, which this pins through the production predicate.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,disp_window,t=7,s=3,st=PLAYING,ed=1,es=1,len=18432,w=1536,b=16"),
+      "the display window's transition receipt survives the timing-critical flush");
   // ...and task 3.15g: the frozen Record-return receipt now carries the root-return adoption diagnostics, so it must
   // survive the timing-critical flush like the family it appends to.
   TEST_ASSERT_TRUE_MESSAGE(

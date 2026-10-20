@@ -614,6 +614,29 @@ SC_MEM_ATTR void displaySnapshotWindow(uint8_t slot, const char* trackState, uin
                                        size_t sourceEventCount, size_t visualNotes, size_t frameNotes,
                                        size_t bufferEvents, int hasCommittedPasses, uint32_t windowStartTick,
                                        uint8_t windowBars, size_t windowNoteCount);
+/** The **detailed display window**'s transition receipt (`DIAG,disp_window`) — one row per **change** of the window the
+ *  display holds, never one per frame and never per painted note.
+ *  Why it exists: `SC_DISP` / `SC_DISP_WINDOW` are raised from the paint path and gated on note counters
+ *  (`DisplayManager::maybeEmitDisplayCaptureOnChange`), so a frame that keeps repainting the *same* content raises
+ *  nothing — and a frozen window is exactly that case. Task 6.4's ten-run campaign measured the consequence: a fully
+ *  green lane run whose drained set carried **no** `state=PLAYING` `DISP` row at all (448 rows: 444 `RECORDING`, 4
+ *  `STOPPED`), so the long-loop leg's freeze / snap / hold brackets had nothing to read. This family is raised by the
+ *  window owner itself (`DisplayManager::observeDetailedWindowTransition`), so it exists whether or not a paint happens.
+ *  It is **not** a second content representation and **not** a `DISP` stream: it carries interval metadata only.
+ *  Wire form: `DIAG,disp_window,t=<track>,s=<slot>,st=<trackState>,ed=<noteSessionOpen 0|1>,es=<EditSessionType>,`
+ *  `len=<loopLengthTicks>,w=<windowStartTick>,b=<windowBars>`.
+ *  `ed` is `EditManager::isNoteEditActive()` and `es` the edit-session the mode cycle is in (0 loop, 1 note, 2
+ *  control-change); together they name **what the display is showing**, so entering or leaving the NOTE_EDIT overlay is
+ *  itself a transition — the anchor a freeze bracket needs. `w`/`b` are the window the display holds for `s` (the values
+ *  the next paint resolves from), read from the display's own state, so the row reports the window even when nothing
+ *  repaints.
+ *  Delivery follows `readinessReceiptImmediate`'s two rules — written directly when USB has room, enqueued on the ring
+ *  otherwise — because the row is raised under transport, where the ring is retained by design and a merely enqueued
+ *  Tier-A row arrives only after the stop. */
+SC_MEM_ATTR void displayWindowTransition(uint8_t track, uint8_t slot, const char* trackState,
+                                        uint8_t noteSessionOpen, uint8_t editSession,
+                                        uint32_t loopLengthTicks, uint32_t windowStartTick,
+                                        uint8_t windowBars);
 /**
  * Visual cache coverage at a pass-lifecycle or rebuild boundary. Distinguishes committed
  * content loss from cache under-coverage: `events` is the gathered committed event count when
@@ -860,6 +883,9 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                       wNotes) \
   DebugSessionCapture::displaySnapshotWindow(slot, state, loopLen, take, visual, frame, buffer, \
                                              hasCommittedPasses, wStart, wBars, wNotes)
+#define SC_DISP_WINDOW_TRANSITION(track, slot, state, noteSessionOpen, editSession, loopLen, wStart, wBars) \
+  DebugSessionCapture::displayWindowTransition(track, slot, state, noteSessionOpen, editSession, loopLen, \
+                                               wStart, wBars)
 #define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
                   dirtyFlag) \
   DebugSessionCapture::visualCacheState(phase, events, notes, firstBar, lastBar, totalBars, \
@@ -1010,6 +1036,8 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_DISP(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses) ((void)0)
 #define SC_DISP_WINDOW(slot, state, loopLen, take, visual, frame, buffer, hasCommittedPasses, wStart, wBars, \
                       wNotes) \
+  ((void)0)
+#define SC_DISP_WINDOW_TRANSITION(track, slot, state, noteSessionOpen, editSession, loopLen, wStart, wBars) \
   ((void)0)
 #define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
                   dirtyFlag) \

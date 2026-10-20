@@ -155,6 +155,11 @@ private:
     void resizeLiveDisplayNotesNoGrow(size_t requestedCount);
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                          const DisplayNoteVec& frameNotes);
+    /// The detailed display window's **transition** receipt: sampled from `update()` (not from the paint path), one row
+    /// per change of what the display holds -- track, slot, track state, edit-session mode, loop length, window start and
+    /// window bars. It exists because `SC_DISP` is paint-driven and gated on note counters, so a window that stays put
+    /// raises no row (task 6.4's ten-run campaign: a green lane run with no `state=PLAYING` `DISP` row at all).
+    void observeDetailedWindowTransition();
     const DisplayNoteVec& resolvedPaintNotes() const;
     void runPaintResolvePhase(uint32_t now);
     void runPaintDrawPhase();
