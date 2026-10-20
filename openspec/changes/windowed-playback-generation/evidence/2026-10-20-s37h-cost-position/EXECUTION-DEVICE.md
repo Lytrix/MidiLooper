@@ -84,10 +84,13 @@ stop-seam discards that the prior runs also show — 26 and 32 — not refusals.
   verifier's pre-existing `capture_evidence_ring_intact` gate), and the transition rows were evicted; the receipts
   above are the same events from the finer `win_frozen_readiness` family.
 - **No transport-scoped verdict.** Every verifier transport check reads `under_transport=0` because this run's log
-  carries no `Transport started` line: that marker is logged only by the **button** path (`ClockManager::toggleTransport`),
-  never by the external-clock path (`onMidiStart`/`onMidiStop`), so a host-clock run has no transport intervals at all.
-- **No switch leg.** A host-clock run ends the capture at the record stop ("neither a switch leg nor a drain belongs
-  here"), so `switch_target_span_alignment` has no target rows to read by design.
+  carries no `Transport started` line: that marker was logged only by the **button** path
+  (`ClockManager::toggleTransport`), never by the external-clock path (`onMidiStart`/`onMidiStop`), so a host-clock run
+  has no transport intervals at all. **Fixed in the same slice** — see the `-04` run below.
+- **No switch leg in this run.** The leg ended the capture at the record stop ("neither a switch leg nor a drain belongs
+  here") because the transport was reported stopped, so `switch_target_span_alignment` had no target rows to read. This
+  is a leg state, not a host-clock rule: the `-04` run on the same preset and take kept the transport and ran the switch
+  leg normally.
 - The frame goes `win_blocked` at 142.46 s, **after** the transport stops (the host teardown).
 
 ## Second device run — `captures/i5-s37h-device-32bar-02` (device clock, transport-scoped)
@@ -154,12 +157,50 @@ So the missing button markers are a **measurement** detail of the host-clock leg
 already writes; no firmware slice is needed to read it. If a future host-clock leg should score transport-scoped gates
 automatically, the two-line durable fix is to log the transport edges from `onMidiStart`/`onMidiStop` too.
 
-## Verifier result (both runs)
+## Transport markers on the external-clock path — `captures/i5-s37h-host-clock-04`
 
-`captures/i5-s37h-device-32bar-01/…json` (host clock, known 90 BPM): `window_demand_observed` **ok** and
-`capture_evidence_ring_intact` **fail** (`tier_a_evicted=1`, pre-existing) as reported by the run; re-judged above from
-the same capture, three of the five transport-scoped checks are **ok**, `switch_target_span_alignment` is not
-applicable by design, and the overrun row is the named host-clock artifact.
+The durable fix is two lines and changes no behaviour: `ClockManager::onMidiStart` and `onMidiStop` now write the same
+`Transport started` / `Transport stopped` markers the button path writes — after the tick-0 alignment and the track
+fan-out in the one, after the stop fan-out in the other, i.e. exactly where `toggleTransport` writes them. The verifier
+therefore reads the edge the firmware itself acts on (`sequencerRunning`), not a proxy derived from clock-source
+transitions. No DEC: no schema, tier, ownership or lifecycle change, and the message text is the existing one, so every
+host parser that looks for these lines sees a real edge instead of a button press. Both builds SUCCESS with RAM1
+unchanged (default `variables 96 192 / code 392 216 / padding 1 000`; qualification `96 192 / 392 376 / 840` — the floor,
+0 B of ITCM); full native **3352 / 7 skipped / 3345 succeeded**.
+
+Same preset, same 32-bar take, same host clock at 90 BPM, image `eace974f…` (this slice's qualification build; the run's
+`metadata.json` records `git_dirty: true` because the commit followed the run). Record stop **113.689 s**, `RECS,stop` →
+**24 576 = 32 × 768**.
+
+| Check | `-04` (host clock, 90 BPM) |
+|---|---|
+| `readiness_receipts_under_transport` | **ok** — 30/30 under transport, 32 source-qualified of 261 |
+| `windowed_service_coverage_under_transport` | **ok** — 546 opportunities |
+| `no_windowed_overrun_under_transport` | **ok** — 0 rows |
+| `switch_target_span_alignment` | **ok** — `t=7 s=4 len=18432` |
+| `window_boundaries_crossed_under_transport` | **ok** — 490 completions |
+| `capture_evidence_ring_intact` | **fail** — `RING,tier_a_evicted,41,first=192.35 s` (pre-existing ring budget) |
+
+Markers: `Transport started` **7.940 s** (the boot/clear leg's play press) → `Transport stopped` **342.618 s**
+(teardown) — one interval, with the take's playback (116.32 → 126.99 s) inside it. Unlike `-01` this run kept the
+transport through the record stop, so the switch leg ran: the take adopts **5** consecutive one-bar boundaries, and all
+**13** `handoff_unreachable`/`win_repositioned` rows are on `t=7 s=4` — the 24-bar switch target (`len=18432`) whose loop
+cannot hold the priced lead — ending in `win_blocked_by_budget`. The same contract split the device-clock run shows, now
+readable on the known clock.
+
+The ring evictions begin at 192.35 s, after the take and the switch, during the 170 s settle; every row the five green
+checks read precedes them. The `no_windowed_overrun_under_transport` row that `-01` carried at 42.08 s did not recur
+here, which is consistent with it being a record-start stall rather than a view advance.
+
+## Verifier result (all three runs)
+
+`captures/i5-s37h-device-32bar-01/…json` (host clock, known 90 BPM, **before** the marker fix): `window_demand_observed`
+**ok** and `capture_evidence_ring_intact` **fail** (`tier_a_evicted=1`) as reported by the run; re-judged above from the
+same capture, three of the five transport-scoped checks are **ok**, `switch_target_span_alignment` is absent because the
+leg ran no switch, and the overrun row is the named host-clock artifact.
+
+`captures/i5-s37h-host-clock-04/…json` (host clock, known 90 BPM, **with** the marker fix): all five transport-scoped
+checks **ok**, `window_demand_observed` **ok**, `capture_evidence_ring_intact` **fail** (`tier_a_evicted`, pre-existing).
 
 `captures/i5-s37h-device-32bar-02/…json` (device clock): five of six lane checks **ok** (table above), with the same
 pre-existing ring gate the only failure.

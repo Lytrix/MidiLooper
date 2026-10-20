@@ -909,14 +909,21 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   `handoff_unreachable`/`win_repositioned` rows in that run are on the **24-bar switch target** (`len=18432`), whose loop
   cannot hold the priced lead by construction: the contract's second clause, on device, on the slot it was written for.
   **3.7d stays open:** no demand reached a terminal term while playing (the take's frame blocks only when the switch
-  selects the other slot). The host-clock leg is **judgeable from its own capture** without a rerun: the external-clock
-  path (`ClockManager::onMidiStart`/`onMidiStop`) logs its clock edges instead of the button path's transport lines, and
-  re-judging `-01` on `External MIDI clock detected` (40.744 s) → `MIDI clock lost` (184.079 s) gives the same picture as
-  `-02` — 32/32 readiness receipts under transport (18 source-qualified), 555 service opportunities, 511 boundary
-  completions — with the device's own `running=1` `win_gap` rows continuous 42.08 → 183.31 s and no stopped turn between
-  the first and last qualified receipt. The one red transport check is the pre-existing host-clock overrun row at
-  42.08 s (`permitted=64`, `overrun_max=72`, record leg's first service turn; identical in `-03`, absent on both
-  device-clock runs), so the marker gap is a measurement note rather than an open firmware item. Evidence:
+  selects the other slot). **The host-clock leg's missing transport marker is fixed, not merely explained:** `ClockManager::onMidiStart` and
+  `onMidiStop` now write the same `Transport started`/`Transport stopped` lines the button path writes — after the tick-0
+  alignment and the track fan-out in the one, after the stop fan-out in the other — so the verifier reads the edge the
+  firmware acts on (`sequencerRunning`) instead of a clock-source proxy. No behaviour change and no new schema or tier:
+  both builds SUCCESS with RAM1 unchanged (qualification `392 376 + 840`, the floor), full native **3352 / 7 skipped /
+  3345 succeeded**. `captures/i5-s37h-host-clock-04` (same 32-bar take, host clock 90 BPM, image `eace974f…`, record stop
+  113.689 s, `RECS,stop` → 24 576) scores **all five** transport-scoped checks green — 30/30 readiness receipts under
+  transport (32 source-qualified of 261), 546 service opportunities, 490 boundary completions, the switch target
+  span-aligned (`t=7 s=4 len=18432`), no overrun — with only the pre-existing `tier_a_evicted` ring gate red. Markers:
+  `Transport started` 7.940 s → `Transport stopped` 342.618 s, with the take's playback (116.32 → 126.99 s) inside; the
+  take adopts 5 consecutive one-bar boundaries and all 13 `handoff_unreachable`/`win_repositioned` rows are on the 24-bar
+  switch target. Before the fix the same leg was unjudgeable; re-reading `-01` from the external-clock edges
+  (40.744 s → 184.079 s) had given the same picture (32/32 receipts, 555 opportunities, 511 completions), which is the
+  measurement that justified the two lines. The overrun row `-01` carried at 42.08 s did not recur, consistent with it
+  being a record-start stall rather than a view advance. Evidence:
   [`s37h-cost-position`](evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md).
 - [ ] 3.7i **A `Bound` launch is the playing slot's window; the provision owner must not cancel it** (`DEC-154`) —
   landed 2026-10-20 as 3.7f's evidence blocker. Device `captures/i5-s37f-device-32bar-01` measured the interleaving: the

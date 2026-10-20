@@ -349,12 +349,18 @@ CLOCK_COLD_MEM void ClockManager::onMidiStart() {
   }
 
   trackManager.updateAllTracks(currentTick);
+  // The external transport edge writes the same marker the button path writes (`toggleTransport`). The lane
+  // verifier derives its transport intervals from these two lines, so without this a capture paced by an
+  // external clock -- the HITL host-clock leg -- carries no interval at all and every transport-scoped check
+  // reads zero. Logged after the tick-0 alignment and the track fan-out, exactly where the button path logs it.
+  logger.info("Transport started");
 }
 
 void ClockManager::onMidiStop() {
   sequencerRunning = false;
   firstPulseAfterStart = false;
   RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE();
+  logger.info("Transport stopped");
 }
 
 void ClockManager::handleMidiClock() {
