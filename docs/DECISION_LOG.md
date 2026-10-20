@@ -8568,3 +8568,58 @@ The undo/redo edge owed a *request* for currency (3.14c), and the request alread
 
 ### Evidence
 [`evidence/2026-10-20-s314c-publication-owner-request/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s314c-publication-owner-request/EXECUTION.md) — the window carries the overlay before the undo (10 effective events, served) and exactly the post-undo effective content afterwards (6, the still-active batch included), measured through the real `undoForLoop` edge on a root the owner built; three red-proofs (no request / pending publication left in place / rebuild downgraded to incremental) failing at their own named assertions with sources restored byte-identically; host **221/221** (baseline confirmed at 221 on the stashed tree), full native **3338 / 7 skipped / 3331 succeeded**, target build SUCCESS with RAM1 `variables 96,192` / `code 392,216` / `padding 1,000` unchanged. `adoptNewInventoryRowsInto` is review-driven and **not** fixture-covered (the interleaving needs a live stop immediately after an undo); its absence would be caught by the coverage rule, not by a test.
+
+## DEC-151 — `DMAMEM` gate-row dedupe state proves "written" with a magic, never with a member initialiser
+
+**Date:** 2026-10-20
+**Owner:** `Track::reportPlaybackLaunchGateRow` / `Track::reportPlaybackRollingGateRow`; the state is
+`GateRowLastState::LaunchState` / `RollingState` (`include/Utils/GateRowLastState.h`).
+**Status:** Accepted and implemented — new native suite **5/5** with a byte-identical red-proof, full native
+**3343 / 7 skipped / 3336 succeeded**, both target builds SUCCESS with RAM1 unchanged, and the device leg re-run (no
+reboot; the target's launch rows emitted).
+**Follows:** DEC-121 (the same class in the capture journal — "static field initializers therefore do not initialize"
+`.bss.dma`), and 5.3's sampler arming, which used the same written-magic rule for the receipt.
+**Supersedes:** nothing.
+
+### Problem
+Both gate rows are transition records: they keep their last emitted state in `DMAMEM` and compare `exit` **by content**
+(`std::strcmp`) so an unchanged row is not re-emitted. `DMAMEM` places the tables in `.dmabuffers`, which the Teensy core
+linker script collects into `.bss.dma (NOLOAD)`; the section has no initial image and `startup.c` clears only ordinary
+`.bss`. The members' `= nullptr` / `= 0` initialisers are therefore declarations, not boot-time behaviour, and the null
+check on `exit` read stale OCRAM. Measured 2026-10-20, four of four queued switches on two images: a slot switch
+prepares its launch through `preparePlaybackLaunchForSlot` — the **first** row for that (track, slot) of the boot — and
+`strcmp` dereferenced `0xD2E3A540`: DACCVIOL, `PC 0x59768` (`strcmp`), auto reboot. The switch is the registered leg's
+demand, so the same defect also blocked 3.7d's owed device read. The rolling table carries the same defect behind a
+stale `seen` byte, which is why the first `win_gate` row of a boot could fault too.
+
+### Decision
+1. "Never written" is proven by a **written magic**, one per table, compared before any other field (`'LGL1'`, `'RGL1'`).
+2. A mismatch resets the **whole entry** and stamps the magic; a match leaves the entry untouched. Whole-entry, because
+   a stale `key`/`flags`/`seen` could otherwise *suppress* a first row instead of faulting on it.
+3. The reset is a pure function in a header (`GateRowLastState::ensureInitialized`), so a native fixture owns the shape
+   without stubbing the owner. The tables stay in `DMAMEM` (RAM2); no DTCM flag is added — DEC-121's ordinary-`.bss` flag
+   is the right shape for one global journal and the wrong shape for a per-entry table.
+4. Nothing else changes: same structs in the same place (now aliased from the header), same row tokens, fields and
+   cadence, same decisions.
+
+### Rationale / alternatives
+- **Ordinary-`.bss` "tables initialised" flag (DEC-121's pattern):** sound, but spends RAM1 on state that is per entry
+  anyway, and one row emitted before the flag is set would still fault. Per-entry magic is self-healing and costs RAM2
+  only (**+288 B**: 64 × 4 launch + 8 × 4 rolling).
+- **Move the tables out of `DMAMEM` into ordinary `.bss`:** ~1.2 KB of RAM1 for diagnostic cadence state; rejected on the
+  RAM1 rule.
+- **Compare pointers instead of content:** literals are not guaranteed merged across call sites; that would re-emit rows
+  the cadence exists to suppress.
+
+### Consequences and named limits
+- Any new state placed in `DMAMEM` must prove "written" with a magic (or be cleared by an explicit boot owner); a member
+  initialiser there is documentation only. That generalises DEC-121's rule and is cited from the header.
+- Named limit: the other 48 `DMAMEM` declarations were not audited. Scalar-only state cannot fault this way; pointer
+  members could, and that audit is a separate slice, not this one.
+- Device observation from the fixed leg (recorded, not a claim of this decision): the queued switch still does not commit
+  inside 120 s at 32 bars (`snap_gate,t=7,s=4,a=3`, 450 turns), so 3.7d's read remains owed on the switch-commit path.
+
+### Evidence
+[`evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md)
+and its `EXECUTION-PACKET.md` — the four crash reports and the `!CRASH_LOG` reads, the linker/startup citations, the
+fixture and its red-proof, both builds' RAM1/RAM2 lines, and device runs 06/07.

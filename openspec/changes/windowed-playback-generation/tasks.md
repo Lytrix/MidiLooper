@@ -780,6 +780,23 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   playhead passes 24 bars, and this run's hold sat past it, so the leg's hold term cannot move there
   (`unique_starts=[12288]`). 24 bars stays the leg's configuration.
 
+  *Blocker fixed 2026-10-20 — the switch leg's reboot, not the 3.7d term*
+  ([`s37d-device-switch-crash`](evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md), **DEC-151**). The
+  switch attempt was the demand the leg lacked, and it rebooted the board on **four of four** runs immediately after
+  `Loop 5: Queued playback switch`: `PC 0x59768` (`strcmp`), DACCVIOL at `0xD2E3A540`, `boot_reset,crash=1`. Both
+  gate-row dedupe tables (`sLaunchGateLast` per (track, slot), `sRollingGateLast` per track) keep their `exit` pointer
+  in `DMAMEM`, i.e. `.bss.dma (NOLOAD)`, where member initialisers are never applied — the launch row's first call for
+  a switched-to slot therefore compared stale OCRAM as a C string. Fixed by a **written magic per entry**
+  (`include/Utils/GateRowLastState.h`), pinned natively by `test_gate_row_last_state` **5/5** (red: guard disabled →
+  **5 failed**, header restored byte-identically) with full native **3343 / 7 skipped / 3336 succeeded**; both builds
+  SUCCESS with RAM1 unchanged (RAM2 **+288 B**). Device runs 06/07 on `fa7197e7…`: **zero** `crash=1` rows and **seven**
+  `launch_gate` rows for `t=7,s=4` (`launch_requested`, `launch_requested_match` ×3, `launch_ready`,
+  `launch_ready_owns_source`, `launch_building_match`). **The read is still owed, now for a second reason:** the queued
+  switch does not commit inside the settle window (`snap_gate,t=7,s=4,a=3` for **450** turns at 120 s, and no
+  `win_gate` for the target), so the target's demand turn never runs — while its preparation does complete
+  (`qualification_started` → `build_admitted` → `completed_unpublished` → `released_without_site`, the same precursor
+  the 2026-10-19 episode showed 87 µs before its `win_blocked_by_request`).
+
   ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
   the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
   hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root

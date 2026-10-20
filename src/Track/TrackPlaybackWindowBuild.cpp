@@ -19,6 +19,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/TelemetryCadence.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/GateRowLastState.h"
 #include "Utils/PlaybackSourceReadGuard.h"
 // Task 3.7a (I7): the retained revision's own Active Note note-edit rows are resolved per layer, through the shipped
 // owner of that rule (`applyNoteEditPassSequence`), never re-stated here.
@@ -7601,13 +7602,10 @@ namespace {
 /// The launch gate row's **last emitted state** for one (track, slot) target: the row is a *transition* record, so a
 /// pending switch that sits on the same exit for hundreds of deferred turns costs one row while every move is still
 /// named (a row per turn would evict the evidence it explains -- the reason `TelemetryCadence` exists for the readiness
-/// receipt). `DMAMEM` on the target is RAM2: off-clock state, read by the deferred-idle turn alone, never DTCM.
-struct LaunchGateLastState {
-  const char* exit = nullptr;
-  uint32_t loopLengthTicks = 0;
-  uint16_t flags = 0;
-  uint8_t launchPreparation = 0;
-};
+/// receipt). `DMAMEM` on the target is RAM2: off-clock state, read by the deferred-idle turn alone, never DTCM -- and
+/// `.bss.dma` is NOLOAD, so "never written" is proven by `GateRowLastState`'s written magic, never by an initialiser
+/// (`Utils/GateRowLastState.h` carries the measured episode).
+using LaunchGateLastState = GateRowLastState::LaunchState;
 
 constexpr size_t kLaunchGateSlotCount = Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK;
 #if defined(__IMXRT1062__)
@@ -7648,6 +7646,9 @@ TRACK_COLD_MEM void Track::reportPlaybackLaunchGateRow(uint8_t slotIndex, const 
   if (sourceRequestAccepted) flags |= 1u << 11;
   const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
   LaunchGateLastState& last = sLaunchGateLast[static_cast<size_t>(trackIndex) * Config::MAX_LOOPS_PER_TRACK + slotIndex];
+  // `DMAMEM` is NOLOAD: `exit` is stale until this entry is written, so the first row for a (track, slot) of the boot
+  // resets it before the compare (`Utils/GateRowLastState.h`; a switch to an unwritten slot rebooted the device).
+  (void)GateRowLastState::ensureInitialized(last, GateRowLastState::kLaunchMagic);
   // The token is compared by **content**, not by pointer: the same exit is named from more than one place, and literal
   // merging is not a contract. Bounded, off-clock work on a deferred turn.
   if (last.exit != nullptr && std::strcmp(last.exit, exit) == 0 && last.loopLengthTicks == loop.loopLengthTicks &&
@@ -7800,14 +7801,7 @@ namespace {
 /// `bit 14` (outstanding grains) is printed as context but is **not** part of the change key: it is a progress counter,
 /// not a decision, and keying on it would turn one state into a row per grain. `DMAMEM` is RAM2: off-clock state read
 /// by the lane turn alone, never DTCM.
-struct RollingGateLastState {
-  uint16_t key = 0;
-  uint8_t slot = 0;
-  uint32_t loopLengthTicks = 0;
-  uint8_t requestResult = 0;
-  const char* exit = nullptr;
-  bool seen = false;
-};
+using RollingGateLastState = GateRowLastState::RollingState;
 
 constexpr size_t kRollingGateTrackCount = Config::NUM_TRACKS;
 /// The bits whose change is a change of the **decision**. `coverageRoleAvailable` (10), `ownsCoverageSource` (11),
@@ -7898,6 +7892,9 @@ TRACK_COLD_MEM void Track::reportPlaybackRollingGateRow(const char* exit, bool c
   const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
   if (trackIndex >= kRollingGateTrackCount) return;
   RollingGateLastState& last = sRollingGateLast[trackIndex];
+  // `seen`, the key and `exit` are stale in `DMAMEM` until the entry is written; a stale non-zero `seen` with a
+  // matching key used to reach the same `strcmp` (`Utils/GateRowLastState.h`).
+  (void)GateRowLastState::ensureInitialized(last, GateRowLastState::kRollingMagic);
   const uint16_t key = static_cast<uint16_t>(flags & kRollingGateChangeKeyMask);
   // The token is compared by **content**, not by pointer, and the key is the *decision* (the exit token, the length the
   // deciding terms read, the request's ordinal and the deciding bits) rather than every printed field. Bounded,
