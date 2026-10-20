@@ -2260,7 +2260,7 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   tempo is swept only through the declared advance (not other tempos), chords/same-tick density are not swept, the
   device leg is not run, and no single configuration is presented as the acceptance — see
   [`hk-contention-sweep`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).
-- [ ] 6.4 Add a dedicated **windowed HITL profile** through the existing content-verification pipeline (canonical
+- [x] 6.4 Add a dedicated **windowed HITL profile** through the existing content-verification pipeline (canonical
   stimuli preserved, never edited to chase a condition) — verify the profile is registered, authorized and used for the
   F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
   rolling implementation; registration, authorization, exercise and successful qualification remain distinct
@@ -2304,6 +2304,15 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   fails), neighbours **57/57**, `test_capture_ring` 38/38 with the Tier-A pin, full native **3 338 / 7 skipped /
   3 331 succeeded**; default `code 392,216 + padding 1,000` (baseline-identical) and lane `392,376 + 840` (floor). **6.4's
   checkoff stays a separate judgement** — this supplies the leg half only; 3.7d's device read and 4.5 stay open.
+  *Checked off 2026-10-20.* Every term of the 6.4 four-term table is judged, and the profile half is now repeatable:
+  the registered `windowed_content_parity` preset (track 8 / slot 4 / channel 8, 24 bars) is registered, authorized and
+  used, and it passed **three consecutive combined greens on one boot** (runs 03/04/05, image `3ef153c5…`) with
+  `readiness_receipts_under_transport` 24–25/24–25 under transport, `windowed_service_coverage_under_transport` 59–448
+  blocks with opportunities, `window_boundaries_crossed_under_transport` 32–395 `build_complete` at `loop_len 768`,
+  `overrun_rows=0`, ring intact (`critical_evidence_loss_rows=0`) and the snapshot checks green. F-7's parity **verdict**
+  and F-8's residency **figure** are read by their owners and both have since landed (4.3 `PASS`, 4.4 sweep); the lane's
+  `oracle_complete: false` envelope is unchanged by construction and is not read as F-7/F-8 qualification. What remains
+  outside 6.4 is named separately: 3.7d's device read and 4.5's 3.14c / displayed-provenance / device leg.
 
 
 - [x] 6.4a Stage the I5 rolling-Record HITL into short, independently drivable managed passes without weakening 6.4 or 3.15f.
