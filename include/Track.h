@@ -274,6 +274,34 @@ public:
   bool hasPendingPlaybackViewMaintenance() const;
   enum class RollingOutcome : uint8_t { Disabled, Excluded, Busy, Requested, Waiting, Ready, Serving, Expired, Rejected };
   RollingOutcome serviceRollingPlaybackWindow(PlaybackDeadlineClock clock);
+  /// windowed-playback-generation 3.7e: **why the rolling frame did not adopt a bound launch window.** The seed is a
+  /// silent "no" for every slot that carries no launch at all (the ordinary case), but a slot whose launch exists and
+  /// was *not* adopted is a decided refusal, and a device run must be able to name the term instead of inferring it from
+  /// flags. `win_seed_refused` carries this ordinal in `rq`; `launch_seed_not_bound` carries the launch row's own
+  /// `prep` beside it.
+  ///
+  /// The witness is the **commit's own bind** (`launchBoundTick`), not the handoff view's `launchPreparation`:
+  /// `boundLaunchView` makes the launch's expiry/invalidation sticky by clearing `launchPreparation` while leaving the
+  /// bound view and the bind's tick intact, and that sticky term answers "may the *handoff* still serve this view",
+  /// which is a different question from "did this slot's playback start inside the window the commit bound".
+  enum class LaunchSeedRefusal : uint8_t {
+    Adopted = 0,
+    /// No launch on this slot at all: nothing ever bound this slot's playback to a launch window (the ordinary
+    /// demoted/restored slot). Not reported.
+    NoLaunch = 1,
+    /// A launch exists but is in a **live** preparation this seed cannot read as a window: `Requested`, `Building`,
+    /// `Ready`, `Fallback` or `FallbackBound`. A `Ready` launch here means the switch committed **without binding it**,
+    /// which is the commit-side gap this seed exposes.
+    NotBound = 2,
+    /// The bound window no longer names the loop: slot view role, storage generation, source origin, generation,
+    /// revision, snapshot identity, coverage geometry, or a promise/owner/builder holding the slot.
+    Identity = 3,
+    /// The window names the loop but its coverage does not contain the playhead.
+    Uncovered = 4,
+    /// The playhead has left the traversal the bind named: the window's interval ended before this turn. The next
+    /// traversal covers the same phases from **newer** content, so re-serving this view would be serving a stale read.
+    Expired = 5,
+  };
   struct RollingResolution { RollingOutcome outcome; const RuntimePlaybackView* view; };
   /// The **slot index of a loop this track owns** (`255` when it owns none of them), so a caller that holds a `Loop&`
   /// -- the deferred owners do, through their selectors -- can name it on a row without duplicating the address walk.
@@ -284,6 +312,17 @@ public:
   bool preparePlaybackLaunchForSlot(uint8_t slotIndex);
   bool playbackLaunchReadyForSlot(uint8_t slotIndex) const;
   bool bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick);
+  /// windowed-playback-generation 3.7e — **the rolling frame adopts the launch window it already owns.** A committed
+  /// switch target binds its launch's phase-0 two-bar window (`bindPlaybackLaunchForSlot`) and then starts playback at
+  /// that window's own phase; the rolling frame, however, began `Idle`, so it opened a fresh demand, deferred to source
+  /// qualification and charged a whole-loop build against a rolling span's handoff (device
+  /// `captures/i5-s37d-device-32bar-10`: `win_requested rq=12` -> `handoff_unreachable` x12 -> `win_blocked_by_budget`).
+  /// This seeds the frame to serve the **current** view when -- and only when -- that view's slot, generation, revision,
+  /// snapshot identity and coverage all still name the loop as it is now, so a stale window can never masquerade as
+  /// served. It publishes nothing, builds nothing and cancels nothing; when any identity has moved it names the
+  /// refused term (`LaunchSeedRefusal`) and the lane keeps its ordinary demand path.
+  LaunchSeedRefusal seedRollingFrameFromBoundLaunch(uint8_t slotIndex, uint32_t generation,
+                                                    const PlaybackDeadlineClock& clock, uint32_t phase);
   void cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool includeBound = false);
   /// windowed-playback-generation, the switch leg's launch-path diagnostic: the **launch gate row** for one target
   /// slot and one exit token. Every exit of `preparePlaybackLaunchForSlot` (and the decisions its caller takes before

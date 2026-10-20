@@ -8623,3 +8623,71 @@ stale `seen` byte, which is why the first `win_gate` row of a boot could fault t
 [`evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md)
 and its `EXECUTION-PACKET.md` — the four crash reports and the `!CRASH_LOG` reads, the linker/startup citations, the
 fixture and its red-proof, both builds' RAM1/RAM2 lines, and device runs 06/07.
+
+## DEC-152 — The rolling frame's seed takes the **commit's own bind** (`launchBoundTick`) as its witness, never the handoff view's `launchPreparation`
+
+**Date:** 2026-10-20
+**Owner:** `Track::seedRollingFrameFromBoundLaunch` (`src/Track/TrackPlaybackWindowBuild.cpp`), called from
+`Track::serviceRollingPlaybackWindow`'s idle turn before `playbackViewCoverageContract()`; the bind it reads is written by
+`Track::bindPlaybackLaunchForSlot` (the switch commit ladder's only call site).
+**Status:** Accepted and implemented — native **225/225** focused, full native **3347 / 7 skipped / 3340 succeeded**, host
+`scripts.test_windowed_content_parity_verify` **56/56**, both builds SUCCESS; device run
+`captures/i5-s37e-device-32bar-04` shows `win_adopted_launch` + `win_serving` on the qualification image.
+**Follows:** DEC-147 (the traversal terminal), DEC-116 (one reader per sounding slot), task 3.7c (the active slot's first
+window), task 3.14's source-currency work.
+**Supersedes:** nothing — `boundLaunchView`'s handoff contract, its sticky expiry and DEC-147 are unchanged.
+
+### Problem
+Task 3.7e asked the rolling frame to **adopt** the launch window the switch commit had already bound instead of opening a
+second demand for the same interval. The first implementation gated the seed on
+`launchPreparation == LaunchPreparation::Bound`. That is the *handoff view's* state, and `LoopPlaybackRuntime::boundLaunchView`
+makes its expiry **sticky**: when the bound interval ends, or when its `phase == elapsed` proof fails, it returns `nullptr`
+and sets `launchPreparation = None` while leaving the bound view published and `launchBoundTick` intact
+(`src/Track/TrackPlaybackRuntime.cpp`). The seed therefore refused a window that was still perfectly readable, and the lane
+fell back to the redundant demand the slice exists to remove.
+
+The device evidence for that reading had to be re-taken: the two runs that "showed no seed rows"
+(`captures/i5-s37e-device-32bar-02`, `-03`) executed the **default** image, where `PLAYBACK_WINDOW_ROLLING_ENABLED` is 0
+(`platformio.ini`: only `[env:teensy41-capture-serial-window-qualification]` sets it) — the seed is compiled out there, so
+their silence was never evidence about the seed. On the qualification image the same scenario produced the adopted window
+on the first switch turn.
+
+### Decision
+1. **The witness is the bind, not the preparation.** `launchBoundTick != 0` means this slot's active playback was bound to a
+   launch window by the commit that made it active; that is the fact a rolling frame needs. `launchPreparation == None` is
+   **accepted** by the seed, because it is exactly the sticky handoff term described above.
+2. **A live preparation still refuses by name.** `Requested`, `Building`, `Ready`, `Fallback` and `FallbackBound` return
+   `NotBound` (reported as `win_seed_refused` plus `launch_seed_not_bound`): those are other owners' in-flight work or a
+   commit that bound nothing, not a window this frame may serve.
+3. **The bind names one traversal.** The seed serves only while `clock.tick - launchBoundTick < coverage.lengthTicks`
+   (otherwise `Expired`, a new ordinal). Past that interval the same phases belong to the next traversal, whose content the
+   view does not carry; `coverage.contains(phase)` alone would re-serve it one loop later. This is the seed's read of the
+   same bound `boundLaunchView` states as `elapsed < coverage.lengthTicks`, not a second rule.
+4. **Nothing else moves.** Identity checks are unchanged (storage generation, origin, generation, revision, snapshot
+   identity, coverage geometry, and no promise/owner/builder holding the slot). The seed publishes, builds, cancels and
+   re-positions nothing, and no qualification-build accounting is touched in this slice.
+
+### Rationale / alternatives
+- **Require `Bound` (the first form).** Correct only while the handoff view is unexpired; it cannot see the window the
+  commit bound once `boundLaunchView` has answered its own question, which the device measured 50 ms after the commit.
+- **Relax `boundLaunchView`'s `phase == elapsed` proof instead.** That is DEC-147/DEC-116 territory — a handoff contract
+  shared by every launch consumer — and the slice's instruction was explicitly not to weaken it. The seed has its own,
+  weaker need (position the frame on a view it will serve), so it gets its own witness.
+- **Derive the frame from the view alone (no bind).** A view that is current but was never bound for this slot's playback
+  could be a *preview* or a stale successor; the bind is what says the playhead started inside it.
+
+### Consequences and named limits
+- A bind from an older traversal is refused by the elapsed guard, so a stale window cannot be adopted later in the loop.
+- **Named next RED (not fixed here):** on device the adopted zero-deadline frame serves its two bars and then
+  `win_blocked`s permanently — `resolveRollingPlaybackWindow` rejects a `Serving` frame whose
+  `coverage.contains(phase)` fails and never returns it to `Idle`, so the lane opens no successor span after the adopted
+  window (`captures/i5-s37e-device-32bar-04`: `win_serving` 247.80 s → `win_blocked` 251.79 s, exactly the 2-bar interval).
+  That is the post-adoption route, and it is the next independent slice.
+- **3.7d's device read is now owed for a new reason:** with the seed adopting, the switch route opens **no** rolling demand
+  at all, so `win_blocked_by_request` (a demand's terminal term) cannot appear on it; that read needs a route that still
+  opens a demand (the post-adoption continuation above, or a slot played without a switch).
+
+### Evidence
+[`evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md)
+— the device rows and the image correction, the four native cases with their red/green reading, both builds' lines, and the
+host suite.

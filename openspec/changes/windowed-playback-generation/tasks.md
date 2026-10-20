@@ -840,6 +840,43 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   full-suite/build state (focused 54/54, full native 2685 / 2678 succeeded / 7 skipped / 0 failed,
   `teensy41-capture-serial` SUCCESS) and no red-proof applies to a note; the behavioural half — fair service among
   holders, no starvation — stays **task 3.10's**.
+- [x] 3.7e **Seed the rolling frame from the committed switch target's bound launch window** instead of opening a second
+  demand for the interval it already owns — *"make the rolling frame adopt/seed from that bound launch window when its
+  slot/revision/coverage identity is current"*, with DEC-147 and the handoff-deadline guards untouched.
+  *Landed 2026-10-20 (`DEC-152`).* `Track::seedRollingFrameFromBoundLaunch` takes the **commit's own bind**
+  (`launchBoundTick != 0`) as its witness, not the handoff view's `launchPreparation`: `boundLaunchView` makes its expiry
+  sticky (it clears the preparation and leaves the bound view published), because it answers "may the *handoff* still
+  serve this view", which is a different question from "did this slot's playback start inside the window the commit
+  bound". A live preparation still refuses by name (`NotBound`), a bind whose traversal has ended refuses as `Expired`
+  (new), and the identity/coverage checks are unchanged; `boundLaunchView`, its `phase == elapsed` proof and DEC-147 are
+  untouched, and no qualification-build accounting changed. Four native cases (the commit-shaped positive, **the
+  device's own sticky-handoff shape**, past-interval, stale-identity), the first two red-proved (`Expected 6 (Serving)
+  Was 3 (Requested)`), focused **225/225**, full native **3347 / 7 skipped / 3340 succeeded**, host
+  `scripts.test_windowed_content_parity_verify` **56/56**, both builds SUCCESS with RAM1/RAM2 unchanged.
+  **Device (qualification image, `captures/i5-s37e-device-32bar-04`):** commit at 247.751 s →
+  `win_adopted_launch` 31 ms later with `dm=0` → `win_serving` → `win_blocked` at 251.79 s, exactly the two-bar
+  interval; `win_requested` 0, `handoff_unreachable` 0, `win_repositioned` 0, `win_blocked_by_budget` 0 (the
+  `s37d-device-32bar-10` storm is gone). *Corrected reading:* runs `-02`/`-03` had shown no seed row at all because they
+  ran the **default** image, where `PLAYBACK_WINDOW_ROLLING_ENABLED` is 0 — their byte-identical default hex
+  (`5dbbae91…`) before and after the change proves the seed was compiled out, so their silence was never evidence about
+  the seed. **3.7d stays open for a new reason:** the adopting seed removes the demand from this route, so
+  `win_blocked_by_request` needs 3.7f's continuation (or a slot played without a switch). Detail:
+  [`2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md`](evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md).
+- [ ] 3.7f **Let an adopted frame roll on to its next span** — the post-adoption route (the next independent RED from
+  3.7e). Device `captures/i5-s37e-device-32bar-04`: a `Serving` zero-deadline frame reaches the end of its two-bar
+  coverage and `resolveRollingPlaybackWindow` rejects it (`coverage.contains(phase)` fails) into `Blocked`, where it
+  stays for the rest of the slot's playback — so the lane opens no successor span and 3.7d's demand term never runs.
+  The frame must return to `Idle` (and the lane request the next positioned span) instead of blocking on a window it
+  *finished*, without weakening DEC-147/DEC-116. Owed: the paired RED (a serving frame whose coverage ended goes
+  `Blocked` today), then the device rerun for `win_serving` across a window boundary.
+- [ ] 3.7g **Host-clock source for the long-loop HITL leg** (`--clock-source {device,host}` + `--tempo-bpm`), so a
+  windowed evaluation can be paced by the host's 24 PPQN at a stated BPM instead of the device's own transport clock.
+  Not a firmware change: `scripts/hitl/scenarios/long_loop_display_window.py` has no such flag (only
+  `legacy_record_baseline.py` does), and the reference shape anchors the realtime `Start` **at the record arm** so
+  `grid_origin_pulse()` is still ahead of the pump (`legacy_record_baseline.py` ~6950), then keeps the pump alive past
+  the leg's port close because the device's slaving is a 500 ms timeout, not a latch. Owed: the leg's host-mode
+  branching, its host tests, and a device run proving the 32-bar take still lands at `len % 768 == 0` with the clock
+  owned by the host.
 - [x] 3.9 Deliver readiness receipts by the two delivery rules — verify a receipt produced under transport reaches the
   evidence stream and that diagnostic cadence cannot evict it
   *Increment 3.9 (increment 1) landed 2026-10-02 — **the readiness receipt and its two delivery rules**, and the half of that pair that had no fixture at all:

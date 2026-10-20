@@ -74,6 +74,12 @@ DEMAND_EXITS: frozenset[str] = frozenset(
         # own budget. It is a demand answer like the rest, and it is a separate token from `win_blocked_by_request` so
         # that exit's `rq` keeps one meaning (task 3.7d's term).
         "win_blocked_by_budget",
+        # Task 3.7e: the committed switch target's frame adopted the launch window it already owned, so no demand was
+        # opened for that interval at all. It can only be reached with a bound launch and a current view in existence.
+        "win_adopted_launch",
+        # Task 3.7e: a launch exists on the slot and the frame did not adopt it; `rq` names the refused term and the
+        # paired `launch_seed_not_bound` row names the launch state when the launch was not `Bound` at all.
+        "win_seed_refused",
     }
 )
 #: What each **refusing** exit means, in the active slot's own terms, so the reader is not left to decode flags.
@@ -92,7 +98,28 @@ REFUSAL_REASONS: dict[str, str] = {
     "win_request_refused": "the request itself was refused by name",
     "win_blocked_by_request": "the retained demand was invalidated and may not proceed",
     "win_blocked_by_budget": "every span of one traversal refused the demand, so its budget is spent",
+    "win_seed_refused": "a launch exists on the slot but the frame did not adopt its window (`rq` names the term)",
 }
+
+#: `Track::LaunchSeedRefusal` ordinals, in the enum's own declaration order (`include/Track.h`). On `win_seed_refused`
+#: the row's `rq` carries one of these -- **why the committed switch target's bound window was not adopted** -- and the
+#: paired `launch_seed_not_bound` row carries the launch's own `prep` when the launch was not `Bound` at all. The
+#: ordinal `no_launch` is never emitted: a slot with no launch preparation is the ordinary case and stays silent.
+SEED_REFUSALS: tuple[str, ...] = (
+    "adopted",
+    "no_launch",
+    "not_bound",
+    "identity",
+    "uncovered",
+    "expired",
+)
+
+
+def seed_refusal_name(ordinal: int) -> str:
+    """The term a `win_seed_refused` row names, spelled the way the enum spells it."""
+    if 0 <= ordinal < len(SEED_REFUSALS):
+        return SEED_REFUSALS[ordinal]
+    return f"seed_term_{ordinal}"
 
 #: `PlaybackViewPendingReason` ordinals, in the enum's own declaration order (`include/TrackPlaybackRuntime.h`). On
 #: `win_blocked_by_request` the row's `rq` carries one of these -- the **term that stopped the retained demand** -- while

@@ -312,6 +312,7 @@ void resetSlotChangeObservation() { slotChangeObservation() = SlotChangeObservat
 // assert the turn's work without re-stating it.
 // S4b.7: the bounded hold's own age test and named terminal, and the snapshot root the demoted target's merged
 // window is gathered from (`storePublishedSnapshotForTest` is the existing test seam).
+#include "Utils/IntervalProjection.h"
 #include "Utils/SlotProvisionHold.h"
 #include "LoopSnapshot.h"
 #include "Utils/MidiServiceDrain.h"
@@ -354,6 +355,21 @@ struct TrackCaptureStopTestAccess {
   }
   static LoopPlaybackRuntime* runtimeIfAllocated(Track& track, uint8_t slot) {
     return track.playbackRuntime.slotIfAllocated(slot);
+  }
+  /// windowed-playback-generation 3.7e: release the **launch binding** the switch commit left on a target, leaving the
+  /// prewarmed view set, its published current window, the playing slot and the playhead exactly as the commit left
+  /// them. A slot that keeps the binding has the lane **serve that window** (`win_adopted_launch`) instead of opening a
+  /// demand, which is the production sequence the dedicated 3.7e fixtures pin. The fixtures that use this accessor are
+  /// the **demand-path** ones -- handoff lead, re-position, blocked term, cancellation -- whose subject is what the lane
+  /// does when it owes an interval; they take a demoted, committed, playing slot that reached playback without a launch
+  /// binding, the shape task 3.7c made servable in the first place.
+  static void dropLaunchBinding(Track& track, uint8_t slot) {
+    auto* runtime = track.playbackRuntime.slotIfAllocated(slot);
+    TEST_ASSERT_NOT_NULL(runtime);
+    runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::None;
+    // 3.7e: the **bind's tick** is the seed's witness, so a fixture that wants "this slot carries no launch" has to
+    // drop both halves. Clearing only the preparation is the *device's* sticky handoff shape, which still seeds.
+    runtime->launchBoundTick = 0;
   }
   static void seedPreRoll(Track& track) {
     track.armedPreRollNotes[{1,65}] = PendingNote{65,1,120,91};
@@ -12095,6 +12111,7 @@ void test_launch_gate_rows_name_the_silent_exits_once_per_state_change() {
 void test_long_committed_window_owner_to_edge_selects_the_reader() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   Track& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   Loop& loop = track.getLoop(2);
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
@@ -12207,6 +12224,7 @@ void test_long_committed_window_owner_to_edge_selects_the_reader() {
 void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   nativePlaybackDeadlineClock = {origin, 1};
@@ -12278,6 +12296,7 @@ void test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick()
     if (scenario) setUp();
     assert_s4b_7_a_demoted_target_through_the_turn(true);
     auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
     auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
     const uint64_t origin = clockManager.getCurrentTick();
     nativePlaybackDeadlineClock = {origin, 1};
@@ -12310,6 +12329,7 @@ void test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick()
 void test_rolling_cancellation_retires_only_its_owned_request() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   nativePlaybackDeadlineClock = {origin, 1};
@@ -12416,6 +12436,7 @@ void test_rolling_stop_or_slot_exit_releases_the_episode_off_clock() {
     if (scenario) setUp();
     assert_s4b_7_a_demoted_target_through_the_turn(true);
     auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
     auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
     nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
     track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
@@ -12434,6 +12455,9 @@ void test_rolling_stop_or_slot_exit_releases_the_episode_off_clock() {
 void test_rolling_queued_zero_start_keeps_the_original_debt() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  // 3.7e: a demoted, committed, playing slot that reached playback without a launch binding -- the demand path's
+  // shape (task 3.7c). A slot that keeps the commit's binding serves that window instead.
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);
   nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
       static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
@@ -12458,6 +12482,7 @@ void test_rolling_generation_change_at_completion_publishes_nothing() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
   track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
   const auto originalGeneration = track.getPlaybackGeneration();
@@ -12493,6 +12518,7 @@ void test_rolling_generation_change_at_completion_publishes_nothing() {
 void test_activation_audit_the_production_demand_is_positioned_and_an_unqualified_clock_is_refused() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   const uint64_t origin = clockManager.getCurrentTick();
@@ -12591,6 +12617,7 @@ void test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged() 
 void test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   nativePlaybackDeadlineClock = {origin, 1};
@@ -12732,6 +12759,7 @@ void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
 void test_rolling_path_budget_charges_qualification_and_retirement_work() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* target = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   const bool wasEnforced = sInterferenceBudgetEnforced;
@@ -12968,6 +12996,7 @@ void test_rolling_path_reuses_the_view_slot_after_a_refused_completion() {
 void test_rolling_path_cancellation_between_every_preparation_grain_recovers() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   auto* set = runtime->viewSetIfPrewarmed();
@@ -13562,6 +13591,7 @@ void test_s45_the_moving_closure_closes_when_an_edit_moves_the_note_off_behind_t
 void test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   Loop& active = track.getActiveLoop();
@@ -13632,6 +13662,7 @@ void test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving
 void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   Loop& active = track.getActiveLoop();
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
   const uint64_t origin = clockManager.getCurrentTick();
@@ -13706,6 +13737,7 @@ void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
 void test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   const uint64_t origin = clockManager.getCurrentTick();
@@ -13752,6 +13784,7 @@ void test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal() {
 void test_3_7d_the_blocked_demand_row_names_the_term_that_invalidated_it() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   const uint64_t base = clockManager.getCurrentTick() + 512;
@@ -13790,6 +13823,7 @@ void test_3_7d_the_blocked_demand_row_names_the_term_that_invalidated_it() {
 void test_3_7d_the_blocked_demand_row_falls_back_to_the_owners_recomputation() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   const uint64_t base = clockManager.getCurrentTick() + 512;
@@ -13816,6 +13850,7 @@ void test_3_7d_the_blocked_demand_row_falls_back_to_the_owners_recomputation() {
 void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   Loop& active = track.getActiveLoop();
@@ -14074,6 +14109,144 @@ void test_3_7a_i2_a_rootless_launch_target_binds_from_the_retained_revision() {
   TEST_ASSERT_TRUE(bound.published);
   TEST_ASSERT_EQUAL_PTR_MESSAGE(target.publishedSnapshotIdentity(), bound.source.snapshotIdentity,
                                 "the bound view reads no root: the retained revision served it");
+}
+
+/// 3.7e -- **a committed switch target seeds its rolling frame from the launch window it already owns.** Device
+/// `captures/i5-s37d-device-32bar-10` measured the shape: the switch commits (`snap_gate,t=7,s=4,a=4`), the target's
+/// launch has built and bound a phase-0 two-bar window, and the rolling frame still starts `Idle` -- so the lane opens
+/// a redundant demand, defers to source qualification and charges a whole-loop build against the rolling span's
+/// handoff (`win_requested rq=12` -> `handoff_unreachable` x12 -> `win_blocked_by_budget`). Seeded, the lane serves the
+/// window the target already owns and opens no demand of its own.
+void test_3_7e_a_bound_launch_seeds_the_rolling_frame_instead_of_re_requesting() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);     // demoted 24-bar target (slot 2) with a current published root
+  drainImmutableLaunch(track, 2);  // its launch reaches Ready off-clock
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  // The commit binds at the loop boundary it switches on, so the playhead starts at the window's own phase 0. Put the
+  // fixture's clock there first: the bind's tick is the seed's traversal witness, and a bind away from the boundary
+  // would name a different traversal than the one the window covers.
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Bound),
+                    static_cast<int>(runtime->launchPreparation));
+  // The commit hands the audible slot to the target; the rolling frame has never been positioned for it.
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  TEST_ASSERT_EQUAL_UINT8(2, track.getActiveLoopIndex());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                    static_cast<int>(runtime->rolling.phase));
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& bound = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE(bound.complete);
+  TEST_ASSERT_TRUE(bound.published);
+  TEST_ASSERT_EQUAL_UINT32(0u, bound.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(2 * Config::TICKS_PER_BAR, bound.coverage.lengthTicks);
+  // The commit starts the playhead at the bound window's own phase; the fixture's clock is already there.
+  TEST_ASSERT_EQUAL_UINT32(0u, IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length));
+  const auto outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Serving), static_cast<int>(outcome),
+                            "the lane serves the window the committed target already owns");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT8(set->lifecycle.current, runtime->rolling.boundView);
+  TEST_ASSERT_EQUAL_UINT64(bound.storageGeneration, runtime->rolling.boundStorageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(bound.coverage.startPhase, runtime->rolling.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(length, runtime->rolling.loopLength);
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "and opens no demand of its own");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active() || runtime->coverageBuildNeedsService(),
+                            "so no redundant qualification build is launched");
+  // The next turn is the ordinary serving turn: the seed happened once, not on every turn.
+  nativePlaybackDeadlineClock.tick += 64;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+}
+
+/// 3.7e -- **the device's own shape.** `boundLaunchView`'s expiry/invalidation is sticky: it clears
+/// `launchPreparation` and leaves the bound view and the bind's tick untouched. Measured on hardware, the lane's first
+/// turn after the commit (`captures/i5-s37e-device-32bar-02`: commit 234.835 s, turn 234.8859 s, window intact and
+/// `sv=1`) found no preparation at all, so a seed that insists on `Bound` cannot see the launch the commit bound. The
+/// bind's tick is the witness; the handoff view's preparation is not.
+void test_3_7e_a_launch_whose_handoff_view_expired_still_seeds_the_rolling_frame() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick)));
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& bound = set->views[set->lifecycle.current];
+  // The sticky handoff term the device measured, applied without touching the view it served.
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Bound),
+                    static_cast<int>(runtime->launchPreparation));
+  TEST_ASSERT_TRUE(bound.published);
+  runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::None;
+  const auto outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Serving), static_cast<int>(outcome),
+                            "the handoff view's sticky expiry must not hide the window the commit bound");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT8(set->lifecycle.current, runtime->rolling.boundView);
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "and the lane opens no demand for the already-owned window");
+}
+
+/// 3.7e -- the **bind names one traversal.** Once the window's own interval has passed, the same phases belong to the
+/// next traversal (newer content), so the frame is not positioned on the old view; the lane keeps its ordinary demand.
+void test_3_7e_a_bound_launch_past_its_interval_is_not_seeded() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick)));
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& bound = set->views[set->lifecycle.current];
+  // One tick past the window's interval, still naming the same traversal's last phase if the frame read the view by
+  // phase alone -- which is exactly the stale read this guard refuses.
+  nativePlaybackDeadlineClock.tick += bound.coverage.lengthTicks;
+  const auto outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving), static_cast<int>(outcome));
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                                static_cast<int>(runtime->rolling.phase),
+                                "the expired bind must not position the frame on the old view");
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(2), "the lane keeps its ordinary demand instead");
+}
+
+/// 3.7e -- the seed is **identity-gated**: the same committed target whose bound window no longer names the loop's
+/// revision is not seeded, so a stale window can never masquerade as served. The lane keeps its ordinary demand path.
+void test_3_7e_a_stale_bound_launch_is_not_seeded() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick)));
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  ++track.getLoop(2).playbackRevision;  // what an edit does to the identity the window was dated by
+  const auto outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving), static_cast<int>(outcome));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                    static_cast<int>(runtime->rolling.phase));
 }
 
 /// 3.7a (I2): the refused gather **keeps the demand** and names why -- a retained revision that lags the loop, a
@@ -16820,6 +16993,11 @@ int main() {
   // keeps the demand with its reason named.
   RUN_TEST(test_3_7a_i2_a_rootless_committed_demand_is_served_from_the_retained_revision);
   RUN_TEST(test_3_7a_i2_a_rootless_launch_target_binds_from_the_retained_revision);
+  // windowed-playback-generation slice 3.7e: a committed switch target seeds its frame from the launch it owns.
+  RUN_TEST(test_3_7e_a_bound_launch_seeds_the_rolling_frame_instead_of_re_requesting);
+  RUN_TEST(test_3_7e_a_launch_whose_handoff_view_expired_still_seeds_the_rolling_frame);
+  RUN_TEST(test_3_7e_a_bound_launch_past_its_interval_is_not_seeded);
+  RUN_TEST(test_3_7e_a_stale_bound_launch_is_not_seeded);
   RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
   // windowed-playback-generation slice 3.7a (I3): the capture admission counts **committed** windows only, so a served
   // preview (the session's uncommitted projection) inherits nothing.

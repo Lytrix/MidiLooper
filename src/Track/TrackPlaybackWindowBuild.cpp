@@ -4391,6 +4391,90 @@ bool Track::bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick) {
   return true;
 }
 
+// windowed-playback-generation 3.7e -- **the committed switch target's own first window.**
+//
+// `captures/i5-s37d-device-32bar-10` measured the gap. The switch committed (`snap_gate,t=7,s=4,a=4` at 224.1 s) and
+// the target's launch had already built and bound a phase-0 two-bar window -- the commit binds exactly that window and
+// starts the playhead at its phase. The rolling frame still began `Idle`, so the lane opened a **second** demand for
+// the same interval; the demand deferred to source qualification (`win_requested rq=12`), the qualification it started
+// was a whole-loop build, and that build was charged against the rolling span's two-bar handoff
+// (`handoff_unreachable` on five of thirteen grains, one DEC-147 re-position) -- twelve spans later
+// `win_blocked_by_budget`, for the remaining 99 s. Nothing was wrong with the bound window; the frame simply did not
+// know it existed.
+//
+// This seeds the frame onto that window. The predicate is the resolver's own serving contract (`resolveRollingFrame`,
+// `phase == Serving` with `deadlineTick == 0`), read against the slot's live loop, so a frame seeded here is one the
+// very next turn would have accepted anyway: same `boundView`, same storage generation, same start phase, same span,
+// same revision and snapshot identity, and a coverage that contains the playhead. What it adds is the one thing the
+// resolver cannot know -- that the **launch bound it for this slot**. A stale view (an edit after the bind, a new
+// generation, a republished root, a moved playhead) fails the identity and the lane keeps its ordinary demand path.
+TRACK_COLD_MEM Track::LaunchSeedRefusal Track::seedRollingFrameFromBoundLaunch(uint8_t slotIndex, uint32_t generation,
+                                                                              const PlaybackDeadlineClock& clock,
+                                                                              uint32_t phase) {
+#if !PLAYBACK_WINDOW_ROLLING_ENABLED
+  (void)slotIndex; (void)generation; (void)clock; (void)phase;
+  return LaunchSeedRefusal::NoLaunch;
+#else
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated() || clock.epoch == 0)
+    return LaunchSeedRefusal::NoLaunch;
+  auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return LaunchSeedRefusal::NoLaunch;
+  // **The witness is the commit's own bind, not the handoff view's preparation.** `bindPlaybackLaunchForSlot` sets
+  // both (`launchBoundTick`, `launchPreparation = Bound`), but `boundLaunchView`'s expiry/invalidation is **sticky**: it
+  // clears `launchPreparation` while leaving the bound view published and the bind's tick intact
+  // (`src/Track/TrackPlaybackRuntime.cpp`, the `phase == elapsed` and `elapsed < lengthTicks` guards). That sticky term
+  // answers "may the *handoff* still serve this view"; the question a rolling frame needs is "did this slot's playback
+  // start inside the window the commit bound", and that one is the bind's tick. Gating on `Bound` therefore served only
+  // the handoff's lifetime, and the lane fell back to the redundant demand this slice removes -- pinned by
+  // `test_3_7e_a_launch_whose_handoff_view_expired_still_seeds_the_rolling_frame`, which drives exactly that state.
+  if (runtime->launchBoundTick == 0) return LaunchSeedRefusal::NoLaunch;
+  // A fallback target has no window to seed from, and a live preparation is another owner's work.
+  if (runtime->launchPreparation != LoopPlaybackRuntime::LaunchPreparation::Bound &&
+      runtime->launchPreparation != LoopPlaybackRuntime::LaunchPreparation::None)
+    return LaunchSeedRefusal::NotBound;
+  auto& frame = runtime->rolling;
+  if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) return LaunchSeedRefusal::NoLaunch;
+  const auto* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.current >= set->views.size()) return LaunchSeedRefusal::Identity;
+  const auto& view = set->views[set->lifecycle.current];
+  const Loop& loop = loopForSlot(slotIndex);
+  const uint32_t span = 2 * Config::TICKS_PER_BAR;
+  if (!loop.hasCommittedPasses() || !playbackWindowSourceIsCurrentForSlot(slotIndex) ||
+      runtime->ownsCoverageSource() || runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
+      !view.complete || !view.published || view.storageGeneration == 0 ||
+      view.source.origin != PlaybackWindowOrigin::Committed ||
+      view.source.sourceGeneration != generation || view.source.playbackRevision != loop.playbackRevision ||
+      (loop.publishedSnapshotIsCurrent() && view.source.snapshotIdentity != loop.publishedSnapshotIdentity()) ||
+      view.coverage.loopLengthTicks != loop.loopLengthTicks || loop.loopLengthTicks % span != 0 ||
+      view.coverage.startPhase != 0 || view.coverage.lengthTicks != span)
+    return LaunchSeedRefusal::Identity;
+  // The bind named one traversal of the loop -- the window's own interval, starting at `launchBoundTick`. Past its end
+  // the same phases belong to the next traversal, whose content this view does not carry, so the frame must not be
+  // positioned there. (`boundLaunchView` states the same bound as `elapsed < coverage.lengthTicks`; this is the seed's
+  // read of it, not a second rule.)
+  const uint32_t elapsed = clock.tick < runtime->launchBoundTick
+                               ? 0u
+                               : static_cast<uint32_t>(clock.tick - runtime->launchBoundTick);
+  if (elapsed >= view.coverage.lengthTicks) return LaunchSeedRefusal::Expired;
+  if (!view.coverage.contains(phase)) return LaunchSeedRefusal::Uncovered;
+  // Publish metadata last: until `phase` is written the frame is still the `Idle` one the caller found.
+  frame.startPhase = view.coverage.startPhase;
+  frame.deadlineTick = 0;
+  frame.refusedHandoffPhase = 0;
+  frame.refusedSpanAttempts = 0;
+  frame.refusedHandoffValid = false;
+  frame.boundView = set->lifecycle.current;
+  frame.boundStorageGeneration = view.storageGeneration;
+  frame.epoch = clock.epoch;
+  frame.generation = generation;
+  frame.loopLength = loop.loopLengthTicks;
+  frame.projectionStart = getProjectionCycleStartTick();
+  frame.lastTick = clock.tick;
+  frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+  return LaunchSeedRefusal::Adopted;
+#endif
+}
+
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
 namespace {
 // Same one-core PRIMASK save/restore pattern as ClockManager. This section
@@ -4794,6 +4878,26 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   }
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       effective, getProjectionCycleStartTick(), loop.loopLengthTicks);
+  // Task 3.7e -- **the window this slot already owns.** A committed switch target bound its launch's phase-0 window
+  // before it became the active slot, and the playhead then started at that window's own phase; requesting the same
+  // interval again is what cost run 10 a whole-loop qualification build charged to a two-bar span. The seed serves
+  // that window as it stands (identity checked against the live loop by the helper) and opens no demand. It is placed
+  // after the repositioning and busy gates because those own other promises, and before the boundary/lookahead work
+  // because a frame that can serve now owes none of it.
+  const LaunchSeedRefusal seed = seedRollingFrameFromBoundLaunch(activeLoopIndex, playbackGeneration, clock, phase);
+  if (seed == LaunchSeedRefusal::Adopted) {
+    reportPlaybackRollingGateRow("win_adopted_launch", clock.epoch != 0);
+    return RollingOutcome::Serving;
+  }
+  // A refused launch is not the ordinary "no launch here": that one is silent by design. `launch_seed_not_bound`
+  // carries the launch row's own `prep`/`own`/`dem` when the slot still has a *live* preparation this seed cannot read
+  // as a window (`Requested`/`Building`/`Ready`/`Fallback`), which is the commit-side gap the row exists to expose.
+  if (seed != LaunchSeedRefusal::NoLaunch) {
+    reportPlaybackRollingGateRow("win_seed_refused", clock.epoch != 0, /*reprojectedTick=*/false,
+                                 static_cast<uint8_t>(seed));
+    if (seed == LaunchSeedRefusal::NotBound)
+      reportPlaybackLaunchGateRow(activeLoopIndex, "launch_seed_not_bound");
+  }
   const auto contract = playbackViewCoverageContract();
   const uint64_t lookahead = uint64_t(contract.requiredGrains()) *
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
