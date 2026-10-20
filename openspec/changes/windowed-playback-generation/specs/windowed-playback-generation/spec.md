@@ -785,7 +785,10 @@ unchanged sounding notes SHALL survive without retriggering, removed/invalidated
 handoff, and obsolete closures SHALL be suppressed. Generation-qualified cancellation and retention SHALL
 also hold when another undo/redo or a slot/track switch occurs between preparation grains. This integration
 is required before normal windowed undo/redo is enabled or the mutable fallback is removed; checkpoint
-content parity alone SHALL NOT discharge it. Preview-session undo/redo retains its separate source lifecycle
+content parity alone SHALL NOT discharge it. The refresh SHALL request currency through the existing immutable
+publication owner instead of enumerating or publishing at the undo edge, and a request whose entry leaves the
+committed-pass inventory unchanged SHALL be served by a rebuild of that inventory plus the active overlays, so an
+overlay a disabled batch no longer contributes is retracted rather than left in the selected root. Preview-session undo/redo retains its separate source lifecycle
 and SHALL obey the same audible continuity rule through the existing preview-publication requirement.
 
 #### Scenario: Undoing one pass preserves another pass's sustained note
