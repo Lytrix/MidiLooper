@@ -25,13 +25,15 @@ was read at HEAD (`feature/runtime-working-set-ownership`).
 | the commit-side binding | `TrackManager::updateAllTracks` (`src/TrackManager/TrackManagerTransportTick.cpp:216-233`): readiness → occupancy → keep the switch **pending** with no inline build |
 | the off-clock precedent | `MidiServiceDrain::DeferredIdleOwner::SlotProvision = 5`, body `TrackManager::servicePendingSlotProvision()` (`src/TrackManager/TrackManagerSlotMatrix.cpp:348-390`), dispatched before the all-stopped guard, eligibility `MidiServiceDrain::slotProvisionNeeded` |
 | the measured consequence of no root | the gather returns nothing ⇒ `GatherMissHoldEmpty` (`include/Utils/RuntimeTimingTelemetry.h:37`) ⇒ RWO's S4b.7 demoted-target hold, bounded and reported as `slot_switch_hold_exceeded` (DEC-104) |
-| **the size pins** | `static_assert(sizeof(LoopPlaybackRuntime) == 6368)`, `sizeof(Loop) == 984`, `sizeof(TrackPlaybackRuntime) == 32` (`src/Track/TrackPlaybackRuntime.cpp:2246-2249`) |
+| **the size pins** | `static_assert(sizeof(LoopPlaybackRuntime) == 7896)` (host ABI `10080`), `sizeof(Loop) == 1008`, `sizeof(TrackPlaybackRuntime) == 32` (`src/Track/TrackPlaybackRuntime.cpp:2943-2978`), each re-base carrying its reason at the assert; the display-window receipt key is pinned at `<= 32 B` in `DisplayNoteWindowGather.cpp` |
 
 **Constraints.** Hot paths stay allocation-free; the RAM1 budget is enforced by `scripts/check_ram1_budget.py` with a
 floor of **840 B** and invariant 36's **872 B** usable padding (a bank cross costs 32,768 B and reaches the documented
-silent boot hang); new per-slot state belongs in the external `LoopPlaybackRuntime` — pinned at **6,368 B**, re-based
-deliberately with the reason recorded at the assert (DEC-107 recorded the last `6,352 -> 6,360` step) — or is
-`FLASHMEM`/`TRACK_COLD_MEM` constructed. The external pool's ceiling is **measured** (a 24-bar heap run refused
+silent boot hang); new per-slot state belongs in the external `LoopPlaybackRuntime` — pinned at **7,896 B** on the
+target ABI (**10,080 B** host), re-based deliberately with the reason recorded at the assert (the chain from DEC-107's
+`6,352 -> 6,360` step through DEC-136 and DEC-147 is in `src/Track/TrackPlaybackRuntime.cpp:2935-2978`) — or is
+`FLASHMEM`/`TRACK_COLD_MEM` constructed. Mutable capture-sampler state is `DMAMEM` (`.bss.dma`), never DTCM: the display
+window receipt key is the most recent example. The external pool's ceiling is **measured** (a 24-bar heap run refused
 `bytes=8192` at `live=8527KB`). `ExecutionBounds.md` classes the present build **Unbounded** (row 2) and its rows 27–29
 declare the windowed-view contract as **excluded from admission** until its caps are implemented and proven. The `P`
 class this change reshapes is derived in `runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md` on the target ABI.
@@ -241,7 +243,7 @@ behaviour**.
 - `N` beyond today's eight sounding roles, and any supported-density claim (both a memory **and** a deadline test must
   pass).
 - The per-window capacity beyond the provisional 2,048-event ceiling; whether smaller spans are adopted.
-- The RAM1 line on a fresh target build, and the corrected size baselines (6,368 B / 984 B).
+- The RAM1 line on a fresh target build, and the corrected size baselines (target `LoopPlaybackRuntime` **7,896 B**, `Loop` **1,008 B**; host `10,080 B`).
 - The source-retention cost as a charged envelope term.
 - Device evidence: the windowed HITL profile, and the sweeps over loop length, density, tempo, window span and competing
   deferred work.

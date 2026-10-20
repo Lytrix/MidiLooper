@@ -27,9 +27,13 @@
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
 #define DISP_CAPTURE_MEM FLASHMEM
+/// Mutable capture-sampler state (task 5.3 / invariant 36): external RAM, never DTCM. At 250 Hz the slower access is
+/// irrelevant, and the approved RAM1 line stays exactly as measured for the lane.
+#define DISP_RECEIPT_MEM DMAMEM
 #else
 #define DISP_COLD_MEM
 #define DISP_CAPTURE_MEM
+#define DISP_RECEIPT_MEM
 #endif
 
 using namespace DisplayManagerInternal;
@@ -127,7 +131,20 @@ struct DetailedWindowReceiptKey {
     uint32_t windowBand = 0xFFFFFFFFu;
     uint32_t windowStart = 0xFFFFFFFFu;
     uint8_t windowBars = 0xFF;
+    /// Not part of the comparison. `.bss.dma` is **ALLOC-only** (verified on the ELF: no `CONTENTS`, no initial image),
+    /// so nothing here is initialised at boot -- this is DEC-121's poisoned-init hazard, and a `= 0` initialiser would be
+    /// a lie. Arming is therefore a **value the sampler writes** on every emit: `armedMagic == kReceiptArmedMagic` means
+    /// "a key has been recorded". Fresh NOLOAD garbage practically never equals the magic, and a warm reset that does
+    /// match leaves the previous boot's last key, which is exactly a legitimate "last emitted".
+    uint32_t armedMagic = 0;
 };
+
+/// Task 5.3 / invariant 36: the key is *mutable* state, so it must not land in DTCM — the RAM1 line stays as measured
+/// for the lane, and the sampler's 32 B (28 B key + cadence stamp) live in external RAM beyond the RAM1 line. The pin
+/// makes the size
+/// deliberate: one key per boot, one cache line, re-base at the assert if the key ever grows.
+static_assert(sizeof(DetailedWindowReceiptKey) <= 32,
+              "DEC-149 display-window receipt key grew past one cache line; re-base this pin deliberately");
 
 /// 250 Hz sampling: fine enough that a 2 s freeze / snap / hold bracket cannot lose a transition, and it runs from
 /// `update()` (not from the paint path) precisely so a window that stops repainting keeps being observed.
@@ -138,9 +155,18 @@ constexpr uint32_t kDetailedWindowReceiptSampleMs = 4;
 /// sampler is a stream by construction (the first rerun emitted 2 757 rows and evicted a Tier-A row).
 constexpr uint8_t kObservedTrackState = static_cast<uint8_t>(TRACK_PLAYING);
 
-DetailedWindowReceiptKey lastDetailedWindowReceipt;
-uint32_t lastDetailedWindowReceiptMs = 0;
-bool detailedWindowReceiptArmed = false;
+/// External RAM on the target (invariant 36), plain statics on the host.
+DISP_RECEIPT_MEM DetailedWindowReceiptKey lastDetailedWindowReceipt;
+/// Only a cadence stamp: it is read only once a key is armed, and a write precedes that, so NOLOAD boot bytes can at
+/// worst admit one early sample.
+DISP_RECEIPT_MEM uint32_t lastDetailedWindowReceiptMs;
+
+/// The value that arms the sampler; written by `observeDetailedWindowTransition`, never initialised (see above).
+constexpr uint32_t kReceiptArmedMagic = 0x44575031u;  // 'DWP1'
+
+inline bool detailedWindowReceiptArmed() {
+    return lastDetailedWindowReceipt.armedMagic == kReceiptArmedMagic;
+}
 
 }  // namespace
 #endif
@@ -148,7 +174,7 @@ bool detailedWindowReceiptArmed = false;
 DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
 #if defined(SESSION_CAPTURE)
     const uint32_t nowMs = millis();
-    if (detailedWindowReceiptArmed &&
+    if (detailedWindowReceiptArmed() &&
         static_cast<uint32_t>(nowMs - lastDetailedWindowReceiptMs) < kDetailedWindowReceiptSampleMs) {
         return;
     }
@@ -162,7 +188,7 @@ DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
     // Outside the observed state only a *transition out of it* is worth a row: the verifier reads the last playing row
     // and the closing row as the interval's ends, and nothing else is sampled.
     if (state != kObservedTrackState &&
-        !(detailedWindowReceiptArmed && lastDetailedWindowReceipt.state == kObservedTrackState)) {
+        !(detailedWindowReceiptArmed() && lastDetailedWindowReceipt.state == kObservedTrackState)) {
         return;
     }
     DetailedWindowReceiptKey key{};
@@ -178,7 +204,7 @@ DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
     key.windowBand = key.windowStart / static_cast<uint32_t>(Config::TICKS_PER_BAR);
     key.windowBars = detailedWindowBars_[displaySlot];
     lastDetailedWindowReceiptMs = nowMs;
-    if (detailedWindowReceiptArmed && key.track == lastDetailedWindowReceipt.track &&
+    if (detailedWindowReceiptArmed() && key.track == lastDetailedWindowReceipt.track &&
         key.slot == lastDetailedWindowReceipt.slot && key.state == lastDetailedWindowReceipt.state &&
         key.noteSessionOpen == lastDetailedWindowReceipt.noteSessionOpen &&
         key.editSession == lastDetailedWindowReceipt.editSession &&
@@ -187,7 +213,7 @@ DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
         key.windowBars == lastDetailedWindowReceipt.windowBars) {
         return;
     }
-    detailedWindowReceiptArmed = true;
+    key.armedMagic = kReceiptArmedMagic;
     lastDetailedWindowReceipt = key;
     SC_DISP_WINDOW_TRANSITION(key.track, key.slot, TrackStateMachine::toString(track.getState()),
                               key.noteSessionOpen, key.editSession, key.loopLength, key.windowStart,

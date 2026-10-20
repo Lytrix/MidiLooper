@@ -322,6 +322,72 @@ class TransitionReceiptTests(unittest.TestCase):
         self.assertTrue(result["ok"], result.get("issues"))
         self.assertNotIn("freeze_window_rows:entry_anchor_only", result["warnings"])
 
+    RELEASE = (
+        "[163.000] [DEBUG] [BTN] Button released: Ch16 Note40, start=160000, now=164000, duration=4000"
+    )
+
+    def test_a_hold_pinned_at_the_window_clamp_accepts_the_release_witness(self) -> None:
+        """24 bars -> clamp 18432 - 16 x 768 = 6144 (32 bars -> 12288). Past the clamp the hold has no travel.
+
+        Measured 2026-10-20 (run 06): `play_stop_hold_did_not_track_playhead unique_starts=[6144]` where 6144 is exactly
+        `loop_len - window_bars x TICKS_PER_BAR`; the window was doing what it can, so the release witness is the proof.
+        """
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(100_011_000, window_start=4401, note_open=1, session=1),
+            _disp_window_transition(160_500_000, window_start=6144),
+            _disp_window_transition(161_500_000, window_start=6144),
+            _disp_window_transition(162_500_000, window_start=6144),
+            self.RELEASE,
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result.get("hold_verify_mode"), "indirect_button_hold_clamped")
+        self.assertIn("hold_window_at_clamp:accepted_play_stop_hold_release", result["warnings"])
+
+    def test_a_hold_pinned_at_the_clamp_without_a_release_still_fails(self) -> None:
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(100_011_000, window_start=4401, note_open=1, session=1),
+            _disp_window_transition(160_500_000, window_start=6144),
+            _disp_window_transition(161_500_000, window_start=6144),
+            _disp_window_transition(162_500_000, window_start=6144),
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any(
+                "play_stop_hold_did_not_track_playhead" in issue
+                and "window_at_clamp=1" in issue
+                for issue in result["issues"]
+            ),
+            result["issues"],
+        )
+
+    def test_a_static_hold_away_from_the_clamp_keeps_the_original_verdict(self) -> None:
+        lines = [
+            self.ENTER,
+            self.BUTTON_ON,
+            self.SNAP,
+            _disp_window_transition(100_011_000, window_start=4401, note_open=1, session=1),
+            _disp_window_transition(160_500_000, window_start=5000),
+            _disp_window_transition(161_500_000, window_start=5000),
+            _disp_window_transition(162_500_000, window_start=5000),
+            self.RELEASE,
+        ]
+        result = verify_long_loop_display_window(lines, _windowed_args())
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any(
+                "play_stop_hold_did_not_track_playhead" in issue for issue in result["issues"]
+            ),
+            result["issues"],
+        )
+
     def test_a_snap_that_never_leaves_the_frozen_window_still_fails(self) -> None:
         lines = [
             self.ENTER,

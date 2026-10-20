@@ -258,9 +258,11 @@ Host verifier: `scripts/test_occupy_paint_serial_verify.py`. Device gates: OD1 `
 
 ### `long_loop_display_window`
 
-Loop must be **> 16 bars** for bounded detailed window. Prefer **24 bars**: the 16-bar window's start is clamped to
-`loopLength − 16 bars`, reached at playhead `24 bars` on a 32-bar loop, so a hold that lands past that point has no travel
-and cannot move the window (`play_stop_hold_did_not_track_playhead unique_starts=[12288]` measured 2026-10-20).
+Loop must be **> 16 bars** for bounded detailed window. The hold term has a geometric limit worth knowing: the window
+start is clamped to `loopLength − windowBars`, so a hold that lands past the clamp has no travel and cannot move the
+window (measured 2026-10-20: `12288` on a 32-bar take, `6144` on a 24-bar take). The verifier names that case
+(`hold_verify_mode=indirect_button_hold_clamped`, and `window_at_clamp=1` on the failure when the release witness is also
+missing); a static window away from the clamp still fails as before.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset long_loop_display_window \

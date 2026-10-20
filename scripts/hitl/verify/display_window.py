@@ -277,6 +277,24 @@ def verify_follow_window_readiness(
     }
 
 
+def _hold_window_is_clamped(row: dict[str, object]) -> bool:
+    """True when the held window start is at its maximum: `loop_len - window_bars x TICKS_PER_BAR`.
+
+    The detailed window centres on the playhead and `resolveDetailedPaintWindow` clamps the start to
+    `loopLength - windowLength`. Past `playhead - windowBars/2 == clamp`, the window cannot advance, so a play/stop hold
+    has no travel left and "the window did not move" is geometry, not a tracking failure. Measured 2026-10-20: a 32-bar
+    take pinned at 12288 and a 24-bar take at 6144 (`play_stop_hold_did_not_track_playhead unique_starts=[6144]`).
+    """
+    loop_len = int(row.get("loop_len") or 0)
+    bars = int(row.get("window_bars") or 0)
+    if loop_len <= 0 or bars <= 0:
+        return False
+    span = bars * TICKS_PER_BAR
+    if span >= loop_len:
+        return False
+    return int(row.get("window_start") or 0) == loop_len - span
+
+
 def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str, object]:
     issues: list[str] = []
     warnings: list[str] = []
@@ -395,16 +413,24 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
     elif snap_idx is not None:
         hold_rows = _phase_rows(rows, lines, snap_idx, None)[-40:]
 
-    hold_indirect_ok = False
     hold_release_idx: Optional[int] = None
     hold_release_duration_ms: Optional[int] = None
-    if len(hold_rows) < 3 and "phase:hold_track_start" in phase_markers:
+
+    def find_hold_release() -> bool:
+        """The play/stop release witness, searched on demand (sparse rows, or a window that cannot travel)."""
+        nonlocal hold_release_idx, hold_release_duration_ms
+        if hold_release_idx is not None:
+            return True
+        if "phase:hold_track_start" not in phase_markers:
+            return False
         min_hold_ms = max(int(hold_track_ms * 0.75), 2000)
         anchor = enter_idx if enter_idx is not None else 0
         hold_release_idx, hold_release_duration_ms = _find_play_stop_hold_release(
             lines, after_index=anchor, min_duration_ms=min_hold_ms
         )
-        hold_indirect_ok = hold_release_idx is not None
+        return hold_release_idx is not None
+
+    hold_indirect_ok = find_hold_release() if len(hold_rows) < 3 else False
 
     if len(hold_rows) < 3:
         if hold_indirect_ok:
@@ -418,7 +444,18 @@ def verify_long_loop_display_window(lines: list[str], args: object) -> dict[str,
     else:
         hold_starts = [int(row["window_start"]) for row in hold_rows]
         if len(set(hold_starts)) < 2:
-            if hold_indirect_ok:
+            if _hold_window_is_clamped(hold_rows[0]) and find_hold_release():
+                # The window sits at its maximum start, so the hold could not move it even if tracking were perfect
+                # (`resolveDetailedPaintWindow` clamps to `loopLength - windowLength`). The release witness is the only
+                # proof available, and a static window that is *not* clamped keeps the original verdict.
+                hold_verify_mode = "indirect_button_hold_clamped"
+                warnings.append("hold_window_at_clamp:accepted_play_stop_hold_release")
+            elif _hold_window_is_clamped(hold_rows[0]):
+                issues.append(
+                    "play_stop_hold_did_not_track_playhead "
+                    f"unique_starts={sorted(set(hold_starts))} window_at_clamp=1"
+                )
+            elif hold_indirect_ok:
                 hold_verify_mode = "indirect_button_hold"
                 warnings.append("hold_disp_static:accepted_play_stop_hold_release")
             else:

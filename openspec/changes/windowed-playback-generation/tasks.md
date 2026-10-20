@@ -2203,10 +2203,24 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   a supported-density claim
 - [ ] 5.2 Verify no accepted content is truncated to fit — verify a dense interval reports capacity pressure by name and
   serves every accepted event (the "Accepted content is never truncated" requirement)
-- [ ] 5.3 Pin placement and cost — verify `static_assert` size pins cover any new state and are re-based with the reason
+- [x] 5.3 Pin placement and cost — verify `static_assert` size pins cover any new state and are re-based with the reason
   recorded at the assert, no new state lands in DTCM (invariant 36), the corrected baselines (**6,368 B**
   `LoopPlaybackRuntime`, **984 B** `Loop`) are reflected in the docs, and `scripts/check_ram1_budget.py` passes on a
   fresh target build
+  *Verified 2026-10-20 (with the 6.4 receipt slice as the newest state, and the pins re-read against the code).* **Pins:**
+  `static_assert(sizeof(LoopPlaybackRuntime) == 7896)` (host `10080`), `sizeof(Loop) == 1008`,
+  `sizeof(TrackPlaybackRuntime) == 32` at `src/Track/TrackPlaybackRuntime.cpp:2943-2978`, each re-base carrying its reason
+  at the assert (the chain runs from DEC-107's `6,352 -> 6,360` through DEC-136 and DEC-147's "unchanged" note), and the
+  newest state — the display-window receipt key — is pinned `<= 32 B` in `DisplayNoteWindowGather.cpp`. **Placement:** the
+  receipt key, its cadence stamp and its arm flag are `DMAMEM`, i.e. `.bss.dma` in external RAM (verified on the ELF:
+  `0x20202b8c`, 28 B, `ALLOC`-only section), so **no new state lands in DTCM** and `variables` stays **96,192** — the same
+  figure recorded at 4.5, 3.7d and 6.4. Because `.bss.dma` has no initial image (DEC-121's poisoned-init hazard), the
+  sampler arms itself with a **value it writes** (`armedMagic`), never with an initialiser. The only RAM1 intervention
+  left is a `.rodata` carve-out for that TU's read-only literals (`variables` 96,192 -> 100,288 without it, measured by
+  removing the line). **Docs:** `design.md`'s size-pin row and its "corrected baselines" line now state the pins above
+  instead of the stale 6,368 / 984. **Budget:** the `check_ram1_budget.py` hook passes on a fresh target build
+  (`teensy41-capture-serial` `code 392,216 + padding 1,000`; lane image `392,376 + 840`, the floor) and *fails* when the
+  carve-out is removed — the red-proof that the guard is live.
 - [x] 5.4 State the envelope honestly — today's **eight** sounding roles, **16** as the next target,
   and 32/48/64 as measured-without-promise, each supported claim gated on **both** memory and deadlines.
   **Verified 2026-10-11 (documentation only):** `proposal.md` § Design commitments states all clauses;
@@ -2320,7 +2334,9 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   checkoff stays a separate judgement** — this supplies the leg half only; 3.7d's device read and 4.5 stay open.
   *Checked off 2026-10-20.* Every term of the 6.4 four-term table is judged, and the profile half is now repeatable:
   the registered `windowed_content_parity` preset (track 8 / slot 4 / channel 8, 24 bars) is registered, authorized and
-  used, and it passed **three consecutive combined greens on one boot** (runs 03/04/05, image `3ef153c5…`) with
+  used, and it passed **three consecutive combined greens on one boot** (runs 03/04/05 on image `3ef153c5…`, and again
+  **07/08/09 on `99247cb5…`** after task 5.3 moved the sampler state to external RAM — the claim was re-earned on the new
+  image rather than carried over) with
   `readiness_receipts_under_transport` 24–25/24–25 under transport, `windowed_service_coverage_under_transport` 59–448
   blocks with opportunities, `window_boundaries_crossed_under_transport` 32–395 `build_complete` at `loop_len 768`,
   `overrun_rows=0`, ring intact (`critical_evidence_loss_rows=0`) and the snapshot checks green. F-7's parity **verdict**

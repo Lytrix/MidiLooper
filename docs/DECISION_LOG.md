@@ -8519,8 +8519,18 @@ Two distinct failures met in the same place.
 - The hold term is now proved from the row family itself (`hold_verify_mode=disp_window_rows`) rather than the indirect
   release witness.
 - Cost: no ITCM growth (`DisplayManager::update` would have spent 16 B — exactly the lane image's remaining padding — so
-  the sampler rides the existing per-update capture hook); the DTCM align edge crossed by the sampler's 25 B is answered
-  by a `.rodata` carve-out for `DisplayNoteWindowGather.cpp`, keeping `variables` at 96,192.
+  the sampler rides the existing per-update capture hook). **Correction (task 5.3, same day):** the sampler's mutable
+  state (the 24 B key + clock + arm flag) is `DMAMEM`, i.e. `.bss.dma` in external RAM, so it adds **no DTCM state**
+  (invariant 36) and is pinned at `<= 32 B` at the assert. What still needed the linker's help was the TU's ~140 B of
+  read-only literals crossing the `_VectorsRam`/periodictable align edge (`variables` 96,192 -> 100,288, measured by
+  removing the carve-out); the `.rodata` carve-out for `DisplayNoteWindowGather.cpp` stays for that reason only, and
+  `variables` remains 96,192.
+- **A hold cannot move a clamped window, and the verifier now says so.** `resolveDetailedPaintWindow` clamps the window
+  start to `loopLength - windowLength`, so past `playhead - windowBars/2 == clamp` a play/stop hold has no travel left
+  (measured: `12288` on a 32-bar take, `6144` on a 24-bar take). One static start **at the clamp** now requires the
+  play/stop release witness and reports `indirect_button_hold_clamped`; with no witness the run still fails and the issue
+  carries `window_at_clamp=1`. A static window away from the clamp keeps the original verdict, so the term did not get
+  weaker — it got a name for the case geometry, not tracking, decides.
 - The lane terms and the `oracle_complete` deferrals are untouched: every run above still reports `oracle_complete:
   false` with the same two deferred terms.
 

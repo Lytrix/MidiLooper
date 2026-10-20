@@ -8,8 +8,10 @@ outside this slice and unchanged (`oracle_complete: false` on every run below, s
 Image: `teensy41-capture-serial-window-qualification`, HEX
 **`3ef153c5deb5f5337675ca96bb2b75872730f2efd7eab6b30e1a961c1c8bffdc`**, built from `a3c5d051` + this slice's tree.
 RAM1: `variables 96,192 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,880`, approved floor `padding >= 840`
-(default image: `code 392,216 + padding 1,000`, byte-identical to the 4.5 baseline). Device `/dev/cu.usbmodem154944801`;
-no shutdown latch before or after.
+(default image: `code 392,216 + padding 1,000`, byte-identical to the 4.5 baseline). The sampler's mutable state is
+`.bss.dma` (external RAM, `DISP_RECEIPT_MEM`) and pinned at `<= 32 B`, so it adds no DTCM state (task 5.3 / invariant 36);
+the `.rodata` carve-out exists for the TU's read-only literals alone. Device `/dev/cu.usbmodem154944801`; no shutdown
+latch before or after.
 
 ## What the device now reports
 
@@ -58,6 +60,30 @@ Replaying run 02's session log through the final verifier is green on the leg te
 `long_loop_disp_row_count 282`, `disp_window_transition_row_count 11`), i.e. the receipt data was already sufficient and
 the remaining red was the bracket definition — recorded here so the fix is attributed to the verifier, not to new data.
 
+## Re-qualification after task 5.3 (same day, new image)
+
+Task 5.3 moved the sampler's state out of DTCM (`.bss.dma`, external RAM) and made arming a written magic instead of an
+initialiser — a storage-only change, but a **new image**: `99247cb5…` (lane `code 392,376 + padding 840`). The claim in
+the table above therefore had to be re-earned on it.
+
+- **Run 06** (`captures/i5-s53-receipt-24bar-06`, `--build-upload`, post-flash warm-up): the leg went red on
+  `play_stop_hold_did_not_track_playhead unique_starts=[6144]` — and `6144 = 18432 − 16 × 768` is exactly the window's
+  **clamp** (`resolveDetailedPaintWindow` caps the start at `loopLength - windowLength`). The window could not move; the
+  rule was measuring geometry as failure. Replaying that log through the corrected verifier is green
+  (`hold_verify_mode=indirect_button_hold_clamped`, `hold_window_at_clamp:accepted_play_stop_hold_release`).
+- **Runs 07/08/09** (`--no-boot-reset`): **three consecutive combined greens on `99247cb5…`** — leg, all six lane checks,
+  snapshot, `critical_evidence_loss_rows=0`; the hold proved from the rows themselves in all three
+  (`hold_verify_mode=disp_window_rows`, no warnings), 11/15/15 transition rows.
+
+### The clamp rule (4th lesson, and it is not a relaxation)
+
+A hold can only move the window while the window has travel: past `playhead − windowBars/2 == loopLength − windowBars`,
+the start is pinned. Measured on the same day at 32 bars (`12288`) and at 24 bars (`6144`). The verifier now names it:
+if every hold row has one start **and** that start is the clamp, the play/stop release witness is required and the mode is
+`indirect_button_hold_clamped`; if the witness is absent the run still fails, with `window_at_clamp=1` appended to
+`play_stop_hold_did_not_track_playhead`. A static window that is **not** at the clamp keeps the original verdict. Three
+host tests pin all three directions (`scripts.test_long_loop_display_serial_verify`, 30/30).
+
 ## Verification
 
 - `pio run -e teensy41-capture-serial` → SUCCESS, `variables 96,192 / ITCM 393,216 (code 392,216 + padding 1,000) /
@@ -65,8 +91,8 @@ the remaining red was the bracket definition — recorded here so the fix is att
 - `pio run -e teensy41-capture-serial-window-qualification` → SUCCESS, `code 392,376 + padding 840` (approved floor).
 - `python3 scripts/check_marker_contract.py 'DIAG,disp_window,'` → `emitted=src/Utils/DebugSessionCapture.cpp:2200
   tier-a-prefix='DIAG,disp_' (10/31 bytes)`.
-- `python3 -m unittest scripts.test_long_loop_display_serial_verify` → **27/27** (5 receipt tests + 2 bracket tests
-  added to the 19 gesture/retry tests).
+- `python3 -m unittest scripts.test_long_loop_display_serial_verify` → **30/30** (5 receipt tests, 2 bracket tests and 3
+  clamp tests added to the 19 gesture/retry tests).
 - `python3 -m unittest scripts.test_windowed_content_parity_verify` → **57/57**.
 - `pio test -e native` → **3338 cases: 7 skipped, 3331 succeeded** (the 7 skips are the isolated-recovery/parked cases
   named in `tasks.md` 6.1, unchanged).
