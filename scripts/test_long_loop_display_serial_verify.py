@@ -12,7 +12,14 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from hitl.scenarios.long_loop_display_window import _parse_common_args
+from hitl.scenarios.long_loop_display_window import (
+    _ensure_note_edit_exited,
+    _parse_common_args,
+    latest_edit_session_mode,
+    note_edit_repress_needed,
+    record_press_needs_retry,
+    record_stop_needs_retry,
+)
 from hitl.verify.display_window import (
     verify_follow_window_readiness,
     verify_long_loop_display_window,
@@ -227,6 +234,91 @@ class FollowWindowReadinessVerifyTests(unittest.TestCase):
         ns = _parse_common_args(SimpleNamespace(legacy_args=["--record-bars", "32", "--display-hold-s", "90"]))
         self.assertEqual(ns.record_bars, 32)
         self.assertEqual(ns.display_hold_s, 90.0)
+
+    def test_a_record_press_is_repeated_only_when_the_device_is_not_recording(self):
+        """A lagging capture log must not turn an unobserved press into a second (stopping) press.
+
+        Measured 2026-10-20: the retry stopped a take that had started, leaving a one-bar loop and making every
+        downstream display check fail for a reason that had nothing to do with the window.
+        """
+        self.assertFalse(record_press_needs_retry("RECORDING"))
+        self.assertTrue(record_press_needs_retry(None))
+        self.assertTrue(record_press_needs_retry("PLAYING"))
+        self.assertTrue(record_press_needs_retry("STOPPED"))
+
+    def test_a_record_stop_is_repeated_only_while_the_take_is_still_recording(self):
+        """The mirror trap: re-pressing a stop that already landed is a new record gesture, not a stop.
+
+        Measured 2026-10-20 as a transport stop right after the take reached its length; the NOTE_EDIT phases then ran
+        with the transport stopped and the playing-window rows never arrived.
+        """
+        self.assertTrue(record_stop_needs_retry("RECORDING"))
+        self.assertFalse(record_stop_needs_retry("STOPPED_RECORDING"))
+        self.assertFalse(record_stop_needs_retry("PLAYING"))
+        self.assertFalse(record_stop_needs_retry(None))
+
+    def test_latest_edit_session_mode_reads_the_last_ack(self):
+        self.assertIsNone(latest_edit_session_mode(["nothing here"]))
+        lines = [
+            "Edit session: LOOP_EDIT (Program 2, Note 100 trigger)",
+            "Edit session: NOTE_EDIT (Program 1, Note 0 trigger)",
+        ]
+        self.assertEqual(latest_edit_session_mode(lines), "NOTE_EDIT")
+        self.assertEqual(latest_edit_session_mode(list(reversed(lines))), "LOOP_EDIT")
+
+    def test_an_entry_press_is_repeated_only_after_a_fresh_loop_edit_ack(self):
+        """Without an ack the mode is unknown; a blind re-press would cycle an unobserved NOTE_EDIT back to LOOP_EDIT."""
+        self.assertTrue(note_edit_repress_needed("LOOP_EDIT"))
+        self.assertFalse(note_edit_repress_needed("NOTE_EDIT"))
+        self.assertFalse(note_edit_repress_needed(None))
+
+    def test_note_edit_exit_presses_only_from_note_edit_and_waits_for_the_loop_ack(self):
+        lines = ["Edit session: NOTE_EDIT (Program 1, Note 0 trigger)"]
+        port = _FakeOutPort(on_send=lambda msg: lines.append(
+            "Edit session: LOOP_EDIT (Program 2, Note 100 trigger)"
+        ) if msg.type == "note_on" else None)
+        ok = _ensure_note_edit_exited(
+            port, _FakeCollector(lines), press_ms=1, timeout_s=1.0
+        )
+        self.assertTrue(ok)
+        self.assertEqual([msg.type for msg in port.messages], ["note_on", "note_off"])
+
+    def test_note_edit_exit_is_a_no_op_when_the_overlay_is_already_closed(self):
+        lines = ["Edit session: LOOP_EDIT (Program 2, Note 100 trigger)"]
+        port = _FakeOutPort()
+        self.assertTrue(_ensure_note_edit_exited(port, _FakeCollector(lines), press_ms=1, timeout_s=1.0))
+        self.assertEqual(port.messages, [])
+
+    def test_note_edit_exit_refuses_when_the_mode_is_unknown(self):
+        port = _FakeOutPort()
+        self.assertFalse(_ensure_note_edit_exited(port, _FakeCollector([]), press_ms=1, timeout_s=0.1))
+        self.assertEqual(port.messages, [])
+
+    def test_note_edit_exit_never_presses_twice_on_a_lagging_ack(self):
+        """A lagging ack must not become a return trip into NOTE_EDIT: one press, then an unconfirmed exit."""
+        lines = ["Edit session: NOTE_EDIT (Program 1, Note 0 trigger)"]
+        port = _FakeOutPort()
+        self.assertFalse(_ensure_note_edit_exited(port, _FakeCollector(lines), press_ms=1, timeout_s=0.1))
+        self.assertEqual([msg.type for msg in port.messages], ["note_on", "note_off"])
+
+
+class _FakeOutPort:
+    def __init__(self, on_send=None) -> None:
+        self.messages = []
+        self._on_send = on_send
+
+    def send(self, message) -> None:
+        self.messages.append(message)
+        if self._on_send is not None:
+            self._on_send(message)
+
+
+class _FakeCollector:
+    def __init__(self, lines) -> None:
+        self._lines = lines
+
+    def snapshot(self):
+        return list(self._lines)
 
 
 if __name__ == "__main__":

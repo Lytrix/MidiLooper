@@ -96,6 +96,15 @@ that is not there proves nothing:
   `overdub start refused: no predecessor stop-completion receipt` class, where the record leg
   looked fine and the successor leg could never be admitted.
 
+The long press above is the *establishing* gesture: `EXIT_EDIT_MODE` always ends in `LOOP_EDIT`, so it
+is the safe way to reach the mode a record/overdub leg needs. It is **not** how the note overlay is
+left in ordinary use: short press is `CYCLE_EDIT_MODE`, so `NOTE_EDIT` is entered from `LOOP_EDIT`
+and left back to `LOOP_EDIT` with short presses, and a short-press exit is confirmed by the
+`Edit session: LOOP_EDIT` ack (`EditManager::cycleEditSession` → `sendEditSessionChange(Loop, true)`).
+A leg that leaves `NOTE_EDIT` as part of its own flow uses the cycle, and only presses when the
+device's latest ack names `NOTE_EDIT` — a lagging ack must never cause a second press, which would
+be the return trip into `NOTE_EDIT`.
+
 The **short** press is deliberately not the proof: it is bound to `CYCLE_EDIT_MODE`, so what it
 lands in depends on the mode the run is trying to prove. Never press the edit button twice inside
 the double-tap window (300 ms) either — a double press opens the load/save overlay.

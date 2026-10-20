@@ -266,9 +266,13 @@ Loop must be **> 16 bars** for bounded detailed window.
   --serial-port /dev/cu.usbmodem154944801 \
   --track-number 5 --midi-channel 5 \
   --record-bars 24 --start-transport \
-  --freeze-wait-ms 8000 --hold-track-ms 4000 --long-press-ms 700 \
+  --freeze-wait-ms 8000 --hold-track-ms 4000 \
   --phase-wait-ms 500 --press-ms 120
 ```
+
+`NOTE_EDIT` is entered and left with **short** presses (the Edit button's `CYCLE_EDIT_MODE`); the leg
+requires the `Edit session: NOTE_EDIT` ack to enter and the `Edit session: LOOP_EDIT` ack to exit.
+`--long-press-ms` is accepted but unused by the overlay exit.
 
 Host unit test: `scripts/test_long_loop_display_serial_verify.py`.
 

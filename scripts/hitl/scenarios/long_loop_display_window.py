@@ -1,4 +1,8 @@
-"""Long-loop bounded window: NOTE_EDIT freeze, play/stop long-press snap, hold-to-track."""
+"""Long-loop bounded window: NOTE_EDIT freeze, play/stop long-press snap, hold-to-track.
+
+The note overlay is entered **and** left with short presses of the Edit button: short press is
+`CYCLE_EDIT_MODE` (LOOP_EDIT ↔ NOTE_EDIT), while the long press is `EXIT_EDIT_MODE` and leaves edit mode altogether.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,55 @@ from pathlib import Path
 from typing import Optional
 
 from hitl.context import get_context
+
+def record_press_needs_retry(latest_state: Optional[str]) -> bool:
+    """Whether a record press that was not *observed* may be pressed again.
+
+    The managed capture's session log lags the wire, so "not confirmed" is not the same as "did not start". A second
+    press on a device that **is** recording stops the take — measured 2026-10-20 as a one-bar take
+    (`DIAG,record_length,ticks=768`) whose display rows never arrive, which then reads as
+    `missing_playing_bounded_window_disp` in every downstream check. Only the device's own latest state decides.
+    """
+    return latest_state != "RECORDING"
+
+
+def record_stop_needs_retry(latest_state: Optional[str]) -> bool:
+    """Whether a record-stop press that was not *observed* may be pressed again.
+
+    The same lag trap as the start press, one step later: the first stop press may have landed while the capture log
+    still shows the take as unfinished. A second press there is a fresh record gesture — measured 2026-10-20 as a
+    transport stop at the end of the take, after which every NOTE_EDIT phase ran with the transport stopped and the
+    playing window rows never arrived. Only a device that is **still recording** gets the second stop press.
+    """
+    return latest_state == "RECORDING"
+
+
+def latest_edit_session_mode(lines: list[str]) -> Optional[str]:
+    """The device's latest edit-session ack (`NOTE_EDIT` / `LOOP_EDIT`), or None when none is in the log.
+
+    The Edit button's bindings are a **cycle**: short press is `CYCLE_EDIT_MODE` (LOOP_EDIT ↔ NOTE_EDIT; from no
+    session it opens NOTE_EDIT) and long press is `EXIT_EDIT_MODE`. So the note overlay is entered *and* left with
+    short presses, and the gesture that leaves it must be chosen from the mode the device last announced — a second
+    short press on a device that already cycled is the return trip.
+    """
+    mode: Optional[str] = None
+    for line in lines:
+        if "Edit session: NOTE_EDIT" in line:
+            mode = "NOTE_EDIT"
+        elif "Edit session: LOOP_EDIT" in line:
+            mode = "LOOP_EDIT"
+    return mode
+
+
+def note_edit_repress_needed(mode_since_press: Optional[str]) -> bool:
+    """Whether an unconfirmed NOTE_EDIT entry may be pressed again.
+
+    Only a fresh `LOOP_EDIT` ack *since our own press* says the press cycled instead of entering; then the next short
+    press is the way into NOTE_EDIT. With no ack yet the state is unknown, so pressing again could cycle an
+    unobserved NOTE_EDIT straight back to LOOP_EDIT — the measured re-press trap.
+    """
+    return mode_since_press == "LOOP_EDIT"
+
 
 def _track_index(track_number_1based: int) -> int:
     """0-based track index — matches host_midi_automation_baseline first_track_index."""
@@ -41,24 +94,18 @@ def _ensure_note_edit_entered(
     from hitl.midi_io import _send_short_press
 
     def _note_edit_active(lines: list[str]) -> bool:
-        last_kind = ""
-        for line in lines:
-            if "Edit session: NOTE_EDIT" in line:
-                last_kind = "NOTE_EDIT"
-            elif "Edit session: LOOP_EDIT" in line:
-                last_kind = "LOOP_EDIT"
-        if last_kind == "NOTE_EDIT":
+        if latest_edit_session_mode(lines) == "NOTE_EDIT":
             return True
         return any("entered note edit mode" in line for line in lines)
 
     def _note_edit_entered_in_suffix(suffix: list[str]) -> bool:
+        # Only note-specific acks count. `MIDI Edit Mode: Short press` is printed for every cycle press, including the
+        # one that left NOTE_EDIT for LOOP_EDIT, so it cannot confirm an entry.
         if any("Edit session: NOTE_EDIT" in line for line in suffix):
             return True
         if any("entered note edit mode" in line for line in suffix):
             return True
         if any("EditSession opened editPass=0" in line for line in suffix):
-            return True
-        if any("MIDI Edit Mode: Short press" in line for line in suffix):
             return True
         return False
 
@@ -81,13 +128,14 @@ def _ensure_note_edit_entered(
         last_press_at = time.monotonic()
         while time.monotonic() < deadline:
             suffix = serial_collector.snapshot()[baseline:]
-            if any("exited edit mode" in line for line in suffix):
-                break
             if _note_edit_entered_in_suffix(suffix):
                 print("[long-loop-display-hitl] NOTE_EDIT enter confirmed")
                 return True
-            if time.monotonic() - last_press_at >= 5.0:
-                print("[long-loop-display-hitl] re-press edit (no enter confirmation yet)")
+            mode_since_press = latest_edit_session_mode(suffix)
+            if time.monotonic() - last_press_at >= 5.0 and note_edit_repress_needed(mode_since_press):
+                print(
+                    "[long-loop-display-hitl] re-press edit (the press cycled to LOOP_EDIT, not NOTE_EDIT)"
+                )
                 _send_short_press(
                     out_port,
                     note=EDIT_BUTTON_NOTE,
@@ -98,6 +146,58 @@ def _ensure_note_edit_entered(
                 time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
             time.sleep(0.05)
     return False
+
+
+def _ensure_note_edit_exited(
+    out_port,
+    serial_collector,
+    *,
+    press_ms: int,
+    timeout_s: float = 8.0,
+) -> bool:
+    """Leave NOTE_EDIT through the surface's own cycle: a short press moves NOTE_EDIT → LOOP_EDIT.
+
+    The Edit button's long press is `EXIT_EDIT_MODE` — it leaves edit mode altogether rather than closing the note
+    overlay, and the leg's description ("exit NOTE_EDIT") does not mean that. The short press is the documented
+    cycle (`EditManager::cycleEditSession`), and its ack (`Edit session: LOOP_EDIT`) is the exit evidence.
+
+    State-aware like the record press: the press is sent only when the device's latest ack says NOTE_EDIT, and a lagging
+    ack is **not** answered with a second press — that would cycle straight back into NOTE_EDIT.
+    """
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.midi_io import _send_short_press
+
+    snapshot = serial_collector.snapshot()
+    mode = latest_edit_session_mode(snapshot)
+    if mode == "LOOP_EDIT":
+        print("[long-loop-display-hitl] NOTE_EDIT already left (LOOP_EDIT)")
+        return True
+    if mode != "NOTE_EDIT":
+        print(
+            f"[long-loop-display-hitl] error: NOTE_EDIT exit refused — the device's latest edit session is "
+            f"{mode or 'unknown'}, so a cycle press has no defined direction"
+        )
+        return False
+
+    baseline = len(snapshot)
+    _send_short_press(
+        out_port,
+        note=EDIT_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+    )
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        if latest_edit_session_mode(serial_collector.snapshot()[baseline:]) == "LOOP_EDIT":
+            print("[long-loop-display-hitl] NOTE_EDIT exit confirmed (LOOP_EDIT)")
+            return True
+        time.sleep(0.05)
+    print("[long-loop-display-hitl] error: NOTE_EDIT exit not confirmed (no LOOP_EDIT ack)")
+    return False
+
 
 def _parse_common_args(args: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
@@ -120,7 +220,15 @@ def _parse_common_args(args: object) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--press-ms", type=int, default=120)
-    parser.add_argument("--long-press-ms", type=int, default=700)
+    parser.add_argument(
+        "--long-press-ms",
+        type=int,
+        default=700,
+        help=(
+            "Unused by the note-overlay exit: NOTE_EDIT is entered and left by the short-press cycle "
+            "(CYCLE_EDIT_MODE), not by the long press (EXIT_EDIT_MODE). Retained so older invocations still parse"
+        ),
+    )
     parser.add_argument(
         "--play-stop-long-press-ms",
         type=int,
@@ -429,23 +537,41 @@ def run_long_loop_display_window(args: object) -> int:
                 abort=abort,
             )
             if not reached_recording:
-                print("[long-loop-display-hitl] warn: RECORDING not confirmed; retrying record press")
-                _send_short_press(
-                    out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=ns.press_ms,
-                )
-                reached_recording = _wait_for_recording_started(
-                    serial_collector,
-                    baseline_len=record_baseline_len,
-                    baseline_reca=baseline_reca,
-                    baseline_recording_transitions=baseline_recording_transitions,
-                    baseline_latest_state=baseline_latest_state,
-                    timeout_s=ns.state_sync_timeout_ms / 1000.0,
-                    serial_grace_s=ns.serial_grace_ms / 1000.0,
-                    abort=abort,
-                )
+                # The managed capture's session log lags the wire, so "not confirmed" can mean "not observed yet".
+                # Pressing again in that state **stops** the take the first press started -- measured 2026-10-20 as a
+                # one-bar take (`DIAG,record_length,ticks=768`) whose display rows never arrive, which then reads as
+                # `missing_playing_bounded_window_disp` in every downstream check. Re-read the device's own latest
+                # state before deciding; only a device that is genuinely not recording gets the second press.
+                lagging = _latest_track_state(serial_collector.snapshot(), after_index=record_baseline_len)
+                if not record_press_needs_retry(lagging):
+                    print(
+                        "[long-loop-display-hitl] RECORDING confirmed late (the capture log lagged the press); "
+                        "not pressing again"
+                    )
+                    reached_recording = True
+                else:
+                    print("[long-loop-display-hitl] warn: RECORDING not confirmed; retrying record press")
+                    _send_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=ns.press_ms,
+                    )
+                    reached_recording = _wait_for_recording_started(
+                        serial_collector,
+                        baseline_len=record_baseline_len,
+                        baseline_reca=baseline_reca,
+                        baseline_recording_transitions=baseline_recording_transitions,
+                        baseline_latest_state=baseline_latest_state,
+                        timeout_s=ns.state_sync_timeout_ms / 1000.0,
+                        serial_grace_s=ns.serial_grace_ms / 1000.0,
+                        abort=abort,
+                    )
+            if not reached_recording:
+                # Nothing is recording: continuing would record nothing, then fail the display checks for reasons that
+                # have nothing to do with the window. Name the real cause instead.
+                print("[long-loop-display-hitl] error: the record press was not confirmed; the leg cannot record")
+                return 2
         else:
             time.sleep(ns.phase_wait_ms / 1000.0)
 
@@ -534,24 +660,34 @@ def run_long_loop_display_window(args: object) -> int:
                 abort=abort,
             )
             if not reached_play:
-                print(
-                    "[long-loop-display-hitl] warn: STOPPED_RECORDING->PLAYING not confirmed; "
-                    "retrying record stop press"
-                )
-                _send_short_press(
-                    out_port,
-                    note=RECORD_BUTTON_NOTE,
-                    channel_1based=CONTROL_CHANNEL_1BASED,
-                    press_ms=ns.press_ms,
-                )
-                reached_play = _wait_for_transition_count(
-                    serial_collector,
-                    from_state="STOPPED_RECORDING",
-                    to_state="PLAYING",
-                    target_count=expected_play,
-                    timeout_s=sync_timeout_s,
-                    abort=abort,
-                )
+                # The stop press may have landed while the log still showed the take unfinished. Decide from the
+                # device's own latest state: only a take that is **still recording** gets a second press.
+                lagging = _latest_track_state(serial_collector.snapshot(), after_index=stop_baseline_len)
+                if not record_stop_needs_retry(lagging):
+                    print(
+                        "[long-loop-display-hitl] record stop confirmed late (the capture log lagged the press); "
+                        "not pressing again"
+                    )
+                    reached_play = True
+                else:
+                    print(
+                        "[long-loop-display-hitl] warn: STOPPED_RECORDING->PLAYING not confirmed; "
+                        "retrying record stop press"
+                    )
+                    _send_short_press(
+                        out_port,
+                        note=RECORD_BUTTON_NOTE,
+                        channel_1based=CONTROL_CHANNEL_1BASED,
+                        press_ms=ns.press_ms,
+                    )
+                    reached_play = _wait_for_transition_count(
+                        serial_collector,
+                        from_state="STOPPED_RECORDING",
+                        to_state="PLAYING",
+                        target_count=expected_play,
+                        timeout_s=sync_timeout_s,
+                        abort=abort,
+                    )
             if not reached_play:
                 print("[long-loop-display-hitl] warn: did not confirm STOPPED_RECORDING->PLAYING")
 
@@ -675,14 +811,32 @@ def run_long_loop_display_window(args: object) -> int:
         ctx.markers.append("phase:hold_track_end")
         time.sleep(max(DISPLAY_SETTLE_MS, ns.phase_wait_ms) / 1000.0)
 
-        print("[long-loop-display-hitl] exit NOTE_EDIT")
-        _send_long_press(
-            out_port,
-            note=EDIT_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.long_press_ms,
-        )
-        ctx.markers.append("exited edit mode")
+        print("[long-loop-display-hitl] exit NOTE_EDIT (short press cycles to LOOP_EDIT)")
+        if serial_collector is not None:
+            exit_confirmed = _ensure_note_edit_exited(
+                out_port,
+                serial_collector,
+                press_ms=ns.press_ms,
+                timeout_s=sync_timeout_s,
+            )
+            if not exit_confirmed:
+                lines = serial_collector.snapshot()
+                out_dir = Path(getattr(args, "out_dir", Path("captures")))
+                out_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                fail_path = out_dir / f"host_midi_hitl_long_loop_display_fail_{stamp}.log"
+                fail_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                print(f"[long-loop-display-hitl] serial fail log: {fail_path}")
+                print("[long-loop-display-hitl] error: NOTE_EDIT exit not confirmed; the leg cannot leave the overlay")
+                return 1
+        else:
+            _send_short_press(
+                out_port,
+                note=EDIT_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=ns.press_ms,
+            )
+        ctx.markers.append("phase:note_edit_exited")
 
         if ns.display_hold_s > 0:
             print(

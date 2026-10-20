@@ -2265,6 +2265,25 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
   rolling implementation; registration, authorization, exercise and successful qualification remain distinct
 
+  *Qualification attempted 2026-10-20 on the current lane image — **measured, not qualified** (see
+  [`s64-multi-run`](evidence/2026-10-20-s64-multi-run/EXECUTION.md)).* Ten managed runs of the registered profile
+  (track 8 / slot 4, 24 bars, image `441d5e0e…` at git `46e2be4c`, no firmware change) produced **one** combined green
+  (run 02), so no three consecutive green and no qualification. What blocks it is named and is **not** the lane: the
+  device holds `DISP` rows in its capture buffer and flushes them at the transport stop (run 10: 448 in the session log,
+  **2** in the leg's own copy, 446 in the post-stop drain), so the reused leg's display half depends on how many rows
+  leak during the run (2–15 observed) — run 10 is **all six lane checks + snapshot + ring integrity green, leg red with
+  no `state=PLAYING` row even in the drained set** (448 rows: 444 `RECORDING`, 4 `STOPPED`); run 02's green is the case
+  where 8 `PLAYING` rows arrived. `tier_a_evicted=1` (03/05/07/09) is an independent,
+  truthful ring refusal. One run (08) hung 22 min after a green leg with no combined/shutdown/cleanup receipt and was
+  killed (cause UNKNOWN; diagnostic only). Post-flash and fresh-boot runs (01, 05, 09) are not verdict-grade. **Host
+  tooling landed in the slice** (`scripts/hitl/scenarios/long_loop_display_window.py`, tests **19/19**): the note
+  overlay is entered *and* left with **short** presses (short = `CYCLE_EDIT_MODE`, long = `EXIT_EDIT_MODE`; the leg's
+  description and its long-press exit were both wrong), the entry re-press and the record-**stop** retry are
+  state-aware (run 09 measured the stop retry stopping the transport after the take had completed). The remaining
+  blocker (flush/tier policy or a timestamp-ordered drain read) is outside this declaration's "no firmware change, no
+  oracle weakening" boundary and needs its own scope decision. Lane terms measured under transport: receipts 23–24/24,
+  overrun 0, boundaries 206–475, `oracle_complete: false` with the two deferred terms unchanged. **6.4 stays open.**
+
 
 - [x] 6.4a Stage the I5 rolling-Record HITL into short, independently drivable managed passes without weakening 6.4 or 3.15f.
   `growth` then `empty` SHALL remain one `growth-empty` report/session/boot to preserve the cross-take transition;
