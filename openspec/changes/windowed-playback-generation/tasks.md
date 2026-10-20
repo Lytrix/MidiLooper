@@ -733,7 +733,7 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   change neither consumes nor shares. Its two **INTERPRETATION** rows are marked as mappings a reader can dispute
   without the citation being wrong. **The audit the task asks for is recorded too:** one deferred-service enumeration
 
-- [ ] 3.7d **Name the invalidation term on the blocked-demand row** — the `win_blocked_by_request` exit SHALL carry the
+- [x] 3.7d **Name the invalidation term on the blocked-demand row** — the `win_blocked_by_request` exit SHALL carry the
   term that stopped the retained demand (`PlaybackViewPendingReason`), so a device run names it instead of leaving the
   five candidates the retry lane's validation can produce (a changed loop length, a changed clock epoch, a passed
   admitted position, a passed deadline, or a source that is no longer current). **Prepared and deliberately not
@@ -925,7 +925,25 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   measurement that justified the two lines. The overrun row `-01` carried at 42.08 s did not recur, consistent with it
   being a record-start stall rather than a view advance. Evidence:
   [`s37h-cost-position`](evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md).
-- [ ] 3.7i **A `Bound` launch is the playing slot's window; the provision owner must not cancel it** (`DEC-154`) —
+
+  *Device read closed by analysis 2026-10-21 (owner decision); no firmware or tooling change.* Two further
+  gate-row-grade device runs on the qualification image (`captures/i5-s37i-device-32bar-01` and `-02`, device clock,
+  switch to slot 5, commits at 240.944 s and 232.943 s) recorded **zero** `win_blocked_by_request` rows, and the
+  ordering explains the absence rather than leaving it to luck. Every production writer of the exit's precondition now
+  either re-positions in the same gather turn or blocks the frame by name: the gather's `leadTooShort` branch
+  (`win_repositioned`) **clears** the retained record before returning; DEC-147's spent-budget terminal is
+  `win_blocked_by_budget`, which sets the frame `Blocked` and returns before the request is read; 3.7h removed the
+  late-build/`DeadlineExpired` route that produced the 2026-10-07/10-19 captures; and the paged lane's two reasons are
+  behind the active slot's own `Excluded` guards. Both runs show the storm in exactly that shape — 12 ×
+  (`win_requested` → `win_waiting` → `win_repositioned`, `rq=1…12`) → `win_blocked_by_budget rq=12` →
+  `win_blocked`, 238.3→239.0 s in `-02` and 246.3→247.0 s in `-01`, with all 12 `handoff_unreachable` drops on the
+  24-bar target. The one path that would leave the record for the exit is `siblingBroken` (reason 2, no re-position,
+  `rq=2`), and it needs a sibling slot on the same track with an admitted build whose deadline cannot hold the
+  candidate; the only such sibling here is the switch target's launch build, 117 ms against an ~11 s span period, which
+  the gesture cannot place. The instrument stays in the image and fires if the state occurs; a device read of it needs a
+  deliberate two-build overlap (a qualification-only trigger), not another run. Record:
+  [`s37d-s37i-reachability`](evidence/2026-10-21-s37d-s37i-reachability/EXECUTION-DEVICE.md).
+- [x] 3.7i **A `Bound` launch is the playing slot's window; the provision owner must not cancel it** (`DEC-154`) —
   landed 2026-10-20 as 3.7f's evidence blocker. Device `captures/i5-s37f-device-32bar-01` measured the interleaving: the
   commit bound the launch and the provision owner's next turn restarted the preparation
   (`cancelPlaybackLaunchForSlot(slot, true)`), which reset the adopted **current** view's metadata — the seed then
@@ -934,6 +952,22 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   RED→GREEN (`test_3_7f_a_bound_launch_survives_the_provision_owner_turn`), full native **3349 / 7 skipped / 3342
   succeeded**, both builds SUCCESS. *Device read owed:* a run that lands the interleaving should show
   `launch_bound_owned` and then adopt.
+
+  *Device read closed by analysis 2026-10-21 (owner decision); no firmware or tooling change.* Two gate-row-grade
+  device runs (`captures/i5-s37i-device-32bar-01` and `-02`, qualification image, device clock, switch to slot 5)
+  recorded **zero** `launch_bound_owned` rows, and the ordering excludes the state the guard reads. `Bound` has one
+  writer, `bindPlaybackLaunchForSlot`, called only from the commit branch of `TrackManagerTransportTick.cpp` after
+  `playbackLaunchReadyForSlot` has passed; the same branch then runs `clearPendingSlotSwitch` and
+  `applyActiveLoopIndex` in the **same tick**, and a successful bind implies `loop.hasCommittedPasses()` →
+  `hasDataInSlot`, so the commit's own next guard cannot divert it. `preparePlaybackLaunchForSlot` is only reached for
+  a pending switch on a **non-active** slot, so no provision turn can see `Bound` plus a pending switch. Measured in
+  both runs: the target walks `launch_requested` → `…_match` ×3 → `launch_building_match` (`prep=2`) → `ready_owns_source`
+  → `ready` (`prep=3`) at 195.78/195.10 s and stays `Ready` until the commit at 240.944/232.943 s, which then adopts
+  (`win_adopted_launch` at 240.993/232.983 s, 49/40 ms later) with no guard row. The only producible shape is a switch **away and back** inside the
+  bound window (≤ one two-bar traversal), which the commit ladder's wait for the outgoing loop's boundary (70–77 s here)
+  rules out. The guard stays as landed; its `Bound` arm is defensive, and the 3.7f capture's own row reads `prep=0` after
+  the cancel, so that log cannot separate `Bound` from a stale `Ready`. Record:
+  [`s37d-s37i-reachability`](evidence/2026-10-21-s37d-s37i-reachability/EXECUTION-DEVICE.md).
 - [x] 3.7g **Host-clock source for the long-loop HITL leg** (`--clock-source {device,host}` + `--tempo-bpm`), so a
   windowed evaluation can be paced by the host's 24 PPQN at a stated BPM instead of the device's own transport clock.
   *Landed 2026-10-20, host tooling only (no `src/`/`include/` change, images untouched).* The leg now sends the realtime
