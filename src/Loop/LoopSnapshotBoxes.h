@@ -117,6 +117,12 @@ struct PendingSnapshotPublishBox {
   PayloadReleaseResult stepPayloadRelease(PayloadReleaseCursor&, size_t maximumUnits);
   PayloadReleaseResult payloadReleaseResult(const PayloadReleaseCursor&) const;
   bool sessionExitQueued = false;
+  /// Task 3.14c: this request enumerates the committed passes against an **empty** parent rather
+  /// than the published root's diff (`resolvePendingParent`). A pass whose rows the published root
+  /// already represents still yields a fragment, which is what an edit-pass undo/redo needs: the
+  /// committed-pass inventory is unchanged, so the diff is empty, yet the overlay it carried may
+  /// no longer be valid. The published root stays selected until the candidate publishes.
+  bool rebuildFromPassInventory = false;
   /// DEC-073: the committed-pass revision the box's enumerated pass/companion inventory covers.
   /// It advances only when a request actually enumerates passes into this box, and the candidate
   /// finally published inherits it. A request that arrives later without being enumerated here

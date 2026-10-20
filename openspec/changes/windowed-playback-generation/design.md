@@ -504,6 +504,18 @@ not retriggered or closed. `TrackUndo` still owns undo semantics; the checkpoint
 outside this task. The proposal's previous read-only treatment of undo consumers does not apply to this narrow
 playback-refresh integration. Preview undo/redo uses task 3.13's existing immutable preview discipline.
 
+**The request's shape (landed 2026-10-20, DEC-150).** The edge requests once the entry is fully applied, and the
+*shape* depends on what the entry changed. Entries that changed **edit passes** use
+`Loop::requestCommittedPassesRebuild`, which enumerates the active pass inventory against an **empty** parent: the
+committed-pass diff against the published root would be empty for them (the passes did not change), and a companion
+change can only add or update, so a withdrawn overlay is retracted by omitting it from a rebuild rather than by
+removing a row. Entries that only changed committed passes keep `requestCommittedPassesRepublish`, whose diff parent is
+the published root. Both stamp the coverage they enumerated (DEC-073) and keep the previous root audible until the
+replacement lands. A later edge **replaces** an older in-flight request rather than leaving it (its enumeration is
+newer, so the last edge before the idle lane runs publishes at its own coverage); a stop's session-exit queue that
+adopts a rebuild box re-enumerates the identities it does not track before stamping. Evidence:
+[`2026-10-20-s314c-publication-owner-request`](evidence/2026-10-20-s314c-publication-owner-request/EXECUTION.md).
+
 Before the integration slice, its execution packet must enumerate capture-pass and overdub undo/redo callers,
 the request-to-handoff identity and ledger transition oracle, including repeated operations/selection changes
 between grains. Production-path native fixtures must fail under the present blanket silence and assert exact

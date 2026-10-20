@@ -114,6 +114,21 @@ Publication is **atomic** and conditional:
 - Wrap journals carry a `targetRevision` so a candidate is never marked current
   for a revision it does not contain; unstamped journals stay unselected.
 
+**Two request shapes, one lane (DEC-150).** A request queues work; it never publishes. The *incremental* form
+(`requestCommittedPassesRepublish`) diffs every queued committed pass and companion against the **published root**, which
+is what a pass-state change needs. The *rebuild* form (`requestCommittedPassesRebuild`) resolves an **empty** parent, so
+the candidate is the active pass inventory plus the active overlays — used by the undo/redo edge when the entry changed
+**edit passes**: the committed-pass diff would be empty there, and a companion change can only add or update, so a
+withdrawn overlay can only be retracted by omitting it from a rebuild. Both stamp `coveredPassRevision` from the inventory
+they enumerated (DEC-073), both keep the previous root selected and audible until the replacement lands, and both are
+serviced by the same idle owner at the same bounded units.
+
+A second request **replaces** an older one instead of being dropped: its enumeration is newer, and the older
+candidate would otherwise publish behind the live revision. A rebuild box that a stop's session-exit queue
+adopts re-enumerates the identities it does not track yet before stamping coverage (an empty-parent candidate
+must contain every pass its watermark claims); the shared enumeration itself stays literal, so a duplicate pass
+id remains an inventory row.
+
 ---
 
 ## Consumers

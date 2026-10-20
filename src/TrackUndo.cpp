@@ -150,6 +150,43 @@ TRACK_COLD_MEM void bindSessionExitAfterAttach(Loop& loop, UndoEntryId entryId) 
     loop.setPendingSessionExitUndoAttachEntryId(static_cast<uint32_t>(entryId));
 }
 
+/// Task 3.14c: the **request** through the publication owner, made at the undo/redo edge and served by
+/// the owner's own idle lane. Nothing is enumerated here, which is what the 2026-10-02 source
+/// verification measured as the reason this edge cannot do the work itself.
+///
+/// The entry has already advanced `playbackRevision`, and `committedPassRevision()` *is* that
+/// revision, so the published root is behind by DEC-073's own rule: `publishedSnapshotIsCurrent()` is
+/// false and the window lane refuses the demand `SourceNotCurrent` -- named, never served stale.
+///
+/// A root that already covers the live revision has nothing to rebuild, so a no-op change costs no
+/// publication. An older request that is still in flight is deliberately **replaced** rather than left
+/// alone: this request enumerates the inventory as of its own edge and stamps that coverage, so the
+/// last edge wins and the publish cannot land claiming a revision its candidate does not contain
+/// (DEC-073). Keeping the older candidate would publish behind the live revision and need one more
+/// request to converge -- and a session-exit publication queued meanwhile could advance its watermark
+/// without re-enumerating the inventory, which is the over-claim shape this replacement avoids.
+///
+/// `rebuildFromPassInventory` picks the **shape** of the request, and it is not cosmetic: an entry that
+/// changed **edit passes** leaves the committed-pass inventory unchanged, so the incremental form's
+/// diff against the published root is empty and the owner correctly finds nothing to freeze (measured:
+/// the box cleared with no candidate, coverage stayed at the pre-undo revision). It also cannot retract
+/// an overlay the root already carries, because a companion change can only add or update. The rebuild
+/// form enumerates the passes from an empty parent, which both represents an unchanged pass and drops
+/// the overlay a disabled batch no longer contributes.
+TRACK_COLD_MEM void requestPlaybackSourceCurrency(Loop& loop, bool rebuildFromPassInventory) {
+    if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+        return;
+    }
+    if (loop.publishedSnapshotIsCurrent()) {
+        return;
+    }
+    if (rebuildFromPassInventory) {
+        (void)loop.requestCommittedPassesRebuild();
+    } else {
+        (void)loop.requestCommittedPassesRepublish();
+    }
+}
+
 TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& entry, bool undo) {
     if (entry.kind == UndoEntryKind::LoopBoundaryChange) {
         return;
@@ -177,10 +214,13 @@ TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& en
     // Requeue a full rebuild from the committed passes on the normal publication lane, which the
     // idle Snapshot owner services while transport is live, and which keeps the previous root
     // audible until the replacement lands.
-    if (entry.kind == UndoEntryKind::RecordPassAdded ||
-        entry.kind == UndoEntryKind::OverdubPassAdded) {
-        (void)loop.requestCommittedPassesRepublish();
-    }
+    //
+    // Task 3.14c: an entry that carries **edit-pass** ids is published in the rebuild shape, because
+    // the committed passes it also changed are not the whole change -- the overlay it disabled or
+    // restored is not expressible as a diff against the root (measured in the 3.14 fixture before this
+    // placement: the request queued, the owner found an empty diff, and the box cleared with no root).
+    // Entries that only changed committed passes keep the incremental form this path has always used.
+    requestPlaybackSourceCurrency(loop, /*rebuildFromPassInventory=*/!entry.editPassIds.empty());
 }
 
 TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,

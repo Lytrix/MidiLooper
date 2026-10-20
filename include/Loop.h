@@ -1084,6 +1084,15 @@ struct Loop {
   /// current-but-incomplete root that is visible on the display and silent in
   /// playback.
   bool requestCommittedPassesRepublish();
+  /// Task 3.14c: the same request, but enumerated against an **empty** parent instead of the
+  /// published root's diff. A note-edit undo/redo changes the companion overlay only: the
+  /// committed passes are unchanged, so their diff against the published root is empty and a
+  /// republish has nothing to freeze. A rebuild enumerates every active committed pass from
+  /// scratch (plus the active overlays), which both retracts an overlay that a disabled batch no
+  /// longer contributes and still represents an unchanged pass. The published root stays
+  /// selected and audible until the replacement lands. Costs one full pass enumeration, the same
+  /// work a load/restore publication pays, and only on an edit-pass edge.
+  bool requestCommittedPassesRebuild();
   /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
   bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
   /// Record the `playbackRevision` a queued wrap journal will represent once complete.
@@ -1459,6 +1468,10 @@ struct Loop {
   uint64_t captureContentGeneration_ = 1;
   void advanceCaptureContentGeneration();
   friend class TrackUndo;
+  /// Task 3.14c: the publication-lane request both public forms share. A request replaces an older
+  /// in-flight one rather than being dropped: its enumeration is newer, so the last edge before the
+  /// idle lane runs publishes at its own coverage.
+  bool requestCommittedPassesOnPublicationLane(bool rebuildFromPassInventory);
   friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
                                             PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);
 

@@ -2,8 +2,11 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.14 (the publication-owner request) ·
 **Date:** 2026-10-20 · **Branch:** `feature/unified-rolling-playback-path` · **Baseline:** `1372953c`
-**Outcome:** **G0 BLOCKED on a design fork.** No firmware change landed; the tree is unchanged. The naively correct
-change was implemented and measured, and the owner refused to publish it for a reason the task text did not name.
+**Outcome:** **G0 BLOCKED on a design fork** at the time of writing: the naively correct change was implemented and
+measured, and the owner refused to publish it for a reason the task text did not name.
+**Resolved the same day:** option **A** (rebuild-from-empty) landed as this slice's increment — see
+[`EXECUTION.md`](EXECUTION.md). This note is kept as the finding that made the shape necessary; its measurements and
+the rejection reasons below are unchanged.
 
 ## Scope traced
 
@@ -73,13 +76,13 @@ existing one.
 | B | Companion **removals**: teach the snapshot change set to express "this edit row is gone" and apply it at membership. | Correct, and keeps candidates small. | Changes the snapshot model and every membership consumer; larger blast radius than the task's contract suggests. |
 | C | **Coverage repair**: treat companion-only changes as an overlay revision that does not stale the content coverage; the read path applies the live overlay. | Correct by construction, and removes the whole class of spurious staleness. | Overturns DEC-073's "coverage is the committed-pass revision" contract; needs a reassessment, not a slice. |
 
-## Recommendation
+## Resolution
 
-Take **A**, as its own slice with a DEC: *"a republish request rebuilds from the committed passes, not from the parent's
-diff"*. It answers 3.14c in the owner's own vocabulary, keeps DEC-073 untouched, leaves the record/overdub path
-byte-identical, and is native-verifiable with the fixture scaffolding already proven in this investigation (a real root
-at setup, three `NoteEditPassClosed` batches so consecutive real `undoForLoop` edges are available — the redo route
-drags `LoopEditManager` into this suite and does not link).
+**A** was taken, as its own slice with **DEC-150**: *"a rebuild request enumerates the pass inventory from an empty
+parent"*. It answers 3.14c in the owner's own vocabulary, keeps DEC-073 untouched, leaves the record/overdub path on
+the incremental form, and is native-verified with the fixture scaffolding proven here (a real root at setup, three
+`NoteEditPassClosed` batches so consecutive real `undoForLoop` edges are available — the redo route drags
+`LoopEditManager` into this suite and does not link). Implementation, oracle, red-proofs and gates:
+[`EXECUTION.md`](EXECUTION.md).
 
-**Task state:** 3.14 stays open; 3.14c is unchanged and still owed. `tasks.md`, `PROJECT_STATE.md`, `CURRENT_WORK.md` and
-`DELIVERABLE_TRACKING.md` were **not** edited for this investigation beyond this note, because nothing shipped.
+**Task state:** 3.14 stays open for its remaining terms; 3.14c's owed request is landed.

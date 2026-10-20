@@ -6954,16 +6954,63 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
                                    "a refresh with no affected identity emits nothing by itself");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
                            "and it leaves the soundings it did not reconcile alone");
-  // (7) The **publication-owner handoff** (task 3.14c): the undo edge speaks the owner's currency instead of silencing.
-  // A served window is published for the slot first, so the undo's staleness is visible in the owner's own vocabulary; the
-  // refresh then completes through the owner's normal request path, and the served window carries the restored revision.
+  // (7) The **publication-owner handoff** (task 3.14c): the undo edge *requests* currency through the owner instead of
+  // silencing, and the slot serves again once the replacement publishes -- never stale-as-current.
+  //
+  // The **shape** of the request is measured here, not assumed: the slot first publishes a root that *carries* the
+  // edit-pass overlay, because an edit-pass undo leaves the committed passes unchanged and the incremental republish
+  // then diffs to nothing (the box clears with no candidate). A rebuild enumerates the passes from an empty parent, so
+  // the candidate is the active inventory plus the active overlays: it represents an unchanged pass and returns the
+  // window to the effective content by **omitting** the overlay the disabled batch no longer contributes.
   Track& refreshTrack = trackManager.getTrack(3);
   refreshTrack.ensureLoopsAllocated();
   TrackCaptureStopTestAccess::selectSlot(refreshTrack, 0);
-  commitRecordPassIntoTrackSlot(refreshTrack, 0);
+  {
+    // Two bars of committed content (two note pairs), so the window has real rows to compare.
+    Loop& setupLoop = refreshTrack.getActiveLoop();
+    setupLoop.loopLengthTicks = 2 * Config::TICKS_PER_BAR;
+    setupLoop.beginCapture(CapturePhase::Record);
+    TEST_ASSERT_TRUE(setupLoop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+    TEST_ASSERT_TRUE(setupLoop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+    TEST_ASSERT_TRUE(setupLoop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 50, 100)));
+    TEST_ASSERT_TRUE(setupLoop.appendCaptureEvent(MidiEvent::NoteOff(848, 1, 50, 0)));
+    TEST_ASSERT_EQUAL(SealOutcome::Ok,
+                      setupLoop.sealCapture(setupLoop.loopLengthTicks, CommitReason::RecordStop));
+    TEST_ASSERT_TRUE(setupLoop.commitPendingCapturePass());
+  }
   Loop& refreshLoop = refreshTrack.getActiveLoop();
   refreshLoop.loopLengthTicks = kWindowOwnerLoopTicks;
-  publishBarSpacedRootForSlot(refreshLoop, 64);
+  // Three edit batches with one undo entry each. Consecutive undos are the **real** production edge (the redo route
+  // drags `LoopEditManager` into a suite that deliberately stubs it, so the second edge below is the next undo).
+  for (unsigned i = 0; i < 3; ++i) {
+    EditPass batch{};
+    batch.id = static_cast<EditPassId>(4343 + i);
+    batch.passType = EditPassType::Note;
+    batch.actionType = EditActionType::Create;
+    batch.propertyType = EditPropertyType::None;
+    batch.state = EditPassState::Active;
+    const uint32_t onTick = 96u + i * 96u;
+    const uint8_t pitch = static_cast<uint8_t>(66 + i);
+    // Both representations, kept consistent: the row's span is what a snapshot companion adds, and `addedEvents` is
+    // what the effective-content oracle contributes. A row carrying only one of them would measure one side, not the
+    // agreement between the published root and the effective content.
+    batch.targetNoteId = static_cast<NoteId>(9100 + i);
+    batch.pitch = pitch;
+    batch.velocity = 100;
+    batch.startTick = onTick;
+    batch.endTick = onTick + 48u;
+    batch.addedEvents.push_back(NoteIdTestFixtures::noteOnWithNoteId(
+        onTick, 1, pitch, 100, static_cast<NoteId>(9100 + i)));
+    batch.addedEvents.push_back(MidiEvent::NoteOff(onTick + 48u, 1, pitch, 0));
+    refreshLoop.passes.editPasses.push_back(batch);
+  }
+  // A **real** root that carries the overlays, built by the owner through the same request the edge uses.
+  TEST_ASSERT_TRUE(refreshLoop.requestCommittedPassesRebuild());
+  for (unsigned turn = 0; turn < 20000 && !refreshLoop.publishedSnapshotIsCurrent(); ++turn) {
+    (void)refreshLoop.stepPendingSnapshotPublish(2, true, 0);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(refreshLoop.publishedSnapshotIsCurrent(),
+                           "fixture precondition: the slot serves a current root carrying the overlay");
   TEST_ASSERT_TRUE(refreshTrack.prewarmPlaybackForSlot(0, true));
   SessionMidiEventVec refreshScratch;
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
@@ -6973,35 +7020,79 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
   }
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
                     static_cast<int>(refreshTrack.playbackWindowReadinessForSlot(0)));
+  // The window the resolver names, and the **served** answer (the requester's own scratch), compared with the
+  // effective-content oracle for that interval. A Create row contributes one note pair, and the root carries it because
+  // the rebuild enumerated the active overlays.
+  PlaybackCoverageInterval refreshInterval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(refreshLoop.loopLengthTicks, true, 500u, refreshInterval));
+  uint32_t preUndoWindowEvents = 0;
+  {
+    SessionMidiEventVec preOracle;
+    refreshLoop.copyEffectiveCommittedEventsInRange(preOracle, refreshInterval.startPhase,
+                                                    refreshInterval.lengthTicks);
+    preUndoWindowEvents = static_cast<uint32_t>(preOracle.size());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(10u, preUndoWindowEvents,
+                                     "pre-undo: 4 committed events + 3 overlay note pairs are effective");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(preUndoWindowEvents, static_cast<uint32_t>(refreshScratch.size()),
+                                     "pre-undo: the served window carries the overlay the root published");
+  }
+  for (unsigned i = 0; i < 3; ++i) {
+    UndoEntry entry{};
+    entry.kind = UndoEntryKind::NoteEditPassClosed;
+    entry.slotIndex = 0;
+    entry.editPassType = EditPassType::Note;
+    entry.editPassIds.push_back(static_cast<EditPassId>(4343 + i));
+    pushUndoEntry(refreshTrack, std::move(entry));
+  }
   const uint32_t revisionBeforeUndo = refreshLoop.playbackRevision;
-  EditPass refreshBatch{};
-  refreshBatch.id = 4343;
-  refreshBatch.passType = EditPassType::Note;
-  refreshBatch.state = EditPassState::Active;
-  refreshBatch.addedEvents.push_back(MidiEvent::NoteOn(0, 1, 66, 100));
-  refreshLoop.passes.editPasses.push_back(refreshBatch);
-  UndoEntry refreshEntry{};
-  refreshEntry.kind = UndoEntryKind::NoteEditPassClosed;
-  refreshEntry.slotIndex = 0;
-  refreshEntry.editPassType = EditPassType::Note;
-  refreshEntry.editPassIds.push_back(4343);
-  pushUndoEntry(refreshTrack, std::move(refreshEntry));
-  TrackUndo::undoForLoop(refreshTrack, refreshTrack.getActiveLoop());
+  TrackUndo::undoForLoop(refreshTrack, refreshLoop);
   TEST_ASSERT_TRUE_MESSAGE(refreshLoop.playbackRevision != revisionBeforeUndo,
                            "fixture precondition: the undo advanced the loop's revision");
   // The handoff, in the owner's vocabulary: the window lane owes a rebuild, and the edge said so instead of silencing.
   TEST_ASSERT_TRUE_MESSAGE(refreshTrack.playbackWindowReadinessForSlot(0) != Track::PlaybackWindowReadiness::Ready,
                            "a stale window is named as owing, not silently replaced by silence");
-  // And the refresh through the owner's own request path is **refused by name**, not served stale: an undo deliberately
-  // does not stamp its restored root current (DEC-073's protection, and task 4.1's lagging-checkpoint outcome), so the
-  // window's enumeration refuses `SourceNotCurrent` until a current root exists. That is the measured reason the gesture
-  // edge does not enumerate for itself: the correct requester is the lane that owns a current root (4.1's outcome, then
-  // 3.7's consumer), and what this edge owes is exactly what it does -- advance the currency, settle the closures and
-  // let the owner's vocabulary name the rebuild.
+  // (7a) **S1 -- the request exists** (the claim this increment lands). The edge asks the owner, which stamps the
+  // coverage it enumerated; it is a *rebuild*, never boot hydration, and nothing is enumerated at the edge. Stale is
+  // still refused by name -- the request is not permission to serve old content (DEC-073, and task 4.1's outcome).
+  TEST_ASSERT_TRUE_MESSAGE(refreshLoop.hasPendingSnapshotPublish(),
+                           "the undo edge requests currency through the publication owner");
+  TEST_ASSERT_FALSE_MESSAGE(refreshLoop.pendingSnapshotFromLoadedPasses(),
+                            "a rebuild request is not boot hydration");
+  TEST_ASSERT_FALSE(refreshLoop.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::SourceNotCurrent),
                             static_cast<int>(refreshTrack.requestPlaybackWindow(0, 500u, refreshScratch)),
-                            "a lagging root is named, never served as current");
+                            "a lagging root is named, never served as current -- even while a request is pending");
   TEST_ASSERT_FALSE(refreshTrack.hasPendingPlaybackViewMaintenance());
+  // (7b) **S2 -- the last edge wins, and the window returns to the effective content.** A second undo lands while the
+  // first request is still publishing; it *replaces* that request (its enumeration is newer, and the older candidate
+  // would otherwise publish behind the live revision), so one publication after the last edge lands current.
+  TrackUndo::undoForLoop(refreshTrack, refreshLoop);
+  TEST_ASSERT_TRUE_MESSAGE(refreshLoop.hasPendingSnapshotPublish(),
+                           "the second edge re-requests the inventory it enumerated");
+  for (unsigned turn = 0; turn < 20000 && !refreshLoop.publishedSnapshotIsCurrent(); ++turn) {
+    (void)refreshLoop.stepPendingSnapshotPublish(2, true, 0);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(refreshLoop.publishedSnapshotIsCurrent(),
+                           "the owner's own lane makes the replacement current");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(refreshTrack.requestPlaybackWindow(0, 500u, refreshScratch)),
+                            "and the refused demand is admitted against it");
+  for (size_t turn = 0; turn < 32 && refreshTrack.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)refreshTrack.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                            static_cast<int>(refreshTrack.playbackWindowReadinessForSlot(0)),
+                            "the served window is ready again");
+  SessionMidiEventVec refreshOracle;
+  refreshLoop.copyEffectiveCommittedEventsInRange(refreshOracle, refreshInterval.startPhase,
+                                                 refreshInterval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(refreshOracle.size()),
+                                   static_cast<uint32_t>(refreshScratch.size()),
+                                   "the served window carries exactly the post-undo effective content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(6u, static_cast<uint32_t>(refreshOracle.size()),
+                                   "two disabled batches: 4 committed events + the one batch still active");
+  TEST_ASSERT_TRUE_MESSAGE(static_cast<uint32_t>(refreshOracle.size()) < preUndoWindowEvents,
+                           "the two undone batches' overlay rows are **retracted**, not merely left unpublished");
 
   // (5) A slot with **no window lane** is not silenced either: the blanket emitter was the only thing that acted there,
   // and acting was the defect.

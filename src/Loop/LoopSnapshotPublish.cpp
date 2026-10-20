@@ -9,6 +9,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -312,6 +313,36 @@ bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
   return box.constructionPassId == passId || passIdInList(box.queuedPassIds, passId) ||
          passIdInList(box.appliedPassIds, passId) || passIdInList(box.journaledPassIds, passId) ||
          (box.passChangeProgress.active && box.passChangeProgress.passId == passId);
+}
+
+/// Task 3.14c: adopt inventory rows a **rebuild** box does not track yet. A rebuild candidate is built from an empty
+/// parent, so a box that an undo/redo edge enumerated can be adopted by a later owner (a stop's
+/// `queueSessionExitSnapshot`) only if the identities the inventory gained in between are queued too -- otherwise the
+/// published root would omit them while its watermark advanced. Untracked identities are appended in the literal
+/// inventory order.
+LOOP_COLD_MEM void adoptNewInventoryRowsInto(const Loop& loop, PendingSnapshotPublishBox& box) {
+  const auto tracked = [&box](PassId passId) { return passAlreadyTracked(box, passId); };
+  if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active &&
+      !loop.passes.recordPass.committedChunkIds.empty() &&
+      loop.passes.recordPass.id != kInvalidPassId && !tracked(loop.passes.recordPass.id)) {
+    box.queuedPassIds.push_back(loop.passes.recordPass.id);
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty() ||
+        pass.id == kInvalidPassId || tracked(pass.id)) {
+      continue;
+    }
+    box.queuedPassIds.push_back(pass.id);
+  }
+  for (const EditPass& edit : loop.passes.editPasses) {
+    if (edit.state != EditPassState::Active || edit.id == kInvalidEditPassId) {
+      continue;
+    }
+    if (std::find(box.companionIds.begin(), box.companionIds.end(), edit.id) == box.companionIds.end()) {
+      box.companionIds.push_back(edit.id);
+    }
+  }
+  box.companionsApplied = box.companionIds.empty();
 }
 
 uint32_t estimateNoteAffectedBars(const LoopSnapshotNote& note, uint32_t loopLengthTicks) {
@@ -1037,6 +1068,15 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(Loop& loop,
       box.unpublishedCandidate->loopLengthTicks() == loop.loopLengthTicks &&
       (box.sessionExitQueued || box.unpublishedCandidate->loopLengthTicks() >= completedTicks)) {
     return box.unpublishedCandidate;
+  }
+  // Task 3.14c: a **rebuild** request constructs from an empty parent, so every queued committed pass
+  // produces its own fragment instead of diffing to nothing against a published root that already
+  // represents it. The published root stays selected (and audible) until the candidate publishes; only
+  // the construction's parent differs. The candidate branch above still wins, so later fragments build
+  // on the work already done.
+  if (box.rebuildFromPassInventory) {
+    return LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                     loop.nextNoteId_, 1);
   }
   ImmutableLoopSnapshotRef parent = loop.publishedSnapshot();
   if (parent) {
@@ -1841,6 +1881,9 @@ namespace {
 /// Shared enumeration for a "publish everything committed" request. Returns false when the loop
 /// has nothing to publish; the caller owns the published root and pending-box policy.
 LOOP_COLD_MEM bool queueAllCommittedPassesInto(Loop& loop, PendingSnapshotPublishBox& box) {
+  // Literal inventory rows, deliberately not de-duplicated by id: a duplicate id in the pass list is an inventory row
+  // (`test_note_edit_entry_boundary` pins `{11, 21, 24, 24}`), not an identity to collapse. Adoption into a box that
+  // already tracks ids is a separate path (`adoptNewInventoryRowsInto`, task 3.14c).
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active &&
       !loop.passes.recordPass.committedChunkIds.empty() &&
       loop.passes.recordPass.id != kInvalidPassId) {
@@ -1891,6 +1934,14 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
 }
 
 LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
+  return requestCommittedPassesOnPublicationLane(/*rebuildFromPassInventory=*/false);
+}
+
+LOOP_COLD_MEM bool Loop::requestCommittedPassesRebuild() {
+  return requestCommittedPassesOnPublicationLane(/*rebuildFromPassInventory=*/true);
+}
+
+LOOP_COLD_MEM bool Loop::requestCommittedPassesOnPublicationLane(bool rebuildFromPassInventory) {
   if (loopLengthTicks == 0 || !hasCommittedPasses()) {
     return false;
   }
@@ -1905,13 +1956,18 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
   box.fromLoadedPasses = false;
   box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;
   box.sessionExitReason = CommitReason::RecordStop;
+  // Task 3.14c: the rebuild enumerates every active committed pass against an empty parent, so an
+  // unchanged pass still produces a fragment and the candidate is the pass inventory itself rather
+  // than the published root's diff. The **incremental** form keeps the published root as the diff
+  // parent, which is what a pass-state change needs and what the record/overdub undo path relies on.
+  box.rebuildFromPassInventory = rebuildFromPassInventory;
   if (!queueAllCommittedPassesInto(*this, box)) {
     clearPendingSnapshotPublish();
     return false;
   }
-  // DEC-073: the republish request covers the pass inventory it just enumerated. A later inventory
-  // change advances `committedPassRevision` without advancing this watermark, so the candidate
-  // built from this request publishes as an intermediate root and never claims the newer coverage.
+  // DEC-073: the request covers the pass inventory it just enumerated. A later inventory change
+  // advances `committedPassRevision` without advancing this watermark, so the candidate built from
+  // this request publishes as an intermediate root and never claims the newer coverage.
   box.coveredPassRevision = committedPassRevision();
   return true;
 }
@@ -2089,6 +2145,15 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
   // DEC-073: this enumeration reflects the committed-pass inventory as of now, so the box's
   // coverage watermark advances to it. Only an actual enumeration may advance coverage; a request
   // that arrives later without being enumerated here leaves the watermark behind.
+  //
+  // Task 3.14c: a **rebuild** box enumerated the full inventory at its own request, and this call only
+  // *appends* the stop's pass. Its candidate is built from an **empty** parent, so anything the inventory
+  // gained in between (a pass re-enabled by a later edge) would be omitted while the watermark below
+  // advanced -- a current root missing a pass. Adopt the identities the box does not track yet, then the
+  // watermark describes the candidate honestly.
+  if (box.rebuildFromPassInventory) {
+    adoptNewInventoryRowsInto(*this, box);
+  }
   box.coveredPassRevision = committedPassRevision();
 
   if (box.construction || !box.queuedPassIds.empty() || box.unpublishedCandidate ||
