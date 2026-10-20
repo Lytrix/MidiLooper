@@ -877,14 +877,47 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   demand pays the whole-loop qualification cost (5.8 ms/grain) against a two-bar handoff → `handoff_unreachable` ×12 →
   `win_blocked_by_budget` (238.76 s → 239.47 s); that is 3.7h. **3.7d** therefore still needs a route whose demand
   reaches a terminal term.
-- [ ] 3.7h **The successor span's demand must not pay the whole-loop qualification cost** — the post-adoption RED
+- [x] 3.7h **The successor span's demand must not pay the whole-loop qualification cost** — the post-adoption RED
   measured by 3.7f. Device `captures/i5-s37f-device-32bar-03`: after the adopted span expires, `win_requested` (reason
   source qualification) starts a `qualification_started` grain of **5.86 ms** (the whole-loop page), the two-bar
   handoff lead cannot hold it, and every attempt ends `handoff_unreachable` (24.6 ms builds) → 12 `win_repositioned` →
   `win_blocked_by_budget` at 239.467 s, so the remaining 22 bars are served by the ordinary merged path and no window is
-  ever served beyond phase 0. Owed: the RED pair for a positioned demand whose qualification is page-bounded by the
-  **span** (not the loop), then the device rerun for `win_ready`/`win_serving` past a boundary — the same read re-opens
-  3.7d's `win_blocked_by_request` route once a demand can reach its terminal.
+  ever served beyond phase 0.
+  *Landed 2026-10-20 (firmware + native RED→GREEN ×3 + host + both builds + device run).* **The premise as first written
+  was wrong and the measurement corrected it:** the qualification is *already* span-bounded (`EventWindowCursor::begin`
+  pins ≤ 3 bars; `qualifiedReleaseUnitBound()` derives from those pinned pages). The blocker is the **position**: the
+  selector placed the demand at the *declared* basis (`7 × 8 × 64 + 768 = 4 352` ticks) while the admission charged the
+  window's **own derived work** (fills + two bounded sorts + rank pass + the pinned release), so `canCompleteWithinLead`
+  could never hold on a dense span and every attempt left as `handoff_unreachable`. The fix is one price, used twice:
+  `CoverageServiceContract::deriveWindowGrainsFrom` (new) plus the file-local `boundRollingWindowWork`, which prices the
+  densest **span-aligned** window from page `count`s only (no event dereference) and is also what the admission site now
+  charges the counted window; the selector takes `max(declared, priced)` **only** when `priced + span ≤ loopLength`.
+  Where the cost cannot fit inside one loop the declared lookahead and DEC-147's bounded refusal stand unchanged — this
+  bounds a wait, it never pretends work is schedulable. No envelope constant, resolver branch or DEC-136 admission bound
+  was touched. Native: three cases (`test_3_7h_a_dense_span_is_positioned_by_its_cost_and_reaches_serving` RED at the
+  position assertion → GREEN through `Ready` and a boundary `Serving`; the cost-exceeds-loop guard; the cheap-span
+  no-regression), focused **230/230**, full native **3352 / 7 skipped / 3345 succeeded**, both builds SUCCESS.
+  Device `captures/i5-s37h-device-32bar-01` (same 32-bar take, host clock 90 BPM): **0** `build_drop handoff_unreachable`,
+  **0** `win_repositioned`, **0** `win_blocked_by_budget` against 13/13/1 on the host-clock run of the previous image, and
+  six consecutive one-bar boundary adoptions (`complete_ready clock_edge` → `adopted e2_boundary` at 126.458 … 139.777 s).
+  A second run on the same image, `captures/i5-s37h-device-32bar-02` (device clock, so the preset's play press supplies
+  the transport markers the host-clock path never logs), is **gate-row-grade and transport-scoped**: five of six lane
+  checks **ok** — `readiness_receipts_under_transport` (31/31), `windowed_service_coverage_under_transport` (557
+  opportunities), `window_boundaries_crossed_under_transport` (513 completions), `switch_target_span_alignment`
+  (`t=7 s=4 len=18432`) and `no_windowed_overrun_under_transport` — with the pre-existing `tier_a_evicted=1` ring gate
+  the only failure. The 32-bar take adopts **12** consecutive one-bar boundaries (116.54 → 145.84 s), and **all 12**
+  `handoff_unreachable`/`win_repositioned` rows in that run are on the **24-bar switch target** (`len=18432`), whose loop
+  cannot hold the priced lead by construction: the contract's second clause, on device, on the slot it was written for.
+  **3.7d stays open:** no demand reached a terminal term while playing (the take's frame blocks only when the switch
+  selects the other slot). The host-clock leg is **judgeable from its own capture** without a rerun: the external-clock
+  path (`ClockManager::onMidiStart`/`onMidiStop`) logs its clock edges instead of the button path's transport lines, and
+  re-judging `-01` on `External MIDI clock detected` (40.744 s) → `MIDI clock lost` (184.079 s) gives the same picture as
+  `-02` — 32/32 readiness receipts under transport (18 source-qualified), 555 service opportunities, 511 boundary
+  completions — with the device's own `running=1` `win_gap` rows continuous 42.08 → 183.31 s and no stopped turn between
+  the first and last qualified receipt. The one red transport check is the pre-existing host-clock overrun row at
+  42.08 s (`permitted=64`, `overrun_max=72`, record leg's first service turn; identical in `-03`, absent on both
+  device-clock runs), so the marker gap is a measurement note rather than an open firmware item. Evidence:
+  [`s37h-cost-position`](evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md).
 - [ ] 3.7i **A `Bound` launch is the playing slot's window; the provision owner must not cancel it** (`DEC-154`) —
   landed 2026-10-20 as 3.7f's evidence blocker. Device `captures/i5-s37f-device-32bar-01` measured the interleaving: the
   commit bound the launch and the provision owner's next turn restarted the preparation
@@ -912,6 +945,10 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   Detail: [`2026-10-20-s37g-host-clock/EXECUTION-DEVICE.md`](evidence/2026-10-20-s37g-host-clock/EXECUTION-DEVICE.md).
   *Recorded, not chased:* the run's lane verdict adds `no_windowed_overrun_under_transport` (`overrun_rows=1,
   worst=72`, µs 43.9 s) beside the pre-existing ring gate; the image is 3.7f's, so that row belongs with 3.7h/3.7d.
+  *Characterized with 3.7h:* it is the record leg's **first** service turn (`permitted=64 overruns=1 overrun_max=72`),
+  identical on the previous image's host-clock run and absent from both device-clock runs — a host-clock leg artifact
+  (a ~2 s stall at record start measured as a 72-tick service gap), not the playback view advancing past its bound; the
+  device-clock run is the overrun authority.
 - [x] 3.9 Deliver readiness receipts by the two delivery rules — verify a receipt produced under transport reaches the
   evidence stream and that diagnostic cadence cannot evict it
   *Increment 3.9 (increment 1) landed 2026-10-02 — **the readiness receipt and its two delivery rules**, and the half of that pair that had no fixture at all:

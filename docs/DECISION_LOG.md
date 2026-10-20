@@ -8778,3 +8778,50 @@ cancelling. `None` (the sticky handoff invalidation) keeps its old meaning and i
 ### Evidence
 [`evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md)
 — the `-01` interleaving rows, the RED (`Expected FALSE Was TRUE`), and the green suite.
+
+## DEC-155 — The rolling selector positions a demand with **the price the admission will charge**, bounded to the loop it can still hold
+
+**Date:** 2026-10-20
+**Owner:** `Track::serviceRollingPlaybackWindow` (the selector's `lookahead`) and the window price it shares with
+`Track::requestCommittedPlaybackWindow`'s admission; `CoverageServiceContract::deriveWindowGrainsFrom` plus the
+file-local `boundRollingWindowWork` (`src/Track/TrackPlaybackWindowBuild.cpp`, `src/Track/RuntimePlaybackViewBuild.cpp`).
+**Status:** Accepted and implemented — native RED→GREEN ×3, full native **3352 / 7 skipped / 3345 succeeded**, both
+builds SUCCESS, device runs `captures/i5-s37h-device-32bar-01` (host clock, known 90 BPM) and `-02` (device clock,
+transport-scoped: five of six lane checks green, 12 consecutive boundary adoptions on the take, and the cost-does-not-fit
+refusal confined to the 24-bar switch target where it belongs).
+
+### Decision
+The position a successor demand asks for SHALL be derived from the **same cost function the admission will charge that
+window** — fills, the two bounded sorts and the rank pass over the window's event count, and the retirement of the
+pages the qualification pins — and never from the lane's declared basis alone. The bound is computed without reading
+events (page `count`s over each span-aligned window, the maximum taken) so it can run before the window exists, and the
+selector uses it only when `pricedLead + span <= loopLength`; otherwise the declared position and DEC-147's bounded
+refusal/re-position stand unchanged. No envelope constant and no DEC-136 admission bound is relaxed: this bounds a
+*wait*, it never declares unschedulable work schedulable.
+
+### Rationale / alternatives
+- **Keep the declared basis and treat the dense refusal as terminal.** That is what the device measured before this
+  decision: `handoff_unreachable` ×13 and `win_repositioned` ×13 on the 32-bar take, ending in
+  `win_blocked_by_budget`, with the remaining bars served by the merged path and no window ever served past phase 0.
+  The admission was charging ~40 grains where the position paid for 7.
+- **Shorten the qualification instead.** Rejected: the qualification was already span-bounded
+  (`EventWindowCursor::begin` pins ≤ 3 bars, `qualifiedReleaseUnitBound()` derives from those pinned pages); the
+  premise that it priced the whole loop was wrong, and the measurement said so before any code changed.
+- **Reassess the envelope (loosen DEC-136).** Refused, as at 3.10: a loosened admission constant would make every
+  dense span look schedulable and destroy the refusal that fixture pins.
+- **Price the target span exactly instead of bounding over the loop.** Equivalent in cost on a uniform loop and
+  strictly weaker when spans differ, because the boundary the demand lands on is chosen after the price is taken.
+
+### Consequences
+- A dense span is admitted when its own price fits inside one loop; on the 32-bar take that removed every refused
+  handoff and every re-position, and the take adopted six consecutive one-bar windows.
+- The position can exceed the declared basis, so a lane's first window may now be placed most of a loop ahead; the
+  frame still adopts only at its own boundary, and an earlier request is not an earlier promise.
+- Where the price cannot fit, behaviour is byte-for-byte the old one — 3.10's dense-refusal fixture and the 24-bar
+  switch target keep their refusals. On device that is visible as the two slots of one run disagreeing: `len=24576`
+  serves twelve boundaries, `len=18432` spends its twelve re-positions and ends `win_blocked_by_budget`.
+
+### Evidence
+[`evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md)
+— the RED position assertion, the A/B receipt counts (13/13/1 → 0/0/0), the six boundary adoptions, and the read
+qualification (receipt-grade; the take's gate rows were evicted).

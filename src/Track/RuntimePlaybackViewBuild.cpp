@@ -377,6 +377,14 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::canCompleteWithinL
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveSnapshotGrainsFrom(
     size_t sourceUnits, size_t eventCount, size_t fillQuantum, size_t orderQuantum) {
+  deriveWindowGrainsFrom(sourceUnits, eventCount, 0, fillQuantum, orderQuantum);
+}
+
+/// Task 3.7h — the **one** price for a window build, shared by the rolling selector's position and the
+/// admission's lead test. `releaseUnits == 0` is the source-only shape (`deriveSnapshotGrainsFrom`), which
+/// charges the single promotion grain and nothing for retirement.
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveWindowGrainsFrom(
+    size_t sourceUnits, size_t eventCount, size_t releaseUnits, size_t fillQuantum, size_t orderQuantum) {
   const auto grains = [](size_t work, size_t quantum) -> size_t {
     return quantum == 0 ? SIZE_MAX : work == 0 ? 1 : 1 + (work - 1) / quantum;
   };
@@ -384,7 +392,9 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveSnapshotGrai
   const size_t sort = RuntimePlaybackOrderBuilder::requiredGrains(eventCount, orderQuantum);
   const size_t ranks = grains(eventCount, orderQuantum);
   const size_t orders = sort > (SIZE_MAX - ranks) / 2 ? SIZE_MAX : 2 * sort + ranks;
+  const size_t releaseGrains = grains(releaseUnits, fillQuantum);
+  const size_t promotion = releaseUnits == 0 ? 1 : (releaseGrains == SIZE_MAX ? SIZE_MAX : 1 + releaseGrains);
   requiredFillGrains = static_cast<uint16_t>(fills > UINT16_MAX ? UINT16_MAX : fills);
   requiredOrderGrains = static_cast<uint16_t>(orders > UINT16_MAX ? UINT16_MAX : orders);
-  requiredPromotionGrains = 1;
+  requiredPromotionGrains = static_cast<uint16_t>(promotion > UINT16_MAX ? UINT16_MAX : promotion);
 }

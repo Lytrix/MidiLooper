@@ -4696,6 +4696,64 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
 #endif
 }
 
+/// **Task 3.7h -- the densest span-aligned window of this loop, priced before it is read.** The window cursor pins
+/// at most the bars the interval intersects (`kMaximumWindowTicks` is two bars), so the three quantities the
+/// admission will later *measure* can be bounded from the pinned pages alone: the event references in those bars,
+/// the pages they span, and the retirement units the qualification will owe. No event is dereferenced and no page
+/// content is read; only each page's `count` is visited, once per span.
+struct RollingWindowWorkBound {
+  size_t events = 0;
+  size_t readUnits = 0;
+  size_t releaseUnits = 0;
+};
+
+/// Two owner turns of headroom between the request and the admission's lead test: the qualification itself runs
+/// before `beginQualifiedCoverageBuild` reads the clock, and a position that paid *exactly* the price would lose
+/// those turns off the lead it was promised. Two turns is the declared per-turn advance twice, not a measured fudge.
+constexpr uint64_t kRollingPositionSlackTicks = 2 * uint64_t(Track::kPlaybackViewPermittedAdvancePerTurn);
+
+TRACK_COLD_MEM bool boundRollingWindowWork(const LoopSnapshot& snapshot, uint32_t loopLengthTicks,
+                                          uint32_t windowTicks, RollingWindowWorkBound& out) {
+  if (loopLengthTicks == 0 || windowTicks == 0 || windowTicks > loopLengthTicks ||
+      windowTicks % Config::TICKS_PER_BAR != 0) {
+    return false;
+  }
+  const uint32_t windowBars = windowTicks / Config::TICKS_PER_BAR;
+  const uint32_t bars = loopLengthTicks / Config::TICKS_PER_BAR;
+  if (windowBars == 0 || bars < windowBars) {
+    return false;
+  }
+  RollingWindowWorkBound bound;
+  for (uint32_t first = 0; first + windowBars <= bars; ++first) {
+    size_t windowEvents = 0;
+    size_t windowPages = 0;
+    for (uint32_t bar = 0; bar < windowBars; ++bar) {
+      auto page = snapshot.eventMembership(first + bar);
+      while (page) {
+        windowEvents += page->count;
+        ++windowPages;
+        page = page->next;
+      }
+    }
+    // A window the admission cannot hold is not a candidate position: its own request would be refused by name.
+    if (windowEvents > RuntimePlaybackViewConfig::kWindowAdmissionLimit) {
+      return false;
+    }
+    // The cursor's read units are one per reference, one per page link and one per bar exit; retirement charges
+    // every fixed slot of every pinned page, as `EventWindowCursor::qualifiedReleaseUnitBound` does after a read.
+    const size_t readUnits = windowEvents + windowPages + windowBars;
+    const size_t releaseUnits = windowPages * (kSnapshotMembershipPageCapacity + 1u) + windowBars;
+    if (windowEvents > bound.events) bound.events = windowEvents;
+    if (readUnits > bound.readUnits) bound.readUnits = readUnits;
+    if (releaseUnits > bound.releaseUnits) bound.releaseUnits = releaseUnits;
+  }
+  if (bound.events == 0) {
+    return false;
+  }
+  out = bound;
+  return true;
+}
+
 TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(PlaybackDeadlineClock clock) {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
   (void)clock;
@@ -4923,8 +4981,30 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       reportPlaybackLaunchGateRow(activeLoopIndex, "launch_seed_not_bound");
   }
   const auto contract = playbackViewCoverageContract();
-  const uint64_t lookahead = uint64_t(contract.requiredGrains()) *
+  uint64_t lookahead = uint64_t(contract.requiredGrains()) *
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
+  // **Task 3.7h -- the position pays for the work it asks for.** The declared basis (`3/3/1`) prices the *lane's*
+  // promise, but the admission prices the **window's own** derived work (`fills + two sorts + rank pass + the pinned
+  // release`), and the two differ by an order of magnitude on a dense span: the device's take measured ~40 grains
+  // against a declared 7, so a lead of `7 x 8 x 64 + 768` could never hold it and every attempt left as
+  // `handoff_unreachable` -- twelve re-positions, then the traversal budget. The position is therefore taken from the
+  // same price the admission will charge, bounded over **every** span of this loop (so whichever span the boundary
+  // lands on cannot cost more than the position paid for). Where that price cannot fit inside one loop, the declared
+  // lookahead and DEC-147's bounded refusal/re-position behaviour stand unchanged: this bounds a wait, it never
+  // pretends work is schedulable.
+  {
+    RollingWindowWorkBound bound{};
+    const auto snapshot = loop.publishedSnapshot();
+    if (snapshot && boundRollingWindowWork(*snapshot, loop.loopLengthTicks, span, bound)) {
+      CoverageServiceContract priced = contract;
+      priced.deriveWindowGrainsFrom(bound.readUnits, bound.events, bound.releaseUnits,
+                                    kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+      const uint64_t pricedLead = uint64_t(priced.requiredGrains()) *
+              (uint64_t(priced.maximumConsecutiveDeniedTurns) + 1) * priced.maximumPhaseAdvancePerTurn +
+          priced.leadTicks + kRollingPositionSlackTicks;
+      if (pricedLead > lookahead && pricedLead + span <= loop.loopLengthTicks) lookahead = pricedLead;
+    }
+  }
   uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
   if (frame.refusedHandoffValid) {
     // DEC-147: start at the refused span's handoff, so the retry can never land on the position that was just measured
@@ -5533,16 +5613,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   if (runtime->coveragePreparation != LoopPlaybackRuntime::CoveragePreparation::AwaitAdmission)
     return PlaybackViewTurnResult::Idle;
   auto contract = playbackViewCoverageContract();
-  contract.deriveSnapshotGrainsFrom(runtime->coverageSourceUnits, runtime->coverageEventCount,
-      kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+  // Task 3.7h: **the same price the selector positions against** -- fill pages + the two bounded sorts and the rank
+  // pass + the retirement of the topology the qualification pinned. The selector's position is priced from a bound
+  // over every span of this loop (so the target's own cost can never exceed it); the admission prices the counted
+  // window with the one function both read, so a position and a lead test can never disagree about what the work is.
+  contract.deriveWindowGrainsFrom(runtime->coverageSourceUnits, runtime->coverageEventCount,
+                                  runtime->coverageSource.qualifiedReleaseUnitBound(),
+                                  kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
   contract.requiredFillGrains = 0; // Already completed in private qualification; never reread.
-
-  // Count qualification visited every page. Charge its pinned topology, including
-  // all fixed child slots and empty pages, independent of today's sharing. Before
-  // qualification the outstanding preparation budget still uses the global bound.
-  const uint32_t releaseGrains = (runtime->coverageSource.qualifiedReleaseUnitBound() +
-      kPlaybackViewFillQuantum - 1) / kPlaybackViewFillQuantum;
-  contract.requiredPromotionGrains = static_cast<uint16_t>(1 + releaseGrains);
   // Launch has no deadline to expire. A sibling appearing after qualification
   // temporarily owns service; preserve the counted source and retry admission.
   if ((launch || cold) && playbackViewOutstandingGrains(slotIndex) != 0)

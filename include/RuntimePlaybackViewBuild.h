@@ -144,6 +144,12 @@ struct CoverageServiceContract {
   /// Source qualification and retirement must be charged separately by the owner.
   void deriveSnapshotGrainsFrom(size_t sourceUnits, size_t eventCount,
                                 size_t fillQuantum, size_t orderQuantum);
+  /// **Task 3.7h: the one price for a window build.** Fill pages + the two bounded sorts and the rank
+  /// pass over `eventCount` + the retirement of the pinned `releaseUnits` (one grain when nothing is
+  /// pinned). The rolling selector positions its demand with this price and the admission prices the
+  /// counted window with it, so the position and the lead test cannot drift into two estimates.
+  void deriveWindowGrainsFrom(size_t sourceUnits, size_t eventCount, size_t releaseUnits,
+                              size_t fillQuantum, size_t orderQuantum);
   bool canCompleteBeforeHandoff(uint32_t currentPhase, uint32_t handoffPhase,
                                 uint32_t loopLengthTicks,
                                 uint16_t additionalGrains = 0) const;

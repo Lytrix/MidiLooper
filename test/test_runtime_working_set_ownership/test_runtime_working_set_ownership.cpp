@@ -14331,6 +14331,160 @@ void test_3_7f_a_bound_launch_survives_the_provision_owner_turn() {
   TEST_ASSERT_NOT_EQUAL(0u, runtime->launchBoundTick);
 }
 
+/// **Task 3.7h -- the position pays for the work it asks for.**
+///
+/// 3.7f's post-adoption RED was recorded as "the successor span pays a whole-loop qualification". The code says
+/// otherwise: `EventWindowCursor::begin` pins only the bars the interval intersects (`kMaximumWindowTicks` is two
+/// bars), and `qualifiedReleaseUnitBound()` is computed from those pinned pages, so the qualification **is**
+/// span-bounded. What refuses is the **lead**: `canCompleteWithinLead` charges the window's own derived work
+/// (`grains x (denied + 1) x advance` plus the one-bar reserve) while the selector positioned every demand at the
+/// **declared basis** (`7 grains x 8 x 64 + 768 = 4 352`), which a dense two-bar span cannot afford. On the device's
+/// uniform take that is `handoff_unreachable` at every attempt, twelve re-positions, then `win_blocked_by_budget`.
+///
+/// The contract pinned here leaves DEC-136's arithmetic and DEC-147's re-positioning untouched:
+/// 1. when the target span's own derived price fits inside one loop, the demand is positioned at that price;
+/// 2. when it does not, the declared lookahead and its bounded refusal/re-position behaviour are preserved;
+/// 3. a cheap span is positioned exactly as before (no regression to the short lookahead).
+constexpr uint32_t kRollingBar3_7h = Config::TICKS_PER_BAR;
+
+/// The selector's declared-basis lead, read from the same contract the lane reads (`7 x (H+1) x advance + one bar`).
+uint64_t declaredRollingLead3_7h() {
+  const auto contract = Track::playbackViewCoverageContract();
+  return uint64_t(contract.requiredGrains()) *
+             (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) *
+             contract.maximumPhaseAdvancePerTurn +
+         contract.leadTicks;
+}
+
+/// A demoted, span-aligned, playing slot whose **published root** carries `notesPerBar` notes in every bar -- the
+/// device take's uniform density rather than the suite's one-note-per-bar fixture.
+LoopPlaybackRuntime* setupDenseRollingDemand3_7h(uint8_t slot, uint32_t bars, uint32_t notesPerBar) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, slot, bars);
+  Loop& loop = track.getActiveLoop();
+  publishNotesInBarsRootForSlot(loop, 0, bars, bars * notesPerBar);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(200);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+  TEST_ASSERT_NOT_NULL(runtime);
+  return runtime;
+}
+
+/// The off-clock owner, one declared grain per turn (no clock advance): the build the position has to pay for.
+/// Returns true when the successor is complete **and** the qualification's retirement has finished -- the boundary
+/// resolver refuses a candidate that still owns its coverage source.
+bool drainRollingOwner3_7h(Track& track, LoopPlaybackRuntime* runtime, uint32_t turns) {
+  auto* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) return false;
+  const auto readyComplete = [&]() {
+    return set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
+        set->views[set->lifecycle.ready].complete;
+  };
+  for (uint32_t turn = 0; turn < turns && !readyComplete(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance(
+        static_cast<uint32_t>(clockManager.getCurrentTick()), nullptr, false, nativePlaybackDeadlineClock);
+  }
+  if (!readyComplete()) return false;
+  for (uint32_t turn = 0; turn < 4096 && runtime->ownsCoverageSource(); ++turn)
+    (void)runtime->stepCoverageSourceRetirement(64);
+  return !runtime->ownsCoverageSource();
+}
+
+/// **3.7h (1): cost fits inside the loop** -- the demand is positioned at the span's own price, refused by nothing,
+/// and adopted at its boundary.
+void test_3_7h_a_dense_span_is_positioned_by_its_cost_and_reaches_serving() {
+  constexpr uint8_t kSlot = 0;   // an enabled slot: a disabled one never reaches the emitter
+  constexpr uint32_t kBars = 32;
+  auto* runtime = setupDenseRollingDemand3_7h(kSlot, kBars, 8);
+  Track& track = trackManager.getTrack(0);
+  const uint32_t length = track.getLoop(kSlot).loopLengthTicks;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kBars * kRollingBar3_7h, length, "precondition: the 32-bar take's geometry");
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the dense span is requested");
+  const uint64_t lead = handoffLeadTicks(phase, runtime->rolling.startPhase, length);
+  const uint64_t declared = declaredRollingLead3_7h() + 2 * kRollingBar3_7h;
+  TEST_ASSERT_TRUE_MESSAGE(lead > declared,
+                           "the position pays the span's own derived cost, not the declared basis lookahead");
+  TEST_ASSERT_TRUE_MESSAGE(lead < length, "and the position is still inside one loop");
+  TEST_ASSERT_TRUE_MESSAGE(drainRollingOwner3_7h(track, runtime, 8192),
+                           "the priced position's build is admitted and publishes the ready successor");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                   "not one position refusal: the lead the demand was given covers its own work");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                            static_cast<int>(runtime->rolling.phase), "and the frame waits for its own boundary");
+  const uint64_t boundary = runtime->rolling.deadlineTick;
+  // Adoption happens on the **production tick path**: the merged read resolves the frame at the boundary it promised
+  // (`rollingCandidateReadyAtBoundary` requires the playhead to have *arrived*, so a synthetic clock jump is refused).
+  TEST_ASSERT_TRUE(boundary > nativePlaybackDeadlineClock.tick);
+  TEST_ASSERT_TRUE(boundary - nativePlaybackDeadlineClock.tick <= length);
+  for (uint64_t tick = nativePlaybackDeadlineClock.tick; tick <= boundary; ++tick)
+    rollingTestTick(track, tick, /*service=*/false);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                            static_cast<int>(runtime->rolling.phase),
+                            "the boundary adopts the priced window: win_ready -> win_serving");
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackWindowServesSlot(kSlot), "and the slot is served from it");
+}
+
+/// **3.7h (2): cost does not fit inside the loop** -- the declared lookahead and its bounded refusal/re-position
+/// behaviour are preserved; nothing pretends the work is schedulable.
+void test_3_7h_a_span_whose_cost_exceeds_the_loop_keeps_the_declared_position() {
+  constexpr uint8_t kSlot = 0;   // an enabled slot: a disabled one never reaches the emitter
+  constexpr uint32_t kBars = 18;  // still past the demotion bound, and a whole number of two-bar spans
+  auto* runtime = setupDenseRollingDemand3_7h(kSlot, kBars, 15);
+  Track& track = trackManager.getTrack(0);
+  const uint32_t length = track.getLoop(kSlot).loopLengthTicks;
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the demand is still made");
+  const uint64_t lead = handoffLeadTicks(phase, runtime->rolling.startPhase, length);
+  TEST_ASSERT_TRUE_MESSAGE(lead < declaredRollingLead3_7h() + 2 * kRollingBar3_7h,
+                           "an unaffordable span keeps the declared lookahead");
+  for (uint32_t turn = 0; turn < 4096 && RollingGateRows::countOf("win_repositioned") == 0; ++turn) {
+    (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(clockManager.getCurrentTick()), nullptr, false,
+                                            nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                          "and the lead refusal is still the named position refusal");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                                static_cast<int>(runtime->rolling.phase),
+                                "a window this loop cannot hold is never admitted");
+}
+
+/// **3.7h (3): a cheap span keeps the short lookahead** -- no regression for the shapes the lane already served.
+void test_3_7h_a_cheap_span_keeps_the_short_lookahead_and_is_served() {
+  constexpr uint8_t kSlot = 0;   // an enabled slot: a disabled one never reaches the emitter
+  constexpr uint32_t kBars = 24;
+  auto* runtime = setupDenseRollingDemand3_7h(kSlot, kBars, 1);
+  Track& track = trackManager.getTrack(0);
+  const uint32_t length = track.getLoop(kSlot).loopLengthTicks;
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the cheap span is requested");
+  const uint64_t lead = handoffLeadTicks(phase, runtime->rolling.startPhase, length);
+  TEST_ASSERT_TRUE_MESSAGE(lead < declaredRollingLead3_7h() + 2 * kRollingBar3_7h,
+                           "a cheap span is positioned by the declared lookahead, as before");
+  TEST_ASSERT_TRUE_MESSAGE(drainRollingOwner3_7h(track, runtime, 8192),
+                           "and it still builds to the ready successor");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+                                   "no position refusal for a shape that always fitted");
+}
+
 /// 3.7a (I2): the refused gather **keeps the demand** and names why -- a retained revision that lags the loop, a
 /// passed deadline, and the gather's own discarding transition. Nothing here publishes, and nothing is dropped.
 void test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand() {
@@ -17082,6 +17236,11 @@ int main() {
   RUN_TEST(test_3_7e_a_stale_bound_launch_is_not_seeded);
   RUN_TEST(test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
+  // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
+  // fits inside one loop; the declared lookahead, unchanged, when it does not).
+  RUN_TEST(test_3_7h_a_dense_span_is_positioned_by_its_cost_and_reaches_serving);
+  RUN_TEST(test_3_7h_a_span_whose_cost_exceeds_the_loop_keeps_the_declared_position);
+  RUN_TEST(test_3_7h_a_cheap_span_keeps_the_short_lookahead_and_is_served);
   RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
   // windowed-playback-generation slice 3.7a (I3): the capture admission counts **committed** windows only, so a served
   // preview (the session's uncommitted projection) inherits nothing.
