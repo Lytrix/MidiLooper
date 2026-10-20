@@ -1312,6 +1312,25 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   [`evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md`](evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md)
   with its [`EXECUTION.md`](evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md) packet.
 
+
+  *Increment 3.14c investigation landed 2026-10-20 (read-only; **nothing shipped**, the task stays open):* the owed
+  "request through the publication owner" was **implemented and measured, then withdrawn**, because the owner cannot
+  build a replacement for a note-edit-only change. The edge *can* request: a cold helper calling
+  `Loop::requestCommittedPassesRepublish` at the end of `applyPublishedSnapshotSelect` (after every case mutation --
+  placing it inside the refreshes stamped a coverage the caller then invalidated) leaves
+  `hasPendingSnapshotPublish()==true`, `pendingSnapshotFromLoadedPasses()==false`, one queued pass, and still answers
+  `SourceNotCurrent` -- DEC-073 intact. But the owner then finds **nothing to publish**: the record pass is already
+  represented in the parent, so the pass diff is empty; the batch the undo just disabled is no longer *active*, so the
+  companion branch skips it; and the empty-candidate path clears the box. Measured: after 20 000 owner turns
+  `publishedSnapshotCoveredRevision()==1` while `playbackRevision==4`, with no new root. The deeper term is that
+  `appendEditRowChange` can only add/update -- a companion that becomes `Disabled` has **no removal representation**, so a
+  root published with the overlay cannot have it retracted, and re-stamping a no-op diff as current would be
+  silent-wrong (rejected). So 3.14c needs a **shape** decision, not a call to the existing request: (A) a
+  **rebuild-from-empty** flavour (empty parent + every committed pass + active overlays; the record/overdub path stays
+  byte-identical; recommended), (B) companion removals in the snapshot change set, or (C) a coverage repair that stops
+  companion-only changes staleing content coverage (overturns DEC-073, needs a reassessment). Detail:
+  [`evidence/2026-10-20-s314c-publication-owner-request/G0-INVESTIGATION.md`](evidence/2026-10-20-s314c-publication-owner-request/G0-INVESTIGATION.md).
+
   **Sequence:** 3.7a first, then complete 3.14 and 4.5 against the real handoff. 3.7b removes fallback only after those plus 3.12/3.13, F-7/F-8, timing and compatibility gates pass.
 
 ### 3.15 — DEC-116 one rolling playback path for all sounding slots (new design scope; all unchecked)
