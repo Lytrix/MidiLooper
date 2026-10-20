@@ -13273,6 +13273,180 @@ void test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_r
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(again.closureCount),
                                    "a second plan finds nothing to close: exactly once, not twice");
 }
+
+/// **4.5 -- the moving closure on a demoted slot's serving handoff.**
+///
+/// Increment I9 closed the moving closure for the **merged** route: an obligation the replacement keeps while moving
+/// its own NoteOff behind the phase the walk resumes from is closed at the handoff instead of outliving the revision
+/// that ended it. On a demoted slot the merged store is only a two-bar slice, so that route is not the one serving, and
+/// the lane's own seam deliberately closes nothing from a slice (`test_rolling_path_interval_ab_revision_trace_...`:
+/// a window's absence is not removal evidence). The case that stayed open is the one where the edit **keeps** the note
+/// and moves its end *behind the playhead*: the served pass can never reach that tick again, so the sounding instance
+/// would stay open until the next traversal of that interval -- a whole loop away -- or until some whole-loop authority
+/// happened to close it.
+///
+/// This fixture measures the real path: a demoted 24-bar slot is **served** from an interval window, an obligation is
+/// articulated inside it, and an edit batch (landed through the production undo/redo reconcile) moves that note's end
+/// behind the playhead while re-stating a second note unchanged. The contract asserted is the spec's: the moved note
+/// **closes once, now**; the untouched one keeps sounding with no early NoteOff and no retrigger; and nothing closes
+/// twice when the lane later serves other intervals.
+void test_s45_the_moving_closure_closes_when_an_edit_moves_the_note_off_behind_the_playhead() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  constexpr uint8_t kSlot = 2;
+  constexpr uint8_t kHeld = 70;   // the obligation whose end the edit moves behind the playhead
+  constexpr uint8_t kKept = 72;   // the obligation the edit re-states unchanged: it must keep sounding
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kSpan = 2 * kBar;
+  const uint32_t aStart = 6 * kBar;
+  const uint32_t aEnd = aStart + kSpan;
+  const uint32_t heldOn = aEnd - 44;        // inside A, ahead of the edit's own position
+  const uint32_t movedOff = heldOn + 8;     // the edit's new end: behind the playhead once it lands
+  const uint32_t keptOff = aEnd + 96;       // unchanged, still ahead of the floor
+  Loop& loop = track.getLoop(kSlot);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kSlot);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint64_t origin = clockManager.getCurrentTick();
+
+  auto addNote = [&](LoopSnapshotChangeSet& changes, uint32_t order, uint16_t noteId, uint8_t pitch,
+                     uint32_t onTick, uint32_t offTick) {
+    SnapshotNoteChange note{};
+    note.kind = SnapshotChangeKind::Add;
+    note.next.loopId = loop.loopId;
+    note.next.noteId = static_cast<NoteId>(noteId);
+    note.next.pitch = pitch;
+    note.next.velocity = 100;
+    note.next.startTick = onTick;
+    note.next.endTick = offTick;
+    changes.notes.push_back(note);
+    SnapshotEventChange on{};
+    on.kind = SnapshotChangeKind::Add;
+    on.next.loopId = loop.loopId;
+    on.next.eventId = static_cast<EventId>(7100 + order * 2);
+    on.next.canonicalOrder = order * 2;
+    on.next.value = MidiEvent::NoteOn(onTick, 1, pitch, 100);
+    on.next.value.noteId = static_cast<NoteId>(noteId);
+    changes.events.push_back(on);
+    SnapshotEventChange off{};
+    off.kind = SnapshotChangeKind::Add;
+    off.next.loopId = loop.loopId;
+    off.next.eventId = static_cast<EventId>(7101 + order * 2);
+    off.next.canonicalOrder = order * 2 + 1;
+    off.next.value = MidiEvent::NoteOff(offTick, 1, pitch, 0);
+    off.next.value.noteId = static_cast<NoteId>(noteId);
+    changes.events.push_back(off);
+  };
+  auto publishRevision = [&]() {
+    auto empty = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 11000, 21000);
+    LoopSnapshotChangeSet changes;
+    addNote(changes, 0, 9101, 48, 6 * kBar, 6 * kBar + 48);
+    addNote(changes, 1, 9102, 48, 7 * kBar, 7 * kBar + 48);
+    addNote(changes, 2, 9103, kHeld, heldOn, aEnd + 56);
+    addNote(changes, 3, 9104, kKept, heldOn, keptOff);
+    LoopSnapshotConstruction construction(empty, changes);
+    for (unsigned step = 0; step < 4000 && !construction.complete(); ++step)
+      TEST_ASSERT_TRUE(construction.step(64));
+    TEST_ASSERT_TRUE(construction.complete());
+    ++loop.playbackRevision;
+    loop.storePublishedSnapshotForTest(construction.freeze(), loop.playbackRevision);
+  };
+
+  publishRevision();
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the demoted slot's interval demand opens");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(aStart, runtime->rolling.startPhase, "and A is the two bars from bar six");
+
+  // Serve A up to the moment the edit lands: **after** the moved end's tick has passed (heldOn + 8), and before the
+  // interval ends -- so the serviced pass can no longer reach that tick, which is the whole point of the case.
+  const uint32_t editAt = aEnd - 4;
+  bool servedA = false;
+  uint32_t adoptedAt = 0;
+  MidiSendCapture::reset();
+  for (uint32_t delta = 1; delta <= editAt; ++delta) {
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    if (!servedA && runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        track.playbackWindowServesSlot(kSlot)) {
+      servedA = true;
+      adoptedAt = delta;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(servedA, "A's interval was served on the playing chain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(aStart, adoptedAt, "A is adopted at its own deadline");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kHeld),
+                           "precondition: the obligation is sounding inside A");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kKept),
+                           "precondition: and so is the one the edit leaves alone");
+  const size_t beforeEdit = MidiSendCapture::count();
+
+  // The edit lands through the owner the undo/redo path calls (`TrackUndo.cpp`'s
+  // `refreshPlaybackAfterEditPassStateChange` -> this same entry; called directly because the redo path also pulls the
+  // slot-clear restore into the native link, which this fixture does not need).
+  // The batch's own rows move kHeld's end behind the playhead and re-state kKept unchanged, so the two obligations
+  // differ only in where their end now is.
+  constexpr EditPassId kBatchId = 5150;
+  EditPass batch{};
+  batch.id = kBatchId;
+  batch.passType = EditPassType::Note;
+  batch.state = EditPassState::Active;
+  MidiEvent movedOn = MidiEvent::NoteOn(heldOn, 1, kHeld, 100);
+  movedOn.noteId = static_cast<NoteId>(9103);
+  MidiEvent movedOffEvent = MidiEvent::NoteOff(movedOff, 1, kHeld, 0);
+  movedOffEvent.noteId = static_cast<NoteId>(9103);
+  MidiEvent keptOn = MidiEvent::NoteOn(heldOn, 1, kKept, 100);
+  keptOn.noteId = static_cast<NoteId>(9104);
+  MidiEvent keptOffEvent = MidiEvent::NoteOff(keptOff, 1, kKept, 0);
+  keptOffEvent.noteId = static_cast<NoteId>(9104);
+  batch.addedEvents.push_back(movedOn);
+  batch.addedEvents.push_back(movedOffEvent);
+  batch.addedEvents.push_back(keptOn);
+  batch.addedEvents.push_back(keptOffEvent);
+  loop.passes.editPasses.push_back(batch);
+  const EditPassIdList batchIds{kBatchId};
+  const ClosureSettlement settled =
+      track.reconcileAfterEditPassStateChange(kSlot, batchIds, /*identitiesAreRemoved=*/false);
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(settled.closureCount),
+                                              "the settlement names the obligation the edit invalidated");
+
+  const auto countOffsAfter = [&](uint8_t pitch, size_t from) {
+    uint32_t offs = 0;
+    const size_t total = MidiSendCapture::count();
+    for (size_t index = from; index < total; ++index) {
+      const auto event = MidiSendCapture::at(index);
+      if (event.isNoteOff() && event.data.noteData.note == pitch) ++offs;
+    }
+    return offs;
+  };
+  const auto countOnsAfter = [&](uint8_t pitch, size_t from) {
+    uint32_t ons = 0;
+    const size_t total = MidiSendCapture::count();
+    for (size_t index = from; index < total; ++index) {
+      const auto event = MidiSendCapture::at(index);
+      if (event.isNoteOn() && event.data.noteData.note == pitch) ++ons;
+    }
+    return ons;
+  };
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countOffsAfter(kHeld, beforeEdit),
+                                   "the moved end closes the sounding instance exactly once, now");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kHeld),
+                            "and the obligation is discharged rather than left behind the playhead");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countOffsAfter(kKept, beforeEdit),
+                                   "the note the edit leaves alone receives no early NoteOff");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSlot, kKept),
+                           "it is still sounding");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countOnsAfter(kHeld, beforeEdit) + countOnsAfter(kKept, beforeEdit),
+                                   "and neither is retriggered by the edit");
+
+  // The lane keeps serving: the closure must not be replayed by a later interval's handoff or by the wrap of A.
+  for (uint32_t delta = editAt + 1; delta <= editAt + 3 * kSpan; ++delta) {
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countOffsAfter(kHeld, beforeEdit),
+                                   "exactly once: a later interval's handoff closes nothing again");
+}
 /// **Task 6.4/6.5 -- the rolling demand path's gate row (`DIAG,win_gate`).**
 ///
 /// The lane's own rows (`win_gap`, `playback_build`) say whether it was *dispatched*; nothing said **what its demand
@@ -16442,6 +16616,7 @@ int main() {
   RUN_TEST(test_rolling_path_reuses_the_view_slot_after_a_refused_completion);
   RUN_TEST(test_rolling_path_cancellation_between_every_preparation_grain_recovers);
   RUN_TEST(test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_revision);
+  RUN_TEST(test_s45_the_moving_closure_closes_when_an_edit_moves_the_note_off_behind_the_playhead);
   RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
   RUN_TEST(test_launch_gate_rows_name_the_silent_exits_once_per_state_change);
   RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);

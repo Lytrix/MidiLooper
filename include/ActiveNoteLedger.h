@@ -109,6 +109,21 @@ class ActiveNoteLedger {
                                          uint32_t servedThroughPhase, uint32_t loopLength) const;
 #endif
 
+  /// The **phase half** alone (task 4.5's moving closure), for streams that are **not** whole-loop authority: an edit
+  /// batch, or a window. It plans only obligations whose own NoteOff the stream carries at or behind
+  /// `servedThroughPhase` -- the tick has been traversed and cannot be reached again before the pass restarts, so the
+  /// sounding instance must be closed now. An identity the stream does not mention is **never** planned: absence from a
+  /// batch or a slice is not evidence. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  HandoffClosurePlan planExpiredClosures(const MidiEvent* events, size_t eventCount,
+                                         uint32_t servedThroughPhase, uint32_t loopLength) const {
+    return planExpiredClosuresBody(events, eventCount, servedThroughPhase, loopLength);
+  }
+#else
+  HandoffClosurePlan planExpiredClosures(const MidiEvent* events, size_t eventCount,
+                                         uint32_t servedThroughPhase, uint32_t loopLength) const;
+#endif
+
   /// The **structural half** by name, for callers that owe no wire half and therefore have no traversal position to
   /// reason about: the same predicate with nothing served yet. Its plan is a *subset* of the serving handoff's — see
   /// `planHandoffClosures`. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
@@ -266,6 +281,19 @@ class ActiveNoteLedger {
   /// stream events), which is the nested shape the structural prune already ran on this path, and it replaces it.
   HandoffClosurePlan planHandoffClosuresBody(const MidiEvent* events, size_t eventCount,
                                              uint32_t servedThroughPhase, uint32_t loopLength) const {
+    return planClosuresBody(events, eventCount, servedThroughPhase, loopLength, /*structuralEvidence=*/true);
+  }
+
+  /// The **phase half by itself** (task 4.5's moving closure on a stream that is not whole-loop authority): only an
+  /// obligation whose own NoteOff the stream *carries* at or behind `servedThroughPhase` is planned. The structural half
+  /// is deliberately absent -- an edit batch or a window says nothing about an identity it does not mention.
+  HandoffClosurePlan planExpiredClosuresBody(const MidiEvent* events, size_t eventCount,
+                                             uint32_t servedThroughPhase, uint32_t loopLength) const {
+    return planClosuresBody(events, eventCount, servedThroughPhase, loopLength, /*structuralEvidence=*/false);
+  }
+
+  HandoffClosurePlan planClosuresBody(const MidiEvent* events, size_t eventCount, uint32_t servedThroughPhase,
+                                      uint32_t loopLength, bool structuralEvidence) const {
     HandoffClosurePlan plan;
     if (eventCount > 0 && events == nullptr) {
       return plan;
@@ -275,7 +303,8 @@ class ActiveNoteLedger {
       if (entry.noteId == kInvalidNoteId) {
         continue;
       }
-      bool noteOnPresent = false;
+      // The structural half is the only reader of this term, so a phase-only plan does not even maintain it.
+      bool noteOnPresent = !structuralEvidence;
       bool closurePresent = false;
       bool closureReachable = false;
       for (size_t eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
@@ -302,10 +331,12 @@ class ActiveNoteLedger {
           closureReachable = true;
         }
       }
-      // The stream cannot discharge this obligation: the content that carried it is gone, or the note-off that would
-      // close it has already been traversed and cannot be reached again before the pass restarts (and a stream that
-      // carries no note-off at all says nothing -- a note that never ends is not a note that had to end).
-      const bool undeliverable = !noteOnPresent || (closurePresent && !closureReachable);
+      // The stream cannot discharge this obligation: the content that carried it is gone (**whole-loop authority
+      // only**), or the note-off that would close it has already been traversed and cannot be reached again before the
+      // pass restarts (and a stream that carries no note-off at all says nothing -- a note that never ends is not a note
+      // that had to end).
+      const bool undeliverable =
+          (structuralEvidence && !noteOnPresent) || (closurePresent && !closureReachable);
       if (!undeliverable || plan.count >= kMaxOpenNotes) {
         continue;
       }

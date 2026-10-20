@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-148](#dec-148--a-noteoff-behind-the-served-position-terminates-the-sounding-instance-a-closure-the-ledger-no-longer-holds-is-suppressed) | 2026-10-20 | A NoteOff behind the served position terminates the sounding instance; a closure the ledger no longer holds is suppressed | Accepted (landed, 4.5 increment) |
+| [DEC-147](#dec-147--a-handoff-lead-refusal-is-a-position-refusal-the-traversal-budget-is-counted-in-spans) | 2026-10-19 | A handoff-lead refusal is a position refusal; the traversal budget is counted in spans | Accepted (landed; logged 2026-10-20) |
 | [DEC-144](#dec-144--the-matched-terminal-is-dec-136-aware-same-reader-where-the-pre-stop-window-is-current-continuous-same-take-serving-across-the-generation-handoff) | 2026-10-19 | The matched terminal is DEC-136-aware: same reader where the pre-Stop window is current, continuous same-take serving across the generation handoff | Accepted and implemented — native RED→GREEN + host fixtures + offline re-verification + device matched PASS; three-group aggregate PASS |
 | [DEC-143](#dec-143--a-published-record-slice-is-read-material-before-its-root-publishes) | 2026-10-19 | A published Record slice is read material before its root publishes: temporary overlay keyed to the publication edge, sourced from the presentation's sealed extent; mutable capture still excluded | Accepted; implemented and native/build verified, device half open |
 | [DEC-142](#dec-142--record-presentation-lifetime-split) | 2026-10-19 | Record presentation lifetime split: immutable publication releases interaction FIFO, frozen readers retire independently | Accepted owner-approved implementation; native/review/resource evidence recorded, latest device gate pending |
@@ -8365,3 +8367,100 @@ Two properties are part of the decision, not of the implementation:
 the production change reverted; GREEN after; control turn with a covering merged route silences nothing); focused
 **215/215**; full native **3332 cases, 3325 succeeded, 7 skipped, 0 failed**; capture build **SUCCESS**. Detail:
 [`evidence/2026-10-19-s45-no-serving-route/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-no-serving-route/EXECUTION.md).
+
+## DEC-147 — A handoff-lead refusal is a position refusal; the traversal budget is counted in spans
+
+**Date:** 2026-10-19 (landed; logged 2026-10-20 with its own token split)
+**Owner:** `Track::requestCommittedPlaybackWindow`'s contract test at the refusal site, and the rolling frame
+**Status:** Accepted and implemented — native RED→GREEN, device chain proven (`win_requested → win_repositioned → win_ready → win_serving`)
+**Follows:** DEC-108 §13(b)/(f); task 4.5
+**Supersedes:** the single `:5393` predicate whose two terms shared one name
+
+### Problem
+The refusal site collapsed two different facts into `CannotCompleteBeforeHandoff`: **this demand's own derived build cost
+does not fit the lead it was positioned against** (`canCompleteWithinLead`), and **admitting it would break a deadline
+already promised to a window on this track** (`playbackViewAdmissionKeepsAdmittedDeadlines`). The first is a *position*
+refusal — the same demand is still current and can be tried at another span. The second is a *promise* refusal and must
+stay terminal. With one name, the lane either retried forever or ended the episode at the first short lead; the device
+measured the second (`captures/i5-s64-f8-parity-32bar-01`: admitted, then `handoff_unreachable` 38.7 ms later).
+
+### Decision
+Only the lead term is repositionable, and the owner re-requests the **same still-current demand** at the next eligible
+span. The admitted-deadline term is unchanged and terminal. Three properties are part of the decision:
+1. **Forward distance, not numeric phase.** The refused handoff is measured as `(h + len − phase) % len`, so a wrapped
+   start is still placed at the refused span's handoff.
+2. **The budget is the contract's own quantity:** `refusedSpanAttempts >= loopLength / span` (saturating at 255), held in
+   the rolling frame's existing padding — both ABI pins unchanged (7,896 target / 10,080 host).
+3. **One token, one meaning.** The traversal terminal emits **`win_blocked_by_budget`** with `rq` = the spent ordinal;
+   `win_blocked_by_request` carries the demand's own `PlaybackViewPendingReason` term (task 3.7d). The earlier form that
+   put the budget ordinal on `win_blocked_by_request` is superseded by this split.
+
+No same-handoff retry loop, no retry when the demand is stale or superseded, and no relaxation of the guard.
+
+### Consequences
+- A demand that cannot fit its lead is served one or more spans later instead of ending the episode; the device chain
+  closes end-to-end (first `win_ready`, then `win_serving` one traversal later at the adoption boundary).
+- The intent has to survive the wait: a transport stop between ready and adoption cancels it (`build_drop, window_cancelled`).
+- Cost: none beyond the frame's existing padding (lane image held at `code 392,376 + padding 840`).
+
+### Evidence
+`test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving`,
+`test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping` and
+`test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal`; device
+`captures/i5-s64-f9-adoption4-32bar-01`. Detail:
+[`evidence/2026-10-19-s45-repositioning/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-19-s45-repositioning/EXECUTION-DEVICE.md).
+
+## DEC-148 — A NoteOff behind the served position terminates the sounding instance; a closure the ledger no longer holds is suppressed
+
+**Date:** 2026-10-20
+**Owner:** `Track::reconcileAfterEditPassStateChange` (the edit-batch reconcile) and `ActiveNoteLedger::planExpiredClosures`
+**Status:** Accepted and implemented — native RED→GREEN, two red-proofs, gates green, no upload
+**Follows:** DEC-108 §13(g) ("notes removed or invalidated are closed at handoff"; "obsolete closures are suppressed"); task 4.5
+**Supersedes:** nothing — this is the half I9 recorded as still owed for a **long/demoted** slot
+
+### Problem
+The whole-loop handoff closes an obligation whose replacement keeps its NoteOn while moving its own NoteOff behind the
+phase the walk resumes from (`planHandoffClosures`' phase half). On a long/demoted slot the merged store is only a
+two-bar slice, so that reconcile returns early by design — and the lane's seam deliberately closes nothing from a slice,
+because absence in a window is not removal evidence. The case left open was therefore a real defect: an edit that keeps
+a sounding note and moves its end **behind the playhead** leaves that end unreachable for the rest of the pass, so the
+instance keeps sounding until the interval is traversed again (a whole loop later) or some whole-loop authority happens
+to close it.
+
+### Decision
+The **phase half of the handoff's own predicate** is applied to streams that are *not* whole-loop authority — an edit
+batch, a window — under these terms:
+1. **Only a NoteOff the stream carries, at or behind the served position, is evidence.** An identity the stream does not
+   mention is never planned: absence is not removal, which is the rule that keeps an event-empty window from silencing a
+   sustained note.
+2. **The served position is the owner's existing term** (`playbackClosureServeFloor`), with the lane's own projection
+   phase as the fallback when the merged walk has not stamped `lastTickInLoop`; `UINT32_MAX` means nothing has been
+   served, and then nothing is closed early.
+3. **The closure is emitted at the edit's edge**, through the same wire-and-ledger order as the handoff
+   (`closePlannedHandoffClosures`), and before the presence settlement — so the required NoteOff precedes any
+   replacement's note-ons by construction.
+4. **A planned closure the ledger no longer holds is suppressed** rather than emitted: the same plan can be applied
+   after another owner closed the obligation, and a second NoteOff for it would be an orphan on the wire. This is
+   `applyClosureSettlementForSlot`'s new guard, and the spec's own "obsolete closures SHALL be suppressed".
+
+### Alternatives considered
+1. **Close at the interval boundary instead of the edit** — needs the *incoming* revision's content for the interval that
+   just finished, which the lane never builds; the edit is the only owner holding the new end.
+2. **Let the structural half run on the edit batch** — wrong: an edit batch says nothing about identities it does not
+   mention, so it would close untouched soundings (the blanket-silence defect in a new form).
+3. **Wait for the next traversal of the interval** — that is the defect: a whole loop of an audible note whose end the
+   content already passed.
+
+### Consequences
+- A moved end stops the sounding instance at the edit, once; an unchanged sustained note the batch re-states keeps
+  sounding with no NoteOff and no retrigger (the fixture asserts both).
+- The same predicate is now available to any non-authoritative stream (3.14c's publication-owner request included); the
+  structural half still runs only where the content is authoritative for the whole loop.
+- Cost: none measurable in ITCM (default capture build `code 392,216 + padding 1,000`, lane image at the approved
+  `392,376 + 840` floor — both unchanged).
+
+### Evidence
+`test_s45_the_moving_closure_closes_when_an_edit_moves_the_note_off_behind_the_playhead` (RED first at its contract
+assertion; two mutations red-proved — the plan removed, and the obsolete-closure guard removed — each failing exactly
+that fixture, with byte-identical restores). Detail:
+[`evidence/2026-10-20-s45-moving-closure-demoted/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s45-moving-closure-demoted/EXECUTION.md).

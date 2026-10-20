@@ -366,6 +366,12 @@ public:
   /// geometry change -- only the promise's position is void, and the miss it causes is reported, never compensated by
   /// an inline rebuild (DEC-108 §13(c)).
   PlaybackViewPendingReason pendingViewRequestInvalidation(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
+  /// Task 4.5 (the moving closure): **the phase this slot's playback has already served** in the pass that is running,
+  /// in the terms the handoff's closure plan uses. `UINT32_MAX` means nothing has been served -- the transport is
+  /// stopped, the slot is not the one playing, or no position exists yet -- so an edit's NoteOff is never called
+  /// "behind" on the strength of a stopped clock. The lane's own projection is the fallback when the merged walk has
+  /// not stamped `lastTickInLoop` (a demoted slot is served by interval windows, not by that walk).
+  uint32_t playbackClosureFloorForSlot(uint8_t slotIndex) const;
   /// DEC-108 §13b / task 3.10: serve **one declared grain** of this track's owed window work. `currentPhase` is
   /// the playhead's phase and `cursor` the caller's rotation position across holders: the selection is the shared
   /// policy (`MidiServiceDrain::selectPlaybackHolder`) -- holders rotate, the earliest outstanding handoff is

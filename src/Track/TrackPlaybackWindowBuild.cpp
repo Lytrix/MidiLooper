@@ -7229,6 +7229,12 @@ TRACK_COLD_MEM size_t Track::applyClosureSettlementForSlot(uint8_t slotIndex, co
     const uint16_t key = settlement.closures[i];
     const uint8_t channel = static_cast<uint8_t>(key >> 8);
     const uint8_t note = static_cast<uint8_t>(key & 0xFFu);
+    if (!runtime->ledger.isActive(channel, note)) {
+      // "Closures that became obsolete SHALL be suppressed": the obligation is already gone, because the owner that
+      // planned it closed it first (task 4.5's moving closure is planned and discharged before this settlement is
+      // applied). Emitting anyway would put a second, orphan NoteOff on the wire for the same sounding.
+      continue;
+    }
     const MidiEvent close = MidiEvent::NoteOff(0, channel, note, 0);
     midiHandler.sendMidiEvent(close);
     (void)runtime->ledger.applyPlaybackEvent(channel, close);
@@ -7299,6 +7305,30 @@ void collectCommittedPassIdentities(const Loop& loop, PassId passId, NotePresenc
 }
 }  // namespace
 
+/// Task 4.5 (the moving closure): the phase this slot has already **served**, which is the term that decides whether an
+/// edit's own NoteOff can still be reached before the pass restarts. The merged walk's cursor is the first source
+/// (`playbackClosureServeFloor`, the handoff's own term); a **demoted** slot is served by interval windows rather than
+/// by that walk, so its projection phase is the fallback. `UINT32_MAX` means nothing is served -- stopped, not the
+/// playing slot, or no position -- and then no edit can make an end "behind" anything.
+TRACK_COLD_MEM uint32_t Track::playbackClosureFloorForSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return UINT32_MAX;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (loop.loopLengthTicks == 0) {
+    return UINT32_MAX;
+  }
+  const uint32_t served = playbackClosureServeFloor(*this, loop, clockManager.getCurrentTick());
+  if (served != UINT32_MAX) {
+    return served;
+  }
+  if (!isPlaying() || slotIndex != activeLoopIndex) {
+    return UINT32_MAX;
+  }
+  return IntervalProjection::tickPhaseInProjectionCycle(
+      clockManager.getCurrentTick(), getProjectionCycleStartTick(), loop.loopLengthTicks);
+}
+
 TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterCommittedPassStateChange(uint8_t slotIndex,
                                                                               const PassId* passIds, size_t passCount,
                                                                               bool identitiesAreRemoved) {
@@ -7353,7 +7383,44 @@ TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterEditPassStateChange(uint8_
       break;
     }
   }
-  settlement = settleLedgerAgainstPresence(runtime->ledger, affected, identitiesAreRemoved);
+  //
+  // Task 4.5 (the moving closure), **before** the presence settlement: an edit that keeps a sounding note but moves its
+  // own NoteOff behind the phase this pass has already served ends the sounding instance now. That tick can never be
+  // reached again before the pass restarts, and on a demoted slot the merged whole-loop reconcile that would otherwise
+  // catch it never runs -- its own store is a two-bar slice. The predicate is the ledger's phase half over the batch's
+  // own rows, so an identity the batch does not mention is untouched (an edit batch is not whole-loop authority).
+  const uint32_t closureFloor = playbackClosureFloorForSlot(slotIndex);
+  if (closureFloor != UINT32_MAX) {
+    for (const EditPassId id : passIds) {
+      for (const EditPass& pass : loop.passes.editPasses) {
+        if (pass.id != id) {
+          continue;
+        }
+        const ActiveNoteLedger::HandoffClosurePlan expired =
+            runtime->ledger.planExpiredClosures(pass.addedEvents.data(), pass.addedEvents.size(), closureFloor,
+                                                loop.loopLengthTicks);
+        for (size_t i = 0; i < expired.count && settlement.closureCount < ClosureSettlement::kMaxKeys; ++i) {
+          const uint16_t channel = static_cast<uint16_t>(expired.entries[i].channel) << 8;
+          settlement.closures[settlement.closureCount++] =
+              static_cast<uint16_t>(channel | expired.entries[i].note);
+        }
+        (void)closePlannedHandoffClosures(runtime->ledger, expired, clockManager.getCurrentTick());
+        break;
+      }
+    }
+  }
+  const ClosureSettlement presence = settleLedgerAgainstPresence(runtime->ledger, affected, identitiesAreRemoved);
+  // One settlement for the caller: the closures named above (already discharged on the wire) plus the presence walk's
+  // own verdict over what is left. A closed entry is gone from the ledger, so the two halves cannot name the same key.
+  for (size_t i = 0; i < presence.closureCount && settlement.closureCount < ClosureSettlement::kMaxKeys; ++i) {
+    settlement.closures[settlement.closureCount++] = presence.closures[i];
+  }
+  for (size_t i = 0;
+       i < presence.suppressedRetriggerCount && settlement.suppressedRetriggerCount < ClosureSettlement::kMaxKeys; ++i) {
+    settlement.suppressedRetriggers[settlement.suppressedRetriggerCount++] = presence.suppressedRetriggers[i];
+  }
+  settlement.preservedCount = static_cast<uint16_t>(settlement.preservedCount + presence.preservedCount);
+  settlement.eventEmptyWindow = presence.eventEmptyWindow;
   (void)applyClosureSettlementForSlot(slotIndex, settlement);
   return settlement;
 }

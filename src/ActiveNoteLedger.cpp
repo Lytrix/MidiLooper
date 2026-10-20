@@ -17,6 +17,12 @@ ActiveNoteLedger::planHandoffClosures(const MidiEvent* events, size_t eventCount
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::HandoffClosurePlan
+ActiveNoteLedger::planExpiredClosures(const MidiEvent* events, size_t eventCount, uint32_t servedThroughPhase,
+                                      uint32_t loopLength) const {
+  return planExpiredClosuresBody(events, eventCount, servedThroughPhase, loopLength);
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::HandoffClosurePlan
 ActiveNoteLedger::planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
                                                            size_t eventCount) const {
   return planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
