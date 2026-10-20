@@ -1,6 +1,14 @@
 # S4.5 — owner-level repositioning after a handoff-lead refusal (G2 packet)
 
-Status: **design frozen, implementation not started.** Scope owner: 4.5 / 6.4 (ordered receipts on device).
+Status: **landed; this file is the frozen design, not current behavior.** Scope owner: 4.5 / 6.4 (ordered receipts on
+device).
+
+> **Superseded in one term (2026-10-20, task 3.7d).** Where this file says the traversal terminal is
+> `win_blocked_by_request` (the "Budget" item and §5's loop-prevention wording), that token now means something else:
+> `win_blocked_by_request` carries the **`PlaybackViewPendingReason` ordinal** that stopped the retained demand. The
+> traversal terminal emits its own token, **`win_blocked_by_budget`**, with `rq` = the spent span ordinal. The behavior
+> this file designs is unchanged; only the exit's name is. Detail:
+> [`../2026-10-07-s37d-invalidation-term/EXECUTION.md`](../2026-10-07-s37d-invalidation-term/EXECUTION.md).
 
 ## 1. Contract
 

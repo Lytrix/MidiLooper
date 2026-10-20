@@ -218,4 +218,6 @@ the 2-bar span at this tempo) and the budget for a 32-bar loop is `24,576 / 1,53
 `win_pre_guard` (a temporary unconditional row) and the `0x80 | ordinal` marker on `win_repositioned` were probes for
 this run and are removed in the commit that records it. The permanent diagnostics are the `rq` fields already carried:
 `win_repositioned` → the attempt ordinal, `win_retry_ordinal` → the guard's input (once per distinct value),
-`win_blocked_by_request` → the ordinal it decided on.
+`win_blocked_by_budget` → the spent span ordinal it decided on. **Superseded 2026-10-20 (task 3.7d):** that last row was
+`win_blocked_by_request` at the time of this run; the token now carries the demand's `PlaybackViewPendingReason` ordinal
+instead, so the budget answer was given its own name (`win_blocked_by_budget`) to keep one token to one meaning.

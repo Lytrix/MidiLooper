@@ -745,6 +745,27 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   diagnostic are recorded in
   [`2026-10-07-s37d-invalidation-term/PREPARED.md`](evidence/2026-10-07-s37d-invalidation-term/PREPARED.md).
 
+  *Increment 3.7d landed 2026-10-20 (firmware + native + host decode); **the task stays open for the device read.***
+  `rq` on
+  `win_blocked_by_request` is the **`PlaybackViewPendingReason` ordinal**: the record's own terminal term when it has
+  one, otherwise the owner's existing `pendingViewRequestInvalidation` recomputation (a bare `positionInvalidated` flag
+  names nothing by itself). No field, schema or new invalidation rule. **DEC-147's traversal terminal moved to its own
+  token, `win_blocked_by_budget`**, keeping `rq` = the spent span ordinal, so one token never carries two meanings; the
+  verifier counts the new token as a demand answer. **The three-attempt blocker is answered:** `pendingViewRequest()`
+  returns `nullptr` unless the record is `active`, so an attempt that invalidated a discharged record could never be
+  read, and driving the *deadline* past expiry records `DeadlineExpired`, which is not one of the four conditions that
+  reach this exit. Fixtures `test_3_7d_the_blocked_demand_row_names_the_term_that_invalidated_it` (recorded term) and
+  `test_3_7d_the_blocked_demand_row_falls_back_to_the_owners_recomputation` (owner's recomputation; a geometry mismatch
+  cannot reach the exit because the lane's identity refresh repairs `loopLengthTicks` each turn); red-proof by a
+  constant `0` fails **exactly** those two and the file was restored byte-identically. Focused **220/220**, host
+  `scripts.test_windowed_content_parity_verify` **57/57**, `teensy41-capture-serial` SUCCESS at
+  `code 392,216 + padding 1,000` (unchanged) and the lane image at `code 392,376 + padding 840` (**the floor, unchanged
+  -- 0 B of ITCM**). **Owed:** the device run that reads a named term -- the exit is reachable on hardware (the 2026-10-07
+  captures show it), but no registered leg of this session reproduced it: the two most recent lane captures contain
+  **zero** `win_blocked_by_request` rows, because post-DEC-147 a handoff refusal re-positions instead of blocking, and
+  the unaligned-length demand is refused at *entry* (`win_window_ineligible`, `al=0`), which is a different exit. Detail:
+  [`2026-10-07-s37d-invalidation-term/EXECUTION.md`](evidence/2026-10-07-s37d-invalidation-term/EXECUTION.md).
+
   ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
   the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
   hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root
@@ -2122,7 +2143,8 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   demand refused **only** for its handoff lead is re-requested by the same owner at the next span (the admitted-deadline
   term stays terminal, so that protection is unchanged). Receipts: `win_requested` → `handoff_unreachable` +
   `build_drop` → `win_repositioned` → `win_requested` → `win_waiting` → `win_ready` →
-  `win_serving`; strict advance plus a whole-traversal `win_blocked_by_request` bounds the episode. Native: two new
+  `win_serving`; strict advance plus a whole-traversal terminal bounds the episode (that terminal is `win_blocked_by_budget`
+  since 3.7d, 2026-10-20). Native: two new
   fixtures plus 3.10's dense-shape fixture re-pinned to the new contract (the dense interval is never adopted, the demand
   moves to a span it can afford); focused **217/217**, full native **3,334 / 7 skipped / 3,327 succeeded / 0 failed**;
   lane image `code 392,376 + padding 840` (floor). **The device half is still owed and its blocker is now the fixture,

@@ -4739,8 +4739,18 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
         request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
         request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved)) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
+      // Task 3.7d: **the term travels with the exit.** The retry lane can change the epoch, the geometry, the admitted
+      // position or the deadline, or find the source stale, and records that only in the demand's own record -- so the
+      // row used to leave five candidates and no reader. `rq` on this exit is the **`PlaybackViewPendingReason`
+      // ordinal** that stopped the retained demand: the recorded term when the record names a terminal one, otherwise
+      // the owner's existing recomputation (an invalidation flag alone carries no term of its own).
+      const PlaybackViewPendingReason blockedBy =
+          (request->reason == PlaybackViewPendingReason::None ||
+           request->reason == PlaybackViewPendingReason::AwaitingSourceQualification)
+              ? pendingViewRequestInvalidation(activeLoopIndex, clock)
+              : request->reason;
       reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0, /*reprojectedTick=*/false,
-                                   frame.refusedSpanAttempts);
+                                   static_cast<uint8_t>(blockedBy));
       return RollingOutcome::Rejected;
     }
     if (frame.phase != LoopPlaybackRuntime::RollingPhase::Ready) {
@@ -4818,9 +4828,11 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       frame.refusedSpanAttempts >= (spanBudget > 255u ? 255u : spanBudget);
   if (boundaryOutOfRange || traversalSpent) {
     if (frame.refusedHandoffValid) {
-      // A whole traversal of refused spans is a terminal answer, not permission to re-request forever.
+      // A whole traversal of refused spans is a terminal answer, not permission to re-request forever. The token is
+      // distinct from `win_blocked_by_request` on purpose: this exit is the **budget** answer (and `rq` is its spent
+      // ordinal), while that one is the demand's own recorded **term**. One token, one meaning of `rq`.
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
-      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0, /*reprojectedTick=*/false,
+      reportPlaybackRollingGateRow("win_blocked_by_budget", clock.epoch != 0, /*reprojectedTick=*/false,
                                    frame.refusedSpanAttempts);
       return RollingOutcome::Rejected;
     }

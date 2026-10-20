@@ -70,6 +70,10 @@ DEMAND_EXITS: frozenset[str] = frozenset(
         # DEC-147: a demand refused only for its handoff lead is re-positioned to the next span; the row is emitted at
         # the refusal, so its presence proves a demand existed and the owner answered it.
         "win_repositioned",
+        # DEC-147 second form: every span of one traversal was measured and every one refused, so the episode ends on its
+        # own budget. It is a demand answer like the rest, and it is a separate token from `win_blocked_by_request` so
+        # that exit's `rq` keeps one meaning (task 3.7d's term).
+        "win_blocked_by_budget",
     }
 )
 #: What each **refusing** exit means, in the active slot's own terms, so the reader is not left to decode flags.
@@ -86,7 +90,36 @@ REFUSAL_REASONS: dict[str, str] = {
     "win_reprojected_tick": "the tick fell outside the projection, so the demand's absolute position is not this one",
     "win_boundary_rejected": "the declared lead could not place a boundary inside the loop",
     "win_request_refused": "the request itself was refused by name",
+    "win_blocked_by_request": "the retained demand was invalidated and may not proceed",
+    "win_blocked_by_budget": "every span of one traversal refused the demand, so its budget is spent",
 }
+
+#: `PlaybackViewPendingReason` ordinals, in the enum's own declaration order (`include/TrackPlaybackRuntime.h`). On
+#: `win_blocked_by_request` the row's `rq` carries one of these -- the **term that stopped the retained demand** -- while
+#: on `win_blocked_by_budget` it carries the spent traversal ordinal instead (one token, one meaning).
+PENDING_REASONS: tuple[str, ...] = (
+    "no_term",  # None: the record names no terminal term
+    "interference_budget",
+    "cannot_complete_before_handoff",
+    "build_in_flight",
+    "successor_already_prepared",
+    "deadline_invalidated_epoch",
+    "deadline_invalidated_geometry",
+    "awaiting_source_qualification",
+    "source_not_current",
+    "window_exceeds_retained_capacity",
+    "deadline_expired",
+    "closures_exceed_declared_capacity",
+    "pinned_edit_rows_unresolved",
+    "private_root_return_preparation",
+)
+
+
+def pending_reason_name(ordinal: int) -> str:
+    """The term a blocked-demand row names, spelled the way the enum spells it."""
+    if 0 <= ordinal < len(PENDING_REASONS):
+        return PENDING_REASONS[ordinal]
+    return f"term_{ordinal}"
 #: The flags that explain each refusal, and the sentence each flag's `0` adds.
 _FLAG_LABELS: dict[str, str] = {
     "ep": "the deadline clock is unstamped",
@@ -411,6 +444,11 @@ def _refusal_detail(exit_name: str, row: dict[str, Any] | None) -> str:
         for name in _REFUSAL_FLAGS.get(exit_name, ())
         if flags.get(name) == "0"
     ]
+    if exit_name == "win_blocked_by_request":
+        # Task 3.7d: the row carries the term itself, so say it rather than leaving five candidates.
+        named.append(f"the retained demand records {pending_reason_name(int(row['request_result']))}")
+    elif exit_name == "win_blocked_by_budget":
+        named.append(f"a whole traversal was measured: budget ordinal {row['request_result']} is spent")
     if not named:
         return reason
     return f"{reason}: {'; '.join(named)}"

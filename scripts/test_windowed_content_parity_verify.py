@@ -472,6 +472,36 @@ class WindowedLaneTests(unittest.TestCase):
         self.assertIn("no current source to build a window from", demand["detail"])
         self.assertEqual({"win_not_servable": 3}, result["demand"]["exits"])
 
+    def test_a_blocked_demand_names_the_term_that_stopped_it(self) -> None:
+        """Task 3.7d: `rq` on `win_blocked_by_request` is the `PlaybackViewPendingReason` ordinal, so the reader says
+        *why* the retained demand may not proceed instead of leaving the record's five candidates."""
+        lines = _no_demand_lines(
+            _gate(2_110_000, exit="win_blocked_by_request", sv=1, rt=1, rq=9),
+        )
+        result = verify_windowed_lane(lines)
+        refusal = result["demand"]["refusal"]
+        self.assertIn("invalidated and may not proceed", refusal)
+        self.assertIn("window_exceeds_retained_capacity", refusal)
+        # A term this reader does not know is named by its ordinal, never dropped or guessed.
+        unknown = _no_demand_lines(
+            _gate(2_111_000, exit="win_blocked_by_request", sv=1, rt=1, rq=99),
+        )
+        self.assertIn("term_99", verify_windowed_lane(unknown)["demand"]["refusal"])
+
+    def test_the_budget_terminal_is_a_demand_answer_with_its_own_meaning(self) -> None:
+        """`win_blocked_by_budget` is DEC-147's traversal answer, and it is counted as a demand; its `rq` is the
+        **spent ordinal**, not a term, so the two exits cannot be confused for one another."""
+        lines = [
+            "[1.000] [INFO] Transport started",
+            _gate(2_100_000, exit="win_requested", sv=1, rt=1, rq=0),
+            _gate(2_200_000, exit="win_blocked_by_budget", sv=1, rt=1, rq=16),
+            "[9.000] [INFO] Transport stopped",
+        ]
+        result = verify_windowed_lane(lines)
+        self.assertTrue(result["demand"]["observed"])
+        summary = demand_entry_summary(lines)
+        self.assertIn("win_blocked_by_budget", summary["demand_exits"])
+
     def test_the_most_frequent_exit_is_the_one_reported(self) -> None:
         """One odd refusal among many is not reported as the reason: the dominant exit is."""
         lines = _no_demand_lines(

@@ -13408,7 +13408,7 @@ void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
     rollingTestTick(track, now, true);
     runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
     if (runtime == nullptr) break;
-    if (ourRows("win_blocked_by_request") != 0) break;
+    if (ourRows("win_blocked_by_budget") != 0) break;
   }
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_repositioned"),
                                           "the refusal is still a position refusal and still re-positions");
@@ -13426,7 +13426,7 @@ void test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping() {
   TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(active.loopLengthTicks / span),
                                            static_cast<uint32_t>(ourRows("win_repositioned")),
                                            "but only one attempt per span: a whole traversal is the budget");
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_blocked_by_request"),
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ourRows("win_blocked_by_budget"),
                                           "and the episode ends with the terminal row instead of looping");
   TEST_ASSERT_NOT_NULL(runtime);
   TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
@@ -13468,6 +13468,84 @@ void test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal() {
                                           "it takes the terminal block path");
   TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
                     static_cast<int>(runtime->rolling.phase));
+}
+
+/// **Task 3.7d -- the exit names the term that stopped the retained demand, not just that one did.** The retry lane can
+/// change the epoch, the geometry, the admitted position or the deadline, or find the source stale, and records that
+/// only in the demand's own record (`PlaybackViewPendingReason`). Before this slice the row left all five candidates and
+/// no reader (`captures/s64-37c-01`: the demand was accepted and blocked 60-71 ms later with nothing on the wire saying
+/// why). `rq` on `win_blocked_by_request` is now that ordinal.
+///
+/// This fixture pins the **recorded** half: the record's own terminal reason, which the recomputation cannot produce (the
+/// loop's length and the clock's epoch are both unchanged), so `rq` can only have come from the record. Its fallback
+/// half -- the record names no term and the owner's **existing** recomputation names the invalidation -- is the separate
+/// fixture below, because a first block leaves the frame `Blocked` and a blocked frame never reaches the record again.
+///
+/// The invalidation is written through the record the resolver reads, the shape the stale-demand control beside this
+/// fixture already uses -- the dense/capacity paths that produce these terms end-to-end belong to 3.10/3.12, and this
+/// fixture's subject is the row.
+void test_3_7d_the_blocked_demand_row_names_the_term_that_invalidated_it() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t base = clockManager.getCurrentTick() + 512;
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime->pendingViewRequest(),
+                               "the fixture's precondition: the demand must be active where the exit reads it");
+
+  // (A) A **recorded** terminal term travels with the exit. The recomputation cannot produce this term (the loop's
+  // length and the clock's epoch are both unchanged), so `rq` can only carry it from the record.
+  runtime->pendingViewRequest_.positionInvalidated = true;
+  runtime->pendingViewRequest_.reason = PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
+  nativePlaybackDeadlineClock = {base + 1, 1};
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base + 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Rejected),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("win_blocked_by_request", RollingGateRows::last()->exit,
+                                   "the blocked demand still names itself by that exit");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::WindowExceedsRetainedCapacity),
+      RollingGateRows::last()->requestResult,
+      "and `rq` is the term the record holds, not the fact that some term stopped it");
+}
+
+/// **Task 3.7d, the fallback half.** When the record names no terminal term but its position is invalidated, the exit
+/// must still say why -- and it must say it with the owner's **existing** recomputation
+/// (`pendingViewRequestInvalidation`), not a second copy of that rule. The record's clock epoch no longer matches the
+/// live clock, so the recomputation answers epoch. **Not** a geometry mismatch: the lane's identity refresh
+/// (`refreshRetainedDemandIdentityForSlot`, task 3.15g) repairs a stale `loopLengthTicks` at the top of every turn, so
+/// that term cannot reach the exit through the record -- an epoch mismatch is not part of the refresh's staleness test.
+/// A separate fixture, not a second turn: the first block leaves the frame `Blocked`, and a blocked frame reports
+/// `win_blocked` before it ever reaches the demand's record.
+void test_3_7d_the_blocked_demand_row_falls_back_to_the_owners_recomputation() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t base = clockManager.getCurrentTick() + 512;
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  TEST_ASSERT_NOT_NULL(runtime->pendingViewRequest());
+  runtime->pendingViewRequest_.positionInvalidated = true;
+  runtime->pendingViewRequest_.reason = PlaybackViewPendingReason::None;
+  runtime->pendingViewRequest_.clockEpoch = 2;  // the clock is stamped 1; the record's promise belongs to another epoch
+  nativePlaybackDeadlineClock = {base + 1, 1};
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base + 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Rejected),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_STRING("win_blocked_by_request", RollingGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::DeadlineInvalidatedEpoch),
+      RollingGateRows::last()->requestResult,
+      "the recomputation is the owner's existing rule, reached through the same exit");
 }
 
 void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change() {
@@ -16326,6 +16404,8 @@ int main() {
   RUN_TEST(test_a_handoff_shortfall_repositions_the_current_demand_and_reaches_serving);
   RUN_TEST(test_a_traversal_of_handoff_refusals_ends_terminal_instead_of_looping);
   RUN_TEST(test_a_stale_demand_is_not_repositioned_after_a_handoff_refusal);
+  RUN_TEST(test_3_7d_the_blocked_demand_row_names_the_term_that_invalidated_it);
+  RUN_TEST(test_3_7d_the_blocked_demand_row_falls_back_to_the_owners_recomputation);
   RUN_TEST(test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change);
   RUN_TEST(test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
