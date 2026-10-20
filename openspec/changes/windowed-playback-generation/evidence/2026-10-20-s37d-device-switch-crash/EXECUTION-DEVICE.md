@@ -155,3 +155,67 @@ With the switch no longer rebooting, both runs show the queued switch **never co
 Named limit: the *provenance* of the exact stale value `0xD2E3A540` (which earlier writer left those overflow bytes) is
 not established and is not needed — the invariant violation (a null-check that depends on an initialiser the linker
 does not emit) is sufficient, is pinned by the two images, and is now removed.
+
+## The commit blocker was the leg, not the switch (2026-10-20, host-only fix)
+
+The switch never committed in runs 06–09 for a reason that is entirely in the **host recipe**: 1.8 s after the
+selection had already queued the switch, the leg pressed the **global** record control, which started a live overdub on
+the active loop:
+
+```
+171.901  Loop 5: Queued playback switch        <- the slot press queued it (MidiButtonActions: "queue playback, never overdub")
+173.674  MIDI Button A: Live Overdub           <- the leg's press_record_for_active_slot
+173.688  Overdubbing started @ tick 22548
+```
+
+The commit ladder runs only `if (tracks[i].isPlaying())`, and `isPlaying()` is false while overdubbing, so the pending
+switch could not commit for the whole settle — in runs 06 and 07 too (their `snap_gate` rows close with
+`play=0, od=1`; the `od=0, play=1` rows are only the two before the press landed). Runs 06, 07 and 09 show the same
+`od=1` count (428–430 rows) for the target slot; run 08 (18 bars) overdubbed identically (`Overdubbing started` at
+112.2 s, right after its press) but emitted no target rows at all.
+
+**Fix (host tooling only, no firmware):** `switch_leg` no longer presses any record control. The slot press *is* the
+queue gesture, the edit exit stays (run 04), and the leg's docstring now records why. `press_record_for_active_slot`
+and `RECORD_PRESS_MS` are removed; `scripts/test_windowed_content_parity_verify.py` (its gesture test rewritten around
+the overdub evidence) **56/56**, `scripts/test_hitl_boot_handoff.py` **33/33**.
+
+## Run 10: the switch commits, and the lane's next blocker is named
+
+`captures/i5-s37d-device-32bar-10` (32 bars, settle 170 s, image `fa7197e7…`, no firmware change):
+
+- **The switch commits.** `Loop 5: Queued playback switch` at 152.5 s, `Slot switch hold` at 160.5 s (a report), and
+  `snap_gate,t=7,s=4,a=4` at **224.1 s** — 72 s later, which is the target's root publication (~47 s) plus the
+  active 32-bar loop's next wrap. Zero `crash=1` rows.
+- **The lane then runs for the new active slot** (12 each of `win_requested`, `win_waiting`, `win_repositioned`,
+  `win_retry_ordinal`, `win_busy`), which is the demand turn 3.7d was waiting for.
+- **It fails in the source-qualification deferral, not in the demand's term.** Every attempt repeats:
+
+```
+win_requested   rq=12   (PlaybackViewRequestResult::DeferredSourceQualification), sv=1 rt=1 rl=1 dm=1
+build_drop,qualification_started   (a whole-loop build: length = 18432 = the 24-bar loop)
+win_waiting     bld=1 ow=1
+build_drop,handoff_unreachable     (5 of 13 grains qualified before the handoff)
+win_repositioned rq=<attempt ordinal>   (DEC-147 moves the start one span)
+build_drop,released_without_site
+win_busy
+```
+
+- The deferral charges a **whole-loop** qualification build against the **rolling span's** handoff (2 bars), so a
+  24-bar body can never complete in time; DEC-147 re-positions one span at a time, all **12** spans of the traversal
+  are spent, and the lane ends in `win_blocked_by_budget` (`rq=12` = the spent ordinal) and then `win_blocked` for the
+  remaining **99 s** of the settle.
+- **No `win_blocked_by_request`.** The terminal condition is measured by the *builder*
+  (`handoff_unreachable`) and the demand is dropped/re-positioned there (line 5476 clears `pendingViewRequest_`), while
+  the 3.7d exit needs the **admission** refusal that *retains* the term (`CannotCompleteBeforeHandoff`,
+  line 3910) — which this shape never reaches because `DeferredSourceQualification` answers first.
+- **The lane itself is healthy when the source is already qualified.** The live-recorded 32-bar slot (s=3, before the
+  switch) completes the same pipeline: `completed_unpublished` (11/110 grains) → `adopt_wait,e2_boundary` →
+  `playback_build,snapshot` → `playback_available` (serving). So the defect is specific to a **switched-to** slot: its
+  launch built and bound a ready window for phase 0, but the rolling frame starts `Idle` and re-requests instead of
+  adopting it.
+
+**Consequence for 3.7d.** The exit needs a *retained* request carrying a terminal term, and none of the three
+reachable terms occurs on this path: the capacity term needs >2048 events in one 2-bar window (out of HITL reach), the
+pinned-edit term needs the paged lane to see the demand (same qualification deferral first), and the handoff term is
+preempted by the deferral and then dropped by the builder. **The read stays owed, now for a named upstream gap in the
+switched-to slot's window path** — not for the 3.7d instrument, which is implemented and pinned natively.

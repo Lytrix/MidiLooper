@@ -49,7 +49,6 @@ SWITCH_SETTLE_S = 90.0
 #: preparation is never reached -- no provision row, no prewarm, no lane work -- so the switch holds until its bound.
 #: The firmware's own long-press window is 350 ms (`EDIT_BUTTON_DEBOUNCE_MS`); 700 ms is the value the reused leg uses.
 EDIT_EXIT_PRESS_MS = 700
-RECORD_PRESS_MS = 120
 
 
 def split_flag(legacy: list[str], name: str) -> tuple[int | None, list[str]]:
@@ -206,25 +205,6 @@ def switch_target_slot_from(legacy: list[str]) -> int | None:
     return split_switch_target_slot_flag(legacy)[0]
 
 
-def press_record_for_active_slot(out_port: Any, *, press_ms: int = RECORD_PRESS_MS) -> None:
-    """Press the record control, whose meaning the **firmware** decides from the target's own state.
-
-    With the track playing and the selected slot **filled**, `MidiButtonActions` cannot enter its recording branch
-    (`slotCanArmForRecord = !hasCommittedPassesInSlot(slot)` is false) and queues a playback switch instead, so this
-    gesture cannot overwrite the target. That is why the switch leg selects the target first and then presses this.
-    """
-    from hitl.control_constants import CONTROL_CHANNEL_1BASED, RECORD_BUTTON_NOTE
-    from hitl.midi_io import _send_short_press
-
-    _send_short_press(
-        out_port,
-        note=RECORD_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=press_ms,
-        _caller="windowed_content_parity",
-    )
-
-
 def press_edit_exit(out_port: Any, *, press_ms: int = EDIT_EXIT_PRESS_MS) -> None:
     """Hold the edit control long enough to leave the loop-edit session a slot selection opens.
 
@@ -245,20 +225,26 @@ def press_edit_exit(out_port: Any, *, press_ms: int = EDIT_EXIT_PRESS_MS) -> Non
 
 
 def switch_leg(out_port: Any, target_slot: int, *, settle_s: float = SWITCH_SETTLE_S) -> None:
-    """Select the target, leave the edit session it opens, then press its record control and wait for the switch.
+    """Select the target, leave the edit session that opens, then wait for the switch the selection queued.
 
-    The order is the whole safety argument: the record control acts on the *selected* slot, and on a filled one while the
-    track plays the firmware can only queue a playback switch. Reversing those two would put the press on whatever slot
-    happened to be active. The **edit exit** sits between them because the selection opens a session the switch's
-    preparation does not survive (run 04).
+    **The selection is the whole gesture.** A short press on a *non-selected filled* slot while the track plays is the
+    firmware's queue-playback path (`MidiButtonActions`: "queue playback, never overdub"), and the device logs
+    `Loop N: Queued playback switch` before any other control is touched. The target must therefore be filled: an empty
+    one takes the record-arm branch instead.
+
+    The leg used to follow the selection with a press of the **global** record control, on the assumption that it acts on
+    the selected slot. It does not: it acts on the active track and starts a live overdub there (device: `Live Overdub`
+    1.8 s after the switch was already queued), and the commit ladder runs only `if (tracks[i].isPlaying())`, so the
+    queued switch could not commit for the whole settle in every run 06/07/09. The press is gone; the switch is queued
+    before it ever happened.
+
+    The **edit exit** stays: the selection opens a session the switch's preparation does not survive (run 04).
     """
     if not 1 <= target_slot <= 8:
         raise ValueError(f"switch target slot {target_slot} is outside 1..8")
     select_loop_slot(out_port, target_slot)
     time.sleep(0.5)
     press_edit_exit(out_port)
-    time.sleep(0.5)
-    press_record_for_active_slot(out_port)
     time.sleep(settle_s)
 
 
@@ -392,8 +378,8 @@ def run_post_leg_phase(
             if not 1 <= switch_target_slot <= 8:
                 print(f"[windowed-content-parity] --switch-target-slot {switch_target_slot} is outside 1..8")
                 return None
-            print(f"[windowed-content-parity] switch leg: selecting slot {switch_target_slot} and pressing its record "
-                  f"control to queue a switch while the transport runs")
+            print(f"[windowed-content-parity] switch leg: selecting slot {switch_target_slot} to queue a switch on the "
+                  f"selection itself while the transport runs")
             switch_leg(out_port, switch_target_slot, settle_s=switch_settle_s)
 
         print("[windowed-content-parity] stopping the transport so the retained Tier-A rows drain")

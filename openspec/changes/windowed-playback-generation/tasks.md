@@ -797,6 +797,25 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   (`qualification_started` → `build_admitted` → `completed_unpublished` → `released_without_site`, the same precursor
   the 2026-10-19 episode showed 87 µs before its `win_blocked_by_request`).
 
+  *Commit blocker was the leg; the switch commits now; the next blocker is the switched-to slot's window path
+  (2026-10-20, host-only fix + device run; 3.7d still open).* The queued switch never committed in runs 06–09 because
+  the **host leg**, 1.8 s after the selection had already queued the switch, pressed the **global** record control and
+  started a live overdub on the active loop (`Loop 5: Queued playback switch` 171.901 s → `Live Overdub` 173.674 s →
+  `Overdubbing started`), and the commit ladder runs only `if (tracks[i].isPlaying())`. `switch_leg` no longer presses
+  any record control (`press_record_for_active_slot`/`RECORD_PRESS_MS` removed; the slot press *is* the queue gesture,
+  the edit exit stays), host tests **56/56** and **33/33**. On device (`captures/i5-s37d-device-32bar-10`, 32 bars,
+  settle 170 s, image `fa7197e7…`) the switch **commits** (`snap_gate,t=7,s=4,a=4` at 224.1 s, 72 s after the press) and
+  the lane runs for the new active slot — but every attempt repeats `win_requested rq=12`
+  (`DeferredSourceQualification`) → `qualification_started` → `handoff_unreachable` (5 of 13 grains) →
+  `win_repositioned`, spending all **12** spans of the traversal to `win_blocked_by_budget`, then `win_blocked` for the
+  last 99 s. **Zero `win_blocked_by_request`:** the deferral charges a *whole-loop* qualification build (length = the
+  24-bar loop) against the *rolling span's* 2-bar handoff, so the builder's `handoff_unreachable` drops and re-positions
+  the demand instead of the admission retaining a terminal term; the live-recorded 32-bar slot shows the lane is healthy
+  once the source is qualified (`completed_unpublished` → `adopt_wait,e2_boundary` → `playback_available`). So the read
+  is owed behind the **switched-to slot's window path** (its bound launch window is not adopted by the rolling frame;
+  the qualification deferral is mis-charged), not behind the 3.7d instrument. Detail:
+  [`2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md`](evidence/2026-10-20-s37d-device-switch-crash/EXECUTION-DEVICE.md).
+
   ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
   the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
   hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root

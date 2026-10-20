@@ -30,12 +30,10 @@ from hitl.control_constants import (
     EDIT_BUTTON_NOTE,
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
-    RECORD_BUTTON_NOTE,
 )
 from hitl.scenarios.windowed_content_parity import (
     last_transport_row_running,
     press_edit_exit,
-    press_record_for_active_slot,
     run_post_leg_phase,
     switch_leg,
     split_switch_target_slot_flag,
@@ -759,11 +757,6 @@ class WindowedTargetTests(unittest.TestCase):
 
         self.assertEqual(2, run_windowed_content_parity(_Args()))
 
-    def test_the_record_press_uses_the_record_control(self) -> None:
-        port = _StubPort()
-        press_record_for_active_slot(port, press_ms=1)
-        self.assertEqual([(RECORD_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2, port.sent)
-
     def test_the_switch_leg_needs_a_running_transport_and_a_named_slot(self) -> None:
         """Both halves of the post-leg phase are gated on the transport: a switch (or a stop press, which toggles)
         performed while it is stopped is not the regime the leg exists for."""
@@ -927,15 +920,21 @@ class WindowedTargetTests(unittest.TestCase):
         self.assertNotIn("--switch-target-slot", remaining)
         self.assertEqual(["--track-number", "8", "--midi-channel", "8"], remaining)
 
-    def test_the_switch_leg_selects_then_leaves_the_edit_session_then_presses_record(self) -> None:
-        """Three gestures in one order: the selection is the safety argument, and the edit exit is what the switch's
-        preparation needs (run 04: with the session open the preparation never starts)."""
+    def test_the_switch_leg_queues_on_the_selection_and_leaves_the_edit_session(self) -> None:
+        """Two gestures: the selection *is* the switch gesture, and the edit exit is what the switch's preparation
+        needs (run 04: with the session open the preparation never starts).
+
+        A third press of the global record control used to follow, on the assumption that it acts on the selected slot.
+        It acts on the active track and starts a live overdub there (device: `Live Overdub` 1.8 s after the switch was
+        queued), and the commit ladder runs only while the track `isPlaying()`, so the switch held for the whole settle
+        in every run that pressed it (06/07/09). The switch is queued by the selection alone (`MidiButtonActions`:
+        "queue playback, never overdub"), so the leg must not send any record control.
+        """
         port = _StubPort()
         switch_leg(port, 3, settle_s=0.0)
         self.assertEqual(
             [(LOOP_SELECT_NOTE_BASE + 2, CONTROL_CHANNEL_1BASED - 1)] * 2
-            + [(EDIT_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2
-            + [(RECORD_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
+            + [(EDIT_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
             port.sent,
         )
         with self.assertRaises(ValueError):
