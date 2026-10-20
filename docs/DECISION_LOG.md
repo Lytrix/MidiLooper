@@ -8691,3 +8691,90 @@ on the first switch turn.
 [`evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md)
 — the device rows and the image correction, the four native cases with their red/green reading, both builds' lines, and the
 host suite.
+
+## DEC-153 — An adopted launch window is a **positioned span**: the commit's bind tick is its `deadlineTick`
+
+**Date:** 2026-10-20
+**Owner:** `Track::seedRollingFrameFromBoundLaunch` (`src/Track/TrackPlaybackWindowBuild.cpp`), called from
+`Track::serviceRollingPlaybackWindow`'s idle turn; the frame it writes is read by
+`Track::resolveRollingPlaybackWindow`, whose serving branch (`span = deadlineTick == 0 ? loopLength : 2 bars`) is the
+only reader that classifies a frame by its deadline.
+**Status:** Accepted and implemented — native **227/227** focused, full native **3349 / 7 skipped / 3342 succeeded**,
+host `scripts.test_windowed_content_parity_verify` **56/56**, both builds SUCCESS; device run
+`captures/i5-s37f-device-32bar-03` shows the adopted span expiring into the successor demand.
+
+### Decision
+1. **The seed writes the bind's tick as the frame's `deadlineTick`.** Before this, the seeded frame kept
+   `deadlineTick = 0`, the resolver's *whole-loop* (cold) class: it sized the frame's serving span as
+   `frame.loopLength` and then required `current.coverage.lengthTicks == span`. A launch window is two bars, so the
+   adopted frame was rejected against its own coverage the moment the launch view it was read through had no interval
+   left (`coverage.lengthTicks != span`), and `rejectRollingFrame` left it `Blocked` for the rest of the slot's playback.
+2. **No second rule is added.** The frame is exactly what a positioned span already is: a start tick (the bind), a
+   two-bar interval, and an end. The resolver's existing serving branch validates it (start phase, span, loop length,
+   storage/source identity) and its existing expiry ends it (`tick - deadlineTick >= span` → `Idle` + `Expired`), after
+   which the lane's next turn opens the successor demand through the ordinary rolling path. The zero-deadline branch,
+   its revision re-checks, `boundLaunchView`'s `phase == elapsed` proof and DEC-147 are untouched.
+3. **The seed's own guard and the resolver now agree by construction.** `elapsed >= coverage.lengthTicks` (refusal
+   `Expired`) and `tick - deadlineTick >= span` are the same quantity, so a bind from an older traversal cannot be
+   adopted and a served span cannot be held past its end.
+
+### Rationale / alternatives
+- **Teach the resolver to recognise the seeded shape** (e.g. `startPhase == 0 && coverage.lengthTicks == 2 bars &&
+  loopLength != 2 bars`). That is geometry guessing on a hot path, and it would keep two classes of two-bar frames
+  (adopted vs requested) that behave identically otherwise.
+- **Return the frame to `Idle` from the seed's coverage check.** Only the *lane* would see the end; the read path would
+  still be rejecting the frame into `Blocked` first, which is the device-observed failure.
+
+### Consequences and named limits
+- The adopted frame serves its two bars, then **expires**: device `captures/i5-s37f-device-32bar-03` shows
+  `win_adopted_launch` (`sv=1`) → `win_serving` → at the span end `win_seed_refused rq=5` (`expired`) and
+  `win_requested` in the same turn, with **no** `win_blocked` on the frame (contrast `captures/i5-s37e-device-32bar-04`:
+  `win_blocked` exactly at the 3.992 s interval and no request).
+- **Named next RED (not fixed here):** the successor demand's qualification costs 5.8 ms per grain (a whole-loop page)
+  and is charged against a two-bar handoff: `qualification_started` → `handoff_unreachable` (24.6 ms) → 12
+  `win_repositioned` → `win_blocked_by_budget` (`captures/i5-s37f-device-32bar-03`, 238.76 s → 239.47 s), so windows do
+  not *resume* after the first adopted span and the ordinary path serves the rest. That is the whole-loop-vs-span cost
+  mismatch, task 3.7h, not the frame's life cycle.
+- The lane's re-adoption of the same view a few ticks before its end (the service turn that finds the frame `Idle`
+  while `elapsed < span`) is left as is: it is the seed's documented contract (a window it may still serve) and the
+  frame expires on time.
+
+### Evidence
+[`evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md)
+— the RED (`Expected 7 (Expired) Was 8 (Rejected)`), the green suite, both builds, and the device rows.
+
+## DEC-154 — A **`Bound`** launch belongs to the commit that consumed it; the provision owner may not cancel it
+
+**Date:** 2026-10-20
+**Owner:** `Track::preparePlaybackLaunchForSlot` (`src/Track/TrackPlaybackWindowBuild.cpp`), the only caller of
+`cancelPlaybackLaunchForSlot(slot, includeBound=true)`; `TrackManager::servicePendingSlotProvision` is its only caller.
+**Status:** Accepted and implemented — native RED→GREEN (`test_3_7f_a_bound_launch_survives_the_provision_owner_turn`),
+full native **3349 / 7 skipped / 3342 succeeded**, both builds SUCCESS.
+
+### Decision
+`launchPreparation == Bound` (or `FallbackBound`) is **not** a stale preparation. `Bound` is written only by
+`Track::bindPlaybackLaunchForSlot`, i.e. by the switch commit that has already consumed this switch; from that moment the
+preparation's view is the playing slot's own source (the handoff window and the rolling seed's view). The provision
+owner's "the preparation no longer matches, start over" turn therefore reports `launch_bound_owned` and returns without
+cancelling. `None` (the sticky handoff invalidation) keeps its old meaning and its old path.
+
+### Rationale / alternatives
+- **Leave the restart in place and re-seed from `Ready` again.** Not possible: the restart's
+  `cancelPlaybackLaunchForSlot(slot, true)` resets the adopted **current** view's metadata, so the window the commit
+  bound no longer exists — the seed's `Identity` term refuses with `sv=0` and there is nothing left to recover.
+- **Make the seed accept an unpublished current view.** That would let the seed serve a view the authoring lane has
+  already abandoned, and it weakens DEC-152's identity evidence.
+
+### Consequences and named limits
+- Device `captures/i5-s37f-device-32bar-01` is the interleaving that motivated this: the commit bound the launch
+  (246.699), the provision turn ran at 246.734 while the preparation was still `Bound`, and its restart deleted the
+  adopted view ("`win_seed_refused rq=3`" from 246.807, `sv=0`) — the lane fell back to the whole-loop demand
+  (`win_requested rq=12` ×12, `win_blocked_by_budget`) exactly as before 3.7e. The same scenario in
+  `captures/i5-s37e-device-32bar-04` and `captures/i5-s37f-device-32bar-03` did not land in that window and adopted.
+- The pending switch keeps its state: this changes **no** switch decision, no commit timing and no handoff promise.
+- The guard is native-verified; the device read for it is the *absence* of `launch_bound_owned` on a run that adopts
+  (and, symmetrically, its presence instead of a seed refusal on one that does not).
+
+### Evidence
+[`evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37f-device-adoption-roll-on/EXECUTION-DEVICE.md)
+— the `-01` interleaving rows, the RED (`Expected FALSE Was TRUE`), and the green suite.

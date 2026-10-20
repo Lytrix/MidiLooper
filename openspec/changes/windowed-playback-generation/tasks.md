@@ -862,13 +862,38 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   the seed. **3.7d stays open for a new reason:** the adopting seed removes the demand from this route, so
   `win_blocked_by_request` needs 3.7f's continuation (or a slot played without a switch). Detail:
   [`2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md`](evidence/2026-10-20-s37e-device-launch-adoption/EXECUTION-DEVICE.md).
-- [ ] 3.7f **Let an adopted frame roll on to its next span** — the post-adoption route (the next independent RED from
-  3.7e). Device `captures/i5-s37e-device-32bar-04`: a `Serving` zero-deadline frame reaches the end of its two-bar
-  coverage and `resolveRollingPlaybackWindow` rejects it (`coverage.contains(phase)` fails) into `Blocked`, where it
-  stays for the rest of the slot's playback — so the lane opens no successor span and 3.7d's demand term never runs.
-  The frame must return to `Idle` (and the lane request the next positioned span) instead of blocking on a window it
-  *finished*, without weakening DEC-147/DEC-116. Owed: the paired RED (a serving frame whose coverage ended goes
-  `Blocked` today), then the device rerun for `win_serving` across a window boundary.
+- [x] 3.7f **Let an adopted frame roll on to its next span** — the post-adoption route (the next independent RED from
+  3.7e). *Landed 2026-10-20 (`DEC-153`).* The seed now writes the commit's bind tick as the frame's `deadlineTick`, so
+  the adopted two-bar window is a **positioned span** to `resolveRollingPlaybackWindow`: the resolver validates it
+  against its own coverage and ends it at its span end (`Idle` + `Expired`) instead of rejecting it into `Blocked`, and
+  the lane's next turn opens the successor demand through the ordinary rolling path. No second rule, no change to
+  `boundLaunchView`/DEC-147, no zero-deadline branch change, no qualification-build accounting change. Native: the
+  paired case red-proved (`Expected 7 (Expired) Was 8 (Rejected)`), focused **227/227**, full native **3349 / 7 skipped /
+  3342 succeeded**, host **56/56**, both builds SUCCESS (default `d415934a…`, qualification `b4a73e29…`).
+  **Device (`captures/i5-s37f-device-32bar-03`, qualification image):** `win_adopted_launch` (`sv=1`) 234.756560 →
+  `win_serving` 234.771268 → at the span end 238.758000 `win_seed_refused rq=5` (`expired`) **and** `win_requested`
+  (the successor), with no `win_blocked` on the adopted frame — against `captures/i5-s37e-device-32bar-04`, which
+  `win_blocked` at exactly the 3.992 s interval and never requested again. **Windows do not resume yet:** the successor
+  demand pays the whole-loop qualification cost (5.8 ms/grain) against a two-bar handoff → `handoff_unreachable` ×12 →
+  `win_blocked_by_budget` (238.76 s → 239.47 s); that is 3.7h. **3.7d** therefore still needs a route whose demand
+  reaches a terminal term.
+- [ ] 3.7h **The successor span's demand must not pay the whole-loop qualification cost** — the post-adoption RED
+  measured by 3.7f. Device `captures/i5-s37f-device-32bar-03`: after the adopted span expires, `win_requested` (reason
+  source qualification) starts a `qualification_started` grain of **5.86 ms** (the whole-loop page), the two-bar
+  handoff lead cannot hold it, and every attempt ends `handoff_unreachable` (24.6 ms builds) → 12 `win_repositioned` →
+  `win_blocked_by_budget` at 239.467 s, so the remaining 22 bars are served by the ordinary merged path and no window is
+  ever served beyond phase 0. Owed: the RED pair for a positioned demand whose qualification is page-bounded by the
+  **span** (not the loop), then the device rerun for `win_ready`/`win_serving` past a boundary — the same read re-opens
+  3.7d's `win_blocked_by_request` route once a demand can reach its terminal.
+- [ ] 3.7i **A `Bound` launch is the playing slot's window; the provision owner must not cancel it** (`DEC-154`) —
+  landed 2026-10-20 as 3.7f's evidence blocker. Device `captures/i5-s37f-device-32bar-01` measured the interleaving: the
+  commit bound the launch and the provision owner's next turn restarted the preparation
+  (`cancelPlaybackLaunchForSlot(slot, true)`), which reset the adopted **current** view's metadata — the seed then
+  refused on identity (`sv=0`, `win_seed_refused rq=3`) and the lane fell back to the whole-loop storm. The guard
+  reports `launch_bound_owned` and leaves the preparation, the switch and the bound window exactly as they were; native
+  RED→GREEN (`test_3_7f_a_bound_launch_survives_the_provision_owner_turn`), full native **3349 / 7 skipped / 3342
+  succeeded**, both builds SUCCESS. *Device read owed:* a run that lands the interleaving should show
+  `launch_bound_owned` and then adopt.
 - [ ] 3.7g **Host-clock source for the long-loop HITL leg** (`--clock-source {device,host}` + `--tempo-bpm`), so a
   windowed evaluation can be paced by the host's 24 PPQN at a stated BPM instead of the device's own transport clock.
   Not a firmware change: `scripts/hitl/scenarios/long_loop_display_window.py` has no such flag (only

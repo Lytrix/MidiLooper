@@ -4332,6 +4332,21 @@ TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
       return sourceRequested;
     }
   }
+  if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Bound ||
+      runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::FallbackBound) {
+    // **A bound launch belongs to the playing slot, not to a pending switch.** `Bound` is only ever written by
+    // `bindPlaybackLaunchForSlot`, i.e. by a commit that has already consumed this switch; the preparation's window is
+    // now the playing playback's own source (the handoff's view and the seed's). The turn below is the provision
+    // owner's "the preparation no longer matches the source, start over" path, and for a Bound preparation that
+    // restart is destructive: `cancelPlaybackLaunchForSlot(slotIndex, true)` resets the adopted **current** view's
+    // metadata, so the seed then refuses on identity (`sv=0`) and the lane falls back to the whole-loop demand this
+    // slice exists to avoid. Device `captures/i5-s37f-device-32bar-01`: the bind at 246.699, this turn at 246.734,
+    // `win_seed_refused rq=3` from 246.807 on, and the pre-3.7e storm for the rest of the switch; the same scenario in
+    // `captures/i5-s37e-device-32bar-04` did not land in that interleaving and adopted. Nothing here admits, refuses or
+    // reorders a switch: the pending switch keeps its state, and the commit's own window is left exactly as bound.
+    reportPlaybackLaunchGateRow(slotIndex, "launch_bound_owned", sourceRequestNeeded, sourceRequested);
+    return false;
+  }
   if (runtime->launchPreparation != LoopPlaybackRuntime::LaunchPreparation::None)
     cancelPlaybackLaunchForSlot(slotIndex, true);
   // Do not overwrite an independent positioned demand or another prepared owner.
@@ -4403,11 +4418,13 @@ bool Track::bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick) {
 // know it existed.
 //
 // This seeds the frame onto that window. The predicate is the resolver's own serving contract (`resolveRollingFrame`,
-// `phase == Serving` with `deadlineTick == 0`), read against the slot's live loop, so a frame seeded here is one the
-// very next turn would have accepted anyway: same `boundView`, same storage generation, same start phase, same span,
-// same revision and snapshot identity, and a coverage that contains the playhead. What it adds is the one thing the
-// resolver cannot know -- that the **launch bound it for this slot**. A stale view (an edit after the bind, a new
-// generation, a republished root, a moved playhead) fails the identity and the lane keeps its ordinary demand path.
+// `phase == Serving` with the frame positioned at the span's start), read against the slot's live loop, so a frame seeded
+// here is one the very next turn would have accepted anyway: same `boundView`, same storage generation, same start phase,
+// same span, same revision and snapshot identity, and a coverage that contains the playhead. What it adds is the one
+// thing the resolver cannot know -- that the **launch bound it for this slot**. A stale view (an edit after the bind, a
+// new generation, a republished root, a moved playhead) fails the identity and the lane keeps its ordinary demand path.
+// 3.7f: the bind's tick is also written as the frame's `deadlineTick`, so the seeded span has an **end** and hands the
+// lane back its demand instead of stranding it on a coverage it can no longer validate.
 TRACK_COLD_MEM Track::LaunchSeedRefusal Track::seedRollingFrameFromBoundLaunch(uint8_t slotIndex, uint32_t generation,
                                                                               const PlaybackDeadlineClock& clock,
                                                                               uint32_t phase) {
@@ -4459,7 +4476,14 @@ TRACK_COLD_MEM Track::LaunchSeedRefusal Track::seedRollingFrameFromBoundLaunch(u
   if (!view.coverage.contains(phase)) return LaunchSeedRefusal::Uncovered;
   // Publish metadata last: until `phase` is written the frame is still the `Idle` one the caller found.
   frame.startPhase = view.coverage.startPhase;
-  frame.deadlineTick = 0;
+  // **The frame is a positioned span, and the bind's tick is its start.** The resolver reads `deadlineTick == 0` as the
+  // *whole-loop* (cold) class and sizes its serving span as `frame.loopLength`; a launch window is two bars, so a
+  // zero-deadline frame here is rejected against its own coverage (`coverage.lengthTicks != span`) the moment the launch
+  // view it was read through has no interval left. Device `captures/i5-s37e-device-32bar-04`: that rejection is
+  // `win_blocked` 3.992 s after adoption, and the lane never asks again. With the span's start in `deadlineTick`, the
+  // resolver serves the window for its own interval and ends it as `Expired` + `Idle`, so the lane's next turn opens the
+  // successor span -- the same positioned-span life cycle every rolling frame already has.
+  frame.deadlineTick = runtime->launchBoundTick;
   frame.refusedHandoffPhase = 0;
   frame.refusedSpanAttempts = 0;
   frame.refusedHandoffValid = false;

@@ -14249,6 +14249,88 @@ void test_3_7e_a_stale_bound_launch_is_not_seeded() {
                     static_cast<int>(runtime->rolling.phase));
 }
 
+/// 3.7f -- **a served span ends by expiring, and the lane opens the next one.** Device
+/// `captures/i5-s37e-device-32bar-04` measured the adopted launch window serving its two bars and then
+/// `win_blocked` for the rest of the slot's playback (251.79 s, 3.992 s after adoption), because the resolver read the
+/// zero-deadline frame as a **whole-loop** one (`span = frame.loopLength`) and rejected the two-bar coverage it actually
+/// carried (`current.coverage.lengthTicks != span`). The frame must be positioned in time -- the commit's bind tick is
+/// the span's start -- so its own span ends by `Expired` + `Idle` and the lane's next turn requests the successor.
+void test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);     // demoted 24-bar target (slot 2) with a current published root
+  drainImmutableLaunch(track, 2);  // its launch reaches Ready off-clock
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t span = 2 * Config::TICKS_PER_BAR;
+  // The commit binds at the loop boundary it switches on (device: `LoopEnd playback commit ... start=0`).
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  const uint32_t boundAt = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick);
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, boundAt));
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Serving),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the launch window is adopted first (3.7e)");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                    static_cast<int>(runtime->rolling.phase));
+  // The read path asks the resolver once the launch view it served has no interval left; the frame's own span ends at
+  // exactly the same tick, and it must end as an expiry, not as a rejection the lane can never leave.
+  nativePlaybackDeadlineClock.tick = boundAt + span;
+  const auto resolved = track.resolveRollingPlaybackWindow(
+      2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Expired), static_cast<int>(resolved.outcome),
+                            "a served span ends by expiring; blocking the frame strands the lane for the whole loop");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                    static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_NULL(resolved.view);
+  // The lane's next turn is the ordinary rolling demand, for the **successor** span, not for the served one.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the lane must keep rolling after the adopted window");
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(2));
+  TEST_ASSERT_EQUAL_UINT32(0u, runtime->rolling.startPhase % span);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0u, runtime->rolling.startPhase, "the next span, not the adopted phase zero");
+}
+
+/// 3.7f (blocker) -- **a bound launch belongs to the playing slot, so the provision owner leaves it alone.** Device
+/// `captures/i5-s37f-device-32bar-01` landed an interleaving the previous run did not: the commit bound the target's
+/// launch (`launchBoundTick` set, the phase-0 window adopted as `current`) and the provision owner's next turn ran
+/// while that preparation was still `Bound`. `preparePlaybackLaunchForSlot` read anything that is not `Ready` as "start
+/// over", and its restart cancels with `includeBound=true` -- which resets the adopted **current** view's metadata. The
+/// seed then saw an unservable view (`sv=0`) and refused on identity for the rest of the switch, so the lane fell back
+/// to the whole-loop demand 3.7e exists to remove (`win_requested rq=12`, twelve re-positions, `win_blocked_by_budget`).
+void test_3_7f_a_bound_launch_survives_the_provision_owner_turn() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Ready),
+                    static_cast<int>(runtime->launchPreparation));
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick)));
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t adoptedView = set->lifecycle.current;
+  TEST_ASSERT_TRUE(set->views[adoptedView].published);
+  // The switch itself is still pending here (the clock path's own turn consumes it), which is exactly the window this
+  // turn can land in. Reading `Bound` as a stale preparation must not restart anything.
+  TEST_ASSERT_FALSE(track.preparePlaybackLaunchForSlot(2));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Bound),
+                            static_cast<int>(runtime->launchPreparation),
+                            "the commit's bind is the playing slot's witness; the provision owner must not clear it");
+  TEST_ASSERT_NULL(track.pendingViewRequest(2));
+  TEST_ASSERT_EQUAL_UINT8(adoptedView, set->lifecycle.current);
+  TEST_ASSERT_TRUE_MESSAGE(set->views[adoptedView].published,
+                           "the adopted current view is the seed's source; restarting the launch deletes it");
+  TEST_ASSERT_NOT_EQUAL(0u, runtime->launchBoundTick);
+}
+
 /// 3.7a (I2): the refused gather **keeps the demand** and names why -- a retained revision that lags the loop, a
 /// passed deadline, and the gather's own discarding transition. Nothing here publishes, and nothing is dropped.
 void test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand() {
@@ -16998,6 +17080,8 @@ int main() {
   RUN_TEST(test_3_7e_a_launch_whose_handoff_view_expired_still_seeds_the_rolling_frame);
   RUN_TEST(test_3_7e_a_bound_launch_past_its_interval_is_not_seeded);
   RUN_TEST(test_3_7e_a_stale_bound_launch_is_not_seeded);
+  RUN_TEST(test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one);
+  RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
   // windowed-playback-generation slice 3.7a (I3): the capture admission counts **committed** windows only, so a served
   // preview (the session's uncommitted projection) inherits nothing.
