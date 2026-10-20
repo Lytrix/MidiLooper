@@ -766,6 +766,20 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   the unaligned-length demand is refused at *entry* (`win_window_ineligible`, `al=0`), which is a different exit. Detail:
   [`2026-10-07-s37d-invalidation-term/EXECUTION.md`](evidence/2026-10-07-s37d-invalidation-term/EXECUTION.md).
 
+  *Device read attempted 2026-10-20 on the current image — **not reproduced**, and the attempt narrowed it*
+  ([`s37d-device-attempt`](evidence/2026-10-20-s37d-device-attempt/EXECUTION-DEVICE.md)). A registered-preset run at
+  **32 bars** (the only configuration where the exit has ever been seen: `captures/i5-s64-f8-parity-32bar-01`, one
+  `win_blocked_by_request` row 10 ms after `build_drop,handoff_unreachable`) emitted **zero** such rows — the lane never
+  even requested a window (`win_requested`/`win_repositioned`/`win_ready`/`win_serving` all 0; `win_not_servable` 10,
+  `win_busy` 6, all with `bld=0, gr=0`), so the exit's precondition (a retained request that is position-invalidated or
+  carries a terminal term) was never met, while the take itself was the intended aligned 24 576-tick body. The
+  difference is the lane's state at the instant of the demand: the 2026-10-19 episode had the request admitted at
+  `phase 24599` of 24 576, one tick before the wrap, so its contract could not finish before the handoff. **Still owed:**
+  a run that reaches the exit (a request admitted near the loop end) and reads a named `rq`. The attempt also measured a
+  recipe limit that is not a 3.7d defect: at 32 bars the 16-bar window clamps at `24576 − 12288 = 12288` once the
+  playhead passes 24 bars, and this run's hold sat past it, so the leg's hold term cannot move there
+  (`unique_starts=[12288]`). 24 bars stays the leg's configuration.
+
   ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
   the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
   hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root
