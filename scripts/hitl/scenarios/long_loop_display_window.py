@@ -68,6 +68,40 @@ def _track_index(track_number_1based: int) -> int:
     """0-based track index — matches host_midi_automation_baseline first_track_index."""
     return track_number_1based - 1
 
+# Seconds of lateness the host-mode record stop must lead by: the post-stream wait the leg keeps for its
+# transition baseline (0.5 s), the press's own dwell (0.12 s at the default `--press-ms`) and the device's
+# short-press double-tap window (~0.3 s). The device quantises the committed length to the nearest bar, so the
+# press only has to land inside the last bar; a lead left at zero lands in the next bucket at a slow tempo
+# (90 BPM: bar 2.67 s, half-bar quantum 1.33 s, measured lateness ~1.3 s ->
+# `captures/i5-s37g-host-clock-02` committed 33 bars). At 120 BPM the same lateness is inside the quantum, which
+# is why the device-clock leg never showed this. 0.9 s is the measured lateness and leaves margin below half a
+# bar even at 120 BPM (43 clocks against the 48 a tie would need).
+HOST_STOP_LEAD_SECONDS = 0.9
+
+
+def _host_stop_lead_clocks(tempo_bpm: float) -> int:
+    """Clocks of lead the host-mode stop press needs at ``tempo_bpm`` (24 PPQN).
+
+    ``HOST_STOP_LEAD_SECONDS`` is a wall-clock lateness, so the lead in clocks follows the tempo (32 clocks at
+    90 BPM, 43 at 120). It is capped at 0.4 bar (38 clocks) because a press further ahead of the boundary than that
+    starts costing the bar it is meant to close at a fast tempo; the cap still lands the press inside the last bar
+    the quantiser rounds to.
+    """
+    lateness_clocks = HOST_STOP_LEAD_SECONDS * 24.0 * tempo_bpm / 60.0
+    return max(1, min(int(round(lateness_clocks)), 38))
+
+
+def _seconds_per_bar(clock_source: str, tempo_bpm: float) -> float:
+    """Bar length the record phase's guard is sized with, for the leg's two clock sources.
+
+    Device mode keeps the measured 2 s bar (24 PPQN at the device's own 120 BPM transport), so its behaviour is
+    unchanged; host mode follows the tempo the host actually sends, so a slow host clock is not cut off by a guard
+    sized for the device's clock.
+    """
+    if clock_source == "host":
+        return (60.0 / tempo_bpm) * 4.0
+    return 2.0
+
 def _effective_sync_timeout_s(record_bars: int, configured_ms: int) -> float:
     """Scale state-sync waits for long-loop stop finalize + deferred save."""
     scaled_ms = max(configured_ms, record_bars * 1000)
@@ -219,6 +253,28 @@ def _parse_common_args(args: object) -> argparse.Namespace:
             "(96 clocks = one bar at 24 PPQN / 4-4) lands the take on the requested length"
         ),
     )
+    parser.add_argument(
+        "--clock-source",
+        choices=("device", "host"),
+        default="device",
+        help=(
+            "Which transport clock paces the take. 'device' (default) is the device's own transport: the leg "
+            "presses play/stop and the stream is paced by the wall-clock proxy. 'host' is the host's 24 PPQN at "
+            "--tempo-bpm: the host sends the realtime Start (which is the device's tick 0) and owns the transport, "
+            "so the leg sends no transport press and the stream is paced by the pump. Same shape as "
+            "legacy_record_baseline.py's --clock-source"
+        ),
+    )
+    parser.add_argument(
+        "--tempo-bpm",
+        type=float,
+        default=120.0,
+        help=(
+            "Tempo the host clock runs at in --clock-source host, and the bar-to-seconds conversion for either "
+            "source. 24 PPQN at this tempo is what the device slaves to; the take's length must still come out at "
+            "a whole number of bars (len % TICKS_PER_BAR == 0)"
+        ),
+    )
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument(
         "--long-press-ms",
@@ -320,6 +376,7 @@ def run_long_loop_display_window(args: object) -> int:
     import mido
     from hitl.serial_transport import resolve_wall_tempo_for_proxy
     from hitl.transport_clock import ensure_transport_clock
+    from hitl.midi_clock import MidiClockMaster
     from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
         EDIT_BUTTON_NOTE,
@@ -363,6 +420,9 @@ def run_long_loop_display_window(args: object) -> int:
     if ns.record_bars <= 16:
         print("[long-loop-display-hitl] error: --record-bars must be > 16 for bounded window")
         return 2
+    if ns.tempo_bpm <= 0:
+        print("[long-loop-display-hitl] error: --tempo-bpm must be > 0")
+        return 2
 
     # The runner's `--out-dir` is this leg's artifact directory too (the base legacy drivers route theirs
     # the same way), so a managed run's log/report land with its session log rather than in the default.
@@ -371,6 +431,11 @@ def run_long_loop_display_window(args: object) -> int:
 
     out_port = mido.open_output(_find_midi_port(ns.midi_out, "output"))
     in_port = mido.open_input(_find_midi_port(ns.midi_in, "input"))
+    # Host clock source: one master per run, bound to the output port it drives. `None` in device mode, so every
+    # branch below keeps its measured device-clock shape and the flag's default changes nothing.
+    clock_master: Optional[MidiClockMaster] = (
+        MidiClockMaster(out_port) if ns.clock_source == "host" else None
+    )
     serial_collector: Optional[SerialCaptureCollector] = None
     abort = RunAbort()
     exit_code = 0
@@ -400,14 +465,26 @@ def run_long_loop_display_window(args: object) -> int:
 
 
         if ns.start_transport:
-            _ensure_transport_running(
-                out_port,
-                in_port,
-                press_ms=ns.press_ms,
-                phase_wait_ms=ns.phase_wait_ms,
-                serial_collector=serial_collector,
-                transport_args=ns,
-            )
+            if clock_master is not None:
+                # Host clock source: the host owns the transport, and nothing starts here. The realtime Start goes
+                # out **after the record arm** (below), because that Start is the device's tick 0 -- the origin the
+                # take is measured from. Starting it here would leave the take's first bar ahead of the stream's
+                # anchor: measured as a 33-bar commit on the first host-clock run (`captures/i5-s37g-host-clock-01`,
+                # `DIAG,record_length,ticks=25344`). A transport press would toggle off whatever the Start begins,
+                # and an inbound-clock wait can only fail because a slaved device emits no clock of its own.
+                print(
+                    "[long-loop-display-hitl] clock source host: transport stays stopped until the record arm "
+                    f"({ns.tempo_bpm:.1f} BPM, continuous 24 PPQN pump after it)"
+                )
+            else:
+                _ensure_transport_running(
+                    out_port,
+                    in_port,
+                    press_ms=ns.press_ms,
+                    phase_wait_ms=ns.phase_wait_ms,
+                    serial_collector=serial_collector,
+                    transport_args=ns,
+                )
 
         if ns.adoption_hold_s > 0:
             print(
@@ -443,8 +520,11 @@ def run_long_loop_display_window(args: object) -> int:
 
         if ns.clear_before_record:
             if serial_collector is not None:
-                # Recover transport clock after serial boot / prior STOPPED (same as base preset).
-                if ns.start_transport:
+                # Recover transport clock after serial boot / prior STOPPED (same as base preset). Host mode owes no
+                # recovery: there is no device clock to wait for (a slaved device emits none) and a transport press
+                # would start a run the later realtime Start is meant to own (the reference
+                # `legacy_record_baseline.py` has the same asymmetry).
+                if ns.start_transport and clock_master is None:
                     _send_short_press(
                         out_port,
                         note=GLOBAL_TRANSPORT_NOTE,
@@ -473,12 +553,17 @@ def run_long_loop_display_window(args: object) -> int:
                             press_ms=ns.press_ms,
                         )
                         time.sleep(ns.phase_wait_ms / 1000.0)
-                _stop_transport_if_running(
-                    out_port,
-                    in_port,
-                    press_ms=ns.press_ms,
-                    phase_wait_ms=ns.phase_wait_ms,
-                )
+                if clock_master is not None:
+                    # The clear needs a stopped transport, and the host owns it: a realtime Stop (plus a pump stop,
+                    # which is a no-op here). Nothing restarts it until the record arm below.
+                    clock_master.stop()
+                else:
+                    _stop_transport_if_running(
+                        out_port,
+                        in_port,
+                        press_ms=ns.press_ms,
+                        phase_wait_ms=ns.phase_wait_ms,
+                    )
                 if not _ensure_clear_to_empty(
                     out_port,
                     serial_collector,
@@ -496,14 +581,18 @@ def run_long_loop_display_window(args: object) -> int:
                     press_ms=ns.clear_press_ms,
                 )
             if ns.start_transport:
-                _ensure_transport_running(
-                    out_port,
-                    in_port,
-                    press_ms=ns.press_ms,
-                    phase_wait_ms=ns.phase_wait_ms,
-                    serial_collector=serial_collector,
-                    transport_args=ns,
-                )
+                if clock_master is None:
+                    # Device clock: the transport must run again for the record press to capture. Host mode stays
+                    # stopped on purpose -- the Start that makes tick 0 is the one after the record arm below (an
+                    # early Start is the 33-bar take noted above).
+                    _ensure_transport_running(
+                        out_port,
+                        in_port,
+                        press_ms=ns.press_ms,
+                        phase_wait_ms=ns.phase_wait_ms,
+                        serial_collector=serial_collector,
+                        transport_args=ns,
+                    )
 
         print(f"[track {track_index}] record {ns.record_bars} bars")
         record_baseline_len = len(serial_collector.snapshot()) if serial_collector is not None else 0
@@ -524,6 +613,18 @@ def run_long_loop_display_window(args: object) -> int:
             channel_1based=CONTROL_CHANNEL_1BASED,
             press_ms=ns.press_ms,
         )
+        # Grid origin of the take, when the host owns the clock: the realtime Start below is the device's tick 0,
+        # and the first pump pulse after it is grid position 1. Passing this to the streamer makes its bar budget
+        # count from the take's own origin, so a slow RECORDING confirmation costs notes at the start of the
+        # pattern instead of adding a bar to the commit (`grid_anchor_missed_pulses` reports how far behind it was).
+        record_grid_origin_pulse: Optional[int] = None
+        if clock_master is not None:
+            clock_master.start(bpm=ns.tempo_bpm, abort=abort)
+            record_grid_origin_pulse = clock_master.grid_origin_pulse()
+            print(
+                "[long-loop-display-hitl] host Start after record arm (device tick 0), grid origin pulse "
+                f"{record_grid_origin_pulse}"
+            )
         reached_recording = False
         if serial_collector is not None:
             reached_recording = _wait_for_recording_started(
@@ -579,26 +680,42 @@ def run_long_loop_display_window(args: object) -> int:
             print("[long-loop-display-hitl] error: record did not reach RECORDING")
             return 1
 
-        if not hasattr(ns, "tempo_bpm"):
-            ns.tempo_bpm = 120.0
-        clock_ok, using_serial_proxy = ensure_transport_clock(
-            in_port,
-            out_port,
-            serial_collector,
-            ns,
-            min_clocks=24,
-            timeout_s=3.0,
-            abort=abort,
-        )
-        if not clock_ok:
-            print("[long-loop-display-hitl] MIDI clock missing before record stream")
-            return 1
-        wall_clock_tempo = resolve_wall_tempo_for_proxy(
-            serial_collector, ns, using_serial_proxy=using_serial_proxy
-        )
+        if clock_master is not None:
+            # A slaved device emits no clock of its own, so there is nothing to wait for and no proxy to resolve:
+            # the pump is the clock, and the phase below is paced by it (`master=`), never by wall-clock seconds.
+            clock_ok, using_serial_proxy = True, False
+            wall_clock_tempo = None
+            print(
+                "[long-loop-display-hitl] host clock before record stream: "
+                f"{ns.tempo_bpm:.1f} BPM, pump pulse {clock_master.pulses_sent()}"
+            )
+        else:
+            clock_ok, using_serial_proxy = ensure_transport_clock(
+                in_port,
+                out_port,
+                serial_collector,
+                ns,
+                min_clocks=24,
+                timeout_s=3.0,
+                abort=abort,
+            )
+            if not clock_ok:
+                print("[long-loop-display-hitl] MIDI clock missing before record stream")
+                return 1
+            wall_clock_tempo = resolve_wall_tempo_for_proxy(
+                serial_collector, ns, using_serial_proxy=using_serial_proxy
+            )
 
-        seconds_per_bar = 2.0
+        # The guard and the stop lead are bar-based; a host clock at a stated BPM must not keep the device-clock 2 s.
+        seconds_per_bar = _seconds_per_bar(ns.clock_source, ns.tempo_bpm)
         guard = max(30.0, ns.record_bars * seconds_per_bar * 2.5)
+        # Host mode presses the stop from inside the stream, one lead ahead of the last bar: the post-stream path
+        # waits 0.5 s for the transition baseline and the device acts on a short press ~0.3 s later, which at a slow
+        # tempo is more than the bar's half-bar quantum (see HOST_STOP_LEAD_SECONDS). The lead is in clocks, so it
+        # follows the tempo the host sends.
+        host_stop_lead_clocks = 0
+        if clock_master is not None:
+            host_stop_lead_clocks = _host_stop_lead_clocks(ns.tempo_bpm)
         rec_notes, _rec_cc, rec_clock_count, _timing = _stream_pattern_for_bars(
             out_port,
             in_port,
@@ -615,14 +732,34 @@ def run_long_loop_display_window(args: object) -> int:
             phase_start_delay_beats=0,
             max_seconds_guard=guard,
             fixed_note=None,
-            stop_press_advance_clocks=ns.stop_press_advance_clocks,
+            # Device clock: the leg presses the stop itself after the stream. Host clock: the stream presses it a
+            # lead early, because the leg's own press comes ~0.9 s late (see HOST_STOP_LEAD_SECONDS).
+            stop_press_advance_clocks=(
+                ns.stop_press_advance_clocks if clock_master is None else host_stop_lead_clocks
+            ),
+            stop_press_note=None if clock_master is None else RECORD_BUTTON_NOTE,
+            stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
+            stop_press_press_ms=ns.press_ms,
             abort=abort,
             emit_immediate_first_step=True,
+            # Exactly one pacing source: the pump in host mode (None here), the wall-clock proxy otherwise. Passing
+            # both raises inside the streamer by design.
+            master=clock_master,
             wall_clock_tempo_bpm=wall_clock_tempo,
+            # Only meaningful with the host pump: the take's own grid origin, so the bar budget is measured from
+            # tick 0 instead of from when this process got around to streaming.
+            grid_origin_pulse=record_grid_origin_pulse,
         )
         print(
             f"[long-loop-display-hitl] record stream notes={rec_notes} clocks={rec_clock_count}"
         )
+        if clock_master is not None:
+            print(
+                "[long-loop-display-hitl] host clock anchor: "
+                f"source={_timing.get('clock_source')} "
+                f"missed_pulses={_timing.get('grid_anchor_missed_pulses')} "
+                f"first_note_tick={_timing.get('grid_first_note_tick')}"
+            )
         if rec_notes == 0 or rec_clock_count == 0:
             print(
                 "[long-loop-display-hitl] error: no MIDI notes/clocks streamed during record "
@@ -635,20 +772,31 @@ def run_long_loop_display_window(args: object) -> int:
 
         expected_play = None
         stop_baseline_len = 0
+        # Host mode may have pressed the stop from inside the stream (a lead early, to keep the commit inside the
+        # last bar). That press's transition is already in the snapshot, so the expected count does not advance again
+        # and no second press is sent -- a second press would arm a *new* take.
+        stop_press_sent_during_stream = bool(
+            clock_master is not None and _timing.get("stop_press_sent_during_stream")
+        )
         if serial_collector is not None:
             from hitl.capture_transitions import _count_capture_transitions
 
             counts = _count_capture_transitions(serial_collector.snapshot())
-            expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + 1
+            expected_play = counts.get(("STOPPED_RECORDING", "PLAYING"), 0) + (
+                0 if stop_press_sent_during_stream else 1
+            )
             stop_baseline_len = len(serial_collector.snapshot())
 
-        print("[long-loop-display-hitl] record stop (returns to play)")
-        _send_short_press(
-            out_port,
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=ns.press_ms,
-        )
+        if stop_press_sent_during_stream:
+            print("[long-loop-display-hitl] record stop was sent from inside the stream (host clock lead)")
+        else:
+            print("[long-loop-display-hitl] record stop (returns to play)")
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=ns.press_ms,
+            )
 
         if serial_collector is not None and expected_play is not None:
             reached_play = _wait_for_transition_count(
@@ -877,6 +1025,8 @@ def run_long_loop_display_window(args: object) -> int:
                         "scenario": "long_loop_display_window",
                         "track_number": ns.track_number,
                         "record_bars": ns.record_bars,
+                        "clock_source": ns.clock_source,
+                        "tempo_bpm": ns.tempo_bpm,
                         "freeze_wait_ms": ns.freeze_wait_ms,
                         "hold_track_ms": ns.hold_track_ms,
                         "display_hold_s": ns.display_hold_s,
@@ -898,6 +1048,12 @@ def run_long_loop_display_window(args: object) -> int:
     finally:
         if serial_collector is not None:
             serial_collector.stop()
+        if clock_master is not None:
+            # Retire the pump only -- never `Stop`. The device's slaving is a 500 ms timeout, not a latch, so it
+            # falls back to its own clock and keeps playing; the wrapper's switch leg needs the transport running
+            # (it queues its switch on the selection itself), and a realtime Stop here would end the take the run
+            # just committed.
+            clock_master.stop_pump()
         out_port.close()
         in_port.close()
         from hitl.midi_io import _drain_input_messages

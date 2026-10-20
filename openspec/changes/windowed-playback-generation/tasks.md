@@ -894,14 +894,24 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   RED→GREEN (`test_3_7f_a_bound_launch_survives_the_provision_owner_turn`), full native **3349 / 7 skipped / 3342
   succeeded**, both builds SUCCESS. *Device read owed:* a run that lands the interleaving should show
   `launch_bound_owned` and then adopt.
-- [ ] 3.7g **Host-clock source for the long-loop HITL leg** (`--clock-source {device,host}` + `--tempo-bpm`), so a
+- [x] 3.7g **Host-clock source for the long-loop HITL leg** (`--clock-source {device,host}` + `--tempo-bpm`), so a
   windowed evaluation can be paced by the host's 24 PPQN at a stated BPM instead of the device's own transport clock.
-  Not a firmware change: `scripts/hitl/scenarios/long_loop_display_window.py` has no such flag (only
-  `legacy_record_baseline.py` does), and the reference shape anchors the realtime `Start` **at the record arm** so
-  `grid_origin_pulse()` is still ahead of the pump (`legacy_record_baseline.py` ~6950), then keeps the pump alive past
-  the leg's port close because the device's slaving is a 500 ms timeout, not a latch. Owed: the leg's host-mode
-  branching, its host tests, and a device run proving the 32-bar take still lands at `len % 768 == 0` with the clock
-  owned by the host.
+  *Landed 2026-10-20, host tooling only (no `src/`/`include/` change, images untouched).* The leg now sends the realtime
+  `Start` **after the record arm** (that Start is the device's tick 0), hands `grid_origin_pulse` to the streamer so the
+  bar budget counts from the take's own origin, presses the record stop **from inside the stream** one lead early
+  (`HOST_STOP_LEAD_SECONDS = 0.9`, tempo-scaled and capped at 0.4 bar) instead of after it, and sends no transport press
+  at all in host mode (the clear is a realtime `Stop`; the pump is retired with `stop_pump()` without a `Stop`, because
+  the wrapper's switch leg needs the transport running and the device falls back to its own clock after its 500 ms slave
+  timeout). Device mode is unchanged behind `clock_master is None`. **Device (qualification image,
+  `captures/i5-s37g-host-clock-03`, 90 BPM):** `RECS,stop,3,24648,96,24552,24576,0` → **24 576 = 32 × 768**
+  (`len % TICKS_PER_BAR == 0`), one clock-lost row only at 184.015 s (89.8 BPM, after the pump retired) so the device was
+  slaved to the host for the whole take, and 31 bars measured 83.7 s ≈ 2.70 s/bar (≈89 BPM) rather than the device's
+  2.0 s. The two path-finding runs committed **25 344 (33 bars)**: `-01` had started the host transport before the
+  record arm, `-02` had the anchor but still waited ~0.9 s to press the stop (past the 90 BPM half-bar quantum).
+  Host tests: new `scripts/test_long_loop_display_host_clock.py` **21/21** plus 30/56/23/3 in the neighbouring suites.
+  Detail: [`2026-10-20-s37g-host-clock/EXECUTION-DEVICE.md`](evidence/2026-10-20-s37g-host-clock/EXECUTION-DEVICE.md).
+  *Recorded, not chased:* the run's lane verdict adds `no_windowed_overrun_under_transport` (`overrun_rows=1,
+  worst=72`, µs 43.9 s) beside the pre-existing ring gate; the image is 3.7f's, so that row belongs with 3.7h/3.7d.
 - [x] 3.9 Deliver readiness receipts by the two delivery rules — verify a receipt produced under transport reaches the
   evidence stream and that diagnostic cadence cannot evict it
   *Increment 3.9 (increment 1) landed 2026-10-02 — **the readiness receipt and its two delivery rules**, and the half of that pair that had no fixture at all:
