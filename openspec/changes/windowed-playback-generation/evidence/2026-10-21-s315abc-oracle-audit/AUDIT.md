@@ -134,3 +134,24 @@ removed"*, not *"before"*. The fixture now pins the reading rather than the clai
 `committedWindowTurns` as a named harness limit, so a later session can flip that one assertion the moment the route is reached.
 
 Full native with the fixture: **3 374 / 7 skipped / 3 367 succeeded / 0 failed**.
+
+## 3.15c — the committed route was driven through the production requester; the lane still does not serve (2026-10-21)
+
+The two explanations that would have made the previous reading a harness artefact are both **ruled out**:
+
+- **not a build artefact:** `test_windowed_preview_integration` defines `PLAYBACK_WINDOW_ROLLING_ENABLED 1` at its top (line 37),
+  so the rolling/committed lane is compiled in for this suite;
+- **not a substitute requester:** `Track::serviceRollingPlaybackWindow(windowClock)` is exactly the production call in
+  `src/main.cpp`'s per-track visit (line 487), and the fixture interleaves it per edge turn.
+
+Together with the root built from the fixture's own events and a retained source, the fixture therefore drives the production
+path — and `committedWindowTurns` is still **0** while the stream is exact (4 events).
+
+**Remaining candidates, now only two:** the request's **geometry** (the interval the fixture asks for is not the one the resolver
+serves), or the committed window **genuinely is not load-bearing** for sparse long-loop playback, with another route sounding it.
+
+**The probe that distinguishes them** is the rolling lane's own outcome during the drive: `requestCommittedPlaybackWindow`'s
+result, `rolling.phase`, `retainedGatherRefusal`, `retainedGatherUnits` and `pagedOutcome`, captured per turn. A lane that never
+leaves `Idle`/`Waiting` names geometry or refusal; a lane that serves and is not selected names the selection.
+
+That is the next measurement. Until it runs, 3.7b's precondition stays **unrestated** rather than restated on this evidence.
