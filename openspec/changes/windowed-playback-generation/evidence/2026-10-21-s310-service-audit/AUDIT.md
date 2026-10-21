@@ -121,3 +121,32 @@ which a track was actually eligible**:
 **3.10's fixture requirement is now met in both halves.** What remains for the task's own closeout: the pending **capture finalization
 and persistence** work in the same window, and the envelope stated against grain costs (the turn bound is stated; the grain-cost
 derivation is not), plus the device/service legs owned by 6.3/6.5.
+
+## The non-starvation clause landed (2026-10-21)
+
+`test_3_10_capture_and_persistence_keep_their_own_opportunities` pins the structural half of the clause:
+
+- **every `DeferredIdleOwner` is distinct** (Snapshot, VisualCache, wrap-append, Persistence, LoadAndDisplay, SlotProvision,
+  PlaybackViewMaintenance), so no turn can be mistaken for another owner's;
+- **`serviceCanonicalPrefixTurn` declines every non-canonical owner** — persistence, playback maintenance, snapshot, slot provision and
+  load/display cannot consume the canonical prefix turn, so their cadence is not spent here;
+- **the canonical rotation serves every track once per `trackCount` turns** (6 turns / 3 tracks → exactly 2 each), which is the
+  non-starvation property for the canonical prefix.
+
+**What this is and is not:** it is a **structural** proof — distinct opportunities and a rotation that cannot be absorbed. It is not a
+driven finalization/persistence completion bound; that needs real storage work in the same window and remains owed, together with the
+grain-cost envelope and the 6.3/6.5 device/service legs.
+
+## 3.10 status after this run
+
+| Term | State |
+|---|---|
+| recurring bounded opportunity | implemented; pinned structurally here |
+| round-robin across eligible holders | **pinned** (fixed set + live offers) |
+| earliest deadline within a holder | pinned by the existing holder-level cases |
+| cursor advances past a blocked holder | **pinned** (never served; `AllBlocked` advances) |
+| capture/persistence own opportunities | **structural pin landed**; driven completion bound owed |
+| one grain per turn | pinned for the window owner (existing) |
+| the fixture 3.10 names | **landed** in both halves |
+| derived envelope | turn bound stated (`count` per still-owing holder); grain-cost derivation owed |
+| device/service legs | 6.3 / 6.5 |

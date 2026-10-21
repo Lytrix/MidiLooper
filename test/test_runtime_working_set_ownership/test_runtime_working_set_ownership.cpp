@@ -17220,6 +17220,50 @@ void test_3_10_each_still_owing_track_is_served_within_count_eligible_turns() {
   }
 }
 
+
+// Task 3.10 (non-starvation clause): capture finalization and persistence keep their **own** opportunities, and the canonical
+// prefix rotation cannot be absorbed by another owner. Structural pins: distinct owner identities, and a prefix turn that only the
+// two canonical owners may take -- so a playback or persistence turn can never consume it.
+void test_3_10_capture_and_persistence_keep_their_own_opportunities() {
+  using MidiServiceDrain::DeferredIdleOwner;
+  // Every owner is a distinct opportunity: no two collide, so no turn can be mistaken for another's.
+  const DeferredIdleOwner owners[] = {DeferredIdleOwner::Snapshot, DeferredIdleOwner::VisualCache,
+                                      DeferredIdleOwner::VisualCacheWrapAppend, DeferredIdleOwner::Persistence,
+                                      DeferredIdleOwner::LoadAndDisplay, DeferredIdleOwner::SlotProvision,
+                                      DeferredIdleOwner::PlaybackViewMaintenance};
+  constexpr uint8_t kCount = sizeof(owners) / sizeof(owners[0]);
+  for (uint8_t i = 0; i < kCount; ++i) {
+    for (uint8_t j = static_cast<uint8_t>(i + 1); j < kCount; ++j) {
+      TEST_ASSERT_NOT_EQUAL(static_cast<int>(owners[i]), static_cast<int>(owners[j]));
+    }
+  }
+  // The canonical prefix turn belongs to the two canonical owners only: persistence, playback maintenance, snapshot,
+  // slot provision and load/display all decline it, so their own cadence cannot be spent here.
+  uint8_t next = 0;
+  uint32_t served[3] = {0, 0, 0};
+  for (uint8_t owner = 0; owner < kCount; ++owner) {
+    if (owners[owner] == DeferredIdleOwner::VisualCache ||
+        owners[owner] == DeferredIdleOwner::VisualCacheWrapAppend) {
+      continue;
+    }
+    TEST_ASSERT_FALSE_MESSAGE(MidiServiceDrain::serviceCanonicalPrefixTurn(
+                                  owners[owner], 3, next,
+                                  [](uint8_t) { return false; }, [&](uint8_t) { ++served[0]; return true; }),
+                              "a non-canonical owner declines the canonical prefix turn");
+  }
+  // ...and with the canonical owner, the rotation serves every track once per turn count (no track starves).
+  uint8_t rotation = 0;
+  uint32_t perTrack[3] = {0, 0, 0};
+  for (uint8_t turn = 0; turn < 6; ++turn) {
+    (void)MidiServiceDrain::serviceCanonicalPrefixTurn(
+        DeferredIdleOwner::VisualCache, 3, rotation, [](uint8_t) { return false; },
+        [&](uint8_t index) { ++perTrack[index]; return true; });
+  }
+  for (uint8_t i = 0; i < 3; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(2u, perTrack[i]);
+  }
+}
+
 int main() {
 
 
@@ -17495,6 +17539,7 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_10_a_blocked_early_holder_cannot_starve_the_rotation);
   RUN_TEST(test_3_10_each_still_owing_track_is_served_within_count_eligible_turns);
+  RUN_TEST(test_3_10_capture_and_persistence_keep_their_own_opportunities);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn);
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);
