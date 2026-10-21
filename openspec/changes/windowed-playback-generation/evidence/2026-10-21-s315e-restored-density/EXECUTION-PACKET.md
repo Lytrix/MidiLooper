@@ -55,6 +55,41 @@ production change** — the suite never carries a red case.
 | ASSUMPTION | The merged fallback's whole-loop build is what serves the short dense shape in production; the measurement decides this |
 | UNKNOWN | Whether a whole-loop dense interval can be served from pages at all without a re-arm budget (the ring is three pages; the content straddles the wrap by construction) |
 
+## Named finding (hypothesis, not a defect)
+
+> `pagedEmissionDeliveryStateForSlot()` and `admittedForEmission()` currently express different admissibility contracts;
+> production consequence unmeasured pending combined dense-production-edge harness.
+
+What is known: the reporting API can say `CannotStraddleTheWrap`; `admittedForEmission()` does not consult that report; and
+the first probe could not reach a valid sealed production state. What is **not** known: whether the production edge actually
+serves an invalid whole-loop dense delivery, whether another gate prevents it earlier, or whether the report is
+advisory/diagnostic rather than normative. The selector is not patched on this evidence.
+
+## Combined harness (built, measurement in progress)
+
+RWO's dense builder (`prepareOverCapacityPagedSlot`, 2 500 sealed events) handed to the **production edge**
+(`Track::playMidiEvents`), with the deferred lane serviced between edge turns. Four cases wired: sparse short-loop control,
+dense 2-bar over `L`, dense 512-bar over `L`, and the wrap-sensitive report case. The harness was withdrawn byte-identically
+after these readings (both suites back to green: RWO 230/230, preview 29/29):
+
+| Drive | Control (200) | Dense 2-bar (2 500) | Dense 512-bar (2 500) | Report at start |
+|---|---|---|---|---|
+| edge turns only (no lane turn) | **200 = accepted** (pass) | **128 emitted** | **128 emitted** | `CannotStraddleTheWrap` (case D passed) |
+| one lane turn per edge turn, deadline stamp advancing | pass | **0** | **0** | — |
+| one lane turn per edge turn, deadline stamp held | pass | **0** | **0** | — |
+
+**What the numbers say, and do not say.** 128 is exactly `kWindowPageCapacity`: the production edge *did* select the paged
+delivery and emitted precisely one staged page, then had nothing further because the lane was not serviced. Once a lane turn
+is interleaved, emission drops to **0** — the delivery is discarded or de-proven by that turn in this state, and the edge
+then emits nothing at all rather than a named refusal. That is a *reading about the harness state*, not yet a production
+verdict: `driveGatherUntilPagedSwitch` leaves a demand that the real scheduler would not leave, and the existing I3c fixtures
+step the lane on its own cadence and drive the walk through a frame helper rather than `playMidiEvents`. So the harness is
+close but the demand state is not yet production-faithful, which is the next increment's work.
+
+**Not claimed:** no completeness/order/wrap reading for any dense case, no statement that the edge serves an invalid
+delivery, and no defect. The four-case oracle (selected source, emitted count, element-wise order, wrap continuity,
+duplication/loss, merged usage) is defined and unwritten.
+
 ## As executed (2026-10-21) — G0 closed, measurement **not** obtained
 
 **G0 verdict: PASS for discovery, BLOCKED for slice 2's shape.** The discovery found the two facts that matter and no
