@@ -20,7 +20,7 @@ Method: a route counts as **covered** only when a fixture drives the **productio
 | stop return | **UNKNOWN** | E2 frozen-Record bar-two reader exists (flagged); stop→committed handoff at the edge not shown |
 | live overdub / wrap | **covered** (2026-10-21) | `test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap` — `playMidiEvents`, two traversals, independent ordered stream, with the same-world-minus-overdub control |
 | NOTE_EDIT open/change/session undo/exit | **covered** | preview suite (2.12 closeout table) |
-| layered/jam slot playback | **UNKNOWN** | no `playMidiEvents` fixture with a layered/jam slot found |
+| layered/jam slot playback | **covered** (2026-10-21) | **layered:** RWO `test_layered_two_bar_off_keeps_its_phase_after_reachable_action` (two enabled sounding slots, ordered exactly-once at `updateAllTracks` — the audit's earlier UNKNOWN was a miss); **jam:** `test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars` |
 | slot switch | **covered** | `test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview` |
 | global undo/redo (audible) | **UNKNOWN** | 3.14's evidence is lane-level; no edge-order fixture located in this audit |
 | clock-source / seek | **UNKNOWN** | `test_playback_read_witness` exercises the edge but not a clock-source transition |
@@ -52,6 +52,25 @@ wire -- the incremental overdub-seal admit forced false, `collectActiveCommitted
 stale-root overlay's unpublished lists cleared -- each left the fixture GREEN. That is not a failure of the fixture; it is
 the route: the content was already compiled into the bridge. **Hand-off to 3.15c:** the removal-of-new-reader proof for
 this route must target the **bridge compilation** (or the view publication), not the gather.
+
+## 3.15a — layered/jam covered (2026-10-21)
+
+**Layered was already covered, and this audit had it wrong:** `test_layered_two_bar_off_keeps_its_phase_after_reachable_action`
+(RWO) enables two sounding slots, drives `TrackManager::updateAllTracks` across a selection action and asserts the outgoing
+slot's own `On@700`/`Off@800` exactly once plus a closed ledger — an ordered edge expectation on a layered slot. The route
+is corrected to **covered** here rather than re-proved.
+
+**Jam had no fixture anywhere in the tree** — no test mentions `isJamPlaybackActive`, `setJam` or the region filter — so it
+is proved new: `test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars`
+(`test_shared_capture_finalization`) sets the jam region to **bar two only** on a two-bar loop whose bars each carry one
+sounding, drives the production clock entry over two whole traversals, and requires the bar-two pair once per traversal
+with the bar-one sounding **filtered** (`0` Ons) and the ledger closed. The control clears the jam and serves **both**
+soundings, so the fixture cannot pass on silence. Red-proved by mutation: `isStorageTickInJamRegion` forced to accept
+everything fails the filter assertion (`Expected 0 Was 2`), restored byte-identically.
+
+**3.15a now stands at 8/12 routes** (short, long, empty intervals, same-tick density, NOTE_EDIT, slot switch, live
+overdub/wrap, layered/jam); first Record bar, stop return, global undo/redo and clock-source/seek remain, with SD-restored
+density partial.
 
 ## 3.15c — one completed-window reader at the edge
 

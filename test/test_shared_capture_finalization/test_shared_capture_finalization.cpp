@@ -7046,8 +7046,80 @@ void test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_
   serveTwoBarTraversalsAndCheckOrder(t, *loopB, 1, false);
 }
 
+// Task 3.15a — **the jam region is a service filter at the production edge, and the control proves the filter is live.**
+//
+// The audit leaves "layered/jam" UNKNOWN. The **layered** half is covered by RWO's
+// `test_layered_two_bar_off_keeps_its_phase_after_reachable_action` (two enabled sounding slots, ordered exactly-once
+// through `updateAllTracks`); this fixture closes the **jam** half, which no test in the tree exercised at all.
+//
+// Jam playback narrows the served storage region: `isStorageTickInJamRegion` drops every event outside
+// `[jamStartTick, jamStartTick + jamLength)`. The oracle drives the production clock entry over two whole traversals of
+// a two-bar loop whose bar one and bar two each carry one sounding, with the jam region set to **bar two only**: only the
+// bar-two pair may reach the wire, once per traversal, and the ledger must close. The control clears the jam and serves
+// both soundings -- so the fixture cannot pass by emitting nothing, and the suppression is attributable to the jam
+// region rather than to a missing route.
+void test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLoopTicks = 2u * kBar;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loop = nullptr;
+  stageTwoBarWorld(t, 0, loop);
+  TEST_ASSERT_NOT_NULL(loop);
+
+  const auto driveTwoTraversals = [&](uint8_t slot, Loop& driven) {
+    MidiSendCapture::reset();
+    t.forceSetState(TRACK_PLAYING);
+    TrackCaptureStopTestAccess::unmute(t);
+    TrackCaptureStopTestAccess::selectSlot(t, slot);
+    TrackCaptureStopTestAccess::resetProjectionCycle(t);
+    driven.lastTickInLoop = 0;
+    driven.nextEventIndex = 0;
+    for (uint32_t tick = 64; tick <= 2u * kLoopTicks; tick += 64) {
+      t.playMidiEvents(tick, true);
+    }
+  };
+  const auto countNotes = [&](uint8_t note, bool onsOnly) {
+    uint32_t seen = 0;
+    for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+      const MidiEvent& event = MidiSendCapture::at(i);
+      if (event.data.noteData.note != note) continue;
+      if (!onsOnly || event.isNoteOn()) ++seen;
+    }
+    return seen;
+  };
+  const auto ledgerOpen = [&](uint8_t slot) {
+    unsigned sounding = 0;
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, slot);
+    runtime.ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+    return sounding;
+  };
+
+  // (1) Jam over **bar two only**: bar two's sounding is served once per traversal; bar one's is filtered out.
+  t.setJam(kBar, kBar);
+  t.setJamPlayback(true);
+  TEST_ASSERT_TRUE(t.isJamPlaybackActive());
+  driveTwoTraversals(0, *loop);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, countNotes(62, true),
+                                   "the jam region's own sounding is served once per traversal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countNotes(48, true),
+                                   "a sounding outside the jam region is filtered, not played");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(0), "the served note is closed by its own off");
+
+  // (2) The control: the same loop, the same drive, the jam cleared. Both soundings are served -- twice each over the two
+  // traversals -- so the suppression above belongs to the jam region and the fixture is not passing on silence.
+  t.clearJam();
+  TEST_ASSERT_FALSE(t.isJamPlaybackActive());
+  driveTwoTraversals(0, *loop);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, countNotes(62, true), "with no jam region, bar two's sounding is still served");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, countNotes(48, true), "and bar one's is served again, once per traversal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(0), "and the ledger still closes");
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);
   RUN_TEST(test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence);
   RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
