@@ -391,6 +391,34 @@ qualification image, with the cold helper applied. The symbol that grew by 16 B 
 the call site. The default image already passes at `392 232 + 984` with 144 B of headroom, so no floor rebase is needed —
 only this 16 B.
 
+## 1n. The 16 B are a long-call veneer — the cold helper is not the lever (2026-10-21)
+
+Link-map diff of the qualification ELF, baseline vs cold helper:
+
+| Symbol / section | Baseline | With helper |
+|---|---|---|
+| `.text.itcm` | 391 520 | **391 536 (+16)** |
+| `Track::playCommittedLoopMidi` | `0x8b6` | `0x8ac` (−8) |
+| `Track::drainPagedTailBeforeWrap` | — | `0x124` at **`0x6007f6fc`** (flash) ✔ |
+| `___ZN5Track24drainPagedTailBeforeWrapEhmm_veneer` | — | **`0x8` at `0x5f888`** (ITCM) |
+
+**The helper itself is correctly flash-resident and cheaper than the inline form by 168 B; the 16 B are the linker's
+long-call veneer** needed for a `BL` from ITCM (address 0) to flash (0x6007f6fc), plus alignment. That is why every call-site
+shape measured the same +16: the veneer is per-callee, not per-call-shape, and no amount of argument or store folding can
+remove it.
+
+**Therefore the diet is "no new call from ITCM", not "a smaller call site".** Two forms achieve that and both leave the hot
+path byte-identical to baseline:
+
+1. **Fold the drain into an existing flash entry.** `servicePagedPassBoundaryForTurn` is already called from the hot path on
+   every turn of a bound delivery; it computes the same wrap facts. The drain can live there, with the walk index seeded
+   through a single `uint16_t` field that fits existing padding (recorded cost: one store in a flash function).
+2. **Make the adapter skip already-consumed ordinals**, so no seed is needed at all: `size` returns `servable − max(passBase,
+   consumed)` and `eventAt` indexes from the same `max`. Both functions are already flash-resident, so this costs **zero ITCM**
+   — but it changes adapter semantics for every paged case, so the 512-bar control must be re-measured first.
+
+Form 1 is preferred (localised, no semantic change to the adapter); form 2 is the zero-cost option if form 1's field cannot fit.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
