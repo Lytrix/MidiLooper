@@ -122,6 +122,35 @@ tail is again *inside* that turn's window (it was for pass 1: 1 473…1 535 in [
 the parked base **after** the wrap turn's emission rather than at the next boundary service — i.e. the pending flag must be
 consumed by the turn that parks it, not by the next one.
 
+## 1d. Second-boundary probe — the instrument was wrong, not the hypothesis (2026-10-21)
+
+Attempt 2 was re-applied and a probe sampled the **second** boundary from *after* the turn (`playMidiEvents` returned). The
+capture is internally inconsistent and cannot be used:
+
+| Reading (after the second boundary turn) | Value |
+|---|---|
+| saw a second boundary | yes |
+| `passContentOrdinal` | **2 500** (stale — pass 2's end should be 5 000) |
+| `passBaseOrdinal` | **0** (the pass-1 park was never applied) |
+| `passRebasePending` | **1** |
+| emitted by then | **4 937** |
+
+`pending = 1` while `emitted = 4 937` is impossible under the code as written (a 4 937 walk satisfies
+`consumed >= passContent`), and `base = 0` contradicts a pass 2 that emitted 2 437 events. So the sampling point is wrong:
+by the time the probe reads, a later turn has already overwritten the fields it wanted. **Attempt 3 is therefore not
+justified yet** — the measurement it depends on was not obtained.
+
+**Corrected instrument (next):** capture the boundary state **inside `notePassBoundary`**, before that turn's emission — a
+one-line probe that records `(consumedOrdinal, passContentOrdinal, passBaseOrdinal, publishedOrdinal, dryTurns)` for each
+boundary ordinal and asserts the second tuple. Only that can answer, coherently:
+
+1. is `passContentOrdinal` advanced per pass (2 500 → 5 000), or does it stay at the first pass's end;
+2. does the pass-1 park get applied at all, and if not, which guard skipped it;
+3. is the second tail again inside that turn's own window.
+
+Only if (3) is yes *and* the park is provably skipped does the relocation ("apply after the same wrap turn's emission") have
+a measured basis.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
