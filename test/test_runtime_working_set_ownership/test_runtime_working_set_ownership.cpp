@@ -17703,6 +17703,8 @@ int main() {
   RUN_TEST(test_positioned_eight_slot_holder_first_service_is_bounded);
   RUN_TEST(test_window_contention_sweep_scales_with_density_and_is_span_independent);
   RUN_TEST(test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed);
+  RUN_TEST(test_window_contention_sweep_chord_density_costs_the_same_as_spread);
+  RUN_TEST(test_window_contention_sweep_tempo_is_a_time_scale_not_a_cost);
   // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,
   // and which production paths are deliberately exempt.
   // windowed-playback-generation task 3.10: the rolling path's admission boundary on the playing chain.

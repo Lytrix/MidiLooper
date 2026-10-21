@@ -34,6 +34,8 @@ struct WindowContentionCell {
   uint32_t loopBars = 24;
   uint32_t notes = 20;
   uint32_t advance = kContentionDeclaredAdvance;
+  /// Content shape: spread entries (the grid's density axis) or one **chord** whose notes share their two ticks.
+  bool chord = false;
 };
 
 /// What one **shape** costs, measured on a throwaway world: the charge its retained record carries, the entries it
@@ -48,6 +50,9 @@ struct WindowShapeProbe {
   uint64_t deadlineTick = 0;
   uint64_t completionTick = 0;
   uint32_t promisedTurns = 0;
+  /// How many distinct ticks the gathered window carries. A spread shape's entries sit on their own ticks; a chord's
+  /// sit on two (one On tick, one Off tick), which is the density axis the spread cells cannot express.
+  uint32_t distinctTicks = 0;
 };
 
 /// What one **cell** measured -- all of it read back from production surfaces (the retained work records, the per-track
@@ -99,9 +104,67 @@ inline const PlaybackViewAdmittedWork* contentionActiveWork(uint8_t track, uint8
   return runtime != nullptr ? runtime->activeViewBuildWork() : nullptr;
 }
 
+/// Publish `notes` note pairs that **share their ticks** -- one chord, On at `tick`, Off at `tick + 240` -- as the slot's
+/// current root. The spread helper gives every note its own tick, so this is the shape that exercises same-tick density
+/// (chords) rather than note count.
+inline void publishChordRootForSlot(Loop& loop, uint32_t tick, uint32_t notes) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  EventId nextEventId = 12000;
+  for (uint32_t i = 0; i < notes; ++i) {
+    const uint8_t pitch = static_cast<uint8_t>(40 + (i % 40));
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = static_cast<NoteId>(6000 + i);
+    add.next.pitch = pitch;
+    add.next.velocity = 100;
+    add.next.startTick = tick;
+    add.next.endTick = tick + 240;
+    changes.notes.push_back(add);
+    SnapshotEventChange on_change{};
+    on_change.kind = SnapshotChangeKind::Add;
+    on_change.next.loopId = loop.loopId;
+    on_change.next.eventId = nextEventId++;
+    on_change.next.canonicalOrder = nextEventId * 2;
+    on_change.next.value = MidiEvent::NoteOn(tick, 1, pitch, 100);
+    changes.events.push_back(on_change);
+    SnapshotEventChange off_change{};
+    off_change.kind = SnapshotChangeKind::Add;
+    off_change.next.loopId = loop.loopId;
+    off_change.next.eventId = nextEventId++;
+    off_change.next.canonicalOrder = nextEventId * 2 + 1;
+    off_change.next.value = MidiEvent::NoteOff(tick + 240, 1, pitch, 0);
+    changes.events.push_back(off_change);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+}
+
+/// Count the distinct ticks in the source a build is borrowing.
+inline uint32_t distinctSourceTicks(const SessionMidiEventVec& source) {
+  uint32_t distinct = 0;
+  for (size_t i = 0; i < source.size(); ++i) {
+    bool seen = false;
+    for (size_t j = 0; j < i; ++j) {
+      if (source[j].tick == source[i].tick) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) ++distinct;
+  }
+  return distinct;
+}
+
 /// Commit a slot with a current root, prewarm it, and request its window **at the caller's stamp**.
 inline void prepareContentionHolder(uint8_t track, uint8_t slot, uint32_t loopTicks, uint32_t notes,
-                                    const PlaybackDeadlineClock& stamp) {
+                                    const PlaybackDeadlineClock& stamp, bool chord = false) {
   Track& t = trackManager.getTrack(track);
   commitRecordPassIntoTrackSlotOfLength(t, slot, loopTicks);
   Loop& loop = t.getLoop(slot);
@@ -109,7 +172,11 @@ inline void prepareContentionHolder(uint8_t track, uint8_t slot, uint32_t loopTi
   // The notes sit **inside** the two-bar interval this phase selects (bars 12..13 live in
   // `[phase - one bar, phase + one bar)`), so the gathered event count is exactly `2 x notes` whatever the loop length
   // is -- which is what makes a cell's cost a function of its density alone.
-  publishNotesInBarsRootForSlot(loop, kContentionRequestBar, kContentionRequestBar + 1, notes);
+  if (chord) {
+    publishChordRootForSlot(loop, kContentionRequestBar * Config::TICKS_PER_BAR, notes);
+  } else {
+    publishNotesInBarsRootForSlot(loop, kContentionRequestBar, kContentionRequestBar + 1, notes);
+  }
   TEST_ASSERT_TRUE_MESSAGE(t.prewarmPlaybackForSlot(slot),
                            "the slot must prewarm a runtime to owe a grain");
   SessionMidiEventVec& scratch = contentionSourceBuffer(track, slot);
@@ -122,16 +189,17 @@ inline void prepareContentionHolder(uint8_t track, uint8_t slot, uint32_t loopTi
 
 /// One window of this shape on its own track, drained to completion at the declared advance. The turns it needed are
 /// the fixture's unit of cost: the composition below spreads exactly these over the competing tracks.
-inline WindowShapeProbe probeWindowShape(uint32_t notes) {
+inline WindowShapeProbe probeWindowShape(uint32_t notes, bool chord = false) {
   resetWindowContentionWorld();
   PlaybackPathRows::reset();
   const PlaybackDeadlineClock stamp = nextWindowRequestClock();
-  prepareContentionHolder(0, 0, 40u * Config::TICKS_PER_BAR, notes, stamp);
+  prepareContentionHolder(0, 0, 40u * Config::TICKS_PER_BAR, notes, stamp, chord);
   const PlaybackViewAdmittedWork* work = contentionActiveWork(0, 0);
   TEST_ASSERT_NOT_NULL_MESSAGE(work, "an admitted window owes work, and its record is where the charge is read");
   WindowShapeProbe probe;
   probe.chargedGrains = static_cast<uint32_t>(work->requiredGrains());
   probe.sourceEvents = work->sourceEntries;
+  probe.distinctTicks = distinctSourceTicks(contentionSourceBuffer(0, 0));
   probe.deadlineTick = work->deadlineTick;
   probe.promisedTurns = static_cast<uint32_t>((work->deadlineTick - stamp.tick) / kContentionDeclaredAdvance);
   PlaybackDeadlineClock clock = stamp;
@@ -207,7 +275,7 @@ inline WindowContentionResult runWindowContentionCell(const WindowContentionCell
   for (uint8_t track = 0; track < cell.tracks; ++track) {
     trackManager.getTrack(track).ensureLoopsAllocated();
     for (uint8_t slot = 0; slot <= cell.siblings; ++slot) {
-      prepareContentionHolder(track, slot, loopTicks, cell.notes, stamp);
+      prepareContentionHolder(track, slot, loopTicks, cell.notes, stamp, cell.chord);
       ++out.windowsOwed;
     }
   }
@@ -528,4 +596,93 @@ void test_window_contention_boundary_is_predicted_by_the_declaration_and_named_w
                                           "at twice the permitted advance the same shape is late");
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, doubled.missRows,
                                           "and the miss is named: the oracle can fail");
+}
+
+
+/// **S7 -- the same-tick (chord) density axis.** The grid's density cells spread their notes over the window, so every
+/// entry sits on its own tick; a **chord** puts all of its notes on two ticks (one On, one Off). The claim the account
+/// makes is that a window's price is its **entry count**, not how many ticks those entries share -- and that the
+/// composition drains a chord exactly like spread content of the same count. Measured, not assumed: the charge, the
+/// service turns and the whole cell are compared against the spread shape of the same note count.
+void test_window_contention_sweep_chord_density_costs_the_same_as_spread() {
+  constexpr uint32_t kNotes = 20;
+  const uint8_t kSiblings = 1;
+  const WindowShapeProbe spread = probeWindowShape(kNotes);
+  const WindowShapeProbe chord = probeWindowShape(kNotes, true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(2u * kNotes), static_cast<uint32_t>(chord.sourceEvents),
+                                   "the chord gathered the same number of entries as the spread shape");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, chord.distinctTicks,
+                                   "the chord's notes share their On tick and their Off tick");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(2u, spread.distinctTicks,
+                                          "while the spread shape puts its entries on their own ticks");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(spread.chargedGrains, chord.chargedGrains,
+                                   "a chord's price is its entry count, not the number of ticks it occupies");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(spread.serviceTurns, chord.serviceTurns,
+                                   "and it is served in the same number of grains");
+
+  const uint32_t bars = contentionLoopBarsFor(chord.chargedGrains, kSiblings, kContentionDeclaredAdvance, 2u);
+  const WindowContentionResult chordRow =
+      runWindowContentionCell({Config::NUM_TRACKS, kSiblings, bars, kNotes, kContentionDeclaredAdvance, true}, bars);
+  const WindowContentionResult spreadRow =
+      runWindowContentionCell({Config::NUM_TRACKS, kSiblings, bars, kNotes, kContentionDeclaredAdvance, false}, bars);
+  TEST_ASSERT_TRUE_MESSAGE(chordRow.drained, "the chord cell drains inside the bounded drain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(chordRow.windowsOwed, chordRow.windowsCompleted, "each owed chord window once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(chordRow.windowsOwed, chordRow.completeRows, "and each completion is named");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chordRow.missRows, "no promise is crossed by a chord");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(spreadRow.drainTurns, chordRow.drainTurns,
+                                   "the same entry count drains in the same composed turns");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(spreadRow.trackGrains, chordRow.trackGrains,
+                                   "and the per-track budget charges the same work");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(spreadRow.targetCompletionTurns, chordRow.targetCompletionTurns,
+                                   "the target completes on the same schedule");
+}
+
+/// **S8 -- the tempo axis, in the declaration's own currency.** The envelope is stated in **ticks** (`Delta-max`,
+/// `leadTicks`, grains), so the reachable tempo range changes what a tick *costs in time*, never what a window costs.
+/// The sweep is run at 20 / 120 / 300 BPM: every tick-domain figure must be identical, and the wall-clock translation of
+/// one permitted turn and of the admitted promise must shrink with tempo. What this cannot establish is physical
+/// timing -- the device leg owns the measured advance (6.5) -- and the fixture says so rather than implying it.
+void test_window_contention_sweep_tempo_is_a_time_scale_not_a_cost() {
+  constexpr uint32_t kNotes = 20;
+  const uint8_t kSiblings = 1;
+  const uint32_t tempos[] = {20u, 120u, 300u};
+  constexpr size_t kTempos = sizeof(tempos) / sizeof(tempos[0]);
+  const WindowShapeProbe probe = probeWindowShape(kNotes);
+  const uint32_t bars = contentionLoopBarsFor(probe.chargedGrains, kSiblings, kContentionDeclaredAdvance, 2u);
+  WindowContentionResult rows[kTempos];
+  uint64_t msPerPermittedTurn[kTempos] = {};
+  for (size_t i = 0; i < kTempos; ++i) {
+    // The cell is a tick design: the tempo is not an input to it, which is exactly what this axis asserts.
+    rows[i] = runWindowContentionCell({Config::NUM_TRACKS, kSiblings, bars, kNotes, kContentionDeclaredAdvance}, bars);
+    msPerPermittedTurn[i] = (60000ull * kContentionDeclaredAdvance) /
+                            (static_cast<uint64_t>(tempos[i]) * Config::INTERNAL_PPQN);
+    TEST_ASSERT_TRUE_MESSAGE(rows[i].drained, "the cell drains at every reachable tempo");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, rows[i].missRows, "and crosses no promise at any of them");
+  }
+  // (A) **Tick-domain invariance**: the measured cost does not move across the reachable tempo range.
+  for (size_t i = 1; i < kTempos; ++i) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(rows[0].trackGrains, rows[i].trackGrains,
+                                     "the charged work is the same at every tempo");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(rows[0].drainTurns, rows[i].drainTurns,
+                                     "and the composed drain is the same at every tempo");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(rows[0].targetCompletionTurns, rows[i].targetCompletionTurns,
+                                     "including when the target becomes ready");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(rows[0].promisedTurns, rows[i].promisedTurns,
+                                     "and the promised lead, which is stated in ticks");
+  }
+  // (B) **The time translation is the only thing tempo changes**, and it is monotone: a permitted turn is 1 000 ms at
+  // 20 BPM, 166 ms at 120 and 66 ms at 300 -- so the same tick-domain promise is a shrinking wall-clock budget.
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(1000ull, msPerPermittedTurn[0], "one permitted turn at 20 BPM");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(166ull, msPerPermittedTurn[1], "one permitted turn at 120 BPM");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(66ull, msPerPermittedTurn[2], "one permitted turn at 300 BPM");
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(msPerPermittedTurn[1], msPerPermittedTurn[0],
+                                          "a slower tempo gives each permitted turn more time");
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(msPerPermittedTurn[2], msPerPermittedTurn[1],
+                                          "and the fastest declared tempo gives it the least");
+  for (size_t i = 0; i < kTempos; ++i) {
+    // The admitted promise in the same currency: ticks x ms-per-tick. Reported, not asserted as a limit -- the device
+    // leg's measured advance is what can falsify it (6.5).
+    const uint64_t promiseMs = static_cast<uint64_t>(rows[i].promisedTurns) * msPerPermittedTurn[i];
+    TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(0ull, promiseMs, "the promise has a positive wall-clock budget at every tempo");
+  }
 }

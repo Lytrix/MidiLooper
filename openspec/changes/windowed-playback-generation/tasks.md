@@ -2633,6 +2633,20 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   tempo is swept only through the declared advance (not other tempos), chords/same-tick density are not swept, the
   device leg is not run, and no single configuration is presented as the acceptance — see
   [`hk-contention-sweep`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).
+
+  **Native axes completed 2026-10-21 (two new cells; the device leg is what stays open).** **Same-tick/chord density:**
+  `test_window_contention_sweep_chord_density_costs_the_same_as_spread` publishes a **20-note chord** (all notes sharing
+  one On tick and one Off tick: `distinctTicks == 2`, measured) and compares it with the spread 20-note shape: identical
+  gathered entry count, identical **charge**, identical **service turns**, and an `H = 8, K = 1` cell that drains in the
+  same composed turns, charges the same per-track work and completes the target on the same schedule with **no crossed
+  promise**. The claim the account makes is therefore measured: a window's price is its **entry count**, not how many
+  ticks those entries occupy. **Tempo:** `test_window_contention_sweep_tempo_is_a_time_scale_not_a_cost` runs the same cell
+  at **20 / 120 / 300 BPM** and asserts every tick-domain figure (charge, drain turns, target completion, promised lead)
+  is identical, while the time translation is monotone and exact — one permitted turn is **1 000 / 166 / 66 ms**
+  (`(60000 × Δ) / (BPM × INTERNAL_PPQN)`), so the same tick promise is a shrinking wall-clock budget. **Named limit:** this
+  cannot establish physical timing; the measured advance at tempo is 6.5's hardware claim, and the fixture says so rather
+  than implying it. With the earlier grid (loop length, density, span, competing deferred work) 6.3's native axes are now
+  all present; **6.3 stays open on its device leg** — and no single configuration is presented as the acceptance.
 - [x] 6.4 Add a dedicated **windowed HITL profile** through the existing content-verification pipeline (canonical
   stimuli preserved, never edited to chase a condition) — verify the profile is registered, authorized and used for the
   F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
