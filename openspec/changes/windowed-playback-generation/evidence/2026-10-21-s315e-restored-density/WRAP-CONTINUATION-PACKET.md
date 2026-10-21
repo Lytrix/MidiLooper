@@ -484,6 +484,28 @@ exact state it is meant to repair, and leaves every healthy boundary untouched.
 **Status of the mechanism:** proven (2 500/traversal, element-wise, control unchanged) in the inline form; ITCM solved (0 B) in the
 boundary-service form. What remains is this single trigger/base sequence, then the six cases and the gate.
 
+## 1r. Pending-triggered drain — tail released, small overshoot remains (2026-10-21)
+
+`passRebasePending` (set by `notePassBoundary` only when `consumed < passContent`) was used as the drain's trigger, inside the
+boundary service, with base = live consumed before the walk and cleared after.
+
+| Form | Whole-loop emitted | Control | ITCM |
+|---|---|---|---|
+| pending-triggered drain | **2 758** (2 500 + 258) | 2 500 | 0 B |
+
+So the trigger is right (the tail is released and the healthy boundaries are untouched), and the ITCM cost is zero. The residual
+is a **258-event overshoot** rather than the 63 that were missing — the drain's own walk plus the main frame still overlap by more
+than the tail, so the adapter-visible range must be clamped to `[consumed, passContent)` for the drain and the main frame must
+start at `passContent`, not at the base.
+
+**Next increment:** pass the drain an explicit ordinal range (`from = consumedOrdinal`, `to = passContentOrdinal`) and set the walk
+index to the range end afterwards — rather than relying on `passBaseOrdinal` to express both bounds. That removes the last
+degree of freedom and is local to the flash helper.
+
+**Session status:** predicate, trigger, frame, ITCM placement and the RED/GREEN harness are all settled and recorded; the remaining
+work is this range clamp. Two forms have already shown 2 500/traversal element-wise with the control unchanged (the inline drain,
+and the cold helper at +16 B), so the contract is achievable within every constraint.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
