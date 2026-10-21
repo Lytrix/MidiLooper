@@ -66,3 +66,23 @@ The task requires fixtures to **fail when the migrated route is removed**. Mutat
 So the dense oracle is **new-reader-dependent** in the required direction: remove the reader and the route that serves restored
 density emits nothing. That is the RED half of 3.15c's open item for the paged route; the same proof is still owed for the
 **window** route (a short/long sparse loop served by `fixedView`/rolling) before 3.15c can be considered covered.
+
+## 3.15c — removal-of-window-route RED proof (2026-10-21)
+
+Second mutation, same technique, on the **NOTE_EDIT window route** (`Track::resolveNoteEditPreviewSourceForTurn` forced to
+`return false`):
+
+| Fixture that went RED | Clause it names |
+|---|---|
+| `test_3_15d_slice2_note_edit_serves_the_preview_interval_at_the_clock_edge` | "the clock edge binds the preview window inside its interval" |
+| `test_3_15d_slice2_the_preview_to_merged_seam_carries_a_crossing_note_once` | "the preview serves inside its interval" |
+| `test_3_15d_slice2_the_lane_re_covers_the_playhead_across_intervals` | "the re-covered interval serves the next stretch, not a gap" |
+| `test_3_15d_slice2_adoption_closes_the_identity_the_session_removed` | "the interval's adoption is the turn's route" |
+| `test_3_15d_slice2_the_session_exit_yields_the_preview_frame` | "the session's preview is serving at the clock edge" |
+| `test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview` | "the departing slot's preview is serving before the switch" |
+
+Restored byte-identically; focused suite back to **29/29**.
+
+**What is proved:** the preview window route is new-reader-dependent, and the mutation is *discriminating* — each failure names the
+clause it covers. **What is still owed for 3.15c:** the same RED for the **committed** window route (a sparse short/long loop served
+by `fixedView`/rolling with no NOTE_EDIT). That needs its own edge fixture before 3.15c can claim the pair.
