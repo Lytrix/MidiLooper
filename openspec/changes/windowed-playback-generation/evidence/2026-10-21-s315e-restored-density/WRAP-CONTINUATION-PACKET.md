@@ -300,6 +300,29 @@ The RED target is the walk's handling of an offered tail under a wrap frame (`fr
 visits and the phase each `eventAt` returns (e.g. first index visited, its phase, the phase that failed the window test), so
 the exact predicate that rejects 1 473…1 535 is named rather than inferred.
 
+## 1j. The rejecting predicate, named — and the drain that now works (2026-10-21)
+
+The walk's filter is `IntervalProjection::didPlaybackEventCross(frame.atLoopStart, frame.prevTickInLoop, evTick,
+frame.tickInLoop)`, with an early `break` when an event's phase is greater than `frame.tickInLoop`. On the wrap turn the
+normal frame is `{tickInLoop = 0, prevTickInLoop = 1 472}`, so an offered tail event at phase 1 473…1 535 cannot pass the
+window and the walk breaks before consuming it — **that is the predicate that loses the 63 events**, and it is exactly what
+the bridge avoids with its own tail frame.
+
+**Drain implemented with the old-cycle tail frame *and its own cursor* (`uint16_t` starting at 0):** the paged adapter indexes
+from `passBaseOrdinal`, so passing the merged cursor (attempt 1) never walked the tail. Measured: **2 437 → 2 563** on the
+whole-loop shape — the 63 tail events are now emitted — with the 512-bar control still **2 500**. So the drain is correct.
+
+**Remaining defect (measured, not inferred):** 2 563 = 2 500 + 63, i.e. the tail is emitted **twice**: the adapter's `size` is
+`servable − passBaseOrdinal` and ignores `consumedOrdinal`, so after the drain the main frame's fresh cursor re-walks the same
+ordinals. Attempting to close that by moving `passBaseOrdinal` to the live consumed value **after** the drain measured
+**2 758** — worse, because the next traversal then starts from a base the producer has not reached. So the duplicate needs a
+different lever than the base.
+
+**Candidate (not implemented):** after the drain, seed the **main walk's cursor** past the drained ordinals instead of touching
+the base — the main frame and the drain share the adapter's index space, so the cursor is the authority that must reflect the
+drain. That change is local to the wrap turn, leaves `passBaseOrdinal`, the producer, page depth and admission untouched, and
+must show 2 500 on the short shape and 2 500 unchanged on the 512-bar control.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
