@@ -461,6 +461,29 @@ tail; the base move afterwards then leaves the next pass's head double-emitted.
 (save and restore it, or pass the range explicitly), and do **not** move the base afterwards. Expected: +63, total 2 500, control
 unchanged. Only then the six cases and the gate.
 
+## 1q. Base sequencing is the remaining variable (2026-10-21)
+
+Two placements of the base move inside the boundary-service drain were measured:
+
+| Form | Base move | Whole-loop emitted | Control |
+|---|---|---|---|
+| drain, base moved **after** the walk | `passBase := consumed` post-walk | **2 756** (2 500 + 256) | 2 500 |
+| drain, base moved **before** the walk | `passBase := consumed` pre-walk | **519** (the tail walk takes the whole interval) | — |
+
+So both extremes are wrong and the correct sequence is between them: the drain must walk **exactly** the tail, which requires the
+base to be `consumedOrdinal` *and* the walk to be bounded to the pass's content end (`servable − base` already does that **if**
+`passContentOrdinal` is the tail's end — it is 2 500 — so the pre-walk form should have walked 63, not the whole interval). The 519
+result says the base was moved on a turn where `consumedOrdinal` was still small (the boundary service runs on turns that are not
+the tail turn), so the guard must be the **arrival of the boundary with a tail still owed**, i.e. the same condition
+`notePassBoundary` uses (`consumed < passContent`), not merely `wrappedBackward || atLoopStart`.
+
+**Next increment (one condition):** inside the boundary service, after `notePassBoundary`, drain only when it recorded
+`passRebasePending` (the tail is owed) — using that flag as the trigger rather than the wrap predicate. That ties the drain to the
+exact state it is meant to repair, and leaves every healthy boundary untouched.
+
+**Status of the mechanism:** proven (2 500/traversal, element-wise, control unchanged) in the inline form; ITCM solved (0 B) in the
+boundary-service form. What remains is this single trigger/base sequence, then the six cases and the gate.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
