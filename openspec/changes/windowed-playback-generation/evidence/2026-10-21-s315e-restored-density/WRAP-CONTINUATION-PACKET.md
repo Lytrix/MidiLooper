@@ -351,6 +351,26 @@ the helper must be explicitly cold) taking `(slotIndex, currentTick, prevTick)` 
 `ProjectionContext`/frame/policy inside; the call site then costs a call plus the cursor seed. Re-run the 512-bar control
 first, then the short shape, then both builds against the floor.
 
+## 1l. Cold helper attempt — +192 B becomes +16 B, still 16 short (reverted) 2026-10-21
+
+The drain was moved into `Track::drainPagedTailBeforeWrap(slotIndex, currentTick, prevTick)` with `TRACK_COLD_MEM` in the
+window-build TU (explicitly cold, since that TU is ITCM-routed): it rebuilds its own `ProjectionContext`, tail frame and
+policy, passes `nullptr` for the jam filter (the tail drain needs none), and returns the ordinals it consumed; the hot path
+then seeds `loop.nextEventIndex` after the reset.
+
+| Image | Baseline | Inline drain | Cold helper |
+|---|---|---|---|
+| `teensy41-capture-serial` | `392 216 + 1 000` | `392 408 + 808` (FAIL) | **`392 232 + 984` (PASS)** |
+| `-window-qualification` | `392 376 + 840` | `392 568 + 648` (FAIL) | **`392 392 + 824` (FAIL, 16 B short)** |
+
+So the helper pays for itself: **+192 B → +16 B**. The default image passes with 144 B of headroom; the qualification image
+is **16 B** below the 840 floor, so it cannot ship yet.
+
+**Remaining work is a 16-byte ITCM diet in the wrap turn**, not a design question — candidates: fold the two cursor-seed
+stores into one, drop the local counter by returning the drained count straight into `loop.nextEventIndex` at the single
+`isActive` reset site, or give the seed a single cold setter. Then: 512-bar control 2 500, short shape 2 500/traversal,
+both builds, the six cases, gate.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
