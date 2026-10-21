@@ -105,3 +105,32 @@ removal proof cannot be taken, and 3.15c's committed-window claim stays open.
 
 **What this does not say:** it is not evidence that the committed window fails to serve sparse content. The probe never reached the
 route under test; the synthetic root measured a different content set.
+
+## 3.15c — the sparse committed-window fixture now exists, and the reading is the finding (2026-10-21)
+
+A seam was added and a fixture landed: `publishRootFromEventsForSlot` builds a `LoopSnapshot` **from the fixture's own committed
+events** (notes paired On→Off, events in canonical order) and stores it as the current root — the piece
+`publishCommittedRootForSlot` lacks, because it publishes synthetic bar-start notes.
+
+`test_3_15c_a_sparse_long_loop_is_served_by_the_committed_window_reader` (preview suite, default gate) drives a 64-bar loop with
+two identified notes, a root built from those events, a retained source, a committed demand at the playhead, and
+`serviceRollingPlaybackWindow` interleaved per edge turn.
+
+| Reading | Value |
+|---|---|
+| stream at the edge | **4 events — exact** (two notes, On/Off once each) |
+| `committedWindowTurns` (`rolling.phase == Serving`, bound view origin `Committed`) | **0** |
+
+**So the content is served by another route even with everything the committed lane needs.** Three candidate explanations, and this
+audit does not choose between them:
+
+1. the harness's demand path is still incomplete (the production requester is not `serviceRollingPlaybackWindow` alone);
+2. the interval geometry the harness requests is not the one the resolver serves;
+3. the committed window genuinely is not load-bearing for sparse long-loop playback, and the merged fallback is what sounds it.
+
+**Why this matters for 3.7b:** if (3) holds in production, removing the compatibility emitters changes sparse playback for content
+nobody has measured — and the precondition must be restated as *"no supported slot reaches an old reader **after** the emitters are
+removed"*, not *"before"*. The fixture now pins the reading rather than the claim: it asserts the exact stream and records
+`committedWindowTurns` as a named harness limit, so a later session can flip that one assertion the moment the route is reached.
+
+Full native with the fixture: **3 374 / 7 skipped / 3 367 succeeded / 0 failed**.

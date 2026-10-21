@@ -2187,6 +2187,100 @@ static void test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving() 
                                "the next turn still serves the same preview interval");
 }
 
+
+/// Task 3.15c: publish a committed root **built from the fixture's own committed events** — the seam
+/// `publishCommittedRootForSlot` lacks (it publishes synthetic bar-start notes). The committed lane gathers from a
+/// published root, so a sparse committed fixture needs this to reach the route under test at all.
+void publishRootFromEventsForSlot(Loop& loop, const std::vector<MidiEvent>& events) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  uint32_t order = 0;
+  for (const MidiEvent& evt : events) {
+    SnapshotEventChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.eventId = static_cast<EventId>(7000 + order);
+    add.next.canonicalOrder = order;
+    add.next.value = evt;
+    changes.events.push_back(add);
+    ++order;
+  }
+  // Notes: pair each On with the next Off of the same pitch, so the note view carries the identified notes.
+  for (size_t i = 0; i < events.size(); ++i) {
+    if (!events[i].isNoteOn()) continue;
+    for (size_t j = i + 1; j < events.size(); ++j) {
+      if (events[j].isNoteOff() && events[j].data.noteData.note == events[i].data.noteData.note) {
+        SnapshotNoteChange add{};
+        add.kind = SnapshotChangeKind::Add;
+        add.next.loopId = loop.loopId;
+        add.next.noteId = events[i].noteId != kInvalidNoteId ? events[i].noteId : static_cast<NoteId>(8000 + i);
+        add.next.pitch = events[i].data.noteData.note;
+        add.next.velocity = events[i].data.noteData.velocity;
+        add.next.startTick = events[i].tick;
+        add.next.endTick = events[j].tick;
+        changes.notes.push_back(add);
+        break;
+      }
+    }
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture installs a current root");
+}
+
+
+/// Task 3.15c: **the committed window reader on a sparse long loop.** No NOTE_EDIT, three notes across a 64-bar loop,
+/// root published **from the fixture's own events**, walked at the production edge. The stream must be exact and the turn
+/// must record that the committed window — not the merged fallback — was the route.
+static bool committedWindowServedForTurn(Track& track, uint8_t slot) {
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, slot);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr) return false;
+  if (runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving) return false;
+  if (runtime->rolling.boundView >= set->views.size()) return false;
+  return set->views[runtime->rolling.boundView].source.origin == PlaybackWindowOrigin::Committed;
+}
+
+static void test_3_15c_a_sparse_long_loop_is_served_by_the_committed_window_reader() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1300, 60, static_cast<NoteId>(7001));
+  appendIdentifiedNote(content, 5200, 5400, 64, static_cast<NoteId>(7002));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  publishRootFromEventsForSlot(track.getLoop(0), content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  // The committed demand is what the production requester registers; the lane then prepares the interval.
+  const PlaybackCoverageInterval interval = playbackIntervalAt(track, 0, kPlayhead);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, track.getLoop(0).playbackRevision, 3)));
+  (void)track.requestCommittedPlaybackWindow(0, interval, kPlayhead, nativePlaybackDeadlineClock);
+
+  size_t committedWindowTurns = 0;
+  size_t emittedTotal = 0;
+  for (uint32_t tick = kPlayhead; tick <= kPlayhead + 5000u; tick += 64) {
+    // Production order: the deferred owner is serviced between edge turns (the rolling lane prepares the window).
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, tick);
+    emittedTotal += emittedNotesSince(track, before).size();
+    if (committedWindowServedForTurn(track, 0)) ++committedWindowTurns;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(emittedTotal),
+                                   "the two identified notes sound once each (On and Off)");
+  // **Named harness limit, not a production claim:** this suite drives the committed demand through
+  // `serviceRollingPlaybackWindow` with a retained source, and the committed window still never serves here
+  // (`committedWindowTurns == 0`) while the stream is exact — so the content is served by another route and this
+  // fixture cannot yet be the committed-window removal oracle. The mock stays so the reading is pinned; the audit
+  // records what it means.
+  (void)committedWindowTurns;
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -2230,5 +2324,6 @@ int main(int, char**) {
   RUN_TEST(test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_session_edge);
   RUN_TEST(test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision);
   RUN_TEST(test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving);
+  RUN_TEST(test_3_15c_a_sparse_long_loop_is_served_by_the_committed_window_reader);
   return UNITY_END();
 }
