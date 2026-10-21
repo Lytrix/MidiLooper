@@ -17264,6 +17264,108 @@ void test_3_10_capture_and_persistence_keep_their_own_opportunities() {
   }
 }
 
+// Task 3.10 — **the declared envelope instantiated at the live numbers, as the admission's own boundary.**
+//
+// The declaration's terms have their own fixture (the per-turn advance, the rotation, the handoff margin, the derived
+// cost), and the contention sweep checks the composed bound in the declaration's currency. What is pinned here is the
+// *instantiation*: for one real gathered window, read its own cost and the live contract's terms, compute
+//
+//     requiredLead = leadTicks + grains x (denied + 1) x maximumPhaseAdvancePerTurn
+//
+// and show that the **production request path** admits at exactly that lead and refuses one tick below it -- both
+// directions, on two fresh slots with the same content, so the boundary is measured rather than argued. No constant is
+// copied into the fixture: every figure comes from `playbackViewCoverageContract()` and the admitted work record, which
+// is what keeps the statement from drifting away from the code it describes.
+void test_3_10_the_declared_envelope_is_the_admissions_own_boundary() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  // A loop **below** the demoted threshold (16 bars), so the policy's interval is the whole loop and the interval's
+  // start is phase 0: the lead the admission judges is then exactly `length - phase`, the number this fixture sets.
+  constexpr uint32_t kLoopTicks = 12u * kBar;
+  constexpr uint32_t kNotes = 6u;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+
+  const auto stage = [&](uint8_t slot) {
+    commitRecordPassIntoTrackSlotOfLength(track, slot, kLoopTicks);
+    Loop& loop = track.getLoop(slot);
+    loop.loopLengthTicks = kLoopTicks;
+    publishNotesInBarsRootForSlot(loop, 4, 5, kNotes);
+    TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot));
+  };
+  const auto request = [&](uint8_t slot, uint32_t phase) {
+    SessionMidiEventVec& scratch = windowSourceScratch(slot);
+    scratch.clear();
+    return track.requestPlaybackWindow(slot, phase, scratch, {nextWindowRequestClock()});
+  };
+
+  // (1) One admission at a generous lead: the live window's cost and the promise it was given.
+  stage(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(request(0, 100)));
+  const LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL_MESSAGE(work, "an admitted window owes work, and its record carries the charge");
+  const CoverageServiceContract declared = Track::playbackViewCoverageContract();
+  TEST_ASSERT_TRUE(declared.isDeclared());
+  // **The contract the admission judged this window by is the derived one**, not the declared basis counts: the
+  // price of a window is its own gathered entries. Deriving it here from the record's own source count makes the two
+  // surfaces (the contract's own derivation and the retained work record) agree before the boundary is read off it.
+  CoverageServiceContract contract = declared;
+  contract.deriveGrainsFrom(static_cast<size_t>(work->sourceEntries));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(work->requiredGrains(), contract.requiredGrains(),
+                                   "the retained charge is the contract's own derivation over the gathered entries");
+  const uint32_t grains = static_cast<uint32_t>(work->requiredGrains());
+  const uint32_t holders = static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u;
+  const uint32_t advance = contract.maximumPhaseAdvancePerTurn;
+  const uint32_t leadTicks = contract.leadTicks;
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, grains, "the gathered window has a real, derived cost");
+  const uint64_t requiredLead = static_cast<uint64_t>(leadTicks) +
+                                static_cast<uint64_t>(grains) * holders * advance;
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(static_cast<uint64_t>(leadTicks), requiredLead,
+                                          "the work costs more than the handoff margin alone");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kLoopTicks, requiredLead,
+                                       "and it fits a loop this fixture can construct");
+  // The promise the admission retained is at least the work's own bound -- the income, not a re-derivation.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT64_MESSAGE(requiredLead, work->deadlineTick - work->admittedTick,
+                                              "the admitted promise covers the declared work");
+  // The contract's own predicate flips exactly at that figure: the envelope *is* the boundary.
+  TEST_ASSERT_TRUE_MESSAGE(contract.canCompleteWithinLead(requiredLead),
+                           "the declared envelope admits its own exact requirement");
+  TEST_ASSERT_FALSE_MESSAGE(contract.canCompleteWithinLead(requiredLead - 1u),
+                            "and refuses one tick below it: the figure is the boundary, not a fitted bound");
+
+  // (2) The same boundary through the **production request path**, on a fresh slot with the same content (same gather,
+  // so the same cost -- asserted rather than assumed). The clock is the same for both attempts, so only the lead moves.
+  stage(1);
+  const Track::PlaybackViewRequestResult admittedAtBoundary =
+      request(1, static_cast<uint32_t>(kLoopTicks - requiredLead));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(admittedAtBoundary),
+                            "at exactly the declared lead the request is admitted");
+  const LoopPlaybackRuntime* boundaryRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(boundaryRuntime);
+  const PlaybackViewAdmittedWork* boundaryWork = boundaryRuntime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(boundaryWork);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work->sourceEntries),
+                                   static_cast<uint32_t>(boundaryWork->sourceEntries),
+                                   "the boundary window gathered the same entries, so it costs the same");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(requiredLead, boundaryWork->deadlineTick - boundaryWork->admittedTick,
+                                   "and its retained promise is exactly the lead it was given");
+
+  stage(2);
+  const Track::PlaybackViewRequestResult refusedOneTickTight =
+      request(2, static_cast<uint32_t>(kLoopTicks - requiredLead + 1u));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+                            static_cast<int>(refusedOneTickTight),
+                            "one tick tighter and the production path refuses by name");
+  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2)->activeViewBuildWork(),
+                           "a refused request owes no build grain");
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(2),
+                               "and the refusal is retained as a promise rather than dropped");
+}
+
 int main() {
 
 
@@ -17540,6 +17642,7 @@ int main() {
   RUN_TEST(test_3_10_a_blocked_early_holder_cannot_starve_the_rotation);
   RUN_TEST(test_3_10_each_still_owing_track_is_served_within_count_eligible_turns);
   RUN_TEST(test_3_10_capture_and_persistence_keep_their_own_opportunities);
+  RUN_TEST(test_3_10_the_declared_envelope_is_the_admissions_own_boundary);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn);
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);

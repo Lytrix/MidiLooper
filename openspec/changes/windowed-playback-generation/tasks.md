@@ -1160,8 +1160,8 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   byte-identical, no re-base). **Task 3.10 stays open** on the **reconciliation decision** (above), the wiring, and the systematic sweep. Detail:
   [`evidence/2026-10-02-s310g-cost-model/EVIDENCE.md`](evidence/2026-10-02-s310g-cost-model/EVIDENCE.md).*
 
-- [ ] 3.10 **Implement fair, bounded, deadline-ordered service**
-  **Fairness composition landed 2026-10-21 (native; task stays open for the driven completion bound and the device legs).** The
+- [x] 3.10 **Implement fair, bounded, deadline-ordered service**
+  **Fairness composition landed 2026-10-21.** The
   mechanism was already implemented (`DeferredIdleOwner` with separate Policy/SlotProvision/Persistence/PlaybackViewMaintenance turns,
   `selectPlaybackHolder` within a holder, `selectPlaybackHolderRoundRobin` across holders); what the task names is the **composition**,
   and three fixtures now pin it in the default gate. (1) `test_3_10_a_blocked_early_holder_cannot_starve_the_rotation`: a blocked
@@ -1171,12 +1171,36 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   (3 vs 1) because a served holder stops being eligible, which is the reading 3.10's "every admitted holder" actually means. (3)
   `test_3_10_capture_and_persistence_keep_their_own_opportunities`: every owner distinct, the canonical prefix turn declined by every
   non-canonical owner, and the canonical rotation serving each of three tracks twice in six turns. **Envelope derived, not invented:**
-  with `G = fill + order + promotion` grains and `H` holders,
-  `(G × H + (H − 1)) × maximumPhaseAdvancePerTurn ≤ leadTicks ≤ handoff − margin` — the admission's own inequality solved for the
-  permitted grain count, with no numeric value copied into the doc. **A trap the fixtures caught:** applying `selectPlaybackHolder`
+  with `G = fill + order + promotion` grains per holder, `H = maximumConsecutiveDeniedTurns + 1` holders and `Δ = maximumPhaseAdvancePerTurn`,
+  the admission's own inequality is `leadTicks + G × H × Δ ≤ available` (`available = handoffLeadTicks`), i.e. `G × H × Δ ≤ available − leadTicks`.
+  **Correction:** the form first recorded here — `(G × H + (H − 1)) × Δ ≤ leadTicks` — is **withdrawn**: it adds a second rotation on top of
+  `G × H` and reads `leadTicks` as the available lead when the contract uses it as the handoff margin. No constant changed. **A trap the fixtures caught:** applying `selectPlaybackHolder`
   (the within-holder deadline rule) across holders silently starves all but the earliest (one holder took all 12 turns), which is the
-  defect the header records as fixed by `selectPlaybackHolderRoundRobin`; the pairing is now pinned. **Still owed:** the driven
-  finalization/persistence completion bound, the numeric instantiation of the envelope, and the device/service legs (6.3/6.5).
+  defect the header records as fixed by `selectPlaybackHolderRoundRobin`; the pairing is now pinned.
+  **Checked off 2026-10-21 — the two owed halves landed, and the envelope's form was corrected.**
+  *Driven composition* (`test_shared_capture_finalization`, the one suite that links the real stop commit, the real storage closure and
+  the Track harness): `test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence` drives `src/main.cpp`'s own
+  composition — `selectDeferredIdleOwner` → the lane's per-track offers → `selectPlaybackHolderRoundRobin` → one grain; the
+  `Snapshot`/`VisualCache`/`VisualCacheWrapAppend` turns through the finalizing track's `processDeferredIdleMaintenance`, gated by
+  `hasRealtimeDeferredIdleWork()`; the storage boundary offered on every turn — over a window holding **a blocked holder** (a demand
+  retained in an earlier clock epoch), **two real owed window builds**, a **real accepted overdub stop's finalization** and its
+  **sealed capture chunks** as a real persistence obligation. Measured: 403 turns / 57 rotations; 57 lane opportunities; 14 lane grains
+  (two windows × 7); the finalization advanced 29 times with a worst gap of **7 turns — one rotation, tight against the bound**;
+  persistence worked on 268 turns with **0 owed-but-unserved** in either admission class (sealed chunks on any owner turn, save/revision
+  on the persistence owner's own turn) and completed; the blocked holder was **offered on all 57 opportunities and served 0**; every
+  owner kept exactly one turn per rotation. *Red proofs* (production mutations, restored byte-identically): ignoring `canProgress` in
+  `selectPlaybackHolderRoundRobin` serves the blocked holder 43 times; dropping `queuedCaptureChunks` from
+  `serviceDeferredPersistenceTurn` fails the persistence completion; removing the handoff margin from `canCompleteWithinLead` fails the
+  envelope boundary. *Numeric instantiation* (RWO): `test_3_10_the_declared_envelope_is_the_admissions_own_boundary` reads one real
+  gathered window's cost and the live contract terms and shows the **production request path** admitting at exactly `lead + G × H × Δ`
+  and refusing `CannotCompleteBeforeHandoff` one tick below — 12 entries → 4 grains → **2 816 ticks** (admitted 2 816, refused 2 815,
+  retained promise exactly 2 816); the `H × K` sweep composes the same inequality two-sidedly. **Limits, named:** *inbound switch
+  preparation* is covered as its own `SlotProvision` turn only (S4b.6/S4b.7 own the driven provisioning); the persistence
+  **save/revision** class's completion is the storage suite's `test_i4_revision_only_save_dispatches_and_completes_through_main_admission`
+  (this harness reports `bootRecoveryBlocked()`, so a workspace save cannot be requested there); the finalization *completion* assertion
+  was sensitivity-checked by a harness cap rather than a production removal (the mutations tried were non-discriminating on an audible
+  track, or stalled the suite); the device/service legs stay with 6.3/6.5. Gates: finalization suite **87/87**, RWO **237/237**, full
+  native **3 379 / 7 skipped / 3 372 succeeded / 0 failed**; no `src/` or `include/` line changed, so both images and every pin stand.
   Evidence: [`s310-service-audit`](evidence/2026-10-21-s310-service-audit/AUDIT.md). (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a
   holder; **cursor advances even when a holder cannot progress**; capture finalization and persistence keep their own

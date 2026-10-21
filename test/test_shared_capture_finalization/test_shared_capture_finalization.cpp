@@ -338,6 +338,12 @@ struct TrackCaptureStopTestAccess {
   static LoopPlaybackRuntime& runtimeFor(Track& t, uint8_t slot) {
     return *t.playbackRuntime.slotIfAllocated(slot);
   }
+  /// Task 3.10: the deferred stop's own FSM phase, read so a fixture can tell "this owner turn **advanced** the
+  /// finalization" from "this owner turn was offered and did nothing". `-1` means no job is left to advance.
+  static int headStopPhase(const Track& t) {
+    const auto* job = t.captureStopJobHead();
+    return job != nullptr ? static_cast<int>(job->admission.phase) : -1;
+  }
   static bool presentationActive(const Track& t, uint8_t slot) {
     return t.captureStopJobs_ != nullptr && slot < Config::MAX_LOOPS_PER_TRACK &&
         t.captureStopJobs_->presentations[slot].retirementActive;
@@ -6501,9 +6507,352 @@ void test_snapshot_owner_serves_a_rootless_pending_slot_while_the_track_plays() 
   TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
 }
 
+// Task 3.10 — **the driven composition: a blocked holder, later holders owing preparation, and a real capture
+// finalization in one window, all carried by the production deferred-owner rotation.**
+//
+// The task's own fixture text asks for an early holder that is **blocked** while later holders need preparation and
+// capture/persistence work is pending, with a progress bound for **every admitted holder** (including inbound switch
+// preparation and overlapping finalization). The pure fixtures state the fairness rules where they are exact; this one
+// drives the composition `src/main.cpp` runs, with the other owners **executed** rather than counted:
+//
+//   owner = selectDeferredIdleOwner(...)            -- one owner per idle turn, the production rotation
+//   PlaybackViewMaintenance -> every track's offer -> selectPlaybackHolderRoundRobin -> one grain on the chosen track
+//   Snapshot / VisualCache / VisualCacheWrapAppend -> the selected realtime track's processDeferredIdleMaintenance
+//   Persistence / LoadAndDisplay -> the storage owner's own boundary, offered on every turn with the rotation's owner
+//
+// The holding set: track 1 owes a **blocked** demand (retained while the clock was in an earlier epoch: the obligation
+// survives, only its position is void -- `committedPlaybackRetryCanProgress`'s own false); tracks 2 and 3 owe real,
+// admitted window builds; track 0 is the **selected, playing** track and carries a **real accepted overdub stop**, so
+// its finalization is in flight and its **sealed capture chunks** are a real persistence obligation in the same window.
+// (A workspace save cannot be requested in this harness -- `StorageManager::requestDeferredSaveState` returns early on
+// `bootRecoveryBlocked()` -- so the class measured here is the sealed-chunk one; the save/revision class's completion
+// through the same boundary is the storage suite's `test_i4_revision_only_save_dispatches_and_completes_...`.) The
+// clock advances by the declaration's own `maximumPhaseAdvancePerTurn` per turn, so every gap measured here is in the
+// currency the envelope is stated in.
+//
+// The bound asserted for each kind is the rotation's own: **no advance waits longer than one rotation of the seven
+// deferred owners**, and no owner loses or doubles its turn while the lane owes windows.
+namespace {
+SessionMidiEventVec& compositionWindowScratch(uint8_t track, uint8_t slot) {
+  static SessionMidiEventVec buffers[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+  return buffers[track % Config::NUM_TRACKS][slot % Config::MAX_LOOPS_PER_TRACK];
+}
+
+/// Publish `count` note pairs inside `[fromBar, toBar)` as the slot's current root, so the committed lane has an
+/// interval to gather. The same construction the runtime-working-set suite's window fixtures use.
+void publishCompositionRootNotes(Loop& loop, uint32_t fromBar, uint32_t toBar, uint32_t count) {
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  const uint32_t span = (toBar - fromBar) * Config::TICKS_PER_BAR;
+  EventId nextEventId = 9000;
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t on = fromBar * Config::TICKS_PER_BAR + (span * i) / (count > 0 ? count : 1);
+    const uint8_t pitch = static_cast<uint8_t>(36 + (i % 40));
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = static_cast<NoteId>(4000 + i);
+    add.next.pitch = pitch;
+    add.next.velocity = 100;
+    add.next.startTick = on;
+    add.next.endTick = on + 48;
+    changes.notes.push_back(add);
+    SnapshotEventChange on_change{};
+    on_change.kind = SnapshotChangeKind::Add;
+    on_change.next.loopId = loop.loopId;
+    on_change.next.eventId = nextEventId++;
+    on_change.next.canonicalOrder = nextEventId * 2;
+    on_change.next.value = MidiEvent::NoteOn(on, 1, pitch, 100);
+    changes.events.push_back(on_change);
+    SnapshotEventChange off_change{};
+    off_change.kind = SnapshotChangeKind::Add;
+    off_change.next.loopId = loop.loopId;
+    off_change.next.eventId = nextEventId++;
+    off_change.next.canonicalOrder = nextEventId * 2 + 1;
+    off_change.next.value = MidiEvent::NoteOff(on + 48, 1, pitch, 0);
+    changes.events.push_back(off_change);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+}
+
+/// One slot with committed content, a published root and a prewarmed runtime: the shape a window request needs.
+void stageCompositionSlot(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
+                          uint32_t notes) {
+  track.setActiveLoopIndex(slot);
+  Loop& loop = track.getLoop(slot);
+  loop.loopLengthTicks = loopTicks;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(loopTicks, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  publishCompositionRootNotes(loop, fromBar, toBar, notes);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(slot),
+                           "the slot must prewarm a runtime to owe a window grain");
+}
+
+/// A window holder that **cannot progress**: a committed demand retained while the clock was in an earlier epoch.
+void stageBlockedCompositionHolder(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
+                                   uint32_t notes, uint64_t tick) {
+  stageCompositionSlot(track, slot, loopTicks, fromBar, toBar, notes);
+  const PlaybackCoverageInterval coverage{fromBar * Config::TICKS_PER_BAR, 2 * Config::TICKS_PER_BAR, loopTicks};
+  TEST_ASSERT_EQUAL_MESSAGE(
+      static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(slot, coverage, fromBar * Config::TICKS_PER_BAR,
+                                                            {tick, 1u})),
+      "the blocked holder's demand is retained as a promise its owner still owes");
+}
+
+/// A window holder that owes **real work**: an admitted build, gathered from the slot's published root.
+void stageOwingCompositionHolder(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
+                                 uint32_t notes, uint32_t requestPhase, uint8_t trackIndex, uint64_t tick) {
+  stageCompositionSlot(track, slot, loopTicks, fromBar, toBar, notes);
+  SessionMidiEventVec& scratch = compositionWindowScratch(trackIndex, slot);
+  scratch.clear();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch, {tick, 1u})),
+                            "the fixture's owing window must sit inside the declared envelope");
+}
+}  // namespace
+
+void test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLoopTicks = 32u * kBar;
+  constexpr uint32_t kNotes = 20u;
+  constexpr uint32_t kNoteBar = 12u;
+  constexpr uint32_t kRequestPhase = kNoteBar * kBar + 384u;
+  constexpr uint8_t kFinalizingTrack = 0;
+  constexpr uint8_t kHolderCount = 3;  // one blocked holder ahead of two owing ones
+  const uint8_t kOwnerCount = MidiServiceDrain::kDeferredIdleOwnerCount;
+  LoopEventStore::initPool();
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    trackManager.getTrack(i).ensureLoopsAllocated();
+  }
+
+  // (1) Holder 1 is **blocked**; holders 2 and 3 owe real builds (two bars of notes at the request bar, so the
+  // gathered interval is the two-bar window the demoted policy selects). The blocked holder still sits **ahead** of
+  // every holder that can progress, which is the ordering the fairness rule must survive.
+  constexpr uint8_t kBlockedTrack = 1;
+  constexpr uint8_t kOwingTrackA = 2;
+  constexpr uint8_t kOwingTrackB = 3;
+  stageBlockedCompositionHolder(trackManager.getTrack(kBlockedTrack), 0, kLoopTicks, kNoteBar, kNoteBar + 1, kNotes,
+                                1000000ull);
+  stageOwingCompositionHolder(trackManager.getTrack(kOwingTrackA), 0, kLoopTicks, kNoteBar, kNoteBar + 1, kNotes,
+                              kRequestPhase, kOwingTrackA, 1000064ull);
+  stageOwingCompositionHolder(trackManager.getTrack(kOwingTrackB), 0, kLoopTicks, kNoteBar, kNoteBar + 1, kNotes,
+                              kRequestPhase, kOwingTrackB, 1000128ull);
+  TEST_ASSERT_TRUE(trackManager.getTrack(kOwingTrackA).hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_TRUE(trackManager.getTrack(kOwingTrackB).hasPendingPlaybackViewMaintenance());
+
+  // (2) A **real accepted overdub stop** on the selected track: the finalization is in flight for the whole fixture,
+  // and the same stop leaves a real persistence obligation behind. The selected track is where `main.cpp`'s Snapshot
+  // owner turn and its realtime track loop both reach the job, so the finalization is reachable on every owner turn
+  // whose owner owns it.
+  Track& finalizing = trackManager.getTrack(kFinalizingTrack);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kFinalizingTrack, trackManager.getSelectedTrackIndex(),
+                                  "the finalizing track is the selected one");
+  prepareSlot(finalizing, 0, true);
+  start(finalizing, 0, true, 96, 60);
+  stop(finalizing, true, 144);
+  TEST_ASSERT_TRUE_MESSAGE(finalizing.hasPendingDeferredOverdubStop() || finalizing.hasStopInFlight(),
+                           "fixture precondition: the stop is accepted and its finalization is in flight");
+  TEST_ASSERT_TRUE_MESSAGE(finalizing.hasRealtimeDeferredIdleWork(),
+                           "and the production gate that reaches this track on a non-lane owner turn holds");
+  // The stop's own persistence obligation: its sealed chunks are queued for the incremental flush, which is the class
+  // that is admitted on any owner turn. (The workspace-save request is issued here too, through the production entry the
+  // stop paths use, but this harness answers `bootRecoveryBlocked()` and drops it -- measured, not assumed; the assertion
+  // below therefore requires *an* obligation and the drive asserts the class it actually got.)
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
+  const bool persistencePending = StorageManager::hasDeferredSaveWork() ||
+                                  StorageManager::hasQueuedCaptureChunksToPersist() ||
+                                  StorageManager::hasRevisionCommitWork();
+  TEST_ASSERT_TRUE_MESSAGE(persistencePending,
+                           "the same window must carry a real persistence obligation, not only a finalization");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::hasQueuedCaptureChunksToPersist(),
+                           "this window's persistence work is the same stop's sealed chunks");
+
+  MidiServiceDrain::DeferredIdleOwnerCursor ownerCursor{};
+  MidiServiceDrain::PlaybackHolderCursor laneCursor{};
+  uint32_t ownerTurns[MidiServiceDrain::kDeferredIdleOwnerCount] = {};
+  uint32_t eligibleTurns[Config::NUM_TRACKS] = {};
+  uint32_t servedTurns[Config::NUM_TRACKS] = {};
+  uint32_t lastServedLaneTurn[Config::NUM_TRACKS] = {};
+  uint32_t maxLaneGap = 0;
+  uint32_t laneTurns = 0;
+  uint32_t laneOpportunityTurns = 0;
+  uint32_t finalizationAdvances = 0;
+  uint32_t maxFinalizationGap = 0;
+  uint32_t lastFinalizationAdvanceTurn = 0;
+  uint32_t persistenceTurns = 0;
+  uint32_t chunkOwedButUnserved = 0;
+  uint32_t ownerOwedButUnserved = 0;
+  uint32_t turnsUsed = 0;
+  const auto finalizationDone = [&]() {
+    return !finalizing.hasPendingDeferredOverdubStop() && !finalizing.hasStopInFlight() &&
+           !TrackCaptureStopTestAccess::recordWorkPending(finalizing);
+  };
+  const auto laneDone = [&]() {
+    return !trackManager.getTrack(kOwingTrackA).hasPendingPlaybackViewMaintenance() &&
+           !trackManager.getTrack(kOwingTrackB).hasPendingPlaybackViewMaintenance();
+  };
+  const auto persistenceDone = [&]() {
+    return !StorageManager::hasDeferredSaveWork() && !StorageManager::hasQueuedCaptureChunksToPersist() &&
+           !StorageManager::hasRevisionCommitWork();
+  };
+
+  PlaybackDeadlineClock clock{1001000ull, 2u};
+  const uint32_t kTurnCap = 4096u;
+  for (uint32_t turn = 1; turn <= kTurnCap; ++turn) {
+    if (finalizationDone() && laneDone() && persistenceDone()) break;
+    turnsUsed = turn;
+    clock.tick += Track::kPlaybackViewPermittedAdvancePerTurn;
+    const MidiServiceDrain::DeferredIdleOwner owner =
+        MidiServiceDrain::selectDeferredIdleOwner(ownerCursor, false);
+    ++ownerTurns[static_cast<uint8_t>(owner)];
+    if (owner == MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) {
+      ++laneOpportunityTurns;
+      const uint8_t trackCount = trackManager.getTrackCount();
+      MidiServiceDrain::PlaybackHolder offers[Config::NUM_TRACKS] = {};
+      for (uint8_t i = 0; i < trackCount; ++i) {
+        Track& track = trackManager.getTrack(i);
+        track.serviceAdmittedDeadlineMisses(clock);
+        offers[i] = track.playbackWindowServiceOffer(static_cast<uint32_t>(clock.tick), clock);
+        if (offers[i].eligible) ++eligibleTurns[i];
+      }
+      uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+      if (MidiServiceDrain::selectPlaybackHolderRoundRobin(laneCursor, offers, trackCount, chosen) ==
+          MidiServiceDrain::PlaybackHolderSelection::Service) {
+        ++servedTurns[chosen];
+        ++laneTurns;
+        if (lastServedLaneTurn[chosen] != 0u) {
+          const uint32_t gap = laneTurns - lastServedLaneTurn[chosen];
+          if (gap > maxLaneGap) maxLaneGap = gap;
+        }
+        lastServedLaneTurn[chosen] = laneTurns;
+        (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(
+            static_cast<uint32_t>(clock.tick), nullptr, false, clock);
+      }
+      continue;
+    }
+    // `src/main.cpp` offers the storage boundary on **every** turn, with the rotation's own owner; the boundary decides
+    // whether this owner's turn is its opportunity. That is the composition being measured, so it is driven here too.
+    // **The persistence bound, stated as the boundary's own two admission classes** (never as an invented cadence):
+    // sealed capture chunks are admitted on *any* owner turn, while the save/revision classes are admitted only on the
+    // persistence owner's own turn. Both halves can fail: a collision or an owner-gate mistake leaves owed work
+    // unserved, and the rotation is what supplies the owner turn in the second class.
+    const bool chunkClassOwed = StorageManager::hasQueuedCaptureChunksToPersist();
+    const bool ownerClassOwed =
+        StorageManager::hasDeferredSaveWork() || StorageManager::hasRevisionCommitWork();
+    const bool persistenceRan = MidiServiceDrain::serviceDeferredPersistenceTurn<StorageManager>(
+        looperState.getLooperState(), owner, true, false, 0, false, false);
+    if (persistenceRan) ++persistenceTurns;
+    if (chunkClassOwed && !persistenceRan) ++chunkOwedButUnserved;
+    if (ownerClassOwed && !persistenceRan && owner == MidiServiceDrain::DeferredIdleOwner::Persistence) {
+      ++ownerOwedButUnserved;
+    }
+    if (owner == MidiServiceDrain::DeferredIdleOwner::Persistence ||
+        owner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay ||
+        owner == MidiServiceDrain::DeferredIdleOwner::SlotProvision) {
+      // `main.cpp` hands these three to their own owners (storage, display, and the pending-switch provisioning) and
+      // never reaches a track's deferred maintenance through them. The persistence boundary above already took its own
+      // opportunity on these turns; none of the three may consume the finalization's.
+      continue;
+    }
+    if (finalizationDone()) continue;
+    // The production gate that decides whether a non-lane owner turn reaches this track at all
+    // (`hasRealtimeDeferredIdleWork`, the term the 2026-10-08 cross-track finalization repair added). A track that is
+    // merely stopped and owes no job is not visited; one holding an accepted stop is.
+    if (!finalizing.hasRealtimeDeferredIdleWork()) continue;
+    const int phaseBefore = TrackCaptureStopTestAccess::headStopPhase(finalizing);
+    const uint64_t budgetBefore = TrackCaptureStopTestAccess::budget(finalizing);
+    finalizing.processDeferredIdleMaintenance(0, false, owner);
+    // **Progress is work, not a phase name.** A bounded grain can repeat inside one phase (the closure tail does), so
+    // the observable is the job's own remaining-work figure moving, or the phase/ job moving at all.
+    const bool advanced = finalizationDone() ||
+                          TrackCaptureStopTestAccess::headStopPhase(finalizing) != phaseBefore ||
+                          TrackCaptureStopTestAccess::budget(finalizing) < budgetBefore;
+    if (!advanced) continue;
+    ++finalizationAdvances;
+    if (lastFinalizationAdvanceTurn != 0u) {
+      const uint32_t gap = turn - lastFinalizationAdvanceTurn;
+      if (gap > maxFinalizationGap) maxFinalizationGap = gap;
+    }
+    lastFinalizationAdvanceTurn = turn;
+  }
+
+  // (A) **All three owed kinds complete in the same window**: the real finalization, both real window builds, and the
+  // real persistence obligation.
+  TEST_ASSERT_TRUE_MESSAGE(finalizationDone(), "the real finalization completes inside the rotation");
+  TEST_ASSERT_TRUE_MESSAGE(laneDone(), "both owing windows complete inside the same window");
+  TEST_ASSERT_TRUE_MESSAGE(persistenceDone(), "and the persistence obligation completes too");
+
+  // (B) **The progress bound, in the rotation's own unit, for each kind** -- no advance waits longer than one rotation
+  // of the seven deferred owners. This is the task's "progress bound for every admitted holder ... including overlapping
+  // finalization", stated where it can fail: a kind reachable on too few owners, or stalled behind the lane, crosses it.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, finalizationAdvances, "the finalization advanced to get there");
+  // **The bound is the rotation itself, and the measurement is tight against it** (observed worst gap: one full
+  // rotation, 7 turns, in this window). A stop's grain is offered on the three track-maintenance owners -- `Snapshot`,
+  // `VisualCache`, `VisualCacheWrapAppend` -- so one rotation is the declared maximum; anything that removes an owner
+  // *or* stalls the job behind the lane crosses it or fails the completion assertion above.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(
+      kOwnerCount, maxFinalizationGap,
+      "every finalization advance is at most one deferred-owner rotation after the last");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, persistenceTurns, "the persistence obligation did real work");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, chunkOwedButUnserved,
+                                   "the any-owner class (sealed chunks) is never refused while it is owed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ownerOwedButUnserved,
+                                   "and the owned class (save/revision) is never refused on its own owner's turn");
+
+  // (C) **The lane's bound survives the composition**: neither progressable holder waited more than one rotation of the
+  // live holder set (three holders, one of them blocked).
+  TEST_ASSERT_GREATER_THAN_UINT32(0, laneTurns);
+  const uint8_t owingTracks[2] = {kOwingTrackA, kOwingTrackB};
+  for (uint8_t i = 0; i < 2; ++i) {
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servedTurns[owingTracks[i]], "each owing holder was served");
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(eligibleTurns[owingTracks[i]] / kHolderCount,
+                                                servedTurns[owingTracks[i]],
+                                                "one service per rotation of the still-owing set");
+  }
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(3u, maxLaneGap,
+                                           "no progressable holder waits beyond one rotation of three holders");
+
+  // (D) **The blocked holder is owed and offered on every lane turn, and never served** -- it neither takes the
+  // rotation's position nor drops out of it.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, servedTurns[kBlockedTrack],
+                                   "a blocked holder never consumes the lane's turn");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(laneOpportunityTurns, eligibleTurns[kBlockedTrack],
+                                   "and it is offered on every lane opportunity while its obligation survives");
+
+  // (E) **No track that owes no window is served**, so the lane's turn is not handed to an unrelated track -- the
+  // finalizing track included.
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    if (i == kBlockedTrack || i == kOwingTrackA || i == kOwingTrackB) continue;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, servedTurns[i], "a track with no owed window never takes the lane's turn");
+  }
+
+  // (F) **Every owner kept exactly its own turn per rotation**: the lane's work does not absorb the persistence,
+  // slot-provision or snapshot opportunities, and no owner takes a second turn inside a rotation.
+  const uint32_t rotations = turnsUsed / static_cast<uint32_t>(kOwnerCount);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, rotations);
+  for (uint8_t owner = 0; owner < kOwnerCount; ++owner) {
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(rotations, ownerTurns[owner],
+                                                "no owner loses a turn while the window carries all three kinds");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(rotations + 1u, ownerTurns[owner],
+                                             "and no owner takes a second turn in a rotation");
+  }
+}
+
 int main() {
   UNITY_BEGIN();
-      RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
+  RUN_TEST(test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence);
+  RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
 RUN_TEST(test_record_source_staging_merges_the_frozen_take_after_closure);
 RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_job_pass_staging_denial_and_receipt_binding);
