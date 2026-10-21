@@ -1095,6 +1095,13 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
     const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut) {
   rollingViewSelectedOut = false;
+  // Task 3.15d (slice 2): **NOTE_EDIT is served by the preview's own interval** -- see
+  // `resolveNoteEditPreviewSourceForTurn` for the contract and the hazards. One out-of-line FLASH-resident call keeps
+  // the ITCM resolver's own edge bounded: the caller only takes the committed reader's frame-bound `return`.
+  if (resolveNoteEditPreviewSourceForTurn(slotIndex, loop, currentTick, sourceOut, bridgeOut, viewOut)) {
+    rollingViewSelectedOut = true;
+    return;
+  }
   // A qualified live interval is the same immutable fixed-storage reader as
   // committed playback. Input changes only private demand, never served bytes.
   if (slotIndex == activeLoopIndex && isRecording() && !isJamPlaybackActive() &&
@@ -1374,6 +1381,128 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
       rollingViewSelectedOut = true;
     }
   }
+}
+
+/// Task 3.15d (slice 2): **NOTE_EDIT is served by the preview's own interval.** Slice 1 composed and published a
+/// `Preview`-origin window for the interval the committed route reads; the audible route still served the merged
+/// reader, so the preparation never reached the wire. This is the committed reader's own shape -- a frame-bound view,
+/// a coverage test, and **one** cursor reset per handoff -- with the three terms the session owns:
+///
+///   * currency is the **session's** revision, not the lane's frozen one: a window whose revision the session has left
+///     must not sound even though it stays readable for display (the lane's retention contract);
+///   * adoption is at a coverage boundary: a successor that covers the playhead, or the session's first publication,
+///     which already covers it;
+///   * the adoption runs the NOTE_EDIT selective closure, because the preview replaced the merged reader's rebuild,
+///     which is where a removed identity was closed.
+///
+/// The merged reader stays the named compatibility fallback: when no current `Preview` window covers the playhead this
+/// returns false and the turn resolves exactly as it did before the seam existed.
+///
+/// `ledgerBoundary` is deliberately **not** an admission gate here. A summary is exact (an empty one means "no open
+/// note", never "unconstrained") and is captured at build time, so requiring a match would refuse every adoption after
+/// the playhead moved; the closure obligation is carried by the incoming interval's own NoteOffs, by the merged
+/// reader's next traversal, and by the adoption reconcile below.
+///
+/// **Out of line and FLASH-resident on purpose**: it runs once per MIDI turn while a session is open, and the ITCM
+/// resolver that calls it is the one the RAM1 budget measures.
+FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
+    uint8_t slotIndex, const Loop& loop, uint32_t currentTick, PlaybackViewSourceIdentity& sourceOut,
+    const FixedPlaybackBridgeStorage*& bridgeOut, const RuntimePlaybackView*& viewOut) {
+  const bool sessionSlot = slotIndex == activeLoopIndex && editManager.isNoteEditActive() && isPlaying() &&
+                           !isJamPlaybackActive() && !isJamming() && !hasQueuedPlaybackStart() &&
+                           !hasPendingDeferredOverdubStop() && loop.loopLengthTicks != 0;
+  const auto clock = clockManager.getPlaybackDeadlineClock();
+  const uint32_t previewRevision = editManager.sessionPlaybackPreviewRevision();
+  LoopPlaybackRuntime* runtime = sessionSlot ? playbackRuntime.slotIfAllocated(slotIndex) : nullptr;
+  RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr || clock.epoch == 0 || clock.tick != currentTick || previewRevision == 0) {
+    return false;
+  }
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
+  // Written out at each use rather than captured in a lambda: this object file's `*(.text*)` is routed to ITCM, so every
+  // lambda here would cost ITCM bytes the RAM1 budget does not have.
+  auto& frame = runtime->rolling;
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
+    // **Only a preview frame is this seam's business.** A frame the committed or capture lane bound to its own
+    // published window is that lane's traversal: ending it here would tear a reader this seam does not own (and the
+    // owned frames it cannot validate must not survive as a `Serving` claim either, because the committed reader
+    // rejects a bound view that is not a published `Committed` one and a rejected frame is `Blocked`).
+    const bool boundToOtherLanesWindow =
+        frame.boundView < set->views.size() && frame.boundView == set->lifecycle.current &&
+        set->views[frame.boundView].complete && set->views[frame.boundView].published &&
+        set->views[frame.boundView].source.origin != PlaybackWindowOrigin::Preview &&
+        frame.boundStorageGeneration == set->views[frame.boundView].storageGeneration;
+    if (boundToOtherLanesWindow) {
+      return false;  // the resolver continues into that lane's own frame handling
+    }
+    if (frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
+        frame.loopLength == loop.loopLengthTicks && frame.boundView == set->lifecycle.current &&
+        frame.boundView < set->views.size()) {
+      const RuntimePlaybackView& current = set->views[frame.boundView];
+      // `published` and the storage generation are the committed reader's own terms (`origin`, currency, coverage and
+      // role come first): the frame is a claim over **one storage instance**, so a republished role at the same
+      // revision must not inherit it.
+      if (current.complete && current.published && current.source.origin == PlaybackWindowOrigin::Preview &&
+          current.source.playbackRevision == previewRevision && current.coverage.isValid() &&
+          current.coverage.loopLengthTicks == loop.loopLengthTicks && current.coverage.contains(phase) &&
+          frame.boundStorageGeneration == current.storageGeneration) {
+        frame.lastTick = currentTick;
+        sourceOut = current.source;
+        bridgeOut = nullptr;
+        viewOut = &current;
+        return true;
+      }
+    }
+    // Served out, superseded, or the view role moved: hand the traversal back to the merged reader with a clean
+    // cursor, exactly as the committed reader expires. The frame is Idle from here, so the reset happens **once** per
+    // handoff rather than on every turn (a per-turn reset would re-walk the merged store each turn).
+    frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
+    getLoop(slotIndex).nextEventIndex = 0;
+  }
+  // Adoption has **one** site: a prepared successor that covers the playhead is adopted first, and the current role is
+  // otherwise offered as-is (the session's first publication already covers the playhead).
+  const RuntimePlaybackView* adopted = nullptr;
+  if (set->lifecycle.ready < set->views.size()) {
+    const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+    if (!ready.published && ready.complete && ready.source.origin == PlaybackWindowOrigin::Preview &&
+        ready.source.playbackRevision == previewRevision && ready.coverage.isValid() &&
+        ready.coverage.loopLengthTicks == loop.loopLengthTicks && ready.coverage.contains(phase) &&
+        adoptPreparedPlaybackWindow(slotIndex) && set->lifecycle.current < set->views.size()) {
+      adopted = &set->views[set->lifecycle.current];
+    }
+  }
+  if (adopted == nullptr && set->lifecycle.current < set->views.size()) {
+    const RuntimePlaybackView& current = set->views[set->lifecycle.current];
+    if (current.complete && current.source.origin == PlaybackWindowOrigin::Preview &&
+        current.source.playbackRevision == previewRevision && current.coverage.isValid() &&
+        current.coverage.loopLengthTicks == loop.loopLengthTicks && current.coverage.contains(phase)) {
+      adopted = &current;
+    }
+  }
+  if (adopted == nullptr) {
+    return false;
+  }
+  // The merged reader closes a removed identity on its own rebuild (`reconcileDeletedNoteEditPreviewSoundings`); when
+  // the preview serves, that rebuild does not run, so adoption is where the obligation is discharged. A crossing note
+  // (its Off beyond this interval) is not in the rows and stays open for the route that carries its Off -- which is
+  // what the harness pins.
+  reconcileDeletedNoteEditPreviewSoundings(*runtime, currentTick);
+  getLoop(slotIndex).nextEventIndex = 0;
+  frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+  frame.boundView = set->lifecycle.current;
+  frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
+  frame.epoch = clock.epoch;
+  frame.generation = playbackGeneration;
+  frame.loopLength = adopted->coverage.loopLengthTicks;
+  frame.projectionStart = getProjectionCycleStartTick();
+  frame.startPhase = adopted->coverage.startPhase;
+  frame.deadlineTick = 0;
+  frame.lastTick = currentTick;
+  sourceOut = adopted->source;
+  bridgeOut = nullptr;
+  viewOut = adopted;
+  return true;
 }
 #endif
 TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliveryStateForSlot(
@@ -4868,6 +4997,17 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     }
     cancelRollingPlaybackWindow(activeLoopIndex);
   }
+  // Task 3.15d (slice 2): **a NOTE_EDIT preview frame is the session lane's frame.** While the session owns the
+  // source and the transport is rolling, this requester leaves it alone: the clock edge adopted it at a coverage
+  // boundary and the session's cadence keeps its successor prepared. Cancelling here would hand the very next tick
+  // to the merged reader and the tick after back to the preview -- cursor churn with a seam every turn. A stop, a
+  // deferred overdub-stop, a jam or a queued start still falls through to the cancellation below.
+  if (editManager.isNoteEditActive() && runtime->previewSourceActive && isPlaying() &&
+      !hasPendingDeferredOverdubStop() && !hasQueuedPlaybackStart() && !isJamPlaybackActive() &&
+      !isJamming()) {
+    return frame.phase == LoopPlaybackRuntime::RollingPhase::Idle ? RollingOutcome::Waiting
+                                                                  : RollingOutcome::Serving;
+  }
   if (!isPlaying() || editManager.isNoteEditActive() || hasPendingDeferredOverdubStop() ||
       runtime->previewSourceActive) {
     cancelRollingPlaybackWindow(activeLoopIndex);
@@ -6881,7 +7021,9 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
                                                                            uint32_t previewRevision,
                                                                            const MidiEvent* source,
                                                                            size_t sourceCount,
-                                                                           uint32_t currentPhase, PlaybackDeadlineClock clock) {
+                                                                           uint32_t playheadPhase,
+                                                                           uint32_t intervalPhase,
+                                                                           PlaybackDeadlineClock clock) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return PlaybackViewRequestResult::NoRuntime;
   }
@@ -6894,13 +7036,13 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
     return PlaybackViewRequestResult::NotServable;
   }
   // Task 3.15d: the preview reads the **same interval** the committed reader serves -- the loop's demoted shape at the
-  // playhead, resolved by the one policy (`playbackWindowInterval`), never a second geometry rule. A short loop's
+  // requested phase, resolved by the one policy (`playbackWindowInterval`), never a second geometry rule. A short loop's
   // interval is its whole loop, so the preview lane and the merged NOTE_EDIT preview agree there by construction.
   // The caller supplies the interval-qualified composition (`composePreviewIntervalSourceForSlot`); an empty
   // composition is a valid, complete preview (zero events over a real span), not a refusal.
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), currentPhase,
-                              coverage)) {
+  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                              intervalPhase, coverage)) {
     return PlaybackViewRequestResult::NotServable;
   }
   // The **frozen source**: preview currency is the session's preview revision, and the origin marks the contract. The
@@ -6908,7 +7050,10 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
   // what stops it from passing as committed currency.
   const PlaybackViewSourceIdentity identity{previewRevision, playbackGeneration, nullptr,
                                             PlaybackWindowOrigin::Preview};
-  const uint32_t phase = currentPhase % loop.loopLengthTicks;
+  // The admission's lead is measured from the **playhead**, never from the interval's own centre: the interval can be
+  // positioned ahead of the playhead (the cadence), and handing its centre in as "now" would declare almost a whole
+  // loop of lead where only the distance to `coverage.startPhase` exists.
+  const uint32_t phase = playheadPhase % loop.loopLengthTicks;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   const PlaybackViewRequestResult result = requestPlaybackViewMaintenance(
       slotIndex, source, sourceCount, identity, coverage, {}, {}, phase, coverage.startPhase, clock);
@@ -6921,6 +7066,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
   }
   return result;
 }
+
 /// Task 3.7a (I3) / task 3.13: **the preview lane's production requester**, run on the focus lane's own deferred turn.
 ///
 /// The seam is the *session's own revision*: the preview lane's currency is `sessionPlaybackPreviewRevision()`, and the
@@ -6937,9 +7083,20 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
 /// selected one yields it without owing anything (a re-focus is not an exit). Both are the same two calls the exit and
 /// re-focus hooks make, so a hook that did not run leaves no half-state: this is idempotent by construction.
 ///
-/// It deliberately does **not** touch the merged NOTE_EDIT preview path (the fallback that serves editing today), does
-/// not adopt a prepared successor (the swap belongs to the serving path's boundary, which the default build does not
-/// run -- named as owed), and asks for nothing when the lane is already preparing work.
+/// Task 3.15d (slice 2) adds the **per-boundary re-cover cadence** and the adoption seam this requester feeds:
+///
+/// * the lane keeps **the playhead's own interval** serving (slice 1's geometry) and asks again **from the playhead**
+///   as soon as the served window's coverage no longer contains it. A successor positioned one boundary ahead is not
+///   requested: its true handoff lead is one bar, and the declared envelope (`canCompleteBeforeHandoff`) requires
+///   `leadTicks` plus `grains x (denied + 1) x advance` -- it refuses that position by name, which is why the earlier
+///   "two bars past the playhead" cadence was withdrawn rather than admitted on a lead it did not have;
+/// * a prepared successor whose interval lies **behind** the playhead is retired without invalidating the operation
+///   identity (`retireSupersededReady`), so the served frame and sibling slots keep their generation;
+/// * the swap itself belongs to the clock edge (`Track::resolveNoteEditPreviewSourceForTurn`), never to this turn --
+///   this caller prepares, the edge adopts;
+/// * a source is cancelled (`SourceMutated`) only on an **actual** revision change, so a window that still serves its
+///   own revision is never torn down by the cadence's next request, and nothing is asked while another build is in
+///   flight.
 TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
   if (!loopsAllocated()) {
     return;
@@ -6978,30 +7135,62 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     // prepare until the committed successor is adopted.
     return;
   }
-  if (runtime->previewSourceActive && runtime->previewSourceRevision == previewRevision) {
-    return;  // this revision is what the lane already froze
+  if (isJamPlaybackActive() || isJamming()) {
+    // The clock edge does not adopt a preview under a jam (the jam owns the traversal), so a window prepared here
+    // would have no reader. Spend nothing.
+    return;
   }
-  PlaybackWindowIdentity served{};
-  if (publishedPlaybackWindowIdentityForSlot(slot, served) &&
-      served.origin == PlaybackWindowOrigin::Preview && served.playbackRevision == previewRevision) {
-    return;  // and nothing owes a rebuild while it is served
+  const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
+  const uint32_t tickNow = clock.epoch != 0 ? static_cast<uint32_t>(clock.tick) : clockManager.getCurrentTick();
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      getEffectivePlaybackTick(tickNow), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  // Task 3.15d (slice 2): **one interval at a time, re-covered from the playhead.** The lane serves the interval the
+  // committed route reads (slice 1's geometry), and that interval ends one bar behind the playhead, so the lane asks
+  // again as soon as the served window's coverage no longer contains the playhead. The successor is therefore
+  // **adopted mid-interval, at the playhead**, which is the only shape the declared service envelope admits: a
+  // successor positioned one boundary ahead of the playhead would have a handoff lead of one bar, and
+  // `CoverageServiceContract::canCompleteBeforeHandoff` requires `leadTicks` plus `grains x (denied + 1) x advance`
+  // (2304 ticks for a three-grain window) -- it refuses that position by name (`CannotCompleteBeforeHandoff`). Asking
+  // from the playhead keeps the request's declared lead honest: its interval starts behind the playhead, so the entry
+  // that serves it is the next pass, `loopLength - halfWindow` away.
+  //
+  // Coverage, not identity, is what the terms below read: a window is "serving" only while its interval contains the
+  // playhead (a readable-but-passed window is not serving).
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.current >= RuntimePlaybackViewConfig::kViewCount) {
+    return;
   }
-  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
-  const bool successorPrepared = set != nullptr && set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
-                                 set->views[set->lifecycle.ready].complete;
-  if (successorPrepared &&
-      set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Preview &&
-      set->views[set->lifecycle.ready].source.playbackRevision == previewRevision) {
-    return;  // prepared and waiting for its boundary: asking again would only churn the lane
+  const RuntimePlaybackView& current = set->views[set->lifecycle.current];
+  const bool currentServesPlayhead =
+      current.complete && current.source.origin == PlaybackWindowOrigin::Preview &&
+      current.source.playbackRevision == previewRevision && current.coverage.isValid() &&
+      current.coverage.loopLengthTicks == loop.loopLengthTicks && current.coverage.contains(phase);
+  if (set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
+      set->views[set->lifecycle.ready].complete) {
+    const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+    const bool readyIsSessionWindow =
+        ready.source.origin == PlaybackWindowOrigin::Preview &&
+        ready.source.playbackRevision == previewRevision && ready.coverage.isValid() &&
+        ready.coverage.loopLengthTicks == loop.loopLengthTicks;
+    if (!readyIsSessionWindow) {
+      // Another owner's successor (committed or capture) holds the role. It is not this lane's to retire, and the
+      // preview can prepare nothing beside it: wait for that owner's boundary.
+      return;
+    }
+    if (ready.coverage.contains(phase)) {
+      return;  // the interval the clock edge adopts **at this boundary**: it must never be retired here
+    }
+    // Its interval is behind the playhead, so no boundary can adopt it. Retire it **without** invalidating the
+    // operation identity: the served frame keeps its generation, and a sibling slot's frame is not torn by another
+    // slot's edit session. The shared-view row is the fallback when the role accounting refuses the direct retire.
+    if (!set->lifecycle.retireSupersededReady(set->views)) {
+      applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+    }
   }
-  if (successorPrepared) {
-    // A prepared successor for a revision the session has **left**: the shared-view row that releases a candidate,
-    // retires a prepared successor and invalidates the operation identity states exactly this transition, and the served
-    // window stays readable (the invariant every row carries). Without it the newest revision could never be prepared --
-    // the request would be refused as a successor already waiting, and the slot would keep the stale one.
-    applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+  if (currentServesPlayhead) {
+    return;  // the lane is already serving the playhead's interval: nothing is owed until its coverage ends
   }
-  if (runtime->previewSourceActive) {
+  if (runtime->previewSourceActive && runtime->previewSourceRevision != previewRevision) {
     // **The mutation edge.** The lane's frozen revision is gone, so the superseded preparation is cancelled by name
     // before a new one is requested -- a cancellation is what makes a stale completion publish nothing. This happens
     // whether or not the lane is busy: a build in flight for the old revision is exactly what must not land.
@@ -7011,10 +7200,11 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
       runtime->completedPromisePendingJudgement) {
     return;  // the lane is still busy for another reason; the next seam re-checks rather than stacking a demand
   }
-  const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
-  const uint32_t tickNow = clock.epoch != 0 ? static_cast<uint32_t>(clock.tick) : clockManager.getCurrentTick();
-  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
-      getEffectivePlaybackTick(tickNow), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  if (runtime->pendingViewRequest_.active) {
+    return;  // the lane's request is already its standing demand
+  }
+  // The requested interval is the **playhead's own** -- the one the committed route is reading -- so the edge can
+  // adopt it as soon as it is complete, and the request's declared lead is the true one.
   // Task 3.15d: the lane reads the **committed route's interval**, composed with the session's delta. The composition
   // lives in the slot runtime's resident scratch because the build copies it across grains; it is written here only,
   // after the busy guard above, so a live build's source is never overwritten. An empty composition is a complete
@@ -7028,7 +7218,7 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
   if (!composePreviewIntervalSourceForSlot(slot, coverage, composition)) {
     return;
   }
-  (void)requestPreviewWindow(slot, previewRevision, composition.data(), composition.size(), phase, clock);
+  (void)requestPreviewWindow(slot, previewRevision, composition.data(), composition.size(), phase, phase, clock);
 }
 
 TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(
@@ -7058,10 +7248,24 @@ TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(
   }
   runtime->previewSourceActive = false;
   runtime->previewSourceRevision = 0;
+  // Task 3.15d (slice 2): **a frame the preview lane adopted cannot outlive its source.** The clock edge only binds a
+  // `Preview` view while the session's revision is current, so from here on the seam declines the frame -- and the
+  // committed reader *rejects* it, because its bound view is not a published `Committed` one; a rejected frame is
+  // `Blocked`, and a blocked frame never re-requests. Ending it here, at the yield, is what lets the committed lane
+  // request its successor (and discharge `previewHandoffOwed`) instead of going quiet for the rest of the play run.
+  // Any other bound frame belongs to the committed or capture lane and is left exactly as it is.
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set != nullptr && runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+      runtime->rolling.boundView < set->views.size() &&
+      set->views[runtime->rolling.boundView].source.origin == PlaybackWindowOrigin::Preview) {
+    runtime->rolling = LoopPlaybackRuntime::RollingFrame{};
+    loopForSlot(slotIndex).nextEventIndex = 0;
+  }
   if (reason == PreviewWindowCancelReason::SessionExited) {
     // The exit handoff: the preview source yields and the committed successor is owed. The preview window that is
     // serving right now keeps serving -- the handoff is a boundary, not a gap -- until a committed successor is
-    // adopted.
+    // adopted. (Its **frame** has yielded above; the merged reader covers the traversals in between, exactly as it did
+    // before this slice existed.)
     runtime->previewHandoffOwed = true;
     return laneOwnsInFlightBuild ? PreviewCancelOutcome::BuildCancelledAndHandoffOwed
                                  : PreviewCancelOutcome::HandoffOwed;

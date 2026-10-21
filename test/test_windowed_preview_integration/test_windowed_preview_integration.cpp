@@ -20,19 +20,21 @@
 //     projection, the session's own revision, the production undo/redo entries and the production
 //     focus route are the inputs, so the preview a fixture sees is the session's, not a hand-built
 //     vector;
-//   * **the production callers** (the preview requester and the `EditManager` lifecycle hooks): still
-//     owed, and *not* simulated here. A published window is consumed by the windowed serving path,
-//     which production admits in task 3.10/3.7 (the merged fallback still serves NOTE_EDIT preview
-//     today, and the rolling lane is behind `PLAYBACK_WINDOW_ROLLING_ENABLED`, default 0). This suite
-//     asks and cancels the lane at the seams those callers will use — the session's revision bump
-//     (the deferred-refresh flush), the focus departure and the session exit — so the wiring lands
-//     against a pinned integration, not against a guess.
+//   * **the production callers** (the preview requester and the `EditManager` lifecycle hooks) and, since
+//     task 3.15d slice 2, **the clock edge's own adoption**: a published preview window is what NOTE_EDIT
+//     playback emits while it is current, and the merged reader is the named compatibility fallback. The
+//     edge selector is compiled only under `PLAYBACK_WINDOW_ROLLING_ENABLED` (opened below for this suite),
+//     so the emission fixtures drive the real `playMidiEvents` path rather than a stand-in.
 //
 // The boundary stub surface is the runtime working-set suite's measured set with the note-edit
 // neighbours **removed** (this suite defines them for real through `src/EditManager*.cpp`); everything
 // else keeps the same treatment: physical outputs observable, unrelated domain routes fail closed.
 
 #define ARDUINO 1
+// Task 3.15d slice 2: the emission harness drives the clock edge's rolling selector, which is compiled only under this
+// gate (`RuntimePlaybackView.h` admits native as a gate owner). The lane fixtures above the harness do not drive the
+// edge, so opening the gate adds the selector without changing what they ask.
+#define PLAYBACK_WINDOW_ROLLING_ENABLED 1
 
 #include <unity.h>
 
@@ -252,6 +254,25 @@ void drainLane(Track& track, uint32_t phase, size_t maxTurns = 2048) {
   TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(), "the lane's admitted build completes");
 }
 
+/// Run deferred turns only until the **first** preview window is published, then stop: a lane that produced its first
+/// interval and has not (yet) been asked for a successor. That is the late-cadence shape the seam fixture needs.
+void publishFirstPreview(Track& track, uint8_t slot, uint32_t phase, size_t maxTurns = 64) {
+  for (size_t turn = 0; turn < maxTurns; ++turn) {
+    WindowIdentity identity{};
+    if (track.publishedPlaybackWindowIdentityForSlot(slot, identity)) return;
+    laneTurn(track, phase);
+  }
+  TEST_FAIL_MESSAGE("the first preview window publishes");
+}
+
+/// One production `PlaybackViewMaintenance` owner visit for this track, in `src/main.cpp`'s order: the session's
+/// requester runs (**unconditionally** on the visit -- that is the cadence's whole point), then the lane serves the
+/// work it admitted.
+void serviceLaneVisit(Track& track, uint32_t phase) {
+  track.servicePreviewWindowForNoteEditSession();
+  drainLane(track, phase);
+}
+
 /// The session's own projection: `store.readEvents()` (the const overload), which is the content the
 /// session serves and the source a preview request is made of. The non-const overload returns the
 /// mutable store the edit ops write.
@@ -408,7 +429,7 @@ uint32_t publishSessionPreviewAt(Track& track, uint8_t slot, uint32_t revision, 
   // drives the same state to a served window either way, and a request that *was* admitted is still admissible: what it
   // asserts is the state, not which caller asked first.
   const Track::PlaybackViewRequestResult requested = track.requestPreviewWindow(
-      slot, revision, source.data(), source.size(), phase);
+      slot, revision, source.data(), source.size(), phase, phase);
   TEST_ASSERT_TRUE_MESSAGE(requested == Track::PlaybackViewRequestResult::Admitted ||
                                requested == Track::PlaybackViewRequestResult::SuccessorAlreadyPrepared ||
                                requested == Track::PlaybackViewRequestResult::BuildInFlight,
@@ -718,7 +739,8 @@ static void test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stal
   beforeMutationSource = intervalProjection(playbackIntervalAt(track, 0, kContentPhase));
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(track.requestPreviewWindow(
-                                0, first, beforeMutationSource.data(), beforeMutationSource.size(), kContentPhase)),
+                                0, first, beforeMutationSource.data(), beforeMutationSource.size(), kContentPhase,
+                                kContentPhase)),
                             "the rebuild is admitted");
   laneTurn(track, kContentPhase);
 
@@ -751,7 +773,8 @@ static void test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stal
   mutatedSource = intervalProjection(playbackIntervalAt(track, 0, kContentPhase));
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(track.requestPreviewWindow(
-                                0, second, mutatedSource.data(), mutatedSource.size(), kContentPhase)),
+                                0, second, mutatedSource.data(), mutatedSource.size(), kContentPhase,
+                                kContentPhase)),
                             "the new revision is admitted");
   drainLane(track, kContentPhase);
   // The replacement becomes the *ready successor* while the previous window keeps serving; the
@@ -1379,6 +1402,512 @@ static void test_3_15d_a_preview_window_is_never_committed_currency() {
                            "and the preview keeps serving until the committed successor is adopted");
 }
 
+// ==================================================================================================
+// Task 3.15d (slice 2) -- the **native MIDI-emission harness** for the NOTE_EDIT clock edge.
+//
+// The edge has exactly two native seams, and the harness uses those rather than a second copy of the walk:
+//
+//   * **the clock**: `ClockManager::getPlaybackDeadlineClock()`, which `track_harness.inc` answers from
+//     `nativePlaybackDeadlineClock`. A turn publishes `{tick, epoch}` before it runs, and the window routes
+//     require a nonzero epoch.
+//   * **the sink**: `Track::sentPlaybackMidiForTest_` (task 3.7a I4), which `Track::sendMidiEvent` appends to
+//     after its own gates and channel remap. A turn's emitted stream is the rows appended since the baseline.
+//
+// The route a turn took is read back from the frame the edge binds (`LoopPlaybackRuntime::rolling`), which is
+// `Serving` exactly while a window serves the traversal -- so "did the preview serve?" is observable with no
+// production hook. `TrackPlaybackTestAccess` already exposes the slot runtime to this suite.
+// ==================================================================================================
+
+/// One emitted playback note, as the sink recorded it.
+struct EmittedNote {
+  uint32_t tick = 0;
+  uint8_t note = 0;
+  bool on = false;
+};
+
+size_t emissionBaseline(const Track& track) { return track.sentPlaybackMidiCountForTest(); }
+
+std::vector<EmittedNote> emittedNotesSince(const Track& track, size_t baseline) {
+  std::vector<EmittedNote> notes;
+  for (size_t i = baseline; i < track.sentPlaybackMidiCountForTest(); ++i) {
+    const MidiEvent& event = track.sentPlaybackMidiAtForTest(i).event;
+    if (!event.isNoteOn() && !event.isNoteOff()) continue;
+    notes.push_back(EmittedNote{event.tick, event.data.noteData.note, event.isNoteOn()});
+  }
+  return notes;
+}
+
+/// Publish the harness's deadline stamp. The window routes read `ClockManager::getPlaybackDeadlineClock()` on the
+/// clock edge *and* in the session's requester, so the stamp and the current tick move together: a stamp that is not
+/// advanced with the tick makes the requester read the wrong phase (the harness must never do that).
+void publishEmissionClock(uint32_t tick) {
+  clockManager.assignCurrentTickSilently(tick);
+  nativePlaybackDeadlineClock = PlaybackDeadlineClock{static_cast<uint64_t>(tick), 1};
+}
+
+/// One clock-edge turn, in production's order: the deadline stamp is published first, then the entry point
+/// decides the route and emits through `sendMidiEvent`.
+void emitTurn(Track& track, uint32_t tick, uint32_t epoch = 1) {
+  clockManager.assignCurrentTickSilently(tick);
+  nativePlaybackDeadlineClock = PlaybackDeadlineClock{static_cast<uint64_t>(tick), epoch};
+  track.playMidiEvents(tick, true);
+}
+
+/// The `Preview`-origin window the last turn served, or `nullptr` when the merged reader served it.
+const RuntimePlaybackView* servedPreviewWindowForTurn(Track& track, uint8_t slot) {
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, slot);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr) return nullptr;
+  if (runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving) return nullptr;
+  if (runtime->rolling.boundView >= set->views.size()) return nullptr;
+  const RuntimePlaybackView& view = set->views[runtime->rolling.boundView];
+  return view.source.origin == PlaybackWindowOrigin::Preview ? &view : nullptr;
+}
+
+/// The slot's open-note ledger (the owner the seam's closures are discharged through).
+const ActiveNoteLedger& ledgerForSlot(Track& track, uint8_t slot) {
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, slot);
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime, "the slot's playback runtime is admitted");
+  return runtime->ledger;
+}
+
+/// True when the lane holds a complete `Preview` window at `revision` whose coverage contains `phase`, in either
+/// role (served or prepared) -- the cadence's own question, asked the way the requester asks it.
+bool laneHoldsPreviewCovering(Track& track, uint8_t slot, uint32_t revision, uint32_t phase) {
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, slot);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr) return false;
+  const uint8_t roles[2] = {set->lifecycle.current, set->lifecycle.ready};
+  for (uint8_t role : roles) {
+    if (role >= set->views.size()) continue;
+    const RuntimePlaybackView& view = set->views[role];
+    if (!view.complete || view.source.origin != PlaybackWindowOrigin::Preview) continue;
+    if (view.source.playbackRevision != revision) continue;
+    if (view.coverage.contains(phase)) return true;
+  }
+  return false;
+}
+
+/// Commit exactly `events` as one record pass. `commitLongLoop` spaces its notes evenly, which cannot place a note
+/// *across* a window boundary -- the shape this harness is about.
+void commitEmissionLoop(Track& track, uint8_t slot, uint32_t lengthTicks,
+                        const std::vector<MidiEvent>& events) {
+  track.ensureLoopsAllocated();
+  SlotAccess::select(track, slot);
+  Loop& loop = track.getLoop(slot);
+  loop.loopLengthTicks = lengthTicks;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE_MESSAGE(loop.captureActive(), "the slot opens a record pass");
+  for (const MidiEvent& event : events) {
+    TEST_ASSERT_TRUE_MESSAGE(loop.appendCaptureEvent(event), "the pass accepts the harness's event");
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(lengthTicks, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// The transport rolling, clock stamped at `startTick`, sink cleared: the edge's window routes require a nonzero
+/// epoch, and the session's requester reads the phase from the same stamp. A phase of 0 cannot host a preview (its
+/// interval would start at the playhead, so the admission has no lead), which is a real constraint, not a harness one.
+void readyEmissionPlaying(Track& track, uint8_t slot, uint32_t startTick = 500) {
+  publishEmissionClock(startTick);
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot, true));
+  track.clearSentPlaybackMidiForTest();
+}
+
+/// One identified note pair, as the harness's committed content states it.
+void appendIdentifiedNote(std::vector<MidiEvent>& out, uint32_t onTick, uint32_t offTick, uint8_t pitch,
+                          NoteId id) {
+  MidiEvent on = MidiEvent::NoteOn(onTick, kChannel, pitch, 100);
+  on.noteId = id;
+  MidiEvent off = MidiEvent::NoteOff(offTick, kChannel, pitch, 0);
+  off.noteId = id;
+  out.push_back(on);
+  out.push_back(off);
+}
+
+/// Task 3.15d (slice 2) -- **the `LedgerBoundarySummary` semantics, with a crossing note.** A summary is the
+/// ledger's exact open set at capture time, so an empty summary means "no open note" -- never "unconstrained".
+/// This is the clause that forbids reading a preview's empty `ledgerBoundary` as licence to serve over sounding
+/// content, and it is why the preview route's closure obligation is carried by the incoming interval's own
+/// NoteOffs (crossing note), the merged reader's next traversal, and the adoption reconcile (removed identity).
+static void test_3_15d_slice2_the_ledger_boundary_summary_is_exact_about_a_crossing_note() {
+  ActiveNoteLedger ledger;
+  MidiEvent on = MidiEvent::NoteOn(700, kChannel, 60, 100);
+  on.noteId = static_cast<NoteId>(4242);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(kChannel, on));
+  LedgerBoundarySummary crossing;
+  crossing.capture(ledger);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, crossing.count, "a crossing note is open at the boundary");
+  TEST_ASSERT_FALSE_MESSAGE(crossing.overflowed, "one open note is not an overflow");
+  TEST_ASSERT_TRUE_MESSAGE(crossing.matches(ledger), "the summary matches the ledger it was captured from");
+
+  // The Off that closes it lies **beyond** the interval: the ledger closes only when that Off is applied, by
+  // whichever route carries it, and the summary stops matching at that point. Equality, not containment.
+  MidiEvent off = MidiEvent::NoteOff(1900, kChannel, 60, 0);
+  off.noteId = static_cast<NoteId>(4242);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(kChannel, off));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(ledger.openCount()));
+  TEST_ASSERT_FALSE_MESSAGE(crossing.matches(ledger),
+                           "the summary is exact: the crossing note's Off ends the match");
+
+  ActiveNoteLedger openAgain;
+  TEST_ASSERT_TRUE(openAgain.applyPlaybackEvent(kChannel, on));
+  LedgerBoundarySummary empty;
+  TEST_ASSERT_TRUE(empty.matches(ActiveNoteLedger{}));
+  TEST_ASSERT_FALSE_MESSAGE(empty.matches(openAgain),
+                           "an empty summary is the empty ledger, never 'unconstrained'");
+}
+
+/// Task 3.15d (slice 2) -- **S1: the clock edge serves the preview's interval.** Slice 1 composed and published
+/// the preview; the audible route still served the merged reader during NOTE_EDIT, so the preparation never
+/// reached the wire. This is the boundary's RED: at a tick inside the published interval the edge must bind the
+/// `Preview` window, not the merged reader.
+static void test_3_15d_slice2_note_edit_serves_the_preview_interval_at_the_clock_edge() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1200, 60, static_cast<NoteId>(5001));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+
+  editManager.openNoteEditSession(track);
+  TEST_ASSERT_TRUE(editManager.isNoteEditActive());
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+  drainLane(track, kPlayhead);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, identity),
+                           "the session's own open requested and published its preview");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision, identity.playbackRevision,
+                                   "the published window carries the session's revision");
+  TEST_ASSERT_TRUE_MESSAGE(identity.interval.contains(900),
+                           "the published interval holds the harness's note");
+
+  emitTurn(track, kPlayhead);  // the phase-establishing turn; nothing is due at the playhead
+  const size_t baseline = emissionBaseline(track);
+  emitTurn(track, 900);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the clock edge binds the preview window inside its interval");
+  const std::vector<EmittedNote> emitted = emittedNotesSince(track, baseline);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(emitted.size()),
+                                   "the turn emits the interval's one NoteOn");
+  TEST_ASSERT_EQUAL_UINT8(60, emitted[0].note);
+  TEST_ASSERT_TRUE(emitted[0].on);
+}
+
+/// Task 3.15d (slice 2) -- **S2a: the preview->merged seam when the lane is late.** The preview serves the On;
+/// its interval ends inside the crossing note's span, no successor is prepared, so the preview yields and the
+/// merged reader carries the Off. Exactly one On and one Off, in order, and the ledger is left empty: the seam
+/// is a cursor handoff, never a re-send or a drop.
+static void test_3_15d_slice2_the_preview_to_merged_seam_carries_a_crossing_note_once() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1900, 60, static_cast<NoteId>(5101));  // crosses the interval's end
+  appendIdentifiedNote(content, 1100, 1200, 62, static_cast<NoteId>(5102)); // wholly inside it
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  publishFirstPreview(track, 0, kPlayhead);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_TRUE_MESSAGE(identity.interval.contains(1100), "the interval holds the interior note");
+
+  struct Routed {
+    EmittedNote note;
+    bool preview = false;
+  };
+  std::vector<Routed> routed;
+  bool previewServedInside = false;
+  // **No further lane turns**: this fixture models a lane that has not prepared the successor yet, so the
+  // interval's end is a real preview->merged handoff.
+  for (uint32_t tick = kPlayhead; tick <= 2400; tick += 100) {
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, tick);
+    const bool preview = servedPreviewWindowForTurn(track, 0) != nullptr;
+    if (tick >= 500 && tick <= 1400 && preview) previewServedInside = true;
+    for (const EmittedNote& note : emittedNotesSince(track, before)) routed.push_back(Routed{note, preview});
+  }
+  TEST_ASSERT_TRUE_MESSAGE(previewServedInside,
+                           "the preview serves inside its interval (the boundary this fixture is about)");
+  size_t crossingOn = 0, crossingOff = 0, interiorOn = 0, interiorOff = 0;
+  bool crossingOffOnMergedTurn = false;
+  int64_t onOrder = -1, offOrder = -1;
+  for (size_t i = 0; i < routed.size(); ++i) {
+    const EmittedNote& note = routed[i].note;
+    if (note.note == 60 && note.on) { ++crossingOn; onOrder = static_cast<int64_t>(i); }
+    if (note.note == 60 && !note.on) {
+      ++crossingOff;
+      offOrder = static_cast<int64_t>(i);
+      crossingOffOnMergedTurn = !routed[i].preview;
+    }
+    if (note.note == 62 && note.on) ++interiorOn;
+    if (note.note == 62 && !note.on) ++interiorOff;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(crossingOn),
+                                   "the crossing note's On is emitted exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(crossingOff),
+                                   "the crossing note's Off is emitted exactly once, by the route that carries it");
+  TEST_ASSERT_TRUE_MESSAGE(crossingOffOnMergedTurn,
+                           "the crossing Off belongs to the merged reader's turn, past the preview's interval");
+  TEST_ASSERT_TRUE_MESSAGE(onOrder >= 0 && offOrder > onOrder, "the On precedes its Off");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(interiorOn), "the interior On is emitted once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(interiorOff), "the interior Off is emitted once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(ledgerForSlot(track, 0).openCount()),
+                                   "the seam leaves no open obligation");
+}
+
+/// Task 3.15d (slice 2) -- **S2b: the same seam while the lane re-covers the playhead.** The lane interleaves its
+/// deferred turn after every emitted tick, so as soon as the served interval's coverage ends it asks again from the
+/// playhead and the edge adopts the replacement. The crossing note's Off is carried by whichever route holds it, and
+/// the count contract is unchanged: one On, one Off.
+static void test_3_15d_slice2_the_lane_re_covers_the_playhead_across_intervals() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1900, 60, static_cast<NoteId>(5111));
+  appendIdentifiedNote(content, 3100, 3200, 64, static_cast<NoteId>(5112));  // the second interval's content
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+
+  size_t ons = 0, offs = 0;
+  bool servedAt3100 = false;
+  for (uint32_t tick = kPlayhead; tick <= 3600; tick += 100) {
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, tick);
+    const bool preview = servedPreviewWindowForTurn(track, 0) != nullptr;
+    if (tick == 3100) servedAt3100 = preview;
+    for (const EmittedNote& note : emittedNotesSince(track, before)) {
+      if (note.note == 60 && note.on) ++ons;
+      if (note.note == 60 && !note.on) ++offs;
+    }
+    serviceLaneVisit(track, tick);  // production's owner visit interleaves with the MIDI interval
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(ons), "the crossing On sounds once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offs), "the crossing Off sounds once");
+  TEST_ASSERT_TRUE_MESSAGE(servedAt3100, "the re-covered interval serves the next stretch, not a gap");
+  TEST_ASSERT_TRUE_MESSAGE(laneHoldsPreviewCovering(track, 0, revision, 3600),
+                           "the lane holds the playhead's interval at the end of the traversal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(ledgerForSlot(track, 0).openCount()),
+                                   "the re-covering lane leaves no open obligation");
+}
+
+/// Task 3.15d (slice 2) -- **S3: adoption closes an identity the session removed.** The merged reader emitted
+/// the note's On before the interval; the session then deleted that identity, so the incoming interval does not
+/// carry its Off. Adoption is where the preview replaced the merged reader's own rebuild, so adoption is where
+/// the obligation is discharged.
+static void test_3_15d_slice2_adoption_closes_the_identity_the_session_removed() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 600, 1400, 60, static_cast<NoteId>(5201));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+
+  // The session opens, so the tick is the **merged** reader's: the first preview is only admitted at the open
+  // (its fill is a deferred grain), and the merged fallback serves until the lane publishes.
+  editManager.openNoteEditSession(track);
+  emitTurn(track, 600);
+  TEST_ASSERT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                           "the merged reader sounds the note before the preview is filled");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(ledgerForSlot(track, 0).openCount()),
+                                   "the sounding note is an open obligation");
+
+  NoteId editedId = kInvalidNoteId;
+  for (const auto& row : editManager.noteEditCurrentState().rows()) {
+    if (row.second.committedSpan.pitch == 60 && row.second.committedSpan.startTick == 600) {
+      editedId = row.first;
+    }
+  }
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(kInvalidNoteId, editedId,
+                                "the session's current state holds the committed identity");
+  editManager.noteEditCurrentStateMut().markRowDeleted(editedId);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  const uint32_t revision = flushSessionPreviewRevision(track);
+  drainLane(track, 600);
+  TEST_ASSERT_TRUE_MESSAGE(laneHoldsPreviewCovering(track, 0, revision, 600),
+                           "the post-delete interval is prepared at the session's new revision");
+
+  MidiSendCapture::reset();
+  const size_t before = emissionBaseline(track);
+  emitTurn(track, 700);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the interval's adoption is the turn's route");
+  // The incoming interval holds no content for the removed identity, so the Track sink stays empty: the closure is
+  // emitted through the handler boundary, which is where every closure has gone since `closePlannedHandoffClosures`.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "adoption closes the removed identity: exactly one NoteOff, no re-send");
+  const MidiEvent closure = MidiSendCapture::at(0);
+  TEST_ASSERT_FALSE_MESSAGE(closure.isNoteOn(), "the closure is a NoteOff, never a re-sent On");
+  TEST_ASSERT_TRUE(closure.isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(60, closure.data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(700, closure.tick, "the closure is stamped with the adopting tick");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(before), static_cast<int>(emissionBaseline(track)),
+                            "the Track sink carries no playback note for this turn");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(ledgerForSlot(track, 0).openCount()),
+                                   "the closure discharges the obligation");
+}
+
+/// Task 3.15d (slice 2) -- **S4: a superseded revision never serves.** The lane's retention keeps an old window
+/// readable after the session advances; the edge's currency is the session's revision, so the old window must
+/// hand the turn to the merged reader, which carries the new content (here the only route that has the mutation).
+static void test_3_15d_slice2_a_superseded_revision_never_serves() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1200, 60, static_cast<NoteId>(5301));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  WindowIdentity served{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+  TEST_ASSERT_TRUE(served.interval.contains(900));
+
+  // The session advances without a drain: the served window is still the old revision, and the mutation's note
+  // (pitch 66 at 1100) exists only in the post-mutation content.
+  const uint32_t next = mutateSessionAndFlush(track, 1100, 66);
+  TEST_ASSERT_GREATER_THAN_UINT32(served.playbackRevision, next);
+
+  emitTurn(track, 600);
+  const size_t before = emissionBaseline(track);
+  emitTurn(track, 1200);
+  TEST_ASSERT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                           "a window whose revision the session has left never serves the edge");
+  const std::vector<EmittedNote> emitted = emittedNotesSince(track, before);
+  bool heardMutation = false;
+  for (const EmittedNote& note : emitted) {
+    if (note.note == 66 && note.on) heardMutation = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(heardMutation,
+                           "the merged reader carries the session's new content while the preview catches up");
+}
+
+/// Task 3.15d (slice 2) -- **S6: the session exit yields the preview frame.** The seam binds a `Preview` view only
+/// while the session's revision is current, so the exit has to end the frame: the committed reader rejects a bound
+/// view that is not a published `Committed` one, and a rejected frame is `Blocked` -- a state that never re-requests,
+/// so the slot's windowed lane would stay dark for the rest of the play run. The served **window** stays readable
+/// (the handoff is still a boundary, not a gap); only the frame that claimed it yields.
+static void test_3_15d_slice2_the_session_exit_yields_the_preview_frame() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1300, 60, static_cast<NoteId>(5501));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  emitTurn(track, kPlayhead);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the session's preview is serving at the clock edge");
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                            static_cast<int>(runtime->rolling.phase), "the edge bound the preview frame");
+
+  editManager.closeNoteEditSession(track);
+  TEST_ASSERT_FALSE(editManager.isNoteEditActive());
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowHandoffOwedForSlot(0), "the exit owes the committed handoff");
+  TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0),
+                           "the exit leaves the served preview window readable");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving,
+                           "and ends the frame that claimed it, instead of leaving it bound to a stale source");
+
+  // One production MIDI turn (the committed reader's own frame handling) and one committed owner visit: the lane is
+  // the committed requester's again, not a rejected frame that can never ask.
+  emitTurn(track, kPlayhead + 100);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Blocked,
+                           "the committed reader is not left blocked by the exit");
+  const Track::RollingOutcome outcome = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE_MESSAGE(outcome != Track::RollingOutcome::Rejected,
+                           "the committed requester owns the lane again and may ask for its successor");
+}
+
+/// Task 3.15d (slice 2) -- **S7: a slot switch yields the departing slot's preview by name.** The session continues
+/// on the incoming slot, so no handoff is owed -- but the departing slot is never visited by the session's requester
+/// again, so its frame has to yield at the depart hook; otherwise its layered reader meets a `Preview`-bound frame and
+/// turns `Blocked`.
+static void test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1300, 60, static_cast<NoteId>(5601));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  emitTurn(track, kPlayhead);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                            static_cast<int>(runtime->rolling.phase),
+                            "the departing slot's preview is serving before the switch");
+  TEST_ASSERT_TRUE(track.previewWindowSourceActiveForSlot(0));
+  editManager.beforeSelectedSlotChange(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                            "the departing slot's preview source yields");
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                            "a slot switch is not a session exit: nothing becomes owed");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving,
+                           "and the departing slot's frame yields with it");
+}
+
+/// Task 3.15d (slice 2) -- **S5: the lane re-covers the playhead when its interval ends, and only then.** The served
+/// interval is the playhead's own (slice 1's geometry), so it always ends one bar *behind* the playhead. The lane
+/// therefore asks again **from the playhead**, never from a position one boundary ahead: that position's handoff lead
+/// is one bar, and the declared service envelope requires `leadTicks` plus `grains x (denied + 1) x advance`
+/// (`canCompleteBeforeHandoff`), so a cadence placed there is refused by name -- pinned at the end of this fixture,
+/// because the refusal is what selects the shape above.
+static void test_3_15d_slice2_the_lane_re_covers_the_playhead_when_its_interval_ends() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1200, 60, static_cast<NoteId>(5401));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);  // a mid-bar playhead: the served end is mid-bar too
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+  drainLane(track, kPlayhead);
+  WindowIdentity first{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, first));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision, first.playbackRevision, "the first request is the session's");
+  TEST_ASSERT_TRUE_MESSAGE(first.interval.contains(kPlayhead),
+                           "the session's first request reads the playhead's own interval");
+  const uint32_t pastEnd = (first.interval.startPhase + first.interval.lengthTicks) % kLongLoopTicks;
+  TEST_ASSERT_FALSE_MESSAGE(first.interval.contains(pastEnd),
+                            "the first interval's coverage has ended one bar behind the playhead");
+  TEST_ASSERT_FALSE_MESSAGE(laneHoldsPreviewCovering(track, 0, revision, pastEnd),
+                            "nothing has been prepared for the phase past the served coverage");
+  // While the interval still contains the playhead the lane owes nothing: a second request would only churn it.
+  for (size_t visit = 0; visit < 4; ++visit) serviceLaneVisit(track, kPlayhead);
+  TEST_ASSERT_FALSE_MESSAGE(laneHoldsPreviewCovering(track, 0, revision, pastEnd),
+                            "no successor is requested while the served interval still contains the playhead");
+  // The production owner visit at the phase past the coverage re-requests, from the playhead, and the lane serves it.
+  publishEmissionClock(pastEnd);
+  for (size_t visit = 0; visit < 4; ++visit) serviceLaneVisit(track, pastEnd);
+  TEST_ASSERT_TRUE_MESSAGE(laneHoldsPreviewCovering(track, 0, revision, pastEnd),
+                           "the lane re-covers the playhead rather than leaving the preview dark");
+  emitTurn(track, pastEnd);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the clock edge adopts the re-covered interval and serves it");
+
+  // The measured alternative, kept as the reason the cadence above is positioned where it is: a successor whose
+  // interval **starts one bar ahead** declares a one-bar handoff lead, and the declared envelope refuses it by name.
+  const uint32_t cadencePhase = (pastEnd + 2u * Config::TICKS_PER_BAR) % kLongLoopTicks;
+  MidiEventVec& source = previewSourceScratch();
+  source = intervalProjection(playbackIntervalAt(track, 0, cadencePhase));
+  const Track::PlaybackViewRequestResult ahead = track.requestPreviewWindow(
+      0, revision, source.data(), source.size(), pastEnd, cadencePhase);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+                            static_cast<int>(ahead),
+                            "a successor positioned one boundary ahead is refused by the declared lead");
+  // The refusal is retained as a demand by the admission's own contract; this fixture is not about that retention,
+  // so it clears it rather than leaving a promise behind for a later fixture's lane.
+  TrackPlaybackTestAccess::runtime(track, 0)->clearViewPendingRequest();
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -1403,5 +1932,17 @@ int main(int, char**) {
   RUN_TEST(test_3_15d_a_short_loop_requests_its_whole_loop_interval);
   RUN_TEST(test_3_15d_the_interval_preview_never_mixes_revisions);
   RUN_TEST(test_3_15d_a_preview_window_is_never_committed_currency);
+  // Task 3.15d (slice 2): the native MIDI-emission harness -- the ledger boundary's semantics with a crossing note,
+  // the clock edge's adoption of the preview interval, both halves of the merged/preview seam, the adoption closure
+  // for a removed identity, the supersession asymmetry, and the per-boundary cadence.
+  RUN_TEST(test_3_15d_slice2_the_ledger_boundary_summary_is_exact_about_a_crossing_note);
+  RUN_TEST(test_3_15d_slice2_note_edit_serves_the_preview_interval_at_the_clock_edge);
+  RUN_TEST(test_3_15d_slice2_the_preview_to_merged_seam_carries_a_crossing_note_once);
+  RUN_TEST(test_3_15d_slice2_the_lane_re_covers_the_playhead_across_intervals);
+  RUN_TEST(test_3_15d_slice2_adoption_closes_the_identity_the_session_removed);
+  RUN_TEST(test_3_15d_slice2_a_superseded_revision_never_serves);
+  RUN_TEST(test_3_15d_slice2_the_session_exit_yields_the_preview_frame);
+  RUN_TEST(test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview);
+  RUN_TEST(test_3_15d_slice2_the_lane_re_covers_the_playhead_when_its_interval_ends);
   return UNITY_END();
 }

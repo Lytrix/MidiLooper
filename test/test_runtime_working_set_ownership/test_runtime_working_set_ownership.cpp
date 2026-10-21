@@ -6052,7 +6052,7 @@ void test_preview_window_is_a_distinct_source_and_never_committed_currency() {
   constexpr uint32_t kPlayhead = 500;
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision, preview.data(),
-                                                                preview.size(), kPlayhead)));
+                                                                preview.size(), kPlayhead, kPlayhead)));
   for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
     (void)track.stepPlaybackViewMaintenance();
   }
@@ -6082,7 +6082,8 @@ void test_preview_window_is_a_distinct_source_and_never_committed_currency() {
   // ... and an empty composition is a **complete** preview of zero events (task 3.15d): the interval really holds
   // nothing, so the lane publishes it at the new revision instead of leaving the previous preview serving as current.
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                    static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision + 1, nullptr, 0, kPlayhead)));
+                    static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision + 1, nullptr, 0, kPlayhead,
+                                                                kPlayhead)));
   for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
     (void)track.stepPlaybackViewMaintenance();
   }
@@ -6118,7 +6119,8 @@ void test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committe
                         0, Track::PreviewWindowCancelReason::SourceMutated)));
   // A preview window is published and served, then the session exits.
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                    static_cast<int>(track.requestPreviewWindow(0, 11, preview.data(), preview.size(), kPlayhead)));
+                    static_cast<int>(track.requestPreviewWindow(0, 11, preview.data(), preview.size(), kPlayhead,
+                                                                kPlayhead)));
   for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
     (void)track.stepPlaybackViewMaintenance();
   }
@@ -6173,7 +6175,8 @@ void test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committe
   otherLoop.loopLengthTicks = kWindowOwnerLoopTicks;
   TEST_ASSERT_TRUE(other.prewarmPlaybackForSlot(0, true));
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                    static_cast<int>(other.requestPreviewWindow(0, 21, preview.data(), preview.size(), kPlayhead)));
+                    static_cast<int>(other.requestPreviewWindow(0, 21, preview.data(), preview.size(), kPlayhead,
+                                                                kPlayhead)));
   TEST_ASSERT_TRUE_MESSAGE(other.hasPendingPlaybackViewMaintenance(),
                            "the preview build is in flight when the source mutates");
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::BuildCancelled),
@@ -8432,7 +8435,7 @@ void test_cancelling_withheld_preview_unblocks_next_admission() {
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
   MidiEvent events[] = {MidiEvent::NoteOn(10, 1, 60, 100), MidiEvent::NoteOff(20, 1, 60, 0)};
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-      static_cast<int>(track.requestPreviewWindow(0, 1, events, 2, 1, {0,1})));
+      static_cast<int>(track.requestPreviewWindow(0, 1, events, 2, 1, 1, {0,1})));
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
   nativePlaybackDeadlineClock = {1,2};
   PlaybackPathRows::reset();
@@ -8447,7 +8450,7 @@ void test_cancelling_withheld_preview_unblocks_next_admission() {
   TEST_ASSERT_FALSE(runtime->previewSourceActive);
   TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-      static_cast<int>(track.requestPreviewWindow(0, 2, events, 2, 1, {2,2})));
+      static_cast<int>(track.requestPreviewWindow(0, 2, events, 2, 1, 1, {2,2})));
 }
 
 void test_retained_completion_cancellation_clears_only_candidate_obligation() {
@@ -14594,6 +14597,7 @@ void test_3_7a_i3_the_capture_admission_counts_committed_windows_only() {
   }
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPreviewWindow(0, 7, previewSource, previewCount,
+                                                                2 * Config::TICKS_PER_BAR,
                                                                 2 * Config::TICKS_PER_BAR)));
   for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
     (void)track.stepPlaybackViewMaintenance();

@@ -663,6 +663,14 @@ public:
       uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
       PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
       const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut);
+  /// Task 3.15d (slice 2): the NOTE_EDIT preview seam -- true when a current `Preview` window (adopted, or the one
+  /// already served) covers the playhead and is the turn's route. Out of line and FLASH-resident so the ITCM resolver
+  /// only pays one call. Returns false for every state that is not a servable session preview, which is how the merged
+  /// reader stays the compatibility fallback.
+  bool resolveNoteEditPreviewSourceForTurn(uint8_t slotIndex, const Loop& loop, uint32_t currentTick,
+                                          PlaybackViewSourceIdentity& sourceOut,
+                                          const FixedPlaybackBridgeStorage*& bridgeOut,
+                                          const RuntimePlaybackView*& viewOut);
 #endif
 #if PLAYBACK_WINDOW_ROLLING_ENABLED && (defined(PIO_UNIT_TEST_NATIVE) || \
     (defined(SESSION_CAPTURE) && PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
@@ -1025,9 +1033,15 @@ public:
   /// `previewRevision` is the lane's **freeze token** and its currency, never the loop's committed revision. The
   /// published window's identity carries `origin == Preview`, so a consumer that requires committed currency refuses
   /// it without inspecting anything else.
+  /// Task 3.15d: the two phases the admission keeps apart. `playheadPhase` is where the transport is **now** and is
+  /// what the lead is measured from; `intervalPhase` is the phase whose interval the caller wants composed. They are
+  /// the same value for the session's first request (the interval the committed route is reading), and they differ for
+  /// a cadence request positioned ahead of the playhead. Passing the interval's own phase as the playhead would
+  /// declare `loopLength - halfWindow` of lead instead of the real distance and admit work that cannot land.
   PlaybackViewRequestResult requestPreviewWindow(uint8_t slotIndex, uint32_t previewRevision,
                                                  const MidiEvent* source, size_t sourceCount,
-                                                 uint32_t currentPhase, PlaybackDeadlineClock clock = {});
+                                                 uint32_t playheadPhase, uint32_t intervalPhase,
+                                                 PlaybackDeadlineClock clock = {});
   /// Task 3.15d: compose the preview's **interval source** -- the committed interval content with the session's
   /// identity-qualified delta applied when a current published root exists, or the session's own effective projection
   /// within the interval when the session rematerialized (no current root). `out` is the caller's **resident** scratch:

@@ -159,6 +159,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::onTrackChanged(Track& newTrack) {
 
 EDIT_MANAGER_IMPL_MEM void EditManager::beforeSelectedSlotChange(Track& track) {
     cancelCurrentRootNoteEditEntry();
+    // Task 3.15d (slice 2): the slot that is ceasing to be the focused one has no live preview source any more, and
+    // the session continues on the incoming slot. The cancel is the **departing** slot's (this hook runs before the
+    // active index moves), and it is not a session exit: nothing becomes owed. Without it the departing slot keeps a
+    // `Preview` frame its edge never revisits, which the layered reader rejects into `Blocked`.
+    (void)track.cancelPreviewWindowForSlot(
+        track.getActiveLoopIndex(), Track::PreviewWindowCancelReason::SelectedTrackChanged);
     commitEditSessionOnDepart(track);
 }
 

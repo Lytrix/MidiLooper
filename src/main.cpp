@@ -485,6 +485,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       // Deadlines outlive worker eligibility (completed candidates may await revalidation).
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
       (void)trackManager.getTrack(i).serviceRollingPlaybackWindow(windowClock);
+      // Task 3.15d (slice 2): the **session lane's** cadence, on the same unconditional per-track visit as the
+      // committed requester above -- the coverage question is cheap and idempotent (it returns as soon as a window at
+      // the session's revision still contains the playhead), and running it here rather than only while a build is
+      // pending is what lets the lane re-cover the playhead before the served interval ends. A track without a
+      // NOTE_EDIT session returns at once.
+      trackManager.getTrack(i).servicePreviewWindowForNoteEditSession();
 #endif
       trackManager.getTrack(i).serviceAdmittedDeadlineMisses(windowClock);
       offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(windowPhase, windowClock);

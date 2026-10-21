@@ -1,7 +1,22 @@
 # 3.15d slice 2 — clock-edge `Preview` adoption during NOTE_EDIT (contract draft)
 
-**Status: draft for owner decision. This is not an authorization, not a G2 packet and not evidence.** No production
-line, fixture or budget is changed by this file. Slice 1 is landed
+**Status: draft for owner decision — SUPERSEDED by [`EXECUTION-PACKET.md`](EXECUTION-PACKET.md) and
+[`EXECUTION.md`](EXECUTION.md) (slice 2 is implemented and verified native-side).** Two of its proposals did not
+survive contact with the harness and the budget: adoption is **not** restricted to a window's own `coverage.startPhase`
+(the session's first publication already covers the playhead, and a covering current role serves as-is), and the cadence
+is "keep a successor that reaches two bars past the playhead", not "request one boundary ahead of the playhead". Hazard 2
+is answered by fixture (`LedgerBoundarySummary` is exact over the live ledger; a served view has no ledger admission
+gate), hazard 1 by the crossing predicate plus the merged rebuild's reanchor (a mutation proves the yield-time cursor
+reset is *not* observable), hazard 3 by the emission harness in
+`test/test_windowed_preview_integration`, and hazard 4 by the ITCM finding recorded in the packet.
+**A third proposal did not survive either, and this is the one to read first:** the "successor that reaches two bars
+past the playhead" cadence is **inadmissible** under the declared service envelope. Its true handoff lead from the
+playhead is one bar, while `CoverageServiceContract::canCompleteBeforeHandoff` requires `leadTicks` plus
+`grains × (denied + 1) × advance` (2 304 ticks for a three-grain window). The draft's cadence was only admitted because
+`requestPreviewWindow` handed the interval's own centre in as the admission's `currentPhase`; with the playhead passed
+honestly the request is refused by name (`CannotCompleteBeforeHandoff`). The landed lane therefore **re-covers from the
+playhead** once the served coverage ends — see the packet's "successor-ahead cadence was withdrawn — measured". Kept as the decision
+trail; the packet is the contract. No production line, fixture or budget is changed by this file. Slice 1 is landed
 ([`../2026-10-21-s315d-preview-interval/EXECUTION.md`](../2026-10-21-s315d-preview-interval/EXECUTION.md)); slice 2 is
 the behaviour change named in its slice map and remains undeclared in `CURRENT_WORK.md`.
 
