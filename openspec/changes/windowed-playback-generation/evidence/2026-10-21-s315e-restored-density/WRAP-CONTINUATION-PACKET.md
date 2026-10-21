@@ -46,6 +46,31 @@ content end (serve the tail from the new pass, in order but late by ≤ one turn
 the tail is staged before it is walked (no lateness at all). The measurement above is consistent with both; the RED/GREEN
 cases below discriminate them.
 
+## 1a. The lateness measurement that decides A vs B (2026-10-21)
+
+Read-only, before any change. At the wrap turn of the short dense shape (`t = 1 536`, 2-bar loop):
+
+| Reading | Value |
+|---|---|
+| phases of the 63 stranded events | **1 473 … 1 535** |
+| the wrap turn's own walk window (`prevTickInLoop` → loop end) | **1 472 … 1 536** |
+| emitted before that turn | 2 437 |
+
+**The stranded tail is entirely inside the wrap turn's own permitted window.** There is no post-wrap catch-up to justify:
+the events are due *in the very turn* that fires the boundary, and that turn emits nothing for them. So the choice is not
+"A (late tail) vs B (staged ahead)" but:
+
+- **A′ — defer the re-base past that turn's emission.** The boundary is judged (admission) before selection as today, but
+  the *re-base* must take effect only after the wrap turn has consumed its own window. The tail is then served in-window, on
+  time, exactly once, with no new state, no rate change and no deeper ring — the defect is the ordering of the boundary
+  against the turn that owns those events.
+- **B** would only be justified if the tail could *not* be served inside the wrap turn's own window. It can, so B is not
+  required by this measurement.
+
+**Consequence for the acceptance test the owner set:** the "one owner turn late" clause is not the bar to clear — the bar is
+that the tail is emitted **in the wrap turn itself**, i.e. zero lateness. A′ must prove that, plus order before any phase-0
+event, continuous ledger, and no accumulation across wraps.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
@@ -83,8 +108,8 @@ it must be measured against the dense long control (which must not move).
 walk (the `emitting` re-arm already exists for the *next* pass's head; this extends it to *this* pass's tail). No lateness,
 but it changes the producer's per-turn budget and the ring's occupancy, so it needs the cost proof first.
 
-**Rule for choosing:** prefer **A** if it yields `2 500/2 500` element-wise *and* the measured lateness is bounded by the
-existing permitted traversal rule; otherwise **B**. **Not allowed without its own measurement:** increasing ring depth
+**Rule for choosing (refined by §1a):** **A′** is the candidate — the tail is due inside the wrap turn's own window, so
+there is no lateness to permit. **B** only if A′ cannot be made to serve the tail in that turn. **Not allowed without its own measurement:** increasing ring depth
 (a larger ring would hide the 2 500 case and leave the lifecycle wrong), replaying the pass from tick 0, or refusing the
 delivery (measured: 0/2 500).
 
