@@ -1185,7 +1185,7 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   `hasRealtimeDeferredIdleWork()`; the storage boundary offered on every turn — over a window holding **a blocked holder** (a demand
   retained in an earlier clock epoch), **two real owed window builds**, a **real accepted overdub stop's finalization** and its
   **sealed capture chunks** as a real persistence obligation. Measured: 403 turns / 57 rotations; 57 lane opportunities; 14 lane grains
-  (two windows × 7); the finalization advanced 29 times with a worst gap of **7 turns — one rotation, tight against the bound**;
+  across the two windows; the finalization advanced 29 times with a worst gap of **7 turns — one rotation, tight against the bound**;
   persistence worked on 268 turns with **0 owed-but-unserved** in either admission class (sealed chunks on any owner turn, save/revision
   on the persistence owner's own turn) and completed; the blocked holder was **offered on all 57 opportunities and served 0**; every
   owner kept exactly one turn per rotation. *Red proofs* (production mutations, restored byte-identically): ignoring `canProgress` in

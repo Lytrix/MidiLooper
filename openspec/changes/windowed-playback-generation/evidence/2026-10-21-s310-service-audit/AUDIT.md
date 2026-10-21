@@ -155,8 +155,8 @@ suite cannot link `processDeferredIdleMaintenance`: it pulls the storage closure
 The window carries, simultaneously: track 1 **blocked** (a committed demand retained in an earlier clock epoch — the
 obligation survives, only its position is void); tracks 2 and 3 owing **real admitted window builds**; track 0 the
 **selected, playing** track with a **real accepted overdub stop** in flight, whose sealed capture chunks are the
-persistence obligation. Measured: **403 turns / 57 rotations**, 57 lane opportunities, **14** lane grains served (two
-windows, 7 grains each), the finalization advanced **29** times with a worst gap of **7 turns** (one rotation — tight
+persistence obligation. Measured: **403 turns / 57 rotations**, 57 lane opportunities, **14** lane grains served across the two
+windows, the finalization advanced **29** times with a worst gap of **7 turns** (one rotation — tight
 against the declared bound), persistence did work on **268** turns with **0** owed-but-unserved turns in either admission
 class, the blocked holder was **offered on all 57** lane opportunities and served **0**, and both windows, the
 finalization and the persistence work completed. Every owner kept exactly one turn per rotation.
