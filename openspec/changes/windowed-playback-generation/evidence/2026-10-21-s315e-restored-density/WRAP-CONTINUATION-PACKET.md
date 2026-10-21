@@ -186,6 +186,39 @@ advances per pass.
 3. Only then decide the boundary ordering (same-turn-end application vs next-turn application) and re-run the long control
    first, requiring 2 500 unchanged.
 
+## 1f. Producer re-arm × adapter walk — the first false transition (2026-10-21)
+
+Static trace of `stepPagedPlaybackForSlot` against the boundary probe's tuples.
+
+**The re-arm's only writer.** `notePassContent` has exactly one call site
+(`TrackPlaybackWindowBuild.cpp`, the producer's `sourceComplete()` branch), and it is reached only when:
+
+1. the ring has a free page — `emitting && pagesPublished() + 1 >= kWindowPageCount` returns `ProducerWaiting` *before*
+   producing anything (the "one page free" rule that exists to hand the next pass's head over);
+2. `pagedWindow.produce(...)` returns anything but `RingFull`/`StaleRevision`;
+3. `pagedWindow.sourceComplete()` — i.e. **the whole interval has been produced**.
+
+Then, in that order: `rearmForNextPass()`, `notePassContent(producedOrdinal())`.
+
+**Reconciled with the measured tuples** (boundary 1: `consumed 2 437`, `content 2 500`, `published 2 628`):
+
+- pass 1 produced 2 500 events; `sourceComplete()` fired once; `notePassContent(2 500)`; the re-arm then produced the next
+  pass's head, taking `publishedOrdinal` to 2 628 (2 500 + 128 = one page). ✔ matches the tuple.
+- at the boundary the adapter's own bound is `servable = min(published 2 628, content 2 500) = 2 500`, so the size it offers is
+  `2 500 − 2 437 = **63**` — **the adapter is asked for the tail and does offer it.**
+- the walk consumed **0** of those 63 (`consumedOrdinal` stays 2 437 at boundaries 2 and 3), so the pages stay published; the
+  "one page free" rule then refuses production (`pagesPublished() + 1 >= kWindowPageCount`), pass 2 can never reach
+  `sourceComplete()`, and `notePassContent` is **never called again** — which is exactly why `passContentOrdinal` stays 2 500
+  for every later boundary.
+
+**First false transition, named:** not the re-arm's value (it is correct: 2 500) and not the adapter's offer (63 is
+correct). It is the **walk dropping the 63 offered events after the index reset** — the tail is offered with phases 1 473…1 535
+while the walk's window after the reset no longer contains them. The stranded tail then blocks the producer through the
+"one page free" rule, and the stale content end is a *downstream symptom*, not the cause.
+
+So the ordering question is now justified — but its target is precise: the **walk's tail consumption across the index reset**,
+not `notePassContent` and not the base arithmetic.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
