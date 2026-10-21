@@ -83,3 +83,20 @@ fixture now pins the correct pairing: **`selectPlaybackHolder` within a holder**
 The driven version — holders that owe **window grains**, a pending capture finalization and a pending persistence in the same window,
 asserting completion bounds through the production service entry rather than through the selection functions. That is the half the
 scope declaration named, and the present fixture is its pure-function foundation.
+
+## The driven half — first attempt measured, withdrawn (2026-10-21)
+
+A driven variant was built: two tracks each owing a window grain (`prepareOwingWindowHolder`, 32-bar loop), the production
+selection asked every turn, the chosen track stepped. Two readings, both useful:
+
+| Attempt | Reading |
+|---|---|
+| 12-bar loop, bars 25–27 | the helper's own root publish refuses (a helper-level assertion, not the scheduler) |
+| 32-bar loop | rotation stepped one track **3** times and the other **1** — because a track's **offer stops being eligible** as soon as its grain completes |
+
+So the driven bound is not `count` turns flat: it is `count` turns **per still-owing holder**, and the offer's eligibility is the
+state that moves. The pure fixture states the bound where it is exact (a fixed holder set); the driven fixture needs the offers'
+lifecycle modelled — which is the real content of 3.10's "progress bound for **every admitted holder**".
+
+Fixture withdrawn rather than left red; the measurement is recorded so the next attempt starts from the eligibility transition
+rather than from the turn count.
