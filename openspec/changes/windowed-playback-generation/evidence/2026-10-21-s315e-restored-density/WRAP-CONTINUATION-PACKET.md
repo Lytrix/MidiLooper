@@ -219,6 +219,33 @@ while the walk's window after the reset no longer contains them. The stranded ta
 So the ordering question is now justified — but its target is precise: the **walk's tail consumption across the index reset**,
 not `notePassContent` and not the base arithmetic.
 
+## 1g. The reset ordering — RED target named (2026-10-21)
+
+The wrap turn's own code answers it. On `wrappedBackward` the hot path builds **one** explicit tail frame for the *bridge*
+stream — `PlaybackTickFrame tail{&playbackContext, loopLengthTicks − 1, loop.lastTickInLoop, false}`, with the comment
+"Consume the old cycle's remaining due events before rewinding either physical cursor" — and then rewinds
+(`loop.nextEventIndex = 0`, `projectionCycleStartTick` advance) and runs the turn's normal frame
+`{tickInLoop = 0, prevTickInLoop = 1 472, atLoopStart}`.
+
+**There is no equivalent tail frame for the paged stream.** So the walk's window for the wrap turn is the *post-reset*
+window `[0, 0]`, not `[1 472, 1 536)`: the 63 events the adapter offers (ordinals 2 437…2 499, phases 1 473…1 535) are
+outside it and are never consumed. That is exactly the measured signature — adapter offers 63, `consumedOrdinal` does not
+move, the pages stay published, the producer is blocked, `passContentOrdinal` never advances.
+
+**RED target (exact, and no other):** *the wrap rewind must advance the paged stream through the old cycle's remaining due
+events before the index reset takes effect, the way the bridge already does.* Nothing else in this packet needs to move — not
+`passBaseOrdinal`, not the producer's re-arm, not page depth, not admission. The asymmetry is the defect: the bridge gets a
+tail frame, the paged delivery does not.
+
+**What the fix must not do:** emit the tail *after* the new cycle starts (that is the relocation attempt 3, which would put
+phases 1 473…1 535 into a phase-0 window), or leave the tail to the next turn (the post-reset window excludes it by
+construction). The tail must be consumed inside the wrap turn, before the rewind — the same place and the same mechanism the
+bridge uses.
+
+**RED/GREEN for the implementation slice:** the gated oracle's whole-loop case is already the RED (2 437 of 2 500); the
+control must stay at 2 500, the tail must emit in the wrap turn at phases 1 473…1 535 before any phase-0 event, the ledger
+must stay continuous, and multi-wrap must not replay. Then the gate promotion.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
