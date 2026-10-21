@@ -150,3 +150,32 @@ grain-cost envelope and the 6.3/6.5 device/service legs.
 | the fixture 3.10 names | **landed** in both halves |
 | derived envelope | turn bound stated (`count` per still-owing holder); grain-cost derivation owed |
 | device/service legs | 6.3 / 6.5 |
+
+## The envelope, derived from the contract's own terms (2026-10-21)
+
+3.10 asks for the supported envelope to be *derived* from grain costs and the worst permitted service gap, with **no invented
+microsecond budget**. The terms are all declared in `CoverageServiceContract` (`include/RuntimePlaybackViewBuild.h`):
+`requiredFillGrains`, `requiredOrderGrains`, `requiredPromotionGrains`, `maximumConsecutiveDeniedTurns`,
+`maximumPhaseAdvancePerTurn`, `leadTicks`.
+
+**The derivation.** A holder needs `G = fill + order + promotion` grains to complete one window. With `H` holders served
+round-robin, a holder's own turns are `H` turns apart *by construction* (the rotation bound the fixtures now pin), so between two
+of its turns the playhead advances at most `H × maximumPhaseAdvancePerTurn`. Completing `G` grains therefore needs at most
+`(G × H + (H − 1)) × maximumPhaseAdvancePerTurn` ticks of lead, and that must fit the holder's available lead:
+
+```
+(G x H + (H - 1)) x maximumPhaseAdvancePerTurn  <=  leadTicks  <=  (handoff - margin)
+```
+
+**Consistency with the admission the code already enforces.** The same statement appears in the admission's own arithmetic
+(`grains × 8 ≤ (available − 768) / 64`, i.e. `grains ≤ (available − leadTicks) / 512`): the envelope is that inequality with
+`available = (G × H + (H − 1)) × maximumPhaseAdvancePerTurn + leadTicks` solved for the permitted grain count. No new constant, no new
+budget, and nothing measured in microseconds.
+
+**What is derived vs. what is measured.** The *turn* bound (`count` per still-owing holder) is measured and pinned by
+`test_3_10_each_still_owing_track_is_served_within_count_eligible_turns`. The *tick* form above follows from the declared contract
+terms; instantiating it numerically requires the live contract values, which are deliberately **not** copied here — a figure that
+drifts from the source would be worse than no figure.
+
+**Still owed:** the driven completion bound (real finalization/persistence work in the same window), and the device/service legs
+(6.3 / 6.5). The envelope above is the form those bounds will be checked against.
