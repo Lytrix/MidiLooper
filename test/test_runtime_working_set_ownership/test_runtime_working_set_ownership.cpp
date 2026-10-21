@@ -6066,7 +6066,11 @@ void test_preview_window_is_a_distinct_source_and_never_committed_currency() {
                                    "preview currency is the session's preview revision");
   TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
   TEST_ASSERT_TRUE_MESSAGE(loop.loopLengthTicks == previewWindow.interval.loopLengthTicks,
-                           "a preview covers the whole loop: a session is not an interval");
+                           "the preview's interval is stated against the loop it reads");
+  // Task 3.15d: a long loop's preview is the committed route's **two-bar interval** at the playhead, not the whole
+  // loop -- the same geometry the committed reader serves.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * Config::TICKS_PER_BAR, previewWindow.interval.lengthTicks,
+                                   "a long loop's preview is the committed route's interval");
   TEST_ASSERT_EQUAL_UINT32(0u, previewWindow.interval.startPhase);
   // The spec's scenario: a window for the same slot, generation, revision and interval -- but committed -- is **not**
   // equal to the preview window, so a consumer that requires committed currency refuses it on identity alone.
@@ -6075,9 +6079,21 @@ void test_preview_window_is_a_distinct_source_and_never_committed_currency() {
   TEST_ASSERT_FALSE_MESSAGE(committedSide == previewWindow,
                             "a committed window is not the preview window at the same revision and interval");
   TEST_ASSERT_TRUE(committedSide != previewWindow);
-  // ... and a preview with no content is refused rather than published as an empty window over edited content.
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+  // ... and an empty composition is a **complete** preview of zero events (task 3.15d): the interval really holds
+  // nothing, so the lane publishes it at the new revision instead of leaving the previous preview serving as current.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision + 1, nullptr, 0, kPlayhead)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.adoptPreparedPlaybackWindow(0),
+                           "the empty preview is prepared as the successor and adopted at the boundary");
+  PlaybackWindowIdentity emptyWindow{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, emptyWindow));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPreviewRevision + 1, emptyWindow.playbackRevision,
+                                   "the empty preview carries its own revision");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.playbackWindowEventCountForSlot(0)),
+                                   "and states zero events over a real interval");
 }
 
 /// 3.13: the preview lane's **lifecycle** -- an in-flight preview build is cancelled by a mutated or re-focused source
@@ -14571,6 +14587,11 @@ void test_3_7a_i3_the_capture_admission_counts_committed_windows_only() {
   // A **preview** window served for the slot: the generic presence question is true, the committed one is not.
   MidiEvent previewSource[6];
   const size_t previewCount = buildWindowOwnerSource(previewSource, 6);
+  // Task 3.15d: the request serves the two-bar interval at phase 1536, and the fill retains only the coverage, so the
+  // source must lie inside it -- a preview's source is the interval's composition, not a whole-loop projection.
+  for (size_t i = 0; i < previewCount; ++i) {
+    previewSource[i].tick += Config::TICKS_PER_BAR;
+  }
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPreviewWindow(0, 7, previewSource, previewCount,
                                                                 2 * Config::TICKS_PER_BAR)));

@@ -267,6 +267,54 @@ const NoteEditCurrentState& noteEditCurrentStateForPlayback() {
 #endif
 }
 
+/// Task 3.15d: **apply the session's identity-qualified delta to a committed interval window**, in place. A committed
+/// identity the session changed (moved, re-pitched, re-velocitied, hidden or deleted) is dropped from the base; the
+/// session's own rows for the interval are appended for identities that override committed content. One rule, called by
+/// both readers -- the merged NOTE_EDIT fallback and the preview lane's interval composition -- so the two cannot drift
+/// while the switch (task 3.7b) is still ahead. `TRACK_COLD_MEM` because both callers are rebuild-time, and an ITCM copy
+/// of this rule cost 400 B of the pinned budget (392,616 + 600 padding vs 392,216 + 1,000 at the approved pin).
+TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& committed,
+                                                       const PlaybackCoverageInterval& coverage) {
+  const NoteEditCurrentState& currentState = noteEditCurrentStateForPlayback();
+  const auto& rows = currentState.rows();
+  const auto stateRow = [&rows](NoteId noteId) -> const NoteEditCurrentNoteState* {
+    const auto found = rows.find(noteId);
+    return found != rows.end() ? &found->second : nullptr;
+  };
+  const auto rowOverridesCommitted = [](const NoteEditCurrentNoteState& row) {
+    return row.presence == NoteEditPresenceType::Hidden ||
+           row.presence == NoteEditPresenceType::Deleted ||
+           row.presence == NoteEditPresenceType::Added ||
+           row.currentSpan.pitch != row.committedSpan.pitch ||
+           row.currentSpan.velocity != row.committedSpan.velocity ||
+           row.currentSpan.startTick != row.committedSpan.startTick ||
+           row.currentSpan.endTick != row.committedSpan.endTick;
+  };
+  size_t retained = 0;
+  for (size_t i = 0; i < committed.size(); ++i) {
+    const MidiEvent& event = committed[i];
+    const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId ? stateRow(event.noteId) : nullptr;
+    if ((event.isNoteOn() || event.isNoteOff()) && row != nullptr && rowOverridesCommitted(*row)) {
+      continue;
+    }
+    if (retained != i) committed[retained] = event;
+    ++retained;
+  }
+  committed.resize(retained);
+
+  for (const MidiEvent& event : editManager.sessionMidiEvents()) {
+    if (!event.isNoteOn() && !event.isNoteOff()) continue;
+    if (!coverage.contains(event.tick)) continue;
+    const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId ? stateRow(event.noteId) : nullptr;
+    if (row == nullptr || !rowOverridesCommitted(*row) ||
+        row->presence == NoteEditPresenceType::Hidden ||
+        row->presence == NoteEditPresenceType::Deleted) {
+      continue;
+    }
+    committed.push_back(event);
+  }
+}
+
 
 /// Task 3.7a (I1): one bounded slice of a retained interval is **one page** -- the same capacity the legacy paged
 /// stream produces with (`kWindowPageCapacity`), so the retained-source gather and the page producer cannot answer
@@ -565,50 +613,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (loop.tryGatherPublishedSnapshotEventsInWindow(
             runtime.mergedMidiEvents.mergedEvents, winStart, winLen, &gatherPath) &&
         gatherPath == Loop::SnapshotWindowGatherPath::Snapshot) {
-      const NoteEditCurrentState& currentState = noteEditCurrentStateForPlayback();
-      const auto stateRow = [&](NoteId noteId) -> const NoteEditCurrentNoteState* {
-        const auto& rows = currentState.rows();
-        const auto found = rows.find(noteId);
-        return found != rows.end() ? &found->second : nullptr;
-      };
-      const auto rowOverridesCommitted = [](const NoteEditCurrentNoteState& row) {
-        return row.presence == NoteEditPresenceType::Hidden ||
-               row.presence == NoteEditPresenceType::Deleted ||
-               row.presence == NoteEditPresenceType::Added ||
-               row.currentSpan.pitch != row.committedSpan.pitch ||
-               row.currentSpan.velocity != row.committedSpan.velocity ||
-               row.currentSpan.startTick != row.committedSpan.startTick ||
-               row.currentSpan.endTick != row.committedSpan.endTick;
-      };
-      SessionMidiEventVec& committed = runtime.mergedMidiEvents.mergedEvents;
-      size_t retained = 0;
-      for (size_t i = 0; i < committed.size(); ++i) {
-        const MidiEvent& event = committed[i];
-        const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId
-            ? stateRow(event.noteId) : nullptr;
-        if ((event.isNoteOn() || event.isNoteOff()) && row != nullptr &&
-            rowOverridesCommitted(*row)) {
-          continue;
-        }
-        if (retained != i) committed[retained] = event;
-        ++retained;
-      }
-      committed.resize(retained);
-
-      const MidiEventVec& overlay = editManager.sessionMidiEvents();
-      const uint32_t winEnd = winStart + winLen;
-      for (const MidiEvent& event : overlay) {
-        if (!event.isNoteOn() && !event.isNoteOff()) continue;
-        if (event.tick < winStart || event.tick >= winEnd) continue;
-        const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId
-            ? stateRow(event.noteId) : nullptr;
-        if (row == nullptr || !rowOverridesCommitted(*row) ||
-            row->presence == NoteEditPresenceType::Hidden ||
-            row->presence == NoteEditPresenceType::Deleted) {
-          continue;
-        }
-        committed.push_back(event);
-      }
+      applyNoteEditDeltaToCommittedWindow(runtime.mergedMidiEvents.mergedEvents,
+                                          PlaybackCoverageInterval{winStart, winLen, loop.loopLengthTicks});
     } else {
       // A current source is required for composition. Keep the failure visible as
       // an empty build rather than mislabeling a stale root as current.
@@ -6754,6 +6760,44 @@ TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool
   return true;
 }
 
+/// Task 3.15d: **the preview's interval source**. Two shapes, one answer:
+///
+/// * a **current published root** -- the session stores only its edit delta, so the interval's committed content is the
+///   base and `applyNoteEditDeltaToCommittedWindow` applies the identity-qualified delta (the same rule the merged
+///   NOTE_EDIT fallback uses, so the two readers cannot disagree while the switch is still ahead);
+/// * a **rematerialized session** (no current root) -- the session's own store already holds the loop's effective
+///   content, so the interval filter *is* the composition.
+///
+/// Returns false when the interval cannot be stated or a current root cannot be gathered; the caller then leaves the
+/// lane's state untouched rather than publishing a composition it could not form. `out` is the caller's **resident**
+/// scratch: the build copies it across grains, so it must outlive the request (the slot runtime owns it, and it is
+/// written only when no build is active).
+TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex,
+                                                              const PlaybackCoverageInterval& coverage,
+                                                              SessionMidiEventVec& out) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !coverage.isValid()) {
+    return false;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  out.clear();
+  if (loop.publishedSnapshotIsCurrent()) {
+    Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+    if (!loop.tryGatherPublishedSnapshotEventsInWindow(out, coverage.startPhase, coverage.lengthTicks, &path) ||
+        path != Loop::SnapshotWindowGatherPath::Snapshot) {
+      out.clear();
+      return false;
+    }
+    applyNoteEditDeltaToCommittedWindow(out, coverage);
+    return true;
+  }
+  for (const MidiEvent& event : editManager.sessionMidiEvents()) {
+    if (coverage.contains(event.tick)) {
+      out.push_back(event);
+    }
+  }
+  return true;
+}
+
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uint8_t slotIndex,
                                                                            uint32_t playheadPhase,
                                                                            SessionMidiEventVec& scratch, PlaybackDeadlineClock clock) {
@@ -6842,20 +6886,21 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
     return PlaybackViewRequestResult::NoRuntime;
   }
   ensureLoopsAllocated();
-  if (source == nullptr || sourceCount == 0) {
-    // A preview with no content is not a preview: publishing emptiness as preview would replace a served preview with
-    // a window that claims "no events" for content the session is editing.
+  if (sourceCount != 0 && source == nullptr) {
     return PlaybackViewRequestResult::NotServable;
   }
   Loop& loop = loopForSlot(slotIndex);
   if (loop.loopLengthTicks == 0) {
     return PlaybackViewRequestResult::NotServable;
   }
-  // Preview covers the **whole loop**: the session's projection is the loop's edited state, and a session is not an
-  // interval. `playbackWindowInterval` states that shape once (whole-loop coverage), so the preview lane does not
-  // invent a second geometry rule.
+  // Task 3.15d: the preview reads the **same interval** the committed reader serves -- the loop's demoted shape at the
+  // playhead, resolved by the one policy (`playbackWindowInterval`), never a second geometry rule. A short loop's
+  // interval is its whole loop, so the preview lane and the merged NOTE_EDIT preview agree there by construction.
+  // The caller supplies the interval-qualified composition (`composePreviewIntervalSourceForSlot`); an empty
+  // composition is a valid, complete preview (zero events over a real span), not a refusal.
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, false, 0, coverage)) {
+  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), currentPhase,
+                              coverage)) {
     return PlaybackViewRequestResult::NotServable;
   }
   // The **frozen source**: preview currency is the session's preview revision, and the origin marks the contract. The
@@ -6920,21 +6965,11 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     return;
   }
   const Loop& loop = loopForSlot(slot);
-  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0 ||
-      !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
-    // The window lane serves the **demoted** shape; a short loop keeps the merged NOTE_EDIT preview path (named
-    // residual: a whole-loop preview window for it would need the display consumer this slice does not wire).
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return;
   }
   const uint32_t previewRevision = editManager.sessionPlaybackPreviewRevision();
   if (previewRevision == 0) {
-    return;
-  }
-  const MidiEventVec& projection = editManager.sessionMidiEvents();
-  if (projection.empty()) {
-    // A preview with no content is not a preview: publishing emptiness would replace a served preview with a window
-    // that claims "no events" for content the session is editing. The requester refuses this too; not asking keeps the
-    // lane's own state untouched.
     return;
   }
   if (runtime->previewHandoffOwed) {
@@ -6980,7 +7015,20 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
   const uint32_t tickNow = clock.epoch != 0 ? static_cast<uint32_t>(clock.tick) : clockManager.getCurrentTick();
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       getEffectivePlaybackTick(tickNow), getProjectionCycleStartTick(), loop.loopLengthTicks);
-  (void)requestPreviewWindow(slot, previewRevision, projection.data(), projection.size(), phase, clock);
+  // Task 3.15d: the lane reads the **committed route's interval**, composed with the session's delta. The composition
+  // lives in the slot runtime's resident scratch because the build copies it across grains; it is written here only,
+  // after the busy guard above, so a live build's source is never overwritten. An empty composition is a complete
+  // preview (the interval really holds nothing after the session's edits), not a refusal.
+  PlaybackCoverageInterval coverage{};
+  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), phase,
+                              coverage)) {
+    return;
+  }
+  SessionMidiEventVec& composition = runtime->previewSourceEvents;
+  if (!composePreviewIntervalSourceForSlot(slot, coverage, composition)) {
+    return;
+  }
+  (void)requestPreviewWindow(slot, previewRevision, composition.data(), composition.size(), phase, clock);
 }
 
 TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(

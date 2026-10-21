@@ -670,6 +670,12 @@ struct LoopPlaybackRuntime {
   /// note-edit rows (the primitive may not hold it: a requester may gather for the same slot through its own local
   /// scratch). Released with the window, and it is **not** the served content -- `retainedGatherEvents` is.
   SessionMidiEventVec retainedGatherEditRows;
+  /// Task 3.15d: the preview lane's **interval composition** -- the committed interval with the session's
+  /// identity-qualified delta applied, or the session's own effective projection within the interval. The build copies
+  /// it across grains, so it is resident here (like the retained gather's window) rather than a caller temporary; the
+  /// preview service writes it only when no build is active, so a live build's source is never overwritten. Released
+  /// with the retained gather's scratch (`discardRetainedGather`).
+  SessionMidiEventVec previewSourceEvents;
   uint32_t retainedGatherUnits = 0;           ///< slices served for the current gather (bounded per demand)
   uint32_t retainedGatherInspectedChunks = 0; ///< chunks those slices copied out of the store
   /// The named refusal that left this slot's demand owed (`None` while a gather is running or nothing was refused).

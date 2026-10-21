@@ -22,12 +22,12 @@ remaining item"* (`tasks.md`, task 3.13). The fact behind it was recorded when t
 > This suite asserts what the lane **publishes**."*
 > — [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md)
 
-The lane is therefore a **write-only** publisher for the display today, and it is written that way on purpose: the owned
-residual is stated in the requester itself —
-
-> *"The window lane serves the **demoted** shape; a short loop keeps the merged NOTE_EDIT preview path (named residual: a
-> whole-loop preview window for it would need **the display consumer this slice does not wire**)."*
-> — [`src/Track/TrackPlaybackWindowBuild.cpp:4360-4361`](../../../src/Track/TrackPlaybackWindowBuild.cpp)
+The lane is therefore a **write-only** publisher for the display today, and it is written that way on purpose. The
+requester's own gate that used to say so is gone: task **3.15d slice 1** removed the demoted-length refusal from
+`Track::servicePreviewWindowForNoteEditSession`, so a short loop now requests its whole-loop interval through the same
+lane (the interval is `playbackWindowInterval`'s answer for that loop, not a second rule). What remains owned by the
+display is the **consumption** side: the merged fallback still serves the display's NOTE_EDIT preview, and this change
+does not wire the display to a published window.
 
 The reconciliation question the owner raised: is that consumer this change's to wire? **No.** The display's representation
 source belongs to the runtime change's display rework, and a display read added here would be a variant that the rework
@@ -106,9 +106,9 @@ S4e's, per its own requirement and its own task text.
   path `S4e.1`/`S4e.2` rework — a temporary display path the rework immediately replaces.
 - **Do not defer the item to 3.7b** fallback removal, and do not fold it into "the serving path's remaining clauses"
   vaguely. It is an acceptance item with an owner and a dependency, both named above.
-- **Do not re-open the display's representation decision here** (a whole-loop preview window for the short/demoted shape
-  would be a *display* representation question — `src/Track/TrackPlaybackWindowBuild.cpp:4360-4361` names it as the
-  display consumer's, not the lane's).
+- **Do not re-open the display's representation decision here.** A short loop's preview window now exists (3.15d slice
+  1), but *how the display renders it* — including whether a whole-loop interval is the rendered detail shape — is the
+  display rework's question (S4e.2/S4e.4), not the lane's.
 
 ## 5. What stays open, and the explicit dependency (both directions)
 

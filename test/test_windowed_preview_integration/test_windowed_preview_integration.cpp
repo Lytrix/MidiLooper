@@ -180,6 +180,11 @@ using WindowIdentity = PlaybackWindowIdentity;
 constexpr uint32_t kLongLoopTicks = 64u * 768u;
 constexpr uint8_t kChannel = 1;
 constexpr uint32_t kPlayhead = 500;
+/// The **restored-shape** fixtures' playhead: the onset of the first committed note `commitLongLoop(kLongLoopTicks, 6)`
+/// writes (49152 / 7 = 7021). Task 3.15d made the preview read an interval, so a playhead in empty bars would make
+/// "the window is the session's content" a comparison against zero events -- these fixtures place it where the content
+/// is, and the served interval is [6253, 7789).
+constexpr uint32_t kContentPhase = 7021;
 
 struct SlotAccess {
   static void select(Track& track, uint8_t slot) { track.setActiveLoopIndex(slot); }
@@ -293,6 +298,26 @@ std::vector<EventKey> projectionEventKeys(const MidiEventVec& events) {
   return keys;
 }
 
+/// The same keys, restricted to one window interval: what a preview window of that interval may serve.
+std::vector<EventKey> projectionEventKeysIn(const MidiEventVec& events,
+                                            const PlaybackCoverageInterval& coverage) {
+  std::vector<EventKey> keys;
+  for (const MidiEvent& event : events) {
+    if (!event.isNoteOn() && !event.isNoteOff()) {
+      continue;
+    }
+    if (!coverage.contains(event.tick)) {
+      continue;
+    }
+    EventKey key{};
+    key.tick = event.tick;
+    key.pitch = event.data.noteData.note;
+    key.on = event.isNoteOn();
+    keys.push_back(key);
+  }
+  return keys;
+}
+
 bool sameKeys(std::vector<EventKey> a, std::vector<EventKey> b) {
   const auto less = [](const EventKey& l, const EventKey& r) {
     if (l.tick != r.tick) return l.tick < r.tick;
@@ -319,12 +344,46 @@ bool projectionHasNoteAt(const MidiEventVec& events, uint32_t tick, uint8_t pitc
   return false;
 }
 
-/// The served window's stream **is** the session's projection — the clause that says the preview the
-/// lane publishes is the session's content and nothing else (no mixed generation, no committed
-/// underlay).
+/// The interval the requester uses for this slot at `playhead` — the **same** policy call the production
+/// requester makes (`Track::playbackWindowInterval` with the loop's own demoted test), so a fixture never
+/// invents a second geometry rule.
+PlaybackCoverageInterval playbackIntervalAt(Track& track, uint8_t slot, uint32_t playhead) {
+  const Loop& loop = track.getLoop(slot);
+  PlaybackCoverageInterval coverage{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(
+      loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), playhead, coverage));
+  return coverage;
+}
+
+/// The session's projection **within** `coverage`. For the restored shape (no published root) the session
+/// store already holds the effective content, so filtering it to the interval *is* the composition; the
+/// current-root shape composes committed content with the delta through the firmware's own path instead.
+MidiEventVec intervalProjection(const PlaybackCoverageInterval& coverage) {
+  MidiEventVec out;
+  for (const MidiEvent& event : sessionProjection()) {
+    if (coverage.contains(event.tick)) {
+      out.push_back(event);
+    }
+  }
+  return out;
+}
+
+/// The interval-qualified source a fixture hands the requester **directly**. It has to outlive the lane's
+/// grains (the build copies the caller's array across turns), so it is fixture-scope storage rather than a
+/// temporary — the production path composes into the slot runtime's own resident scratch for the same reason.
+MidiEventVec& previewSourceScratch() {
+  static MidiEventVec scratch;
+  return scratch;
+}
+
+/// The served window's stream **is** the session's projection within the window's own interval — the clause
+/// that says the preview the lane publishes is the session's content for that interval and nothing else (no
+/// mixed generation, no committed underlay outside the interval).
 void assertServedWindowIsSessionProjection(Track& track, uint8_t slot, const char* reason) {
-  const std::vector<EventKey> expected = projectionEventKeys(sessionProjection());
-  TEST_ASSERT_FALSE_MESSAGE(expected.empty(), "the session's projection has content to serve");
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(slot, identity),
+                           "a window serves the slot");
+  const std::vector<EventKey> expected = projectionEventKeysIn(sessionProjection(), identity.interval);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expected.size()),
                                    static_cast<uint32_t>(track.playbackWindowEventCountForSlot(slot)),
                                    reason);
@@ -333,21 +392,28 @@ void assertServedWindowIsSessionProjection(Track& track, uint8_t slot, const cha
   TEST_ASSERT_TRUE_MESSAGE(sameKeys(served, expected), reason);
 }
 
-/// Publish the session's preview at `revision` and adopt the successor when one is prepared.
-uint32_t publishSessionPreviewAt(Track& track, uint8_t slot, uint32_t revision) {
+/// Publish the session's preview at `revision` and adopt the successor when one is prepared. `phase` is the
+/// playhead the requester reads, so the fixture's source filter and the window's interval are one geometry.
+uint32_t publishSessionPreviewAt(Track& track, uint8_t slot, uint32_t revision, uint32_t phase = kPlayhead) {
   const MidiEventVec& projection = sessionProjection();
   TEST_ASSERT_FALSE_MESSAGE(projection.empty(), "the session has a projection to publish");
+  // Task 3.15d: the requester's source is the **interval-qualified** composition, so this direct caller
+  // supplies the same shape the production composer does for the restored case -- the session's content
+  // within the window's own interval. (A whole-loop projection here would hand the build content outside
+  // the interval it publishes.)
+  MidiEventVec& source = previewSourceScratch();
+  source = intervalProjection(playbackIntervalAt(track, slot, phase));
   // Task 3.7a (I3): the production seams now request the session's preview themselves (the open and every revision
   // advance), so the lane may already hold this revision -- as a prepared successor or a served window. The helper
   // drives the same state to a served window either way, and a request that *was* admitted is still admissible: what it
   // asserts is the state, not which caller asked first.
   const Track::PlaybackViewRequestResult requested = track.requestPreviewWindow(
-      slot, revision, projection.data(), projection.size(), kPlayhead);
+      slot, revision, source.data(), source.size(), phase);
   TEST_ASSERT_TRUE_MESSAGE(requested == Track::PlaybackViewRequestResult::Admitted ||
                                requested == Track::PlaybackViewRequestResult::SuccessorAlreadyPrepared ||
                                requested == Track::PlaybackViewRequestResult::BuildInFlight,
                            "the preview lane admits the session's projection, or already holds it");
-  drainLane(track, kPlayhead);
+  drainLane(track, phase);
   WindowIdentity identity{};
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(slot, identity));
   if (identity.playbackRevision != revision) {
@@ -365,9 +431,9 @@ uint32_t publishSessionPreviewAt(Track& track, uint8_t slot, uint32_t revision) 
   return revision;
 }
 
-/// Publish the session's preview at the revision it currently carries.
-uint32_t publishSessionPreview(Track& track, uint8_t slot) {
-  return publishSessionPreviewAt(track, slot, editManager.sessionPlaybackPreviewRevision());
+/// Publish the session's preview at the revision it currently carries, at `phase`.
+uint32_t publishSessionPreview(Track& track, uint8_t slot, uint32_t phase = kPlayhead) {
+  return publishSessionPreviewAt(track, slot, editManager.sessionPlaybackPreviewRevision(), phase);
 }
 
 /// The session's content changes and the **deferred refresh flushes** — the production edge that
@@ -389,6 +455,36 @@ uint32_t mutateSessionAndFlush(Track& track, uint32_t onTick, uint8_t pitch) {
   const uint32_t after = editManager.sessionPlaybackPreviewRevision();
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(before + 1u, after, "a mutation advances the preview revision once");
   return after;
+}
+
+/// Advance the session's preview revision through the production deferred-refresh edge **without touching the
+/// store**: the fixture has already expressed its delta in `noteEditCurrentState` and projected it. This is the
+/// seam a real edit reaches (`Track::invalidateCaches(true)` arms the refresh while playing; the flush bumps the
+/// revision, invalidates the caches and runs the preview requester).
+uint32_t flushSessionPreviewRevision(Track& track) {
+  const uint32_t before = editManager.sessionPlaybackPreviewRevision();
+  track.invalidateCaches(true);
+  editManager.flushDeferredNoteEditDisplayRefresh(track);
+  const uint32_t after = editManager.sessionPlaybackPreviewRevision();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(before + 1u, after,
+                                   "the deferred refresh advances the preview revision once");
+  return after;
+}
+
+/// Drive the lane to the served window for `expectedRevision`, taking the production boundary when the newest
+/// revision completed as the ready successor (a previously served window keeps serving until then).
+WindowIdentity serveLatestPreview(Track& track, uint8_t slot, uint32_t expectedRevision) {
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(slot, identity),
+                           "a window serves the slot");
+  if (identity.playbackRevision != expectedRevision) {
+    TEST_ASSERT_TRUE_MESSAGE(track.adoptPreparedPlaybackWindow(slot),
+                             "the newest revision is prepared as the successor");
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(slot, identity));
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedRevision, identity.playbackRevision,
+                                   "the served window carries the newest revision");
+  return identity;
 }
 
 /// Install a committed root for the slot (the seam `Loop::storePublishedSnapshotForTest`): the
@@ -565,6 +661,7 @@ static void test_the_session_owns_the_preview_source_and_its_revision_is_the_lan
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
 
   TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowServesSlot(0),
                             "control: no window serves the slot before the session's preview exists");
@@ -578,7 +675,7 @@ static void test_the_session_owns_the_preview_source_and_its_revision_is_the_lan
   TEST_ASSERT_FALSE_MESSAGE(sessionProjection().empty(),
                             "the session rematerialized the loop's content into its own store");
 
-  const uint32_t published = publishSessionPreview(track, 0);
+  const uint32_t published = publishSessionPreview(track, 0, kContentPhase);
   TEST_ASSERT_EQUAL_UINT32(revision, published);
 
   WindowIdentity identity{};
@@ -588,7 +685,14 @@ static void test_the_session_owns_the_preview_source_and_its_revision_is_the_lan
                                   "the published window is identified as preview");
   TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(kLongLoopTicks, identity.interval.loopLengthTicks,
-                                   "a preview covers the whole loop: a session is not an interval");
+                                   "the preview's interval is stated against the loop it reads");
+  // Task 3.15d: a long loop's preview is the committed route's **interval** (two bars at the playhead),
+  // not the whole loop -- the same geometry the committed reader serves.
+  const PlaybackCoverageInterval expectedInterval = playbackIntervalAt(track, 0, kContentPhase);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedInterval.startPhase, identity.interval.startPhase,
+                                   "the preview is the committed route's interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedInterval.lengthTicks, identity.interval.lengthTicks,
+                                   "the preview is the committed route's interval");
   assertServedWindowIsSessionProjection(track, 0, "the served preview is the session's own projection");
 }
 
@@ -601,28 +705,32 @@ static void test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stal
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
   editManager.openNoteEditSession(track);
-  const uint32_t first = publishSessionPreview(track, 0);
+  const uint32_t first = publishSessionPreview(track, 0, kContentPhase);
   WindowIdentity servedFirst{};
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedFirst));
 
-  // A second build is begun and one grain is taken, so the mutation is genuinely mid-build.
+  // A second build is begun and one grain is taken, so the mutation is genuinely mid-build. The source is
+  // the interval-qualified composition (task 3.15d), the same shape the production composer supplies.
   const MidiEventVec beforeMutation = sessionProjection();
+  MidiEventVec& beforeMutationSource = previewSourceScratch();
+  beforeMutationSource = intervalProjection(playbackIntervalAt(track, 0, kContentPhase));
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                            static_cast<int>(track.requestPreviewWindow(0, first, beforeMutation.data(),
-                                                                        beforeMutation.size(), kPlayhead)),
+                            static_cast<int>(track.requestPreviewWindow(
+                                0, first, beforeMutationSource.data(), beforeMutationSource.size(), kContentPhase)),
                             "the rebuild is admitted");
-  laneTurn(track, kPlayhead);
+  laneTurn(track, kContentPhase);
 
   // The mutation lands, and the lane is cancelled exactly as the mutation edge does (the session's
   // frozen revision is gone).
-  const uint32_t second = mutateSessionAndFlush(track, 3000, 72);
+  const uint32_t second = mutateSessionAndFlush(track, 7100, 72);
   const int cancelOutcome = static_cast<int>(track.cancelPreviewWindowForSlot(
       0, Track::PreviewWindowCancelReason::SourceMutated));
   TEST_ASSERT_TRUE_MESSAGE(cancelOutcome == static_cast<int>(Track::PreviewCancelOutcome::BuildCancelled) ||
                                cancelOutcome == static_cast<int>(Track::PreviewCancelOutcome::NothingToCancel),
                            "the mutation cancels (or finds nothing of) the preview lane's own build");
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
 
   // Nothing stale published: the served window is still the first revision **and** the old content.
   WindowIdentity afterStaleStep{};
@@ -633,16 +741,19 @@ static void test_a_mutation_between_build_grains_never_publishes_a_mixed_or_stal
                            "the served window is untouched by the cancelled build, field-for-field");
   const std::vector<EventKey> servedAfterStale =
       servedEventKeys(track, 0, track.playbackWindowEventCountForSlot(0));
-  TEST_ASSERT_TRUE_MESSAGE(sameKeys(servedAfterStale, projectionEventKeys(beforeMutation)),
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(servedAfterStale,
+                                    projectionEventKeysIn(beforeMutation, afterStaleStep.interval)),
                            "and still holds the pre-mutation content — never a mix of the two");
 
   // The new revision publishes and is adopted; the pair (revision, content) is self-consistent.
   const MidiEventVec& mutated = sessionProjection();
+  MidiEventVec& mutatedSource = previewSourceScratch();
+  mutatedSource = intervalProjection(playbackIntervalAt(track, 0, kContentPhase));
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                            static_cast<int>(track.requestPreviewWindow(0, second, mutated.data(),
-                                                                        mutated.size(), kPlayhead)),
+                            static_cast<int>(track.requestPreviewWindow(
+                                0, second, mutatedSource.data(), mutatedSource.size(), kContentPhase)),
                             "the new revision is admitted");
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   // The replacement becomes the *ready successor* while the previous window keeps serving; the
   // production boundary (a traversal entry) is where it is swapped in, so the fixture takes it.
   TEST_ASSERT_TRUE_MESSAGE(track.adoptPreparedPlaybackWindow(0),
@@ -662,6 +773,7 @@ static void test_an_in_session_undo_and_redo_advance_the_preview_revision_and_th
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
   editManager.openNoteEditSession(track);
 
   // The session's own undo entry (the production push the geometry ops make), taken over the content
@@ -669,14 +781,14 @@ static void test_an_in_session_undo_and_redo_advance_the_preview_revision_and_th
   TEST_ASSERT_TRUE_MESSAGE(editManager.pushSessionUndoOnKindChange(track, NoteEditKind::Move),
                            "the session pushes its own undo entry");
   const MidiEventVec contentBeforeEdit = sessionProjection();
-  const uint32_t publishedBeforeEdit = publishSessionPreview(track, 0);
+  const uint32_t publishedBeforeEdit = publishSessionPreview(track, 0, kContentPhase);
 
-  const uint32_t afterEdit = mutateSessionAndFlush(track, 6000, 74);
+  const uint32_t afterEdit = mutateSessionAndFlush(track, 7100, 74);
   const MidiEventVec contentAfterEdit = sessionProjection();
   TEST_ASSERT_FALSE_MESSAGE(sameKeys(projectionEventKeys(contentAfterEdit),
                                      projectionEventKeys(contentBeforeEdit)),
                             "the edit really changed the session's content");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterEdit, publishSessionPreviewAt(track, 0, afterEdit),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterEdit, publishSessionPreviewAt(track, 0, afterEdit, kContentPhase),
                                    "the edited revision is published");
   assertServedWindowIsSessionProjection(track, 0, "the served preview is the edited session content");
 
@@ -689,9 +801,9 @@ static void test_an_in_session_undo_and_redo_advance_the_preview_revision_and_th
   const MidiEventVec& undone = sessionProjection();
   TEST_ASSERT_TRUE_MESSAGE(sameKeys(projectionEventKeys(undone), projectionEventKeys(contentBeforeEdit)),
                            "the session's content is back to what the undo entry named");
-  TEST_ASSERT_FALSE_MESSAGE(projectionHasNoteAt(undone, 6000, 74),
+  TEST_ASSERT_FALSE_MESSAGE(projectionHasNoteAt(undone, 7100, 74),
                             "and the edit the undo removed is gone");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterUndo, publishSessionPreviewAt(track, 0, afterUndo),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterUndo, publishSessionPreviewAt(track, 0, afterUndo, kContentPhase),
                                    "the undone revision is published");
   assertServedWindowIsSessionProjection(track, 0, "the served preview follows the undo");
 
@@ -710,7 +822,7 @@ static void test_an_in_session_undo_and_redo_advance_the_preview_revision_and_th
   editManager.flushDeferredNoteEditDisplayRefresh(track);
   const uint32_t afterRedo = editManager.sessionPlaybackPreviewRevision();
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(afterUndo, afterRedo, "redo advances the preview revision again");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterRedo, publishSessionPreviewAt(track, 0, afterRedo),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(afterRedo, publishSessionPreviewAt(track, 0, afterRedo, kContentPhase),
                                    "the redone revision is published");
   assertServedWindowIsSessionProjection(track, 0, "the served preview follows the redo");
   TEST_ASSERT_EQUAL_UINT32(publishedBeforeEdit + 3u, editManager.sessionPlaybackPreviewRevision());
@@ -832,6 +944,7 @@ static void test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview() {
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
   TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowServesSlot(0), "control: nothing serves the slot before the session");
 
   editManager.openNoteEditSession(track);
@@ -841,7 +954,7 @@ static void test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview() {
 
   // The seam did it: opening the session advances its preview revision, and the owner of that revision (the session
   // stack, at that seam) asked the lane for it. Nothing here calls the requester.
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
 
   WindowIdentity identity{};
   TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, identity),
@@ -854,7 +967,7 @@ static void test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview() {
   assertServedWindowIsSessionProjection(track, 0, "the served preview is the session's projection");
   // Idempotent per revision: more turns request nothing further, so nothing is re-prepared.
   const uint32_t eventsServed = track.playbackWindowEventCountForSlot(0);
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(eventsServed, track.playbackWindowEventCountForSlot(0),
                                    "a second drive of the same revision changes nothing");
 }
@@ -867,8 +980,9 @@ static void test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
   editManager.openNoteEditSession(track);
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   WindowIdentity first{};
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, first));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PlaybackWindowOrigin::Preview), static_cast<uint8_t>(first.origin));
@@ -877,14 +991,14 @@ static void test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the
   // flight for the revision it requested, and the second arrives while that build is still preparing. This is the shape
   // where the supersession cancel is load-bearing -- without it the first build completes and publishes, and the second
   // revision's request is then refused as a prepared successor, so the slot would end up serving stale content.
-  const uint32_t intermediate = mutateSessionAndFlush(track, 3000, 72);
-  const uint32_t next = mutateSessionAndFlush(track, 3100, 74);
+  const uint32_t intermediate = mutateSessionAndFlush(track, 7100, 72);
+  const uint32_t next = mutateSessionAndFlush(track, 7200, 74);
   TEST_ASSERT_TRUE(intermediate != first.playbackRevision);
   TEST_ASSERT_TRUE(next != intermediate);
 
   // The flush seam observed each move: the superseded preparation is cancelled by name (nothing stale may publish) and
   // the newest revision is requested. The successor waits for its boundary, which the serving path owns.
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   WindowIdentity afterTurn{};
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterTurn));
   if (afterTurn.playbackRevision != next) {
@@ -907,8 +1021,9 @@ static void test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_previ
   Track& track = trackManager.getTrack(0);
   commitLongLoop(track, 0, kLongLoopTicks, 6);
   readyLongLoopPlaying(track, 0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
   editManager.openNoteEditSession(track);
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
   TEST_ASSERT_TRUE(track.playbackWindowEventCountForSlot(0) > 0);
   // The admission's **committed-only** question is asserted where the capture admission is linked
@@ -928,7 +1043,7 @@ static void test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_previ
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, atHandoff));
   TEST_ASSERT_TRUE(atHandoff == servedPreview);
   // Turn-driven again: with the session gone the turn must not re-request a preview.
-  drainLane(track, kPlayhead);
+  drainLane(track, kContentPhase);
   TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
   TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
 }
@@ -990,13 +1105,15 @@ static void test_the_save_serializes_the_committed_checkpoint_and_never_the_serv
 
   // The session's projection is established **first** (a root-current session rematerializes with an empty store and
   // would have no preview content at all), and the lane serves it.
+  clockManager.assignCurrentTickSilently(kContentPhase);
   editManager.openNoteEditSession(track);
-  const uint32_t previewRevision = mutateSessionAndFlush(track, 3000, 72);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(previewRevision, publishSessionPreview(track, 0),
+  const uint32_t previewRevision = mutateSessionAndFlush(track, 7100, 72);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(previewRevision, publishSessionPreview(track, 0, kContentPhase),
                                    "the served window is the session's own preview revision");
   assertServedWindowIsSessionProjection(track, 0, "the lane serves the session's preview");
-  const std::vector<EventKey> previewKeys = projectionEventKeys(sessionProjection());
-  TEST_ASSERT_FALSE_MESSAGE(previewKeys.empty(), "the session's projection has content");
+  const std::vector<EventKey> previewKeys =
+      projectionEventKeysIn(sessionProjection(), playbackIntervalAt(track, 0, kContentPhase));
+  TEST_ASSERT_FALSE_MESSAGE(previewKeys.empty(), "the served interval holds the session's content");
 
   // The **checkpoint** the save must serialise: a published root, and the save's own admission requires it to be
   // **settled** -- coverage-current with no publication in flight (`Loop::hasSettledPublishedSnapshotForSave`, DEC-073
@@ -1062,6 +1179,206 @@ static void test_the_save_serializes_the_committed_checkpoint_and_never_the_serv
                             static_cast<int>(servedAfter.origin),
                             "and it is still a preview, not committed currency");
 }
+/// Task 3.15d (slice 1) -- **P1: the preview is the committed interval composed with the session's delta.** A
+/// current-root session stores only its edit delta, so the lane's source must be the committed interval content with
+/// that delta applied -- not the whole-loop projection, and not the delta alone.
+static void test_3_15d_the_preview_is_the_committed_interval_composed_with_the_session_delta() {
+  constexpr uint32_t kIntervalPhase = 3072;  // -> [2304, 3840): bar 3 (noteId 2003) and bar 4 (noteId 2004)
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.rebuildVisualCacheFromPasses();
+  publishCommittedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  // The requester reads the playhead's phase, so the fixture places it where the interval it asserts begins.
+  clockManager.assignCurrentTickSilently(kIntervalPhase);
+
+  editManager.openNoteEditSession(track);
+  TEST_ASSERT_TRUE_MESSAGE(sessionProjection().empty(),
+                           "a current-root session starts with an empty edit delta");
+  const PlaybackCoverageInterval coverage = playbackIntervalAt(track, 0, kIntervalPhase);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2304u, coverage.startPhase, "the interval is the committed route's");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536u, coverage.lengthTicks, "the interval is the committed route's");
+
+  // The delta moves bar 3's end. Bar 4 is **unchanged committed content inside the same interval**, so the
+  // composition and the delta alone differ by exactly those rows.
+  editManager.noteEditCurrentStateMut().upsertRow(
+      2003, NoteBaseline{48, 100, 2304, 2352}, NoteBaseline{48, 100, 2304, 2400},
+      NoteEditPresenceType::Visible);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  const uint32_t revision = flushSessionPreviewRevision(track);
+  drainLane(track, kIntervalPhase);
+  const WindowIdentity identity = serveLatestPreview(track, 0, revision);
+
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the window is a preview");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2304u, identity.interval.startPhase,
+                                   "the preview reads the committed route's interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536u, identity.interval.lengthTicks,
+                                   "the preview reads the committed route's interval");
+  TEST_ASSERT_EQUAL_UINT32(kLongLoopTicks, identity.interval.loopLengthTicks);
+
+  const std::vector<EventKey> expected = {
+      EventKey{2304, 48, true}, EventKey{2400, 48, false},   // the edited identity
+      EventKey{3072, 48, true}, EventKey{3120, 48, false}};  // unchanged committed content in the interval
+  const std::vector<EventKey> served =
+      servedEventKeys(track, 0, track.playbackWindowEventCountForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(served, expected),
+                           "the preview composes the committed interval with the session's delta");
+}
+
+/// Task 3.15d (slice 1) -- **P2: an empty effective interval is a complete, silent preview.** Deleting every identity
+/// the interval holds makes the composition empty over a **real span**; the lane must publish that emptiness at the
+/// new revision rather than leaving the previous preview serving as if it were current.
+static void test_3_15d_an_empty_effective_interval_is_a_complete_silent_preview() {
+  constexpr uint32_t kIntervalPhase = 3072;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.rebuildVisualCacheFromPasses();
+  publishCommittedRootForSlot(loop, 64);
+  clockManager.assignCurrentTickSilently(kIntervalPhase);
+  editManager.openNoteEditSession(track);
+
+  // A first, non-empty preview serves (its content is not this case's subject).
+  editManager.noteEditCurrentStateMut().upsertRow(
+      2003, NoteBaseline{48, 100, 2304, 2352}, NoteBaseline{48, 100, 2304, 2400},
+      NoteEditPresenceType::Visible);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  const uint32_t first = flushSessionPreviewRevision(track);
+  drainLane(track, kIntervalPhase);
+  const WindowIdentity firstIdentity = serveLatestPreview(track, 0, first);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(firstIdentity.origin), "a preview serves before the deletion");
+
+  // Delete **both** identities the interval holds: the composition is empty, but the interval is not.
+  editManager.noteEditCurrentStateMut().markRowDeleted(2003);
+  // `markRowDeleted` only marks a row that already exists, so bar 4's identity is stated first (its committed span),
+  // then deleted -- the shape a production delete of an untouched committed note produces.
+  editManager.noteEditCurrentStateMut().upsertRow(
+      2004, NoteBaseline{48, 100, 3072, 3120}, NoteBaseline{48, 100, 3072, 3120},
+      NoteEditPresenceType::Deleted);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  TEST_ASSERT_TRUE_MESSAGE(sessionProjection().empty(), "the session's delta projects to nothing");
+  const uint32_t empty = flushSessionPreviewRevision(track);
+  drainLane(track, kIntervalPhase);
+  const WindowIdentity emptyIdentity = serveLatestPreview(track, 0, empty);
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2304u, emptyIdentity.interval.startPhase,
+                                   "the empty preview still states the interval it covers");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536u, emptyIdentity.interval.lengthTicks,
+                                   "the empty preview still states the interval it covers");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.playbackWindowEventCountForSlot(0)),
+                                   "the empty interval is a complete preview of zero events");
+}
+
+/// Task 3.15d (slice 1) -- **P3: a short loop requests its whole-loop interval.** The window lane is no longer limited
+/// to the demoted shape: a loop at or below the detailed-rebuild bar limit publishes the preview too, and its interval
+/// is the whole loop (the same shape the merged NOTE_EDIT preview uses).
+static void test_3_15d_a_short_loop_requests_its_whole_loop_interval() {
+  constexpr uint32_t kShortLoopTicks = 4u * 768u;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kShortLoopTicks, 2);
+  readyLongLoopPlaying(track, 0);
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, revision, "the open advances the preview revision");
+
+  drainLane(track, kPlayhead);
+  const WindowIdentity identity = serveLatestPreview(track, 0, revision);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the short loop's window is a preview");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, identity.interval.startPhase, "a short loop's interval is the whole loop");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kShortLoopTicks, identity.interval.lengthTicks,
+                                   "a short loop's interval is the whole loop");
+  assertServedWindowIsSessionProjection(track, 0, "and its content is the session's own projection");
+}
+
+/// Task 3.15d (slice 1) -- **P4: the interval preview never mixes revisions.** Two edits to the same identity land
+/// without a drain between them; the served window is the newest revision's composition, never the intermediate one and
+/// never a blend.
+static void test_3_15d_the_interval_preview_never_mixes_revisions() {
+  constexpr uint32_t kIntervalPhase = 3072;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.rebuildVisualCacheFromPasses();
+  publishCommittedRootForSlot(loop, 64);
+  clockManager.assignCurrentTickSilently(kIntervalPhase);
+  editManager.openNoteEditSession(track);
+
+  editManager.noteEditCurrentStateMut().upsertRow(
+      2003, NoteBaseline{48, 100, 2304, 2352}, NoteBaseline{48, 100, 2304, 2400},
+      NoteEditPresenceType::Visible);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  const uint32_t first = flushSessionPreviewRevision(track);
+  drainLane(track, kIntervalPhase);
+  (void)serveLatestPreview(track, 0, first);
+
+  // The second edit supersedes the first without a boundary in between.
+  editManager.noteEditCurrentStateMut().upsertRow(
+      2003, NoteBaseline{48, 100, 2304, 2352}, NoteBaseline{48, 100, 2304, 2500},
+      NoteEditPresenceType::Visible);
+  editManager.refreshNoteEditSessionProjection(track.getMidiChannel());
+  const uint32_t second = flushSessionPreviewRevision(track);
+  drainLane(track, kIntervalPhase);
+  (void)serveLatestPreview(track, 0, second);
+
+  const std::vector<EventKey> expected = {
+      EventKey{2304, 48, true}, EventKey{2500, 48, false},   // the newest edit
+      EventKey{3072, 48, true}, EventKey{3120, 48, false}};  // unchanged committed content in the interval
+  const std::vector<EventKey> served =
+      servedEventKeys(track, 0, track.playbackWindowEventCountForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(served, expected),
+                           "the served window is the newest revision's composition");
+}
+
+/// Task 3.15d (slice 1) -- **P5: a preview window is never committed currency**, whatever its interval. The identity
+/// says `Preview` with a null snapshot identity; the committed readers refuse it; and the exit owes the committed
+/// handoff while the preview keeps serving.
+static void test_3_15d_a_preview_window_is_never_committed_currency() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, revision, "the open advances the preview revision");
+  drainLane(track, kPlayhead);
+  const WindowIdentity identity = serveLatestPreview(track, 0, revision);
+
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the window is a preview");
+  TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(track.committedPlaybackWindowServesSlot(0),
+                            "a preview window is not committed content");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)));
+
+  // Same revision and generation, different origin: the identity itself is what refuses the claim. The preview's
+  // source identity names no published committed root.
+  const PlaybackViewSourceIdentity preview{identity.playbackRevision, identity.playbackGeneration, nullptr,
+                                           PlaybackWindowOrigin::Preview};
+  const PlaybackViewSourceIdentity committed{identity.playbackRevision, identity.playbackGeneration, nullptr,
+                                             PlaybackWindowOrigin::Committed};
+  TEST_ASSERT_NULL_MESSAGE(preview.snapshotIdentity,
+                           "preview content has no published committed root to name");
+  TEST_ASSERT_FALSE_MESSAGE(preview == committed,
+                            "origin is part of the identity, so a preview never equals committed currency");
+
+  editManager.closeNoteEditSession(track);
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                           "the exit owes the committed handoff");
+  TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0),
+                           "and the preview keeps serving until the committed successor is adopted");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -1079,5 +1396,12 @@ int main(int, char**) {
   // Task 3.13 / fixture 2.12's `then save` clause: the storage harness linked into this suite, and a served preview
   // that the save must never serialise.
   RUN_TEST(test_the_save_serializes_the_committed_checkpoint_and_never_the_served_preview);
+  // Task 3.15d (slice 1): NOTE_EDIT's source is the committed route's **interval**, composed with the session's
+  // delta -- including an empty effective interval, a short loop, supersession, and the currency identity.
+  RUN_TEST(test_3_15d_the_preview_is_the_committed_interval_composed_with_the_session_delta);
+  RUN_TEST(test_3_15d_an_empty_effective_interval_is_a_complete_silent_preview);
+  RUN_TEST(test_3_15d_a_short_loop_requests_its_whole_loop_interval);
+  RUN_TEST(test_3_15d_the_interval_preview_never_mixes_revisions);
+  RUN_TEST(test_3_15d_a_preview_window_is_never_committed_currency);
   return UNITY_END();
 }

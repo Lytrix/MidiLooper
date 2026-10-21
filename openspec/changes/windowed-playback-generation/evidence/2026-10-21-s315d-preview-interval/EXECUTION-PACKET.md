@@ -3,7 +3,7 @@
 Authority: [IMPLEMENTATION_READINESS.md § G2 execution packet](../../../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice).
 This packet covers **one slice** of task 3.15d. It is not evidence that 3.15d, 2.12, 3.7b or 6.4 passed.
 
-Status: **specified** (oracle fixed, no production line changed yet).
+Status: **landed** (slice 1 committed; slices 2–3 owed). Completion record and RED/GREEN evidence: [`EXECUTION.md`](EXECUTION.md).
 
 ## Slice map (3.15d is larger than one reviewable change)
 
@@ -20,43 +20,76 @@ Slices 2 and 3 are **not** in this packet and are not implied by it.
 - **Task / fixture:** `3.15d` (serve short and long NOTE_EDIT from the same interval window reader) — slice 1; fixture `2.12` (preview-source fixture) composition half.
 - **Approved contract:** DEC-116 §2 and the design's *NOTE_EDIT is a source composition, not a second playback engine* (`design.md`), plus design slice **S4**'s predicate replacements (1) and (2). No new DEC: this slice executes a recorded contract, it does not change it.
 - **Owner and path:** `Track::requestPreviewWindow` → `Track::requestPlaybackViewMaintenance` → existing `LoopPlaybackRuntime` build/`ready`/`current` roles; the production requester is `Track::servicePreviewWindowForNoteEditSession`, run on the focus-lane deferred turn (`NoteEditSessionLifecycle.cpp`, `NoteEditDisplayProjection.cpp`). `EditManager` keeps session mutation and preview-revision ownership.
-- **Primary files:** `src/Track/TrackPlaybackWindowBuild.cpp` (`requestPreviewWindow`, `servicePreviewWindowForNoteEditSession`, a new caller-owned interval-composition helper), `include/Track.h` (signature only if the composition needs an explicit present/empty term), `src/Track/TrackPlaybackHotPath.cpp` **read-only** in this slice.
+- **Primary files:** `src/Track/TrackPlaybackWindowBuild.cpp` (`requestPreviewWindow`, `servicePreviewWindowForNoteEditSession`, the new `Track::composePreviewIntervalSourceForSlot` and the file-local delta rule shared with `ensurePlaybackMergedMidiEventsBuilt`), `include/Track.h` (the composition declaration), `include/TrackPlaybackRuntime.h` + `src/Track/TrackPlaybackRuntime.cpp` (the slot-resident composition scratch and the measured size pins), `src/Track/TrackPlaybackHotPath.cpp` **read-only** in this slice.
 - **Preconditions present:** preview lane production requester (3.7a I3 / 3.13), `Preview` origin in `PlaybackViewSourceIdentity`, `previewSourceRevision/Active/HandoffOwed`, cancel-by-name lifecycle (`SourceMutated`, `SelectedTrackChanged`, `SessionExited`), `RuntimePlaybackViewFill` already treats `sourceCount == 0` as a **complete filled empty source** (`sourceFilled = true`), the existing 11-case preview integration suite, and the merged NOTE_EDIT composition rule (`ensurePlaybackMergedMidiEventsBuilt`, current-root branch) as the compatibility reference.
 - **Prerequisites included in this slice:** the composition helper itself and its parity assertion against the merged rule; interval qualification in the requester.
 - **External blockers:** none for slice 1. Slice 2 depends on this slice; 3.15f depends on 3.10/6.3/6.5 and 3.14/4.5.
-- **Mutation:** replace the whole-loop coverage in `requestPreviewWindow` with `playbackWindowInterval(loopLength, shouldAvoidFullVisualRebuild(loopLength), phase, coverage)`; replace the `sourceCount == 0 ⇒ NotServable` refusal with "absent composition only" (`sourceCount != 0 && source == nullptr` is the invalid shape, matching `RuntimePlaybackViewFill::begin`); remove the demoted-only gate and the empty-`sessionMidiEvents()` refusal in the service function; compose the source from the **interval** instead of passing the whole-loop projection.
+- **Mutation:** replace the whole-loop coverage in `requestPreviewWindow` with `playbackWindowInterval(loopLength, shouldAvoidFullVisualRebuild(loopLength), phase, coverage)`; replace the `sourceCount == 0 ⇒ NotServable` refusal with "absent composition only" (`sourceCount != 0 && source == nullptr` is the invalid shape, matching `RuntimePlaybackViewFill::begin`); remove the demoted-only gate and the empty-`sessionMidiEvents()` refusal in the service function; compose the source from the **interval** instead of passing the whole-loop projection. The composition lives in the slot runtime's resident scratch (`LoopPlaybackRuntime::previewSourceEvents`), written only after the service's busy guard, so a live build's source is never overwritten.
 - **Postconditions:** a preview window is published with the committed interval geometry, `origin == Preview`, the session's preview revision as freeze token, and content equal to the specified composition for that interval; an empty effective interval publishes a complete silent window that replaces the stale one.
-- **Explicit non-goals:** edge adoption during NOTE_EDIT; `fixedViewEligible`; any change to the merged fallback or its fixtures; selective closure/ledger behaviour for removed identities; display (RWO S4e); save/storage; device leg; 3.7b; DEC-147/DEC-155 positioning; admission constants.
+- **Explicit non-goals:** edge adoption during NOTE_EDIT; `fixedViewEligible`; any **behavioural** change to the merged fallback (its delta rule is extracted verbatim into the shared helper so the two readers cannot drift; its fixtures are unchanged); selective closure/ledger behaviour for removed identities; display (RWO S4e); save/storage; device leg; 3.7b; DEC-147/DEC-155 positioning; admission constants.
 - **Commit boundary:** independently buildable; the merged fallback keeps serving NOTE_EDIT, so the audible route is unchanged and a revert restores today's image by construction (rolling stays behind `PLAYBACK_WINDOW_ROLLING_ENABLED`).
 
 ## Oracle fixed before behavior edits
 
-Scenario base: 32-bar loop (`kLongLoopTicks = 32 × 768 = 24 576`) with four known notes at ticks 1 000 / 3 000 / 5 000 / 7 000, committed passes present, transport playing at a known phase, session opened through `EditManager::openNoteEditSession` (not by calling the requester). Playhead chosen so the 2-bar interval is `{start = 2 304, length = 1 536, loop = 24 576}` (playhead 3 072). The interval contains notes B (3 000) and C (5 000) only.
+Scenario base: the suite's existing **64-bar root fixture** — `commitLongLoop(track, 0, kLongLoopTicks = 64 × 768, 6)`
+plus `publishCommittedRootForSlot(loop, 64)`, which installs one identified note per bar (pitch 48, on at `bar × 768`,
+off at `+48`, `noteId = 2000 + bar`). A current published root is what makes the session store **only its delta**, which
+is the composition's discriminating property; the playhead is placed at **3 072** so the two-bar interval is
+`{start = 2 304, length = 1 536, loop = 49 152}` and contains bar 3 (`noteId 2003`, 2 304/2 352) and bar 4
+(`noteId 2004`, 3 072/3 120) — and nothing else. (Geometry note: the packet originally named a 32-bar / four-note base
+with interval `{2 304, 1 536, 24 576}`. The executed base is the suite's root fixture with the same interval *shape* and
+the same discriminating content — an interval holding one edited and one untouched identity — because that fixture
+already writes identity-qualified rows, which the 32-bar base would have had to rebuild by hand. The oracle's
+expectations below are hand-written, not derived from the implementation.)
 
 **P1 — long loop, non-empty effective interval.**
-- Delta: B's end moves from 3 048 to 3 120; C is deleted in-session; A and D are outside the interval and unchanged.
-- Steps: open session → drain the lane with the existing one-grain turn (`drainLane`).
-- Expected after the turn: exactly one published window; `identity.origin == Preview`; `identity.playbackRevision == editManager.sessionPlaybackPreviewRevision()`; `identity.interval == {2 304, 1 536, 24 576}`; content = `{B.on@3 000, B.off@3 120}` (hand-written expectation; C absent, A/D absent because outside).
-- Counterexample that must fail: whole-loop coverage (`{0, 24 576, 24 576}`) or the whole-loop projection's content (A, B, C, D).
+- Delta: bar 3's end moves from 2 352 to 2 400; bar 4 is **unchanged committed content in the same interval**; bars
+  outside the interval are untouched.
+- Steps: open session → apply the delta → `refreshNoteEditSessionProjection` → the production flush edge
+  (`invalidateCaches(true)` + `flushDeferredNoteEditDisplayRefresh`) → drain the lane → take the boundary if the newest
+  revision completed as the successor.
+- Expected: exactly one published window; `identity.origin == Preview`; `identity.playbackRevision ==` the flush's
+  preview revision; `identity.interval == {2 304, 1 536, 49 152}`; content = `{on@2 304, off@2 400, on@3 072,
+  off@3 120}` — hand-written. Bar 4's rows are the discriminator: a delta-only source omits them.
+- Counterexample that must fail: whole-loop coverage (`{0, 49 152, 49 152}`), or the whole-loop projection's content,
+  or the delta alone.
 
 **P2 — empty effective interval is Admitted.**
-- Delta: C (the interval's only note in a second scenario variant) is deleted.
-- Expected: `requestPreviewWindow` returns `Admitted`; the lane completes a `ready`/`current` with `sourceFilled` and **zero** events; the published identity is still the preview revision and the interval; the previously served preview does not survive as the served window.
-- Counterexample that must fail: `NotServable` on an empty composition, or the old window still served (stale retention).
+- First a non-empty preview serves (P1's delta), then **both** identities the interval holds are deleted
+  (`markRowDeleted(2003)` for the edited row; `upsertRow(2004, …, Deleted)` for the untouched committed row, because
+  `markRowDeleted` only marks a row that already exists).
+- Expected: the service composes zero events over a **valid** interval and `requestPreviewWindow` returns `Admitted`;
+  the lane publishes that emptiness at the new revision and it is adopted at the boundary; the previously served
+  preview does not survive as the served window; `identity.interval` still states `{2 304, 1 536}`.
+- Counterexample that must fail: `NotServable` on an empty composition, or the old window still served (stale
+  retention).
 
 **P3 — short loop (≤ 16 bars) requests.**
-- Base: 2-bar loop (`1 536`), two notes, session open, transport playing.
-- Expected: the service function requests (the demoted-only gate is gone); `identity.interval == {0, 1 536, 1 536}`; content equals the composition; the merged fallback's audible stream is **unchanged** in this slice (asserted by the existing short-loop characterisation, not by a new emitter).
-- Counterexample that must fail: no request (the old gate) or a two-bar clamped interval for a loop shorter than the span.
+- Base: **4-bar** loop (`3 072`), two committed notes (1 024, 2 048), session opened through `openNoteEditSession`.
+- Expected: the service function requests (the demoted-only gate is gone); `identity.interval == {0, 3 072, 3 072}`;
+  content equals the session projection's interval subset; the merged fallback's audible stream is **unchanged** in this
+  slice (asserted by the existing short-loop characterisation, not by a new emitter).
+- Counterexample that must fail: no request (the old gate) or a two-bar clamped interval for a loop shorter than the
+  span. (4 bars rather than the packet's 2 gives the handoff headroom the admission needs: `lead = 768` against
+  `(0 − phase) mod length`.)
 
 **P4 — currency under supersession.**
-- Two mutations through the production flush with no drain between them (existing `test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn` shape).
-- Expected: the superseded preparation is cancelled by name, the newest revision is the only publishable one, and no served window mixes revisions.
+- Two edits to the same identity through the production flush with no drain between them (existing
+  `test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn` shape), the second moving the same note's
+  end to 2 500.
+- Expected: the superseded preparation is cancelled by name, the newest revision is the only publishable one, and the
+  served content is `{on@2 304, off@2 500, on@3 072, off@3 120}` — the intermediate `off@2 400` never serves.
 - Counterexample that must fail: the intermediate revision publishing after the newer request.
 
 **P5 — preview is never committed currency.**
-- Expected: `publishedPlaybackWindowIdentityForSlot` reports `Preview`; the snapshot identity is null; the exit still yields the source and owes the committed handoff (`previewHandoffOwed`), and the refocus path still owes nothing.
-- Counterexample that must fail: a preview window comparing equal to a committed identity at the same revision/generation.
+- Expected: `publishedPlaybackWindowIdentityForSlot` reports `Preview`; the source identity names no published
+  committed root (null `snapshotIdentity`); `servedPlaybackWindowIsPreviewForSlot` is true and
+  `committedPlaybackWindowServesSlot` / `committedPlaybackWindowEventCountForSlot` answer committed-only; a
+  `PlaybackViewSourceIdentity` differing only in `origin` is **not** equal; and the exit still yields the source and
+  owes the committed handoff while the preview keeps serving.
+- Counterexample that must fail: a preview window comparing equal to a committed identity at the same
+  revision/generation. (The re-focus path's "owes nothing" clause is covered by the existing
+  `test_a_selected_track_change_cancels_the_departing_tracks_preview_by_its_own_lifecycle`.)
 
 **Preserved invariants:** no allocation in the requester or the service turn; at most one prepared successor; the served window stays readable across a cancellation; exactly one published window per revision; the merged fallback's fixtures unchanged.
 
@@ -71,24 +104,29 @@ Scenario base: 32-bar loop (`kLongLoopTicks = 32 × 768 = 24 576`) with four kno
 
 ## Verification recipe
 
-- Focused: `pio test -e native -f test_windowed_preview_integration` (11 existing cases must stay green; new P1–P5 cases added), `pio test -e native -f test_runtime_working_set_ownership` (preview cases at the `requestPreviewWindow` call sites, the `:8419` short-loop pair and the `:14575` interval case).
-- Full: `pio test -e native` — last recorded baseline **3 352 cases / 7 skipped / 3 345 succeeded / 0 failed** at `555354a4` (3.7h); re-measure at slice start, the closeout `02bbf828` is docs-only.
-- Builds + RAM1: `pio run -e teensy41-capture-serial` and `pio run -e teensy41-capture-serial-window-qualification`; pins to preserve: default `variables 96 192 / code 392 216 + padding 1 000`, qualification `392 376 + 840` (floor, `scripts/ram1_budget.json`).
+- Focused: `pio test -e native -f test_windowed_preview_integration` (16 cases: the 11 existing plus P1–P5),
+  `pio test -e native -f test_runtime_working_set_ownership` (the preview cases at the `requestPreviewWindow` call
+  sites, including `test_preview_window_is_a_distinct_source_and_never_committed_currency` and
+  `test_3_7a_i3_the_capture_admission_counts_committed_windows_only`).
+- Full: `pio test -e native` — last recorded baseline **3 352 cases / 7 skipped / 3 345 succeeded / 0 failed** at
+  `555354a4` (3.7h); re-measure at slice start, the closeout `02bbf828` is docs-only.
+- Builds + RAM1: `pio run -e teensy41-capture-serial` and `pio run -e teensy41-capture-serial-window-qualification`;
+  pins to preserve: default `variables 96 192 / code 392 216 + padding 1 000`, qualification `392 376 + 840` (floor,
+  `scripts/ram1_budget.json`).
 - Specs/diff: `openspec validate windowed-playback-generation --strict`, `git diff --check`.
-- **Device:** NOT RUN in this slice — the audible route is unchanged (merged fallback), so a device run would not judge this slice; the route's device parity belongs to 3.15f.
+- **Device:** NOT RUN in this slice — the audible route is unchanged (merged fallback), so a device run would not judge
+  this slice; the route's device parity belongs to 3.15f.
 - Evidence destination: this directory (`EXECUTION.md` for the completion record).
 
 ## Completion record
 
-Every row is **NOT RUN** until the slice lands; a planned command is not a pass.
-
-| Check | Status |
-|---|---|
-| Oracle/contract unchanged | NOT RUN |
-| Fixture implemented (P1–P5) + discriminating RED | NOT RUN |
-| Focused native (`test_windowed_preview_integration`, `test_runtime_working_set_ownership`) | NOT RUN |
-| Full native | NOT RUN |
-| Both builds + RAM1 pins | NOT RUN |
-| Strict validation / `git diff --check` | NOT RUN |
-| Device | NOT APPLICABLE (route unchanged; 3.15f owns it) |
-| 3.15d / 2.12 checkoff | NOT ELIGIBLE (slices 2–3 owed) |
+| Check | Status | Evidence |
+|---|---|---|
+| Oracle/contract unchanged | **PASS** | P1–P5 keep the recorded predicates; the executed geometry is the suite's 64-bar root fixture (see the geometry note above), with the same interval shape and hand-written expectations. |
+| Fixture implemented (P1–P5) + discriminating RED | **PASS** | `test_windowed_preview_integration`: 5 new cases. Pre-fix RED with the production change stashed: P1 (`Expected 6253 Was 0`), P2 (`Expected 0 Was 2`), P3 (`Expected 3072 Was 0`), P4 (`Expected 14 Was 4`), plus the contract-updated existing fixtures (`test_the_session_owns…`, `test_a_mutation_between_build_grains…`, `test_a_selected_track_change…`, `test_the_session_exit…`). P5 is **GREEN pre-fix by design** — it re-asserts a currency invariant this slice must preserve, not a new behaviour. |
+| Focused native | **PASS** | `test_windowed_preview_integration` 16/16; `test_runtime_working_set_ownership` 230/230. |
+| Full native | **PASS** | **3 357 cases / 7 skipped / 3 350 succeeded / 0 failed** (`pio test -e native`, 3:19). Baseline was 3 352/7/3 345 — +5 new cases. |
+| Both builds + RAM1 pins | **PASS** | default `variables 96 192 / code 392 216 + padding 1 000`; qualification `392 376 + 840` — both exactly at the approved pins. `sizeof(LoopPlaybackRuntime)` re-based and measured (7 896 → **7 904** target, 10 080 → **10 104** host); the delta rule is `TRACK_COLD_MEM` because an ITCM copy cost 400 B of the pinned budget. |
+| Strict validation / `git diff --check` | **PASS** | `openspec validate windowed-playback-generation --strict` → valid; `git diff --check` clean. |
+| Device | NOT APPLICABLE | Route unchanged (merged fallback still serves NOTE_EDIT); 3.15f owns device parity. |
+| 3.15d / 2.12 checkoff | NOT ELIGIBLE | Slices 2–3 owed (edge adoption during NOTE_EDIT, short/long parity + lifecycle + 2.12's save clause). |

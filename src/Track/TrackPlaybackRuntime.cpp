@@ -2481,6 +2481,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardRetainedGather(
     SessionMidiEventVec released;
     retainedGatherEditRows.swap(released);
   }
+  if (!previewSourceEvents.empty() || previewSourceEvents.capacity() != 0) {
+    // Task 3.15d: the preview composition scratch is the same kind of resident window buffer -- released with the
+    // gather it belongs to, so a discharged demand never keeps the interval's capacity per slot.
+    SessionMidiEventVec released;
+    previewSourceEvents.swap(released);
+  }
 }
 
 /// DEC-108 §13(a)/(c) / task 3.10 (increment 24): **retain or coalesce the slot's pending preparation demand.** One
@@ -2940,7 +2946,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // per-slot runtime state; no Track field or RAM1 budget change.
 // DEC-147 bound: the refused-span attempt counter fits the rolling frame's existing padding, so both
 // pins are unchanged (7,896 target / 10,080 host); compiler measured, no RAM1 budget change.
-static_assert(sizeof(LoopPlaybackRuntime) == 7896,
+// Task 3.15d: the preview interval composition scratch (one vector header) adds 8 B on the target ABI
+// and 24 B on the host ABI (7,896 -> 7,904 target, 10,080 -> 10,104 host); the capacity is the external
+// pool's, the runtime is externally allocated per slot, and no Track field or RAM1 budget changes.
+static_assert(sizeof(LoopPlaybackRuntime) == 7904,
               "I5: target per-slot runtime measured after presentation owner");
 static_assert(sizeof(Loop) == 1008,
               "I5: LoopPool shell 1,008 B including Capture phase identity "
@@ -2974,7 +2983,10 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // DEC-136 completion (S7.5b.5 release edge): root-return retirement hold key + grains add 8 B
 // on this ABI as well (10,056 -> 10,064); compiler measured, same external-pool caveat.
 // DEC-147 bound: refused-span attempt counter fits existing padding (10,080 unchanged); compiler measured.
-static_assert(sizeof(LoopPlaybackRuntime) == 10080,
+// Task 3.15d: the preview interval composition scratch (one vector header) adds 24 B on this ABI
+// (10,080 -> 10,104); the capacity it grows is the external pool's, not the runtime's, and the runtime is
+// extmem-allocated per slot.
+static_assert(sizeof(LoopPlaybackRuntime) == 10104,
               "I5: host per-slot runtime measured after presentation owner");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

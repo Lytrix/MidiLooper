@@ -1028,6 +1028,13 @@ public:
   PlaybackViewRequestResult requestPreviewWindow(uint8_t slotIndex, uint32_t previewRevision,
                                                  const MidiEvent* source, size_t sourceCount,
                                                  uint32_t currentPhase, PlaybackDeadlineClock clock = {});
+  /// Task 3.15d: compose the preview's **interval source** -- the committed interval content with the session's
+  /// identity-qualified delta applied when a current published root exists, or the session's own effective projection
+  /// within the interval when the session rematerialized (no current root). `out` is the caller's **resident** scratch:
+  /// the build copies it across grains, so it must outlive the request (the slot runtime owns one). Returns false when
+  /// the interval cannot be stated or a current root cannot be gathered -- the caller then leaves the lane untouched.
+  bool composePreviewIntervalSourceForSlot(uint8_t slotIndex, const PlaybackCoverageInterval& coverage,
+                                           SessionMidiEventVec& out);
   /// The preview lane's cancellation. A mutated or removed source cancels the in-flight preview build and invalidates
   /// its operation identity, so a stale completion publishes nothing; a session exit additionally makes the
   /// **committed successor owed** (the handoff). The served window is never torn: at an exit the preview window keeps
