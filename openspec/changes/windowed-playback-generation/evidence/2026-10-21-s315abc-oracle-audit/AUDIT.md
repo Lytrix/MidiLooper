@@ -18,7 +18,7 @@ Method: a route counts as **covered** only when a fixture drives the **productio
 | same-tick density | **covered** | paged fixtures (multi-event ticks asserted non-vacuous) |
 | first Record bar | **UNKNOWN** | E2 flagged fixtures drive Capture `ready`/reader, but the live first-bar `current` is named open in 3.15b's own notes |
 | stop return | **UNKNOWN** | E2 frozen-Record bar-two reader exists (flagged); stop→committed handoff at the edge not shown |
-| live overdub / wrap | **UNKNOWN** | `test_rolling_record_retirement` and RWO run the edge, but no fixture asserts the overdub overlay's ordered stream through the reader |
+| live overdub / wrap | **covered** (2026-10-21) | `test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap` — `playMidiEvents`, two traversals, independent ordered stream, with the same-world-minus-overdub control |
 | NOTE_EDIT open/change/session undo/exit | **covered** | preview suite (2.12 closeout table) |
 | layered/jam slot playback | **UNKNOWN** | no `playMidiEvents` fixture with a layered/jam slot found |
 | slot switch | **covered** | `test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview` |
@@ -33,6 +33,25 @@ release/cancel, one-bar handoff (`test_one_bar_short_loop_does_not_bypass_the_de
 contract cannot admit an empty replacement before the next one-bar wrap), the affected-tick successor, and the composed
 service budget. **Covered:** Capture token/origin identity, the frozen Record source, ready→current adoption, and
 publication — all at lane level with the reader in the loop.
+
+## 3.15a — live overdub/wrap covered at the edge (2026-10-21)
+
+`test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap` lands in
+`test_shared_capture_finalization`. Two worlds share the same two-bar pass, the same **published root** (48 in bar one, 62
+in bar two) and the same drive -- **two whole traversals** in 64-tick steps through `Track::playMidiEvents`, so the wrap is
+the production wrap and not a reset. World A additionally commits an **overdub of 65 in bar two** through the production
+session and the real deferred finalization, recorded *after* the root published (so the root is stale for the overlay's
+region). The oracle is an independent, explicit stream: six events per traversal in world A (`65@1112/1196` included), four
+in world B, one On per note per traversal, and an empty ledger after the drive. **The control carries the falsifiability:**
+the only difference between the worlds is the overlay, so the 65s cannot be a constant read back out of the fixture.
+
+**Route, measured rather than assumed.** A temporary probe in the clock path (removed) showed the served source at every
+turn: a published whole-loop `Committed` view with **4 events** (`coverage 0+1536`, `published=1`) **plus the playback
+bridge**, which carries the compiled overlay. Three production mutations that target the *gather* did **not** move the
+wire -- the incremental overdub-seal admit forced false, `collectActiveCommittedChunkLists`' overdub layer dropped, and the
+stale-root overlay's unpublished lists cleared -- each left the fixture GREEN. That is not a failure of the fixture; it is
+the route: the content was already compiled into the bridge. **Hand-off to 3.15c:** the removal-of-new-reader proof for
+this route must target the **bridge compilation** (or the view publication), not the gather.
 
 ## 3.15c — one completed-window reader at the edge
 

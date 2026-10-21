@@ -1676,7 +1676,25 @@ suite is not green this turn by design. No Git delivery.
   layered/jam playback, global undo/redo, clock-source/seek; **partial** = SD-restored density (the ring path is covered by the
   new dense oracle, the restore acceptance route is not). No checkbox follows. Shortest path to a checkoff: overdub/wrap and
   layered/jam at the edge. Evidence:
-  [`AUDIT.md`](evidence/2026-10-21-s315abc-oracle-audit/AUDIT.md). Link the actual `playCommittedLoopMidi`/MIDI output path and the existing window owner in native fixtures for short/long loops, empty intervals, same-tick density, first Record bar and stop return, live overdub/wrap, NOTE_EDIT open/change/session undo/exit, layered/jam slot playback, slot switch, global undo/redo, clock-source/seek, and SD-restored legacy density. Pin independent expected ordered MIDI, ledger closures, source/slot/generation identity, bounded owner turns, non-destructive refusal and source release; fixtures must fail when the migrated route is removed. Reuse, do not duplicate, existing finalization/ownership/preview/paged tests. Record gaps as explicit prerequisites to their implementing slices; no production policy edit in this task.
+  [`AUDIT.md`](evidence/2026-10-21-s315abc-oracle-audit/AUDIT.md).
+
+  **Live overdub/wrap route landed 2026-10-21 (native; task stays unchecked — 7/12 routes).**
+  `test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap` (`test_shared_capture_finalization`)
+  drives the **production edge** (`Track::playMidiEvents`) over **two whole traversals** of a two-bar loop in 64-tick steps,
+  so the wrap is the production wrap and not a reset. Two worlds, identical but for one fact: the same pass and the same
+  **published root** (48 in bar one, 62 in bar two), and only world A also commits an **overdub of 65 in bar two** through
+  the production session and the real deferred finalization — recorded *after* the root published, so the root is stale for
+  the overlay's region. Asserted (independent, explicit expectations): the exact ordered `(tick, note, On/Off)` stream per
+  traversal — **six** events including `65@1112/1196` in world A, **four** in world B, a replay/omission/tear at the wrap
+  moving either count — plus exactly one On per note per traversal and an empty ledger after the drive. **The control is the
+  falsifiability proof:** the only delta between the worlds is the overlay, so the 65s can only be served because the
+  overlay was. **Route measured, not assumed:** the served source is a published whole-loop `Committed` view (4 events,
+  `coverage 0+1536`) **plus the playback bridge**, which carries the compiled overlay; three production mutations that
+  target the *gather* — the incremental overdub-seal admit, `collectActiveCommittedChunkLists`' overdub layer, and the
+  stale-root overlay's unpublished lists — each left the wire unchanged, which is recorded as the hand-off 3.15c needs:
+  this route's removal proof must target the **bridge compilation** (or the view publication), not the gather. No production
+  line changed; the finalization suite is **88/88** and the full native gate is unchanged apart from the new case.
+  Link the actual `playCommittedLoopMidi`/MIDI output path and the existing window owner in native fixtures for short/long loops, empty intervals, same-tick density, first Record bar and stop return, live overdub/wrap, NOTE_EDIT open/change/session undo/exit, layered/jam slot playback, slot switch, global undo/redo, clock-source/seek, and SD-restored legacy density. Pin independent expected ordered MIDI, ledger closures, source/slot/generation identity, bounded owner turns, non-destructive refusal and source release; fixtures must fail when the migrated route is removed. Reuse, do not duplicate, existing finalization/ownership/preview/paged tests. Record gaps as explicit prerequisites to their implementing slices; no production policy edit in this task.
 
   **I5 — live-Capture oracle increment (2026-10-13; test-only, task unchecked):** existing `UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE` now additionally pins exact Capture token/origin, absence of raw/first-return authority, initial silent ledger/duplicate edge and successor identity. Two separately registered cases freeze accepted-input→real two-bar stop/frozen ready→actual edge MIDI/ledger and the nonzero-epoch non-claim. Gated 193 passed / three expected assertion failures / one Unity harness ERRORED: missing published live current blocks initial and stop cases; epoch-1 is independently unclaimed; downstream assertions NOT RUN, not a lifetime/content PASS. Withholding the private-build owner call adds exactly its completion RED; restored byte-identically. Ordinary focused 489/489, full native 3,099 succeeded / 7 skipped / 114 PASSED suites, strict validation/diff clean; one focused review no concrete defects. No production/build/upload/device/SD/Git action, default rolling off and compatibility registrations intact. Next requires coherent authorized initial-publication/three-role/stop-lifetime implementation; reader-removal/supersession controls and measured/device/all-route gates remain open. [I5 — execution evidence](evidence/2026-10-13-i5-live-capture-oracle/EXECUTION.md).
 

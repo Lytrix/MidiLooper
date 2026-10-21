@@ -6849,8 +6849,206 @@ void test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_pers
   }
 }
 
+// Task 3.15a — **the live overdub/wrap route at the production edge, plus the control that makes it an oracle.**
+//
+// The audit's route table leaves "live overdub / wrap" UNKNOWN: the suites run the edge and commit overdub passes, but no
+// fixture asserts the **overdub overlay's ordered stream through the reader**. This is that oracle, and it is the *cold
+// reference* 3.15f compares the migrated route against: it drives the production clock entry (`Track::playMidiEvents`),
+// not a lane helper, and it states an **independent** ordered expectation -- explicit ticks, explicit notes, explicit
+// On/Off order -- rather than reading the answer back out of the thing under test.
+//
+// Both worlds carry the **same** published root (48 in bar one, 62 in bar two) over the same two-bar pass, and both are
+// driven identically: two whole traversals in 64-tick steps, so the wrap is crossed by the production wrap logic. Only
+// world A also commits an **overdub of 65 in bar two**, through the production session and the real deferred
+// finalization. Because the overdub is recorded *after* the root published, that root is stale for the region the
+// overlay supplies -- the exact "live overlay over a stale root" shape the route is about -- and the 65s can only reach
+// the wire if the overlay is served. World B serves four events per traversal, world A six: the difference **is** the
+// overlay, which is what makes the oracle falsifiable without arguing about internals.
+struct RootPair {
+  uint8_t note;
+  uint32_t on;
+  uint32_t off;
+};
+
+void publishRootPairs(Loop& loop, const RootPair* pairs, size_t count) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  EventId nextEventId = 7000;
+  for (size_t i = 0; i < count; ++i) {
+    const RootPair& pair = pairs[i];
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = static_cast<NoteId>(3000 + i);
+    add.next.pitch = pair.note;
+    add.next.velocity = 100;
+    add.next.startTick = pair.on;
+    add.next.endTick = pair.off;
+    changes.notes.push_back(add);
+    SnapshotEventChange on_change{};
+    on_change.kind = SnapshotChangeKind::Add;
+    on_change.next.loopId = loop.loopId;
+    on_change.next.eventId = nextEventId++;
+    on_change.next.canonicalOrder = nextEventId * 2;
+    on_change.next.value = MidiEvent::NoteOn(pair.on, 1, pair.note, 100);
+    changes.events.push_back(on_change);
+    SnapshotEventChange off_change{};
+    off_change.kind = SnapshotChangeKind::Add;
+    off_change.next.loopId = loop.loopId;
+    off_change.next.eventId = nextEventId++;
+    off_change.next.canonicalOrder = nextEventId * 2 + 1;
+    off_change.next.value = MidiEvent::NoteOff(pair.off, 1, pair.note, 0);
+    changes.events.push_back(off_change);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
+/// Stage one world: the two-bar pass, the published root, and a prewarmed runtime. The root and the pass carry the same
+/// two soundings, so the overlay's contribution is the only difference between the worlds.
+void stageTwoBarWorld(Track& t, uint8_t slot, Loop*& loopOut) {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLoopTicks = 2u * kBar;
+  Loop& loop = t.getLoop(slot);
+  loop.loopLengthTicks = kLoopTicks;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(12, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 48, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kBar + 32, 1, 62, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kBar + 112, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(kLoopTicks, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  const RootPair pairs[] = {{48, 12, 96}, {62, kBar + 32, kBar + 112}};
+  publishRootPairs(loop, pairs, 2);
+  TEST_ASSERT_TRUE_MESSAGE(t.prewarmPlaybackForSlot(slot, true),
+                           "the slot must hold a playback runtime before the edge is driven");
+  loopOut = &loop;
+}
+
+void serveTwoBarTraversalsAndCheckOrder(Track& t, Loop& loop, uint8_t slot, bool expectOverdub) {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLoopTicks = 2u * kBar;
+  constexpr uint32_t kTraversals = 2;
+  struct ExpectedWire {
+    uint32_t tick;
+    uint8_t note;
+    bool on;
+  };
+  const ExpectedWire kRecordOnly[] = {
+      {12, 48, true}, {96, 48, false}, {kBar + 32, 62, true}, {kBar + 112, 62, false}};
+  const ExpectedWire kWithOverdub[] = {
+      {12, 48, true},          {96, 48, false},
+      {kBar + 32, 62, true},   {kBar + 112, 62, false},
+      {1112, 65, true},        {1196, 65, false}};
+  const ExpectedWire* expected = expectOverdub ? kWithOverdub : kRecordOnly;
+  const size_t perTraversal = expectOverdub ? 6u : 4u;
+
+  MidiSendCapture::reset();
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, slot);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  for (uint32_t tick = 64; tick <= kTraversals * kLoopTicks; tick += 64) {
+    t.playMidiEvents(tick, true);
+  }
+
+  // (A) **The exact ordered stream, twice.** Each traversal serves the same events at the same loop-local ticks, in the
+  // same order -- the whole "no replay, no omission, no tear at the wrap" claim in one comparison.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(perTraversal * kTraversals),
+                                   static_cast<uint32_t>(MidiSendCapture::count()),
+                                   expectOverdub
+                                       ? "each sounding (record and overlay) is served once per traversal"
+                                       : "the record pass alone is served once per traversal");
+  for (uint32_t traversal = 0; traversal < kTraversals; ++traversal) {
+    for (size_t i = 0; i < perTraversal; ++i) {
+      const MidiEvent& event = MidiSendCapture::at(traversal * perTraversal + i);
+      const ExpectedWire& want = expected[i];
+      char message[160];
+      snprintf(message, sizeof(message), "%s traversal %u event %u: tick %u note %u %s",
+               expectOverdub ? "overdub" : "record-only", static_cast<unsigned>(traversal),
+               static_cast<unsigned>(i), want.tick, static_cast<unsigned>(want.note),
+               want.on ? "on" : "off");
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(want.tick, event.tick, message);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(want.note, event.data.noteData.note, message);
+      TEST_ASSERT_EQUAL_MESSAGE(want.on, event.isNoteOn(), message);
+    }
+  }
+
+  // (B) **The ledger closes after every traversal**, so the second traversal's ons are independent events and not a
+  // re-trigger over a still-open note.
+  unsigned sounding = 0;
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, slot);
+  runtime.ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, sounding, "every served note is closed by its own off");
+
+  // (C) **One On per note per traversal**, counted independently of the order comparison above.
+  const uint8_t notes[] = {48, 62, 65};
+  for (uint8_t note : notes) {
+    uint32_t ons = 0;
+    for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+      const MidiEvent& event = MidiSendCapture::at(i);
+      if (event.isNoteOn() && event.data.noteData.note == note) ++ons;
+    }
+    if (!expectOverdub && note == 65) {
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ons, "the control world has no overlay note at all");
+      continue;
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(kTraversals, ons, "each sounding is articulated once per traversal");
+  }
+}
+
+void test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+
+  // World A -- root + one overdub note in bar two, recorded after that root published, retired through the real
+  // deferred finalization.
+  Loop* loopA = nullptr;
+  stageTwoBarWorld(t, 0, loopA);
+  TEST_ASSERT_NOT_NULL(loopA);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 1100, 65);  // input lands at 1112..1196
+  stop(t, true, 1200);
+  TEST_ASSERT_TRUE_MESSAGE(t.hasPendingDeferredOverdubStop() || t.hasStopInFlight(),
+                           "fixture precondition: the overdub stop is a deferred job");
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(), "the overdub finalization must retire before the oracle runs");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(loopA->passes.overdubPasses.size()),
+                                   "the overdub committed exactly one pass");
+  {
+    SessionMidiEventVec rows;
+    LoopEventStore::appendChunkRefEvents(loopA->passes.overdubPasses.back().committedChunkIds, rows);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(rows.size()),
+                                     "the overdub pass holds the note's own pair");
+    TEST_ASSERT_EQUAL_UINT8(65, rows[0].data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT32(1112u, rows[0].tick);
+    TEST_ASSERT_EQUAL_UINT32(1196u, rows[1].tick);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(loopA->publishedSnapshotIsCurrent(),
+                            "the root published before the overdub is stale for the overlay's region");
+  serveTwoBarTraversalsAndCheckOrder(t, *loopA, 0, true);
+
+  // World B -- the control: the same root, pass and drive, with no overdub at all.
+  Loop* loopB = nullptr;
+  stageTwoBarWorld(t, 1, loopB);
+  TEST_ASSERT_NOT_NULL(loopB);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(loopB->passes.overdubPasses.size()),
+                                   "the control world carries no overlay");
+  serveTwoBarTraversalsAndCheckOrder(t, *loopB, 1, false);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);
   RUN_TEST(test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence);
   RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
 RUN_TEST(test_record_source_staging_merges_the_frozen_take_after_closure);
