@@ -86,3 +86,22 @@ Restored byte-identically; focused suite back to **29/29**.
 **What is proved:** the preview window route is new-reader-dependent, and the mutation is *discriminating* — each failure names the
 clause it covers. **What is still owed for 3.15c:** the same RED for the **committed** window route (a sparse short/long loop served
 by `fixedView`/rolling with no NOTE_EDIT). That needs its own edge fixture before 3.15c can claim the pair.
+
+## 3.15c — the committed-window fixture needs a root built from the committed passes (2026-10-21)
+
+Attempted the third removal proof (sparse long loop, no NOTE_EDIT, served by the committed window). Two harness facts stopped it,
+and both are worth recording because they would mislead any later reader:
+
+1. **A committed long loop with no published root emits nothing at the edge** (measured: 0 events) — the committed lane gathers
+   from a published root, so a fixture built only from `commitEmissionLoop` has no window source. This is the same constraint the
+   NOTE_EDIT slice fixtures hit, which is why they call `publishCommittedRootForSlot`.
+2. **`publishCommittedRootForSlot(loop, bars)` publishes synthetic content** — `bars` notes at `bar * 768`, ids 2000+bar — **not**
+   the helper's committed events. Using it to make a "sparse committed" fixture measures the synthetic root instead: with 64 bars it
+   emitted 16 events for a fixture expecting 4, and `committedWindowTurns == 0`.
+
+So the sparse committed-window fixture is **not** a production question yet; it needs a harness seam that publishes a root **built
+from the committed passes** (the comment names `Loop::storePublishedSnapshotForTest` as the seam). Until that exists, the third
+removal proof cannot be taken, and 3.15c's committed-window claim stays open.
+
+**What this does not say:** it is not evidence that the committed window fails to serve sparse content. The probe never reached the
+route under test; the synthetic root measured a different content set.
