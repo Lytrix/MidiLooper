@@ -90,6 +90,37 @@ close but the demand state is not yet production-faithful, which is the next inc
 delivery, and no defect. The four-case oracle (selected source, emitted count, element-wise order, wrap continuity,
 duplication/loss, merged usage) is defined and unwritten.
 
+## Production-faithful harness — measured RED (2026-10-21)
+
+The faithful sequence is now reproduced: RWO's sealed dense builder → the demand exactly as the gather/switch leaves it →
+**one bounded owner turn per edge turn on the demand's own stamp** (`nativePlaybackDeadlineClock`, the I3c discipline) →
+`Track::playMidiEvents` consumes what the ring has staged. No `drivePagedEmissionFrame` is used for the behaviour under
+test. The two earlier zeros were **my harness**, not firmware: a synthetic clock stamp (`{1,1}` against a demand registered
+at `{1000,1}`) invalidated the frozen demand and discarded the ring (`pagedActive=0`, `bound=0`,
+`frozenViewRequest.active=0`). Holding the demand's own stamp keeps it (`111`).
+
+One whole traversal of each shape, walk `0…1536` (`+128` past the wrap in the order case), production edge each turn:
+
+| Case | Report at start | Delivery state after | Emitted | Oracle | Order |
+|---|---|---|---|---|---|
+| dense **512-bar** (over-`L` interval in the first two bars) | `NoDelivery` until the switch | bound, admissible | **2 500** | 2 500 | complete |
+| dense **2-bar** (interval *is* the loop) | **`CannotStraddleTheWrap`** (2) | `pagedActive=1`, `bound=1`, `admissible=1` | **2 437** | 2 500 | first 2 437 element-wise **exact** |
+
+**The discrimination the harness was built for:** report = `CannotStraddleTheWrap`, production **selects** the paged delivery
+anyway (`admittedForEmission()` true, `pagedActive`/`bound` true), and the stream is **truncated by exactly 63 events at the
+tail** — with no reordering, no duplication and no mid-stream loss (the element-wise comparison matched for all 2 437
+emitted events, and the packed mismatch reading was `631` = 63 missing, emitted exhausted before the oracle). Walking 128
+ticks past the wrap does not recover them, so this is not a final-step artifact.
+
+That is the first of the four outcomes: **the report and the selector disagree and the selector's answer loses content.**
+Promoted from hypothesis to a measured RED; the fix is **not** applied in this slice.
+
+**Also recorded (harness shape, not firmware):** a *sparse* control inside `prepareOverCapacityPagedSlot`'s rootless
+demoted shape emits 0 (`test_dense_edge_01_control`), because that shape exists to force the paged lane and has no
+published root to fall back to. The valid sparse control remains the preview suite's `commitEmissionLoop` +
+`readyEmissionPlaying` fixture, which emits its accepted stream in full (200 = 200, measured in the first harness run). The
+faithful dense harness therefore needs its control from that shape, not from the dense fixture.
+
 ## As executed (2026-10-21) — G0 closed, measurement **not** obtained
 
 **G0 verdict: PASS for discovery, BLOCKED for slice 2's shape.** The discovery found the two facts that matter and no
