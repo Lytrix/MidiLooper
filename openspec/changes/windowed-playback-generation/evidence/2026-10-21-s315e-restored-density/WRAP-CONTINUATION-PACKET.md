@@ -440,6 +440,27 @@ already moved so `size` was 0.
 turn — one file-tuple again — then either move the drain after the `notePassBoundary` call inside the same flash function
 (preferred: the admission is judged there) or make the predicate exact.
 
+## 1p. Form 1 fires after the judgement but over-emits (2026-10-21)
+
+With the drain placed **after** `servicePagedPassBoundaryForSlot` (so the admission is the one the selection reads), the drain
+runs and the whole-loop shape moves **2 437 → 2 756**:
+
+| Reading | Value |
+|---|---|
+| emitted, whole-loop shape | **2 756** = 2 500 + 256 |
+| 512-bar control | 2 500 (unchanged) |
+| qualification `.text.itcm` | baseline (0 B extra) |
+
+So the trigger point is now right (the drain fires) and the ITCM cost is zero, but the emission is **256 events over** — two
+pages — rather than the 63 that were missing. The overshoot is the next defect, and it is bounded: the drain's `size` is
+`servable − passBaseOrdinal` and the base at that instant is the pass base, not the tail start, so the drain walks more than the
+tail; the base move afterwards then leaves the next pass's head double-emitted.
+
+**Next increment (precise):** bound the drain to the tail it is meant to carry — walk at most
+`passContentOrdinal − consumedOrdinal` events by setting the adapter-visible base to `consumedOrdinal` **for the drain only**
+(save and restore it, or pass the range explicitly), and do **not** move the base afterwards. Expected: +63, total 2 500, control
+unchanged. Only then the six cases and the gate.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
