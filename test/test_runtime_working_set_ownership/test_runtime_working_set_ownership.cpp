@@ -17036,7 +17036,6 @@ void test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase
 // gather/paged switch exactly as production leaves them, then **one bounded owner turn per edge turn on the demand's own
 // stamp** and `Track::playMidiEvents` for the emission. No test-side frame driver is used for the behaviour under test,
 // because a frame driver would prove the walk rather than the production route.
-#if defined(DENSE_DELIVERY_EDGE_ORACLE)
 struct DenseEdgeReading {
   size_t accepted = 0;
   size_t emitted = 0;
@@ -17095,11 +17094,21 @@ static void test_3_15e_a_dense_long_interval_emits_its_whole_content_through_the
   }
 }
 
-/// The measured RED (2026-10-21): a whole-loop dense interval is selected as a paged delivery and truncates at the wrap.
+/// Task 3.15e: a **whole-loop** dense interval keeps its content across the wrap. The wrap turn drains the old cycle's
+/// tail (measured: 2 437 of 2 500 before the fix, 63 events lost) and the next traversal starts where the drain ended.
 static void test_3_15e_a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge() {
-  DenseEdgeReading r = driveDenseEdgeThroughProductionEdge(2500, 2, 2u * Config::TICKS_PER_BAR + 128u);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(r.oracle), static_cast<uint32_t>(r.emitted),
-                                   "a dense whole-loop interval emits every accepted event (measured: 63 lost)");
+  const uint32_t loopTicks = 2u * Config::TICKS_PER_BAR;
+  DenseEdgeReading r = driveDenseEdgeThroughProductionEdge(2500, 2, 2u * loopTicks);
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(2u * r.oracle), static_cast<uint32_t>(r.emitted),
+                                              "a dense whole-loop interval loses nothing over two traversals");
+  const size_t n = r.emittedEvents.size() < 2u * r.oracleEvents.size() ? r.emittedEvents.size()
+                                                                      : 2u * r.oracleEvents.size();
+  for (size_t i = 0; i < n; ++i) {
+    const MidiEvent& want = r.oracleEvents[i % r.oracleEvents.size()];
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(want.tick, r.emittedEvents[i].tick, "element-wise tick order across the wrap");
+    TEST_ASSERT_EQUAL_UINT8(want.data.noteData.note, r.emittedEvents[i].data.noteData.note);
+    TEST_ASSERT_EQUAL(want.isNoteOff(), r.emittedEvents[i].isNoteOff());
+  }
 }
 
 /// The mismatch itself, pinned so the fix has to answer it: the report says the interval cannot straddle its wrap,
@@ -17110,7 +17119,7 @@ static void test_3_15e_the_wrap_report_and_the_selection_predicate_disagree() {
   TEST_ASSERT_TRUE_MESSAGE(r.bound, "the delivery is bound");
   TEST_ASSERT_TRUE_MESSAGE(r.admissible, "and admissible -- the selector never consults the report");
 }
-#endif
+
 
 int main() {
 
@@ -17448,10 +17457,8 @@ int main() {
   // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,
   // and which production paths are deliberately exempt.
   // windowed-playback-generation task 3.10: the rolling path's admission boundary on the playing chain.
-#if defined(DENSE_DELIVERY_EDGE_ORACLE)
   RUN_TEST(test_3_15e_a_dense_long_interval_emits_its_whole_content_through_the_edge);
   RUN_TEST(test_3_15e_a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge);
   RUN_TEST(test_3_15e_the_wrap_report_and_the_selection_predicate_disagree);
-#endif
   return UNITY_END();
 }

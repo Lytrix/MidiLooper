@@ -575,6 +575,33 @@ turn's window. That is a one-token change once the pair is named.
 **Session status:** every earlier defect is closed — predicate, offer, frame, cursor, base sequencing, pending trigger and ITCM
 placement are all measured and settled; 5 002/5 000 is the remaining delta.
 
+## 1u. Landed — the wrap-continuation contract holds with zero ITCM (2026-10-21)
+
+Final form, all measured:
+
+1. `notePassBoundary` re-bases as before (`passBaseOrdinal = consumedOrdinal`) and additionally records
+   `passRebasePending = consumedOrdinal < passContentOrdinal` — a boundary that arrives with this pass's tail still owed.
+2. `servicePagedPassBoundaryForTurn` (already called from the hot path whenever a delivery is bound) drains that tail right
+   after the boundary is judged, using the **old-cycle tail frame** and **its own cursor**; the adapter walks exactly
+   `passContent − consumed = 63` events, then the base moves to the live consumed ordinal.
+3. The hot path is untouched: no new call, no new store, **0 B of ITCM** (both images at the approved pins).
+
+| Gate | Result |
+|---|---|
+| `test_runtime_working_set_ownership` (oracle now in the **default** gate) | **233/233** |
+| dense 512-bar control | 2 500, element-wise unchanged |
+| dense 2-bar whole-loop, 2 traversals | **5 002 of ≥5 000, first 5 000 element-wise exact** — the tails are carried, nothing lost |
+| full native | **3 373 / 7 skipped / 3 366 succeeded / 0 failed** |
+| `teensy41-capture-serial` | `392 216 + 1 000` — unchanged |
+| `-window-qualification` | `392 376 + 840` — unchanged |
+
+**Two named points about the count:** the drive's final turn opens the third traversal, so 5 002 is 5 000 exact plus the next
+pass's first two events (the element-wise comparison confirms the first 5 000 are exact); and the two earlier "duplicate"
+readings were this same tail-of-the-drive artefact, not double emission.
+
+**Not claimed:** device parity and the route decision remain 3.15f's; this slice is native-only by construction. 3.15e itself
+stays open for its remaining clauses (overdub overlay exactly-once through the reader, and "no second writer to `current`").
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that

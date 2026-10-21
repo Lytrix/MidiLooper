@@ -793,6 +793,7 @@ struct LoopPlaybackRuntime {
     /// True once the **emission** is what this delivery serves: the producer then re-arms a pass instead of completing
     /// once, because a delivery nobody emits keeps I3b's one-shot completion (and its `Prepared` discharge).
     bool emitting = false;
+    bool passRebasePending = false;
     void bindToDelivery() {
       consumedOrdinal = 0;
       passBaseOrdinal = 0;
@@ -842,6 +843,7 @@ struct LoopPlaybackRuntime {
         ++passesUnstraddled;
       }
       passBaseOrdinal = consumedOrdinal;
+      passRebasePending = consumedOrdinal < passContentOrdinal;
       if (dryTurns != 0) {
         ++passesWithDrys;
       }
