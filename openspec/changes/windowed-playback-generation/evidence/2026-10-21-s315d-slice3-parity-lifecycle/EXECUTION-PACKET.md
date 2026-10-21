@@ -79,6 +79,11 @@ side: the preview requester must never run after the lane's source has been yiel
 post-exit branch was written, measured unnecessary with that ordering, and removed. See
 [`EXECUTION.md`](EXECUTION.md) for the edit-by-edit RED table.
 
+**Scope decided after the slice (owner, 2026-10-21, option 2):** the fixture's parity statement is recorded as **content
+parity only**. The literal route claim — *serve short and long NOTE_EDIT from the same interval window reader* — stays
+open and the short-loop route-parity decision is **delegated to 3.15f**; this slice is not evidence that the two routes
+are identical.
+
 ## Owner and path
 
 - `Track::cancelPreviewWindowForSlot` (`TRACK_COLD_MEM`) — the release, before the early return.

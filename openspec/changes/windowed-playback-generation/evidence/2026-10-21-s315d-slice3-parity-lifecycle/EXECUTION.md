@@ -2,7 +2,7 @@
 
 Packet: [`EXECUTION-PACKET.md`](EXECUTION-PACKET.md). Slice 2:
 [`../2026-10-21-s315d-slice2-edge-adoption/EXECUTION.md`](../2026-10-21-s315d-slice2-edge-adoption/EXECUTION.md).
-Branch `feature/unified-rolling-playback-path`, base `0f71c75d` (slice 2).
+Branch `feature/unified-rolling-playback-path`, base `0f71c75d` (slice 2), commit `2b876c84`.
 
 ## Order executed
 
@@ -76,20 +76,35 @@ both images are byte-for-byte the same size as before.
 | Check | Status | Evidence |
 |---|---|---|
 | Focused native | **PASS** | `test_windowed_preview_integration` **29/29** (25 existing + 4 new) |
-| Full native | **PASS** | `/tmp/native_s3_final.log`: **3 370 / 7 skipped / 3 363 succeeded / 0 failed** |
+| Full native | **PASS** | `/tmp/native_s3_final2.log`: **3 370 / 7 skipped / 3 363 succeeded / 0 failed** |
 | `teensy41-capture-serial` | **PASS** | `variables 96 192 / code 392 216 / padding 1 000 / locals 34 880` — the approved pins, unchanged |
 | `teensy41-capture-serial-window-qualification` | **PASS** | `variables 96 192 / code 392 376 / padding 840` — the approved floor, unchanged |
 | `openspec validate --strict` | **PASS** | valid |
 | `git diff --check` | **PASS** | clean |
-| Device | NOT RUN | route parity is 3.15f's; the release is observable only where a demand was retained |
+| Device | NOT RUN | route decisions and their qualification are 3.15f's; the release is observable only where a demand was retained |
 
 ## Not claimed
 
-- **Route parity for short loops is still open.** A whole-loop interval needs `768 + grains × 8 × 64` ticks of lead
-  (2 304 at a three-grain price) and a two-bar loop's lead tops out at 1 535, so the window reader cannot serve it at
-  any playhead. The slice pins **content** parity — the same emitted stream from the merged fallback and from the preview
-  frame — and records the route limit as a property of the declared envelope, not of this slice. Whether the task's
-  "serve short and long from the same reader" is satisfied by content parity is an owner decision, and is why 3.15d
-  stays unchecked.
-- The save fixture measures the save against the **serving** frame, after the checkpoint is settled (the settle is
+- **Route parity for short loops is open, not conceded.** A whole-loop interval needs `768 + grains × 8 × 64` ticks of
+  lead (2 304 at a three-grain price) and a two-bar loop's lead tops out at 1 535, so the window reader cannot serve it
+  at any playhead. The slice pins **content** parity — the same emitted stream from the merged fallback and from the
+  preview frame — and records the route limit as a property of the declared envelope, not of this slice.
+- **The save fixture** measures the save against the **serving** frame, after the checkpoint is settled (the settle is
   fixture scaffolding and may legitimately move the lane); it does not claim the settle is side-effect free.
+
+## Scope decision taken after the slice (owner, 2026-10-21)
+
+**Option 2.** The literal route claim stays open and the short-loop route-parity decision is **delegated to 3.15f**.
+Slice 3 is recorded as having proven **content parity** and the **correct lifecycle of a refused request** — explicitly
+not as evidence that the two routes are identical.
+
+Consequences recorded in the docs:
+
+- `tasks.md` 3.15d keeps its first clause open as a literal route claim and states why the task stays unchecked.
+- `tasks.md` 3.15f carries the delegated decision, including that serving such a loop would need an admission/policy
+  decision rather than a preview change.
+- The parity fixture's own description calls itself content parity only, so a later reader cannot mistake it for a route
+  equivalence proof.
+
+No admission constant was touched and no owner moved (this is task scope, not an ownership transfer), so no DEC was
+required.

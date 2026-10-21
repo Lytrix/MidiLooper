@@ -1937,8 +1937,9 @@ std::vector<EmittedNote> walkEmission(Track& track, uint8_t slot, uint32_t from,
 /// **P3 -- short and long NOTE_EDIT emit the same stream.** The two-bar loop's interval is its whole loop, so its lead
 /// is `1 536 - 768 = 768` and the declared envelope (2 304 ticks for a three-grain window) refuses it by name; the
 /// merged reader serves the composition. The 64-bar loop (its own slot, so no pass is shared) carries the same notes
-/// through the preview frame. Same content, two routes, one stream -- which is what "short and long from the same
-/// reader" can mean while the envelope stays as declared (route parity for short loops is 3.15f's).
+/// through the preview frame. Same content, two routes, one stream: this fixture proves **content** parity, not route
+/// identity -- the literal route claim for short loops stays open with 3.15f, because such a loop's whole-loop interval
+/// cannot be admitted at any playhead (its lead tops out at 1 535 against the envelope's 2 304).
 static void test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream() {
   std::vector<EmittedNote> shortStream;
   std::vector<EmittedNote> longStream;
