@@ -7230,6 +7230,17 @@ TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(
   if (runtime == nullptr) {
     return PreviewCancelOutcome::NothingToCancel;
   }
+  // Task 3.15d (slice 3): **a refused preview request is still this lane's promise.** The admission refuses a request
+  // it cannot complete before its handoff and *retains* it (`CannotCompleteBeforeHandoff`, `InterferenceBudget`); no
+  // window was admitted, so `previewSourceActive` stays false and the early return below would leave the promise
+  // behind. Its owner is the session projection, which is exactly what an exit, a mutation or a re-focus retires -- and
+  // while it lives, the committed requester's own `pendingViewRequest_.active` guard answers `win_busy` behind a
+  // promise nobody can keep (a short loop's whole-loop interval, or any demand whose lead is too short). Keyed on the
+  // demand's **source identity**, so a committed, capture or launch promise is never touched.
+  if (runtime->pendingViewRequest_.active &&
+      runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview) {
+    runtime->clearViewPendingRequest();
+  }
   if (!runtime->previewSourceActive) {
     // Nothing of the lane's own. A **repeated exit** is named rather than treated as a second handoff, so a caller
     // cannot make the committed lane re-request by repeating itself.

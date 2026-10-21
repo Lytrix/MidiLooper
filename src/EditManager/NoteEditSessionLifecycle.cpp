@@ -396,9 +396,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     // Task 3.7a (I3) / task 3.13's exit hook: the session is ending, so its preview source **yields** and the committed
     // successor becomes owed -- the handoff the spec names, performed here by the owner of the session. The served
     // preview window keeps serving until that successor is adopted (the handoff is a boundary, never a gap).
+    // Task 3.15d (slice 3): the last display advance is flushed **before** the yield. The flush is the session's own
+    // revision-advance seam and runs the preview requester; doing it after the cancel would prepare a preview for a
+    // session that is already over (and, when the request is refused, leave the promise behind), while doing it first
+    // lets the cancel own the last word: an admitted source becomes the owed handoff, a refused one is released.
+    flushDeferredNoteEditDisplayRefresh(track);
     (void)track.cancelPreviewWindowForSlot(track.getActiveLoopIndex(),
                                            Track::PreviewWindowCancelReason::SessionExited);
-    flushDeferredNoteEditDisplayRefresh(track);
     closeNoteEditPass(track);
     Loop& loop = trackManager.getSelectedLoop(track);
     if (loop.captureActive() || loop.hasOverdubSession()) {

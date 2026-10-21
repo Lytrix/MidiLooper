@@ -1908,6 +1908,284 @@ static void test_3_15d_slice2_the_lane_re_covers_the_playhead_when_its_interval_
   TrackPlaybackTestAccess::runtime(track, 0)->clearViewPendingRequest();
 }
 
+// ==================================================================================================
+// Task 3.15d (slice 3) -- **short/long parity, the refused-demand lifecycle, and 2.12's save clause read
+// against a serving frame.**
+//
+// The admission boundary is a *route* boundary, not a content one: a whole-loop interval whose lead is below
+// the declared price (768 + grains x 8 x 64) is refused by name and the merged reader serves it, while the same
+// content on a demoted loop is served by the preview frame. The parity claim is therefore stated on the emitted
+// stream, not on the route.
+// ==================================================================================================
+
+/// One emitted stream over `[from, to]` for `slot`, with the production interleave: a clock-edge turn, then
+/// (optionally) the track's owner visit. `sawPreview` reports whether any turn bound a `Preview` frame.
+std::vector<EmittedNote> walkEmission(Track& track, uint8_t slot, uint32_t from, uint32_t to, bool interleaveLane,
+                                      bool& sawPreview) {
+  std::vector<EmittedNote> out;
+  sawPreview = false;
+  for (uint32_t tick = from; tick <= to; tick += 100) {
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, tick);
+    if (servedPreviewWindowForTurn(track, slot) != nullptr) sawPreview = true;
+    for (const EmittedNote& note : emittedNotesSince(track, before)) out.push_back(note);
+    if (interleaveLane) serviceLaneVisit(track, tick);
+  }
+  return out;
+}
+
+/// **P3 -- short and long NOTE_EDIT emit the same stream.** The two-bar loop's interval is its whole loop, so its lead
+/// is `1 536 - 768 = 768` and the declared envelope (2 304 ticks for a three-grain window) refuses it by name; the
+/// merged reader serves the composition. The 64-bar loop (its own slot, so no pass is shared) carries the same notes
+/// through the preview frame. Same content, two routes, one stream -- which is what "short and long from the same
+/// reader" can mean while the envelope stays as declared (route parity for short loops is 3.15f's).
+static void test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream() {
+  std::vector<EmittedNote> shortStream;
+  std::vector<EmittedNote> longStream;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+
+  {
+    std::vector<MidiEvent> content;
+    appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6301));
+    commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+    readyEmissionPlaying(track, 0, 100);
+    editManager.openNoteEditSession(track);
+    (void)mutateSessionAndFlush(track, 900, 64);
+    track.servicePreviewWindowForNoteEditSession();
+    LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+    TEST_ASSERT_NOT_NULL(runtime);
+    TEST_ASSERT_TRUE_MESSAGE(runtime->pendingViewRequest_.active,
+                             "the two-bar interval's request is retained, not silently dropped");
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
+                              static_cast<int>(runtime->pendingViewRequest_.reason),
+                              "the declared lead refuses the whole-loop interval by name");
+    TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                              "a refused request owns no preview source");
+    WindowIdentity identity{};
+    TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, identity),
+                              "and publishes no window");
+    bool shortSawPreview = false;
+    shortStream = walkEmission(track, 0, 100, 1700, true, shortSawPreview);
+    TEST_ASSERT_FALSE_MESSAGE(shortSawPreview, "no turn binds a preview frame on the two-bar loop");
+    // The parity oracle is not the release fixture: close the session and clear the promise explicitly so the long
+    // half starts from a clean lane (L3 pins the release itself).
+    editManager.closeNoteEditSession(track);
+    runtime->clearViewPendingRequest();
+  }
+
+  {
+    std::vector<MidiEvent> content;
+    appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6302));
+    commitEmissionLoop(track, 1, kLongLoopTicks, content);  // its own slot: no pass is shared with the short half
+    // The short half walked past the two-bar loop's wrap, which advanced the track's projection cycle origin; the long
+    // half states its own origin so its phase is the playhead's (the production transport sets this on start/wrap).
+    track.setProjectionCycleStartTick(0);
+    readyEmissionPlaying(track, 1, 100);
+    editManager.openNoteEditSession(track);
+    (void)mutateSessionAndFlush(track, 900, 64);
+    drainLane(track, 100);
+    bool longSawPreview = false;
+    longStream = walkEmission(track, 1, 100, 1700, true, longSawPreview);
+    TEST_ASSERT_TRUE_MESSAGE(longSawPreview, "the long loop's interval is served by the preview frame");
+  }
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(shortStream.size()),
+                                   static_cast<uint32_t>(longStream.size()),
+                                   "the two routes emit the same number of notes");
+  for (size_t i = 0; i < shortStream.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(shortStream[i].tick, longStream[i].tick,
+                                     "the two routes agree on the note's tick");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(shortStream[i].note, longStream[i].note,
+                                    "the two routes agree on the pitch");
+    TEST_ASSERT_EQUAL_MESSAGE(shortStream[i].on, longStream[i].on, "the two routes agree on On/Off");
+  }
+  // The stream is the fixture's own content (not an empty stream that trivially matches): the committed note and the
+  // session's edit, each On and Off once.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(shortStream.size()),
+                                   "the composed interval holds the committed note and the edit, each paired");
+}
+
+/// **L3 -- a refused preview demand is released at the session edge.** A session opened at phase 0 asks for an
+/// interval that would start at the playhead: the lead is zero, so the admission refuses and *retains* the demand, and
+/// `previewSourceActive` stays false because nothing was admitted. The promise's owner is the session projection, so
+/// the exit must release it -- otherwise the committed requester's own `pendingViewRequest_.active` guard answers
+/// `win_busy` behind a promise no one can keep.
+static void test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_session_edge() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6401));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  publishCommittedRootForSlot(track.getLoop(0), 4);  // the committed lane has a source once the session ends
+  readyEmissionPlaying(track, 0, 0);                 // phase 0: the refusal this fixture is about
+
+  editManager.openNoteEditSession(track);
+  track.servicePreviewWindowForNoteEditSession();
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pendingViewRequest_.active,
+                           "the phase-0 preview request is retained as a promise");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
+                            static_cast<int>(runtime->pendingViewRequest_.reason),
+                            "because the declared lead cannot hold it");
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                            "and no source was admitted, which is why the cancel used to skip it");
+
+  // The close itself flushes a pending display refresh **while the session is still active**, and that flush is exactly
+  // what can re-retain the promise after the cancel released it: arm one here so the fixture covers that path.
+  track.invalidateCaches(true);
+  editManager.closeNoteEditSession(track);
+  // Snapshot the promise's state at the edge, before the committed visit below can retain one of its **own**.
+  const bool promiseSurvivedExit = runtime->pendingViewRequest_.active;
+  publishEmissionClock(0);
+  const Track::RollingOutcome after = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Busy), static_cast<int>(after),
+                                "the committed lane is no longer held out by the stale demand");
+  TEST_ASSERT_FALSE_MESSAGE(promiseSurvivedExit,
+                            "the exit releases the lane's own promise (its owner, the session, is gone)");
+  // And no later owner visit may revive it either: the demand's owner only exists while the session does.
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active &&
+                                runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview,
+                            "the post-exit visit does not re-retain a preview promise");
+}
+
+/// **L3 -- an edit while the preview frame is serving.** The frame is bound to the old revision when the session
+/// mutates; the stale window must not emit the new revision's content, the edit must sound once, the crossed note's
+/// Off must be carried exactly once by whichever route holds it, and the lane must end serving the new revision.
+static void test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 900, 1900, 60, static_cast<NoteId>(6501));  // crosses the interval's end
+  appendIdentifiedNote(content, 1100, 1200, 62, static_cast<NoteId>(6502));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, kPlayhead);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  size_t ons60 = 0, offs60 = 0, ons62 = 0, offs62 = 0, ons64 = 0, offs64 = 0;
+  auto countNotes = [&](size_t baseline) {
+    for (const EmittedNote& note : emittedNotesSince(track, baseline)) {
+      if (note.note == 60) (note.on ? ons60 : offs60)++;
+      if (note.note == 62) (note.on ? ons62 : offs62)++;
+      if (note.note == 64) (note.on ? ons64 : offs64)++;
+    }
+  };
+  {
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, 900);
+    TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                                 "the preview serves the note it is about to mutate past");
+    countNotes(before);
+  }
+
+  publishEmissionClock(1000);
+  const uint32_t revised = mutateSessionAndFlush(track, 1500, 64);  // the edit lands while the frame is serving
+  serviceLaneVisit(track, 1000);                                    // production: requester, then the lane
+  TEST_ASSERT_FALSE_MESSAGE(servedPreviewWindowForTurn(track, 0) != nullptr &&
+                                servedPreviewWindowForTurn(track, 0)->source.playbackRevision != revised,
+                            "the frame never serves the superseded revision after the edit");
+
+  bool servedNewRevision = false;
+  for (uint32_t tick = 1000; tick <= 2000; tick += 100) {
+    const size_t before = emissionBaseline(track);
+    emitTurn(track, tick);
+    const RuntimePlaybackView* served = servedPreviewWindowForTurn(track, 0);
+    if (served != nullptr && served->source.playbackRevision == revised) servedNewRevision = true;
+    countNotes(before);
+    serviceLaneVisit(track, tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(servedNewRevision, "the lane serves the revision the edit created");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(ons60), "the crossed note's On sounds once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offs60), "and its Off once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(ons62), "the interior note's On sounds once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offs62), "and its Off once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(ons64), "the edit's On sounds once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offs64), "and its Off once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(ledgerForSlot(track, 0).openCount()),
+                                   "the mutation handoff leaves no open obligation");
+}
+
+/// **S3 -- fixture 2.12's `then save` clause with the frame serving.** The earlier save fixture measured the save
+/// against a *published* preview; this one measures it against the frame the clock edge actually bound. The checkpoint
+/// is settled first (as the storage harness does), then the preview is served, then the save runs: the body must be the
+/// checkpoint, and the frame must still be serving the same preview revision afterwards.
+static void test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving() {
+  constexpr uint32_t kRootBars = 4;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  Loop& loop = track.getLoop(0);
+  clockManager.assignCurrentTickSilently(kContentPhase);
+  editManager.openNoteEditSession(track);
+  const uint32_t previewRevision = mutateSessionAndFlush(track, 7100, 72);
+  TEST_ASSERT_EQUAL_UINT32(previewRevision, publishSessionPreview(track, 0, kContentPhase));
+  const std::vector<EventKey> previewKeys =
+      projectionEventKeysIn(sessionProjection(), playbackIntervalAt(track, 0, kContentPhase));
+  TEST_ASSERT_FALSE_MESSAGE(previewKeys.empty(), "the served interval holds the session's content");
+
+  // The checkpoint, settled exactly as the storage harness settles it before a save.
+  publishCommittedRootForSlot(loop, kRootBars);
+  for (size_t step = 0; step < 10000 && loop.hasPendingSnapshotPublish(); ++step) {
+    loop.stepPendingSnapshotPublish(1);
+  }
+  TEST_ASSERT_TRUE(loop.hasSettledPublishedSnapshotForSave());
+  SessionMidiEventVec checkpointEvents;
+  LoopContentResolution::resolveWindow(*loop.publishedSnapshot(), 0, loop.loopLengthTicks, checkpointEvents);
+  TEST_ASSERT_FALSE(checkpointEvents.empty());
+  TEST_ASSERT_FALSE_MESSAGE(sameKeys(resolvedEventKeys(checkpointEvents), previewKeys),
+                            "the checkpoint and the preview are different content by construction");
+
+  // **The frame** the edge binds -- not merely the publication -- is what the save must leave alone.
+  const size_t baseline = emissionBaseline(track);
+  emitTurn(track, kContentPhase);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the clock edge served the session's preview");
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t boundGeneration = runtime->rolling.boundStorageGeneration;
+  WindowIdentity servedBefore{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedBefore));
+  TEST_ASSERT_EQUAL_UINT32(previewRevision, servedBefore.playbackRevision);
+  (void)baseline;
+
+  std::vector<uint8_t> buffer;
+  StorageIo io{
+      [&buffer](const void* data, size_t size) -> bool {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        buffer.insert(buffer.end(), bytes, bytes + size);
+        return true;
+      },
+      nullptr};
+  TEST_ASSERT_TRUE_MESSAGE(writeLoopPersisted(io, loop), "the production save writes the slot's body");
+  LoopSnapshotBodyFormatV1ReadResult read{};
+  TEST_ASSERT_TRUE_MESSAGE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), read),
+                           "the written body reads back");
+  TEST_ASSERT_TRUE(read.ok);
+  SessionMidiEventVec savedEvents;
+  LoopContentResolution::resolveWindow(*read.loopSnapshot, 0, read.loopSnapshot->loopLengthTicks(), savedEvents);
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(resolvedEventKeys(savedEvents), resolvedEventKeys(checkpointEvents)),
+                           "the body carries the checkpoint's own content");
+  TEST_ASSERT_FALSE_MESSAGE(sameKeys(resolvedEventKeys(savedEvents), previewKeys),
+                            "and never the preview the frame was serving");
+
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                            static_cast<int>(runtime->rolling.phase),
+                            "the save leaves the frame serving");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(boundGeneration, runtime->rolling.boundStorageGeneration,
+                                   "over the same storage instance");
+  WindowIdentity servedAfter{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedAfter));
+  TEST_ASSERT_EQUAL_UINT32(previewRevision, servedAfter.playbackRevision);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(servedAfter.origin), "and still preview, not committed currency");
+  emitTurn(track, kContentPhase + 100);
+  TEST_ASSERT_NOT_NULL_MESSAGE(servedPreviewWindowForTurn(track, 0),
+                               "the next turn still serves the same preview interval");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -1944,5 +2222,12 @@ int main(int, char**) {
   RUN_TEST(test_3_15d_slice2_the_session_exit_yields_the_preview_frame);
   RUN_TEST(test_3_15d_slice2_a_slot_switch_yields_the_departing_slots_preview);
   RUN_TEST(test_3_15d_slice2_the_lane_re_covers_the_playhead_when_its_interval_ends);
+  // Task 3.15d (slice 3): short/long **content** parity across the admission boundary, the release of a refused
+  // preview demand at the session edge, an edit carried by the next revision while the frame serves, and 2.12's save
+  // clause read against the serving frame.
+  RUN_TEST(test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream);
+  RUN_TEST(test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_session_edge);
+  RUN_TEST(test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision);
+  RUN_TEST(test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving);
   return UNITY_END();
 }
