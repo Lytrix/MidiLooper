@@ -71,6 +71,33 @@ the events are due *in the very turn* that fires the boundary, and that turn emi
 that the tail is emitted **in the wrap turn itself**, i.e. zero lateness. A′ must prove that, plus order before any phase-0
 event, continuous ledger, and no accumulation across wraps.
 
+## 1b. A′ attempt 1 — recovered the tail, perturbed the control (reverted, 2026-10-21)
+
+Implemented and measured, then reverted (no production line left in the tree). Mechanism: `notePassBoundary` no longer
+re-bases; it sets `passRebasePending`, and `servicePagedPassBoundaryForSlot` applies `passBaseOrdinal = consumedOrdinal` at
+the start of the **next** owner turn. The flag fits existing padding (host `sizeof(LoopPlaybackRuntime)` stays 10 104; a
+variant with a second `uint32_t` needed +8 B and was dropped).
+
+| Case | Before | Attempt 1 | Verdict |
+|---|---|---|---|
+| dense 512-bar control | 2 500 | **2 498** | **regressed — not acceptable** |
+| dense 2-bar whole-loop | 2 437 | **4 933** | tail recovered; the drive then covers a second traversal, so a one-traversal count is no longer the right oracle |
+| report vs selector | passes | passes | unchanged |
+
+A first form that also captured the base at the boundary (`pendingPassBaseOrdinal`) measured **4 937**: the stale base
+re-addressed the already-emitted tail, so the base must come from the live `consumedOrdinal`, not a boundary snapshot.
+
+**What attempt 1 established:** deferring the re-base *does* release the `1473…1535` tail, so §1a's direction is right.
+**What it also established:** an unconditional deferral moves the long control by 2 events, so the base may only advance
+once the walk has actually reached the pass's content end, and the oracle must state traversals explicitly.
+
+**Refinement for attempt 2 (not implemented):**
+
+1. Apply the deferred base only when `consumedOrdinal >= passContentOrdinal`, otherwise keep the old base so the walk
+   drains the tail.
+2. Express the harness oracle per traversal (walk exactly `n × loopLength`, expected `n × oracle`).
+3. Re-run the long control first: it must be **2 500, unchanged**, before the short case is judged.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
