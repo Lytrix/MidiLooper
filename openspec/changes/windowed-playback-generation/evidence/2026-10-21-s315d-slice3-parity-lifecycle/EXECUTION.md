@@ -92,17 +92,37 @@ both images are byte-for-byte the same size as before.
 - **The save fixture** measures the save against the **serving** frame, after the checkpoint is settled (the settle is
   fixture scaffolding and may legitimately move the lane); it does not claim the settle is side-effect free.
 
-## Scope decision taken after the slice (owner, 2026-10-21)
+## Conclusions taken after the slice (owner, 2026-10-21)
 
-**Option 2.** The literal route claim stays open and the short-loop route-parity decision is **delegated to 3.15f**.
-Slice 3 is recorded as having proven **content parity** and the **correct lifecycle of a refused request** — explicitly
-not as evidence that the two routes are identical.
+**The recorded limit is a supported-route failure, not a fallback pass.** Slice 3 proved **content parity** and the
+correct **lifecycle of a refused request**; it is explicitly not evidence that the two routes are identical. Read
+against the authority, that means the merged fallback it measured is not a sanctioned terminal geometry: DEC-116 — one
+rolling playback path per sounding slot requires the unified request → bounded owner turn → complete immutable ready
+window → clock-edge adoption → ordered emission/ledger route "for every sounding slot, regardless of loop length", and
+the spec's *All scheduled loop playback has one emission contract* scenario names a mutable merged branch as "a named
+temporary migration fallback with a removal trigger, not the final playback authority". 3.7b is that trigger, so a
+refusal on a two-bar NOTE_EDIT cannot be scored as a pass — which is why 3.15d stays unchecked.
 
-Consequences recorded in the docs:
+**What is open is the coverage shape, not the route.** The whole-loop interval this slice could not admit
+(`768 + grains × 8 × 64` ticks of lead needed; a two-bar loop tops out at 1 535) is the *current request's* shape, and
+neither the spec nor DEC-116 requires it: the spec says a short loop "**may** have coverage spanning its whole loop", and
+DEC-116 §3 keeps the span "a tunable, not a fixed bar count". So the obligation that survives this slice is **route
+identity — the same request, owner turn, ready window, clock-edge adoption and emission/ledger contract — with correct
+emitted and ledger behavior**. Whole-loop interval identity is not itself required. Three mechanisms can make the route
+admissible for short loops, and choosing among them is 3.15f's:
+
+1. **Sub-interval coverage** — request an interval the envelope admits, carrying the required wrap/closure and handoff
+   cadence.
+2. **Whole-loop coverage** — at a span/cost policy that is measured rather than assumed.
+3. **Position-free preparation** — the DEC-136 shape for a demand the positioned envelope can never admit.
+
+None of the three may weaken the DEC-136 — private committed-root preparation — envelope, and none was touched here.
+
+**Consequences recorded in the docs:**
 
 - `tasks.md` 3.15d keeps its first clause open as a literal route claim and states why the task stays unchecked.
-- `tasks.md` 3.15f carries the delegated decision, including that serving such a loop would need an admission/policy
-  decision rather than a preview change.
+- `tasks.md` 3.15f carries the delegated decision as **route parity, not whole-loop coverage parity**, with the three
+  mechanisms named and the cutover gate defined as route identity plus correct emitted/ledger behavior.
 - The parity fixture's own description calls itself content parity only, so a later reader cannot mistake it for a route
   equivalence proof.
 
