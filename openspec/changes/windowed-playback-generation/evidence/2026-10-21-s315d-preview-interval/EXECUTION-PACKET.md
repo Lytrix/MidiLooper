@@ -115,7 +115,8 @@ expectations below are hand-written, not derived from the implementation.)
   `scripts/ram1_budget.json`).
 - Specs/diff: `openspec validate windowed-playback-generation --strict`, `git diff --check`.
 - **Device:** NOT RUN in this slice — the audible route is unchanged (merged fallback), so a device run would not judge
-  this slice; the route's device parity belongs to 3.15f.
+  this slice; the route's device parity belongs to 3.15f. (Attempted later under the session's HITL authorization: three
+  managed NOTE_EDIT compose runs on this slice's image, no leg pass, readings in [`EXECUTION.md`](EXECUTION.md).)
 - Evidence destination: this directory (`EXECUTION.md` for the completion record).
 
 ## Completion record
@@ -128,5 +129,5 @@ expectations below are hand-written, not derived from the implementation.)
 | Full native | **PASS** | **3 357 cases / 7 skipped / 3 350 succeeded / 0 failed** (`pio test -e native`, 3:19). Baseline was 3 352/7/3 345 — +5 new cases. |
 | Both builds + RAM1 pins | **PASS** | default `variables 96 192 / code 392 216 + padding 1 000`; qualification `392 376 + 840` — both exactly at the approved pins. `sizeof(LoopPlaybackRuntime)` re-based and measured (7 896 → **7 904** target, 10 080 → **10 104** host); the delta rule is `TRACK_COLD_MEM` because an ITCM copy cost 400 B of the pinned budget. |
 | Strict validation / `git diff --check` | **PASS** | `openspec validate windowed-playback-generation --strict` → valid; `git diff --check` clean. |
-| Device | NOT APPLICABLE | Route unchanged (merged fallback still serves NOTE_EDIT); 3.15f owns device parity. |
+| Device | ATTEMPTED — **no pass** | Three managed runs of the registered NOTE_EDIT compose leg on this slice's image (`75d47454` / `2fe13ada…`, track 8 / slot 4 / channel 8): base leg PASS once (`-02`), NOTE_EDIT sessions opened and played with `crash=0` and no ring/heap anomaly in all three, and the leg's same-pitch interaction failed in each (seed re-select; no later same-pitch live note). Failures are interaction/base-grid, not this slice; the composer feeds a lane the audible route does not consume. Readings in [`EXECUTION.md`](EXECUTION.md). 3.15f owns route parity. |
 | 3.15d / 2.12 checkoff | NOT ELIGIBLE | Slices 2–3 owed (edge adoption during NOTE_EDIT, short/long parity + lifecycle + 2.12's save clause). |

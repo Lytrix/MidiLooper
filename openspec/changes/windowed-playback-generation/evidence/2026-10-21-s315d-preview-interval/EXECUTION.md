@@ -87,6 +87,31 @@ budget (`code 392 616 + padding 600`, below the reviewed 840 floor). Placing it 
 their approved figures exactly (`392 216 + 1 000` and `392 376 + 840`). Both callers are rebuild-time paths, and the
 merged builder is called on content change, not per tick.
 
+## Device attempt (authorized, no pass)
+
+Three managed runs of the registered NOTE_EDIT compose leg on the shipping image, all pinned to this slice's build
+(`git_commit 75d47454`, `firmware_hex_sha256 2fe13adaf0ea9c45152660a5271ecc30726cbff215f7f28cc0e2d0f649771f36`,
+`build_env teensy41-capture-serial`), target `track 8 / slot 4 / channel 8`, `HITL_MANAGED_RUN_TIMEOUT_S=600`:
+
+| Run | Base leg (record + one overdub) | NOTE_EDIT leg |
+|---|---|---|
+| `captures/i5-s315d-slice1-noteedit-01` | FAIL — `overdub_stored_span_too_short` (documented non-repeatable baseline problem) | entered NOTE_EDIT, in-edit overdub started, live note at 1131 seen; failed at seed re-select (`could not select seed tick 0`) |
+| `-02` | **PASS** — `overall_ok: true`, no issues | entered NOTE_EDIT, in-edit overdub started, 8 live notes before the move, move applied; failed at `no later same-pitch live note` |
+| `-03` | FAIL — `record_stored_note_grid_bad` (same documented family) | same failure as `-02` (`same-pitch live ticks=[]`) |
+
+**What the runs do show.** On this slice's image the base record/overdub leg verified content once (`-02`), and three
+NOTE_EDIT sessions opened (`NOTE_EDIT_OPEN … visual_notes=44`), played and took in-edit overdub with `crash=0`, no
+`RING,overflow` and no heap/PSRAM anomaly (run-end `#HEAP_STATS` internal free 17 648–18 616 B, external free
+~4.4 MB). The new interval composer therefore runs in a real session on hardware without disturbing it.
+
+**What they do not show.** The leg's own same-pitch-hold interaction did not produce its live note in any of the three
+runs (two different steps), and the base leg is the repo's documented non-repeatable-green baseline: the 2026-10-01
+`CURRENT_WORK` entry names `overdub_stored_span_too_short` and the missing persistence-result stage, and the 2026-10-19
+`PROJECT_STATE` 3.15g entry attributes `record_stored_note_grid_bad` to host pacing rather than the device grid. No
+device pass is claimed, and none of the three failures is attributable to this slice: the composer feeds a lane the
+audible route does not consume, and the failing steps are seed/live-note selection and base-record grid checks.
+Re-running this leg for route parity remains 3.15f's, which needs a leg whose interaction is decidable first.
+
 ## Not claimed
 
 - **3.15d** is not checked off: slice 2 (clock-edge adoption of a `Preview`-origin fixed view during NOTE_EDIT plus
@@ -95,6 +120,6 @@ merged builder is called on content change, not per tick.
 - **2.12** is not checked off.
 - **Audible route:** unchanged. The merged NOTE_EDIT fallback still serves playback; the preview lane remains a
   write-only publisher for the display until RWO S4e.
-- **Device:** not run — a device run cannot judge a lane the audible route does not consume. 3.15f owns the route's
-  device parity.
+- **Device:** attempted three times under the session's HITL authorization and **not a pass** — see the section below.
+  A device run cannot judge a lane the audible route does not consume; 3.15f owns the route's device parity.
 - `win_blocked_by_request` / `launch_bound_owned` device reads remain unobtainable through production gestures.
