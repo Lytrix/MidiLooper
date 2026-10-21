@@ -419,6 +419,27 @@ path byte-identical to baseline:
 
 Form 1 is preferred (localised, no semantic change to the adapter); form 2 is the zero-cost option if form 1's field cannot fit.
 
+## 1o. Form 1 is ITCM-free but did not fire (2026-10-21)
+
+The drain was moved **inside `servicePagedPassBoundaryForTurn`** (the flash function the hot path already calls on every turn of
+a bound delivery), with a file-local `TRACK_COLD_MEM` helper and the base moved to the live consumed ordinal afterwards.
+
+| Check | Result |
+|---|---|
+| qualification `.text.itcm` | **`392 376 + 840` — byte-identical to baseline (0 B)** |
+| dense 512-bar control | 2 500 |
+| dense 2-bar whole-loop | **2 437 — unchanged, the drain never emitted** |
+
+So the ITCM question is solved for this form (the veneer is gone because there is no new call from the ITCM edge), but the drain
+does not run or does not emit at the wrap turn. Candidate causes, in order: `runtime.pagedEmission.admittedForEmission()` is
+false at that instant (the wrap's own `notePassBoundary` has not run yet in that turn), the wrap predicate computed inside the
+service (`didDisplayPlayheadWrapBackward` with `tickInLoop` recomputed there) differs from the hot path's, or the base had
+already moved so `size` was 0.
+
+**Next increment:** instrument the service's own decision (wrapped flag, admitted flag, `size`, base, consumed) at the wrap
+turn — one file-tuple again — then either move the drain after the `notePassBoundary` call inside the same flash function
+(preferred: the admission is judged there) or make the predicate exact.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
