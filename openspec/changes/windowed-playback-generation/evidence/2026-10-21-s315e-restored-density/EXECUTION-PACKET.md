@@ -121,6 +121,44 @@ published root to fall back to. The valid sparse control remains the preview sui
 `readyEmissionPlaying` fixture, which emits its accepted stream in full (200 = 200, measured in the first harness run). The
 faithful dense harness therefore needs its control from that shape, not from the dense fixture.
 
+## Second measurement — is selector refusal safe? **No.** (2026-10-21)
+
+Same dense 2-bar fixture, same production edge, same walk (`0…1536+128`), **one change only**: the paged delivery is made
+ineligible by clearing the predicate's own input (`pagedEmission.unbind()` — no production line touched). That is exactly
+"the selector refuses this delivery".
+
+| Reading | Value |
+|---|---|
+| emitted | **0** |
+| merged store (`mergedMidiEvents.mergedEvents.size()`) | **0** |
+| delivery at end | unbound (`bound = 0`) |
+| ring at end | still active (`pagedActive = 1`, nothing serves from it) |
+| first element mismatch | 0 (trivially — nothing was emitted) |
+
+**Outcome: merged = 0.** The merged fallback does **not** serve this shape, so making `admittedForEmission()` honour
+`CannotStraddleTheWrap` would replace a 63-event truncation with **total silence** — strictly worse. The refusal is
+therefore **not** added. The fix must make the paged/window delivery span the wrap correctly, and that is a design item
+(ring depth / re-arm policy across the wrap), not a predicate edit.
+
+**Route note, recorded because the removal trigger depends on it:** the sparse control that *does* emit (200 = 200) lives in
+the preview suite's published-root shape; this dense fixture is the deliberately **rootless demoted** shape, and in that
+shape no route serves once paging is out. So the honest statement is narrower than "the merged fallback is available":
+in this shape there is **no** fallback at all.
+
+## The RED is now permanent and gated
+
+`test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp` gained the dense-production-edge oracle
+under `DENSE_DELIVERY_EDGE_ORACLE` (**off by default**, so the suite gate stays green):
+
+```
+PLATFORMIO_BUILD_FLAGS=-DDENSE_DELIVERY_EDGE_ORACLE pio test -e native -f test_runtime_working_set_ownership
+```
+
+Measured with the flag: `a_dense_long_interval_emits_its_whole_content_through_the_edge` **PASSES** (2 500 = oracle,
+element-wise), `a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge` **FAILS** (Expected 2 500 / Was
+2 437), and `the_wrap_report_and_the_selection_predicate_disagree` **PASSES** (state = `CannotStraddleTheWrap`, delivery
+bound and admissible). Without the flag: 230/230 green.
+
 ## As executed (2026-10-21) — G0 closed, measurement **not** obtained
 
 **G0 verdict: PASS for discovery, BLOCKED for slice 2's shape.** The discovery found the two facts that matter and no

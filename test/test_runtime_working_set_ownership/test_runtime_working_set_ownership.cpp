@@ -17021,6 +17021,97 @@ void test_the_last_resort_is_applied_only_when_no_serving_route_covers_the_phase
                                    "a covering merged route serves the turn; silence is never opportunistic");
 }
 
+
+// ==================================================================================================
+// Task 3.15e -- the dense-production-edge oracle (gated, OFF by default).
+//
+// Run with:  PLATFORMIO_BUILD_FLAGS=-DDENSE_DELIVERY_EDGE_ORACLE pio test -e native -f test_runtime_working_set_ownership
+//
+// Why it is gated: its short case is the measured production RED for 3.15e -- a whole-loop dense interval is *selected*
+// as a paged delivery (`CannotStraddleTheWrap` notwithstanding) and loses the last 63 of 2 500 events at the wrap, while
+// the long case proves the same lane emits the same content completely. The suite gate must stay green until the fix
+// lands; the RED stays runnable on demand.
+//
+// What it drives, and what it refuses to drive: RWO's sealed dense builder (`prepareOverCapacityPagedSlot`) and the
+// gather/paged switch exactly as production leaves them, then **one bounded owner turn per edge turn on the demand's own
+// stamp** and `Track::playMidiEvents` for the emission. No test-side frame driver is used for the behaviour under test,
+// because a frame driver would prove the walk rather than the production route.
+#if defined(DENSE_DELIVERY_EDGE_ORACLE)
+struct DenseEdgeReading {
+  size_t accepted = 0;
+  size_t emitted = 0;
+  size_t merged = 0;
+  size_t oracle = 0;
+  int stateAtStart = 0;
+  bool pagedActive = false;
+  bool bound = false;
+  bool admissible = false;
+  uint32_t passes = 0;
+  std::vector<MidiEvent> emittedEvents;
+  std::vector<MidiEvent> oracleEvents;
+};
+
+static DenseEdgeReading driveDenseEdgeThroughProductionEdge(uint32_t denseEvents, uint32_t loopBars,
+                                                            uint32_t walkTicks) {
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(denseEvents, loopBars);
+  driveGatherUntilPagedSwitch(fixture);
+  Track& track = *fixture.track;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  DenseEdgeReading r;
+  r.accepted = fixture.denseEvents;
+  r.stateAtStart = static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0));
+  r.pagedActive = runtime->pagedActive;
+  r.bound = runtime->pagedEmission.bound;
+  track.forceSetState(TRACK_PLAYING);
+  MidiSendCapture::reset();
+  for (uint32_t t = 0; t <= walkTicks; t += 64) {
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    track.playMidiEvents(t, true);
+  }
+  r.emitted = static_cast<size_t>(MidiSendCapture::count());
+  for (size_t i = 0; i < r.emitted; ++i) r.emittedEvents.push_back(MidiSendCapture::at(i));
+  r.merged = runtime->mergedMidiEvents.mergedEvents.size();
+  r.admissible = runtime->pagedEmission.admissible;
+  r.passes = runtime->pagedEmission.passCount;
+  SessionMidiEventVec oracle;
+  fixture.loop->copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase,
+                                                   fixture.coverage.lengthTicks);
+  r.oracle = oracle.size();
+  for (const auto& e : oracle) r.oracleEvents.push_back(e);
+  return r;
+}
+
+/// The long shape is the control that makes the short failure localisable: the same lane, the same dense content, an
+/// interval that does not span the loop.
+static void test_3_15e_a_dense_long_interval_emits_its_whole_content_through_the_edge() {
+  DenseEdgeReading r = driveDenseEdgeThroughProductionEdge(2500, 512, 2u * Config::TICKS_PER_BAR);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(r.oracle), static_cast<uint32_t>(r.emitted),
+                                   "a dense interval inside a long loop emits every accepted event");
+  const size_t n = r.emittedEvents.size() < r.oracleEvents.size() ? r.emittedEvents.size() : r.oracleEvents.size();
+  for (size_t i = 0; i < n; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(r.oracleEvents[i].tick, r.emittedEvents[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(r.oracleEvents[i].data.noteData.note, r.emittedEvents[i].data.noteData.note);
+    TEST_ASSERT_EQUAL(r.oracleEvents[i].isNoteOff(), r.emittedEvents[i].isNoteOff());
+  }
+}
+
+/// The measured RED (2026-10-21): a whole-loop dense interval is selected as a paged delivery and truncates at the wrap.
+static void test_3_15e_a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge() {
+  DenseEdgeReading r = driveDenseEdgeThroughProductionEdge(2500, 2, 2u * Config::TICKS_PER_BAR + 128u);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(r.oracle), static_cast<uint32_t>(r.emitted),
+                                   "a dense whole-loop interval emits every accepted event (measured: 63 lost)");
+}
+
+/// The mismatch itself, pinned so the fix has to answer it: the report says the interval cannot straddle its wrap,
+/// and the selector admits it anyway.
+static void test_3_15e_the_wrap_report_and_the_selection_predicate_disagree() {
+  DenseEdgeReading r = driveDenseEdgeThroughProductionEdge(2500, 2, 2u * Config::TICKS_PER_BAR + 128u);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::CannotStraddleTheWrap), r.stateAtStart);
+  TEST_ASSERT_TRUE_MESSAGE(r.bound, "the delivery is bound");
+  TEST_ASSERT_TRUE_MESSAGE(r.admissible, "and admissible -- the selector never consults the report");
+}
+#endif
+
 int main() {
 
 
@@ -17357,5 +17448,10 @@ int main() {
   // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,
   // and which production paths are deliberately exempt.
   // windowed-playback-generation task 3.10: the rolling path's admission boundary on the playing chain.
+#if defined(DENSE_DELIVERY_EDGE_ORACLE)
+  RUN_TEST(test_3_15e_a_dense_long_interval_emits_its_whole_content_through_the_edge);
+  RUN_TEST(test_3_15e_a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge);
+  RUN_TEST(test_3_15e_the_wrap_report_and_the_selection_predicate_disagree);
+#endif
   return UNITY_END();
 }
