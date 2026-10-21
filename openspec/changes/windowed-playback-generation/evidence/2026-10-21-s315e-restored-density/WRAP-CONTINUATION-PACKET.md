@@ -506,6 +506,44 @@ degree of freedom and is local to the flash helper.
 work is this range clamp. Two forms have already shown 2 500/traversal element-wise with the control unchanged (the inline drain,
 and the cold helper at +16 B), so the contract is achievable within every constraint.
 
+## 1s. Range clamp through the adapter is invalid — the design question is now explicit (2026-10-21)
+
+Making the adapter skip already-consumed ordinals (`walkBase = max(passBaseOrdinal, consumedOrdinal)` in both `size` and
+`eventAt`), with the pending-triggered drain, broke four existing paged fixtures immediately:
+
+| Fixture | Failure |
+|---|---|
+| `test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap` | Expected 5 000 Was 227 |
+| `test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact` | "the producer re-armed: a content end exists to bound the walk with" |
+| `test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate` | halved-rate case no longer absorbed or named |
+| `test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick` | Expected 0 Was 328 |
+
+Cause: those fixtures re-walk a pass with their **own** cursors and rely on `size` being **base-relative**; making the adapter
+"skip consumed" silently changes the contract they pin. So the walk's progress belongs to the **caller's cursor**, and the
+adapter must not encode it. Reverted.
+
+### The design question this leaves, stated precisely
+
+The drain needs three things at once, and the current contract can express only two:
+
+1. **zero ITCM** — so it must be called from a flash function (the boundary service is the only candidate already on the edge);
+2. **a call before the reset** — the boundary service runs before `loop.nextEventIndex = 0`, so it cannot seed the walk index;
+3. **a main frame that does not re-walk the drained ordinals** — which needs either the seed (2) or an adapter that skips (1's
+   cursor contract, now disproved).
+
+So the resolution is one of:
+
+- **a single `uint16_t` field** written by the boundary service and read once after the reset by the hot path (+1 load; the
+  veneer-free call already exists, so this is likely ≤ 8 B), or
+- **a second cold entry** called *after* the reset in the wrap turn (re-introduces the veneer; measured +16 B), or
+- **move the reset itself into the flash boundary service** (the hot path then has no store at all and the service owns both
+  reset and drain — zero ITCM by construction, and the shape it needs is already there).
+
+The third option is the one the measurements point at: it keeps the adapter contract intact and needs no new state.
+
+**Session record:** the mechanism is proven (2 500/traversal element-wise, control unchanged, oracle in the default gate at
+233/233) and every constraint has been measured — this is a placement question, not a correctness one.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
