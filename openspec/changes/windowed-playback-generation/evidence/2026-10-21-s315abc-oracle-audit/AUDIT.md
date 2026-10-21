@@ -52,3 +52,17 @@ open items that their own notes already name. What the audit does provide is the
   acceptance route belongs to 5.2.
 
 Recorded so the next slice starts from the shortest path rather than re-reading the histories.
+
+## 3.15c — removal-of-new-reader RED proof (2026-10-21)
+
+The task requires fixtures to **fail when the migrated route is removed**. Mutation performed and restored:
+
+| Step | Command / result |
+|---|---|
+| Mutation | `PagedEmissionState::admittedForEmission()` forced to `false` (the unified paged reader stops being selectable) |
+| Focused RWO suite | **6 failed / 227 succeeded** — `test_3_15e_a_dense_long_interval_emits_its_whole_content_through_the_edge` **Expected 2 500 Was 0**, `test_3_15e_a_dense_whole_loop_interval_emits_its_whole_content_through_the_edge` **Expected ≥5 000 Was 0**, plus four pre-existing paged fixtures |
+| Restore | header restored byte-identically; focused suite **233/233** |
+
+So the dense oracle is **new-reader-dependent** in the required direction: remove the reader and the route that serves restored
+density emits nothing. That is the RED half of 3.15c's open item for the paged route; the same proof is still owed for the
+**window** route (a short/long sparse loop served by `fixedView`/rolling) before 3.15c can be considered covered.
