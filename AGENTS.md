@@ -45,6 +45,12 @@ path and confidence when alternatives exist; do not block on vagueness.
 - **Upload:** after a *successful* firmware build, **ask** before flashing the
   board. Exception: while evaluating the change with a dedicated HITL preset,
   upload and run without asking.
+- **macOS uploader:** follow [`TEENSY_FIRMWARE_UPLOAD.md`](docs/Guides/TEENSY_FIRMWARE_UPLOAD.md):
+  prefer explicit Homebrew `teensy_loader_cli` **2.3+**; the installed PlatformIO
+  bundled CLI 2.2 rejects images reaching 1 MiB (`HEX parse error line 65553`).
+  Do not default to PlatformIO's GUI upload path or count its `SUCCESS` as
+  programming/boot proof. Disable GUI Auto; retain exact HEX hash, loader result
+  and separate USB/boot evidence. Use a short PROGRAM press when needed.
 - **Device SD is user data:** quarantine (`!QUARANTINE_WORKSPACE`), delete or
   rename on the card only with explicit permission in the same session. The
   firmware has no restore command, so quarantine is one-way in practice — see

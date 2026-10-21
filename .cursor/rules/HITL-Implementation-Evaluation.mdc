@@ -82,7 +82,7 @@ Marker rules, learned on device:
 For a HITL that evaluates the change just implemented:
 
 1. `pio run -e teensy41-capture-serial` (RAM1 locals ≥ 4000).
-2. Upload immediately: `pio run -e teensy41-capture-serial -t upload`.
+2. Upload immediately through the [preferred macOS uploader](../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md) (explicit Homebrew CLI2.3+, exact HEX/hash, GUI Auto off, programming and boot evidence). Do not use `pio ... -t upload` or bundled CLI2.2. The HITL exception removes the approval question, not uploader checks. If a runner's `--build-upload` invokes the old path, build/flash separately through this guide and run the preset without that flag, verifying its image pin.
 3. Start the dedicated preset via `host_midi_hitl.py` (managed capture default) **and** `pio test -e native` **in parallel**. Do not wait for the full native suite to finish before upload or HITL. The suite takes about as long as a compose-class HITL; serializing them doubles the wait.
 
 Do **not** wait for a human to approve upload or the HITL run. This overrides [Teensy-Upload-After-Build.mdc](Teensy-Upload-After-Build.mdc) for that evaluation loop only.

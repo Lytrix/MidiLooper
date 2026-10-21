@@ -11,8 +11,11 @@ For **firmware** build and upload, use **`teensy41-capture-serial`** (not plain 
 
 ```bash
 pio run -e teensy41-capture-serial
-pio run -e teensy41-capture-serial -t upload
 ```
+
+For upload, use the exact HEX from this env with the
+[preferred macOS uploader](../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md), not
+PlatformIO's bundled 1 MiB-limited CLI or its default GUI upload path.
 
 This env enables `SESSION_CAPTURE` and `PERF_TELEMETRY` so USB serial emits `#CAP`, `REVT`, `ST`, and edit/transition lines needed for HITL verification and capture sessions.
 

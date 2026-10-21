@@ -1,49 +1,42 @@
 ---
-description: After a successful Teensy firmware build, ask before uploading to the board
+description: Ask after successful Teensy builds; use the checked macOS uploader, not the bundled 1 MiB-limited CLI
 alwaysApply: true
 ---
 
 # Teensy upload after firmware build
 
-## Default build env
+Use **`teensy41-capture-serial`** unless another env is explicitly authorized:
+[default env rule](Teensy-Capture-Serial-Default-Build.mdc).
 
-Use **`teensy41-capture-serial`** for firmware build/upload unless the user opts out — see [Teensy-Capture-Serial-Default-Build.mdc](Teensy-Capture-Serial-Default-Build.mdc).
+After a **successful** firmware build and budget checks, **ask before flashing**.
+Example: “Build succeeded. Upload this checked `firmware.hex` to the Teensy now?”
+Exception: evaluation with a dedicated HITL preset follows
+[HITL evaluation](HITL-Implementation-Evaluation.mdc).
+Never upload after a failed build or when the user requested build-only/host tests.
 
-## When this applies
+## Approved upload
 
-After you run a **successful** Teensy firmware build because firmware code changed, **ask the user** whether to flash the board.
+Follow [the canonical macOS upload guide](../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md).
 
-**Exception:** when evaluating that change with a dedicated HITL preset, upload and run the HITL without asking — [HITL-Implementation-Evaluation.mdc](HITL-Implementation-Evaluation.mdc).
-
-Do **not** upload automatically for other builds. Do **not** skip the question silently.
-
-## What to ask
-
-Use a short, direct prompt, for example:
-
-> Build succeeded. Upload `firmware.hex` to the Teensy now?
-
-## If the user agrees
-
-From the project root (same env as the build):
+- Prefer explicitly selected **Homebrew `teensy_loader_cli` 2.3+**
+  (`/opt/homebrew/bin/teensy_loader_cli` on this host); check its version.
+- **Do not use installed PlatformIO bundled CLI 2.2**: its parser rejects data
+  reaching 1 MiB (`HEX parse error line 65553` in the recorded image).
+- Do not default to `pio run ... -t upload`: this currently selects `teensy-gui`,
+  whose PlatformIO `SUCCESS` is not programming or boot evidence.
+- Hash the exact selected build's HEX. Disable GUI Auto; use one uploader.
+- macOS CLI `-s` is unsupported here. Ask for a short PROGRAM press if needed;
+  never a 15-second factory erase. Keep waiting bounded; do not abort mid-write.
 
 ```bash
-pio run -e teensy41-capture-serial -t upload
+uploader=/opt/homebrew/bin/teensy_loader_cli
+hex="/absolute/path/to/the/approved/build/firmware.hex"
+shasum -a 256 "$hex"
+"$uploader" --mcu=TEENSY41 -w -v "$hex"
 ```
 
-PlatformIO reuses the existing build output; you do **not** need a separate rebuild step before upload.
-
-## If the user declines
-
-Stop after the build. Do not run upload or monitor unless they ask.
-
-## When **not** to offer upload
-
-- `pio test -e native` or other host-only work
-- Build failed — fix first, then rebuild, then ask
-- User already asked only to build, compile-check, or run tests
-- User explicitly said not to upload in this session
-
-## Upload problems
-
-If upload fails on port detection, run `pio device list` and report what you find.
+Retain version/hash/exit code and programming-through-`Booting` transcript.
+Parse/write errors are **upload failures**, not firmware boot failures.
+Verify USB enumeration and fresh boot rows separately; record the image left
+on the board. For missing ports, inspect `pio device list` and USB/HalfKay.
+No SD quarantine/delete permission follows from permission to upload.
