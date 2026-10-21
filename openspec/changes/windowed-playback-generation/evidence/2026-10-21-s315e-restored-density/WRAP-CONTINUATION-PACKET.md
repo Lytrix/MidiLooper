@@ -323,6 +323,34 @@ the base — the main frame and the drain share the adapter's index space, so th
 drain. That change is local to the wrap turn, leaves `passBaseOrdinal`, the producer, page depth and admission untouched, and
 must show 2 500 on the short shape and 2 500 unchanged on the 512-bar control.
 
+## 1k. The fix works — and costs 192 B of ITCM (reverted, not shipped) 2026-10-21
+
+Implemented in the wrap turn: **drain the paged tail with the old-cycle tail frame and its own cursor, then seed the main
+walk's cursor past the drained ordinals** (`loop.nextEventIndex = drained` after the reset), gated to whole-loop intervals
+(`pagedInterval.lengthTicks >= loop.loopLengthTicks`), because an interval inside a long loop is already covered by its own
+interval-start frame.
+
+| Case | Result |
+|---|---|
+| dense 512-bar control | **2 500 — unchanged** |
+| dense 2-bar whole-loop, 2 traversals | **5 000 → 2 500 per traversal, element-wise exact** |
+| existing `test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact` | passes (2 500) |
+| existing `test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick` | passes |
+| gated suite with the oracle **in the default gate** | **233/233** |
+
+So the mechanism is proven: drain + cursor seed, no base change, no producer change, no admission change. Without the
+whole-loop gate, the two existing paged fixtures moved (2 244 and 364 skipped) — recorded so the gate is not mistaken for
+decoration.
+
+**Blocker: ITCM.** `teensy41-capture-serial` measured `code 392 408 + padding 808` (was `392 216 + 1 000`) and the
+qualification image `392 568 + 648` (was `392 376 + 840`) — **+192 B of ITCM, below the 840 floor.** The hot path is the
+ITCM TU, so the drain must become flash-resident before it can ship.
+
+**Next increment (mechanical):** move the drain into a `TRACK_COLD_MEM` helper (the window-build TU is itself ITCM-routed, so
+the helper must be explicitly cold) taking `(slotIndex, currentTick, prevTick)` and rebuilding its own
+`ProjectionContext`/frame/policy inside; the call site then costs a call plus the cursor seed. Re-run the 512-bar control
+first, then the short shape, then both builds against the floor.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
