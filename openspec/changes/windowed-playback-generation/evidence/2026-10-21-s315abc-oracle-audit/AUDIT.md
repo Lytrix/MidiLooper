@@ -238,3 +238,25 @@ standing slot at an arbitrary phase. Building that is a service/deadline fixture
 **Not concluded:** nothing about whether the committed window is load-bearing for sparse playback. Three fixtures have now been
 withdrawn for the same reason — none reached the route — and that is itself the finding: **the route's reachability, not its content,
 is what 3.15c's third proof is waiting on.**
+
+## 3.15c — removal-of-new-reader RED for the **window** route (2026-10-21)
+
+The three withdrawn attempts above all tried to *open a demand* from a standing slot at an arbitrary phase; the route is
+reachable a simpler way — the fixtures that already run it. The removal is therefore performed at the **clock path**, where
+the reader is selected, and the fixtures that reach it are read for content:
+
+| Step | Command / result |
+|---|---|
+| Mutation | after `resolveQualificationPlaybackSourceForTurn`, `fixedView = nullptr; fixedBridge = nullptr;` — the committed-window route is not selectable at the edge (nothing else changes; the merged, paged and cold-owner paths remain) |
+| Focused RWO suite | **37 failed / 201 succeeded** of 238 |
+| Content-level REDs (the claim itself) | `test_record_capture_initial_window_reaches_unified_reader` **Expected 1 Was 0**; `test_rolling_record_observation_growth_and_current_is_nonmutating` **Expected 1 Was 0** — the served window content is gone |
+| Breadth, named | the other 35 fail at shared **setup** helpers ("the root-backed demoted switch must commit"), because the same selection also advances the switch commit — so the mutation is broader than "emission only" |
+| Route-scoped control | the **paged/dense** fixtures (3.15e) and the short-loop merged fixtures stay GREEN, so this is not "playback is off" |
+| Restore | header restored byte-identically; focused suite back to **237/237** (the new 3.15a case included) |
+
+**What this settles:** the committed-window reader is **load-bearing for content** in the required direction — disable it and
+the unified-reader fixtures emit nothing — which is the RED half 3.15c's removal item asked for. **What it does not
+settle:** the mutation is not *narrowly* emission-only (it also removes the route's progression role in switch commit), and
+3.15c's other two terms — the owner-turn/adoption fixture and the one-bar cutover — remain open, so the task stays
+unchecked. A future narrowing (route the fixed stream to empty at the cursor advance while leaving resolution intact) would
+strengthen this, and is not required by the term as written.
