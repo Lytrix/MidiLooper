@@ -155,3 +155,28 @@ result, `rolling.phase`, `retainedGatherRefusal`, `retainedGatherUnits` and `pag
 leaves `Idle`/`Waiting` names geometry or refusal; a lane that serves and is not selected names the selection.
 
 That is the next measurement. Until it runs, 3.7b's precondition stays **unrestated** rather than restated on this evidence.
+
+## 3.15c — the lane reading: the harness demand is refused, so production is not implicated (2026-10-21)
+
+Lane outcome captured during the sparse committed-window drive:
+
+```
+req=<non-Admitted>  phase=Idle  refusal=None  retainedGatherUnits=0  pagedOutcome=None  interval=[0, 1536, 49 152]  emitted=4  committedWindowTurns=0
+```
+
+`rolling.phase` never leaves **Idle**, `retainedGatherUnits` stays **0** and no refusal is recorded — the demand is **not admitted**,
+so the committed lane never starts. The interval the fixture asks for is `[0, 1536)` of a 49 152-tick loop, i.e. a two-bar span at
+phase 0 while the playhead is at 500.
+
+**Conclusion of the discrimination:** the earlier `committedWindowTurns == 0` says **nothing** about production load-bearing — the
+route under test was never entered. Explanation (2) from the earlier list is the one that holds: the harness's request geometry /
+registration is not the production requester's.
+
+**Consequences recorded, not acted on:**
+
+- **3.7b's precondition is not restated.** The "committed window may not be load-bearing" hypothesis remains untested, and no
+  authority text was changed on the strength of a lane that never started.
+- The fixture now **pins the limit**: it asserts the stream is exact and that the harness demand is *not* admitted, so the reading is
+  visible and flips with one assertion once a correctly registered demand exists (the RWO fixtures register it through
+  `requestCommittedPlaybackWindow` with a demoted-slot shape; the preview harness's playhead/interval pair is what differs).
+- The third removal proof is therefore **owed**, and it belongs in the harness that can enter the lane (RWO's), not here.

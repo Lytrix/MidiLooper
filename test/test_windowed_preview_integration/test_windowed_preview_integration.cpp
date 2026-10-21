@@ -2259,7 +2259,14 @@ static void test_3_15c_a_sparse_long_loop_is_served_by_the_committed_window_read
   const PlaybackCoverageInterval interval = playbackIntervalAt(track, 0, kPlayhead);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
                     static_cast<int>(track.retainPlaybackSourceForSlot(0, track.getLoop(0).playbackRevision, 3)));
-  (void)track.requestCommittedPlaybackWindow(0, interval, kPlayhead, nativePlaybackDeadlineClock);
+  const Track::PlaybackViewRequestResult reqResult =
+      track.requestCommittedPlaybackWindow(0, interval, kPlayhead, nativePlaybackDeadlineClock);
+  // Named harness limit: the demand is **not admitted** here (measured: non-Admitted result, `rolling.phase` stays Idle,
+  // `retainedGatherUnits == 0`), so the committed lane never starts and this fixture cannot yet be the committed-window
+  // removal oracle. The reading is pinned so one assertion can flip when a correctly registered demand exists.
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                                static_cast<int>(reqResult),
+                                "the harness demand is not admitted (named limit, not a production claim)");
 
   size_t committedWindowTurns = 0;
   size_t emittedTotal = 0;
