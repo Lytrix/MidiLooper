@@ -544,6 +544,37 @@ The third option is the one the measurements point at: it keeps the adapter cont
 **Session record:** the mechanism is proven (2 500/traversal element-wise, control unchanged, oracle in the default gate at
 233/233) and every constraint has been measured — this is a placement question, not a correctness one.
 
+## 1t. The drain now lands within 2 events of exact — the last defect is 2 duplicates (2026-10-21)
+
+The drain probe exposed the real bug in the previous attempt: with the *conditional* re-base, `passBaseOrdinal` was still **0**
+at drain time, so `size` was the whole interval and the drain walked 2 500 events to send the 63 tail events
+(`runs=1 consumed=2437 base=0 content=2500 published=2628 drained=2500 emitted=2437`).
+
+Correct form: **the base is always re-based at the boundary (baseline behaviour), and `passRebasePending` only records that the
+boundary arrived with the tail still owed**; the boundary service drains right after, with `base = consumed` (2 437), so `size`
+is exactly 63.
+
+Measured over two traversals (`runs=2 consumed=4937 base=4937 content=5000 published=5128 drained=63 emitted=5002`):
+
+| Reading | Value |
+|---|---|
+| drain runs | 2 (one per wrap) |
+| drained per run | **63** ✔ |
+| emitted | **5 002** vs 5 000 expected |
+| 512-bar control | 2 500 (unchanged) |
+
+So the drain is now correct in shape and size; the residual is **two duplicated events** across the whole two-traversal drive —
+i.e. an overlap of exactly the kind the per-call dedup cannot catch (its duplicate filter is call-local). The candidate is the
+boundary tick itself: the drain's window is `(prevTick, loopLength − 1]` while the preceding turn's window ended at `prevTick`,
+so a pair of events sitting exactly on the boundary phase can be emitted by both.
+
+**Next increment:** compare the two streams element-wise to name the duplicated pair (tick/note/kind), then adjust the drain's
+window bound (`prevTick` vs `prevTick + 1`, or `loopLength` vs `loopLength − 1`) so it is exactly the complement of the last
+turn's window. That is a one-token change once the pair is named.
+
+**Session status:** every earlier defect is closed — predicate, offer, frame, cursor, base sequencing, pending trigger and ITCM
+placement are all measured and settled; 5 002/5 000 is the remaining delta.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
