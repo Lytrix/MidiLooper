@@ -159,6 +159,19 @@ element-wise), `a_dense_whole_loop_interval_emits_its_whole_content_through_the_
 2 437), and `the_wrap_report_and_the_selection_predicate_disagree` **PASSES** (state = `CannotStraddleTheWrap`, delivery
 bound and admissible). Without the flag: 230/230 green.
 
+## Wrap transition — named (2026-10-21)
+
+Instrumented at the wrap turn of the short dense shape (2-bar loop, 2 500 accepted, `t = 1 536`): `consumedOrdinal = 2 437`,
+`producedOrdinal = 2 628`, `passContentOrdinal = 2 500`, and `notePassBoundary` sets `passBaseOrdinal = 2 437`. So the new
+pass's index 0 maps **behind** the pass's own content end: the 63 published events in `[2 437, 2 500)` become unaddressable,
+and the next pass's head (already staged, 128 events at `[2 500, 2 628)`) is addressed 63 events late. `admissible` stays
+true, so nothing names the loss. The tail was one page late at that turn — the boundary logic converts a recoverable
+lateness into permanent loss.
+
+Design and execution contract: **[`WRAP-CONTINUATION-PACKET.md`](WRAP-CONTINUATION-PACKET.md)** — contract, what must
+survive the wrap, the two bounded candidates (content-end base vs one-page-ahead re-arm), the cost proof, the six
+RED/GREEN cases, and the rule that the gated oracle joins the default gate in the fixing slice. No code in this slice.
+
 ## As executed (2026-10-21) — G0 closed, measurement **not** obtained
 
 **G0 verdict: PASS for discovery, BLOCKED for slice 2's shape.** The discovery found the two facts that matter and no
