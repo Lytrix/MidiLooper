@@ -275,6 +275,31 @@ run ended in **SIGBUS** after the assertions — so the recorded fields belong t
 Only that record can answer whether `[2 437, 2 500)` was available at the exact moment of the drain, which is the
 discriminator the fix depends on.
 
+## 1i. The single measurement — size 63, consumed 0 (2026-10-21)
+
+One fixture, one case, first wrap only, no drain (production behaviour unchanged), tuple written from inside the run:
+
+```
+captures=1  size=63  consumed=2437  base=2437  published=2628  content=2500  prev=1472  tick=0  emitted=2437  passes=3
+```
+
+**Fork resolved: `size = 63`, consumed delta = 0.** At the wrap turn the adapter is handed the old-cycle frame
+(`prev = 1 472`, `tick = 0`), the delivery is admitted, the base has already re-based to 2 437 (the current code's immediate
+re-base), and the adapter offers exactly the 63 tail events (ordinals 2 437…2 499, phases 1 473…1 535). The walk consumes
+none of them: `emitted` stays 2 437 for the whole drive.
+
+So the loss is **not** eligibility, not the frame, not the offer, and not the base arithmetic — it is inside
+`advancePlaybackCursor` and its phase filtering for this stream on a wrap frame. That is the function boundary the earlier
+probes could not reach, and it is now the only one left.
+
+**Constraints for the next slice (unchanged):** do not change `passBaseOrdinal`, the producer re-arm, page depth or admission.
+The RED target is the walk's handling of an offered tail under a wrap frame (`from = 1 472`, `to = 0`, size 63, phases
+1 473…1 535) — whatever in `advancePlaybackCursor`'s wrap/phase path drops them.
+
+**Next probe (one run, same technique):** inside the wrap turn, record for the paged stream which indices the walk actually
+visits and the phase each `eventAt` returns (e.g. first index visited, its phase, the phase that failed the window test), so
+the exact predicate that rejects 1 473…1 535 is named rather than inferred.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
