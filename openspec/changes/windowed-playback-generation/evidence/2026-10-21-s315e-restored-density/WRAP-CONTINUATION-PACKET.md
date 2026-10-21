@@ -98,6 +98,30 @@ once the walk has actually reached the pass's content end, and the oracle must s
 2. Express the harness oracle per traversal (walk exactly `n × loopLength`, expected `n × oracle`).
 3. Re-run the long control first: it must be **2 500, unchanged**, before the short case is judged.
 
+## 1c. A′ attempt 2 — conditional deferral (measured, reverted, 2026-10-21)
+
+Mechanism exactly as specified: `notePassBoundary` keeps the **immediate** re-base when
+`consumedOrdinal >= passContentOrdinal`, and only parks the base (`passRebasePending`) when the walk is still short of the
+pass's content end; the parked base is applied from **live** `consumedOrdinal` once it reaches `passContentOrdinal`. One
+`bool`, no size change.
+
+| Case | Before | Attempt 2 | Verdict |
+|---|---|---|---|
+| dense 512-bar control | 2 500 | **2 500** | **unchanged — the conditional form fixes attempt 1's regression** |
+| dense 2-bar whole-loop, two traversals | 2 437 (1st only) | **4 937 / 5 000** | pass 1 now complete (2 500); pass 2 still loses its final 63 |
+
+**What this isolates:** the deferral is correct and sufficient for the **first** wrap — pass 1 goes 2 437 → 2 500 — and the
+control is untouched. The residual 63 is the **final traversal's** tail: at that boundary the walk's index resets while
+`passRebasePending` has not yet been applied (it needs `consumedOrdinal` to reach `passContentOrdinal`, which for the last
+traversal happens only after the tail would have been served). So the defect is **per-wrap**, not one-off: the same
+conditional must hold for every boundary, including the last one in the drive.
+
+**Next diagnostic (do this before another mechanism):** record at the **second** boundary `passRebasePending`,
+`consumedOrdinal`, `passContentOrdinal`, `passBaseOrdinal`, and the walk's index immediately after the reset, and whether the
+tail is again *inside* that turn's window (it was for pass 1: 1 473…1 535 in [1 472, 1 536)). If it is, the fix is to apply
+the parked base **after** the wrap turn's emission rather than at the next boundary service — i.e. the pending flag must be
+consumed by the turn that parks it, not by the next one.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
