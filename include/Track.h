@@ -649,6 +649,11 @@ public:
   /// judged *before* the selection that reads it, and doing that inline cost the ITCM +256 B; so the clock path pays one
   /// load, one test and one call, and this function recomputes the turn's projection itself, off-ITCM.
   void servicePagedPassBoundaryForTurn(uint8_t slotIndex, uint32_t currentTick);
+  /// Task 3.15e: **the owed tail's drain, on the clock path's own ITCM turn.** The boundary judgement above is flash;
+  /// the drain itself stays here because it calls `advancePlaybackCursor` (ITCM) -- a flash-resident drain needs a
+  /// flash->ITCM veneer, and the image built with one did not boot (see the boot matrix in `PROJECT_STATE`). It is
+  /// called on the same turn, immediately after the boundary judgement, with the tick the walk started from.
+  void servicePagedOwedTailTurn(uint8_t slotIndex, uint32_t currentTick, uint32_t prevTickInLoop);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// Task 3.7a (I5)'s ITCM budget slice: **the fixed-source identity and the bridge/view that carry it, resolved in
   /// flash.** The identity is written back because five later decisions in the turn compare against it; the two lookups

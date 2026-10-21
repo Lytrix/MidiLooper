@@ -1026,21 +1026,6 @@ TRACK_COLD_MEM void Track::servicePagedPassBoundaryForSlot(uint8_t slotIndex, bo
   }
 }
 
-TRACK_COLD_MEM static void drainPagedOwedTail(Track& track, uint8_t slotIndex, LoopPlaybackRuntime& runtime, Loop& loop,
-                                              uint32_t currentTick, uint32_t prevTick) {
-  const ProjectionContext playbackContext = makePlaybackContext(track, loop, currentTick);
-  PagedEmissionStreamCtx ctx{&track, &runtime, slotIndex};
-  const PlaybackEventStream stream = makePagedEmissionStream(ctx);
-  const PlaybackTickFrame tail{&playbackContext, loop.loopLengthTicks - 1, prevTick, false};
-  const PlaybackEmitPolicy policy =
-      slotIndex == track.getActiveLoopIndex() ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
-  uint16_t cursor = 0;
-  (void)advancePlaybackCursor({&cursor, nullptr}, tail, policy, stream, playbackCursorAdvanceSend, &track, slotIndex,
-                              nullptr, nullptr, track.getMidiChannel(), playbackCursorAdvanceApplyLedger);
-  runtime.pagedEmission.passBaseOrdinal = runtime.pagedEmission.consumedOrdinal;
-  runtime.pagedEmission.passRebasePending = false;
-}
-
 TRACK_COLD_MEM void Track::servicePagedPassBoundaryForTurn(uint8_t slotIndex, uint32_t currentTick) {
   // Task 3.7a (I5): **the admission's input, computed off-ITCM.** The turn's own projection is computed again by its
   // caller at the place it always was, so nothing here is a value the clock path must keep live across the merged build
@@ -1059,9 +1044,6 @@ TRACK_COLD_MEM void Track::servicePagedPassBoundaryForTurn(uint8_t slotIndex, ui
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
   const bool atLoopStart = IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
   servicePagedPassBoundaryForSlot(slotIndex, wrappedBackward, atLoopStart, prevTickInLoop, tickInLoop);
-  if (runtime->pagedEmission.passRebasePending && runtime->pagedInterval.lengthTicks >= loop.loopLengthTicks) {
-    drainPagedOwedTail(*this, slotIndex, *runtime, loop, currentTick, prevTickInLoop);
-  }
 }
 
 

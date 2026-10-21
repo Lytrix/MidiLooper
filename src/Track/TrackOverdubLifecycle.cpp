@@ -2873,7 +2873,7 @@ TRACK_COLD_MEM void Track::clearStoppingIntervalLedger() {
   }
 }
 
-bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
+TRACK_COLD_MEM bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
   (void)closeTick;
   if (!editManager.isNoteEditActive()) {

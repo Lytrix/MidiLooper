@@ -332,7 +332,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // flash call that returns at once unless a delivery is bound: it recomputes this turn's projection itself, because
   // hoisting those projections inline cost the ITCM **+256 B** on an edge with an 80 B allowance (see the fix's record).
   if (pagedDeliveryBound) {
+    const uint32_t prevTickForTail = loop.lastTickInLoop;
     servicePagedPassBoundaryForTurn(slotIndex, currentTick);
+    servicePagedOwedTailTurn(slotIndex, currentTick, prevTickForTail);
   }
   const bool pagedEmission = fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr &&
                              runtime.pagedEmission.admittedForEmission();
@@ -907,4 +909,26 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::sendAllNotesOff() {
   // also clear any half-open pending notes so they don't get forced later
   pendingNotes.clear();
   logger.logTrackEvent("All Notes Off sent", clockManager.getCurrentTick());
+}
+
+
+/// Task 3.15e: the owed tail of a whole-loop paged delivery, drained with the old cycle's tail frame. Defined in this
+/// TU on purpose: `advancePlaybackCursor` lives in ITCM, so an intra-region caller needs no flash->ITCM veneer (the
+/// image built with the drain in flash did not boot; see the boot matrix in PROJECT_STATE).
+void Track::servicePagedOwedTailTurn(uint8_t slotIndex, uint32_t currentTick, uint32_t prevTickInLoop) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->pagedEmission.bound || !runtime->pagedEmission.passRebasePending) return;
+  Loop& loop = loopForSlot(slotIndex);
+  if (runtime->pagedInterval.lengthTicks < loop.loopLengthTicks) return;
+  const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+  PagedEmissionStreamCtx ctx{this, runtime, slotIndex};
+  const PlaybackEventStream stream = makePagedEmissionStream(ctx);
+  const PlaybackTickFrame tail{&playbackContext, loop.loopLengthTicks - 1, prevTickInLoop, false};
+  const PlaybackEmitPolicy policy =
+      slotIndex == getActiveLoopIndex() ? PlaybackEmitPolicy::ActiveCommitted : PlaybackEmitPolicy::LayeredSlot;
+  uint16_t cursor = 0;
+  (void)advancePlaybackCursor({&cursor, nullptr}, tail, policy, stream, playbackCursorAdvanceSend, this, slotIndex,
+                              nullptr, nullptr, getMidiChannel(), playbackCursorAdvanceApplyLedger);
+  runtime->pagedEmission.passBaseOrdinal = runtime->pagedEmission.consumedOrdinal;
+  runtime->pagedEmission.passRebasePending = false;
 }
