@@ -151,6 +151,41 @@ boundary ordinal and asserts the second tuple. Only that can answer, coherently:
 Only if (3) is yes *and* the park is provably skipped does the relocation ("apply after the same wrap turn's emission") have
 a measured basis.
 
+## 1e. Boundary probe inside `notePassBoundary` — the authority is NOT correct (2026-10-21)
+
+Captured at entry of `notePassBoundary`, before any boundary mutation, over a three-traversal drive of the short dense shape
+(2-bar loop, 2 500 accepted):
+
+| Boundary | `consumedOrdinal` | `passContentOrdinal` | `passBaseOrdinal` | `publishedOrdinal` |
+|---|---|---|---|---|
+| 0 | 0 | **0** | 0 | (first re-arm pending) |
+| 1 | **2 437** | **2 500** | **0** | **2 628** |
+| 2 | **2 437** | **2 500** | (unchanged) | **2 628** |
+| 3 | **2 437** | **2 500** | (unchanged) | ... |
+
+`probeCount = 4` boundaries over three traversals.
+
+**Answer to the question this probe existed for: no, `passContentOrdinal` does not advance per traversal.** It is set once
+(2 500) by the producer's first re-arm and never moves again, and after the first boundary the walk's `consumedOrdinal` is
+**stuck at 2 437** — every later boundary records the *same* tuple. So the paged delivery's per-pass content authority is
+stale from the second pass onward, and the whole `consumed >= passContent` conditional (attempt 2) is being evaluated against
+a value that no longer describes the emitting pass.
+
+**Consequence:** attempt 3 (relocating the re-base to the end of the same wrap turn) is **not** the next move. The relocation
+would re-order a decision whose input is wrong. The ordering question can only be diagnosed once the content authority
+advances per pass.
+
+**Ordered next steps (measurement first, each with its own probe):**
+
+1. Establish *why* `passContentOrdinal` is not advanced: trace `notePassContent(producedOrdinal)` call sites and the
+   producer's re-arm condition (`emitting`), and record the producer's `producedOrdinal` at each pass end. Expected shape:
+   2 500, 5 000, 7 500 — the re-arm must publish a new content end per traversal.
+2. Establish *why* the walk stops at 2 437 once the base stops moving: whether the 63 tail events are filtered by phase, by
+   `servable <= consumed`, or by the index reset. The coherent instrument is the adapter's own `size` return plus the walk's
+   `(from, to)` for that turn.
+3. Only then decide the boundary ordering (same-turn-end application vs next-turn application) and re-run the long control
+   first, requiring 2 500 unchanged.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
