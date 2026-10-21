@@ -246,6 +246,35 @@ bridge uses.
 control must stay at 2 500, the tail must emit in the wrap turn at phases 1 473…1 535 before any phase-0 event, the ledger
 must stay continuous, and multi-wrap must not replay. Then the gate promotion.
 
+## 1h. Tail-drain probe — one fact established, the instrument needs rebuilding (2026-10-21)
+
+The instrumented drain (probe flag only, no behaviour change when off) ran the block on each wrap and recorded inside the
+attempt. What survived is decisive on one point and unusable on the rest:
+
+| Fact | Value | Status |
+|---|---|---|
+| the block **is entered** (`wrappedBackward`, no bridge/view/pair, `admittedForEmission()` true) | 1 / 1 / 1 | **established — the "not entered" explanation is dead** |
+| drain attempts over a three-traversal drive | 3 | established |
+| tail frame actually passed | `prevTickInLoop = 1 472`, `tickInLoop = 0` | established |
+| adapter `size` at the attempt / consumed delta | 0 / 130 | **unreliable** |
+
+**Why the last two are unreliable:** the probe used ten separate test cases, each rebuilding a 2 500-event fixture, and the
+run ended in **SIGBUS** after the assertions — so the recorded fields belong to whichever case completed last, and the
+`size` mirror in the probe reproduced `min(published, passContent) − base` while the adapter's own rule is
+`(passContent > passBase ? passContent : published) − passBase`. A probe that mirrors the adapter incorrectly cannot judge it.
+
+**Rebuilt instrument (next, one fixture, one function):**
+
+1. one fixture, all readings captured in the first wrap only, asserted as separate `TEST_ASSERT`s in a single case (no
+   repeated heavy fixtures — that is what exhausted the pool and crashed);
+2. read the adapter's own `size` rather than mirroring it: call the stream's size function directly at the attempt and record
+   its return;
+3. record `(consumedBefore, consumedAfter)` around that single call, plus `(published, passContent, base)` as the adapter sees
+   them, **before** any boundary service of that turn can mutate `passContent`.
+
+Only that record can answer whether `[2 437, 2 500)` was available at the exact moment of the drain, which is the
+discriminator the fix depends on.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
