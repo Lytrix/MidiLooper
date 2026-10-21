@@ -180,3 +180,20 @@ registration is not the production requester's.
   visible and flips with one assertion once a correctly registered demand exists (the RWO fixtures register it through
   `requestCommittedPlaybackWindow` with a demoted-slot shape; the preview harness's playhead/interval pair is what differs).
 - The third removal proof is therefore **owed**, and it belongs in the harness that can enter the lane (RWO's), not here.
+
+## 3.15c — the RWO variant also stays Idle, so the third proof is owed outright (2026-10-21)
+
+The proof was moved to the harness that can register the demand the way the over-capacity fixtures do: a sparse 512-bar slot,
+four committed events, `publishBarSpacedRootForSlot`, `retainPlaybackSourceForSlot`, `requestCommittedPlaybackWindow`
+(`DeferredSourceQualification`, asserted), then owner turns before and between edge turns.
+
+Reading: **`rolling.phase` ends at Idle (0)** — the lane never reaches `Serving`, so no committed window is adopted and
+`committedWindowTurns` is 0 again. The fixture was withdrawn rather than left red.
+
+**What this establishes:** in *both* harnesses, a sparse demoted slot's committed demand is deferred and the gather never produces a
+servable window under the fixture's clock. That is a harness/service fact, **not** a statement that the committed window fails on
+sparse content, and it is emphatically not evidence for the "not load-bearing" hypothesis.
+
+**Consequence:** 3.15c's committed-window removal proof is **owed**, and it now needs a fixture that can drive the committed lane
+from deferral to `Serving` on a sparse slot — i.e. the same careful demand/deadline discipline the over-capacity fixtures use, plus
+whatever `serving` needs that a dense slot provides and a sparse one does not. Until then, 3.7b's precondition stands as written.
