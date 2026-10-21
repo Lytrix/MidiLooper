@@ -197,3 +197,25 @@ sparse content, and it is emphatically not evidence for the "not load-bearing" h
 **Consequence:** 3.15c's committed-window removal proof is **owed**, and it now needs a fixture that can drive the committed lane
 from deferral to `Serving` on a sparse slot — i.e. the same careful demand/deadline discipline the over-capacity fixtures use, plus
 whatever `serving` needs that a dense slot provides and a sparse one does not. Until then, 3.7b's precondition stands as written.
+
+## 3.15c — driving the production requester lands on `Blocked`, not `Serving` (2026-10-21)
+
+A third variant called `serviceRollingPlaybackWindow` (the production per-track requester) on the sparse 512-bar slot with a retained
+source, once per edge turn:
+
+| Reading | Phase 500 start | Phase 0 start |
+|---|---|---|
+| `rolling.phase` | **Blocked (4)** | **Blocked (4)** |
+| `retainedGatherRefusal` | None (0) | — |
+
+So the lane runs and is **blocked by the admission/deadline side**, not by a gather refusal and not by the source. That is consistent
+with the declared envelope this change has measured before (a two-bar span needs `768 + grains × 8 × 64` ticks of lead, and the
+requester's own positioning is what makes it reachable in production).
+
+**What this settles for the audit:** the committed-window removal proof needs a **production-shaped rolling frame** — one where the
+demand is positioned by the real requester on a live frame (the 3.7 device fixtures' shape), not a fixture that starts a demand from a
+standing slot at an arbitrary phase. Building that is a service/deadline fixture, not an oracle one, and it belongs beside `3.10`.
+
+**Not concluded:** nothing about whether the committed window is load-bearing for sparse playback. Three fixtures have now been
+withdrawn for the same reason — none reached the route — and that is itself the finding: **the route's reachability, not its content,
+is what 3.15c's third proof is waiting on.**
