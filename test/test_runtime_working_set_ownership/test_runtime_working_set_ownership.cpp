@@ -17123,6 +17123,61 @@ static void test_3_15e_the_wrap_report_and_the_selection_predicate_disagree() {
 
 
 
+
+// Task 3.10: **the composition the task names** -- a permanently blocked early holder, later holders that can progress (with
+// their own deadlines), and the fairness bound stated in turns. The holder-level rule already has its own cases above; this
+// one pins the property 3.10 asks for: one blocked holder can neither take the turn nor starve the rotation, and every holder
+// that can progress is served within `count` consecutive selections.
+void test_3_10_a_blocked_early_holder_cannot_starve_the_rotation() {
+  using namespace MidiServiceDrain;
+  PlaybackHolder holders[4]{};
+  // Holder 0 is owed and *urgent* -- its deadline is the earliest of all -- but it cannot progress this turn.
+  holders[0].eligible = false;  // blocked: it owes nothing a turn can serve
+  holders[0].canProgress = false;
+  holders[0].hasDeadline = true;
+  holders[0].handoffLeadTicks = 1;
+  for (uint8_t i = 1; i < 4; ++i) {
+    holders[i].eligible = true;
+    holders[i].canProgress = true;
+    holders[i].hasDeadline = true;
+    holders[i].handoffLeadTicks = static_cast<uint32_t>(100 * i);  // all "later" than the blocked one
+  }
+
+  PlaybackHolderCursor cursor{};
+  uint32_t served[4] = {0, 0, 0, 0};
+  for (uint32_t turn = 0; turn < 12; ++turn) {
+    uint8_t chosen = kNoPlaybackHolder;
+    // Across holders the rule is plain round-robin (the within-holder deadline rule is `selectPlaybackHolder`), which is
+    // the composition 3.10 names.
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::Service),
+                      static_cast<int>(selectPlaybackHolderRoundRobin(cursor, holders, 4, chosen)));
+    TEST_ASSERT_NOT_EQUAL_UINT8_MESSAGE(0u, chosen, "the blocked holder never takes a turn");
+    ++served[chosen];
+  }
+  // The fairness bound, in turns: every progressable holder is served within `count` selections.
+  for (uint8_t i = 1; i < 4; ++i) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, served[i], "each progressable holder is served once per rotation");
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, served[0], "and the blocked one is served none");
+
+  // Every owed holder blocked: the selection says so by name and still advances the rotation.
+  PlaybackHolder blocked[2] = {holders[0], holders[0]};
+  blocked[0].eligible = true;  // owed, but cannot progress this turn
+  blocked[1].eligible = true;
+  const uint8_t before = cursor.next;
+  uint8_t chosen = kNoPlaybackHolder;
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::AllBlocked),
+                    static_cast<int>(selectPlaybackHolder(cursor, blocked, 2, chosen)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((before + 1u) % 2u), cursor.next);
+  TEST_ASSERT_EQUAL_UINT8(kNoPlaybackHolder, chosen);
+
+  // Nothing owed: `None`, not `AllBlocked`.
+  PlaybackHolder idle[1] = {};
+  chosen = kNoPlaybackHolder;
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
+                    static_cast<int>(selectPlaybackHolder(cursor, idle, 1, chosen)));
+}
+
 int main() {
 
 
@@ -17396,6 +17451,7 @@ int main() {
   // states the selection gate will read.
   RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
+  RUN_TEST(test_3_10_a_blocked_early_holder_cannot_starve_the_rotation);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn);
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);

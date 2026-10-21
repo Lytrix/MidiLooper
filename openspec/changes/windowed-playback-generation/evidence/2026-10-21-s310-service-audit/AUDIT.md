@@ -53,3 +53,33 @@ envelope; no device claim (the service/timing device legs stay with 6.3/6.5/3.15
 
 **Why this ordering:** `3.15f` names 3.10 as a gate, and the committed-window removal proof left open by 3.15c needs a
 production-shaped frame — which is what this fixture's holder set provides.
+
+## The composition fixture landed (2026-10-21)
+
+`test_3_10_a_blocked_early_holder_cannot_starve_the_rotation` (RWO, default gate, **234/234**) pins the three outcomes and the
+fairness bound:
+
+| Assertion | What it pins |
+|---|---|
+| a blocked holder is **ineligible** and never takes a turn, while its sibling's deadline is the earliest of all | urgency cannot buy a turn for work that cannot progress |
+| over 12 selections with 4 holders, each progressable holder is served **exactly 4** times | round-robin holds with a blocked member present; the bound is `count` selections per holder |
+| all owed holders blocked → `AllBlocked`, cursor still advances, no holder named | "blocked" is named, not silently skipped |
+| nothing owed → `None` | distinct from `AllBlocked` |
+
+**The envelope, stated in turns:** every holder that can progress is served within `count` consecutive selections
+(`count = holders`), so the worst permitted service gap per holder is `count` turns — no microsecond budget is invented, and grain
+cost enters only through how many turns a grain needs.
+
+### A regression this fixture caught on the way
+
+The first form applied **`selectPlaybackHolder`** (the *within-holder* rule) across holders and one holder took **all 12 turns** —
+exactly the starvation the header comment says was corrected on 2026-10-02 by adding `selectPlaybackHolderRoundRobin`. So the two
+rules are easy to confuse at a call site, and the failure is silent (no assertion, just one holder monopolising). The composition
+fixture now pins the correct pairing: **`selectPlaybackHolder` within a holder** (deadline order, `AllBlocked`/`None` naming) and
+**`selectPlaybackHolderRoundRobin` across holders**.
+
+### Still owed by 3.10
+
+The driven version — holders that owe **window grains**, a pending capture finalization and a pending persistence in the same window,
+asserting completion bounds through the production service entry rather than through the selection functions. That is the half the
+scope declaration named, and the present fixture is its pure-function foundation.
