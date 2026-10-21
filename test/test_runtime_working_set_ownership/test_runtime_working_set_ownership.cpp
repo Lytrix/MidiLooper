@@ -17179,6 +17179,47 @@ void test_3_10_a_blocked_early_holder_cannot_starve_the_rotation() {
 }
 
 
+
+// Task 3.10 (driven, lifecycle-aware): the bound is **per still-owing holder**, so it is asserted against the turns on which a
+// track was actually eligible -- a track that has served its grain drops out of the rotation and must not be counted as owed.
+void test_3_10_each_still_owing_track_is_served_within_count_eligible_turns() {
+  using MidiServiceDrain::PlaybackHolder;
+  using MidiServiceDrain::PlaybackHolderCursor;
+  constexpr uint32_t kLoopTicks = 32u * Config::TICKS_PER_BAR;
+  constexpr uint32_t kServingPhase = 900;
+  constexpr uint8_t kTrackCount = 2;
+  Track& a = trackManager.getTrack(0);
+  Track& b = trackManager.getTrack(1);
+  prepareOwingWindowHolder(a, 0, kLoopTicks, 25, 27, 80, 300);
+  prepareOwingWindowHolder(b, 0, kLoopTicks, 25, 27, 80, 600);
+  Track* tracks[kTrackCount] = {&a, &b};
+
+  PlaybackHolderCursor cursor{};
+  uint32_t eligibleTurns[kTrackCount] = {0, 0};
+  uint32_t servedTurns[kTrackCount] = {0, 0};
+  for (uint32_t turn = 0; turn < 12; ++turn) {
+    PlaybackHolder offers[kTrackCount] = {a.playbackWindowServiceOffer(kServingPhase),
+                                          b.playbackWindowServiceOffer(kServingPhase)};
+    for (uint8_t i = 0; i < kTrackCount; ++i) {
+      if (offers[i].eligible) ++eligibleTurns[i];
+    }
+    uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+    if (MidiServiceDrain::selectPlaybackHolderRoundRobin(cursor, offers, kTrackCount, chosen) !=
+        MidiServiceDrain::PlaybackHolderSelection::Service) {
+      continue;
+    }
+    ++servedTurns[chosen];
+    (void)tracks[chosen]->stepPlaybackViewMaintenance(kServingPhase, nullptr);
+  }
+  for (uint8_t i = 0; i < kTrackCount; ++i) {
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, eligibleTurns[i], "the track owed at least one grain");
+    // The bound: with `kTrackCount` holders, every eligible turn is covered by at least one service in every window of
+    // `kTrackCount` turns, i.e. served >= eligible / kTrackCount.
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(eligibleTurns[i] / kTrackCount, servedTurns[i],
+                                                "served at least once per rotation of the still-owing set");
+  }
+}
+
 int main() {
 
 
@@ -17453,6 +17494,7 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_10_a_blocked_early_holder_cannot_starve_the_rotation);
+  RUN_TEST(test_3_10_each_still_owing_track_is_served_within_count_eligible_turns);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn);
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);

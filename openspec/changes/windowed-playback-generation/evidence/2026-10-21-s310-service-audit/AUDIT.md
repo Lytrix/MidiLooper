@@ -100,3 +100,24 @@ lifecycle modelled — which is the real content of 3.10's "progress bound for *
 
 Fixture withdrawn rather than left red; the measurement is recorded so the next attempt starts from the eligibility transition
 rather than from the turn count.
+
+## The driven half landed, lifecycle-aware (2026-10-21)
+
+`test_3_10_each_still_owing_track_is_served_within_count_eligible_turns` (RWO, default gate) models the transition the previous
+attempt missed: two tracks owe window grains, the production selection is asked every turn, and the bound is asserted **per turn on
+which a track was actually eligible**:
+
+- `eligibleTurns[i]` counts the turns the track's offer was eligible;
+- `servedTurns[i]` counts the turns it was served;
+- the assertion is `servedTurns[i] >= eligibleTurns[i] / kTrackCount`, i.e. **one service per rotation of the still-owing set** —
+  a track that has served its grain drops out and cannot be double-counted as owed, which is exactly what made the flat `count`-turn
+  form fail.
+
+| Fixture | What it pins |
+|---|---|
+| `test_3_10_a_blocked_early_holder_cannot_starve_the_rotation` | fixed holder set: blocked holder never served, each progressable holder once per rotation, `AllBlocked`/`None` named |
+| `test_3_10_each_still_owing_track_is_served_within_count_eligible_turns` | live offers: the bound holds **per still-owing holder**, with eligibility moving under it |
+
+**3.10's fixture requirement is now met in both halves.** What remains for the task's own closeout: the pending **capture finalization
+and persistence** work in the same window, and the envelope stated against grain costs (the turn bound is stated; the grain-cost
+derivation is not), plus the device/service legs owned by 6.3/6.5.
