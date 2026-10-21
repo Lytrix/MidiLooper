@@ -371,6 +371,26 @@ stores into one, drop the local counter by returning the drained count straight 
 `isActive` reset site, or give the seed a single cold setter. Then: 512-bar control 2 500, short shape 2 500/traversal,
 both builds, the six cases, gate.
 
+## 1m. The 16 B are invariant across call-site shapes — map-file diet next (2026-10-21)
+
+Four call-site shapes were built and each measured **exactly** `code 392 392 + padding 824` on
+`teensy41-capture-serial-window-qualification` (baseline `392 376 + 840`):
+
+1. helper returns the drained count, hot path keeps a local and two seed stores;
+2. helper returns the count, one assignment after the reset block;
+3. helper is `void` and writes `loop.nextEventIndex` itself;
+4. one cold call owns both the reset and the drain (the two branch stores removed).
+
+**Invariant +16 B.** That rules out call-site shape as the cause: the extra bytes are not the marshalling of arguments or the
+assignment, and the cold helper's own body is correctly flash-resident (the +192 B inline form is gone). The likely sources are
+a small ITCM-resident symbol the declaration pulls in (e.g. an instantiation/thunk in the ITCM-routed TU) or an alignment step
+in the wrap block.
+
+**Next step (cheap and decisive):** diff the two link maps (`arm-none-eabi-nm --print-size --size-sort` on both ELFs) for the
+qualification image, with the cold helper applied. The symbol that grew by 16 B names the cause directly; diet that symbol, not
+the call site. The default image already passes at `392 232 + 984` with 144 B of headroom, so no floor rebase is needed —
+only this 16 B.
+
 ## 2. Contract (must hold after the change)
 
 > A bound paged delivery for an interval that crosses the loop boundary remains **one logical delivery** across that
