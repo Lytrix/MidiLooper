@@ -1160,7 +1160,24 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   byte-identical, no re-base). **Task 3.10 stays open** on the **reconciliation decision** (above), the wiring, and the systematic sweep. Detail:
   [`evidence/2026-10-02-s310g-cost-model/EVIDENCE.md`](evidence/2026-10-02-s310g-cost-model/EVIDENCE.md).*
 
-- [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
+- [ ] 3.10 **Implement fair, bounded, deadline-ordered service**
+  **Fairness composition landed 2026-10-21 (native; task stays open for the driven completion bound and the device legs).** The
+  mechanism was already implemented (`DeferredIdleOwner` with separate Policy/SlotProvision/Persistence/PlaybackViewMaintenance turns,
+  `selectPlaybackHolder` within a holder, `selectPlaybackHolderRoundRobin` across holders); what the task names is the **composition**,
+  and three fixtures now pin it in the default gate. (1) `test_3_10_a_blocked_early_holder_cannot_starve_the_rotation`: a blocked
+  holder is never served even when it carries the earliest deadline, every progressable holder is served once per rotation, all-blocked
+  reports `AllBlocked` with the cursor still advancing, nothing owed is `None`. (2) `test_3_10_each_still_owing_track_is_served_within_
+  count_eligible_turns`: the bound is **per still-owing holder** (`served >= eligible / count`) — the flat count-turn form failed
+  (3 vs 1) because a served holder stops being eligible, which is the reading 3.10's "every admitted holder" actually means. (3)
+  `test_3_10_capture_and_persistence_keep_their_own_opportunities`: every owner distinct, the canonical prefix turn declined by every
+  non-canonical owner, and the canonical rotation serving each of three tracks twice in six turns. **Envelope derived, not invented:**
+  with `G = fill + order + promotion` grains and `H` holders,
+  `(G × H + (H − 1)) × maximumPhaseAdvancePerTurn ≤ leadTicks ≤ handoff − margin` — the admission's own inequality solved for the
+  permitted grain count, with no numeric value copied into the doc. **A trap the fixtures caught:** applying `selectPlaybackHolder`
+  (the within-holder deadline rule) across holders silently starves all but the earliest (one holder took all 12 turns), which is the
+  defect the header records as fixed by `selectPlaybackHolderRoundRobin`; the pairing is now pinned. **Still owed:** the driven
+  finalization/persistence completion bound, the numeric instantiation of the envelope, and the device/service legs (6.3/6.5).
+  Evidence: [`s310-service-audit`](evidence/2026-10-21-s310-service-audit/AUDIT.md). (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a
   holder; **cursor advances even when a holder cannot progress**; capture finalization and persistence keep their own
   opportunities (no starvation); one declared grain per admitted turn, no hidden stacking. Verify with a fixture that
