@@ -880,8 +880,11 @@ void test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate(
     nativePlaybackDeadlineClock = {tick, 1};
     t.playMidiEvents(tick, true);
   };
+  const uint32_t selectionsBeforeWrap = Track::overlayLiveSelectionCount();
   for (uint32_t tick = kLoopTicks + 1056; tick <= kLoopTicks + 1504; tick += 32) at(tick);
   at(kLoopTicks + 1536);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(selectionsBeforeWrap, Track::overlayLiveSelectionCount(),
+                                          "the live view served the first pass before the wrap");
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(passesBefore, static_cast<uint32_t>(loop.passes.overdubPasses.size()),
                                           "the wrap must commit the live pass");
 
@@ -894,18 +897,202 @@ void test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate(
 
   MidiSendCapture::reset();
   for (uint32_t tick = kLoopTicks + 16; tick <= 2u * kLoopTicks; tick += 16) at(tick);
-  unsigned committed70 = 0, tail72 = 0;
+  unsigned committed70On = 0, committed70Off = 0, tail72 = 0;
   for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
     const MidiEvent& event = MidiSendCapture::at(i);
-    if (!event.isNoteOn()) continue;
-    if (event.data.noteData.note == 70) ++committed70;
-    if (event.data.noteData.note == 72) ++tail72;
+    if (event.data.noteData.note == 70) {
+      if (event.isNoteOn()) ++committed70On;
+      if (event.isNoteOff()) ++committed70Off;
+    } else if (event.isNoteOn() && event.data.noteData.note == 72) {
+      ++tail72;
+    }
   }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, committed70,
-                                   "the previously-live row is served once as committed content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, committed70On,
+                                   "the previously-live On is served once as committed content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, committed70Off,
+                                   "the companion Off is served once as committed content");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, tail72, "the new live tail is served once by the echo");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, rt.ledger.openCount(),
                                    "the committed rows close their ledger; the tail is echo-only");
+}
+
+
+// **H2 — the stop boundary while the live view serves.** Accepting the stop moves the track out of OVERDUBBING before the
+// lane's next visit; the boundary branch must retire the candidate and release the one companion instance, so the deferred
+// finalizer never waits on the live reader. The final pass's content parity is the finalization suite's (it links the real
+// stop-commit owners); this fixture pins the lane's own obligation at the edge.
+void test_the_stop_boundary_retires_the_live_view_and_releases_the_borrow() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const RuntimePlaybackView* candidate = buildLiveOverlayCandidate(t, loop, rt, kLoopTicks + 1024, 70);
+  TEST_ASSERT_NOT_NULL(candidate);
+  // Serve a little of the live window so the edge route is the active one.
+  for (uint32_t tick = 16; tick <= 256; tick += 16) {
+    clockManager.assignCurrentTickSilently(kLoopTicks + tick);
+    nativePlaybackDeadlineClock = {kLoopTicks + tick, 1};
+    t.playMidiEvents(kLoopTicks + tick, true);
+  }
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_NOT_NULL_MESSAGE(rt.overdubOverlayCandidate(), "the candidate must exist before the stop edge");
+  TEST_ASSERT_TRUE_MESSAGE(rt.viewBuild.overlayContinuationActive(),
+                           "the stopped edge must tear down a live continuation, not an already-idle builder");
+  clockManager.assignCurrentTickSilently(kLoopTicks + 320);
+  nativePlaybackDeadlineClock = {kLoopTicks + 320, 1};
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(), "the stop edge leaves OVERDUBBING immediately");
+  (void)t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(),
+                           "the stop boundary retires the live candidate");
+  TEST_ASSERT_FALSE_MESSAGE(rt.viewBuild.overlayContinuationActive(),
+                            "the boundary tears the continuation down");
+  TEST_ASSERT_FALSE_MESSAGE(rt.overdubOverlayBorrowHeld(), "the boundary releases the borrowed instance");
+  TEST_ASSERT_TRUE_MESSAGE(rt.frozenCompanionPasses.idle(),
+                           "the one companion instance is released for the finalizer");
+  TEST_ASSERT_FALSE(rt.viewBuild.active());
+}
+
+
+// **H3 — the held NoteOn across the wrap.** A live On with no Off before the boundary is carried into the successor
+// capture tail (the wrap extracts open Ons, seals the rest, and re-admits the held On through continuation staging). Its
+// Off after the boundary closes the carried note. In the second pass the carried On is served once by the echo, the Off
+// once, and the pass's other (closed) row once as committed content; the overlay rows never touch the ledger.
+void test_a_held_note_crosses_the_wrap_and_is_served_once() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  // Note 70 is held at the boundary (no Off). Note 71 is a closed companion so the wrap has a row to seal.
+  const RuntimePlaybackView* candidate = buildLiveOverlayCandidate(t, loop, rt, kLoopTicks + 1024, 70);
+  TEST_ASSERT_NOT_NULL(candidate);
+  t.noteOn(1, 71, 100, kLoopTicks + 1400);
+  t.noteOff(1, 71, 0, kLoopTicks + 1450);
+  const uint32_t passesBefore = static_cast<uint32_t>(loop.passes.overdubPasses.size());
+
+  const auto at = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+    t.playMidiEvents(tick, true);
+  };
+  // One monotone stream across the boundary: the held On is served in the old pass, its Off after the boundary.
+  // (A reset on each side would hide a duplicate at the seam and could sample the Off before the On.)
+  MidiSendCapture::reset();
+  for (uint32_t tick = kLoopTicks + 1056; tick <= kLoopTicks + 1504; tick += 32) at(tick);
+  at(kLoopTicks + 1536);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(passesBefore, static_cast<uint32_t>(loop.passes.overdubPasses.size()),
+                                          "the companion row must let the wrap seal while the On is held");
+
+  // The Off arrives after the boundary; the carried On is still open and owns its reservation.
+  t.noteOff(1, 70, 0, kLoopTicks + 1600);
+  (void)t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(), "the wrap retires the candidate built on the old base");
+  for (uint32_t tick = kLoopTicks + 1552; tick <= kLoopTicks + 1800; tick += 16) at(tick);
+
+  // The held On must be carried, not sealed into the pass: the sealed directory has no pitch-70 row.
+  const PassId sealedId = loop.lastCommittedPassId();
+  const OverdubPass* sealedPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == sealedId) {
+      sealedPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL_MESSAGE(sealedPass, "the wrap pass is in the directory");
+  SessionMidiEventVec sealedRows;
+  LoopEventStore::appendChunkRefEvents(sealedPass->committedChunkIds, sealedRows);
+  unsigned sealedPitch70 = 0;
+  for (const MidiEvent& event : sealedRows) {
+    if (event.data.noteData.note == 70) ++sealedPitch70;
+  }
+  TEST_ASSERT_FALSE_MESSAGE(sealedRows.empty(), "the wrap sealed the companion row into the pass");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, sealedPitch70,
+                                   "the held On is carried into the successor capture, not sealed into the pass");
+
+  long heldOnIndex = -1, heldOffIndex = -1;
+  unsigned held70On = 0, held70Off = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (event.data.noteData.note != 70) continue;
+    if (event.isNoteOn()) { ++held70On; heldOnIndex = static_cast<long>(i); }
+    if (event.isNoteOff()) { ++held70Off; heldOffIndex = static_cast<long>(i); }
+  }
+  TEST_ASSERT_GREATER_THAN_MESSAGE(heldOnIndex, heldOffIndex,
+                                   "the On is served before the boundary and the Off after it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, held70On, "the carried On is served once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, held70Off, "the post-wrap Off is served once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, rt.ledger.openCount(),
+                                   "overlay rows never touch the ledger; the committed pair closes");
+}
+
+
+// **H2b — the stop lands mid-build.** The boundary branch must release the borrowed companion instance even when the
+// candidate never completed; otherwise the deferred finalizer waits on a half-built live window. Stop on the exact turn
+// the borrow is held, before `complete`.
+void test_the_stop_boundary_releases_a_borrow_that_is_still_in_flight() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  clockManager.assignCurrentTickSilently(kLoopTicks + 1024);
+  nativePlaybackDeadlineClock = {kLoopTicks + 1024, 1};
+  t.startOverdubbing(kLoopTicks + 1024);
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  uint8_t nextTrack = 0;
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn)
+    (void)serviceCanonicalTurn(t, nextTrack);
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPassInputs.ready(), "the fixture must reach the canonical base");
+  bool borrowed = false;
+  for (unsigned turn = 0; turn < 600 && !borrowed; ++turn) {
+    (void)t.serviceOverdubOverlayWindow();
+    borrowed = rt.overdubOverlayBorrowHeld();
+    if (borrowed) {
+      TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(),
+                               "the fixture must stop before the candidate is complete");
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(borrowed, "the fixture must stop while the companion instance is borrowed");
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  (void)t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_FALSE_MESSAGE(rt.overdubOverlayBorrowHeld(), "the stop boundary releases the in-flight borrow");
+  TEST_ASSERT_FALSE(rt.viewBuild.overlayContinuationActive());
+  TEST_ASSERT_TRUE(rt.frozenCompanionPasses.idle());
+  TEST_ASSERT_NULL(rt.overdubOverlayCandidate());
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -914,5 +1101,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_the_live_overlay_edge_never_touches_a_foreign_ready_successor);
   RUN_TEST(test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating);
   RUN_TEST(test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate);
+  RUN_TEST(test_the_stop_boundary_retires_the_live_view_and_releases_the_borrow);
+  RUN_TEST(test_the_stop_boundary_releases_a_borrow_that_is_still_in_flight);
+  RUN_TEST(test_a_held_note_crosses_the_wrap_and_is_served_once);
   return UNITY_END();
 }

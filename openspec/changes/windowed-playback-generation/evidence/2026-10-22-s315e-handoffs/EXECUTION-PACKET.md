@@ -3,8 +3,9 @@
 **Change:** `windowed-playback-generation` · **Task:** 3.15e · **Branch:** `feature/unified-rolling-playback-path` ·
 **Base:** `b50df105` · **Design:** the
 [2026-10-22 addendum](../../ARCHITECTURE-REASSESSMENT.md#2026-10-22-addendum--the-live-overdub-overlay-moves-onto-the-single-window-reader-315e-dec-116-extension),
-slice 4 of its queue. **Status: designed, not implemented.** W3 (the pass-commit seam) is deliberately moved here from
-slice 3.
+slice 4 of its queue. **Status: H1–H3 landed as native fixtures in `test_overlay_edge` (7/7); H4/H5 are structural guards;
+H6/H7 mutations run and discriminate. Device parity remains 3.15f.** W3 (the pass-commit seam) was deliberately moved here
+from slice 3.
 
 ## Scope
 
@@ -72,13 +73,46 @@ not the projection start alone. The next probe should witness those three values
 with the echo oracle's exact setup before writing H1. If the production clock path cannot reach the wrap in this harness, the slice is
 blocked on a harness fact, not on the design.
 
+## Landed 2026-10-22 (`test_overlay_edge`, 7/7)
+
+**H1 — `test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate`.** A closed live pair; the wrap
+commits (the unclosed-W1 shape is H3). It asserts the live view was selected before the wrap, the candidate is retired,
+and in the committed pass the previously-live On **and its Off** are each served once as committed content, the new tail
+On once, and the ledger closed.
+
+**H2 — `test_the_stop_boundary_retires_the_live_view_and_releases_the_borrow`.** Before the stop it asserts the candidate
+exists and the continuation is active; after the stop and one lane visit it asserts the candidate is gone, the
+continuation is torn down, the borrow is released and the companion instance is idle.
+
+**H2b — `test_the_stop_boundary_releases_a_borrow_that_is_still_in_flight`.** The stop lands on the exact turn the borrow
+is held with no complete candidate; the boundary must still release it (otherwise the finalizer waits on a half-built
+window).
+
+**H3 — `test_a_held_note_crosses_the_wrap_and_is_served_once`.** A held On with a closed companion row: the wrap seals
+the pass (the sealed directory is non-empty) but contains **no pitch-70 row** — the On is carried, not sealed. One
+monotone stream across the boundary proves the carried On is served before the boundary and its Off after it, each
+exactly once, with the ledger closed. An earlier version reset the capture on each side of the wrap; the focused review
+showed that could sample the Off before the On and hide a seam duplicate, so the fixture now uses a single stream and
+asserts the order index.
+
+**Review findings addressed (focused review, 2026-10-22).** H2 originally sampled only post-borrow state (the completed
+candidate already discards the companion); it now witnesses the pre-stop candidate/continuation and adds H2b for the
+in-flight borrow. H3's two reset sweeps were replaced by the monotone stream plus the sealed-pass pitch check. H1 now
+carries the selection-count delta and the committed Off. Dropped an unrelated `frozenCompanionApply.available()`
+assertion.
+
+**Mutations (run, reverted).** Echo re-enabled while the window serves → W1 duplicates (`Expected 1 Was 2`) and H3's
+carried On duplicates. Both retirements removed (lane `Denied` branch + retention rule) → H1 and H3 fail with the
+candidate still retained. The overlay-ledger mutation (apply the occupy ledger to overlay rows) already opened the
+ledger in W1.
+
 ## Oracle (write the fixtures before the code; H1/H3 first)
 
 | # | Case | Expected |
 |---|---|---|
-| **H1** | live view serving, wrap commits the pass | candidate retired; committed reader serves the committed pass once; echo serves the new tail once; no row emitted twice at the seam; ledger closes |
-| **H2** | deferred stop while the live view serves | candidate retired, borrow released; final pass served once as committed; echo off; ledger closed; stop admitted |
-| **H3** | held NoteOn before the wrap, Off after | On committed in the old pass; new pass serves On (committed) + Off at its tick once; ledger closes once; no duplicate |
+| **H1** | live view serving, wrap commits the pass | candidate retired; committed reader serves the committed pass once; echo serves the new tail once; no row emitted twice at the seam; ledger closes — **landed, green** |
+| **H2** | deferred stop while the live view serves | candidate retired, borrow released; final pass served once as committed; echo off; ledger closed; stop admitted — **lane obligation landed (H2/H2b); final-pass parity remains the finalization suite's** |
+| **H3** | held NoteOn before the wrap, Off after | the wrap seals other rows but carries the On (no pitch-70 row in the sealed pass); the On is served before the boundary and its Off after it, each once; ledger closes — **landed, green** |
 | **H4** | route switch at the commit | resolver stops selecting on the revision move; echo cursor not rewound; no old-pass replay |
 | **H5** | ledger through the seam | committed rows exactly once, overlay rows never, the sealed pass's rows once as committed |
 | **H6** | mutation: echo re-enabled while the window serves | duplicates at the seam (RED) |
