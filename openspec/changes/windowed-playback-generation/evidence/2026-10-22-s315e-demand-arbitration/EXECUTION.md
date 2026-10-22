@@ -315,3 +315,34 @@ No firmware TU includes the header. Gates: focused **91/91**, full native **3 40
 **Owed next:** step 2 — begin the provenance-bearing base fill when `BaseReady` (the `RuntimeCompanionPasses` form), then
 step 3 the continuation, step 4 the append-stable tail, step 5 a named publication/contention result, step 6 identity-keyed
 retirement built on this `RetireStaleCandidate` step.
+
+## 2b-ii-b step 2 — the base fill needs a storage decision first (2026-10-22)
+
+Step 2 is "on `BaseReady`, begin the provenance-bearing base fill". Reading the runtime surface before writing it shows the
+fill has exactly one possible source instance per slot and that instance is not free by construction:
+
+| Surface | Owner / use |
+|---|---|
+| `LoopPlaybackRuntime::frozenCompanionPasses` (one per slot) | the **stopped-oracle** path: built while STOPPED, matched against the oracle, published through `publishStoppedOracleView`, then `discard()`ed |
+| `LoopPlaybackRuntime::frozenCompanionApply` (one per slot) | the same path's apply object |
+| `RuntimeCanonicalPassInputs canonicalPassInputs` | the committed canonical prefix (liveness measured: ready in 13 owner turns under overlay-only demand) |
+
+There is **no second companion storage** on the runtime, and adding one would move the pinned `sizeof(LoopPlaybackRuntime)`
+(`7 904` target / `10 104` host) — a deliberate re-base, which this task is not authorized to make casually. So step 2 must
+choose, explicitly:
+
+1. **Documented borrow (preferred, if the invariants allow):** the overlay lane borrows `frozenCompanionPasses` /
+   `frozenCompanionApply` while the slot is **OVERDUBBING**, where the oracle path cannot be in flight (it requires STOPPED
+   and discards after publishing). This needs a named guard — the lane must refuse (`BaseFillRefused::CompanionBusy`) unless
+   `frozenCompanionPasses.idle()` and no oracle/published-tail generation references it — and it must be proven that a later
+   STOPPED oracle build cannot collide with a retained overlay candidate.
+2. **A second instance with a measured re-base:** cleanest semantically, but it changes the per-slot runtime size pin and the
+   RAM1 budget, so it needs its own measurement and an owner decision.
+3. **A view-only base** (no companion instance): not available — the `RuntimePlaybackViewFill` baseline overload takes a
+   `RuntimeCompanionPasses`; the raw-array path is exactly the shape step 0 refused for missing provenance.
+
+No code was written for this step: choosing (1) or (2) changes either a shared-instance invariant or the RAM1 pin, and both are
+exactly the kind of decision that must not be inferred from convenience. The next slice starts by proving the borrow guard in
+(1) — `CompanionBusy` reached in a fixture with the oracle in flight, `BaseFillRefused` never silent — or by measuring (2).
+
+No source or test line changed for this entry.
