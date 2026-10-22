@@ -2196,9 +2196,12 @@ suite is not green this turn by design. No Git delivery.
   is 4 s and both images PASS the base stimulus (STIM-BASE-2-2-01): default `39,007/39,409 µs`, lane `37,218/37,624 µs`,
   all active-persistence windows satisfied (bound 100,000). Two lane runs at the wrong 90 BPM produced one persistence
   overrun (100,406/106,482; not reproduced) and one host MIDI-stream stall (17 off-grid deltas; not reproduced). The
-  content pipeline is **inconclusive on both images**: the played stream carries other restored-library tracks' channels,
-  so the single-loop comparison cannot form; the SD was not cleared (user data). Route/content parity is **not** claimed,
-  and the short-loop mechanism choice above remains open. Evidence:
+  content pipeline initially returned inconclusive on both images for two setup reasons: the stored channel (1) did not
+  match the track's own output channel (track 5 → 4), and other restored-library traffic shared the port. With
+  `--midi-channel 5` both images form the **same three cycles**: 192 rows/cycle, **0 missing**, and the same 24 CC74 rig
+  rows (fader echo), so `inventory_equal` is false only from the rig traffic; served note rows and order are identical.
+  `storage_matches_effective` is true on both. Route/content parity for the base stimulus is established; the SD was not
+  cleared. The rest of the 3.15f route matrix and the short-loop mechanism choice above remain open. Evidence:
   [`EVIDENCE.md`](evidence/2026-10-22-s315f-device-01/EVIDENCE.md). Board left on the qualification image.
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

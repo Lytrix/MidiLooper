@@ -39,6 +39,8 @@ master at 120; the content then plays with a 4 s two-bar period, confirmed in th
 | `2026-10-22-s315f-lane-base-05` | lane / device 90 | **PASS** | 66,205 | 66,610 | 8 / 8 |
 | `2026-10-22-s315f-default-base-02-hostclock` | default / host 120 | **PASS** | 39,007 | 39,409 | 7 / 7 |
 | `2026-10-22-s315f-lane-base-07-hostclock` | lane / host 120 | **PASS** | 37,218 | 37,624 | 9 / 9 |
+| `2026-10-22-s315f-lane-base-08-ch5` | lane / host 120, ch 5 | **PASS** | 38,199 | 43,052 | 8 / 8 |
+| `2026-10-22-s315f-default-base-03-ch5` | default / host 120, ch 5 | **PASS** | 51,413 | 51,798 | 8 / 8 |
 
 The declared deferred-persistence bound is **100,000 µs** (`_MAX_PERSIST_SLICE_US`). The two 90 BPM lane anomalies:
 
@@ -51,19 +53,39 @@ The declared deferred-persistence bound is **100,000 µs** (`_MAX_PERSIST_SLICE_
 **At the requested 120 BPM with the host as clock master, default and lane both PASS and are comparable** (39.0/39.4 vs
 37.2/37.6 ms). That is the route-parity result this session can support for the base stimulus.
 
-## Content pipeline: inconclusive on both images, for a device-state reason
+## Content pipeline: the channel-5 run gives exact cycle parity
 
-`dump_and_capture.py` + `verify_playback_content.py` returned `INCONCLUSIVE_CAPTURE` ("no unique effective event recurs …
-fewer than one loop's 168 events") on the **default** image as well as the lane. The capture is not the target loop alone:
-the played stream carries other channels from the board's restored library (e.g. channel 4 note 16 and channel 14 notes
-40–46 beside the target). The verifier compares one loop's effective rows, so the single-loop comparison cannot form while
-other tracks sound. This is **not** a lane-parity failure, and the device SD was not cleared or muted (SD is user data;
-that needs explicit permission).
+The first pipeline attempts returned `INCONCLUSIVE_CAPTURE` ("fewer than one loop's 168 events") on **both** images. Two
+setup causes, both measured:
+
+1. **Channel mapping.** The base stimulus recorded with `--midi-channel 1`, but the track outputs on its own channel
+   (track 5 → 0-based channel 4). The capture therefore never contained the expected channel.
+2. **Other restored-library traffic.** Before the channel-5 run the capture also carried other restored tracks' channels,
+   so the single-loop comparison could not form. This is **not** a lane-parity failure; the SD was not cleared (user data),
+   and a solo long-press on the track button (double = mute, long = solo) did not remove the control traffic.
+
+With `--midi-channel 5` (the track's own channel) and host clock 120, both images form cycles and agree **exactly**:
+
+| Image | Cycles | Rows / cycle | Missing | Extra | `inventory_equal` |
+|---|---|---|---|---|---|
+| lane (`…lane-base-08-playback`) | 3 | 192 | 0 | 24 × CC74 | false |
+| default (`…default-base-03-playback`) | 3 | 192 | 0 | 24 × CC74 | false |
+
+The 24 extras are **identical on both images**: CC 74 values 1/2 at the same phases, i.e. the rig's fader/automation
+traffic on the same port, not loop content (the dump itself carries 56 CC74 effective rows; the extras are the
+control-side echo). `inventory_equal` is false only because of them. The lane run's leading fragment also showed two
+`NoteOff` rows (`[128,5,31,0]`, `[128,5,19,0]`) outside the three cut cycles; the per-cycle comparison is missing 0.
+
+**Conclusion this session supports:** for the canonical base stimulus at 120 BPM with the host as clock master, the
+served loop content (all note rows, order, per-cycle counts) is identical between the default and qualification images.
+The verifier's strict inventory equality is blocked by rig CC74 traffic, not by the lane. `storage_matches_effective` is
+true on both.
 
 ## Not claimed
 
-- 3.15f is **not passed**: the registered content profile's playback parity is not established, and the short-loop
-  window-route mechanism (3.15f's design choice among sub-interval / whole-loop / position-free) is still open.
+- 3.15f is **not passed**: the base stimulus's served-cycle parity is established, but the full registered content
+  profile (all routes, simultaneous Record, NOTE_EDIT, switch, undo/redo, persistence/display contention, RAM1/PSRAM
+  high-water) is not, and the short-loop window-route mechanism is still open.
 - The 90 BPM overruns are not called firmware regressions: they did not reproduce at the requested 120 BPM, and the
   record failure is a host-stream stall.
 - No claim about the 3.15e seam on hardware; this session exercised the base stimulus only.
@@ -77,4 +99,4 @@ that needs explicit permission).
    contention, RAM1/PSRAM high-water).
 3. Decide the short-loop window-route mechanism before claiming route identity for short loops.
 
-**Board left on:** qualification image `dfbcfa1c…`.
+**Board left on:** default image `04ea9a8a…` (the final channel-5 default run).
