@@ -1084,6 +1084,70 @@ void test_private_delta_order_freezes_append_waves_without_prefix_replay() {
   TEST_ASSERT_EQUAL_UINT16_ARRAY(second, storage.order, 4);
 }
 
+// Task 3.15e slice 3 — **the readable prefix is frozen**: an extension orders the appended tail only and concatenates it,
+// so a row that the full prefix merge would have moved in front of a readable row stays in the tail instead. This is the
+// order-builder half of the W1 race; the contract is "the already-readable prefix never moves", not "the tail is
+// canonically placed relative to the prefix".
+void test_3_15e_slice3_prefix_preserving_extension_never_moves_a_published_prefix() {
+  FixedPlaybackEventStorage storage;
+  TEST_ASSERT_TRUE(storage.prewarm(8));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(200, 1, 62, 90)));
+  RuntimePlaybackOrderBuilder builder;
+  TEST_ASSERT_TRUE(builder.begin(storage, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, builder.step(2));
+  const uint16_t readable[] = {0, 1};
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(readable, storage.order, 2);
+
+  // An equal-tick Off at the prefix's own tick: the full merge would put it before the prefix On (class rule), but the
+  // prefix is already readable, so it may only enter the tail.
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(100, 1, 60)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrderPreservingPrefix());
+  size_t turns = 0;
+  while (!builder.complete() && turns < 30) {
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+    ++turns;
+  }
+  TEST_ASSERT_TRUE(builder.complete());
+  TEST_ASSERT_EQUAL_UINT16_ARRAY_MESSAGE(readable, storage.order, 2,
+                                         "an extension must never move an already-readable row");
+  TEST_ASSERT_EQUAL_UINT16(2, storage.order[2]);
+  TEST_ASSERT_EQUAL_UINT32(3, builder.orderedEventCount());
+
+  // A second wave that would sort at the very front globally: still tail-only.
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(50, 1, 64, 90)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrderPreservingPrefix());
+  turns = 0;
+  while (!builder.complete() && turns < 30) {
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+    ++turns;
+  }
+  TEST_ASSERT_EQUAL_UINT16_ARRAY_MESSAGE(readable, storage.order, 2,
+                                         "every published row keeps its position across waves");
+  // The readable prefix is whatever the frontier covered at the previous extension; a later wave is appended after it,
+  // even when its tick is earlier. That is exactly what "the prefix never moves" costs, and it is deliberate.
+  TEST_ASSERT_EQUAL_UINT16(2, storage.order[2]);
+  TEST_ASSERT_EQUAL_UINT16(3, storage.order[3]);
+  TEST_ASSERT_EQUAL_UINT32(4, builder.orderedEventCount());
+  TEST_ASSERT_EQUAL_UINT32(4, builder.orderedSourceExtent());
+
+  // Within one wave the tail is canonically ordered among itself: equal-tick Off before On.
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOn(150, 1, 65, 90)));
+  TEST_ASSERT_TRUE(storage.append(MidiEvent::NoteOff(150, 1, 65)));
+  TEST_ASSERT_TRUE(builder.extendPrivateOrderPreservingPrefix());
+  turns = 0;
+  while (!builder.complete() && turns < 40) {
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, builder.step(1));
+    ++turns;
+  }
+  TEST_ASSERT_TRUE(builder.complete());
+  TEST_ASSERT_EQUAL_UINT16_ARRAY(readable, storage.order, 2);
+  const uint16_t appeared[] = {2, 3, 5, 4}; // previous waves, then this wave's Off before its On
+  TEST_ASSERT_EQUAL_UINT16_ARRAY_MESSAGE(appeared, storage.order + 2, 4,
+                                         "each wave is ordered among itself (Off before On at one tick)");
+  TEST_ASSERT_EQUAL_UINT32(6, builder.orderedEventCount());
+}
+
 void test_private_delta_order_wrap_off_on_and_index_write_quantum() {
   FixedPlaybackEventStorage storage; TEST_ASSERT_TRUE(storage.prewarm(8));
   for (size_t i = 0; i < storage.capacity; ++i) storage.order[i] = storage.mergeScratch[i] = UINT16_MAX;
@@ -8846,5 +8910,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half);
   RUN_TEST(test_3_15e_slice2b_the_stopped_oracle_consults_the_overlay_candidate_and_retires_a_stale_one);
   RUN_TEST(test_3_15e_slice3_probe_row_origin_is_visible_at_emission_time);
+  RUN_TEST(test_3_15e_slice3_prefix_preserving_extension_never_moves_a_published_prefix);
   return UNITY_END();
 }

@@ -121,6 +121,14 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::extendPrivateOr
   return true;
 }
 
+PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::extendPrivateOrderPreservingPrefix() {
+  if (!extendPrivateOrder()) return false;
+  // The same delta merge sorts only `[prefix, count)`; the frozen phases make completion concatenate that sorted tail
+  // after the published prefix instead of running the full prefix merge. A zero-append call returns before any phase.
+  if (phase_ == Phase::DeltaFill) phase_ = Phase::FrozenDeltaFill;
+  return true;
+}
+
 PLAYBACK_ORDER_MAINTENANCE_MEM size_t RuntimePlaybackOrderBuilder::workEntriesUpperBound(size_t eventCount) {
   if (eventCount == 0) {
     return 0;
@@ -224,7 +232,9 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
   }
   const FixedPlaybackEventStorage& storage = *storage_;
   if ((phase_ == Phase::DeltaFill || phase_ == Phase::DeltaMerge || phase_ == Phase::DeltaCopyBack ||
-       phase_ == Phase::PrefixMerge || phase_ == Phase::PrefixCopyBack) &&
+       phase_ == Phase::FrozenDeltaFill || phase_ == Phase::FrozenDeltaMerge ||
+       phase_ == Phase::FrozenDeltaCopyBack || phase_ == Phase::PrefixMerge ||
+       phase_ == Phase::PrefixCopyBack) &&
       (storage.eventCount < frozenSourceExtent_ || storage.eventCount > storage.capacity)) {
     phase_ = Phase::Denied;
     return RuntimePlaybackOrderBuildResult::Denied;
@@ -234,14 +244,15 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
   // Finish zero-entry phase transitions even when the last entry consumed
   // this turn's quantum. Completion itself must not require an unreserved turn.
   while (true) {
-    if (phase_ == Phase::Fill || phase_ == Phase::DeltaFill) {
-      const bool delta = phase_ == Phase::DeltaFill;
+    if (phase_ == Phase::Fill || phase_ == Phase::DeltaFill || phase_ == Phase::FrozenDeltaFill) {
+      const bool frozenFill = phase_ == Phase::FrozenDeltaFill;
+      const bool delta = phase_ == Phase::DeltaFill || frozenFill;
       const size_t sourceEnd = delta ? frozenSourceExtent_ : storage.eventCount;
       if (cursor_ == sourceEnd) {
         if (!delta) frozenSourceExtent_ = static_cast<uint16_t>(std::min(sourceEnd, size_t(UINT16_MAX)));
         runWidth_ = orderedDuringFill_ ? orderedEventCount_ - (delta ? prefixEventCount_ : 0) : 1;
         runStart_ = delta ? prefixEventCount_ : 0;
-        phase_ = delta ? Phase::DeltaMerge : Phase::Merge;
+        phase_ = delta ? (frozenFill ? Phase::FrozenDeltaMerge : Phase::DeltaMerge) : Phase::Merge;
         continue;
       }
       if (remaining == 0) return RuntimePlaybackOrderBuildResult::Pending;
@@ -262,16 +273,17 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
       continue;
     }
 
-    if (phase_ == Phase::Merge || phase_ == Phase::DeltaMerge) {
-      const bool delta = phase_ == Phase::DeltaMerge;
+    if (phase_ == Phase::Merge || phase_ == Phase::DeltaMerge || phase_ == Phase::FrozenDeltaMerge) {
+      const bool frozenDelta = phase_ == Phase::FrozenDeltaMerge;
+      const bool delta = phase_ == Phase::DeltaMerge || frozenDelta;
       const size_t first = delta ? prefixEventCount_ : 0;
       if (runWidth_ >= orderedEventCount_ - first) {
         if (mergeReadsScratch_) {
           cursor_ = first;
-          phase_ = delta ? Phase::DeltaCopyBack : Phase::CopyBack;
+          phase_ = delta ? (frozenDelta ? Phase::FrozenDeltaCopyBack : Phase::DeltaCopyBack) : Phase::CopyBack;
           continue;
         }
-        if (delta && prefixEventCount_ != 0 && orderedEventCount_ != prefixEventCount_) {
+        if (delta && !frozenDelta && prefixEventCount_ != 0 && orderedEventCount_ != prefixEventCount_) {
           leftCursor_ = 0; leftEnd_ = prefixEventCount_;
           rightCursor_ = prefixEventCount_; rightEnd_ = orderedEventCount_; outputCursor_ = 0;
           phase_ = Phase::PrefixMerge;
@@ -321,16 +333,18 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
       continue;
     }
 
-    if (phase_ == Phase::CopyBack || phase_ == Phase::DeltaCopyBack) {
+    if (phase_ == Phase::CopyBack || phase_ == Phase::DeltaCopyBack ||
+        phase_ == Phase::FrozenDeltaCopyBack) {
       if (cursor_ == orderedEventCount_) {
         // Only the final normalization is copied. Completion still exposes the
         // original caller-owned order pointer, never the scratch pointer.
         mergeReadsScratch_ = false;
-        const bool delta = phase_ == Phase::DeltaCopyBack;
+        const bool frozenDelta = phase_ == Phase::FrozenDeltaCopyBack;
+        const bool delta = phase_ == Phase::DeltaCopyBack || frozenDelta;
         runStart_ = delta ? prefixEventCount_ : 0;
         leftEnd_ = rightEnd_ = outputCursor_ = 0;
         cursor_ = runStart_;
-        phase_ = delta ? Phase::DeltaMerge : Phase::Merge;
+        phase_ = delta ? (frozenDelta ? Phase::FrozenDeltaMerge : Phase::DeltaMerge) : Phase::Merge;
         continue;
       }
       if (remaining == 0) return RuntimePlaybackOrderBuildResult::Pending;

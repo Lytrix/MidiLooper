@@ -7597,6 +7597,106 @@ void test_3_15e_slice3_row_origin_is_visible_through_the_production_fixed_stream
   t.stopOverdubbing();
 }
 
+// Task 3.15e slice 3 (W1 core) — **the readable frontier is frozen while an extension is ordered.**
+//
+// The race the owner named: the edge is serving prefix N; new rows arrive (including a wave that must be ordered among
+// itself); the lane begins an off-clock extension and stops before its ordering completes. The clock reader may still see
+// **only** rows [0, N): a partial tail is never exposed, and the already-readable prefix never moves. When ordering
+// completes, the frontier advances atomically (and only forward). This fixture is the production lane; the edge binding
+// that consumes the frontier is the next slice-3 unit.
+void test_3_15e_slice3_the_readable_frontier_is_frozen_while_the_tail_is_ordered() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  const auto position = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+  };
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  uint8_t nextTrack = 0;
+  const auto serviceCanonicalTurn = [&]() {
+    return MidiServiceDrain::serviceCanonicalPrefixTurn(
+        MidiServiceDrain::DeferredIdleOwner::VisualCache, Config::NUM_TRACKS, nextTrack,
+        [&](uint8_t index) {
+          if (index != 0) return false;
+          const Loop& active = t.getActiveLoop();
+          return MidiServiceDrain::canonicalPreparationHasPriorityWork(
+              t.isOverdubbing(), active.visualCacheDirty, active.hasDeferredVisualCacheWrapAppend(),
+              active.overdubSourceSpanCacheReady());
+        },
+        [&](uint8_t index) { return index == 0 && trackManager.getTrack(0).processDeferredCanonicalPrefix(); });
+  };
+
+  position(kLoopTicks + 1024);
+  t.startOverdubbing(kLoopTicks + 1024);
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn) (void)serviceCanonicalTurn();
+  TEST_ASSERT_TRUE(rt.canonicalPassInputs.ready());
+
+  const RuntimePlaybackView* candidate = nullptr;
+  for (unsigned turn = 0; turn < 600 && candidate == nullptr; ++turn) {
+    (void)t.serviceOverdubOverlayWindow();
+    const RuntimePlaybackView* now = rt.overdubOverlayCandidate();
+    if (now != nullptr && now->complete) candidate = now;
+  }
+  TEST_ASSERT_NOT_NULL(candidate);
+  const uint16_t frontier = candidate->readableEventCount;
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(candidate->storage.eventCount), frontier);
+  uint16_t readablePrefix[RuntimePlaybackViewConfig::kEventsPerView] = {};
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(sizeof(readablePrefix) / sizeof(readablePrefix[0]), frontier);
+  for (uint16_t i = 0; i < frontier; ++i) readablePrefix[i] = candidate->storage.order[i];
+
+  // New rows arrive **before the last readable row's tick** (1100 < 1500), so a full prefix merge would move them in
+  // front of the published prefix. The frontier contract requires the opposite: they stay in the tail.
+  t.noteOn(1, 72, 100, kLoopTicks + 1100);
+  t.noteOff(1, 72, 0, kLoopTicks + 1160);
+  TEST_ASSERT_TRUE(loop.captureContentGeneration() != candidate->source.captureContentGeneration ||
+                   loop.captureContentGeneration() != 0);
+  // One owner turn **begins** the extension (freeze the suffix, copy, order one grain) and stops mid-ordering.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(OverdubOverlayLane::Turn::OverlayBuilding),
+                                  static_cast<uint8_t>(t.serviceOverdubOverlayWindow()),
+                                  "the appended rows start an off-clock extension");
+  TEST_ASSERT_FALSE_MESSAGE(candidate->complete, "the window is not complete while its tail is being ordered");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(frontier, candidate->readableEventCount,
+                                   "the readable frontier must not advance before ordering completes");
+  for (uint16_t i = 0; i < frontier; ++i)
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(readablePrefix[i], candidate->storage.order[i],
+                                     "a partially ordered tail must not move an already-readable row");
+
+  // Complete the ordering: the frontier advances once, monotonically, and the prefix is still identical.
+  OverdubOverlayLane::Turn turn = OverdubOverlayLane::Turn::OverlayBuilding;
+  for (unsigned i = 0; i < 200 && turn != OverdubOverlayLane::Turn::CandidateReady; ++i)
+    turn = t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OverdubOverlayLane::Turn::CandidateReady),
+                          static_cast<uint8_t>(turn));
+  TEST_ASSERT_TRUE(candidate->complete);
+  TEST_ASSERT_GREATER_THAN_UINT16(frontier, candidate->readableEventCount);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(candidate->storage.eventCount),
+                           candidate->readableEventCount);
+  for (uint16_t i = 0; i < frontier; ++i)
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(readablePrefix[i], candidate->storage.order[i],
+                                     "the published prefix is immutable across the extension");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(frontier, candidate->readableEventCount - 2,
+                                   "the two appended rows are the only new readable rows");
+  for (uint16_t i = frontier; i < candidate->readableEventCount; ++i)
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT16_MESSAGE(frontier, candidate->storage.order[i],
+                                                "an appended row that sorts early still enters the tail, not the prefix");
+  t.stopOverdubbing();
+}
+
 // Task 3.15e — **the live overdub overlay is served exactly once through the wrap, the pass handoff and the stop.**
 //
 // The existing 3.15a fixture proves a *committed* overdub is served once per traversal; `assertRecordRecoveryServesSecondBar`
@@ -7872,6 +7972,7 @@ int main() {
   RUN_TEST(test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval);
   RUN_TEST(test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance);
   RUN_TEST(test_3_15e_slice3_row_origin_is_visible_through_the_production_fixed_stream);
+  RUN_TEST(test_3_15e_slice3_the_readable_frontier_is_frozen_while_the_tail_is_ordered);
   RUN_TEST(test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff);
   RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);

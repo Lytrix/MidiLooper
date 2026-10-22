@@ -222,11 +222,18 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
     return nextGrain();
   }
   if (fill_.appendStableCapture()) {
+    // Slice 3: a live-overlay extension orders the appended tail only, so the published readable prefix never moves under
+    // a consuming reader. The Record lane keeps the full delta order (nothing reads its live window).
+    // The **first** overlay continuation is not yet readable: it must merge canonically with the base rows (an overlay
+    // Off at the base's tick sorts before the base On). Only once a frontier has been published does an extension switch
+    // to preserving the prefix; the caller is then reading [0, readableEventCount).
+    const bool preservePrefix = fill_.continuingOverlay() && destination_->readableEventCount != 0;
     const bool ordered = order_.complete()
-        ? order_.extendPrivateOrder()
+        ? (preservePrefix ? order_.extendPrivateOrderPreservingPrefix() : order_.extendPrivateOrder())
         : order_.begin(destination_->storage, destination_->coverage.loopLengthTicks);
     if (!ordered) { phase_ = Phase::Denied; return RuntimePlaybackViewBuildGrain::Denied; }
     destination_->complete = order_.complete();
+    if (destination_->complete && fill_.continuingOverlay()) publishReadableFrontier();
     phase_ = order_.complete() ? Phase::Complete : Phase::Order;
     return nextGrain();
   }
@@ -282,6 +289,9 @@ RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
   }
   if (result == RuntimePlaybackOrderBuildResult::Complete) {
     if (!canonical) destination_->complete = true;
+    // The ordered index now covers every retained row: publish the readable frontier atomically (one 16-bit store). This
+    // is the only point a live window's frontier may advance; a partially ordered tail is never exposed.
+    if (!canonical && fill_.continuingOverlay()) publishReadableFrontier();
     phase_ = canonical ? Phase::SnapshotRanks : Phase::Complete;
   }
   return nextGrain();
@@ -358,6 +368,14 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::finishCall() {
   discardRequested_ = false;
   executing_ = false;
   return retained;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::publishReadableFrontier() {
+  if (destination_ == nullptr) return;
+  const size_t ordered = order_.orderedEventCount();
+  if (ordered > destination_->storage.eventCount) return; // never publish beyond the retained rows
+  const uint16_t frontier = ordered > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(ordered);
+  if (frontier > destination_->readableEventCount) destination_->readableEventCount = frontier;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::discardNow(

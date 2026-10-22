@@ -522,6 +522,13 @@ struct RuntimePlaybackView {
   bool sourceFilled = false;
   bool complete = false;
   bool published = false;
+  /// **Task 3.15e slice 3 — the published ordered frontier of an append-stable live window.** The readable contract for a
+  /// window the clock edge may consume while its off-clock owner keeps extending it: rows `[0, readableEventCount)` are
+  /// fully filled and ordered and never move; rows beyond it are the owner's private tail. It advances only after an
+  /// extension's ordering completes, never retreats within a generation, and is cleared with the window. Zero for every
+  /// window that is not a live append-stable source. Distinct from `complete` on purpose: a window can be a safe read at
+  /// `readableEventCount` while `complete` is false because a newer tail is still being ordered.
+  uint16_t readableEventCount = 0;
 
   bool prewarm(size_t eventCapacity);
   void resetMetadata();

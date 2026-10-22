@@ -29,39 +29,34 @@ reopened only if this slice exposes a **real competing production claim** (see *
 
 ## Contract for slice 3
 
-**C1 — role admission without arbitration.** A completed overlay candidate is published as the slot's `ready` successor
-(`RuntimePlaybackViewLifecycle::publishCompletedBuildAsReadySuccessor`) **only when the role is free** and the candidate is
-still current for its demand (`candidateBaseCurrent`, unchanged from 2b-ii-b). If `ready` already holds a complete view
-of any origin — a Record-return or launch successor, the preview — the lane keeps its candidate in `build` and returns a
-**named** outcome; the edge then keeps the echo. It never retires, replaces or ages another owner's `ready` candidate, and
-it never asks the three-way resolver. This is the one-successor rule the lifecycle already enforces, applied by the lane
-that owns the candidate.
+**C1 — no role admission on this route.** With the live-frontier contract the overlay view is a **live source**, not a
+`ready` successor: the lane never publishes it, never adopts it as `current`, and therefore never competes for a role with
+the committed, preview or Record-return lanes. DEC-136's `ready` successor, the launch route and the preview lane are
+untouched by construction. The candidate lives in the slot's `build` role (or the lane's private candidate slot) and is
+identified by its mixed provenance shape + demand identity (2b-ii-b). If a future change wants it to own `ready`, that is a
+different contract and reopens 2b-iii.
 
-**C2 — edge binding.** `Track::resolveQualificationPlaybackSourceForTurn` (already `FLASHMEM`, one call from the ITCM
-resolver) gains an overdub branch, after the NOTE_EDIT preview check and before the first-take Record branch: bind the
-slot's overlay window when it is
+**C2 — edge binding (live source, no adoption).** `Track::resolveQualificationPlaybackSourceForTurn` (already `FLASHMEM`,
+one call from the ITCM resolver) gains an overdub branch, after the NOTE_EDIT preview check and before the first-take Record
+branch: bind the slot's overlay **live view** when it is
 
-- in the `ready` or `current` role (the edge consumes only an adopted or adoptable window),
-- `published && complete && sourceFilled && passOriginsReady`,
-- `source` matches the live committed base and carries the live capture generation for the turn,
+- the lane's candidate for the live demand (still in the `build` role; never adopted as `current`),
+- `passOriginsReady` with the mixed provenance shape, `source` matching the live committed base and carrying the live
+  capture generation for the turn,
+- `readableEventCount > 0` (a published prefix exists; `complete` is **not** required — a newer tail may still be ordered),
 - `coverage` contains the current phase and its loop length equals the loop's,
 - the demand is still owed (`overdubOverlayDemandForSlot`).
 
-On a match the resolver sets `rollingViewSelectedOut = true` (the same flag the preview lane uses) so the Record-lane
-ownership logic is unchanged, and the committed walk serves the window. No new owner, no new queue.
+On a match the resolver sets `rollingViewSelectedOut = true` and a new `overlayViewSelectedOut` (or an equivalent named
+result) that the hot path uses to select the overlay stream + provenance send callbacks; the stream's size is
+`readableEventCount`, not `storage.eventCount`. No role is taken, no new owner, no new queue.
 
-**C3 — adoption boundary.** The window is adopted through the existing atomic handoff at a **boundary where the echo has
-not already served the same rows**. The safe rule for this slice:
-
-- adopt at the window's interval start (whole-loop windows: phase 0 of the next pass; long-loop windows: the interval's
-  `startPhase`), never mid-interval after the echo has emitted rows from the same region;
-- carry the window's own `cursorSeed` like every other adopted window, so the first served row is the one after the
-  boundary;
-- if the boundary has already passed when the candidate completes, **wait for the next one**; the echo keeps serving the
-  remainder of this pass.
-
-This rule is deliberately conservative. It is the one behavior the fixtures must pin before any implementation claim; a
-mid-interval adoption that can duplicate an echoed row is a rejected option, not an optimization.
+**C3 — readability boundary, not an adoption boundary.** There is no atomic role handoff for this route: the immutable
+thing is the published **frontier**, not the whole view. The edge may read the live view from the first turn its frontier is
+non-zero; it never reads a row at or beyond the frontier; when the frontier advances, the existing cursor continues into the
+new rows (rows whose ticks already passed are not replayed — they are served by the committed representation at the next
+hand-off, which slice 4 owns). The echo is skipped only while this live source is selected; every other state keeps the
+echo.
 
 **C4 — echo suppression while the window serves.** On a turn where C2 selected the overlay window, the
 `ActiveCaptureOverdub` walk **and** its `ensureCaptureEventsSorted()` do not run. The committed walk (which now walks the
@@ -127,7 +122,38 @@ for every state C1–C2 do not select.
 - Mutations: W5, W6 and one ledger mutation (apply the ledger to overlay rows → W4 RED).
 - Device: **not this slice** (3.15f); the qualification image's route comparison consumes this evidence later.
 
-## BLOCKING DESIGN QUESTION (found while writing W1/W3) — post-adoption appends
+## RESOLVED (owner, 2026-10-22) — the live reader with a frozen ordered frontier
+
+**Decision:** the storage/view may remain append-stable while the **readable prefix is immutable**. The clock edge may
+consume only `[0, readableEventCount)`; the owner advances that frontier atomically after Fill/Order completes, never
+before, never backwards within one overlay generation, and never exposes the private tail. This replaces "adopt an
+immutable complete window" for this route (option 2 of the question below) and preserves both goals: one emission reader
+and near-current overdub audibility. It also avoids the `ready`-role question entirely: the overlay view is bound as a
+**live source**, never adopted as `current`, so DEC-136's `ready` successor is untouched by construction.
+
+**Landed so far (native, no audible change):**
+
+- `RuntimePlaybackOrderBuilder::extendPrivateOrderPreservingPrefix()` — the delta lifecycle sorts the appended wave within
+  itself and concatenates it after the frozen prefix, skipping `PrefixMerge`/`PrefixCopyBack`. Encoded as
+  `FrozenDelta*` phases, **not a new field**, because the builder lives inside the pinned `LoopPlaybackRuntime`
+  (both static_asserts and both RAM1 pins stay exactly `7 904`/`10 104`, `391,688 + 1,528` / `391,848 + 1,368`).
+- `RuntimePlaybackView::readableEventCount` — the published ordered frontier (external view metadata; not the runtime pin).
+  It is distinct from `complete`: a live window can be safely readable at N while a newer tail is still being ordered.
+- `RuntimePlaybackViewBuild::publishReadableFrontier()` — one monotonic 16-bit store, only when the order completes and only
+  for the overlay continuation. The first overlay continuation still merges canonically with the base (the prefix is not
+  yet readable); every later wave preserves the prefix.
+- Fixtures: `test_3_15e_slice3_prefix_preserving_extension_never_moves_a_published_prefix` (order level, including a
+  same-tick Off/On wave and an earlier-tick wave) and
+  `test_3_15e_slice3_the_readable_frontier_is_frozen_while_the_tail_is_ordered` (production lane: one owner turn starts the
+  extension, the frontier and prefix are unchanged, `complete` is false; after ordering the frontier advances to the new
+  extent and the prefix is byte-identical).
+- Mutations that discriminate: force the full prefix merge (prefix moves), publish the frontier during the fill (partial
+  tail exposed), and stop publishing at order completion (frontier never advances) — each RED exactly its case.
+
+**Still to implement:** the edge binding of the live view (C2), the echo skip (C4), the provenance send callback wiring,
+and W3/W5/W6/W7. The frontier contract above is the prerequisite they consume.
+
+## The question this resolved (kept for the record) — post-adoption appends
 
 The immutable-window contract and a **live** overdub pull in opposite directions, and the fixtures cannot be written
 honestly until this is decided:

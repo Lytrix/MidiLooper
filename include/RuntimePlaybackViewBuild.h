@@ -115,6 +115,9 @@ class RuntimePlaybackViewBuild {
   bool enterCall();
   bool finishCall();
   void discardNow(const RuntimePlaybackView* preserveDestination);
+  /// Publish the readable ordered prefix after an order completes. One 16-bit store; monotonic within a window; never
+  /// beyond the retained rows. This is the live-overlay read contract (slice 3), not a second meaning for `complete`.
+  void publishReadableFrontier();
   template <typename Work, typename Result>
   Result execute(Work&& work, Result denied) {
     if (!enterCall()) return denied;

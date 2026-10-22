@@ -377,6 +377,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackView::resetMetadata() {
   sourceFilled = false;
   complete = false;
   published = false;
+  readableEventCount = 0;
 }
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM FixedPlaybackBridgeStorage::~FixedPlaybackBridgeStorage() {

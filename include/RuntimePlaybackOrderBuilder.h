@@ -50,6 +50,12 @@ class RuntimePlaybackOrderBuilder {
   /// View-owned and borrowed-index attempts refuse. Capacity <= UINT16_MAX.
   /// Freeze this suffix; appends during ordering wait for the next extension.
   bool extendPrivateOrder();
+  /// **Task 3.15e slice 3 — extend without touching the readable prefix.** Identical setup to `extendPrivateOrder`, but
+  /// the appended rows are ordered **within the tail only** and concatenated after the existing order; the
+  /// `PrefixMerge`/`PrefixCopyBack` pair is skipped. Use this when a reader may be consuming `[0, orderedEventCount())`
+  /// concurrently (the live overdub overlay): an already-readable row is never moved, and a tail row that would sort
+  /// before the prefix stays in the tail. Caller certifies the prefix, retention, projection and provenance unchanged.
+  bool extendPrivateOrderPreservingPrefix();
   /// Frozen source frontier for extendible fixed storage (capacity <= UINT16_MAX).
   size_t orderedSourceExtent() const { return frozenSourceExtent_; }
   RuntimePlaybackOrderBuildResult step(size_t entryQuantum);
@@ -65,7 +71,12 @@ class RuntimePlaybackOrderBuilder {
 
  private:
   enum class Phase : uint8_t { Idle, Fill, Merge, CopyBack, Complete, Denied,
-                               DeltaFill, DeltaMerge, DeltaCopyBack, PrefixMerge, PrefixCopyBack };
+                               DeltaFill, DeltaMerge, DeltaCopyBack,
+                               // Slice 3: the same delta lifecycle, but completion concatenates the sorted tail after
+                               // the frozen prefix instead of running PrefixMerge/CopyBack. Encoded as phases (no new
+                               // field) because this object lives inside the pinned `LoopPlaybackRuntime`.
+                               FrozenDeltaFill, FrozenDeltaMerge, FrozenDeltaCopyBack,
+                               PrefixMerge, PrefixCopyBack };
 
   const FixedPlaybackEventStorage* storage_ = nullptr;
   uint16_t* orderEntries_ = nullptr;
