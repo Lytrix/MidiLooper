@@ -7097,6 +7097,47 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
   // route's own** coverage policy at the playhead (so the overlay replaces exactly that interval).
   t.noteOn(1, 70, 100, kLoopTicks + 1470);
   t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  // (2b) **Liveness of the prerequisite, measured through the real rotation shape.** The overlay lane may observe canonical
+  // readiness but never advance it, so a live overlay demand must make the **committed canonical owner** runnable. This is
+  // the same `MidiServiceDrain::serviceCanonicalPrefixTurn` + `Track::processDeferredCanonicalPrefix` pair `main.cpp` uses,
+  // with the same priority predicate.
+  {
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    uint8_t nextTrack = 0;
+    const auto serviceCanonicalTurn = [&]() {
+      return MidiServiceDrain::serviceCanonicalPrefixTurn(
+          MidiServiceDrain::DeferredIdleOwner::VisualCache, Config::NUM_TRACKS, nextTrack,
+          [&](uint8_t index) {
+            if (index != 0) return false;
+            const Loop& active = t.getActiveLoop();
+            return MidiServiceDrain::canonicalPreparationHasPriorityWork(
+                t.isOverdubbing(), active.visualCacheDirty, active.hasDeferredVisualCacheWrapAppend(),
+                active.overdubSourceSpanCacheReady());
+          },
+          [&](uint8_t index) { return index == 0 && trackManager.getTrack(0).processDeferredCanonicalPrefix(); });
+    };
+    TEST_ASSERT_FALSE(rt.canonicalPassInputs.ready());
+    // The real rotation establishes the display/source-span prerequisite (paint); with that ready the deprioritization term
+    // no longer holds and the canonical owner is runnable. Recorded honestly: the **negative companion** -- that the
+    // prerequisite must not steal a turn while `canonicalPreparationHasPriorityWork` is true -- is not demonstrable in this
+    // fixture, because the span cache is already established by this point; it needs a dirty-span overdub state of its own.
+    if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+    TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReady());
+    unsigned stepped = 0;
+    for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn) {
+      if (serviceCanonicalTurn()) ++stepped;
+    }
+    // (i) the prerequisite made measurable progress, (ii) through the committed canonical owner's own grains...
+    TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPassInputs.ready(),
+                             "a live overlay demand must make its canonical prerequisite runnable");
+    TEST_ASSERT_GREATER_THAN_UINT32(0, stepped);
+    TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(rt.canonicalPassInputs.passCount()));
+    // ...and (iii) without the overlay lane issuing any canonical work: its only entry is this reading, and it created no
+    // committed demand of its own (so nothing here is a second canonical driver).
+    TEST_ASSERT_FALSE_MESSAGE(rt.pendingViewRequest_.active,
+                              "the overlay demand must not become a committed demand of its own");
+    TEST_ASSERT_TRUE(t.overdubOverlayDemandForSlot(0, 1470).owed);
+  }
   const Track::OverdubOverlayDemand live = t.overdubOverlayDemandForSlot(0, 1470);
   TEST_ASSERT_TRUE(live.owed);
   TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), live.captureGeneration);

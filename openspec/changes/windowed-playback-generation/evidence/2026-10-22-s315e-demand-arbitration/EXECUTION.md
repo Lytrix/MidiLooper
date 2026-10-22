@@ -255,3 +255,38 @@ Therefore:
   waiting indistinguishably.
 
 Both probes were removed byte-identically; the focused suite is back to **91/91** and no source line changed.
+
+## 2b-ii-b — liveness measured GREEN through the real rotation shape (2026-10-22)
+
+Correction applied (previous entry): the canonical prefix is `Track::processDeferredCanonicalPrefix`, offered by
+`MidiServiceDrain::serviceCanonicalPrefixTurn` during the **VisualCache** turn and gated by
+`canonicalPreparationHasPriorityWork(...)`, whose overdub term (`overdubbing && !sourceSpansReady`) deprioritizes it until the
+display/source-span cache is ready. Measured with both prerequisites in place, on a live overdub with **no committed demand of
+its own**, using exactly the `main.cpp` pair:
+
+```
+spanReady=1  canonicalReady=0  passes=0
+after 13 canonical-owner turns:  canonicalReady=1  passes=1
+```
+
+So liveness **holds**: a live overlay demand does not need to drive anything, because the canonical owner is already runnable
+and advances the base once the paint prerequisite exists. The earlier "RED" was (a) the wrong owner entry and (b) the
+deliberate deprioritization while the span cache was absent.
+
+The registered fixture now asserts the three parts the owner asked for, in
+`test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval`:
+
+1. `canonicalPassInputs.ready()` after bounded canonical-owner turns under overlay-only demand;
+2. the work went through the committed owner's own grains (`serviceCanonicalPrefixTurn` →
+   `Track::processDeferredCanonicalPrefix`, `stepped > 0`, `passCount == 1`);
+3. the overlay lane issued **zero** canonical work — its only entry is the const `overdubOverlayDemandForSlot` reading, and
+   `pendingViewRequest_.active` stays false, so the overlay demand created no committed demand and no second driver.
+
+**Named limitation (honest):** the negative companion — "*the prerequisite must not steal a turn while
+`canonicalPreparationHasPriorityWork` is true*" — is **not** demonstrated here: by this point in the fixture the span cache is
+already established, so the deprioritized branch is not reachable without a dirty-span overdub state of its own. It is
+recorded as owed rather than asserted. The stale-identity case is satisfied **by construction**: the prerequisite is derived
+per turn from live state (`overdubOverlayDemandForSlot`), so there is no retained obligation that could survive a revision or
+capture-generation change — there is nothing to go stale.
+
+No source line changed (test only). Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**.
