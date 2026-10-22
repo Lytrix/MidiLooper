@@ -657,6 +657,37 @@ bool serviceCanonicalTurn(Track& t, uint8_t& nextTrack) {
 
 }  // namespace
 
+
+// Shared setup: the two-bar world is already staged and the track is PLAYING. Starts the live overdub, appends one note,
+// prepares the canonical base through the committed owner, and drives the overlay lane to a complete candidate.
+static const RuntimePlaybackView* buildLiveOverlayCandidate(Track& t, Loop& loop, LoopPlaybackRuntime& rt,
+                                                            uint32_t startTick, uint8_t note) {
+  clockManager.assignCurrentTickSilently(startTick);
+  nativePlaybackDeadlineClock = {startTick, 1};
+  t.startOverdubbing(startTick);
+  t.noteOn(1, note, 100, startTick + 446);
+  if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  uint8_t nextTrack = 0;
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn)
+    (void)serviceCanonicalTurn(t, nextTrack);
+  if (!rt.canonicalPassInputs.ready()) return nullptr;
+  const RuntimePlaybackView* candidate = nullptr;
+  for (unsigned turn = 0; turn < 600 && candidate == nullptr; ++turn) {
+    (void)t.serviceOverdubOverlayWindow();
+    const RuntimePlaybackView* now = rt.overdubOverlayCandidate();
+    if (now != nullptr && now->complete) candidate = now;
+  }
+  return candidate;
+}
+
+void playTraversal(Track& t, uint32_t loopTicks, uint32_t from, uint32_t to) {
+  for (uint32_t tick = from; tick <= to; tick += 16) {
+    clockManager.assignCurrentTickSilently(loopTicks + tick);
+    nativePlaybackDeadlineClock = {loopTicks + tick, 1};
+    t.playMidiEvents(loopTicks + tick, true);
+  }
+}
+
 // **W1/W4/W5 — the live overlay window serves, the echo is suppressed, and the ledger splits by provenance.**
 //
 // A two-bar committed world, a live overdub with one unclosed note, the lane's candidate with a published frontier, then
@@ -728,8 +759,99 @@ void test_the_live_overlay_window_serves_and_the_echo_is_suppressed() {
                                    "an overlay row is sounded without committed-pass ledger ownership");
 }
 
+
+// **W2 — DEC-136 guard: the live route takes no role.** A complete committed-origin successor is planted in `ready`; the
+// overlay edge serves from the live view and leaves that successor exactly where its own lane put it (complete, same
+// identity, still in `ready`, unpublished). No retirement, no replacement, no role request.
+void test_the_live_overlay_edge_never_touches_a_foreign_ready_successor() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const RuntimePlaybackView* candidate = buildLiveOverlayCandidate(t, loop, rt, kLoopTicks + 1024, 70);
+  TEST_ASSERT_NOT_NULL(candidate);
+
+  RuntimePlaybackViewSet* set = rt.viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t ready = set->lifecycle.ready;
+  TEST_ASSERT_LESS_THAN(static_cast<uint32_t>(set->views.size()), static_cast<uint32_t>(ready));
+  RuntimePlaybackView& successor = set->views[ready];
+  successor.resetMetadata();
+  successor.complete = true;
+  successor.published = false;
+  successor.source = PlaybackViewSourceIdentity{loop.playbackRevision,
+      TrackCaptureStopTestAccess::playbackGenerationOf(t), loop.publishedSnapshotIdentity()};
+  successor.coverage = PlaybackCoverageInterval{0, loop.loopLengthTicks, loop.loopLengthTicks};
+  const uint32_t successorRevision = successor.source.playbackRevision;
+
+  const uint32_t selectionsBefore = Track::overlayLiveSelectionCount();
+  playTraversal(t, kLoopTicks, 16, kLoopTicks);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(selectionsBefore, Track::overlayLiveSelectionCount(),
+                                          "the edge selected the live view while the successor was planted");
+  TEST_ASSERT_TRUE_MESSAGE(successor.complete, "the foreign ready successor stays complete");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(successorRevision, successor.source.playbackRevision,
+                                   "the foreign ready successor keeps its identity");
+  TEST_ASSERT_FALSE(successor.published);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(ready, set->lifecycle.ready, "the successor is still the ready role");
+}
+
+// **W6/W7 — the named fallback.** With the edge disabled (the test seam), the resolver does not bind the live view: the
+// committed walk and the echo serve, the live row still appears exactly once, and no role or frontier is touched. This is
+// the fixture form of the "force the branch off" mutation; the finalization suite's 3.15e oracle covers the same fallback
+// shape on the echo path.
+void test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  Track::setOverlayEdgeDisabledForTest(true);
+  const RuntimePlaybackView* candidate = buildLiveOverlayCandidate(t, loop, rt, kLoopTicks + 1024, 70);
+  TEST_ASSERT_NOT_NULL(candidate);
+  TEST_ASSERT_GREATER_THAN_UINT16(0, candidate->readableEventCount);
+
+  const uint32_t selectionsBefore = Track::overlayLiveSelectionCount();
+  MidiSendCapture::reset();
+  playTraversal(t, kLoopTicks, 16, kLoopTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(selectionsBefore, Track::overlayLiveSelectionCount(),
+                                   "the disabled edge must not bind the live view");
+  unsigned liveOns = 0, baseOns = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (event.isNoteOn() && event.data.noteData.note == 70) ++liveOns;
+    if (event.isNoteOn() && event.data.noteData.note == 48) ++baseOns;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, liveOns, "the echo serves the live row once on the fallback");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, baseOns, "the committed walk still serves the base");
+  Track::setOverlayEdgeDisabledForTest(false);
+}
+
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_the_live_overlay_window_serves_and_the_echo_is_suppressed);
+  RUN_TEST(test_the_live_overlay_edge_never_touches_a_foreign_ready_successor);
+  RUN_TEST(test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating);
   return UNITY_END();
 }

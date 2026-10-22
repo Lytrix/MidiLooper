@@ -512,8 +512,9 @@ void reanchorFixedPlaybackIndex(Loop& loop, const FixedPlaybackEventStorage& sto
 namespace { bool mergedMidiEventsBuildInProgress = false; }
 #if defined(PIO_UNIT_TEST_NATIVE)
 // Test-only witness: MIDI turns that selected the live overlay window. No target path reads it.
-namespace { unsigned sOverlayLiveSelectionsForTest = 0; }
+namespace { unsigned sOverlayLiveSelectionsForTest = 0; bool sOverlayEdgeDisabledForTest = false; }
 unsigned Track::overlayLiveSelectionCount() { return sOverlayLiveSelectionsForTest; }
+void Track::setOverlayEdgeDisabledForTest(bool disabled) { sOverlayEdgeDisabledForTest = disabled; }
 #endif
 
 #if defined(PIO_UNIT_TEST_NATIVE)
@@ -1138,7 +1139,13 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
   // exposed; the storage may still be extended off-clock; no role is taken. The base identity is the stable selector
   // (the capture generation drifts per append). The shared cursor is anchored to the last processed phase, O(log n).
   if (slotIndex == activeLoopIndex && isOverdubbing() && !isJamPlaybackActive() && !isJamming() &&
-      !editManager.isNoteEditActive()) {
+      !editManager.isNoteEditActive() &&
+#if defined(PIO_UNIT_TEST_NATIVE)
+      !sOverlayEdgeDisabledForTest
+#else
+      true
+#endif
+      ) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
     const RuntimePlaybackView* live = runtime != nullptr ? runtime->overdubOverlayCandidate() : nullptr;
     const uint32_t livePhase = IntervalProjection::tickPhaseInProjectionCycle(

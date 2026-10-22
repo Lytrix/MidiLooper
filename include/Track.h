@@ -422,6 +422,7 @@ public:
   #if defined(PIO_UNIT_TEST_NATIVE)
   /// Test-only witness: MIDI turns that selected the live overlay window (slice 3).
   static uint32_t overlayLiveSelectionCount();
+  static void setOverlayEdgeDisabledForTest(bool disabled);
 #endif
   static void resetPlaybackLaneMeasurement();
   static void samplePlaybackLaneOpportunity(PlaybackDeadlineClock clock, bool running, bool eligible,

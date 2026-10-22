@@ -160,16 +160,22 @@ and near-current overdub audibility. It also avoids the `ready`-role question en
 - **C4:** while the live view is selected, the `ActiveCaptureOverdub` walk and `ensureCaptureEventsSorted()` do not run.
 - **C5:** `playbackCursorAdvanceSendOverlay` / `playbackCursorAdvanceApplyLedgerOverlay` (flash, function-pointer calls)
   apply the ledger only to committed-origin rows.
-- **New suite `test_overlay_edge`** (rolling 1, real hot path, captured two-bar world): W1 green — the live row is served
-  once, the committed base pair once, the ledger stays closed, and the selection witness proves the route. Mutations that
-  discriminate: re-enabling the echo under the window duplicates the live row; applying the ledger to overlay rows opens
-  the ledger.
+- **New suite `test_overlay_edge`** (rolling 1, real hot path, captured two-bar world): **W1** green (live row once, base
+  pair once, ledger closed, selection witness proves the route); **W2** green (a planted complete committed-origin `ready`
+  successor stays complete, keeps its identity, remains in `ready` and unpublished — the live route takes no role, so
+  DEC-136 is untouched); **W6/W7** green via the test-only fallback seam (the resolver does not bind; the committed walk +
+  echo serve the base and the live row once, no duplicate, no role touched). Mutations that discriminate: re-enabling the
+  echo under the window duplicates the live row; applying the ledger to overlay rows opens the ledger; disabling the edge
+  selects nothing and falls back without duplicating.
 - **Budget:** default image stays `391,688 + 1,528`; the lane image moves **+64 B of ITCM** (`391,848 + 1,368` →
   `391,912 + 1,304`, still 464 B above the approved 840 floor) — the cost of the route selection/locals in the hot path.
   No floor or size pin is re-based; the move is recorded, not absorbed silently.
 
-**Still to implement:** W2 (foreign `ready`/DEC-136 guard), W3 (pass-commit fallback at the seam), W6 (branch-off fallback
-proof), W7 (named refusals).
+**Still to implement:** **W3** (pass-commit fallback at the seam). It is deliberately deferred to slice 4: the fixture's
+wrap-commit trigger did not fire in the new suite (the pass stayed uncommitted across the boundary), and the packet already
+assigns the wrap-held hand-off to slice 4. The seam is otherwise guarded structurally: the resolver selects on the base
+revision, so a committed pass stops the binding; the lane's identity rules retire the stale candidate (proved in the
+finalization suite's 2b-ii-b wrap case).
 
 **Fixture-home constraint (found while wiring the edge; the wiring was prototyped and reverted).**
 `test_shared_capture_finalization` defines `PLAYBACK_WINDOW_ROLLING_ENABLED 1` **only** when
