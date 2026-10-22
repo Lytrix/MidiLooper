@@ -140,3 +140,50 @@ pass commit) is the owner build itself, not a wiring detail.
 
 Gates: focused **244/244** (prewarm), full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**, both images
 byte-identical at the pins (`391,688 + 1,528` / `391,848 + 1,368`). Still nothing audible.
+
+## 2b-ii-b — measured blocker before the owner build: the canonical base is **not ready** during an overdub (2026-10-22)
+
+Owner direction: take `RuntimeCompanionPasses` as the committed base (it is the committed lane's canonical form and the only
+provenance-bearing base the continuation accepts), and scope the owner build as *"the overlay demand does not create a new
+kind of committed base; it requests the same provenance-bearing committed interval the ordinary committed lane would prepare,
+then continues that same window with the generation-qualified live overlay."*
+
+Before writing the lane, the prerequisite was measured in the suite that has a real overdub
+(`test_shared_capture_finalization`, `test_3_15e_slice2b_…`, live overdub with rows):
+
+```
+canonicalReady=0  passCount=0  companionApply=1  frozenPassesIdle=1
+```
+
+So in the overdub state the runtime's **canonical pass inputs are empty**: there is no `RuntimeCompanionPasses` base to fill
+from until `LoopPlaybackRuntime::stepCanonicalPrefix` has prepared them. The companion apply and the frozen companion
+passes are available/idle (the storage exists), but the canonical prefix owner has not been driven.
+
+This changes the lane's shape, not its contract. The lifecycle the owner drew now has an explicit **first** step that costs
+grains and shares an owner:
+
+```
+overdubOverlayDemandForSlot
+        ↓
+canonical prefix prepared (stepCanonicalPrefix — the committed lane's own grains)   <-- measured NOT READY
+        ↓
+RuntimeCompanionPasses fill  (passOriginsReady)
+        ↓
+base complete → beginLiveOverlayContinuation → append-stable Capture continuation → ready
+```
+
+Two consequences the next step must decide, because the overlay lane cannot simply "request the committed interval" without
+touching a shared resource:
+
+1. **Shared canonical owner.** The committed lane already drives `canonicalPassInputs`. If the overlay lane drives it too,
+   two lanes advance one owner in the same turn — the exact "two drivers, one owner" shape the arbitration is meant to
+   prevent. The overlay lane should therefore treat canonical readiness as a **precondition** (`WaitingCanonicalBase`) and
+   let the committed lane's grain establish it, or the arbitration must name a single canonical-prefix driver per slot.
+2. **Which identity keys the base.** `RuntimeCompanionPasses::begin(...)` binds `canonicalPassInputs`'s generation, so the
+   base half's identity is that generation plus the loop revision; the candidate's retirement must key on both (committed
+   revision change → base no longer authoritative; capture generation advance → live half stale; coverage change → candidate
+   no longer answers the request), exactly as the owner listed.
+
+No code changed for this entry; the probe was removed byte-identically (`git diff` clean) and the focused suite is back to
+**91/91**. This is the measured input the owner build (and 2b-iii's arbitration) must consume: the overlay lane's first turn
+is a *waiting* state, not a build, until the canonical prefix exists.
