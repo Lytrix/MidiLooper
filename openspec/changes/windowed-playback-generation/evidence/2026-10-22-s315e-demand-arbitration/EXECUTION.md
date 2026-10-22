@@ -290,3 +290,28 @@ per turn from live state (`overdubOverlayDemandForSlot`), so there is no retaine
 capture-generation change — there is nothing to go stale.
 
 No source line changed (test only). Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**.
+
+## 2b-ii-b step 1 — the waiting state is a pure observation (2026-10-22)
+
+`include/Utils/OverdubOverlayLane.h` is the lane's vocabulary and nothing more: `Step { NotRequired, WaitingCanonicalBase,
+BaseReady, RetireStaleCandidate }` plus the identity quartet a revisit must find unchanged — committed revision, canonical
+generation, capture generation, coverage — and a `candidateIdentityMismatch` flag that orders retirement *before* any build.
+
+`observe()` is pure: no canonical work, no view role, no request record. The fixture gathers those inputs from real state on
+a live overdub (`canonicalPassInputs.ready()`, `canonicalPassInputs.generation()`, `overdubOverlayDemandForSlot`) and asserts:
+
+- canonical not ready → `WaitingCanonicalBase` and `waiting() == true`;
+- observing changed nothing: revision, capture generation, canonical pass count all unchanged, and the demand still owed;
+- `candidateIdentityMismatch` → `RetireStaleCandidate` (retirement is ordered before building);
+- `baseCommitted == false` → `NotRequired` (a slot that can never satisfy the wait is **not** "waiting"), and no demand →
+  `NotRequired`.
+
+Two mutations each kill exactly one assertion and are restored byte-identically (`sha256 d02be9dd1bcaee5d…`): "always
+`BaseReady`" fails the waiting case (`Expected 1 Was 2`), and dropping the mismatch branch fails the retirement case
+(`Expected 3 Was 1`).
+
+No firmware TU includes the header. Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**.
+
+**Owed next:** step 2 — begin the provenance-bearing base fill when `BaseReady` (the `RuntimeCompanionPasses` form), then
+step 3 the continuation, step 4 the append-stable tail, step 5 a named publication/contention result, step 6 identity-keyed
+retirement built on this `RetireStaleCandidate` step.

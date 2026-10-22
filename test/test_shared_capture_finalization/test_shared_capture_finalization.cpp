@@ -19,6 +19,7 @@
 // recorder counts exactly the rows the device would emit.
 #include <cstddef>
 #include "Utils/PlaybackDemandClaims.h"
+#include "Utils/OverdubOverlayLane.h"
 #include <cstdint>
 namespace SnapshotGateRows {
 struct Row {
@@ -7097,6 +7098,41 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
   // route's own** coverage policy at the playhead (so the overlay replaces exactly that interval).
   t.noteOn(1, 70, 100, kLoopTicks + 1470);
   t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  // (2b-0) **The waiting state is a pure observation.** Before any canonical work exists, the lane's step is
+  // `WaitingCanonicalBase` and observing it changes nothing: the identity quartet is reported, and the capture, revision,
+  // canonical generation and demand are all unchanged afterwards.
+  {
+    using namespace OverdubOverlayLane;
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    const Track::OverdubOverlayDemand demand = t.overdubOverlayDemandForSlot(0, 1470);
+    Observation observation;
+    observation.demandOwed = demand.owed;
+    observation.baseCommitted = demand.baseCommitted;
+    observation.canonicalReady = rt.canonicalPassInputs.ready();
+    observation.committedRevision = demand.playbackRevision;
+    observation.canonicalGeneration = rt.canonicalPassInputs.generation();
+    observation.captureGeneration = demand.captureGeneration;
+    observation.coverage = demand.coverage;
+    TEST_ASSERT_FALSE_MESSAGE(observation.canonicalReady, "fixture precondition: no canonical base yet");
+    TEST_ASSERT_EQUAL(Step::WaitingCanonicalBase, observe(observation));
+    TEST_ASSERT_TRUE(waiting(observe(observation)));
+    // Purity: the same observation reports the same identity and nothing moved.
+    TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, observation.committedRevision);
+    TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), observation.captureGeneration);
+    TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(rt.canonicalPassInputs.passCount()));
+    TEST_ASSERT_FALSE(t.overdubOverlayDemandForSlot(0, 1470).owed == false);
+    // A candidate whose identity moved retires before anything is built, and a slot with no base is not "waiting".
+    Observation stale = observation;
+    stale.candidateIdentityMismatch = true;
+    TEST_ASSERT_EQUAL(Step::RetireStaleCandidate, observe(stale));
+    Observation noBase = observation;
+    noBase.baseCommitted = false;
+    TEST_ASSERT_EQUAL(Step::NotRequired, observe(noBase));
+    Observation notOwed = observation;
+    notOwed.demandOwed = false;
+    TEST_ASSERT_EQUAL(Step::NotRequired, observe(notOwed));
+  }
+
   // (2b) **Liveness of the prerequisite, measured through the real rotation shape.** The overlay lane may observe canonical
   // readiness but never advance it, so a live overlay demand must make the **committed canonical owner** runnable. This is
   // the same `MidiServiceDrain::serviceCanonicalPrefixTurn` + `Track::processDeferredCanonicalPrefix` pair `main.cpp` uses,
