@@ -527,3 +527,57 @@ emission rule).
 - **Device evidence is 3.15f.** No physical claim follows from native gates.
 - `WaitingCanonicalBase` remains silent at the call site (named outcome only); its reported (`CanonicalDependencyDeferred`)
   form stays with the arbitration slice.
+
+## 2b-iii — attempted, reviewed, and **withdrawn before landing**: the priority inversion has no reachable subject, and the naive form breaks DEC-136 (2026-10-22; no code change)
+
+This entry records a **stop**, not a slice. The next unit after 2b-ii-b is 2b-iii ("lanes ask the resolver; losers return
+named outcomes; the winner executes `supersedeReady`/`retireStaleReady`; the committed lane may only be deferred once the
+overlay can take the boundary"). The owner build can take the boundary, so the inversion was implemented on a feature tree:
+
+- `Track::playbackDemandDecisionForSlot` gathered the three claims from production state (committed = a retained
+  `CommittedSnapshot` request vs the live root; preview = the live NOTE_EDIT session revision vs the lane's frozen
+  revision; overlay = the live demand with the candidate's **base** identity as currency);
+- `applyPlaybackDemandRoleDecisionForSlot` executed `retireStaleReady`/`supersedeReady` on the `ready` role;
+- `committedPlaybackRetryCanProgress` and `requestCommittedPlaybackWindow` deferred an ordinary convergence demand during a
+  live overdub (named `DeferredToHigherPriority`), and the overlay lane consulted the same decision.
+
+One focused independent review falsified the slice's premise with reachable production paths. Both findings are **accepted**;
+the tree was reverted to `8e58f78a` and no firmware line landed.
+
+**V1 — `CommittedSnapshot` is also the Record-return obligation.** DEC-136's private root-return successor requires
+`sourceKind == CommittedSnapshot` (`rootReturnSuccessorIsOwedForSlot`) and is offered during an overdub
+(`fillPlaybackHolders`). Nothing forbids starting an overdub while a Record presentation is still retiring
+(`presentationOwner != nullptr`). The deferral therefore stopped the **one** committed demand that must not be deferred: the
+return window could not be qualified, the presentation could not retire (its release gate needs a published window matching
+the current root, which an unpublished Capture-origin overlay cannot provide), and the successor's STOP admission is bounded
+by that retirement — the documented "the stop press admitted nothing, the overdub can never stop" class. The role decision
+had the same conflation: `readyComplete` was derived from `origin == Committed` alone, so a **Committed-origin** Record-return
+(`fromFrozenJob`) or launch successor could be retired as "superseded", while the note-edit lane deliberately refuses to do
+that to another owner's successor.
+
+**V2 — ordinary convergence does not survive an overdub.** `serviceRollingPlaybackWindow` cancels its frame and any matching
+`CommittedSnapshot` pending request as soon as `!isPlaying()` — i.e. on the first maintenance turn after the overdub starts.
+So the deferral's stated subject (ordinary committed convergence) has **no production producer during an overdub**; the only
+reachable subject is V1's Record-return demand. The fixture that "proved" the inversion called
+`requestCommittedPlaybackWindow` directly on an already-overdubbing track, which no production lane does — the reviewer's
+"tests manufacture prerequisites production never supplies" rule, and it hid V1.
+
+**Also found (kept as a placement contract for whoever lands 2b-iii):** `PlaybackDemandArbitration::resolve` was inline, and
+calling it from `TrackPlaybackWindowBuild.cpp` (whose default section is ITCM) emitted a **532 B weak ITCM symbol plus a
+flash→ITCM veneer** in **both** images: default `391,688 + 1,528` → `392,200 + 1,016`, lane `391,848 + 1,368` → `392,360 +
+856` (16 B above the floor). Moving the body out of line and flash-resident restored the exact pins. The next attempt should
+start from that placement, not from the inline header.
+
+**What the owner must decide before 2b-iii can land** (this is the formal boundary; the review found an authority conflict
+between the 2a priority contract and DEC-136's return obligation):
+
+1. **Keep ordinary convergence alive across an overdub** — do not cancel a genuine convergence demand at overdub start
+   (the overlay's window carries its base), and give the pending request an **obligation kind** so the arbitration can
+   distinguish ordinary convergence from Record-return/launch obligations. Only then may the committed lane be deferred,
+   and the `ready` role decision must bind to that demand's own source/coverage (never "any Committed-origin view").
+2. **Or defer 2b-iii until slice 3/adoption creates the competition**, leaving the Record-return and launch routes exactly as
+   they are. This is the lower-risk option today; it means the 2a priority contract has no production consumer yet, which
+   should be recorded as such rather than implied by a test-only demand.
+
+No claim is made about either option's cost. The evidence above is the input the decision needs; the slice's packet should be
+rewritten before code, not after.
