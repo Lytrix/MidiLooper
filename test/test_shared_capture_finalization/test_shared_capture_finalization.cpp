@@ -18,6 +18,7 @@
 // selected** and **which gate refused** it. The cadence that bounds the row is production state, so a substituted
 // recorder counts exactly the rows the device would emit.
 #include <cstddef>
+#include "Utils/PlaybackDemandClaims.h"
 #include <cstdint>
 namespace SnapshotGateRows {
 struct Row {
@@ -7046,6 +7047,96 @@ void test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_
   serveTwoBarTraversalsAndCheckOrder(t, *loopB, 1, false);
 }
 
+// Task 3.15e slice 2b-ii — **the per-overdub overlay demand, derived from live state only.**
+//
+// The overlay lane may not keep a demand record (that would be the hidden fourth state the arbitration contract forbids), so
+// the demand *is* a reading of live state: an overdub that is actually carrying rows on top of committed content owes a
+// window whose coverage is the committed route's own policy at the playhead, whose identity is the live capture generation,
+// and whose pass/stop boundaries make it disappear rather than go stale. The claim the arbiter consumes is built from the
+// same reading, which is what keeps "identity beats class" honest across the wrap.
+void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  const auto position = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+  };
+  const auto play = [&](uint32_t tick) { position(tick); t.playMidiEvents(tick, true); };
+
+  // (1) Not overdubbing: nothing owed, but the base the overlay would carry is present. A slot with no committed content
+  // has no base and therefore no demand either.
+  const Track::OverdubOverlayDemand idle = t.overdubOverlayDemandForSlot(0, 100);
+  TEST_ASSERT_FALSE(idle.owed);
+  TEST_ASSERT_TRUE(idle.baseCommitted);
+  TEST_ASSERT_EQUAL_UINT64(0, idle.captureGeneration);
+  const Track::OverdubOverlayDemand empty = t.overdubOverlayDemandForSlot(1, 100);
+  TEST_ASSERT_FALSE(empty.owed);
+  TEST_ASSERT_FALSE_MESSAGE(empty.baseCommitted, "a slot with no committed content owes no overlay");
+
+  // (2) A live overdub with no rows yet carries nothing, so there is nothing to prepare.
+  position(kLoopTicks + 1024);
+  t.startOverdubbing(kLoopTicks + 1024);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const Track::OverdubOverlayDemand opened = t.overdubOverlayDemandForSlot(0, 1024);
+  TEST_ASSERT_FALSE(opened.owed);
+  TEST_ASSERT_TRUE(opened.baseCommitted);
+
+  // (3) With rows, the demand names the live capture generation, the current playback revision, and the **committed
+  // route's own** coverage policy at the playhead (so the overlay replaces exactly that interval).
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  const Track::OverdubOverlayDemand live = t.overdubOverlayDemandForSlot(0, 1470);
+  TEST_ASSERT_TRUE(live.owed);
+  TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), live.captureGeneration);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, live.playbackRevision);
+  PlaybackCoverageInterval want{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks,
+                                                 loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), 1470, want));
+  TEST_ASSERT_EQUAL_UINT32(want.startPhase, live.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(want.lengthTicks, live.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(want.loopLengthTicks, live.coverage.loopLengthTicks);
+
+  // The arbitration claim is current against that same live generation.
+  const auto liveClaim = PlaybackDemandClaims::overlay(true, loop.captureContentGeneration(), live.captureGeneration,
+                                                       /*readyComplete=*/false);
+  TEST_ASSERT_TRUE(liveClaim.identityCurrent);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Class::Overlay, liveClaim.demandClass);
+
+  // (4) The wrap's pass commit advances the capture generation: the demand taken a moment ago is **stale** by identity (not
+  // by class), the store restarts, and nothing is owed until new rows exist.
+  for (uint32_t tick = kLoopTicks + 1056; tick <= kLoopTicks + 1504; tick += 32) play(tick);
+  play(kLoopTicks + 1536);
+  TEST_ASSERT_TRUE_MESSAGE(loop.captureContentGeneration() != live.captureGeneration,
+                           "the wrap commit must advance the capture generation");
+  const auto staleClaim = PlaybackDemandClaims::overlay(true, loop.captureContentGeneration(), live.captureGeneration,
+                                                        /*readyComplete=*/true);
+  TEST_ASSERT_FALSE_MESSAGE(staleClaim.identityCurrent, "the recorded demand is stale after the pass commit");
+  const Track::OverdubOverlayDemand afterWrap = t.overdubOverlayDemandForSlot(0, 0);
+  TEST_ASSERT_FALSE_MESSAGE(afterWrap.owed, "a re-based store carries nothing, so nothing is owed");
+
+  // (5) A pending stop ends the demand as well: the overlay lane never owns a boundary once the session is stopping.
+  t.noteOn(1, 71, 100, kLoopTicks + 1536 + 200);
+  t.noteOff(1, 71, 0, kLoopTicks + 1536 + 260);
+  TEST_ASSERT_TRUE(t.overdubOverlayDemandForSlot(0, 200).owed);
+  position(kLoopTicks + 1536 + 320);
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_FALSE_MESSAGE(t.overdubOverlayDemandForSlot(0, 320).owed,
+                           "a stopping session owes no overlay boundary");
+}
+
 // Task 3.15e — **the live overdub overlay is served exactly once through the wrap, the pass handoff and the stop.**
 //
 // The existing 3.15a fixture proves a *committed* overdub is served once per traversal; `assertRecordRecoveryServesSecondBar`
@@ -7318,6 +7409,7 @@ void test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval);
   RUN_TEST(test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff);
   RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);

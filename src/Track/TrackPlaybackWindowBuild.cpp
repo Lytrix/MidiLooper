@@ -6877,6 +6877,28 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   return primaryTurn && bridgeTurn ? outcome : PlaybackViewTurnResult::GrainDenied;
 }
 
+TRACK_COLD_MEM Track::OverdubOverlayDemand Track::overdubOverlayDemandForSlot(uint8_t slotIndex,
+                                                                              uint32_t playheadPhase) const {
+  OverdubOverlayDemand demand;
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return demand;
+  const Loop& loop = loopForSlot(slotIndex);
+  demand.baseCommitted = loop.hasCommittedPasses() && loop.loopLengthTicks != 0;
+  // Nothing is owed unless a live overdub is actually carrying rows, and there is a committed base to carry them over.
+  if (!isOverdubbing() || loop.capture.phase != CapturePhase::Overdub || loop.capture.store.empty() ||
+      !demand.baseCommitted) {
+    return demand;
+  }
+  const uint32_t phase = playheadPhase % loop.loopLengthTicks;
+  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), phase,
+                              demand.coverage)) {
+    return demand;
+  }
+  demand.owed = true;
+  demand.captureGeneration = loop.captureContentGeneration();
+  demand.playbackRevision = loop.playbackRevision;
+  return demand;
+}
+
 TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,
                                                   uint32_t playheadPhase, PlaybackCoverageInterval& out) {
   if (loopLengthTicks == 0) {

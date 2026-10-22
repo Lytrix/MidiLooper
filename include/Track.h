@@ -486,6 +486,20 @@ public:
   /// rule, not its contract). Public so the resolver, its fixtures and its readers agree on one policy.
   static bool playbackWindowInterval(uint32_t loopLengthTicks, bool demoted, uint32_t playheadPhase,
                                      PlaybackCoverageInterval& out);
+  /// **Slice 3.15e/2b-ii — the per-overdub overlay demand.** What the overlay lane owes for a slot, derived from **live
+  /// state only** (there is no stored record, so no stale demand can exist): `owed` while an overdub is recording rows on
+  /// top of committed content, `coverage` from the committed route's own window policy at the playhead (the overlay replaces
+  /// exactly what that route would serve), and `captureGeneration` the identity a prepared window must carry — the same
+  /// value the arbitration's overlay claim compares (`PlaybackDemandClaims::overlay`).
+  struct OverdubOverlayDemand {
+    bool owed = false;
+    /// The committed base the overlay would carry exists (a slot with no committed content has nothing to overlay).
+    bool baseCommitted = false;
+    uint64_t captureGeneration = 0;
+    uint32_t playbackRevision = 0;
+    PlaybackCoverageInterval coverage{};
+  };
+  TRACK_COLD_MEM OverdubOverlayDemand overdubOverlayDemandForSlot(uint8_t slotIndex, uint32_t playheadPhase) const;
   /// DEC-108 item 1 / task 3.2: ask the owner to prepare **the window this slot needs**, resolved from the
   /// selected `LoopSnapshot` -- the caller names a **slot and a phase**, never events. `scratch` is the
   /// caller's bounded buffer for the enumeration; the owner neither allocates nor keeps state for it. Returns

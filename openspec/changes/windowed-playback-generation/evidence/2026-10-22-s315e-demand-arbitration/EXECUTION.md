@@ -76,3 +76,40 @@ the pins (`391,688 + 1,528` / `391,848 + 1,368`) because no firmware TU includes
    returns a named `PlaybackViewRequestResult`/turn outcome, and the winner executes `supersedeReady`/`retireStaleReady`
    against `viewSet->lifecycle` (the retirement that slice 1 proved is needed). The committed lane must be deferred only
    once the overlay lane can actually take the boundary, otherwise convergence stalls.
+
+## 2b-ii — the per-overdub overlay demand (2026-10-22)
+
+`Track::overdubOverlayDemandForSlot(slot, playheadPhase)` (`TRACK_COLD_MEM`, flash) is the overlay lane's **request
+identity**, and it is deliberately a *reading* rather than a record — a stored demand is exactly the hidden fourth state the
+arbitration contract forbids, and a reading cannot go stale in storage:
+
+| Field | Derived from |
+|---|---|
+| `owed` | `isOverdubbing()` && `capture.phase == Overdub` && the live store is non-empty && `baseCommitted` |
+| `baseCommitted` | `hasCommittedPasses()` && `loopLengthTicks != 0` |
+| `coverage` | the committed route's **own** policy — `Track::playbackWindowInterval(loopLength, demoted, playheadPhase)` |
+| `captureGeneration` | `Loop::captureContentGeneration()` (the same value the arbitration's overlay claim compares) |
+| `playbackRevision` | `Loop::playbackRevision` |
+
+Fixture `test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval`
+(`test_shared_capture_finalization`, the suite with the real edge and the real stop): not-overdubbing → not owed but base
+present; a slot with no committed content → no base, no demand; a live session with no rows → not owed; with rows → owed
+with the live generation, the current revision and **exactly** the committed policy's coverage, and the
+`PlaybackDemandClaims::overlay` claim built from it is current; the **wrap's pass commit** advances the generation, so the
+demand taken a moment earlier is stale **by identity** (the claim goes stale with `readyComplete` true, which asks for the
+role's retirement) and the re-based store owes nothing; a **stopping** session owes nothing.
+
+Mutation (`sha256 1b0e548caf12ec3f…`, restored byte-identically): the demand's generation replaced by `playbackRevision`
+fails exactly this case (`Expected 10 Was 1`). **Named unproven guard:** the `isOverdubbing()` term is not independently
+discriminated by the fixture, because a deferred stop has already moved the rows to the job (store empty); it is kept for
+the denied/latched-stop shape and recorded here rather than claimed as proven.
+
+Gates: focused **91/91**; full native **3 399 / 7 skipped / 3 392 succeeded / 0 failed**; both images byte-identical at the
+pins (`391,688 + 1,528` / `391,848 + 1,368`). Nothing consumes the demand yet and nothing is audible.
+
+### Still owed in slice 2
+
+1. **2b-ii-b — the overlay owner build.** The owner turn that admits a role and drives slice 1's continuation window for
+   this demand (committed base for `coverage` + live overlay, retire on generation advance), still emitting nothing.
+2. **2b-iii — the wiring.** Lanes ask the resolver; losers return named outcomes; the winner executes
+   `supersedeReady`/`retireStaleReady`. The committed lane may only be deferred once 2b-ii-b can take the boundary.
