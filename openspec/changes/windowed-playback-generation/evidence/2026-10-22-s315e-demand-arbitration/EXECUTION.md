@@ -224,3 +224,34 @@ with the liveness fixture as its own RED→GREEN, and only then (1) `WaitingCano
 (4) named contention at publication, (5) identity-keyed retirement.
 
 No source line changed; the probe was removed byte-identically (`git diff` clean apart from documentation).
+
+## 2b-ii-b — correction: the liveness RED is **not established** (2026-10-22)
+
+The previous entry measured 400 turns of `Track::stepPlaybackViewMaintenance` and called the empty canonical inputs a RED.
+That scope was wrong: the canonical prefix is not driven by the playback-view owner at all. It is driven by
+`Track::processDeferredCanonicalPrefix`, reached through the **VisualCache / VisualCacheWrapAppend** deferred turns
+(`MidiServiceDrain::serviceCanonicalPrefixTurn`), and gated by
+`MidiServiceDrain::canonicalPreparationHasPriorityWork(overdubbing, visualDirty, wrapAppend, sourceSpansReady)`, whose
+overdub term is `overdubbing && !sourceSpansReady` — i.e. **during an overdub, canonical preparation is deliberately
+deprioritized while the overdub's own source-span cache is not ready.**
+
+Second measurement, same fixture, 400 `processDeferredIdleMaintenance(..., DeferredIdleOwner::VisualCache, 1)` turns:
+`ready=0 passCount=0` before **and** after. So neither owner entry makes progress here — but that is a statement about this
+**harness shape** (no display/paint work, so the source-span cache never becomes ready and the higher-priority term stays
+true), not a verdict on the real rotation.
+
+Therefore:
+
+- **The liveness RED is withdrawn as a claim.** What is established: (a) the playback-view owner does not advance the
+  canonical prefix, (b) the VisualCache owner does not in this fixture either, (c) the rule that explains both is the
+  deliberate overdub deprioritization above.
+- **The liveness question is still owed**, and its precondition is a **harness** fact, not a scheduling one: it must be
+  measured where `overdubSourceSpanCacheReady()` can become true (the real `updateAllTracks` rotation, or a fixture that
+  drives the source-span/paint work first). Until then neither "it wakes" nor "it starves" may be claimed, and no scheduling
+  change is justified by the measurement.
+- The owner's design is unaffected and remains the target: the dependency must make the canonical owner *runnable*
+  (`CanonicalPrerequisiteOwed(slot)`), arbitration ranks it below stop/finalization and existing committed/sounding work, and
+  a prerequisite that cannot legally be serviced must be reported (`CanonicalDependencyDeferred`/`Blocked`) rather than
+  waiting indistinguishably.
+
+Both probes were removed byte-identically; the focused suite is back to **91/91** and no source line changed.
