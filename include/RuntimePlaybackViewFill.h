@@ -29,6 +29,9 @@ enum class RuntimePlaybackViewFillRefusal : uint8_t {
   /// The continuation was asked for with an identity that does not share the base's revision/generation, or with a source
   /// that is not an append-stable live capture.
   ContinuationIdentityMismatch,
+  /// The committed base half carries **no per-row provenance**, so the window could not tell a committed row from an overlay
+  /// row. A raw copied base is refused here rather than labelled with an origin nobody proved.
+  ContinuationBaseWithoutProvenance,
 };
 
 struct RuntimePlaybackViewSource {
@@ -119,7 +122,7 @@ class RuntimePlaybackViewFill {
   /// True while this fill is appending the live-overlay half of a window (never for the first-take Record lane).
   bool continuingOverlay() const { return testFlag(kOverlayActiveBit); }
   RuntimePlaybackViewFillRefusal refusal() const {
-    return static_cast<RuntimePlaybackViewFillRefusal>((flags_ >> kOverlayRefusalShift) & 0x3u);
+    return static_cast<RuntimePlaybackViewFillRefusal>((flags_ >> kOverlayRefusalShift) & kOverlayRefusalMask);
   }
   /// Content generation of the live overlay this fill is appending (0 when none): the identity slice-2 arbitration needs.
   /// It is the live source's own generation token, so it needs no field of its own.
@@ -165,7 +168,9 @@ class RuntimePlaybackViewFill {
     kAppendStableCaptureBit = 1u << 2,
     kOverlayActiveBit = 1u << 3,
   };
+  /// Three bits, because the refusal set is now five names; still inside the one packed byte.
   static constexpr uint8_t kOverlayRefusalShift = 4;
+  static constexpr uint8_t kOverlayRefusalMask = 0x7u;
   uint8_t flags_ = 0;
   bool testFlag(uint8_t bit) const { return (flags_ & bit) != 0; }
   void setFlag(uint8_t bit, bool on) {
@@ -174,8 +179,8 @@ class RuntimePlaybackViewFill {
   bool sourceReadsByCopy() const { return testFlag(kSourceReadsByCopyBit); }
   bool ownsLiveGuard() const { return testFlag(kGuardLiveCaptureBit); }
   void setRefusal(RuntimePlaybackViewFillRefusal reason) {
-    flags_ = uint8_t((flags_ & ~(0x3u << kOverlayRefusalShift)) |
-                     ((static_cast<uint8_t>(reason) & 0x3u) << kOverlayRefusalShift));
+    flags_ = uint8_t((flags_ & ~(kOverlayRefusalMask << kOverlayRefusalShift)) |
+                     ((static_cast<uint8_t>(reason) & kOverlayRefusalMask) << kOverlayRefusalShift));
   }
   void refuseOverlay(RuntimePlaybackViewFillRefusal reason);
 };

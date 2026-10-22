@@ -8259,6 +8259,45 @@ void test_3_15e_slice1_one_window_carries_the_committed_base_and_the_live_overla
   TEST_ASSERT_EQUAL_UINT64(f.loop.captureContentGeneration(), f.build.overlayCaptureGeneration());
 }
 
+// A committed base copied from a raw array carries no per-row provenance, so the window could not distinguish a committed
+// row from an overlay row. The continuation must refuse it by name rather than attach and let a default origin stand in for
+// "committed pass 0" — which is the difference between one provenance table and a guess.
+void test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  MidiEvent baseRows[2] = {MidiEvent::NoteOn(10, 1, 60, 100), MidiEvent::NoteOff(90, 1, 60, 0)};
+  const PlaybackCoverageInterval coverage{0, 768, 768};
+  const PlaybackViewSourceIdentity baseIdentity{1, 2, nullptr};
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(32));
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(build.begin(view, baseRows, 2, baseIdentity, coverage, {}, {}));
+  for (size_t turn = 0; turn < 2000; ++turn) {
+    const RuntimePlaybackViewBuildGrain grain = build.nextGrain();
+    if (grain == RuntimePlaybackViewBuildGrain::Complete) break;
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, grain);
+    (void)(grain == RuntimePlaybackViewBuildGrain::Fill ? build.stepFill(1) : build.stepOrder(1));
+  }
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_FALSE_MESSAGE(view.passOriginsReady, "fixture precondition: a raw copied base has no provenance table");
+
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 100)));
+  const auto live = RuntimePlaybackViewSource::fromLiveCapture(loop, true);
+  const PlaybackViewSourceIdentity overlay{1, 2, nullptr, PlaybackWindowOrigin::Capture,
+                                          loop.captureContentGeneration()};
+  TEST_ASSERT_FALSE_MESSAGE(build.beginLiveOverlayContinuation(live, overlay),
+                            "a base without provenance must not take an overlay half");
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillRefusal::ContinuationBaseWithoutProvenance,
+                    build.continuationRefusal());
+  TEST_ASSERT_FALSE(build.overlayContinuationActive());
+  // The base window itself is still a valid committed window: the refusal is about the continuation, not the content.
+  TEST_ASSERT_TRUE(view.complete);
+  build.discard();
+}
+
 void test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window() {
   // (1) **Combined capacity** — base plus overlay must fit one window. The refusal is named and the window is cleared; no
   // overlay row is truncated and no committed row is evicted.
@@ -8564,5 +8603,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_record_source_rejects_pool_reset_and_failed_row_reads);
   RUN_TEST(test_3_15e_slice1_one_window_carries_the_committed_base_and_the_live_overlay);
   RUN_TEST(test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window);
+  RUN_TEST(test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half);
   return UNITY_END();
 }

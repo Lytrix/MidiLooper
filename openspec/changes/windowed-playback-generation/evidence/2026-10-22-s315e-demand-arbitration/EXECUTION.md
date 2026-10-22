@@ -113,3 +113,30 @@ pins (`391,688 + 1,528` / `391,848 + 1,368`). Nothing consumes the demand yet an
    this demand (committed base for `coverage` + live overlay, retire on generation advance), still emitting nothing.
 2. **2b-iii — the wiring.** Lanes ask the resolver; losers return named outcomes; the winner executes
    `supersedeReady`/`retireStaleReady`. The committed lane may only be deferred once 2b-ii-b can take the boundary.
+
+## 2b-ii-b (guard) — the overlay half requires a provenance-bearing base (2026-10-22)
+
+Starting the owner build exposed a decision that has to be made **before** any base source is chosen: a committed base
+copied from a raw array (`RuntimePlaybackViewFill::begin(destination, const MidiEvent*, ...)`) carries **no per-row
+provenance**, so the one provenance table would silently read "committed pass 0" for every base row. That is the difference
+between a contract and a guess, so the continuation now **fails closed**:
+
+- `RuntimePlaybackViewFillRefusal::ContinuationBaseWithoutProvenance` (the refusal set is now five names, packed in three
+  bits of the same one byte — the runtime pins are unchanged);
+- `beginLiveContinuation` refuses unless `destination.passOriginsReady`, which only the `RuntimeCompanionPasses` (or
+  snapshot-cursor) fill produces.
+
+Fixture `test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half` (`test_playback_prewarm`) builds a base
+from a raw array, proves it is complete and **without** provenance, then requires the attach to be refused by that name,
+`overlayContinuationActive()` false and the base window itself still complete (the refusal is about the continuation, not
+about the content). Mutation (guard removed) fails exactly this case: header `sha256 cbb3167e6f14b1af…`, restored
+byte-identically.
+
+**Consequence for 2b-ii-b, now the explicit blocker:** the overlay lane's committed base must come from a
+provenance-bearing source — the canonical `RuntimeCompanionPasses` form (already what the committed lane prepares) or a
+pinned `LoopSnapshot::EventWindowCursor`. A cheap `copyEffectiveCommittedEventsInRange` copy is **not** admissible as the
+base for a window whose rows must be ledger-classified. Choosing and driving that source (grains, role, retirement on the
+pass commit) is the owner build itself, not a wiring detail.
+
+Gates: focused **244/244** (prewarm), full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**, both images
+byte-identical at the pins (`391,688 + 1,528` / `391,848 + 1,368`). Still nothing audible.

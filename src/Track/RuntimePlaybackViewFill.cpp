@@ -418,6 +418,12 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::beginLiveContinuation(
   // starts a second one.
   if (destination_ != nullptr || !destination.complete || destination.published ||
       destination.passOrigins == nullptr || !destination.storage.isPrewarmed()) return false;
+  // One provenance table for both halves is the contract: without it a consumer could not tell a committed row from an
+  // overlay row, and the occupy/closure rule (`221334`) would have no input. Fail closed here.
+  if (!destination.passOriginsReady) {
+    setRefusal(RuntimePlaybackViewFillRefusal::ContinuationBaseWithoutProvenance);
+    return false;
+  }
   const bool liveShape = live.mutableCapture && live.appendStableCapture && live.context != nullptr &&
       live.size != nullptr && live.eventAt != nullptr && live.generation != nullptr &&
       live.generationToken != 0 && live.count <= destination.storage.capacity;
