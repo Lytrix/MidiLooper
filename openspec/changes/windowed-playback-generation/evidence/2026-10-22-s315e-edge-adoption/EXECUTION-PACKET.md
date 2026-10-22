@@ -75,15 +75,23 @@ only. This preserves `221334`/`224719` (occupy reads committed entries only) and
 true in the strong sense: each committed note is ledgered once, each overlay row sounds once, and the pass that later
 contains it is ledgered when it becomes committed content — never twice. The echo's emit-only path is untouched.
 
-**Open mechanism (must be probed before implementation): how the emission callback learns a row's origin.**
-`advancePlaybackCursor` calls `send(ctx, evt, slot)` with the event only; the stream's optional `consume` hook runs
-**after** send (`src/Utils/PlaybackCursorAdvance.cpp`), so "remember the last consumed index" is one row late. Preferred
-mechanism: an optional `originAt(ctx, cursor)` function pointer on `PlaybackEventStreamFor` (one pointer, no allocation,
-no buffer), called by the advance loop for the window route before send; the window's send context resolves
-`view.passOrigins[view.storage.order[cursor]].pass`. Alternatives — reordering `consume` before send (shared semantics
-change for every route) or duplicating the advance loop for the window (rejected: two ordering/emission rules) — are
-recorded, not chosen. The probe must show the hook is not called on the ITCM turn more than once per row and adds no
-ITCM code; if it cannot, C5 waits and the echo stays.
+**Gating probe — how the emission callback learns a row's origin: PASSED.** Native probe
+`test_3_15e_slice3_probe_row_origin_is_visible_at_emission_time` (`test_playback_prewarm`) drives the **real**
+`advancePlaybackCursor` over a real slice-1 overlay window with a probe stream whose `eventAt` records
+`view.passOrigins[view.storage.order[cursor]].pass` into the send context. Measured: **5 rows, 5 `eventAt` calls** (one
+traversal, no second pass), **2 committed / 3 overlay** emissions, the origin observed by the send callback is the row
+being sent (asserted against `storage.order`), and **0 overlay rows ledgered** while both committed rows are. The
+`consume`-after-send ordering is therefore not usable, and no reordering is needed.
+
+**Production delta this fixes (no new function, no traversal):** extend `FixedPlaybackStreamCtx` with
+`const uint16_t* passOrigins` and `uint16_t* originOut`; in `fixedPlaybackStreamEventAt`, when `passOrigins != nullptr`,
+write `*originOut = passOrigins[storage->order[cursor]]` before returning the row. The window route passes a send context
+that reads `originOut`; every other fixed route leaves the pointer null and pays one null check per row. The alternative —
+a dedicated `makeOverlayPlaybackStream` with its own `eventAt` — avoids the check on other routes at the cost of one more
+flash function target; either is compatible with the probe, and the implementation slice must pick one with the measured
+edge cost. Reordering `consume` before send (a shared semantics change for every route) and duplicating the advance loop
+(two ordering/emission rules) are **rejected**. The probe is native-only; the ITCM/flash placement of the modified
+`eventAt` (already `TRACK_INTERNAL_MEM`, flash) is verified at the implementation slice's build gate, not claimed here.
 
 **C6 — hand-offs.** A wrap pass commit or a deferred stop invalidates the candidate exactly as 2b-ii-b already does
 (`nextGrain() == Denied` → retire). If the edge is serving the retired window when the identity moves, the resolver's C2
@@ -111,7 +119,7 @@ for every state C1–C2 do not select.
 
 - Focused: `pio test -e native -f test_shared_capture_finalization` (new W-cases + the 3.15e oracle twice: window route and
   forced-fallback route), `-f test_windowed_preview_integration` (role occupancy by the preview shape),
-  `-f test_playback_prewarm` (the fill/build contract stays green).
+  `-f test_playback_prewarm` (the fill/build contract and the origin probe stay green).
 - Full native (`pio test -e native`), both firmware builds (**default pins must stay byte-identical**; lane pins must not
   move without a measured re-base), `openspec validate windowed-playback-generation --strict`, `git diff --check`.
 - Mutations: W5, W6 and one ledger mutation (apply the ledger to overlay rows → W4 RED).
@@ -119,8 +127,9 @@ for every state C1–C2 do not select.
 
 ## Risks / open questions (each must be answered in the slice's execution record)
 
-1. **Row origin at emission (C5's open mechanism).** If the stream cannot expose the origin without a second traversal or
-   an ITCM call, the ledger split waits and the echo stays. This is the slice's gating probe.
+1. **Row origin at emission (C5's mechanism) — probe PASSED, see above.** The data flow is proven on the real walk; the
+   remaining choice is the production shape (shared `eventAt` + null check, or a dedicated overlay stream) and its measured
+   edge cost. The ledger split no longer waits on feasibility.
 2. **Adoption phase vs the echo prefix (C3).** The next-boundary rule is safe but may leave a full pass on the echo after
    completion. A mid-interval rule is only acceptable with a proof that the window's cursor seed excludes every echoed
    row; do not infer it.

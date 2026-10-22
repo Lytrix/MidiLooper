@@ -8456,6 +8456,88 @@ void test_3_15e_slice2b_the_stopped_oracle_consults_the_overlay_candidate_and_re
   LoopEventStore::releaseChunkRefs(liveLoop.passes.recordPass.committedChunkIds);
 }
 
+// Task 3.15e slice 3 — **the gating probe: a row's provenance is available to the emission callback at the moment it
+// emits, with no second traversal.**
+//
+// The slice-3 packet's C5 (apply the occupy ledger only to committed-origin rows) needs the emission path to know a
+// row's origin. `advancePlaybackCursor` sends the event only, and the stream's `consume` hook runs **after** send, so a
+// "remember the last consumed row" trick would be one row late. This probe validates the alternative shape without touching
+// production: the stream's `eventAt(ctx, cursor)` — called **before** the send for that row — records
+// `view.passOrigins[view.storage.order[cursor]].pass` into a small context; the send callback reads it and gates its
+// ledger action. It also counts the calls, so "one traversal" is measured rather than assumed. The production delta the
+// packet proposes is exactly this store (a provenance pointer + an origin slot on `FixedPlaybackStreamCtx`), no new
+// function and no extra pass.
+void test_3_15e_slice3_probe_row_origin_is_visible_at_emission_time() {
+  LiveOverlayWindowFixture f(32);
+  TEST_ASSERT_TRUE(f.drive(2000));
+  f.startOverdub();
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 100)));
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(30, 1, 62, 0)));
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(10, 1, 64, 0)));
+  TEST_ASSERT_TRUE(f.attachOverlay());
+  TEST_ASSERT_TRUE(f.drive(2000));
+  TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(f.view.storage.eventCount));
+
+  struct ProbeCtx {
+    const FixedPlaybackEventStorage* storage = nullptr;
+    const RuntimePlaybackView* view = nullptr;
+    uint16_t lastOrigin = UINT16_MAX;
+    unsigned eventAtCalls = 0;
+    unsigned sent = 0;
+    unsigned committedSent = 0;
+    unsigned overlaySent = 0;
+    unsigned ledgeredCommitted = 0;
+    unsigned ledgeredOverlay = 0;
+  } probe;
+  probe.storage = &f.view.storage;
+  probe.view = &f.view;
+
+  // Mirrors `fixedPlaybackStreamEventAt` plus the one store the packet proposes.
+  const auto eventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    auto& p = *const_cast<ProbeCtx*>(static_cast<const ProbeCtx*>(ctx));
+    ++p.eventAtCalls;
+    const uint16_t row = p.storage->order[cursor];
+    p.lastOrigin = p.view->passOrigins[row].pass;
+    return p.storage->events[row];
+  };
+  const auto send = [](void* ctx, const MidiEvent&, uint8_t) {
+    auto& p = *static_cast<ProbeCtx*>(ctx);
+    // The origin recorded by `eventAt` must be **this** row's, proving the store happens before the emission callback.
+    const uint16_t row = p.storage->order[p.sent];
+    TEST_ASSERT_EQUAL_UINT16(p.view->passOrigins[row].pass, p.lastOrigin);
+    if (p.lastOrigin == kLiveOverlayPassOrigin) {
+      ++p.overlaySent;
+      // The ledger is deliberately **not** applied to an overlay row (`221334`/`224719`).
+    } else {
+      ++p.committedSent;
+      ++p.ledgeredCommitted;
+    }
+    ++p.sent;
+  };
+  const PlaybackEventStream stream{&probe, [](const void* ctx) {
+                                      return static_cast<const ProbeCtx*>(ctx)->storage->eventCount;
+                                    },
+                                    nullptr, eventAt,
+                                    [](const MidiEvent& event, const ProjectionContext&) { return event.tick; },
+                                    nullptr};
+  ProjectionContext projection{};
+  projection.loopLength = f.base.length;
+  uint16_t cursor = 0;
+  bool dirty = false;
+  const PlaybackTickFrame frame{&projection, f.base.length - 1, 0, false};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor({&cursor, &dirty}, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                          send, &probe, 0, nullptr, nullptr, 1, nullptr));
+  TEST_ASSERT_EQUAL_UINT32(5, cursor);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(5, probe.eventAtCalls,
+                                   "one traversal: every row is visited exactly once");
+  TEST_ASSERT_EQUAL_UINT32(5, probe.sent);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, probe.committedSent, "the committed base pair keeps its own origin");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(3, probe.overlaySent, "the live rows carry the overlay sentinel");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, probe.ledgeredCommitted, "committed rows are the ledger's only input");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, probe.ledgeredOverlay, "an overlay row is sounded once, never ledgered");
+}
+
 void test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window() {
   // (1) **Combined capacity** — base plus overlay must fit one window. The refusal is named and the window is cleared; no
   // overlay row is truncated and no committed row is evicted.
@@ -8763,5 +8845,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window);
   RUN_TEST(test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half);
   RUN_TEST(test_3_15e_slice2b_the_stopped_oracle_consults_the_overlay_candidate_and_retires_a_stale_one);
+  RUN_TEST(test_3_15e_slice3_probe_row_origin_is_visible_at_emission_time);
   return UNITY_END();
 }
