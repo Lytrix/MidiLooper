@@ -150,3 +150,115 @@ The *logical affected-interval obligation* includes only source work that this r
 The narrow correction above was attempted and **reverted** after a focused read-only review identified two falsifiable gaps: both current button actions arm `pendingEnabledSetReplacement`, so `requestSlotSwitch` without replacement is an internal API shape rather than a reachable user gesture; and the first fixture's outgoing NoteOff@48 preceded the switch, so it did not exercise a held note. A valid two-bar outgoing committed source with On@700/Off@800, switching at the next grid tick 768, proved the second gap: suppressing CC123 kept the outgoing ledger open at the switch but its Off@800 never reached MIDI after `commitQueuedPlaybackStart` re-anchored the Track-level projection. This is a **stuck-note defect**, not a safe bounded optimization. The unconditional CC123/ledger clear remains production behavior; the partial C3 owner/reader edits were likewise reverted. Two gated fixtures remain RED: independent two-slot window readiness, and a held outgoing note's continuity at the real switch.
 
 **Revised recommendation:** Before any switch-output change, pin a slot-qualified projection origin/cursor and closure-owner handoff for every still-enabled sounding slot, with exact post-switch Off and ledger discharge through the production action/TrackManager path. Decide the reachable gesture that retains the outgoing enabled set separately from today's replace-only short/long presses (or name an existing non-button caller); do not call an API-only native pass product qualification. Bound any proposed per-note closure work at the clock edge or defer it through the existing owner—no speculative replacement of fixed CC123 with a content-sized scan. The current one-reader per-sounding-slot direction remains DEC-116; this is a correction to the C3 implementation contract, not a new owner, schema or DEC. No additional formal reassessment is started in this session.
+
+## 2026-10-22 addendum — the live overdub overlay moves onto the single window reader (3.15e, DEC-116 extension)
+
+**Status: direction reviewed and mechanism chosen; production code NOT IMPLEMENTED, no DEC yet, device NOT RUN.** This is
+the formal reassessment 3.15e's remaining clause requires before its firmware half starts.
+
+### Reason triggered
+
+Two triggers fire together. **Timing model:** the live overdub's captured rows are served by a second cursor walk at the
+end of `Track::playCommittedLoopMidi`, and that same turn runs `loop.ensureCaptureEventsSorted()` — a full sort of the live
+store — **on the MIDI service turn** (`src/Track/TrackPlaybackHotPath.cpp:580-590`). Removing that walk and that sort
+changes which owner does the work and moves content-sized work off the clock edge, so `ExecutionBounds.md` row 2 must be
+reclassified in the same commit that enforces the new class. **No reusable extension point at the emission boundary:** the
+existing window machinery can build an append-stable window over the live store (`RuntimePlaybackViewSource::fromLiveCapture`,
+`RuntimePlaybackViewBuild::extendLiveCapture`), but it cannot yet build one over **committed base + live overlay**, which is
+the shape an overdub needs.
+
+Not triggers here: no new owner (`Track` keeps the request/build/publication ownership), no ownership transfer from `Loop`
+or `EditManager`, no persistent-state or SD schema change, and no undo change. The recorded ledger invariant
+(`221334`/`224719`: the live echo must not write the occupy ledger) is **preserved, not repealed** — see *Ledger* below.
+
+### Current architecture (G0, verified in code)
+
+| Fact | Where |
+|---|---|
+| The live overlay is a **second walk**: `advancePlaybackCursor(… PlaybackEmitPolicy::ActiveCaptureOverdub, makeCapturePlaybackStream(loop))` over `loop.capture.store`, after the committed walk, on the same frame | `src/Track/TrackPlaybackHotPath.cpp:580-590` |
+| That turn sorts the live store when a dirty flag says append order broke: `ensureCaptureEventsSorted()` + `reanchorCaptureIndex` | `src/Track/TrackPlaybackHotPath.cpp:582-584`, `src/Track/TrackPlaybackWindowBuild.cpp:841-853` |
+| The echo is emit-only: `playbackCursorAdvanceSendCapture` calls `sendMidiEvent` and never `applyPlaybackLedgerEvent` | `src/Track/TrackPlaybackHotPath.cpp:86-91` |
+| Every other route is committed-only; the merged store refuses live capture by contract; the prepared pair is published from it | `src/Track/TrackPlaybackWindowBuild.cpp:507-514`, `:1882-1928` |
+| A `LiveCapture` window already exists — append-stable, incrementally extended, ordered off-clock, priced in grains — but is gated to **first-take Record** (`phase == Record && !hasCommittedPasses()`) | `src/Track/TrackPlaybackWindowBuild.cpp:159-163`, `:201-259`, `:6238-6295` |
+| That build already fills from `RuntimeCompanionPasses` (committed pass inputs **with per-row provenance**) and from the live store, and has an explicit Fill → Order grain sequence with an incremental order bound | `include/RuntimePlaybackViewFill.h`, `src/Track/RuntimePlaybackViewBuild.cpp:176-321` |
+| The view carries a per-row `passOrigins` table (`PlaybackPassEventOrigin{pass, event}`) with `passOriginsReady`, and a canonical `(phase, NoteOff < NoteOn < other)` order over retained rows | `include/RuntimePlaybackView.h:468-482`, `src/Track/RuntimePlaybackView.cpp:331-359` |
+| `Loop::commitOverdubWrap` seals the pass, re-bases the live store and carries held NoteOns into the new pass; the frame's tail interval is drained by `advancePlaybackCursorAcrossOverdubWrap` | `src/Track/TrackOverdubWrap.cpp:16-177`, `src/Track/TrackPlaybackHotPath.cpp:148-176` |
+| Three view roles only (`current`, `ready`, `build`); the committed lane and the NOTE_EDIT preview lane already compete for `ready` | `include/RuntimePlaybackView.h:28` |
+
+### Alternatives and rulings
+
+| Path | Benefit | Cost / ruling |
+|---|---|---|
+| Keep the echo walk and only move its sort off the edge | Smallest change; removes the content-sized sort from the MIDI turn | **Insufficient:** the clause is a *reader* clause, not only a bound clause; two walks keep two ordering/search rules and leave "one ledger owner" unanswerable. May still be taken as a **safety step** inside slice 1. |
+| Make the overlay true input passthrough (send at the input edge, delete the walk) | Removes the replay outright and the sort with it | **Rejected:** it changes *when* a played overdub note sounds (input arrival instead of the clock grid) — a tick-quantization/timing-model change with musical consequences, and it cannot preserve the ledger split for a note whose Off lands after the wrap. |
+| Fold live capture into `mergedMidiEvents` | One stream immediately | **Rejected, and already forbidden by contract:** that representation is committed-only precisely to keep occupy correct (`221334`); re-folding it recreates the defect that fixture pinned. |
+| One window per overdub turn — committed rows from the lane's own committed source + appended live overlay rows, built by the existing owner, adopted at the edge (**preferred**) | Same request → bounded owner turn → complete immutable ready window → clock-edge adoption → ordered emission contract as every other route; ordering happens off-clock; the edge keeps one walk and no sort; overlay rows are provably exactly-once because they exist only in that window | Requires the build to continue from the committed source into the live store, a per-row origin marker for the ledger split, and role/capacity arbitration with the committed and preview lanes; needs RAM1 and device measurement before cutover |
+
+### Preferred evolution (existing-owner extension)
+
+1. **One builder, two source phases.** `RuntimePlaybackViewBuild` fills the committed base for the window's coverage from
+   the lane's own committed source (the `RuntimeCompanionPasses` form, which already produces per-row provenance), then
+   continues the *same* build from `fromLiveCapture(loop, /*appendStable=*/true)` and re-runs its incremental order as the
+   overlay appends. Both phases write the same destination storage; nothing is re-sorted on the clock edge.
+2. **Per-row origin, not a second store.** Overlay rows carry the overlay sentinel in `passOrigins`; committed rows keep
+   their pass provenance. This is how the emission callback can keep `221334`: the ledger is applied only to
+   committed-origin rows, so occupy still reads committed Entries only, while the overlay sounds exactly once.
+3. **The edge keeps one walk.** `resolveQualificationPlaybackSourceForTurn` gains the overdub branch that binds the overlay
+   window for the turn; when such a window is serving, the `ActiveCaptureOverdub` walk and its
+   `ensureCaptureEventsSorted()` do not run. The echo stays as the **named compatibility fallback** whenever the window
+   route is not selected (no committed base, first pass, lane refused, default image) — removed only with the emitter at
+   3.7b.
+4. **Hand-offs stay the owner's.** A pass commit (wrap or stop) advances the revision and invalidates the window exactly as
+   it invalidates a committed one: the next build is `committed (now including the sealed pass) + the new live tail`, and
+   the edge adopts it at its boundary. No new queue, no new Manager, no second content authority, no whole-loop root
+   dependency.
+
+### Ledger
+
+The occupy ledger remains **committed-only**. The overlay's rows are emitted without ledger application (their own
+`sentinel` origin), which preserves the `221334`/`224719` invariant *and* makes the clause's "exactly-once note/ledger
+ownership" true in the strong sense: each committed note is ledgered once, each overlay row is sounded once, and the
+committed pass that later contains it is ledgered when it is committed content — never twice. A DEC is owed when this
+lands (a new per-row emission rule and the bound reclassification), not before.
+
+### Migration impact
+
+- **Files:** `RuntimePlaybackViewFill`/`RuntimePlaybackViewBuild` (continuation source + origin marking),
+  `TrackPlaybackWindowBuild.cpp` (overdub overlay request/admission/build lane and the edge resolver branch),
+  `TrackPlaybackHotPath.cpp` (skip the echo when the window serves; no sort on the edge), `LoopPlaybackRuntime` (request
+  identity for the overlay lane; padding-only fields preferred), `ExecutionBounds.md` row 2, `NAMING.md` if a new stage
+  name is introduced (a **source adapter**, per the existing vocabulary).
+- **Tests:** new fixtures in `test_shared_capture_finalization` (the suite that links the real edge and the real stop) and
+  the preview/RWO suites for role arbitration; the 3.15e oracle landed on 2026-10-22 is the parity reference and must stay
+  green **on both routes** while the fallback exists.
+- **RAM1/PSRAM:** no new event buffer is planned (the window's own role storage is the destination; the existing
+  `mergeScratch`, `order`, `phases`, `retained` and `passOrigins` are reused). Origin marking costs no new array. Every
+  slice must keep both images at the approved pins; a role-storage increase needs its own measurement.
+- **Device:** the device leg is 3.15f's; slices here are native only, with the qualification image used for the eventual
+  route comparison.
+
+### Rollback
+
+Delete the overdub branch of the resolver and the overlay request: the echo walk and its sort are still present and are
+today's behavior. No data or schema is touched, so rollback is a source revert of the slice, and the native oracle keeps
+guarding the fallback shape.
+
+### Recommendation and approval
+
+Preferred path: **one Track-owned overlay window (committed base + append-stable live overlay, provenance-marked), adopted
+at the edge, echo retained as the compatibility fallback.** Confidence: high on the mechanism (every piece it needs
+already exists and is cited above); medium on the role/capacity arbitration with the committed and preview lanes, which
+is why it is slice 2 and not slice 1. The owner approved the one-reader direction for the overdub overlay in this session
+(2026-10-22); the mechanism above is an **existing-owner extension**, not a new owner or ownership transfer, so it proceeds
+under the decision ladder once slice 1's contract is written. G2 gates are NOT ESTABLISHED for any slice yet: each needs
+its own packet, fixtures and RAM1 evidence, and no checkbox follows from this addendum.
+
+### Slice queue (each its own G2 packet; no slice may weaken the DEC-136 envelope)
+
+| # | Slice | Acceptance (native unless stated) | Fallback |
+|---|---|---|---|
+| 1 | **Build continuation**: the existing builder fills a committed source and continues into the live overlay, marking overlay rows in `passOrigins`, with the canonical order applied off-clock. Window built, **nothing consumes it yet** (the 3.15d slice-1 pattern). | A built overlay window contains base + overlay exactly once in canonical order; a later append extends it without re-emitting; a pass commit invalidates it; capacity refusal is named; **no** edge sort and no edge build; production image unchanged in behavior. | Echo unchanged |
+| 2 | **Request/admission + role arbitration**: the overdub phase gets its own request identity and a bounded owner lane beside the committed and preview lanes (no starvation of either). | Request admitted with the declared envelope; role conflict with a committed successor and with a NOTE_EDIT preview is resolved by name, not by clobbering; RAM1 pins unchanged. | Echo unchanged |
+| 3 | **Edge adoption** (`resolveQualificationPlaybackSourceForTurn` branch) + **echo skipped** when the window serves, with the ledger applied only to committed-origin rows. | The 2026-10-22 oracle's exact streams pass **through the window**; echo-only fixtures keep passing on the fallback path; a mutation forcing the window off restores the echo (named fallback), a mutation re-enabling the echo under the window **duplicates** and fails. | Echo |
+| 4 | **Hand-offs**: wrap pass commit mid-overdub and the deferred stop handoff rebuild/adopt the overlay window; held NoteOn carried across the wrap is served once. | Exactly-once across the wrap and the stop, with the wrap-held continuation case (today UNKNOWN) covered; ledger closes; no duplicate at the seam. | Echo |
+| 5 | **Bound reclassification + parity**: `ExecutionBounds.md` row 2 updated with the measured edge cost (no sort, one walk), and the device/route comparison handed to 3.15f. | Edge cost measured and reclassified; both images at pins; 3.15f consumes the evidence. | Echo until 3.7b |
