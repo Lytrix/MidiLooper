@@ -429,6 +429,11 @@ struct Loop {
   void syncNextOverdubSessionIndexFromPasses();
   bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Test-only witnesses for the wrap diagnostic; no target path reads them.
+  bool overdubWrapArmedForTest() const { return overdubWrapArmed_; }
+  bool overdubWrapSuppressNextForTest() const { return overdubWrapSuppressNext_; }
+#endif
   /// True when armed and the playhead crosses loop end (phase 0). S is not the seal clock.
   bool shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const;
   void noteOverdubWrapCommitted();

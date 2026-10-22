@@ -54,10 +54,16 @@ The slice-3 W3 attempt drove the production clock from `kLoopTicks+1056` to `+15
 uses) and the pass **did not commit**: `loop.passes.overdubPasses.size()` stayed unchanged. The wrap requires
 `Loop::shouldCommitOverdubWrap`, which needs `overdubWrapArmed_` and a `didPlayheadCrossPhase(prev, current, 0, length)`
 frame. In the new suite the frame/cursor setup around the candidate build (or a suppression from the session start) is
-not matching the oracle's. **This must be diagnosed and driven honestly before any H-fixture is written** — do not force
-`commitOverdubWrap()` from the test, and do not fake the revision. Instrument `overdubWrapArmed_` and the frame's
-`prev/current` phases through the production path (test-only accessors are acceptable as witnesses, not as drivers). If the
-production clock path cannot reach the wrap in this harness, the slice is blocked on a harness fact, not on the design.
+not matching the oracle's. **Diagnosed 2026-10-22 (no code change):** the suite's **first** `playMidiEvents` re-anchors
+`projectionCycleStartTick` to **1536** (the transport-start projection edge), while the 3.15e echo oracle runs from a
+different projection history. `overdubWrapArmed_` is true after leaving the start phase, but the wrap frame's
+`prev/current` phases no longer describe the oracle's crossing, so the pass does not commit at `+1536`. Test-only Loop
+witnesses (`overdubWrapArmedForTest`, `overdubWrapSuppressNextForTest`) were added for the diagnosis and remain available
+to the H-fixtures. **This must be diagnosed and driven honestly before any H-fixture is written** — do not force
+`commitOverdubWrap()` from the test, and do not fake the revision. The H-fixtures must first establish a stable
+projection (prime the transport before the overdub, or drive the same production start edge the oracle uses) and then prove
+the crossing through the real path. If the production clock path cannot reach the wrap in this harness, the slice is
+blocked on a harness fact, not on the design.
 
 ## Oracle (write the fixtures before the code; H1/H3 first)
 

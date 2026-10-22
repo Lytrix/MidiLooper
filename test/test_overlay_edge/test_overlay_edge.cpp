@@ -847,7 +847,6 @@ void test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating() {
   Track::setOverlayEdgeDisabledForTest(false);
 }
 
-
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_the_live_overlay_window_serves_and_the_echo_is_suppressed);
