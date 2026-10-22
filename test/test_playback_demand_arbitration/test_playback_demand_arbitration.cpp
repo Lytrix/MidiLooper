@@ -14,6 +14,7 @@
 #include <unity.h>
 
 #include "Utils/PlaybackDemandArbitration.h"
+#include "Utils/PlaybackDemandClaims.h"
 
 using namespace PlaybackDemandArbitration;
 
@@ -177,6 +178,75 @@ void test_s2_all_three_owed_names_every_outcome_and_ignores_claim_order() {
   for (size_t i = 0; i < kClassCount; ++i) TEST_ASSERT_EQUAL(Outcome::NotClaimed, none.outcomes[i]);
 }
 
+// (9) **Per-class identity rules.** Currency is compared within one class only, and an absent currency is never current:
+// "no root yet", "no session", "no capture" are ineligible rather than accidentally matching a zero bound value.
+void test_s2b_each_class_decides_its_own_identity_and_absent_is_never_current() {
+  using namespace PlaybackDemandClaims;
+  // Committed: revision *and* generation must match the bound pair, and the live pair must be present.
+  TEST_ASSERT_TRUE(committedIdentityCurrent(/*live*/5, 9, /*bound*/5, 9));
+  TEST_ASSERT_FALSE(committedIdentityCurrent(6, 9, 5, 9));
+  TEST_ASSERT_FALSE(committedIdentityCurrent(5, 10, 5, 9));
+  TEST_ASSERT_FALSE_MESSAGE(committedIdentityCurrent(0, 9, 0, 9), "no published root is not a current identity");
+  // Preview: the session revision must exist and match.
+  TEST_ASSERT_TRUE(previewIdentityCurrent(4, 4));
+  TEST_ASSERT_FALSE(previewIdentityCurrent(5, 4));
+  TEST_ASSERT_FALSE_MESSAGE(previewIdentityCurrent(0, 0), "no session is not a current preview");
+  // Overlay: the live overdub capture generation must exist and match (a pass commit advances it).
+  TEST_ASSERT_TRUE(overlayIdentityCurrent(12, 12));
+  TEST_ASSERT_FALSE(overlayIdentityCurrent(13, 12));
+  TEST_ASSERT_FALSE_MESSAGE(overlayIdentityCurrent(0, 0), "no live capture is not a current overlay");
+}
+
+// (10) The providers feed the contract unchanged: a wrap's pass commit advances the capture generation, so the overlay's
+// own claim goes stale and the committed successor wins — the identity rule, not the class order, decides it.
+void test_s2b_a_wrap_pass_commit_makes_the_overlay_claim_lose_to_the_committed_successor() {
+  using namespace PlaybackDemandClaims;
+  PlaybackDemandArbitration::Claim claims[PlaybackDemandArbitration::kClassCount];
+  claims[0] = preview(false, 0, 0, false);
+  claims[1] = overlay(/*owed=*/true, /*liveCaptureGeneration=*/13, /*boundCaptureGeneration=*/12, /*ready=*/true);
+  claims[2] = committed(/*owed=*/true, 5, 9, 5, 9, /*ready=*/false);
+  const auto resolution = PlaybackDemandArbitration::resolve(claims);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Class::Committed, resolution.owner);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Outcome::RefusedStaleIdentity,
+                    resolution.outcomeFor(PlaybackDemandArbitration::Class::Overlay));
+  TEST_ASSERT_TRUE(resolution.retireStaleReady);
+}
+
+// (11) The converse: a committed root that advanced past its bound claim is stale and cannot hold the boundary, even
+// though the overlay's demand is newer and lower priority.
+void test_s2b_an_advanced_committed_identity_is_stale_against_a_valid_overlay() {
+  using namespace PlaybackDemandClaims;
+  PlaybackDemandArbitration::Claim claims[PlaybackDemandArbitration::kClassCount];
+  claims[0] = preview(false, 0, 0, false);
+  claims[1] = overlay(true, 12, 12, false);
+  claims[2] = committed(/*owed=*/true, /*live*/6, 9, /*bound*/5, 9, /*ready=*/true);
+  const auto resolution = PlaybackDemandArbitration::resolve(claims);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Class::Overlay, resolution.owner);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Outcome::RefusedStaleIdentity,
+                    resolution.outcomeFor(PlaybackDemandArbitration::Class::Committed));
+  TEST_ASSERT_TRUE(resolution.retireStaleReady);
+}
+
+// (12) **Three-view pressure.** With one `ready` role and three valid demands, exactly one owner exists, the role's fate
+// is decided by name, and the two losers hold no window of their own — the resolution is a decision, not storage.
+void test_s2b_three_valid_demands_hold_one_ready_role_and_no_second_window() {
+  using namespace PlaybackDemandClaims;
+  PlaybackDemandArbitration::Claim claims[PlaybackDemandArbitration::kClassCount];
+  claims[0] = preview(true, 4, 4, false);
+  claims[1] = overlay(true, 12, 12, false);
+  claims[2] = committed(true, 5, 9, 5, 9, /*ready=*/true);
+  const auto resolution = PlaybackDemandArbitration::resolve(claims);
+  TEST_ASSERT_TRUE(resolution.hasOwner);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Class::Preview, resolution.owner);
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Outcome::DeferredToHigherPriority,
+                    resolution.outcomeFor(PlaybackDemandArbitration::Class::Overlay));
+  TEST_ASSERT_EQUAL(PlaybackDemandArbitration::Outcome::DeferredToHigherPriority,
+                    resolution.outcomeFor(PlaybackDemandArbitration::Class::Committed));
+  TEST_ASSERT_TRUE_MESSAGE(resolution.supersedeReady, "the committed candidate's role is retired, not duplicated");
+  TEST_ASSERT_FALSE(resolution.retireStaleReady);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(owners(resolution)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_s2_committed_ready_then_live_overlay_owes_a_deterministic_winner);
@@ -187,5 +257,9 @@ int main() {
   RUN_TEST(test_s2_two_complete_candidates_cannot_both_own_the_boundary);
   RUN_TEST(test_s2_role_exhaustion_is_refused_by_name_not_a_silent_echo_fallback);
   RUN_TEST(test_s2_all_three_owed_names_every_outcome_and_ignores_claim_order);
+  RUN_TEST(test_s2b_each_class_decides_its_own_identity_and_absent_is_never_current);
+  RUN_TEST(test_s2b_a_wrap_pass_commit_makes_the_overlay_claim_lose_to_the_committed_successor);
+  RUN_TEST(test_s2b_an_advanced_committed_identity_is_stale_against_a_valid_overlay);
+  RUN_TEST(test_s2b_three_valid_demands_hold_one_ready_role_and_no_second_window);
   return UNITY_END();
 }
