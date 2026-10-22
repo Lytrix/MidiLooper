@@ -61,8 +61,11 @@ different projection history. `overdubWrapArmed_` is true after leaving the star
 witnesses (`overdubWrapArmedForTest`, `overdubWrapSuppressNextForTest`) were added for the diagnosis and remain available
 to the H-fixtures. **This must be diagnosed and driven honestly before any H-fixture is written** — do not force
 `commitOverdubWrap()` from the test, and do not fake the revision. The H-fixtures must first establish a stable
-projection (prime the transport before the overdub, or drive the same production start edge the oracle uses) and then prove
-the crossing through the real path. If the production clock path cannot reach the wrap in this harness, the slice is
+projection **and** the same pre-overdub frame history the oracle has: a probe that primed one committed turn (so the
+projection start was 0) and then ran the same 1056→1504→1536 sequence **still** did not commit, so the remaining difference
+is the frame/cursor state at the crossing (`lastTickInLoop`/`playheadPhaseTick` and the `didPlayheadCrossPhase` inputs),
+not the projection start alone. The next probe should witness those three values on the 1504→1536 frame and compare them
+with the echo oracle's exact setup before writing H1. If the production clock path cannot reach the wrap in this harness, the slice is
 blocked on a harness fact, not on the design.
 
 ## Oracle (write the fixtures before the code; H1/H3 first)
