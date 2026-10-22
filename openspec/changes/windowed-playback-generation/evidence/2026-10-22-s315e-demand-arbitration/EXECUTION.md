@@ -187,3 +187,40 @@ touching a shared resource:
 No code changed for this entry; the probe was removed byte-identically (`git diff` clean) and the focused suite is back to
 **91/91**. This is the measured input the owner build (and 2b-iii's arbitration) must consume: the overlay lane's first turn
 is a *waiting* state, not a build, until the canonical prefix exists.
+
+## 2b-ii-b — the liveness RED: `WaitingCanonicalBase` would be a permanent wait today (2026-10-22)
+
+The owner locked the invariant *"overlay demand may observe canonical-prefix readiness, but must never advance
+canonical-prefix construction"* and asked for the liveness proof before the lane lands: under **overdub-only** demand, does
+the **committed** owner still receive canonical-prefix work? Measured in `test_shared_capture_finalization` on the live
+overdub, driving 400 real owner turns (`Track::stepPlaybackViewMaintenance`), with no committed demand of its own:
+
+```
+before turns  canonicalReady=0  passCount=0  pendingDemand=0
+after  turns  canonicalReady=0  passCount=0  pendingDemand=0
+```
+
+**RED.** The committed lane is only offered work when it has an owing holder, so with overlay-only demand nothing advances
+`canonicalPassInputs` at all. A `WaitingCanonicalBase` state would therefore be a *perfectly legal permanent wait* — the
+starvation the owner predicted, and the same class as the earlier deadlock where a stop waited on a lane that was no longer
+serviced. The measured fact is not "the base is absent"; it is **"overlay demand cannot bootstrap its own prerequisite, and
+nothing else wakes it"**.
+
+Required shape (design fixed, code not yet written):
+
+1. **The dependency is a committed-lane obligation.** When a slot has an overlay demand whose canonical prefix is not ready,
+   the **committed owner** must be offered canonical-prefix grains for that slot even though it has no committed window
+   demand of its own. Ownership is unchanged — one driver — but the obligation is *enlivened by the dependency* rather than by
+   a request the committed lane itself carries.
+2. **The overlay lane only observes.** `WaitingCanonicalBase` stays a pure reading of `(committedRevision,
+   canonicalInputGeneration, captureGeneration, coverage)`; a revisit continues waiting, advances to the base fill, or retires
+   and restarts — and it never calls `stepCanonicalPrefix`.
+3. **The obligation must be bounded and honest.** The wake-up is a *work offer*, not a priority claim: it must not starve the
+   committed lane's own demand, persistence, stop/finalization or another sounding slot, and if it can never be granted the
+   lane must report that by name rather than wait forever.
+
+So the implementation order becomes: **(0) make the committed owner receive canonical-prefix work under overlay-only demand**
+with the liveness fixture as its own RED→GREEN, and only then (1) `WaitingCanonicalBase`, (2) base fill, (3) continuation,
+(4) named contention at publication, (5) identity-keyed retirement.
+
+No source line changed; the probe was removed byte-identically (`git diff` clean apart from documentation).
