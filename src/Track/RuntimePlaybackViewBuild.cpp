@@ -163,6 +163,15 @@ RuntimePlaybackViewBuild::nextGrain() const {
   if (preparationCancelled_) return RuntimePlaybackViewBuildGrain::Denied;
   if (destination_ != nullptr && destination_->storageGeneration != destinationGeneration_)
     return RuntimePlaybackViewBuildGrain::Denied;
+  if (fill_.appendStableCapture() && !fill_.liveCaptureCurrent()) {
+    // The live generation the appended half was built against is gone (a pass commit re-based the capture). Invalidate the
+    // candidate here so no consumer can read `complete` and adopt a window whose overlay half is stale.
+    if (destination_ != nullptr && !destination_->published) {
+      destination_->sourceFilled = false;
+      destination_->complete = false;
+    }
+    return RuntimePlaybackViewBuildGrain::Denied;
+  }
   switch (phase_) {
     case Phase::Fill:
     case Phase::SnapshotFill:
@@ -191,6 +200,12 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
   }
   const RuntimePlaybackViewFillResult result = fill_.step(entryQuantum);
   if (result == RuntimePlaybackViewFillResult::Denied || destination_ == nullptr) {
+    // A refused append (combined capacity, or a stale live-overlay generation) must never leave a window that still looks
+    // complete: the previous ordered index no longer describes the content the build tried to cover.
+    if (destination_ != nullptr && !destination_->published && fill_.appendStableCapture()) {
+      destination_->sourceFilled = false;
+      destination_->complete = false;
+    }
     phase_ = Phase::Denied;
     return RuntimePlaybackViewBuildGrain::Denied;
   }
@@ -215,12 +230,16 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
     phase_ = order_.complete() ? Phase::Complete : Phase::Order;
     return nextGrain();
   }
-  if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
+  // The **storage** overload, so this order can be extended in place when a live-overlay continuation appends to the very
+  // same window (`extendPrivateOrder` refuses a builder that owns the view's completion flag). The build owns
+  // `destination_->complete` instead: it is true exactly when the ordered index covers every retained row.
+  if (!order_.begin(destination_->storage, destination_->coverage.loopLengthTicks, nullptr,
       destination_->rawCoveragePrepared ? RuntimePlaybackOrderMode::RawPlaybackTick
                                         : RuntimePlaybackOrderMode::PlaybackPhase)) {
     phase_ = Phase::Denied;
     return RuntimePlaybackViewBuildGrain::Denied;
   }
+  destination_->complete = order_.complete();
   phase_ = order_.complete() ? Phase::Complete : Phase::Order;
   return nextGrain();
   }, RuntimePlaybackViewBuildGrain::Denied);
@@ -262,7 +281,7 @@ RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
     return RuntimePlaybackViewBuildGrain::Denied;
   }
   if (result == RuntimePlaybackOrderBuildResult::Complete) {
-    if (fill_.appendStableCapture()) destination_->complete = true;
+    if (!canonical) destination_->complete = true;
     phase_ = canonical ? Phase::SnapshotRanks : Phase::Complete;
   }
   return nextGrain();
@@ -280,6 +299,17 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::extendLiveCapture
   return execute([&]() -> bool {
     if ((phase_ != Phase::Fill && phase_ != Phase::Complete) || !destination_ ||
         !fill_.extendLiveCapture(identity)) return false;
+    phase_ = Phase::Fill;
+    return true;
+  }, false);
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::beginLiveOverlayContinuation(
+    const RuntimePlaybackViewSource& live, const PlaybackViewSourceIdentity& identity) {
+  return execute([&]() -> bool {
+    // One build identity: the committed base must be filled and ordered, and this call continues that same window.
+    if (phase_ != Phase::Complete || destination_ == nullptr || fill_.continuingOverlay()) return false;
+    if (!fill_.beginLiveContinuation(*destination_, live, identity)) return false;
     phase_ = Phase::Fill;
     return true;
   }, false);

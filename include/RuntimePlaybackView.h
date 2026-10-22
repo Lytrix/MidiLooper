@@ -467,6 +467,17 @@ struct FixedPlaybackEventStorage {
 
 struct PlaybackPassEventOrigin { uint16_t pass; uint16_t event; };
 
+/// Provenance of a row that came from the **live-overlay half** of a window instead of from a committed pass.
+/// `pass` is a reserved value that is never a real entry of the baseline provenance table (that table indexes passes from
+/// 0 and is bounded by the loop's pass count), so a consumer can tell the two halves apart inside one ordered window. Such a row is **served
+/// content with no committed-pass ownership**: it is emitted from the window exactly once, and it does not acquire
+/// occupy/closure ledger ownership — that stays with the committed content it later becomes (invariant `221334`/`224719`).
+/// For these rows `event` is the row's **ordinal within the overlay half** (monotonic per build), not a pass event index;
+/// the committed meaning of `event == UINT16_MAX` (a synthesized Off) does not apply.
+inline constexpr uint16_t kLiveOverlayPassOrigin = 0xFFFFu;
+/// The live-overlay half has no position in the canonical *committed* source merge, so its rank is not a rank.
+inline constexpr uint16_t kLiveOverlayCanonicalRank = 0xFFFFu;
+
 struct RuntimePlaybackView {
   // Reusing a physical window invalidates borrowed indexes even if its source
   // and coverage happen to repeat after a complete loop cycle.

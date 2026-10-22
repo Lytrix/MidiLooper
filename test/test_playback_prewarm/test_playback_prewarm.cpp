@@ -8093,6 +8093,232 @@ void test_legacy_record_adopter_cannot_reidentify_frozen_capture_ready() {
 #include "live_source_call.inc"
 #include "destination_reuse_call.inc"
 #include "acquisition_call.inc"
+// Task 3.15e slice 1 — **one window carries the committed base and the live overdub overlay.**
+//
+// The migration's first slice is the *build contract*, not the audible route: a window that is filled and ordered from the
+// committed base is continued, in the same build identity, from one append-stable live overlay source. Consequences this
+// fixture pins:
+//  - one coverage interval, one ordered index, one source identity (the overlay identity adds the live capture generation
+//    to the base's revision/generation, so slice 2 can tell which capture the overlay belongs to);
+//  - the base rows keep their committed pass provenance and the overlay rows carry `kLiveOverlayPassOrigin`, so one window
+//    can be served while only committed rows acquire occupy/closure ledger ownership (`221334`);
+//  - the equal-tick tie-break is the existing canonical class rule (NoteOff < NoteOn), not "base first, then overlay";
+//  - appending another overlay note extends and re-orders the *same* window without duplicating any row from either half.
+// Production emission is untouched: nothing selects this window yet, and the `ActiveCaptureOverdub` echo stays authoritative.
+struct LiveOverlayWindowFixture {
+  CanonicalPrefixFixture base;
+  RuntimeCompanionApply::Work work;
+  RuntimeCompanionPasses passes;
+  Loop loop;
+  RuntimePlaybackView view;
+  RuntimePlaybackViewBuild build;
+  /// The committed identity must outlive the passes/build: `RuntimeCompanionPasses::valid()` compares against the object
+  /// the caller handed it, so a temporary here would dangle.
+  PlaybackViewSourceIdentity committedIdentity;
+
+  explicit LiveOverlayWindowFixture(size_t capacity) : work{
+      base.runtime.frozenCompanionPairLookup, base.runtime.frozenCompanionDeleteLookup,
+      base.runtime.frozenCompanionSpans, base.runtime.frozenCompanionReconstruction,
+      base.runtime.frozenCompanionOverlaps} {
+    // The committed base is On@10 note 60 plus its Off, moved to tick 40 by a committed length edit.
+    base.passes.editPasses.push_back(lengthRow(1, 40));
+    base.finish();
+    committedIdentity = {base.revision, base.generation, &base.passes};
+    TEST_ASSERT_TRUE(passes.prewarm(64));
+    TEST_ASSERT_TRUE(passes.begin(base.runtime.frozenCompanionApply, work, base.runtime.canonicalPassInputs,
+                                 nullptr, 0, committedIdentity, base.length));
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    for (size_t turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+      result = passes.step(1);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(passes.size()));
+    TEST_ASSERT_TRUE(view.prewarm(capacity));
+    TEST_ASSERT_TRUE(build.begin(view, passes, committedIdentity, coverage(), {}, {}));
+  }
+  ~LiveOverlayWindowFixture() {
+    build.discard();
+    view.release();
+    passes.discard();
+    base.runtime.reset(false);
+    LoopEventStore::releaseChunkRefs(base.passes.recordPass.committedChunkIds);
+  }
+  PlaybackCoverageInterval coverage() const { return {0, base.length, base.length}; }
+  bool drive(size_t turns) {
+    for (size_t turn = 0; turn < turns; ++turn) {
+      const RuntimePlaybackViewBuildGrain grain = build.nextGrain();
+      if (grain == RuntimePlaybackViewBuildGrain::Complete) return true;
+      if (grain == RuntimePlaybackViewBuildGrain::Denied) return false;
+      const RuntimePlaybackViewBuildGrain stepped = grain == RuntimePlaybackViewBuildGrain::Fill
+          ? build.stepFill(1) : build.stepOrder(1);
+      if (stepped == RuntimePlaybackViewBuildGrain::Denied) return false;
+    }
+    return false;
+  }
+  void startOverdub() {
+    loop.loopLengthTicks = base.length;
+    loop.beginCapture(CapturePhase::Overdub);
+  }
+  PlaybackViewSourceIdentity overlayIdentity() const {
+    return {base.revision, base.generation, nullptr, PlaybackWindowOrigin::Capture,
+            loop.captureContentGeneration()};
+  }
+  bool attachOverlay() {
+    const auto live = RuntimePlaybackViewSource::fromLiveCapture(loop, true);
+    if (live.context == nullptr) return false;
+    return build.beginLiveOverlayContinuation(live, overlayIdentity());
+  }
+  const MidiEvent& ordered(size_t index) const { return view.storage.events[view.storage.order[index]]; }
+};
+
+void test_3_15e_slice1_one_window_carries_the_committed_base_and_the_live_overlay() {
+  LiveOverlayWindowFixture f(32);
+  TEST_ASSERT_TRUE_MESSAGE(f.drive(2000), "the committed base must fill and order as one window");
+  TEST_ASSERT_TRUE(f.view.complete);
+  TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(f.view.storage.eventCount));
+
+  f.startOverdub();
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 100)));
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(30, 1, 62, 0)));
+  // A wrap-held Off whose On belongs to the previous pass: legal live content, and it tests the equal-tick rule at tick 10.
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(10, 1, 64, 0)));
+  TEST_ASSERT_EQUAL_UINT32(3, static_cast<uint32_t>(f.loop.capture.store.size()));
+
+  TEST_ASSERT_TRUE_MESSAGE(f.attachOverlay(), "the continuation attaches to the completed base");
+  TEST_ASSERT_TRUE(f.build.overlayContinuationActive());
+  TEST_ASSERT_EQUAL_UINT64(f.loop.captureContentGeneration(), f.build.overlayCaptureGeneration());
+  TEST_ASSERT_TRUE_MESSAGE(f.drive(2000), "the appended overlay half must fill and re-order");
+
+  // (1) **One ordered sequence**, canonical: the overlay's Off@10 precedes the base's On@10 (class rule), then by tick.
+  TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(f.view.storage.eventCount));
+  {
+    struct Want { uint32_t tick; uint8_t note; bool on; const char* why; };
+    const Want want[] = {
+        {10, 64, false, "the overlay's wrap-held Off sorts before the base's On at the same tick (class rule)"},
+        {10, 60, true, "the base's On at the same tick"},
+        {20, 62, true, "the overlay's On"},
+        {30, 62, false, "the overlay's Off"},
+        {40, 60, false, "the base's committed Off"},
+    };
+    for (size_t i = 0; i < 5; ++i) {
+      const MidiEvent& event = f.ordered(i);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(want[i].tick, event.tick, want[i].why);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(want[i].note, event.data.noteData.note, want[i].why);
+      TEST_ASSERT_EQUAL_MESSAGE(want[i].on, event.isNoteOn(), want[i].why);
+    }
+  }
+
+  // (2) **Provenance per row**: the base rows keep their committed pass origin, the overlay rows carry the sentinel (with
+  // their own ordinal), and the window claims no canonical committed rank for the mixed content.
+  TEST_ASSERT_TRUE(f.view.passOriginsReady);
+  TEST_ASSERT_FALSE(f.view.canonicalRanksReady);
+  TEST_ASSERT_EQUAL_UINT16(0, f.view.passOrigins[0].pass);   // the baseline's own pass index, never the overlay sentinel
+  TEST_ASSERT_EQUAL_UINT16(0, f.view.passOrigins[1].pass);
+  for (size_t i = 2; i < 5; ++i) {
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(kLiveOverlayPassOrigin, f.view.passOrigins[i].pass,
+                                     "an overlay row must never look like a committed pass");
+    TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(i), f.view.passOrigins[i].event);
+    TEST_ASSERT_EQUAL_UINT16(kLiveOverlayCanonicalRank, f.view.canonicalRanks[i]);
+  }
+
+  // (3) **One identity**: the window's identity carries the base's revision/generation *and* the live capture generation.
+  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, f.view.source.origin);
+  TEST_ASSERT_EQUAL_UINT32(f.base.revision, f.view.source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(f.base.generation, f.view.source.sourceGeneration);
+  TEST_ASSERT_EQUAL_UINT64(f.loop.captureContentGeneration(), f.view.source.captureContentGeneration);
+  TEST_ASSERT_NULL(f.view.source.snapshotIdentity);
+
+  // (4) **Append continuation is monotonic**: one more overdub note extends the same window, every earlier row stays exactly
+  // once (from both halves) and the new pair lands in canonical position.
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOn(50, 1, 66, 100)));
+  TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(60, 1, 66, 0)));
+  TEST_ASSERT_TRUE_MESSAGE(f.build.extendLiveCapture(f.overlayIdentity()), "an append extends the same build");
+  TEST_ASSERT_TRUE_MESSAGE(f.drive(2000), "the extension must re-order the same window");
+  TEST_ASSERT_EQUAL_UINT32(7, static_cast<uint32_t>(f.view.storage.eventCount));
+  {
+    const uint32_t wantTick[] = {10, 10, 20, 30, 40, 50, 60};
+    const uint8_t wantNote[] = {64, 60, 62, 62, 60, 66, 66};
+    const bool wantOn[] = {false, true, true, false, false, true, false};
+    for (size_t i = 0; i < 7; ++i) {
+      const MidiEvent& event = f.ordered(i);
+      TEST_ASSERT_EQUAL_UINT32(wantTick[i], event.tick);
+      TEST_ASSERT_EQUAL_UINT8(wantNote[i], event.data.noteData.note);
+      TEST_ASSERT_EQUAL(wantOn[i], event.isNoteOn());
+      for (size_t j = 0; j < i; ++j) {
+        const MidiEvent& other = f.ordered(j);
+        TEST_ASSERT_FALSE_MESSAGE(other.tick == event.tick && other.data.noteData.note == event.data.noteData.note &&
+                                      other.isNoteOn() == event.isNoteOn(),
+                                  "no row is duplicated by the extension");
+      }
+    }
+  }
+  // The committed rows still carry their own provenance and the appended rows the sentinel.
+  TEST_ASSERT_EQUAL_UINT16(0, f.view.passOrigins[0].pass);
+  TEST_ASSERT_EQUAL_UINT16(0, f.view.passOrigins[1].pass);
+  TEST_ASSERT_EQUAL_UINT16(kLiveOverlayPassOrigin, f.view.passOrigins[5].pass);
+  TEST_ASSERT_EQUAL_UINT16(kLiveOverlayPassOrigin, f.view.passOrigins[6].pass);
+  TEST_ASSERT_EQUAL_UINT64(f.loop.captureContentGeneration(), f.build.overlayCaptureGeneration());
+}
+
+void test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window() {
+  // (1) **Combined capacity** — base plus overlay must fit one window. The refusal is named and the window is cleared; no
+  // overlay row is truncated and no committed row is evicted.
+  {
+    LiveOverlayWindowFixture f(4);
+    TEST_ASSERT_TRUE(f.drive(2000));
+    f.startOverdub();
+    TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 100)));
+    TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(30, 1, 62, 0)));
+    TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(10, 1, 64, 0)));
+    TEST_ASSERT_TRUE(f.attachOverlay());
+    TEST_ASSERT_FALSE_MESSAGE(f.drive(2000), "base 2 + overlay 3 cannot fit a 4-row window");
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewFillRefusal::CombinedCapacityExceeded, f.build.continuationRefusal());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(f.view.storage.eventCount),
+                                     "a refused window must not be left partially filled");
+    TEST_ASSERT_FALSE(f.view.complete);
+    TEST_ASSERT_FALSE(f.view.passOriginsReady);
+  }
+
+  // (2) **A pass commit invalidates the live-overlay identity** — the continuation is refused as stale, the window does not
+  // stay complete, and a fresh build re-derives from the committed source instead of carrying the old live rows.
+  {
+    LiveOverlayWindowFixture f(32);
+    TEST_ASSERT_TRUE(f.drive(2000));
+    f.startOverdub();
+    TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOn(20, 1, 62, 100)));
+    TEST_ASSERT_TRUE(f.loop.appendCaptureEvent(MidiEvent::NoteOff(30, 1, 62, 0)));
+    TEST_ASSERT_TRUE(f.attachOverlay());
+    TEST_ASSERT_TRUE(f.drive(2000));
+    TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(f.view.storage.eventCount));
+
+    // The wrap commit's own effect: the capture is re-based (new pass projection/generation) and the store restarts.
+    f.loop.beginCapture(CapturePhase::Overdub);
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, f.build.nextGrain());
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewFillRefusal::ContinuationStale, f.build.continuationRefusal());
+    TEST_ASSERT_FALSE_MESSAGE(f.view.complete, "a stale overlay half must not leave a complete-looking window");
+    TEST_ASSERT_FALSE(f.build.extendLiveCapture(f.overlayIdentity()));
+
+    // The next build derives from the now-committed source: the live rows are gone, the committed base is all there is.
+    RuntimePlaybackViewBuild fresh;
+    RuntimePlaybackView freshView;
+    TEST_ASSERT_TRUE(freshView.prewarm(32));
+    TEST_ASSERT_TRUE(fresh.begin(freshView, f.passes, f.committedIdentity, f.coverage(), {}, {}));
+    bool complete = false;
+    for (size_t turn = 0; turn < 2000 && !complete; ++turn) {
+      const RuntimePlaybackViewBuildGrain grain = fresh.nextGrain();
+      if (grain == RuntimePlaybackViewBuildGrain::Denied) break;
+      if (grain == RuntimePlaybackViewBuildGrain::Complete) { complete = true; break; }
+      (void)(grain == RuntimePlaybackViewBuildGrain::Fill ? fresh.stepFill(1) : fresh.stepOrder(1));
+    }
+    TEST_ASSERT_TRUE_MESSAGE(complete, "the committed source still builds after the overlay is invalidated");
+    TEST_ASSERT_FALSE(fresh.overlayContinuationActive());
+    TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(freshView.storage.eventCount));
+    for (size_t i = 0; i < freshView.storage.eventCount; ++i)
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, freshView.passOrigins[i].pass,
+                                       "re-derived content carries committed provenance only");
+    fresh.discard();
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_direct_writers_refuse_executing_builder_before_role_mutation);
@@ -8336,5 +8562,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_record_source_is_windowed_quantized_and_immutable);
   RUN_TEST(test_frozen_record_source_denies_expiry_and_window_overflow);
   RUN_TEST(test_frozen_record_source_rejects_pool_reset_and_failed_row_reads);
+  RUN_TEST(test_3_15e_slice1_one_window_carries_the_committed_base_and_the_live_overlay);
+  RUN_TEST(test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window);
   return UNITY_END();
 }

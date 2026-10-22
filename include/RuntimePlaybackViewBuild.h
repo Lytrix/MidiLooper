@@ -63,6 +63,8 @@ class RuntimePlaybackViewBuild {
   bool admitCoverageQualification();
   bool coverageOwned() const { return coverageOwned_; }
   void markCoverageOwned() { coverageOwned_ = true; }
+  /// A stale live-overlay continuation (a pass commit re-based the capture) clears the candidate's `complete`/`sourceFilled`
+  /// here, so a refused window can never be mistaken for an adoptable one by a consumer that only reads the view's flags.
   RuntimePlaybackViewBuildGrain nextGrain() const;
   RuntimePlaybackViewBuildGrain stepFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepOrder(size_t entryQuantum);
@@ -73,6 +75,21 @@ class RuntimePlaybackViewBuild {
   /// Caller retains the physical source; this is currency, never a lifetime test.
   bool liveCaptureCurrent() const { return fill_.liveCaptureCurrent(); }
   bool extendLiveCapture(const PlaybackViewSourceIdentity& identity);
+  /// **Slice 3.15e — the live-overlay continuation of one window.** After the committed base is complete and ordered,
+  /// continue this **same** build (one coverage interval, one ordered index, one source identity) from one append-stable
+  /// live capture source. Overlay rows are appended with the `kLiveOverlayPassOrigin` provenance sentinel; the ordered index
+  /// is extended off-clock by the existing Fill → Order grains. The window is not complete again until ordering covers the
+  /// appended rows, and a pass commit that re-bases the capture denies the continuation by name.
+  bool beginLiveOverlayContinuation(const RuntimePlaybackViewSource& live,
+                                    const PlaybackViewSourceIdentity& identity);
+  bool overlayContinuationActive() const { return fill_.continuingOverlay(); }
+  /// Named refusal of the continuation half (capacity, stale generation, identity mismatch) — never a partial window.
+  RuntimePlaybackViewFillRefusal continuationRefusal() const {
+    return fill_.continuingOverlay() && !fill_.liveCaptureCurrent()
+        ? RuntimePlaybackViewFillRefusal::ContinuationStale : fill_.refusal();
+  }
+  /// Content generation of the live overlay this window carries (0 when it has no overlay half).
+  uint64_t overlayCaptureGeneration() const { return fill_.continuationCaptureGeneration(); }
   size_t liveCaptureSourceExtent() const { return fill_.frozenSourceExtent(); }
   size_t liveCaptureSourceFrontier() const { return fill_.sourceFrontier(); }
   size_t privateOrderedEventCount() const { return order_.complete() ? order_.orderedEventCount() : 0; }

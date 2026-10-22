@@ -96,16 +96,14 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   source_ = nullptr;
   sourceSize_ = nullptr;
   sourceEventAt_ = nullptr;
-  sourceReadsByCopy_ = false;
   sourceGeneration_ = nullptr;
   sourceContext_ = nullptr;
   sourceGenerationToken_ = 0;
   blockMayIntersect_ = nullptr;
   inspectBlockRows_ = false;
-  appendStableCapture_ = false;
-  guardLiveCaptureAfterFill_ = false;
   liveCaptureCursor_.discard();
   liveCaptureProjection_ = {};
+  flags_ = 0;
   sourceCount_ = 0;
   cursor_ = 0;
   copied_ = 0;
@@ -167,15 +165,15 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
              coverage, cursorAnchor, ledgerBoundary, scope)) return false;
   sourceContext_ = source.context;
   sourceSize_ = source.size;
-  sourceReadsByCopy_ = source.readsByCopy;
-  if (sourceReadsByCopy_) sourceReadEventAt_ = source.readEventAt;
+  setFlag(kSourceReadsByCopyBit, source.readsByCopy);
+  if (sourceReadsByCopy()) sourceReadEventAt_ = source.readEventAt;
   else sourceEventAt_ = source.eventAt;
   sourceGeneration_ = source.generation;
   sourceGenerationToken_ = source.generationToken;
   blockMayIntersect_ = scope == RuntimePlaybackViewFillScope::RecordCoverage
       ? source.blockMayIntersect : nullptr;
-  guardLiveCaptureAfterFill_ = source.mutableCapture;
-  appendStableCapture_ = source.mutableCapture && source.appendStableCapture;
+  setFlag(kGuardLiveCaptureBit, source.mutableCapture);
+  setFlag(kAppendStableCaptureBit, source.mutableCapture && source.appendStableCapture);
   if (source.mutableCapture) {
     liveCaptureCursor_ = source.captureCursor;
     liveCaptureProjection_ = source.captureProjection;
@@ -260,8 +258,8 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
   }
   bool sourceCurrent = false;
   {
-    PlaybackSourceReadGuard guard(guardLiveCaptureAfterFill_);
-    sourceCurrent = liveCaptureCurrent() && (guardLiveCaptureAfterFill_ ||
+    PlaybackSourceReadGuard guard(ownsLiveGuard());
+    sourceCurrent = liveCaptureCurrent() && (ownsLiveGuard() ||
         ((sourceContext_ == nullptr || sourceSize_(sourceContext_) == sourceCount_) &&
          (sourceGeneration_ == nullptr || sourceGeneration_(sourceContext_) == sourceGenerationToken_)));
   }
@@ -269,6 +267,13 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
       destination_->storage.eventCount != copied_ ||
       !sourceCurrent ||
       (baseline_ != nullptr && (baseline_->generation() != baselineGeneration_ || !baseline_->uneditedBaseline(expected_)))) {
+    if (continuingOverlay() && !destination_->published && !sourceCurrent) {
+      // A pass commit (or any re-based capture) invalidated the live-overlay half. The window must not stay complete: the
+      // next build re-derives the base from the now-committed source instead of continuing to treat these rows as live.
+      setRefusal(RuntimePlaybackViewFillRefusal::ContinuationStale);
+      destination_->sourceFilled = false;
+      destination_->complete = false;
+    }
     if (!destination_->published) { destination_->sourceFilled = false; destination_->passOriginsReady = false; }
     destination_ = nullptr; return RuntimePlaybackViewFillResult::Denied;
   }
@@ -290,7 +295,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
       if (!remaining) break;
     }
     MidiEvent event;
-    if (guardLiveCaptureAfterFill_) {
+    if (ownsLiveGuard()) {
       LoopEventStoreSourceResult result;
       { // Validation and one row/charged transition share the same exclusion.
         PlaybackSourceReadGuard guard;
@@ -308,7 +313,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
         destination_ = nullptr;
         return RuntimePlaybackViewFillResult::Denied;
       }
-    } else if (sourceReadsByCopy_) {
+    } else if (sourceReadsByCopy()) {
       if (!sourceReadEventAt_(sourceContext_, cursor_, event)) {
         destination_->sourceFilled = false;
         destination_ = nullptr;
@@ -320,13 +325,19 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     const bool inRecord = scope_ != RuntimePlaybackViewFillScope::RecordCoverage ||
         LoopEventStore::projectRecordStopTick(event, destination_->coverage.loopLengthTicks);
     const bool retain = inRecord && (scope_ == RuntimePlaybackViewFillScope::AllSource ||
-        ((scope_ == RuntimePlaybackViewFillScope::RawCoverage || appendStableCapture_)
+        ((scope_ == RuntimePlaybackViewFillScope::RawCoverage || appendStableCapture())
           ? event.tick >= destination_->coverage.startPhase &&
             event.tick - destination_->coverage.startPhase < destination_->coverage.lengthTicks
           : destination_->coverage.contains(IntervalProjection::playbackEventPhase(
               event.tick, destination_->coverage.loopLengthTicks))));
     if (retain) {
       if (!destination_->storage.append(event)) {
+        if (continuingOverlay()) {
+          // Base + overlay must fit **one** window: refuse by name and leave no partial window behind. Never truncate the
+          // overlay and never evict committed rows to make it fit.
+          refuseOverlay(RuntimePlaybackViewFillRefusal::CombinedCapacityExceeded);
+          return RuntimePlaybackViewFillResult::Denied;
+        }
         destination_->sourceFilled = false;
         destination_ = nullptr;
         return RuntimePlaybackViewFillResult::Denied;
@@ -334,6 +345,9 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
       if (baseline_ != nullptr) {
         destination_->passOrigins[copied_] = baseline_->origins()[cursor_];
         destination_->canonicalRanks[copied_] = cursor_;
+      } else if (continuingOverlay()) {
+        destination_->passOrigins[copied_] = {kLiveOverlayPassOrigin, static_cast<uint16_t>(copied_)};
+        destination_->canonicalRanks[copied_] = kLiveOverlayCanonicalRank;
       }
       ++copied_;
     }
@@ -342,29 +356,37 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     --remaining;
   }
   if (cursor_ == sourceCount_) {
-    destination_->passOriginsReady = destination_->canonicalRanksReady = baseline_ != nullptr;
-    destination_->passOriginSource = baseline_ != nullptr ? expected_ : PlaybackViewSourceIdentity{};
+    if (continuingOverlay()) {
+      // One provenance table for both halves: committed rows keep theirs (written by the base fill) and overlay rows carry
+      // the sentinel. `passOriginSource` stays the base's, because that is the authority the committed rows came from. The
+      // canonical committed ranks no longer describe the whole window, so the table is not claimed as a rank map.
+      destination_->passOriginsReady = true;
+      destination_->canonicalRanksReady = false;
+    } else {
+      destination_->passOriginsReady = destination_->canonicalRanksReady = baseline_ != nullptr;
+      destination_->passOriginSource = baseline_ != nullptr ? expected_ : PlaybackViewSourceIdentity{};
+    }
     destination_->sourceFilled = true;
-    if (!appendStableCapture_) destination_ = nullptr;
+    if (!appendStableCapture()) destination_ = nullptr;
     return RuntimePlaybackViewFillResult::Complete;
   }
   return RuntimePlaybackViewFillResult::Pending;
 }
 
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::liveCaptureCurrent() const {
-  if (!guardLiveCaptureAfterFill_) return true;
+  if (!ownsLiveGuard()) return true;
   PlaybackSourceReadGuard guard;
   if (sourceContext_ == nullptr || sourceSize_ == nullptr || sourceGeneration_ == nullptr)
     return false;
   const auto& loop = *static_cast<const Loop*>(sourceContext_); // retained by caller/Track
   auto projection = loop.liveCaptureProjectionIdentity();
   // Explicit raw-coverage Record builds do not use the advisory growing length.
-  if (appendStableCapture_ && projection.phase == CapturePhase::Record)
+  if (appendStableCapture() && projection.phase == CapturePhase::Record)
     projection.loopLengthTicks = liveCaptureProjection_.loopLengthTicks;
   return liveCaptureProjection_.phaseGeneration &&
       liveCaptureProjection_ == projection &&
       loop.capture.store.sourceCursorCurrent(liveCaptureCursor_) &&
-      (appendStableCapture_
+      (appendStableCapture()
         ? sourceSize_(sourceContext_) >= sourceCount_ && sourceGeneration_(sourceContext_) != 0
         : sourceSize_(sourceContext_) == sourceCount_ &&
           sourceGeneration_(sourceContext_) == sourceGenerationToken_);
@@ -372,7 +394,7 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::liveCaptureCurrent() const {
 
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::extendLiveCapture(const PlaybackViewSourceIdentity& identity) {
   PlaybackSourceReadGuard guard;
-  if (!appendStableCapture_ || !destination_ || destination_->published || !liveCaptureCurrent() ||
+  if (!appendStableCapture() || !destination_ || destination_->published || !liveCaptureCurrent() ||
       identity.origin != PlaybackWindowOrigin::Capture || identity.snapshotIdentity != nullptr ||
       identity.playbackRevision != expected_.playbackRevision ||
       identity.sourceGeneration != expected_.sourceGeneration ||
@@ -386,6 +408,72 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::extendLiveCapture(const PlaybackView
   destination_->sourceFilled = cursor_ == sourceCount_;
   destination_->complete = false;
   return true;
+}
+
+NOTE_EDIT_MEM bool RuntimePlaybackViewFill::beginLiveContinuation(
+    RuntimePlaybackView& destination, const RuntimePlaybackViewSource& live,
+    const PlaybackViewSourceIdentity& identity) {
+  PlaybackSourceReadGuard guard;
+  // The committed base must already be **filled and ordered as one window**; this call continues that build, it never
+  // starts a second one.
+  if (destination_ != nullptr || !destination.complete || destination.published ||
+      destination.passOrigins == nullptr || !destination.storage.isPrewarmed()) return false;
+  const bool liveShape = live.mutableCapture && live.appendStableCapture && live.context != nullptr &&
+      live.size != nullptr && live.eventAt != nullptr && live.generation != nullptr &&
+      live.generationToken != 0 && live.count <= destination.storage.capacity;
+  // One identity for the whole window: the overlay half shares the base's revision/generation and adds the live capture
+  // generation, so a consumer can tell which capture the overlay corresponds to.
+  const bool identityShape = identity.origin == PlaybackWindowOrigin::Capture &&
+      identity.snapshotIdentity == nullptr && identity.captureContentGeneration != 0 &&
+      identity.captureContentGeneration == live.generationToken &&
+      identity.playbackRevision == expected_.playbackRevision &&
+      identity.sourceGeneration == expected_.sourceGeneration;
+  const auto* loop = liveShape ? static_cast<const Loop*>(live.context) : nullptr;
+  const bool cursorShape = loop != nullptr &&
+      loop->capture.store.sourceCursorCurrent(live.captureCursor) &&
+      loop->captureContentGeneration() == live.generationToken &&
+      live.captureProjection == loop->liveCaptureProjectionIdentity();
+  if (!liveShape || !identityShape || !cursorShape) {
+    setRefusal(RuntimePlaybackViewFillRefusal::ContinuationIdentityMismatch);
+    return false;
+  }
+  sourceContext_ = live.context;
+  sourceSize_ = live.size;
+  setFlag(kSourceReadsByCopyBit, false);
+  sourceEventAt_ = live.eventAt;
+  sourceGeneration_ = live.generation;
+  sourceGenerationToken_ = live.generationToken;
+  liveCaptureCursor_ = live.captureCursor;
+  liveCaptureProjection_ = live.captureProjection;
+  setFlag(kGuardLiveCaptureBit, true);
+  setFlag(kAppendStableCaptureBit, true);
+  setFlag(kOverlayActiveBit, true);
+  setRefusal(RuntimePlaybackViewFillRefusal::None);
+  // The base's provenance stays authoritative; this half only appends.
+  baseline_ = nullptr;
+  baselineGeneration_ = 0;
+  destination_ = &destination;
+  sourceCount_ = live.count;
+  cursor_ = 0;
+  expected_ = identity;
+  destination.source = identity;
+  destination.sourceFilled = cursor_ == sourceCount_;
+  // Appending is a content change: the window is no longer complete until its ordered index covers the appended rows.
+  destination.complete = false;
+  return true;
+}
+
+NOTE_EDIT_MEM void RuntimePlaybackViewFill::refuseOverlay(RuntimePlaybackViewFillRefusal reason) {
+  setRefusal(reason);
+  if (destination_ != nullptr && !destination_->published) {
+    // No partial window: the caller may discard, but nothing here can be mistaken for a servable candidate.
+    destination_->storage.clear();
+    destination_->sourceFilled = false;
+    destination_->complete = false;
+    destination_->passOriginsReady = false;
+    destination_->canonicalRanksReady = false;
+  }
+  destination_ = nullptr;
 }
 
 NOTE_EDIT_MEM void RuntimePlaybackViewFill::discard() {
