@@ -83,15 +83,17 @@ traversal, no second pass), **2 committed / 3 overlay** emissions, the origin ob
 being sent (asserted against `storage.order`), and **0 overlay rows ledgered** while both committed rows are. The
 `consume`-after-send ordering is therefore not usable, and no reordering is needed.
 
-**Production delta this fixes (no new function, no traversal):** extend `FixedPlaybackStreamCtx` with
-`const uint16_t* passOrigins` and `uint16_t* originOut`; in `fixedPlaybackStreamEventAt`, when `passOrigins != nullptr`,
-write `*originOut = passOrigins[storage->order[cursor]]` before returning the row. The window route passes a send context
-that reads `originOut`; every other fixed route leaves the pointer null and pays one null check per row. The alternative —
-a dedicated `makeOverlayPlaybackStream` with its own `eventAt` — avoids the check on other routes at the cost of one more
-flash function target; either is compatible with the probe, and the implementation slice must pick one with the measured
-edge cost. Reordering `consume` before send (a shared semantics change for every route) and duplicating the advance loop
-(two ordering/emission rules) are **rejected**. The probe is native-only; the ITCM/flash placement of the modified
-`eventAt` (already `TRACK_INTERNAL_MEM`, flash) is verified at the implementation slice's build gate, not claimed here.
+**Production delta — landed and measured (C5 slice):** `FixedPlaybackStreamCtx` gained
+`const PlaybackPassEventOrigin* passOrigins` and `uint16_t lastOrigin`, and a **separate** adapter
+`makeOverlayPlaybackStream` (flash-resident `overlayPlaybackStreamEventAt`) records
+`passOrigins[storage->order[cursor]].pass` before returning the row. The shared `fixedPlaybackStreamEventAt` is untouched,
+so every other fixed route is byte-identical. The first cut modified the shared adapter instead: the provenance store
+grew **ITCM by 64 B** in the lane image (`391,848 + 1,368` → `391,912 + 1,304`); moving the shared adapter to flash
+recovered the lane pin but shrank the default image (`391,688` → `391,624`). The dedicated flash adapter restores **both**
+pins exactly (`391,688 + 1,528` / `391,848 + 1,368`), with no veneer (the walk reaches it through the stream's pointer).
+Reordering `consume` before send (a shared semantics change for every route) and duplicating the advance loop (two
+ordering/emission rules) remain **rejected**. Production wiring of the adapter (the send callback and the edge branch) is
+C2/C4's, not this increment's.
 
 **C6 — hand-offs.** A wrap pass commit or a deferred stop invalidates the candidate exactly as 2b-ii-b already does
 (`nextGrain() == Denied` → retire). If the edge is serving the retired window when the identity moves, the resolver's C2
@@ -124,6 +126,39 @@ for every state C1–C2 do not select.
   move without a measured re-base), `openspec validate windowed-playback-generation --strict`, `git diff --check`.
 - Mutations: W5, W6 and one ledger mutation (apply the ledger to overlay rows → W4 RED).
 - Device: **not this slice** (3.15f); the qualification image's route comparison consumes this evidence later.
+
+## BLOCKING DESIGN QUESTION (found while writing W1/W3) — post-adoption appends
+
+The immutable-window contract and a **live** overdub pull in opposite directions, and the fixtures cannot be written
+honestly until this is decided:
+
+- `RuntimePlaybackViewFill::step` / `extendLiveCapture` refuse a **published** destination
+  (`destination_->published`), and `RuntimePlaybackViewLifecycle::handoff` sets `views[current].published = true` on
+  adoption (`src/Track/RuntimePlaybackViewFill.cpp`, `src/Track/RuntimePlaybackView.cpp`).
+- So once the overlay window is adopted as `current`, a row the user plays afterwards **cannot enter the served window**.
+  The lane's next grain is `Denied` (published) and it retires; the only candidate it can build is for the **next**
+  interval, adopted at the next boundary.
+- The echo exists precisely to make that row audible **now**. Replacing it with a complete-window reader therefore moves a
+  live overdub note by up to one coverage interval (two bars, or the whole loop for a whole-take route) unless a new
+  live-read contract is introduced.
+
+Options (an owner decision; all other C1–C5 pieces are independent of it):
+
+1. **Bounded-latency adoption (simplest, immutable contract kept).** Adopt only complete windows at interval boundaries;
+   rows appended during the served interval are served by the next interval's window. Latency ≤ one interval; the echo is
+   removed for adopted intervals. The 3.15e oracle's post-adoption timing must be rewritten to that contract.
+2. **Live window reader with a frozen frontier (closest to today's latency).** The edge serves the `ready` overlay view
+   while it is append-stable, emitting only rows below a recorded ordered frontier (`privateOrderedEventCount()` /
+   `frozenSourceExtent()` already exist); the lane extends and re-orders off-clock, and the frontier advances when the
+   extension completes. This needs an explicit read contract (frozen prefix, atomic frontier, what happens on a pass
+   commit) and a proof that a partially ordered tail is never read. It is a new contract, not a tweak.
+3. **Committed-base window + echo for the live tail (hybrid).** The window carries the committed base, and the echo keeps
+   sounding rows appended since; the tail's ordering can move off-clock. Two emission sources remain, so the "single
+   reader" clause is only partially met.
+
+**Recommendation: option 2 if the clause's one-reader requirement is non-negotiable, otherwise option 1 with an explicit
+latency contract.** Option 3 should be chosen only if the owner accepts that the live tail keeps its own reader. No
+fixture for W1/W3 is written until this is settled; C5 (the provenance mechanism) is independent and has landed.
 
 ## Risks / open questions (each must be answered in the slice's execution record)
 

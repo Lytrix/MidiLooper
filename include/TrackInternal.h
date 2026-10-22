@@ -98,6 +98,13 @@ struct MergedPlaybackStreamCtx {
 /// full-loop view with the exact source identity.
 struct FixedPlaybackStreamCtx {
   const FixedPlaybackEventStorage* storage = nullptr;
+  /// **Task 3.15e slice 3 (C5): optional per-row provenance.** When set, the adapter records the pass origin of the row it
+  /// is about to return (`passOrigins[storage->order[cursor]].pass`) in `lastOrigin`, **before** the emission callback runs.
+  /// The overlay route uses it to apply the occupy ledger only to committed-origin rows (`221334`/`224719`); every other
+  /// fixed route leaves it null and pays one null check per row. No second traversal, no allocation.
+  const PlaybackPassEventOrigin* passOrigins = nullptr;
+  /// The origin of the row most recently returned by `fixedPlaybackStreamEventAt`; read by the emission callback.
+  uint16_t lastOrigin = 0;
 };
 
 TRACK_INTERNAL_MEM ProjectionContext makePlaybackContext(const Track& track, const Loop& loop,
@@ -136,6 +143,9 @@ TRACK_INTERNAL_MEM void reanchorCaptureIndex(Loop& loop);
 TRACK_INTERNAL_MEM PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx);
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx);
+/// Task 3.15e slice 3/C5: the fixed stream with per-row provenance recorded at `eventAt` time. Opt-in; every other fixed
+/// route keeps the plain adapter (byte-identical images).
+TRACK_INTERNAL_MEM PlaybackEventStream makeOverlayPlaybackStream(FixedPlaybackStreamCtx& ctx);
 
 /// Task 3.7a (I3c-a): **the paged emission adapter's context.** It carries no state of its own beyond the slot it
 /// serves -- the position, the staged window and the accounting live in the slot's runtime

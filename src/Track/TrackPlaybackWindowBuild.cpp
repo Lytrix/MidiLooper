@@ -367,6 +367,16 @@ const MidiEvent& fixedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
   return stream->storage->events[stream->storage->order[cursor]];
 }
 
+// Task 3.15e slice 3/C5 — **the provenance-recording adapter**, flash-resident and used only by the overdub overlay route.
+// A separate `eventAt` keeps every other fixed route byte-identical (the shared one is untouched) and keeps this store out
+// of ITCM; the walk reaches it through the stream's function pointer, so no veneer is emitted.
+TRACK_INTERNAL_MEM const MidiEvent& overlayPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  auto* stream = const_cast<FixedPlaybackStreamCtx*>(static_cast<const FixedPlaybackStreamCtx*>(ctx));
+  const uint16_t row = stream->storage->order[cursor];
+  if (stream->passOrigins != nullptr) stream->lastOrigin = stream->passOrigins[row].pass;
+  return stream->storage->events[row];
+}
+
 /// Task 2.4 slice 2: the prepared pair is stored in emission order with an identity
 /// `order`, so it is consumed through the fixed-stream adapter below. No new stream code,
 /// and no member is derived at consume time.
@@ -859,6 +869,11 @@ PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx) {
 PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx) {
   return PlaybackEventStream{&ctx, fixedPlaybackStreamSize, fixedPlaybackStreamValid,
                              fixedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
+}
+
+PlaybackEventStream makeOverlayPlaybackStream(FixedPlaybackStreamCtx& ctx) {
+  return PlaybackEventStream{&ctx, fixedPlaybackStreamSize, fixedPlaybackStreamValid,
+                             overlayPlaybackStreamEventAt, mergedPlaybackStreamPhase};
 }
 
 const SessionMidiEventVec* buildMergedPlaybackFallbackCold(

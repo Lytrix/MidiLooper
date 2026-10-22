@@ -18,6 +18,7 @@
 // selected** and **which gate refused** it. The cadence that bounds the row is production state, so a substituted
 // recorder counts exactly the rows the device would emit.
 #include <cstddef>
+#include "TrackInternal.h"
 #include "Utils/PlaybackDemandClaims.h"
 #include "Utils/OverdubOverlayLane.h"
 #include <cstdint>
@@ -7499,6 +7500,103 @@ void test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance
   TEST_ASSERT_NULL(rt.overdubOverlayCandidate());
 }
 
+// Task 3.15e slice 3 (C5) — **the production fixed stream records a row's provenance before emission.**
+//
+// The probe in `test_playback_prewarm` validated the ordering with a test-local stream. This fixture uses the **production**
+// adapter (`makeFixedPlaybackStream` + `fixedPlaybackStreamEventAt`) over a real overlay window and the real
+// `advancePlaybackCursor`: the stream context's `passOrigins` makes `eventAt` record the row's pass before the send
+// callback, so the callback can apply the occupy ledger to committed-origin rows only. One traversal, no second pass, and
+// the overlay rows are sounded without ledger ownership (`221334`/`224719`).
+void test_3_15e_slice3_row_origin_is_visible_through_the_production_fixed_stream() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  const auto position = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+  };
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  uint8_t nextTrack = 0;
+  const auto serviceCanonicalTurn = [&]() {
+    return MidiServiceDrain::serviceCanonicalPrefixTurn(
+        MidiServiceDrain::DeferredIdleOwner::VisualCache, Config::NUM_TRACKS, nextTrack,
+        [&](uint8_t index) {
+          if (index != 0) return false;
+          const Loop& active = t.getActiveLoop();
+          return MidiServiceDrain::canonicalPreparationHasPriorityWork(
+              t.isOverdubbing(), active.visualCacheDirty, active.hasDeferredVisualCacheWrapAppend(),
+              active.overdubSourceSpanCacheReady());
+        },
+        [&](uint8_t index) { return index == 0 && trackManager.getTrack(0).processDeferredCanonicalPrefix(); });
+  };
+
+  position(kLoopTicks + 1024);
+  t.startOverdubbing(kLoopTicks + 1024);
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn) (void)serviceCanonicalTurn();
+  TEST_ASSERT_TRUE(rt.canonicalPassInputs.ready());
+
+  const RuntimePlaybackView* candidate = nullptr;
+  for (unsigned turn = 0; turn < 600 && candidate == nullptr; ++turn) {
+    (void)t.serviceOverdubOverlayWindow();
+    const RuntimePlaybackView* now = rt.overdubOverlayCandidate();
+    if (now != nullptr && now->complete) candidate = now;
+  }
+  TEST_ASSERT_NOT_NULL(candidate);
+  TEST_ASSERT_TRUE(candidate->passOriginsReady);
+
+  FixedPlaybackStreamCtx streamCtx;
+  streamCtx.storage = &candidate->storage;
+  streamCtx.passOrigins = candidate->passOrigins;
+  const PlaybackEventStream stream = makeOverlayPlaybackStream(streamCtx);
+  struct EmitProbe {
+    const FixedPlaybackStreamCtx* stream = nullptr;
+    unsigned rows = 0, sent = 0, committed = 0, overlay = 0, ledgered = 0;
+  } probe;
+  probe.stream = &streamCtx;
+  const auto send = [](void* ctx, const MidiEvent&, uint8_t) {
+    auto& p = *static_cast<EmitProbe*>(ctx);
+    const uint16_t row = p.stream->storage->order[p.rows];
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(p.stream->passOrigins[row].pass, p.stream->lastOrigin,
+                                     "the production adapter must record this row's origin before the callback");
+    if (p.stream->lastOrigin == kLiveOverlayPassOrigin) {
+      ++p.overlay; // sounded once, no ledger ownership
+    } else {
+      ++p.committed;
+      ++p.ledgered;
+    }
+    ++p.rows;
+    ++p.sent;
+  };
+  ProjectionContext projection{};
+  projection.loopLength = loop.loopLengthTicks;
+  uint16_t cursor = 0;
+  bool dirty = false;
+  const PlaybackTickFrame frame{&projection, static_cast<uint32_t>(loop.loopLengthTicks - 1), 0, false};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor({&cursor, &dirty}, frame, PlaybackEmitPolicy::ActiveCommitted, stream, send,
+                                          &probe, 0, nullptr, nullptr, 1, nullptr));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(candidate->storage.eventCount), cursor);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(candidate->storage.eventCount), probe.sent);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, probe.committed, "the committed base half is the ledger's input");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, probe.overlay, "the live pair is sounded with the overlay sentinel");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, probe.ledgered, "no overlay row is ledgered");
+  t.stopOverdubbing();
+}
+
 // Task 3.15e — **the live overdub overlay is served exactly once through the wrap, the pass handoff and the stop.**
 //
 // The existing 3.15a fixture proves a *committed* overdub is served once per traversal; `assertRecordRecoveryServesSecondBar`
@@ -7773,6 +7871,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval);
   RUN_TEST(test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance);
+  RUN_TEST(test_3_15e_slice3_row_origin_is_visible_through_the_production_fixed_stream);
   RUN_TEST(test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff);
   RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);
