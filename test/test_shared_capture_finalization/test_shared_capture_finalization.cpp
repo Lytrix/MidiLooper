@@ -7046,6 +7046,205 @@ void test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_
   serveTwoBarTraversalsAndCheckOrder(t, *loopB, 1, false);
 }
 
+// Task 3.15e — **the live overdub overlay is served exactly once through the wrap, the pass handoff and the stop.**
+//
+// The existing 3.15a fixture proves a *committed* overdub is served once per traversal; `assertRecordRecoveryServesSecondBar`
+// proves a **live** overdub note is emitted once, but never across a wrap. This fixture closes that gap for 3.15e's
+// overdub-overlay clause, on the production clock entry (`Track::playMidiEvents`) and the real deferred overdub stop.
+//
+// Shape: a committed two-bar Record pass with a published root, then a live overdub whose note **A** (70) lies entirely
+// **before** the wrap and whose note **B** (71) lies entirely **after** it. Driving the edge over the wrap fires
+// `maybeCommitOverdubWrap`: A's pass is sealed and the live store is re-based, so A becomes committed content *inside the
+// same traversal*, while B stays the live tail. The oracle pins each hand-off:
+//  * A is echoed by the live-capture walk exactly once before the wrap;
+//  * the wrap turn emits nothing (the committed interval is owned by the wrap catch-up, so A is not served twice);
+//  * A is then served from the committed reader exactly once, at its own phase, while B is still live (B's rows are not
+//    replayed by that reader);
+//  * the merged store never carries the uncommitted overlay: with A live and uncommitted it holds the base only, and A
+//    appears in it only after the wrap commit;
+//  * the stop commits B's pass and, after retirement, one traversal emits the base, A and B exactly once each, in tick
+//    order, with the ledger closed;
+//  * the growing overlay forces **no** content-sized rebuild on the MIDI turn (the counter stays 0 inside the live pass).
+//
+// Named limit (recorded in the 2026-10-22 packet, not asserted here as satisfied): the live overlay is still served by its
+// own `ActiveCaptureOverdub` cursor walk after the committed walk, with `ensureCaptureEventsSorted()` on the turn -- the
+// "same reader" half of 3.15e stays open. The ledger split (echo is emit-only, invariant `221334`/`224719`) is exercised
+// here: the echo pairs never appear in the ledger and the committed stream still closes.
+void test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+
+  const auto position = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+  };
+  const auto play = [&](uint32_t tick) { position(tick); t.playMidiEvents(tick, true); };
+  // The production deferred owner visit; it publishes/ahead-prepares off the MIDI turn, exactly as `main.cpp` does.
+  const auto owner = [&](uint32_t tick) {
+    position(tick);
+    (void)t.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+  };
+  const auto passCount = [&]() { return static_cast<uint32_t>(loop.passes.overdubPasses.size()); };
+  const auto ledgerOpen = [&]() { return static_cast<unsigned>(runtime.ledger.openCount()); };
+
+  struct ExpectedWire {
+    uint32_t tick;
+    uint8_t note;
+    bool on;
+  };
+  // An independent, hand-written expectation: the wire, element-wise, never read back from the route that produced it.
+  const auto checkWire = [&](const ExpectedWire* want, size_t count, const char* clause) -> const char* {
+    static char message[192];
+    if (MidiSendCapture::count() != count) {
+      snprintf(message, sizeof(message), "%s: expected %u rows, got %u", clause, static_cast<unsigned>(count),
+               static_cast<unsigned>(MidiSendCapture::count()));
+      return message;
+    }
+    for (size_t i = 0; i < count; ++i) {
+      const MidiEvent& event = MidiSendCapture::at(i);
+      if (event.tick != want[i].tick || event.data.noteData.note != want[i].note ||
+          event.isNoteOn() != want[i].on) {
+        snprintf(message, sizeof(message), "%s: row %u expected tick %u note %u %s, got tick %u note %u %s", clause,
+                 static_cast<unsigned>(i), want[i].tick, static_cast<unsigned>(want[i].note),
+                 want[i].on ? "on" : "off", static_cast<unsigned>(event.tick),
+                 static_cast<unsigned>(event.data.noteData.note), event.isNoteOn() ? "on" : "off");
+        return message;
+      }
+    }
+    return nullptr;
+  };
+
+  // (0) Settle the reader: one clean committed traversal of the base pass.
+  MidiSendCapture::reset();
+  for (uint32_t tick = 64; tick <= kLoopTicks; tick += 32) {
+    play(tick);
+    owner(tick + 8);
+  }
+  {
+    const ExpectedWire base[] = {{12, 48, true}, {96, 48, false}, {800, 62, true}, {880, 62, false}};
+    const char* problem = checkWire(base, 4, "settled traversal");
+    TEST_ASSERT_NULL_MESSAGE(problem, problem);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(), "the settled traversal closes its own ledger");
+
+  // (1) Live overdub. A is entirely before the wrap; the overlay is *not* materialised into the merged store.
+  const uint32_t kSessionStart = kLoopTicks + 1024;
+  Track::resetPlaybackOrderHotRebuildCount();
+  position(kSessionStart);
+  t.startOverdubbing(kSessionStart);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(loop.capture.store.size()),
+                                   "the live overlay holds A's own pair");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()),
+                                   "the merged store carries the committed base only, never the live overlay");
+
+  MidiSendCapture::reset();
+  for (uint32_t tick = kLoopTicks + 1056; tick <= kLoopTicks + 1504; tick += 32) {
+    const uint32_t before = passCount();
+    play(tick);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(before, passCount(), "no pass boundary is crossed inside the first bar");
+    owner(tick + 8);
+  }
+  {
+    const ExpectedWire baseAndA[] = {{12, 48, true}, {96, 48, false}, {800, 62, true}, {880, 62, false},
+                                     {1470, 70, true}, {1500, 70, false}};
+    const char* problem = checkWire(baseAndA, 6, "live A before the wrap");
+    TEST_ASSERT_NULL_MESSAGE(problem, problem);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(Track::playbackOrderHotRebuildCount()),
+                                   "the growing overlay forces no content-sized build on the MIDI turn");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(),
+                                   "the echo is emit-only: it writes no ledger entry (221334)");
+
+  // (2) The wrap turn inside the live session: A's pass commits and the live store is re-based. It emits nothing, because
+  // the committed interval is owned by the wrap catch-up -- this is the exactly-once seam.
+  MidiSendCapture::reset();
+  play(2u * kLoopTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the wrap turn must not re-serve the interval it just committed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, passCount(), "A's pass is committed at the wrap");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(loop.capture.store.size()),
+                                   "the pass boundary re-bases the live store");
+  owner(2u * kLoopTicks + 8);
+
+  // B lands entirely after the wrap, in the new pass; capturing it must not disturb the committed reader.
+  t.noteOn(1, 71, 100, 2u * kLoopTicks + 700);
+  t.noteOff(1, 71, 0, 2u * kLoopTicks + 760);
+  MidiSendCapture::reset();
+  for (uint32_t tick = 2u * kLoopTicks + 32; tick <= 2u * kLoopTicks + 896; tick += 32) {
+    play(tick);
+    owner(tick + 8);
+  }
+  {
+    const ExpectedWire baseAndB[] = {{12, 48, true}, {96, 48, false}, {700, 71, true},
+                                     {760, 71, false}, {800, 62, true}, {880, 62, false}};
+    const char* problem = checkWire(baseAndB, 6, "live B after the wrap");
+    TEST_ASSERT_NULL_MESSAGE(problem, problem);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(loop.capture.store.size()),
+                                   "the live tail is B's own pair");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(6u, static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()),
+                                   "A entered the merged store only by being committed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(), "the committed stream closes B's bar and A's pass");
+
+  // (3) The pass handoff, measured inside the same traversal: A is now committed content and is served from the committed
+  // reader exactly once at its own phase, while B is still live and is *not* replayed.
+  MidiSendCapture::reset();
+  for (uint32_t tick = 2u * kLoopTicks + 928; tick <= 2u * kLoopTicks + 1504; tick += 32) {
+    play(tick);
+    owner(tick + 8);
+  }
+  {
+    const ExpectedWire committedA[] = {{1470, 70, true}, {1500, 70, false}};
+    const char* problem = checkWire(committedA, 2, "A served from the committed reader");
+    TEST_ASSERT_NULL_MESSAGE(problem, problem);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(), "the committed reader's own pair closes");
+
+  // (4) The stop commits B's pass through the real deferred owner; the handoff retires the job.
+  position(2u * kLoopTicks + 1528);
+  t.stopOverdubbing();
+  TEST_ASSERT_TRUE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                           "fixture precondition: the overdub stop is a deferred job");
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(), "the overdub finalization retires");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, passCount(), "the stop committed B's pass");
+
+  // (5) One full traversal after the handoff: the base, A and B, each exactly once, in tick order, ledger closed.
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  MidiSendCapture::reset();
+  for (uint32_t tick = 32; tick <= kLoopTicks; tick += 32) {
+    play(tick);
+    owner(tick + 8);
+  }
+  {
+    const ExpectedWire handedOff[] = {{12, 48, true},   {96, 48, false},  {700, 71, true}, {760, 71, false},
+                                      {800, 62, true},  {880, 62, false}, {1470, 70, true}, {1500, 70, false}};
+    const char* problem = checkWire(handedOff, 8, "post-handoff traversal");
+    TEST_ASSERT_NULL_MESSAGE(problem, problem);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(),
+                                   "every articulation after the handoff is closed by its own off");
+}
+
 // Task 3.15a — **the jam region is a service filter at the production edge, and the control proves the filter is live.**
 //
 // The audit leaves "layered/jam" UNKNOWN. The **layered** half is covered by RWO's
@@ -7119,6 +7318,7 @@ void test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff);
   RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);
   RUN_TEST(test_3_10_the_owner_rotation_carries_a_blocked_holder_finalization_and_persistence);
