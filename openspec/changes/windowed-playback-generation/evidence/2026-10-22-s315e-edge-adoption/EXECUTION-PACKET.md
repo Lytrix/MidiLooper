@@ -153,6 +153,24 @@ and near-current overdub audibility. It also avoids the `ready`-role question en
 **Still to implement:** the edge binding of the live view (C2), the echo skip (C4), the provenance send callback wiring,
 and W3/W5/W6/W7. The frontier contract above is the prerequisite they consume.
 
+**Fixture-home constraint (found while wiring the edge; the wiring was prototyped and reverted).**
+`test_shared_capture_finalization` defines `PLAYBACK_WINDOW_ROLLING_ENABLED 1` **only** when
+`UNIFIED_RECORD_RETURN_READER_ORACLE` is defined, and the build never defines that macro — so its default run is the
+**echo** gate and the qualification resolver / hot-path overlay branch is compiled out there. The existing 3.15e fixtures
+in that suite are correct for the echo path (and the slice-1/2b lane/frontier fixtures call the lane directly, which is
+not gated). But W1/W3/W5/W6 must drive the **edge**, so they need a suite that
+
+- compiles with `PLAYBACK_WINDOW_ROLLING_ENABLED == 1`,
+- links the real `TrackPlaybackHotPath.cpp` (the resolver + walk + echo block) and the real window build,
+- has the captured-overdub setup (a committed two-bar world, an overdub with rows, the canonical prerequisite, and the
+  lane's owner turns).
+
+`test_windowed_preview_integration` and `test_runtime_working_set_ownership` satisfy the first two; neither has the
+finalization suite's capture-stop harness/setup, so the next unit must either port that setup into one of them or add a
+dedicated `test_overlay_edge` suite. The edge prototype (resolver branch, live-view stream size, provenance send/ledger
+callbacks, echo skip) is designed in C2–C5 and was reverted uncommitted rather than landed without its oracle. The
+frontier and C5 increments stand on their own.
+
 ## The question this resolved (kept for the record) — post-adoption appends
 
 The immutable-window contract and a **live** overdub pull in opposite directions, and the fixtures cannot be written
