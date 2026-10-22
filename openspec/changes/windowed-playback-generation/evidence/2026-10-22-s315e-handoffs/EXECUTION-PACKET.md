@@ -54,7 +54,11 @@ The slice-3 W3 attempt drove the production clock from `kLoopTicks+1056` to `+15
 uses) and the pass **did not commit**: `loop.passes.overdubPasses.size()` stayed unchanged. The wrap requires
 `Loop::shouldCommitOverdubWrap`, which needs `overdubWrapArmed_` and a `didPlayheadCrossPhase(prev, current, 0, length)`
 frame. In the new suite the frame/cursor setup around the candidate build (or a suppression from the session start) is
-not matching the oracle's. **Diagnosed 2026-10-22 (no code change):** the suite's **first** `playMidiEvents` re-anchors
+not matching the oracle's. **Resolved 2026-10-22 — the blocking condition was the unclosed note.** The wrap seals a **closed** pair; the slice-3 W1
+fixture deliberately used an unclosed live On (to test the ledger), and `commitOverdubWrap` does not produce a pass for that
+shape (the held On is the H3 continuation, not a plain wrap). With a closed On/Off the pass commits at `+1536` on the
+production path. **H1 is now landed as W3** (below); the projection re-anchor was a red herring in the earlier probe.
+Diagnosis retained for the record: the suite's **first** `playMidiEvents` re-anchors
 `projectionCycleStartTick` to **1536** (the transport-start projection edge), while the 3.15e echo oracle runs from a
 different projection history. `overdubWrapArmed_` is true after leaving the start phase, but the wrap frame's
 `prev/current` phases no longer describe the oracle's crossing, so the pass does not commit at `+1536`. Test-only Loop

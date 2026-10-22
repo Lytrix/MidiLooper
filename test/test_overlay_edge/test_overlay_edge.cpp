@@ -847,10 +847,72 @@ void test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating() {
   Track::setOverlayEdgeDisabledForTest(false);
 }
 
+
+
+// **W3 — the pass-commit seam.** The live view serves the first pass; the wrap commits that pass and re-bases the capture.
+// The lane retires the stale candidate, the committed reader serves the committed pass and the echo serves the new tail.
+// In the second pass the previously-live row and the new tail row each appear exactly once, and the ledger closes.
+void test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const RuntimePlaybackView* candidate = buildLiveOverlayCandidate(t, loop, rt, kLoopTicks + 1024, 70);
+  TEST_ASSERT_NOT_NULL(candidate);
+  // Close the live note before the boundary: the wrap seals a closed pair (an unclosed On is a different,
+  // held-continuation shape that slice 4's H3 owns).
+  t.noteOff(1, 70, 0, kLoopTicks + 1524);
+  const uint32_t passesBefore = static_cast<uint32_t>(loop.passes.overdubPasses.size());
+
+  const auto at = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+    t.playMidiEvents(tick, true);
+  };
+  for (uint32_t tick = kLoopTicks + 1056; tick <= kLoopTicks + 1504; tick += 32) at(tick);
+  at(kLoopTicks + 1536);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(passesBefore, static_cast<uint32_t>(loop.passes.overdubPasses.size()),
+                                          "the wrap must commit the live pass");
+
+  // A post-wrap live tail: raw tick past the loop length, projecting into the next pass.
+  t.noteOn(1, 72, 100, kLoopTicks + 1800);
+  t.noteOff(1, 72, 0, kLoopTicks + 1860);
+  (void)t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(),
+                           "the pass commit must retire the stale live candidate");
+
+  MidiSendCapture::reset();
+  for (uint32_t tick = kLoopTicks + 16; tick <= 2u * kLoopTicks; tick += 16) at(tick);
+  unsigned committed70 = 0, tail72 = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (!event.isNoteOn()) continue;
+    if (event.data.noteData.note == 70) ++committed70;
+    if (event.data.noteData.note == 72) ++tail72;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, committed70,
+                                   "the previously-live row is served once as committed content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, tail72, "the new live tail is served once by the echo");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, rt.ledger.openCount(),
+                                   "the committed rows close their ledger; the tail is echo-only");
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_the_live_overlay_window_serves_and_the_echo_is_suppressed);
   RUN_TEST(test_the_live_overlay_edge_never_touches_a_foreign_ready_successor);
   RUN_TEST(test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating);
+  RUN_TEST(test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate);
   return UNITY_END();
 }
