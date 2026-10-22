@@ -346,3 +346,28 @@ exactly the kind of decision that must not be inferred from convenience. The nex
 (1) — `CompanionBusy` reached in a fixture with the oracle in flight, `BaseFillRefused` never silent — or by measuring (2).
 
 No source or test line changed for this entry.
+
+## 2b-ii-b step 2 (a) — the borrow guard is named, and the instance is free while overdubbing (2026-10-22)
+
+Option (1) of the storage decision is now encoded and proved at the decision boundary:
+
+- `Step::BaseFillRefused` joins the vocabulary — canonical ready **and** the one companion instance not borrowable is a
+  **named** refusal, never a silent fill and never a wait;
+- `Observation::companionAvailable` carries the borrow precondition (`frozenCompanionPasses.idle()` and
+  `frozenCompanionApply.available()`), and `observe()` refuses before any build when it is false;
+- `waiting()` stays false for `BaseFillRefused`, so a refused fill cannot be reported as progress.
+
+Fixture (in `test_3_15e_slice2b_…`): canonical ready + companion free → `BaseReady`; canonical ready + companion busy →
+`BaseFillRefused` (and not "waiting"); and on the real live-overdub state, after the liveness run, the actual
+`frozenCompanionPasses.idle()` and `frozenCompanionApply.available()` both hold — i.e. the borrow option is viable in the
+state the lane runs in, not only in the abstract.
+
+Mutation (header `sha256 bbacf1020e4d8f26…`, restored byte-identically): ignoring `companionAvailable` fails exactly the
+refusal assertion (`Expected 2 Was 3`).
+
+Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**. No firmware TU includes the header.
+
+**Still owed in step 2:** the fill itself (begin `RuntimeCompanionPasses` from the borrowed instance for the demand's coverage,
+step Fill/Order to complete, then `beginLiveOverlayContinuation`), plus the collision proof the borrow needs — a STOPPED
+oracle build after a retained overlay candidate must be refused or invalidate the candidate by name rather than reuse the
+storage under it.

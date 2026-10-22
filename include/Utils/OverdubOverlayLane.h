@@ -19,7 +19,10 @@ enum class Step : uint8_t {
   /// A demand exists but its canonical prerequisite is not ready. A **pure wait**: continue observing the same identity; never
   /// drive `stepCanonicalPrefix` from here.
   WaitingCanonicalBase,
-  /// The canonical prerequisite is ready: the lane may begin the provenance-bearing base fill for this demand.
+  /// The canonical prerequisite is ready but the **one** provenance-bearing base instance per slot (the stopped-oracle
+  /// companion storage) is not borrowable this turn. Named, so a refused fill is never silence; the lane stays owed.
+  BaseFillRefused,
+  /// The canonical prerequisite is ready **and** the companion storage is free: the lane may begin the base fill.
   BaseReady,
   /// An existing candidate for this slot no longer matches the demand's identity (committed revision, capture generation or
   /// coverage). Retire it before building; the underlying committed content is untouched.
@@ -38,6 +41,9 @@ struct Observation {
   PlaybackCoverageInterval coverage{};
   /// An existing candidate carries a different committed revision, capture generation or coverage than this demand.
   bool candidateIdentityMismatch = false;
+  /// The one companion instance per slot is free to borrow this turn (`frozenCompanionPasses.idle()` and the apply object
+  /// available). The lane borrows it only while OVERDUBBING, where the stopped-oracle path cannot be in flight.
+  bool companionAvailable = true;
 };
 
 inline Step observe(const Observation& observation) {
@@ -46,7 +52,9 @@ inline Step observe(const Observation& observation) {
   if (observation.candidateIdentityMismatch) return Step::RetireStaleCandidate;
   // A slot with no committed base cannot ever satisfy the wait; it is not "waiting", it is not required.
   if (!observation.baseCommitted) return Step::NotRequired;
-  return observation.canonicalReady ? Step::BaseReady : Step::WaitingCanonicalBase;
+  if (!observation.canonicalReady) return Step::WaitingCanonicalBase;
+  // One provenance-bearing base instance per slot: refuse by name rather than build into the oracle's borrowed storage.
+  return observation.companionAvailable ? Step::BaseReady : Step::BaseFillRefused;
 }
 
 /// True while the lane is waiting for a prerequisite it may not advance itself. Named so a caller cannot report a wait as

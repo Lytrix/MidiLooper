@@ -7131,6 +7131,15 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
     Observation notOwed = observation;
     notOwed.demandOwed = false;
     TEST_ASSERT_EQUAL(Step::NotRequired, observe(notOwed));
+    // Step 2's admission: the canonical base must exist **and** the one companion instance must be free to borrow.
+    Observation baseable = observation;
+    baseable.canonicalReady = true;
+    TEST_ASSERT_EQUAL(Step::BaseReady, observe(baseable));
+    Observation busy = baseable;
+    busy.companionAvailable = false;
+    TEST_ASSERT_EQUAL_MESSAGE(Step::BaseFillRefused, observe(busy),
+                              "a busy companion instance is a named refusal, never a silent fill");
+    TEST_ASSERT_FALSE(waiting(observe(busy)));
   }
 
   // (2b) **Liveness of the prerequisite, measured through the real rotation shape.** The overlay lane may observe canonical
@@ -7166,6 +7175,9 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
     // (i) the prerequisite made measurable progress, (ii) through the committed canonical owner's own grains...
     TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPassInputs.ready(),
                              "a live overlay demand must make its canonical prerequisite runnable");
+    // The borrow precondition the lane depends on: with the slot overdubbing, the stopped-oracle companion storage is free.
+    TEST_ASSERT_TRUE_MESSAGE(rt.frozenCompanionPasses.idle(), "the one companion instance must be idle while overdubbing");
+    TEST_ASSERT_TRUE(rt.frozenCompanionApply.available());
     TEST_ASSERT_GREATER_THAN_UINT32(0, stepped);
     TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(rt.canonicalPassInputs.passCount()));
     // ...and (iii) without the overlay lane issuing any canonical work: its only entry is this reading, and it created no
