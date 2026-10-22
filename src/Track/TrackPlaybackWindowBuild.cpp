@@ -367,6 +367,14 @@ const MidiEvent& fixedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
   return stream->storage->events[stream->storage->order[cursor]];
 }
 
+// Task 3.15e slice 3: the live window's frontier-limited size. The provenance `eventAt` (C5) sits above.
+TRACK_INTERNAL_MEM size_t overlayPlaybackStreamSize(const void* ctx) {
+  const auto* stream = static_cast<const FixedPlaybackStreamCtx*>(ctx);
+  const size_t retained = stream->storage->eventCount;
+  if (stream->readableCount == 0 || stream->readableCount >= retained) return retained;
+  return stream->readableCount;
+}
+
 // Task 3.15e slice 3/C5 — **the provenance-recording adapter**, flash-resident and used only by the overdub overlay route.
 // A separate `eventAt` keeps every other fixed route byte-identical (the shared one is untouched) and keeps this store out
 // of ITCM; the walk reaches it through the stream's function pointer, so no veneer is emitted.
@@ -502,6 +510,11 @@ void reanchorFixedPlaybackIndex(Loop& loop, const FixedPlaybackEventStorage& sto
 }
 
 namespace { bool mergedMidiEventsBuildInProgress = false; }
+#if defined(PIO_UNIT_TEST_NATIVE)
+// Test-only witness: MIDI turns that selected the live overlay window. No target path reads it.
+namespace { unsigned sOverlayLiveSelectionsForTest = 0; }
+unsigned Track::overlayLiveSelectionCount() { return sOverlayLiveSelectionsForTest; }
+#endif
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 /// DEC-143's cost criterion, measurable from a native suite: how many times the merged fallback actually rebuilt. A
@@ -872,7 +885,7 @@ PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx) {
 }
 
 PlaybackEventStream makeOverlayPlaybackStream(FixedPlaybackStreamCtx& ctx) {
-  return PlaybackEventStream{&ctx, fixedPlaybackStreamSize, fixedPlaybackStreamValid,
+  return PlaybackEventStream{&ctx, overlayPlaybackStreamSize, fixedPlaybackStreamValid,
                              overlayPlaybackStreamEventAt, mergedPlaybackStreamPhase};
 }
 
@@ -1109,16 +1122,57 @@ TRACK_COLD_MEM void Track::resolveFixedPlaybackSourceForTurn(
 // This qualification-only selector runs on the clock path but is deliberately placed in FLASH to meet the RAM1 bank
 // budget. Its placement is observable in timing, so no timing equivalence/qualification is claimed here.
 FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
-    uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
+    uint8_t slotIndex, Loop& loop, bool eligible, uint32_t currentTick,
     PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
-    const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut) {
+    const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut, bool& overlayLiveSelectedOut) {
   rollingViewSelectedOut = false;
+  overlayLiveSelectedOut = false;
   // Task 3.15d (slice 2): **NOTE_EDIT is served by the preview's own interval** -- see
   // `resolveNoteEditPreviewSourceForTurn` for the contract and the hazards. One out-of-line FLASH-resident call keeps
   // the ITCM resolver's own edge bounded: the caller only takes the committed reader's frame-bound `return`.
   if (resolveNoteEditPreviewSourceForTurn(slotIndex, loop, currentTick, sourceOut, bridgeOut, viewOut)) {
     rollingViewSelectedOut = true;
     return;
+  }
+  // Task 3.15e slice 3 (C2/C4): the live overdub window, bound as a **live source**. Only [0, readableEventCount) is
+  // exposed; the storage may still be extended off-clock; no role is taken. The base identity is the stable selector
+  // (the capture generation drifts per append). The shared cursor is anchored to the last processed phase, O(log n).
+  if (slotIndex == activeLoopIndex && isOverdubbing() && !isJamPlaybackActive() && !isJamming() &&
+      !editManager.isNoteEditActive()) {
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    const RuntimePlaybackView* live = runtime != nullptr ? runtime->overdubOverlayCandidate() : nullptr;
+    const uint32_t livePhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
+    if (live != nullptr && live->readableEventCount != 0 && live->passOriginsReady &&
+        !live->canonicalRanksReady && live->source.origin == PlaybackWindowOrigin::Capture &&
+        live->source.playbackRevision == loop.playbackRevision &&
+        live->source.sourceGeneration == playbackGeneration &&
+        live->coverage.isValid() && live->coverage.loopLengthTicks == loop.loopLengthTicks &&
+        live->coverage.contains(livePhase)) {
+      if (loop.lastTickInLoop == UINT32_MAX) {
+        loop.nextEventIndex = 0;
+      } else {
+        size_t first = 0, last = live->readableEventCount;
+        while (first < last) {
+          const size_t middle = first + (last - first) / 2;
+          const auto& event = live->storage.events[live->storage.order[middle]];
+          const uint32_t eventPhase =
+              IntervalProjection::playbackEventPhase(event.tick, loop.loopLengthTicks);
+          if (eventPhase <= loop.lastTickInLoop) first = middle + 1;
+          else last = middle;
+        }
+        loop.nextEventIndex = static_cast<uint16_t>(first);
+      }
+      sourceOut = live->source;
+      bridgeOut = nullptr;
+      viewOut = live;
+      rollingViewSelectedOut = true;
+      overlayLiveSelectedOut = true;
+#if defined(PIO_UNIT_TEST_NATIVE)
+      ++sOverlayLiveSelectionsForTest;
+#endif
+      return;
+    }
   }
   // A qualified live interval is the same immutable fixed-storage reader as
   // committed playback. Input changes only private demand, never served bytes.

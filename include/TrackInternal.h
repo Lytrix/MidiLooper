@@ -105,6 +105,8 @@ struct FixedPlaybackStreamCtx {
   const PlaybackPassEventOrigin* passOrigins = nullptr;
   /// The origin of the row most recently returned by `fixedPlaybackStreamEventAt`; read by the emission callback.
   uint16_t lastOrigin = 0;
+  /// Task 3.15e slice 3: the live window's readable frontier (`[0, readableCount)`; zero = expose every row).
+  uint16_t readableCount = 0;
 };
 
 TRACK_INTERNAL_MEM ProjectionContext makePlaybackContext(const Track& track, const Loop& loop,
@@ -143,6 +145,8 @@ TRACK_INTERNAL_MEM void reanchorCaptureIndex(Loop& loop);
 TRACK_INTERNAL_MEM PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx);
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx);
+/// Task 3.15e slice 3: the fixed stream with per-row provenance + the published readable frontier. Opt-in.
+TRACK_INTERNAL_MEM PlaybackEventStream makeOverlayPlaybackStream(FixedPlaybackStreamCtx& ctx);
 /// Task 3.15e slice 3/C5: the fixed stream with per-row provenance recorded at `eventAt` time. Opt-in; every other fixed
 /// route keeps the plain adapter (byte-identical images).
 TRACK_INTERNAL_MEM PlaybackEventStream makeOverlayPlaybackStream(FixedPlaybackStreamCtx& ctx);

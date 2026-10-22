@@ -419,6 +419,10 @@ public:
   /// Passing no cursor keeps the pre-3.10 single-holder behaviour (the scan starts at slot 0 every call), which is
   /// why the existing single-owing-slot fixtures need no change; a caller that serves more than one holder passes
   /// its own cursor so the rotation persists across turns.
+  #if defined(PIO_UNIT_TEST_NATIVE)
+  /// Test-only witness: MIDI turns that selected the live overlay window (slice 3).
+  static uint32_t overlayLiveSelectionCount();
+#endif
   static void resetPlaybackLaneMeasurement();
   static void samplePlaybackLaneOpportunity(PlaybackDeadlineClock clock, bool running, bool eligible,
                                             PlaybackViewTurnResult result, uint32_t workerUs);
@@ -692,9 +696,9 @@ public:
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
   /// Qualification-image source selection in flash. Preserves fixed-view, launch-view, then rolling-window priority.
   void resolveQualificationPlaybackSourceForTurn(
-      uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
+      uint8_t slotIndex, Loop& loop, bool eligible, uint32_t currentTick,
       PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
-      const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut);
+      const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut, bool& overlayLiveSelectedOut);
   /// Task 3.15d (slice 2): the NOTE_EDIT preview seam -- true when a current `Preview` window (adopted, or the one
   /// already served) covers the playhead and is the turn's route. Out of line and FLASH-resident so the ITCM resolver
   /// only pays one call. Returns false for every state that is not a servable session preview, which is how the merged
@@ -2117,6 +2121,9 @@ private:
   friend void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend void playbackCursorAdvanceApplyLedger(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  // Task 3.15e slice 3: the live overlay window's provenance-aware emission/ledger callbacks.
+  friend void playbackCursorAdvanceSendOverlay(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
+  friend void playbackCursorAdvanceApplyLedgerOverlay(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
   friend bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick);
 
 };

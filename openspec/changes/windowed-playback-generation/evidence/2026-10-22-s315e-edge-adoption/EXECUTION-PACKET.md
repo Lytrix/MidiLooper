@@ -150,8 +150,26 @@ and near-current overdub audibility. It also avoids the `ready`-role question en
 - Mutations that discriminate: force the full prefix merge (prefix moves), publish the frontier during the fill (partial
   tail exposed), and stop publishing at order completion (frontier never advances) — each RED exactly its case.
 
-**Still to implement:** the edge binding of the live view (C2), the echo skip (C4), the provenance send callback wiring,
-and W3/W5/W6/W7. The frontier contract above is the prerequisite they consume.
+**Edge landed (2026-10-22; native, no audible change to the default image).**
+
+- **C2:** `resolveQualificationPlaybackSourceForTurn` binds the lane's live view when it has a published frontier, the mixed
+  provenance shape, a base-identity match and coverage containing the phase; it anchors the shared cursor with a
+  logarithmic seek and sets `overlayLiveSelected`.
+- **C3:** no adoption; the stream is `makeOverlayPlaybackStream` and its size is `readableCount` (the frontier), so the walk
+  never reads the private tail.
+- **C4:** while the live view is selected, the `ActiveCaptureOverdub` walk and `ensureCaptureEventsSorted()` do not run.
+- **C5:** `playbackCursorAdvanceSendOverlay` / `playbackCursorAdvanceApplyLedgerOverlay` (flash, function-pointer calls)
+  apply the ledger only to committed-origin rows.
+- **New suite `test_overlay_edge`** (rolling 1, real hot path, captured two-bar world): W1 green — the live row is served
+  once, the committed base pair once, the ledger stays closed, and the selection witness proves the route. Mutations that
+  discriminate: re-enabling the echo under the window duplicates the live row; applying the ledger to overlay rows opens
+  the ledger.
+- **Budget:** default image stays `391,688 + 1,528`; the lane image moves **+64 B of ITCM** (`391,848 + 1,368` →
+  `391,912 + 1,304`, still 464 B above the approved 840 floor) — the cost of the route selection/locals in the hot path.
+  No floor or size pin is re-based; the move is recorded, not absorbed silently.
+
+**Still to implement:** W2 (foreign `ready`/DEC-136 guard), W3 (pass-commit fallback at the seam), W6 (branch-off fallback
+proof), W7 (named refusals).
 
 **Fixture-home constraint (found while wiring the edge; the wiring was prototyped and reverted).**
 `test_shared_capture_finalization` defines `PLAYBACK_WINDOW_ROLLING_ENABLED 1` **only** when

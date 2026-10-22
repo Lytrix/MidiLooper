@@ -8,6 +8,10 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
     "test_midi_button_timing",
     "test_shared_capture_finalization",
+    # windowed-playback-generation 3.15e slice 3: the live-overlay edge oracle compiles the
+    # rolling lane and links the real hot path; the finalization suite (rolling 0 by default)
+    # cannot host these fixtures.
+    "test_overlay_edge",
     # I5 — rolling Record diagnosis: the matched one-bar RecordPublished retirement reproducer compiles
     # the finalization suite's real Track/Loop/storage closure with the rolling reader enabled, so it
     # needs the same Arduino/SD hardware boundaries and the same dead-strip settings.

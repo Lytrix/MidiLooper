@@ -90,6 +90,29 @@ void playbackCursorAdvanceSendCapture(void* ctx, const MidiEvent& evt, uint8_t s
   track->sendMidiEvent(evt, slotIndex);
 }
 
+/// Task 3.15e slice 3 (C5): the live overlay window's emission/ledger callbacks. `eventAt` recorded the row's origin
+/// before this call, so the ledger is applied only to committed-origin rows; an overlay row sounds once without
+/// committed-pass ownership. Flash-resident (reached through function pointers; no ITCM cost or veneer).
+struct OverlayEmitCtx {
+  Track* track = nullptr;
+  const FixedPlaybackStreamCtx* stream = nullptr;
+};
+
+TRACK_COLD_MEM void playbackCursorAdvanceSendOverlay(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  auto* overlay = static_cast<OverlayEmitCtx*>(ctx);
+  if (overlay->stream->lastOrigin != kLiveOverlayPassOrigin &&
+      !overlay->track->applyPlaybackLedgerEvent(evt, slotIndex)) {
+    return;
+  }
+  overlay->track->sendMidiEvent(evt, slotIndex);
+}
+
+TRACK_COLD_MEM void playbackCursorAdvanceApplyLedgerOverlay(void* ctx, const MidiEvent& evt, uint8_t slotIndex) {
+  auto* overlay = static_cast<OverlayEmitCtx*>(ctx);
+  if (overlay->stream->lastOrigin == kLiveOverlayPassOrigin) return;
+  (void)overlay->track->applyPlaybackLedgerEvent(evt, slotIndex);
+}
+
 bool playbackCursorAdvanceJamFilter(void* ctx, uint32_t storageTick) {
   const auto* jam = static_cast<const PlaybackJamFilterCtx*>(ctx);
   return jam->track->isStorageTickInJamRegion(storageTick, *jam->loop);
@@ -228,11 +251,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   PlaybackViewSourceIdentity expectedFixedSource{};
   const FixedPlaybackBridgeStorage* fixedBridge = nullptr;
   const RuntimePlaybackView* fixedView = nullptr;
+  bool overlayLiveSelected = false;
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
   bool rollingViewSelected = false;
   resolveQualificationPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, currentTick,
                                             expectedFixedSource, fixedBridge, fixedView,
-                                            rollingViewSelected);
+                                            rollingViewSelected, overlayLiveSelected);
   // Live Record never credits a legacy gather as readiness, including a
   // missing later interval in an otherwise valid multi-bar rolling period.
   if (isRecording() && !rollingViewSelected) return;
@@ -536,13 +560,18 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       : fixedView != nullptr ? &fixedView->storage
       : livePair != nullptr ? livePair->storage
                             : nullptr};
+  if (overlayLiveSelected && fixedView != nullptr) {
+    fixedCtx.passOrigins = fixedView->passOrigins;
+    fixedCtx.readableCount = fixedView->readableEventCount;
+  }
   PagedEmissionStreamCtx pagedCtx{this, &runtime, slotIndex};
   const PlaybackEventStream committedStream =
       pagedEmission ? makePagedEmissionStream(pagedCtx)
       : emissionWindow ? makeFixedPlaybackStream(fixedCtx)
       : bridgeStream != nullptr ? bridgeStream->stream()
                               : (fixedView != nullptr || livePair != nullptr
-                                     ? makeFixedPlaybackStream(fixedCtx)
+                                     ? (overlayLiveSelected ? makeOverlayPlaybackStream(fixedCtx)
+                                                            : makeFixedPlaybackStream(fixedCtx))
                                      : makeMergedPlaybackStream(mergedCtx));
   PlaybackCursorAdvanceState mergedAdvance{
       !emissionWindow && bridgeStream != nullptr ? &bridgeStream->playbackIndex : &loop.nextEventIndex,
@@ -558,12 +587,21 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
   loop.lastTickInLoop = tickInLoop;
 
+  OverlayEmitCtx overlayEmit{this, &fixedCtx};
+  PlaybackSendFn sendFn = playbackCursorAdvanceSend;
+  void* sendCtx = this;
+  PlaybackSendFn applyLedgerFn = isActive ? playbackCursorAdvanceApplyLedger : nullptr;
+  if (overlayLiveSelected) {
+    sendFn = playbackCursorAdvanceSendOverlay;
+    sendCtx = &overlayEmit;
+    applyLedgerFn = playbackCursorAdvanceApplyLedgerOverlay;
+  }
   if (!mergedIntervalApplied) {
     const auto readResult = advancePlaybackCursor(
         mergedAdvance, frame, mergedPolicy, committedStream,
-        playbackCursorAdvanceSend, this, slotIndex,
+        sendFn, sendCtx, slotIndex,
         isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr,
-        midiChannel, isActive ? playbackCursorAdvanceApplyLedger : nullptr);
+        midiChannel, applyLedgerFn);
 #if SC_PLAYBACK_READ_WITNESS_ENABLED
     if (readResult == PlaybackAdvanceResult::Completed)
       observePlaybackReadForTurn(slotIndex, fixedCtx.storage, fixedBridge);
@@ -577,7 +615,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // Once STOPPING freezes the capture generation, its terminal closures and
   // canonical ordering belong exclusively to the deferred stop owner. Do not
   // let the live cursor sort that mutable store on a MIDI service turn.
-  if (isActive && trackState == TRACK_OVERDUBBING &&
+  // Slice 3 (C4): while the live overlay window is the selected source, its rows are already in that window in canonical
+  // order — the second capture walk and its sort do not run. Every other state keeps today's echo exactly.
+  if (!overlayLiveSelected && isActive && trackState == TRACK_OVERDUBBING &&
       loop.capture.phase == CapturePhase::Overdub && !loop.capture.store.empty()) {
     if (loop.ensureCaptureEventsSorted()) {
       reanchorCaptureIndex(loop);
