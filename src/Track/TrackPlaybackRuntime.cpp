@@ -754,15 +754,29 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedOracleVi
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedCanonicalOracleView(
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
     const RuntimeCanonicalPassInputs::CurrentSource& live, const MidiEvent* oracle,
-    size_t oracleCount, const PlaybackCoverageInterval& coverage) {
+    size_t oracleCount, const PlaybackCoverageInterval& coverage,
+    const OverdubOverlayLane::CandidateRetention& overlayRetention,
+    OverdubOverlayLane::OracleRebuildDecision* overlayDecisionOut) {
+  using OverdubOverlayLane::OracleRebuildDecision;
+  if (overlayDecisionOut != nullptr) *overlayDecisionOut = OracleRebuildDecision::Allowed;
   // RC-MEM-2: same explicit refusal as `publishStoppedOracleView` -- a slot with no
   // whole-take reservation has no authoritative full-take representation to publish into.
   const auto* wholeTakeSet = viewSetIfPrewarmed();
   if (!wholeTakeSet || !wholeTakeSet->wholeTakeViewsReserved() || !coverage.isValid() ||
       coverage.startPhase != 0 ||
       coverage.lengthTicks != coverage.loopLengthTicks || live.loopLengthTicks != coverage.loopLengthTicks ||
-      oracleCount > RuntimePlaybackViewConfig::kEventsPerView || (oracleCount && !oracle) ||
-      canonicalPrefixPhase != CanonicalPrefixPhase::Idle || canonicalTailPhase != CanonicalTailPhase::Idle ||
+      oracleCount > RuntimePlaybackViewConfig::kEventsPerView || (oracleCount && !oracle)) return false;
+  // 3.15e/2b-ii-b step 2: **the borrow's collision rule, consulted before any companion build.** A retained overlay
+  // candidate owns the borrowed companion storage by identity. The check comes before the idle/admission terms on
+  // purpose: a refusal or a retirement must be reported by name even when another of those terms is also false, and a
+  // stale candidate must be retired *here* -- never left for the next build to reinterpret those bytes as oracle output.
+  if (overlayRetention.overlayCandidateRetained) {
+    const auto decision = OverdubOverlayLane::oracleRebuildDecision(overlayRetention);
+    if (overlayDecisionOut != nullptr) *overlayDecisionOut = decision;
+    if (decision == OracleRebuildDecision::RefusedRetainedCandidate) return false;
+    if (!retireOverdubOverlayCandidate()) return false;
+  }
+  if (canonicalPrefixPhase != CanonicalPrefixPhase::Idle || canonicalTailPhase != CanonicalTailPhase::Idle ||
       captureBridgePhase != CaptureBridgePhase::Idle || !canonicalPassInputs.idle() ||
       !frozenCompanionPasses.idle() || !frozenCompanionApply.available()) return false;
   RuntimeCompanionApply::Work work{frozenCompanionPairLookup, frozenCompanionDeleteLookup,
@@ -784,6 +798,195 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedCanonica
   // These workers were idle at admission and are owned by this synchronous call.
   frozenCompanionPasses.discard(); canonicalPassInputs.discard();
   return published;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView* LoopPlaybackRuntime::overdubOverlayCandidate() const {
+  const auto* set = viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.build >= set->views.size()) return nullptr;
+  // The candidate's own metadata is the identity: the mixed provenance shape only the continuation writes. No marker,
+  // no extra field, and a candidate that lost `complete` after a pass commit is still recognisable as stale.
+  const auto& view = set->views[set->lifecycle.build];
+  return OverdubOverlayLane::isOverlayCandidate(view) ? &view : nullptr;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::overdubOverlayBuildExclusive() const {
+  // One builder per slot. Until 2b-iii's role arbitration lands, the overlay lane begins only when no other owner
+  // holds that builder or its prerequisite workers; otherwise it **defers by name** instead of competing.
+  if (viewSetIfPrewarmed() == nullptr) return false;
+  return !pendingViewRequest_.active && !previewSourceActive && !viewBuild.coverageOwned() &&
+         !ownsCoverageSource() && !completedPromisePendingJudgement && !bridgeWindowBuild.active() &&
+         captureBridgePhase == CaptureBridgePhase::Idle && canonicalTailPhase == CanonicalTailPhase::Idle &&
+         (canonicalWindowPhase == CanonicalWindowPhase::Idle ||
+          canonicalWindowPhase == CanonicalWindowPhase::Ready ||
+          canonicalWindowPhase == CanonicalWindowPhase::Denied);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::overdubOverlayBorrowHeld() const {
+  return !frozenCompanionPasses.idle() && captureBridgePhase == CaptureBridgePhase::Idle &&
+         canonicalTailPhase == CanonicalTailPhase::Idle &&
+         (canonicalWindowPhase == CanonicalWindowPhase::Idle ||
+          canonicalWindowPhase == CanonicalWindowPhase::Ready ||
+          canonicalWindowPhase == CanonicalWindowPhase::Denied);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retireOverdubOverlayCandidate() {
+  auto* set = viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.build >= set->views.size()) return false;
+  auto& view = set->views[set->lifecycle.build];
+  if (!OverdubOverlayLane::isOverlayCandidate(view)) return false;
+  // Detach on the **binding**, not on grain currency: a re-based capture makes `nextGrain()` deny (and clears the
+  // view's flags), so a currency test would leave the stale builder attached to the candidate it is retiring. Preserve
+  // the destination through the detach, then clear the view ourselves so no stale flags remain readable.
+  if (viewBuild.boundToDestination(view)) viewBuild.discard(&view);
+  view.resetMetadata();
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM OverdubOverlayLane::Turn LoopPlaybackRuntime::stepOverdubOverlayBuild(
+    const OverdubOverlayLane::BuildRequest& request, Loop& loop, size_t fillQuantum, size_t orderQuantum) {
+  using OverdubOverlayLane::Turn;
+  auto* set = viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.build >= set->views.size() || fillQuantum == 0 || orderQuantum == 0)
+    return Turn::Deferred;
+  auto& view = set->views[set->lifecycle.build];
+
+  // (1) The overlay half is attached: this **is** the append-stable continuation of the one window.
+  if (viewBuild.overlayContinuationActive()) {
+    const auto grain = viewBuild.nextGrain();
+    if (grain == RuntimePlaybackViewBuildGrain::Denied) {
+      // A pass commit re-based the capture (or the generation moved): the candidate's identity is gone. Retire it here
+      // so no consumer can read a complete-looking window, and never reinterpret the borrowed bytes as this window.
+      (void)retireOverdubOverlayCandidate();
+      return Turn::RetiredStale;
+    }
+    if (grain == RuntimePlaybackViewBuildGrain::Complete) {
+      // The live tail grows: extend the same window by the appended rows only. The capture **generation** moving is the
+      // append frontier, not a new pass identity — the builder's own `liveCaptureCurrent()` (folded into `nextGrain()`
+      // above) is what reports a re-based capture, and a genuinely stale half has already been refused by then.
+      if (loop.capture.store.size() > viewBuild.liveCaptureSourceExtent()) {
+        const PlaybackViewSourceIdentity identity{request.baseSource.playbackRevision,
+            request.baseSource.sourceGeneration, nullptr, PlaybackWindowOrigin::Capture,
+            request.captureGeneration};
+        if (!viewBuild.extendLiveCapture(identity)) {
+          (void)retireOverdubOverlayCandidate();
+          return Turn::RetiredStale;
+        }
+        const auto extended = viewBuild.nextGrain();
+        if (extended == RuntimePlaybackViewBuildGrain::Denied) {
+          (void)retireOverdubOverlayCandidate();
+          return Turn::RetiredStale;
+        }
+        const auto stepped = extended == RuntimePlaybackViewBuildGrain::Order
+            ? viewBuild.stepOrder(orderQuantum) : viewBuild.stepFill(fillQuantum);
+        return stepped == RuntimePlaybackViewBuildGrain::Denied ? Turn::RetiredStale : Turn::OverlayBuilding;
+      }
+      return Turn::CandidateReady;
+    }
+    const auto stepped = grain == RuntimePlaybackViewBuildGrain::Fill
+        ? viewBuild.stepFill(fillQuantum) : viewBuild.stepOrder(orderQuantum);
+    if (stepped == RuntimePlaybackViewBuildGrain::Denied) {
+      (void)retireOverdubOverlayCandidate();
+      return Turn::RetiredStale;
+    }
+    return Turn::OverlayBuilding;
+  }
+
+  // Continue **the same build** from the append-stable live source, then release the borrow. `beginLiveOverlayContinuation`
+  // nulls the fill's baseline pointer, so the companion storage is no longer referenced by the append half -- releasing it
+  // here keeps a pass commit's canonical tail and the stopped oracle from waiting on this lane for the one instance.
+  const auto attachOverlay = [&]() -> Turn {
+    const auto live = RuntimePlaybackViewSource::fromLiveCapture(loop, true);
+    const PlaybackViewSourceIdentity identity{request.baseSource.playbackRevision,
+        request.baseSource.sourceGeneration, nullptr, PlaybackWindowOrigin::Capture, request.captureGeneration};
+    if (live.context == nullptr || !viewBuild.beginLiveOverlayContinuation(live, identity)) {
+      viewBuild.discard(&view);
+      view.resetMetadata();
+      frozenCompanionPasses.discard();
+      return Turn::Denied;
+    }
+    frozenCompanionPasses.discard();
+    return Turn::OverlayStarted;
+  };
+
+  // (1b) The base half is **complete**: this turn attaches the overlay half (the previous turn's last grain completed it,
+  // and an explicit step here would be a second child in one turn).
+  if (viewBuild.completedDestinationIs(view) && view.source == request.baseSource &&
+      view.coverage.startPhase == request.coverage.startPhase &&
+      view.coverage.lengthTicks == request.coverage.lengthTicks &&
+      view.coverage.loopLengthTicks == request.coverage.loopLengthTicks)
+    return attachOverlay();
+
+  // (2) The base half is in flight in the one builder. A base that no longer describes this request is abandoned, never
+  // continued under a new demand.
+  if (viewBuild.active()) {
+    if (!(view.source == request.baseSource) || view.coverage.startPhase != request.coverage.startPhase ||
+        view.coverage.lengthTicks != request.coverage.lengthTicks ||
+        view.coverage.loopLengthTicks != request.coverage.loopLengthTicks) {
+      viewBuild.discard(&view);
+      view.resetMetadata();
+      frozenCompanionPasses.discard();
+      return Turn::RetiredStale;
+    }
+    const auto grain = viewBuild.nextGrain();
+    if (grain == RuntimePlaybackViewBuildGrain::Denied) {
+      viewBuild.discard(&view);
+      view.resetMetadata();
+      frozenCompanionPasses.discard();
+      return Turn::Denied;
+    }
+    if (grain != RuntimePlaybackViewBuildGrain::Complete) {
+      const auto stepped = grain == RuntimePlaybackViewBuildGrain::Fill
+          ? viewBuild.stepFill(fillQuantum) : viewBuild.stepOrder(orderQuantum);
+      if (stepped == RuntimePlaybackViewBuildGrain::Denied) {
+        viewBuild.discard(&view);
+        view.resetMetadata();
+        frozenCompanionPasses.discard();
+        return Turn::Denied;
+      }
+      return stepped == RuntimePlaybackViewBuildGrain::Complete ? attachOverlay() : Turn::BaseBuilding;
+    }
+    return attachOverlay();
+  }
+
+  // (3) The borrowed companion fill is in flight (the caller established that this lane is the only owner).
+  if (!frozenCompanionPasses.idle()) {
+    if (frozenCompanionPasses.ready(request.baseSource)) {
+      RuntimeCompanionApply::Work work{frozenCompanionPairLookup, frozenCompanionDeleteLookup,
+          frozenCompanionSpans, frozenCompanionReconstruction, frozenCompanionOverlaps};
+      LedgerBoundarySummary boundary;
+      boundary.capture(ledger);
+      const EmissionCursor anchor{0, request.coverage.startPhase, 0, 0, request.baseSource.sourceGeneration};
+      if (!viewBuild.begin(view, frozenCompanionPasses, request.baseSource, request.coverage, anchor, boundary,
+                           RuntimePlaybackViewFillScope::PlaybackCoverage)) {
+        frozenCompanionPasses.discard();
+        return Turn::Denied;
+      }
+      return Turn::BaseStarted;
+    }
+    const auto result = frozenCompanionPasses.step(fillQuantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      frozenCompanionPasses.discard();
+      return Turn::Denied;
+    }
+    return Turn::BaseBuilding;
+  }
+
+  // (4) Nothing is in flight: admit the borrow by name.
+  if (!frozenCompanionApply.available()) return Turn::BaseFillRefused;
+  if (!canonicalPassInputs.ready() || canonicalPassInputs.generation() == 0 ||
+      !(canonicalPrefixSource == request.baseSource)) return Turn::WaitingCanonicalBase;
+  if (canonicalPassInputs.captureAttached()) return Turn::Denied;
+  // A retained candidate whose identity moved is retired before a new build; the caller does the same, and the local
+  // guard keeps a direct call from building over a candidate it does not own.
+  if (OverdubOverlayLane::isOverlayCandidate(view)) return Turn::Deferred;
+  viewBuild.discard();
+  view.resetMetadata();
+  RuntimeCompanionApply::Work work{frozenCompanionPairLookup, frozenCompanionDeleteLookup,
+      frozenCompanionSpans, frozenCompanionReconstruction, frozenCompanionOverlaps};
+  if (!frozenCompanionPasses.begin(frozenCompanionApply, work, canonicalPassInputs, nullptr, 0,
+                                   request.baseSource, request.coverage.loopLengthTicks))
+    return Turn::Denied;
+  return Turn::BaseStarted;
 }
 
 const RuntimePlaybackView* LoopPlaybackRuntime::publishedFullLoopView(

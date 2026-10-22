@@ -7145,11 +7145,13 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
     TEST_ASSERT_EQUAL(OracleRebuildDecision::Allowed, oracleRebuildDecision(free));
     CandidateRetention retainedCurrent;
     retainedCurrent.overlayCandidateRetained = true;
+    retainedCurrent.candidateBaseCurrent = true;
     retainedCurrent.candidateIdentityCurrent = true;
     TEST_ASSERT_EQUAL_MESSAGE(OracleRebuildDecision::RefusedRetainedCandidate,
                               oracleRebuildDecision(retainedCurrent),
                               "the oracle must not rebuild underneath a live overlay candidate");
     CandidateRetention retainedStale = retainedCurrent;
+    retainedStale.candidateBaseCurrent = false;
     retainedStale.candidateIdentityCurrent = false;
     TEST_ASSERT_EQUAL_MESSAGE(OracleRebuildDecision::RetireCandidateFirst,
                               oracleRebuildDecision(retainedStale),
@@ -7200,6 +7202,167 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
                               "the overlay demand must not become a committed demand of its own");
     TEST_ASSERT_TRUE(t.overdubOverlayDemandForSlot(0, 1470).owed);
   }
+
+  // (2c) **The owner build through its production entry, and the borrow's collision rule on the real slot.**
+  {
+    using namespace OverdubOverlayLane;
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    const PlaybackCoverageInterval full{0, loop.loopLengthTicks, loop.loopLengthTicks};
+    const uint32_t generation = TrackCaptureStopTestAccess::playbackGenerationOf(t);
+
+    // (i) **Companion unavailable → named refusal, no partial candidate.** Another owner (here the canonical window
+    // owner) has the one instance in flight; the lane's turn must refuse by name, begin nothing and leave no half-built
+    // window behind.
+    {
+      RuntimeCompanionApply::Work work{rt.frozenCompanionPairLookup, rt.frozenCompanionDeleteLookup,
+          rt.frozenCompanionSpans, rt.frozenCompanionReconstruction, rt.frozenCompanionOverlaps};
+      rt.canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Fill;
+      TEST_ASSERT_TRUE(rt.frozenCompanionPasses.begin(rt.frozenCompanionApply, work, rt.canonicalPassInputs,
+                                                     nullptr, 0, rt.canonicalPrefixSource, loop.loopLengthTicks));
+      Observation busy;
+      busy.demandOwed = true;
+      busy.baseCommitted = true;
+      busy.canonicalReady = true;
+      busy.companionAvailable = false;
+      TEST_ASSERT_EQUAL_MESSAGE(Step::BaseFillRefused, observe(busy),
+                                "a busy companion instance is a named refusal, never a silent fill");
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(Turn::BaseFillRefused),
+                                      static_cast<uint8_t>(t.serviceOverdubOverlayWindow()),
+                                      "a busy companion instance is refused by name at the production entry");
+      TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(),
+                               "a refused base fill must not leave a partial candidate");
+      TEST_ASSERT_FALSE(rt.viewBuild.active());
+      rt.frozenCompanionPasses.discard();
+      rt.canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Idle;
+    }
+
+    // (ii) **Borrowed base → Fill/Order → continuation → append-stable tail, retained.** Driven only through the
+    // production entry (one grain per owner turn), on the real live overdub.
+    const RuntimePlaybackView* candidate = nullptr;
+    OverdubOverlayLane::Turn firstTurn = OverdubOverlayLane::Turn::Idle;
+    OverdubOverlayLane::Turn lastTurn = OverdubOverlayLane::Turn::Idle;
+    for (unsigned turn = 0; turn < 600 && candidate == nullptr; ++turn) {
+      lastTurn = t.serviceOverdubOverlayWindow();
+      if (turn == 0) firstTurn = lastTurn;
+      const RuntimePlaybackView* now = rt.overdubOverlayCandidate();
+      if (now != nullptr && now->complete) candidate = now;
+    }
+    // The first turn admits the borrow (`BaseStarted`); the loop then drives grains (`BaseBuilding`), attaches the
+    // overlay (`OverlayStarted`) and completes it (`OverlayBuilding`). The next turn, with nothing appended, reports the
+    // retained identity itself (`CandidateReady`) — that is the named reading, not an inference from the flags.
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(OverdubOverlayLane::Turn::BaseStarted),
+                                    static_cast<uint8_t>(firstTurn),
+                                    "the owner turn must admit the borrowed base (not wait, refuse or defer)");
+    TEST_ASSERT_TRUE_MESSAGE(OverdubOverlayLane::progressed(lastTurn), "the completing turn must progress");
+    TEST_ASSERT_NOT_NULL_MESSAGE(candidate, "the borrowed base must complete into the combined candidate");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(OverdubOverlayLane::Turn::CandidateReady),
+                                    static_cast<uint8_t>(t.serviceOverdubOverlayWindow()),
+                                    "a retained, current candidate reports itself and builds nothing");
+    TEST_ASSERT_TRUE(candidate->passOriginsReady);
+    TEST_ASSERT_FALSE(candidate->canonicalRanksReady);
+    TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Capture, candidate->source.origin);
+    TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, candidate->source.playbackRevision);
+    TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), candidate->source.captureContentGeneration);
+    TEST_ASSERT_EQUAL_UINT32(full.startPhase, candidate->coverage.startPhase);
+    TEST_ASSERT_EQUAL_UINT32(full.lengthTicks, candidate->coverage.lengthTicks);
+    // The committed base rows keep their pass origin; the live note (70, before the wrap) is carried once with the
+    // named sentinel, which is exactly the provenance slice 3 classifies on.
+    unsigned overlayRows = 0, committedRows = 0;
+    bool liveOn = false, liveOff = false;
+    for (size_t row = 0; row < candidate->storage.eventCount; ++row) {
+      const auto& event = candidate->storage.events[row];
+      if (candidate->passOrigins[row].pass == kLiveOverlayPassOrigin) {
+        ++overlayRows;
+        TEST_ASSERT_EQUAL_UINT16(kLiveOverlayCanonicalRank, candidate->canonicalRanks[row]);
+        if (event.data.noteData.note == 70 && event.isNoteOn()) liveOn = true;
+        if (event.data.noteData.note == 70 && !event.isNoteOn()) liveOff = true;
+      } else {
+        ++committedRows;
+      }
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, overlayRows, "the live overdub note is carried once, with its Off");
+    TEST_ASSERT_TRUE(liveOn);
+    TEST_ASSERT_TRUE(liveOff);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, committedRows, "the committed base half keeps its own four rows");
+    TEST_ASSERT_TRUE(rt.frozenCompanionPasses.idle()); // the borrow is released once the base is copied
+
+    // (ii-b) **Append-stable tail.** A live note that arrives after the window is complete extends the **same** window
+    // in place: the earlier rows stay exactly once and the new pair lands with the overlay sentinel. The capture
+    // generation advances (every accepted input row does — it is the append frontier), while the committed base
+    // identity does not, which is why retention is keyed on the base and the extension consumes the frontier.
+    const uint32_t rowsBefore = static_cast<uint32_t>(candidate->storage.eventCount);
+    const uint64_t generationBeforeAppend = loop.captureContentGeneration();
+    t.noteOn(1, 72, 100, kLoopTicks + 1200);
+    t.noteOff(1, 72, 0, kLoopTicks + 1260);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(generationBeforeAppend, loop.captureContentGeneration(),
+                                  "every accepted input row advances the capture generation: it is the append frontier");
+    TEST_ASSERT_TRUE_MESSAGE(t.overdubOverlayRetentionForSlot(0, 1024).candidateBaseCurrent,
+                             "the candidate's base still answers the demand after an append");
+    OverdubOverlayLane::Turn appended = OverdubOverlayLane::Turn::Idle;
+    bool sawExtensionGrain = false;
+    for (unsigned turn = 0; turn < 200 && appended != OverdubOverlayLane::Turn::CandidateReady; ++turn) {
+      appended = t.serviceOverdubOverlayWindow();
+      sawExtensionGrain = sawExtensionGrain || appended == OverdubOverlayLane::Turn::OverlayBuilding;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(sawExtensionGrain, "the appended rows are copied and re-ordered by an overlay grain");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(OverdubOverlayLane::Turn::CandidateReady),
+                                    static_cast<uint8_t>(appended),
+                                    "the retained candidate must re-complete after the appended rows");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(rowsBefore + 2, static_cast<uint32_t>(candidate->storage.eventCount),
+                                     "the append extends the same window, never a second one");
+    TEST_ASSERT_TRUE(candidate->complete);
+    unsigned note70 = 0, note72 = 0;
+    for (size_t row = 0; row < candidate->storage.eventCount; ++row) {
+      const auto& event = candidate->storage.events[row];
+      if (candidate->passOrigins[row].pass != kLiveOverlayPassOrigin) continue;
+      if (event.data.noteData.note == 70) ++note70;
+      if (event.data.noteData.note == 72) ++note72;
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, note70, "the earlier overlay pair is not duplicated by the extension");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, note72, "the appended pair is carried once, with the overlay sentinel");
+
+    // (iii) **A retained, current candidate refuses the stopped oracle by name** — the oracle may not build underneath
+    // it, and the candidate must survive the refusal untouched.
+    const CandidateRetention current = t.overdubOverlayRetentionForSlot(0, 1470);
+    TEST_ASSERT_TRUE(current.overlayCandidateRetained);
+    TEST_ASSERT_TRUE_MESSAGE(current.candidateIdentityCurrent, "the retained candidate is current for its demand");
+    {
+      OracleRebuildDecision decision = OracleRebuildDecision::Allowed;
+      const RuntimeCanonicalPassInputs::CurrentSource liveInputs{loop.playbackRevision, generation,
+          loop.loopLengthTicks, loop.canonicalStorageGeneration};
+      TEST_ASSERT_FALSE(rt.publishStoppedCanonicalOracleView(loop.passes, candidate->passOriginSource, liveInputs,
+                                                            nullptr, 0, full, current, &decision));
+      TEST_ASSERT_EQUAL_MESSAGE(OracleRebuildDecision::RefusedRetainedCandidate, decision,
+                                "the oracle must not rebuild underneath a live overlay candidate");
+      TEST_ASSERT_EQUAL_PTR_MESSAGE(candidate, rt.overdubOverlayCandidate(), "a refused oracle overwrites nothing");
+      TEST_ASSERT_TRUE(candidate->complete);
+    }
+
+    // (iv) **The retention rule** this lane and the oracle share: the committed revision, the coverage or the demand
+    // itself moving makes the candidate stale. The live generation is deliberately *not* a retirement reason — every
+    // accepted input row advances it, and that is the append frontier the extension above consumed; it is only the
+    // stricter claim currency (`candidateIdentityCurrent`).
+    const Track::OverdubOverlayDemand demandNow = t.overdubOverlayDemandForSlot(0, 1470);
+    const PlaybackViewSourceIdentity baseNow{demandNow.playbackRevision, generation,
+                                             loop.publishedSnapshotIdentity()};
+    PlaybackViewSourceIdentity revisionDrift = baseNow;
+    ++revisionDrift.playbackRevision;
+    TEST_ASSERT_FALSE(candidateRetention(candidate, true, revisionDrift, demandNow.captureGeneration,
+                                         demandNow.coverage).candidateBaseCurrent);
+    const auto generationDrift = candidateRetention(candidate, true, baseNow,
+                                                    demandNow.captureGeneration + 1, demandNow.coverage);
+    TEST_ASSERT_TRUE_MESSAGE(generationDrift.candidateBaseCurrent,
+                             "an advancing live generation does not retire a candidate whose base still answers");
+    TEST_ASSERT_FALSE(generationDrift.candidateIdentityCurrent);
+    PlaybackCoverageInterval narrowed = demandNow.coverage;
+    narrowed.lengthTicks -= 1;
+    TEST_ASSERT_FALSE_MESSAGE(candidateRetention(candidate, true, baseNow,
+                                                 demandNow.captureGeneration, narrowed).candidateBaseCurrent,
+                              "committed-base coverage mismatch invalidates the retained candidate");
+    TEST_ASSERT_FALSE(candidateRetention(candidate, false, baseNow, demandNow.captureGeneration,
+                                         demandNow.coverage).candidateBaseCurrent);
+  }
+
   const Track::OverdubOverlayDemand live = t.overdubOverlayDemandForSlot(0, 1470);
   TEST_ASSERT_TRUE(live.owed);
   TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), live.captureGeneration);
@@ -7229,6 +7392,33 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
   const Track::OverdubOverlayDemand afterWrap = t.overdubOverlayDemandForSlot(0, 0);
   TEST_ASSERT_FALSE_MESSAGE(afterWrap.owed, "a re-based store carries nothing, so nothing is owed");
 
+  // (4b) **The generation advance retires the retained candidate before anything can reuse the borrow.** The pass
+  // commit moved the live identity; the lane's own turn must retire (not continue) the candidate, and the build role
+  // must no longer hold a servable window.
+  {
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    TEST_ASSERT_NOT_NULL_MESSAGE(rt.overdubOverlayCandidate(), "fixture precondition: a candidate survived to the wrap");
+    t.serviceOverdubOverlayWindow();
+    TEST_ASSERT_NULL_MESSAGE(rt.overdubOverlayCandidate(),
+                             "a pass commit must retire the retained overlay candidate");
+    RuntimePlaybackViewSet* set = rt.viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    TEST_ASSERT_FALSE_MESSAGE(set->views[set->lifecycle.build].complete,
+                              "a retired candidate must not remain complete-looking");
+    // The builder must be **detached**, not merely flag-cleared: a stale live projection makes `nextGrain()` deny and
+    // clears the view's flags, so a currency-based detachment would leave the builder bound to the retired candidate
+    // and every later turn would repeat `RetiredStale` without ever building again.
+    TEST_ASSERT_FALSE_MESSAGE(rt.viewBuild.overlayContinuationActive(),
+                              "retirement must detach the append-stable builder");
+    // And the stopped-oracle decision returns to its existing path immediately: no candidate, so `Allowed`.
+    OverdubOverlayLane::OracleRebuildDecision after = OverdubOverlayLane::OracleRebuildDecision::RefusedRetainedCandidate;
+    (void)rt.publishStoppedCanonicalOracleView(loop.passes, rt.canonicalPrefixSource,
+                                               {loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+                                                loop.loopLengthTicks, loop.canonicalStorageGeneration},
+                                               nullptr, 0, {0, loop.loopLengthTicks, loop.loopLengthTicks}, {}, &after);
+    TEST_ASSERT_EQUAL(OverdubOverlayLane::OracleRebuildDecision::Allowed, after);
+  }
+
   // (5) A pending stop ends the demand as well: the overlay lane never owns a boundary once the session is stopping.
   t.noteOn(1, 71, 100, kLoopTicks + 1536 + 200);
   t.noteOff(1, 71, 0, kLoopTicks + 1536 + 260);
@@ -7238,6 +7428,75 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
   TEST_ASSERT_FALSE(t.isOverdubbing());
   TEST_ASSERT_FALSE_MESSAGE(t.overdubOverlayDemandForSlot(0, 320).owed,
                            "a stopping session owes no overlay boundary");
+}
+
+// Task 3.15e slice 2b-ii-b — **a boundary releases the borrow, even when it arrives mid base-fill.**
+//
+// The stop edge moves the track to `TRACK_OVERDUB_STOPPING` (or PLAYING for a retargeted stop) before the deferred
+// finalizer runs, so a lane that checks `isOverdubbing()` first would never reach its release clause: the one borrowed
+// companion instance would stay held while the canonical tail/oracle is exactly the owner that needs it. This fixture
+// borrows the instance with one owner turn, stops before the base completes, and requires the lane's next visit to free
+// it (**and** detach the builder, so a re-based capture cannot leave the builder bound to a retired half forever).
+void test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance() {
+  static constexpr uint32_t kLoopTicks = 2u * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  Loop* loopPtr = nullptr;
+  stageTwoBarWorld(t, 0, loopPtr);
+  TEST_ASSERT_NOT_NULL(loopPtr);
+  Loop& loop = *loopPtr;
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  const auto position = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+  };
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  uint8_t nextTrack = 0;
+  const auto serviceCanonicalTurn = [&]() {
+    return MidiServiceDrain::serviceCanonicalPrefixTurn(
+        MidiServiceDrain::DeferredIdleOwner::VisualCache, Config::NUM_TRACKS, nextTrack,
+        [&](uint8_t index) {
+          if (index != 0) return false;
+          const Loop& active = t.getActiveLoop();
+          return MidiServiceDrain::canonicalPreparationHasPriorityWork(
+              t.isOverdubbing(), active.visualCacheDirty, active.hasDeferredVisualCacheWrapAppend(),
+              active.overdubSourceSpanCacheReady());
+        },
+        [&](uint8_t index) { return index == 0 && trackManager.getTrack(0).processDeferredCanonicalPrefix(); });
+  };
+
+  position(kLoopTicks + 1024);
+  t.startOverdubbing(kLoopTicks + 1024);
+  t.noteOn(1, 70, 100, kLoopTicks + 1470);
+  t.noteOff(1, 70, 0, kLoopTicks + 1500);
+  if (!loop.overdubSourceSpanCacheReady()) loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn) (void)serviceCanonicalTurn();
+  TEST_ASSERT_TRUE(rt.canonicalPassInputs.ready());
+
+  // One owner turn is enough to borrow the instance and start the base half.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(OverdubOverlayLane::Turn::BaseStarted),
+                                  static_cast<uint8_t>(t.serviceOverdubOverlayWindow()),
+                                  "the lane admits the borrowed base on its first owner turn");
+  TEST_ASSERT_FALSE_MESSAGE(rt.frozenCompanionPasses.idle(), "fixture precondition: the borrow is in flight");
+
+  // The user stops before the base completes. The stop edge leaves OVERDUBBING immediately.
+  position(kLoopTicks + 1520);
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  // The lane's next visit must release the instance **before** the finalizer can need it.
+  (void)t.serviceOverdubOverlayWindow();
+  TEST_ASSERT_TRUE_MESSAGE(rt.frozenCompanionPasses.idle(),
+                           "a stop must release the one borrowed companion instance");
+  TEST_ASSERT_TRUE_MESSAGE(rt.frozenCompanionApply.available(),
+                           "the stop's canonical tail/oracle can now admit the instance");
+  TEST_ASSERT_FALSE_MESSAGE(rt.viewBuild.active(), "the half-built base must not stay in the one builder");
+  TEST_ASSERT_NULL(rt.overdubOverlayCandidate());
 }
 
 // Task 3.15e — **the live overdub overlay is served exactly once through the wrap, the pass handoff and the stop.**
@@ -7513,6 +7772,7 @@ void test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval);
+  RUN_TEST(test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance);
   RUN_TEST(test_3_15e_a_live_overdub_is_served_exactly_once_through_the_wrap_and_the_pass_handoff);
   RUN_TEST(test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_bars);
   RUN_TEST(test_3_15a_a_committed_overdub_is_served_exactly_once_per_traversal_across_the_wrap);

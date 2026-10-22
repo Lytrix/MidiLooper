@@ -1869,11 +1869,22 @@ TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) 
           runtime->mergedMidiEvents.builtFromSnapshotIdentity};
       const RuntimeCanonicalPassInputs::CurrentSource live{loop.playbackRevision, playbackGeneration,
           loop.loopLengthTicks, loop.canonicalStorageGeneration};
+      // 3.15e/2b-ii-b: a retained overdub-overlay candidate owns the borrowed companion instance **by identity**, so
+      // the stopped oracle asks the named decision before it builds. A stale candidate is retired first; a current one
+      // refuses this turn. Either way, the bytes must never be reinterpreted as oracle output underneath it.
+      const uint32_t overlayPhase = IntervalProjection::tickPhaseInProjectionCycle(
+          currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
+      OverdubOverlayLane::OracleRebuildDecision overlayDecision = OverdubOverlayLane::OracleRebuildDecision::Allowed;
       if (!runtime->publishStoppedCanonicalOracleView(loop.passes, sourceIdentity, live,
-              runtime->mergedMidiEvents.mergedEvents.data(), runtime->mergedMidiEvents.mergedEvents.size(), coverage)) {
-        (void)runtime->publishStoppedOracleView(runtime->mergedMidiEvents.mergedEvents.data(),
-                                                runtime->mergedMidiEvents.mergedEvents.size(),
-                                                sourceIdentity, coverage);
+              runtime->mergedMidiEvents.mergedEvents.data(), runtime->mergedMidiEvents.mergedEvents.size(), coverage,
+              overdubOverlayRetentionForSlot(slotIndex, overlayPhase), &overlayDecision)) {
+        // A live candidate owns this turn's boundary; publishing the raw fallback under it would report a boundary the
+        // candidate still answers. Every other refusal keeps the existing fallback exactly as it was.
+        if (overlayDecision != OverdubOverlayLane::OracleRebuildDecision::RefusedRetainedCandidate) {
+          (void)runtime->publishStoppedOracleView(runtime->mergedMidiEvents.mergedEvents.data(),
+                                                  runtime->mergedMidiEvents.mergedEvents.size(),
+                                                  sourceIdentity, coverage);
+        }
       }
     }
   }
@@ -6472,7 +6483,11 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
     if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
         set->lifecycle.build != set->lifecycle.current && set->lifecycle.build != set->lifecycle.ready &&
-        set->lifecycle.build != set->lifecycle.retained) {
+        set->lifecycle.build != set->lifecycle.retained &&
+        // 3.15e/2b-ii-b: a retained overlay candidate is complete and unpublished by design; it is not a leftover
+        // shell, and only its own retirement may clear it. Read it through the runtime owner (flash), never by
+        // re-deriving the candidate predicate here.
+        runtime->overdubOverlayCandidate() != &set->views[set->lifecycle.build]) {
       // The lifecycle's build role is private. Clear leftover completion metadata
       // before current-root qualification so it can reuse the existing buffer.
       set->views[set->lifecycle.build].resetMetadata();
@@ -6533,7 +6548,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
         !set->views[set->lifecycle.build].published &&
         set->views[set->lifecycle.build].complete &&
-        !(set->views[set->lifecycle.build].source == source)) {
+        !(set->views[set->lifecycle.build].source == source) &&
+        // 3.15e/2b-ii-b: a retained overlay candidate is not a leftover shell; its own retirement clears it.
+        runtime->overdubOverlayCandidate() != &set->views[set->lifecycle.build]) {
       set->views[set->lifecycle.build].resetMetadata();
     }
     const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
@@ -6897,6 +6914,141 @@ TRACK_COLD_MEM Track::OverdubOverlayDemand Track::overdubOverlayDemandForSlot(ui
   demand.captureGeneration = loop.captureContentGeneration();
   demand.playbackRevision = loop.playbackRevision;
   return demand;
+}
+
+TRACK_COLD_MEM OverdubOverlayLane::CandidateRetention Track::overdubOverlayRetentionForSlot(
+    uint8_t slotIndex, uint32_t playheadPhase) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return {};
+  const RuntimePlaybackView* candidate = runtime->overdubOverlayCandidate();
+  if (candidate == nullptr) return {};
+  const OverdubOverlayDemand demand = overdubOverlayDemandForSlot(slotIndex, playheadPhase);
+  const PlaybackViewSourceIdentity base{demand.playbackRevision, playbackGeneration,
+                                        loopForSlot(slotIndex).publishedSnapshotIdentity()};
+  // One identity rule for the lane turn and the stopped oracle: the committed base identity and coverage must still be
+  // the demand's, and a demand that ended leaves nothing for the candidate to answer.
+  return OverdubOverlayLane::candidateRetention(candidate, demand.owed, base, demand.captureGeneration,
+                                               demand.coverage);
+}
+
+/// **3.15e/2b-ii-b — the overlay lane's production owner turn.** Same per-track, off-clock visit as the NOTE_EDIT
+/// preview service (`main.cpp`, the `PlaybackViewMaintenance` owner). Order is deliberate:
+///
+/// 1. **a boundary wins** — a pending stop, an accepted interaction or a wrap append retires the candidate and releases
+///    the borrow, so the finalizer never waits for background preparation (this must be checked before the overdub state:
+///    the stop edge already leaves `TRACK_OVERDUBBING`);
+/// 2. **retirement before reuse** — a candidate whose committed base no longer answers the demand is retired before any
+///    other owner can reinterpret the borrowed storage;
+/// 3. only then observe the prerequisite (`BaseReady`), and on that answer drive **one grain** of the borrowed base
+///    fill → continuation → append-stable tail. The lane never advances canonical preparation itself.
+TRACK_COLD_MEM OverdubOverlayLane::Turn Track::serviceOverdubOverlayWindow() {
+  using OverdubOverlayLane::Turn;
+  if (!loopsAllocated()) return Turn::Idle;
+  const uint8_t slot = getActiveLoopIndex();
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr) return Turn::Idle;
+  Loop& loop = loopForSlot(slot);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) return Turn::Idle;
+  // (0) **A boundary owns the turn** — a pending stop, an accepted interaction or a wrap append. This is checked
+  // **before** the overdub state, because the stop edge already moves the track to `TRACK_OVERDUB_STOPPING` (or
+  // PLAYING for a retargeted stop): gating on `isOverdubbing()` first would make this release unreachable for exactly
+  // the finalizer it protects. Retire the candidate (its identity is about to move) and free the one companion
+  // instance, so the canonical tail/oracle can never wait on this lane's background preparation.
+  if (hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction() ||
+      loop.hasDeferredVisualCacheWrapAppend()) {
+    (void)runtime->retireOverdubOverlayCandidate(); // no candidate is a no-op
+    if (runtime->overdubOverlayBorrowHeld() || runtime->viewBuild.overlayContinuationActive()) {
+      runtime->viewBuild.discard();
+      runtime->frozenCompanionPasses.discard();
+    }
+    return Turn::Deferred;
+  }
+  // The lane exists only for a live overdub. Outside one, a leftover candidate cannot answer anything: retire it here
+  // rather than leaving the stopped oracle to discover it. This also keeps the common per-track visit to one predicate.
+  if (!isOverdubbing()) {
+    if (runtime->overdubOverlayCandidate() != nullptr) {
+      (void)runtime->retireOverdubOverlayCandidate();
+      return Turn::RetiredStale;
+    }
+    // A session that ended without a stop job (or whose job already retired) can still leave a base half borrowed;
+    // release it so the instance is never stranded outside the boundary branch.
+    if (runtime->overdubOverlayBorrowHeld() || runtime->viewBuild.overlayContinuationActive()) {
+      runtime->viewBuild.discard();
+      runtime->frozenCompanionPasses.discard();
+    }
+    return Turn::Idle;
+  }
+  const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
+  const uint32_t tickNow = clock.epoch != 0 ? static_cast<uint32_t>(clock.tick) : clockManager.getCurrentTick();
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      getEffectivePlaybackTick(tickNow), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  const OverdubOverlayDemand demand = overdubOverlayDemandForSlot(slot, phase);
+  const PlaybackViewSourceIdentity baseSource{demand.playbackRevision, playbackGeneration,
+                                             loop.publishedSnapshotIdentity()};
+
+  // (1) The candidate's identity is the authority. Once stale, retire it before any other owner can reinterpret the
+  // borrowed bytes as its own output.
+  const OverdubOverlayLane::CandidateRetention retention = overdubOverlayRetentionForSlot(slot, phase);
+  if (OverdubOverlayLane::mustRetire(retention)) {
+    (void)runtime->retireOverdubOverlayCandidate();
+    return Turn::RetiredStale;
+  }
+  if (!demand.owed || !demand.baseCommitted) {
+    // The demand ended before the base half completed: release the borrow and the half-built window (a retained
+    // candidate would already have been retired above).
+    if (runtime->overdubOverlayBorrowHeld()) {
+      runtime->viewBuild.discard();
+      runtime->frozenCompanionPasses.discard();
+    }
+    return Turn::Idle;
+  }
+
+  OverdubOverlayLane::BuildRequest request;
+  request.baseSource = baseSource;
+  request.coverage = demand.coverage;
+  request.captureGeneration = demand.captureGeneration;
+  request.playheadPhase = phase;
+
+  // A retained, current candidate: only the append-stable tail may move (one grain), and the build is already ours.
+  if (retention.overlayCandidateRetained) {
+    return runtime->stepOverdubOverlayBuild(request, loop, kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+  }
+
+  // (2) **The lane is already mid-build.** `observe()` is the *admission* decision; once this lane holds the borrow or
+  // the append-stable continuation, the companion instance being busy is its own work, not a refusal. The marker is
+  // exact: the instance is held and no other owner that uses it (canonical window/tail, capture bridge) is in flight.
+  if (runtime->overdubOverlayBorrowHeld() || runtime->viewBuild.overlayContinuationActive()) {
+    return runtime->stepOverdubOverlayBuild(request, loop, kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+  }
+
+  // (3) Observe the one prerequisite. Readiness is reported, never advanced: the committed canonical owner is the only
+  // driver (`processDeferredCanonicalPrefix`), which the liveness measurement proved runs under overlay-only demand.
+  OverdubOverlayLane::Observation observation;
+  observation.demandOwed = demand.owed;
+  observation.baseCommitted = demand.baseCommitted;
+  observation.canonicalReady = runtime->canonicalPrefixPhase ==
+          LoopPlaybackRuntime::CanonicalPrefixPhase::Ready &&
+      runtime->canonicalPassInputs.ready() && (runtime->canonicalPrefixSource == baseSource);
+  observation.committedRevision = demand.playbackRevision;
+  observation.canonicalGeneration = runtime->canonicalPassInputs.generation();
+  observation.captureGeneration = demand.captureGeneration;
+  observation.coverage = demand.coverage;
+  observation.companionAvailable = runtime->frozenCompanionPasses.idle() &&
+      runtime->frozenCompanionApply.available();
+  switch (OverdubOverlayLane::observe(observation)) {
+    case OverdubOverlayLane::Step::NotRequired: return Turn::Idle;
+    case OverdubOverlayLane::Step::WaitingCanonicalBase: return Turn::WaitingCanonicalBase;
+    case OverdubOverlayLane::Step::BaseFillRefused: return Turn::BaseFillRefused;
+    case OverdubOverlayLane::Step::RetireStaleCandidate:
+      (void)runtime->retireOverdubOverlayCandidate();
+      return Turn::RetiredStale;
+    case OverdubOverlayLane::Step::BaseReady: break;
+  }
+  // One builder per slot: until role arbitration (2b-iii) the lane defers rather than competing for it.
+  if (!runtime->overdubOverlayBuildExclusive()) return Turn::Deferred;
+  RuntimePlaybackViewBuild::PreparationTurn turn(runtime->viewBuild);
+  if (!turn) return Turn::Deferred;
+  return runtime->stepOverdubOverlayBuild(request, loop, kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
 }
 
 TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,

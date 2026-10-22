@@ -397,3 +397,133 @@ it, so both images stand.
 **Remaining for step 2:** the fill itself (borrowed `RuntimeCompanionPasses` → Fill/Order → `beginLiveOverlayContinuation` →
 append-stable tail) and wiring `oracleRebuildDecision` into the oracle path. The wiring is a firmware change and is the first
 unit of work that needs both builds and the RAM1 gates again.
+
+## 2b-ii-b step 2 (completion) — the owner build and the oracle collision, wired (2026-10-22; firmware, nothing audible)
+
+Step 2's second half is now production code, still behind `PLAYBACK_WINDOW_ROLLING_ENABLED` and still emitting nothing:
+
+```
+overdubOverlayDemandForSlot          arrives only on a live overdub with a committed base
+        ↓
+observe()                            BaseReady (canonical ready + the one companion instance free)
+        ↓
+frozenCompanionPasses.begin(...)     the **borrowed** provenance-bearing base (owned companion instance)
+        ↓
+viewBuild.begin(... PlaybackCoverage) → Fill → Order
+        ↓
+beginLiveOverlayContinuation(...)    same build identity, append-stable live source
+        ↓
+frozenCompanionPasses.discard()      the borrow is released as soon as the base is copied (the append half
+                                     does not reference it — the continuation nulls the baseline)
+        ↓
+Fill → Order → retained combined candidate (append frontier extended on each owner turn)
+```
+
+The lifecycle is a **stateless** owner turn: `LoopPlaybackRuntime::stepOverdubOverlayBuild` reads its phase from the
+builder (`active` / `overlayContinuationActive` / `nextGrain`) and from `frozenCompanionPasses.idle()/ready()`. No field was
+added to `LoopPlaybackRuntime`, `Track`, `RuntimePlaybackView` or `RuntimePlaybackViewBuild`; the pinned sizes are the pins
+(`7 904` target / `10 104` host, static_asserts unchanged).
+
+**Production entry.** `Track::serviceOverdubOverlayWindow()` runs on the same per-track, off-clock visit as the NOTE_EDIT
+preview service (`main.cpp`, the `PlaybackViewMaintenance` owner) and returns a **named** `OverdubOverlayLane::Turn`:
+`Idle`, `WaitingCanonicalBase`, `BaseFillRefused`, `Deferred`, `BaseStarted`, `BaseBuilding`, `OverlayStarted`,
+`OverlayBuilding`, `CandidateReady`, `RetiredStale`, `Denied`. It observes canonical readiness and never advances it; when
+another owner holds the slot's builder or prerequisite workers it **defers** by name (role arbitration is 2b-iii).
+
+**The collision rule, wired.** `publishStoppedCanonicalOracleView` takes the `CandidateRetention` and consults
+`oracleRebuildDecision` **before** any companion build or admission term:
+
+| Retention | Behavior |
+|---|---|
+| none | `Allowed` — the oracle borrows exactly as before (decision reported to the caller) |
+| retained, base current | `RefusedRetainedCandidate` — returns before any mutation; the candidate and `current` are untouched; the raw fallback is skipped for exactly this decision |
+| retained, base stale | `RetireCandidateFirst` — retires the candidate **inside the call** (detaching its builder), then continues on the existing path |
+
+**The retention rule, corrected by measurement.** `captureContentGeneration()` advances on **every accepted input row**
+(`LoopCapture.cpp`, after each append), so it is the **append frontier**, not a pass identity. Retention is therefore keyed
+on the **committed base** — the base fill's own provenance source (`passOriginSource`: revision, source generation, snapshot
+identity) plus coverage plus "the demand is still owed". A genuinely re-based capture (wrap commit, stop, re-base) is caught
+by the builder's own live-source currency (`nextGrain() == Denied`), which retires the candidate through the same path. The
+strict `candidateIdentityCurrent` (base **and** live generation) remains available for slice-2 arbitration's claim, but it is
+explicitly not the retirement predicate: a candidate one append behind must be extended, not retired.
+
+**One found by this slice's own gates:** the inline candidate predicate was instantiated out of line in the one window-build
+TU, landed in ITCM as a weak symbol and pulled a flash→ITCM veneer (**+64 B of ITCM**). Reading the candidate through the
+runtime owner (`runtime->overdubOverlayCandidate()`, flash) instead restored the **exact** pins — no re-base, and no new
+`FLASHMEM` inline-COMDAT hazard (the class the boot regression already taught us).
+
+### Focused independent review (bounded lifecycle review, `docs/Agents/reviewer.md`)
+
+One focused review was run. Six concrete findings; two were blocking and are fixed and covered by new assertions:
+
+| # | Finding | Repair |
+|---|---|---|
+| **V1** | The `!isOverdubbing()` early return ran before the boundary branch, but the stop edge already moves the track to `TRACK_OVERDUB_STOPPING` (or PLAYING for a retargeted stop). A stop **mid base-fill** therefore never released the borrowed companion instance — the canonical tail/oracle would wait on this lane. | The boundary branch is now **first**, and the non-overdub branch also releases; new case drives `BaseStarted` → `stopOverdubbing()` → one lane turn and requires `frozenCompanionPasses.idle()`, `frozenCompanionApply.available()`, `!viewBuild.active()`. |
+| **V2** | Retirement detached the builder only when `activeDestinationIs`/`completedDestinationIs` held. After a re-based capture `nextGrain()` denies **and clears** the view's flags, so neither held and the builder stayed bound to the retired candidate — every later turn would report `RetiredStale` and never build again. | Detachment now keys on the **binding** (`RuntimePlaybackViewBuild::boundToDestination`). The wrap-retirement case asserts `!overlayContinuationActive()`. |
+| R1 | `candidateBaseCurrent` compared revision + coverage only; a snapshot republication at the same revision looked current for a base it no longer held. | The rule now compares the base's **provenance identity** (`passOriginSource`, including the snapshot pointer); the continuation nulls `source`'s snapshot by design, so provenance is the authority. Unit row added. |
+| R2 | The by-construction exclusion omitted `completedPromisePendingJudgement` and `ownsCoverageSource()`, both of which sibling admissions include. | Both terms added; the lane defers instead of competing. |
+| R3 | The Record-return path's "leftover shell" resets could silently clear a retained candidate. | Both resets now skip the retained candidate (read through the runtime owner). |
+| R4 | The new test comment claimed a NoteOn append retires the candidate. | Comment corrected; the append fixture now carries a **live NoteOn pair** through the extension, which is the row the overlay exists to serve. |
+
+The reviewer's own coverage gaps are recorded: it did not build or run the suites (all numbers below are measured here), and
+its `RefusedRetainedCandidate` note stands — at STOPPED the demand is no longer owed, so production normally resolves to
+`RetireCandidateFirst`; the current-candidate refusal is the fail-closed branch, exercised by the unit fixture.
+
+**Historical decision check (read against the patch):** DEC-060 (canonical per-pass companion application — the borrowed
+`RuntimeCompanionPasses` form is the one the fill accepts; unchanged), DEC-066 (companion-row reserve accounting — no new
+storage), DEC-069 (wrap commit/revision transition — the trigger the retirement covers), DEC-070 (a retargeted stop keeps
+its companion work — V1 is a new route into its raw-only fallback, repaired rather than superseded), DEC-108/DEC-116 (one
+window owner, one declared grain per owner turn — respected: the lane observes only, one grain per turn, no new scheduler),
+DEC-063 (undo prewarm — untouched). No superseding entry is required; no `3.15e` DEC exists yet by design (slice 3 owns the
+emission rule).
+
+### Cases (all through a production path)
+
+| Case | Where | Expected (measured) |
+|---|---|---|
+| companion unavailable | production entry, canonical window in flight | `Turn::BaseFillRefused`, no candidate, no active builder |
+| borrowed base → continuation | production entry on a live overdub | `BaseStarted` … `OverlayBuilding`; retained candidate with 4 committed rows + the live pair, `passOriginsReady`, `canonicalRanksReady == false`, sentinel provenance, base/overlay identity split |
+| append-stable tail | same candidate, a new live NoteOn pair | an `OverlayBuilding` grain extends the **same** window (+2 rows, earlier rows once); `candidateBaseCurrent` survives the generation advance |
+| current candidate vs oracle | real slot runtime | `RefusedRetainedCandidate`, candidate and `current` untouched |
+| coverage / revision / snapshot drift | identity rule (unit + integration) | `candidateBaseCurrent == false` (`mustRetire`) |
+| stale candidate vs oracle | unit fixture with the real oracle | `RetireCandidateFirst`, candidate cleared **and builder detached**, oracle then publishes |
+| wrap generation/revision change | live overdub through the real wrap | the lane retires the candidate; retired view is not complete; builder detached; next oracle decision `Allowed` |
+| stop mid base-fill | live overdub, one lane turn, then `stopOverdubbing()` | the borrow is released, `frozenCompanionApply` available, builder inactive |
+
+### Gates (all measured here)
+
+| Gate | Command | Result |
+|---|---|---|
+| Focused (runtime/slice) | `pio test -e native -f test_playback_prewarm` | **245 / 245** (244 + the new oracle-collision case) |
+| Focused (production lane) | `pio test -e native -f test_shared_capture_finalization` | **92 / 92** (91 + the new stop-mid-base-fill case; the 3.15e fixture extended) |
+| Full native | `pio test -e native` | **3 402 / 7 skipped / 3 395 succeeded / 0 failed** (baseline 3 400 / 7 / 3 393) |
+| Default build | `pio run -e teensy41-capture-serial` | SUCCESS — `391 688 + 1 528`, **byte-identical to the approved pin** |
+| Lane build | `pio run -e teensy41-capture-serial-window-qualification` | SUCCESS — `391 848 + 1 368`, **byte-identical to the approved pin** |
+| Runtime size pins | compile-time `static_assert` | `sizeof(LoopPlaybackRuntime)` `7 904` target / `10 104` host, unchanged |
+| Spec | `openspec validate windowed-playback-generation --strict` | valid |
+| Whitespace | `git diff --check` | clean |
+| Device | — | **NOT RUN** (3.15f; nothing is emitted) |
+
+### Mutations (each RED exactly its row, restored byte-identically)
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | the oracle ignores `CandidateRetention` (always `Allowed`) | the current-candidate refusal row (`Expected 2 Was 0`) |
+| M2 | retirement clears the flags but keeps the binding | the stale-candidate-retired assertion |
+| M3 | the identity rule drops coverage | the coverage-mismatch row |
+| M4 | the tail never extends (`extendLiveCapture` branch removed) | the append-stable row (no `OverlayBuilding` grain) |
+| M5 | `mustRetire` uses `candidateIdentityCurrent` instead of `candidateBaseCurrent` | the generation-drift row — an append would retire the candidate |
+| M6 (found by review, then fixed) | the old order (`!isOverdubbing()` before the boundary) | the stop-mid-base-fill case (`the borrow is released`) |
+| M7 (found by review, then fixed) | the old currency-based detachment | the wrap-retirement case (`retirement must detach the append-stable builder`) |
+
+### Not claimed / owed
+
+- **Nothing is adopted and nothing is emitted.** The `ActiveCaptureOverdub` echo stays authoritative (slice 3 owns the
+  edge, the echo skip and the ledger rule; the DEC belongs there).
+- **Role arbitration is 2b-iii.** The lane defers when another owner holds the builder; it does not yet ask the resolver or
+  retire a losing `ready` candidate.
+- **Slot switching mid-overdub** is out of scope: the lane visits the active slot, and the runtime reset owns the old
+  slot's resources.
+- **Device evidence is 3.15f.** No physical claim follows from native gates.
+- `WaitingCanonicalBase` remains silent at the call site (named outcome only); its reported (`CanonicalDependencyDeferred`)
+  form stays with the arbitration slice.

@@ -25,6 +25,7 @@
 #include "RuntimeCanonicalPassInputs.h"
 #include "RuntimeNotePairLookup.h"
 #include "Utils/WorkingSetLease.h"
+#include "Utils/OverdubOverlayLane.h"
 #include "Utils/PlaybackSourceReadGuard.h"
 
 class Loop;
@@ -1150,9 +1151,41 @@ struct LoopPlaybackRuntime {
                                 const PlaybackCoverageInterval& coverage);
   /// STOPPED-only construction using idle prewarmed workers. Publishes origins
   /// only when canonical normalization/merge matches the existing oracle.
+  ///
+  /// **3.15e/2b-ii-b — the borrow's collision rule.** `overlayRetention` names whether a retained overdub-overlay
+  /// candidate owns the borrowed companion storage. The decision is consulted **before** any companion build:
+  /// no candidate → `Allowed`; a retained candidate whose identity still matches → `RefusedRetainedCandidate`
+  /// (refused by name, `current` untouched); a stale candidate → `RetireCandidateFirst` (retire it, then continue on
+  /// this path). The out-parameter reports the decision so a caller never has to infer a refusal from a bare `false`.
   bool publishStoppedCanonicalOracleView(const LoopPasses& passes,
       const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
-      const MidiEvent* oracle, size_t oracleCount, const PlaybackCoverageInterval& coverage);
+      const MidiEvent* oracle, size_t oracleCount, const PlaybackCoverageInterval& coverage,
+      const OverdubOverlayLane::CandidateRetention& overlayRetention = {},
+      OverdubOverlayLane::OracleRebuildDecision* overlayDecisionOut = nullptr);
+  /// **3.15e/2b-ii-b — the overlay lane's owner build.** Continues the borrowed provenance-bearing base fill
+  /// (`frozenCompanionPasses`) into the one provenance table, then attaches the append-stable live overlay and keeps it
+  /// current as rows arrive. The borrowed instance is released as soon as the base half is copied (the append half does
+  /// not reference it), so a pass commit or the stopped oracle can never wait on this lane for the storage.
+  ///
+  /// No state is added: the builder's own `nextGrain()`/`overlayContinuationActive()` and the candidate view's
+  /// metadata describe the phase, and `isOverlayCandidate` names the retained candidate. Nothing consumes the window
+  /// and nothing is emitted (slice 3 owns adoption).
+  OverdubOverlayLane::Turn stepOverdubOverlayBuild(const OverdubOverlayLane::BuildRequest& request, Loop& loop,
+                                                   size_t fillQuantum, size_t orderQuantum);
+  /// The retained candidate for this slot, or null. Only the build role can hold it; the identification is the
+  /// continuation's own metadata (`OverdubOverlayLane::isOverlayCandidate`), never a stored marker.
+  const RuntimePlaybackView* overdubOverlayCandidate() const;
+  /// Retire the retained candidate **and** detach its builder, clearing the view so no consumer can read a
+  /// complete-looking window whose identity moved. Returns false when there was nothing to retire.
+  bool retireOverdubOverlayCandidate();
+  /// True when no other owner holds this slot's builder or its prerequisite workers, so the overlay lane may begin a
+  /// build without contending. Role arbitration (2b-iii) will replace this by-construction exclusion with a named
+  /// decision; until then the lane **defers** rather than competing for one builder.
+  bool overdubOverlayBuildExclusive() const;
+  /// True while **this lane's** borrow of the one companion instance is in flight: the instance is busy and no other
+  /// owner that uses it (canonical window, canonical tail, capture bridge) is in flight. A boundary turn uses this to
+  /// release the borrow, so a stop or a wrap commit never waits on background preparation.
+  bool overdubOverlayBorrowHeld() const;
   /// Non-allocating active-path lookup. Only a complete, full-loop current
   /// view with the exact canonical identity is eligible for MIDI emission.
   const RuntimePlaybackView* publishedFullLoopView(

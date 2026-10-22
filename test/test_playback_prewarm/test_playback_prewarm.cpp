@@ -8298,6 +8298,164 @@ void test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half() 
   build.discard();
 }
 
+// Task 3.15e slice 2b-ii-b — **the borrow's collision rule is wired into the stopped oracle, not just named.**
+//
+// A retained overlay candidate owns the borrowed companion storage by identity. This fixture plants a real combined
+// candidate (committed base from `RuntimeCompanionPasses` + a live overlay continuation) into the slot's build role and
+// then runs the **production** oracle entry:
+//  * no candidate           → the oracle borrows exactly as before (`Allowed`, publishes);
+//  * retained and current   → `RefusedRetainedCandidate`; the candidate is untouched and nothing is published under it;
+//  * retained and stale     → `RetireCandidateFirst`; the candidate is retired **inside** the call and the oracle then
+//                             continues on its existing path and publishes — the bytes are never reinterpreted first.
+void test_3_15e_slice2b_the_stopped_oracle_consults_the_overlay_candidate_and_retires_a_stale_one() {
+  CanonicalPrefixFixture f;
+  auto& runtime = f.runtime;
+  const PlaybackCoverageInterval coverage{0, f.length, f.length};
+  auto on = MidiEvent::NoteOn(10, 1, 60, 90);
+  on.noteId = 1; // the fixture's record row carries it, and the oracle compares the full input identity
+  MidiEvent oracle[] = {on, MidiEvent::NoteOff(90, 1, 60)};
+
+  // (1) **No candidate**: the oracle's existing path is untouched, including the decision it reports.
+  {
+    OverdubOverlayLane::OracleRebuildDecision decision = OverdubOverlayLane::OracleRebuildDecision::RefusedRetainedCandidate;
+    TEST_ASSERT_TRUE(runtime.publishStoppedCanonicalOracleView(f.passes, f.source(), f.live(), oracle, 2, coverage, {},
+                                                                &decision));
+    TEST_ASSERT_EQUAL(OverdubOverlayLane::OracleRebuildDecision::Allowed, decision);
+    TEST_ASSERT_NULL(runtime.overdubOverlayCandidate());
+  }
+
+  // Plant the combined candidate the overlay owner turn would have produced: provenance-bearing base from the borrowed
+  // companion instance, then the append-stable live half. The build role is where the lane keeps it.
+  f.finish();
+  Loop liveLoop;
+  liveLoop.loopLengthTicks = f.length;
+  liveLoop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(liveLoop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 62, 100)));
+  TEST_ASSERT_TRUE(liveLoop.appendCaptureEvent(MidiEvent::NoteOff(260, 1, 62, 0)));
+  auto& set = *runtime.viewSetIfPrewarmed();
+  auto& candidate = set.views[set.lifecycle.build];
+  RuntimeCompanionApply::Work work{runtime.frozenCompanionPairLookup, runtime.frozenCompanionDeleteLookup,
+      runtime.frozenCompanionSpans, runtime.frozenCompanionReconstruction, runtime.frozenCompanionOverlaps};
+  const PlaybackViewSourceIdentity base = f.source();
+  TEST_ASSERT_TRUE(runtime.frozenCompanionPasses.begin(runtime.frozenCompanionApply, work,
+                                                       runtime.canonicalPassInputs, nullptr, 0, base, f.length));
+  auto passesResult = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t turn = 0; turn < 4000 && passesResult == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    passesResult = runtime.frozenCompanionPasses.step(64);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, passesResult);
+  TEST_ASSERT_TRUE(runtime.viewBuild.begin(candidate, runtime.frozenCompanionPasses, base, coverage, {}, {},
+                                           RuntimePlaybackViewFillScope::PlaybackCoverage));
+  const auto drive = [&]() {
+    for (size_t turn = 0; turn < 8000; ++turn) {
+      const auto grain = runtime.viewBuild.nextGrain();
+      if (grain == RuntimePlaybackViewBuildGrain::Denied) return false;
+      if (grain == RuntimePlaybackViewBuildGrain::Complete) return true;
+      const auto stepped = grain == RuntimePlaybackViewBuildGrain::Fill
+          ? runtime.viewBuild.stepFill(64) : runtime.viewBuild.stepOrder(48);
+      if (stepped == RuntimePlaybackViewBuildGrain::Denied) return false;
+    }
+    return false;
+  };
+  TEST_ASSERT_TRUE_MESSAGE(drive(), "the borrowed base must fill and order");
+  const auto live = RuntimePlaybackViewSource::fromLiveCapture(liveLoop, true);
+  const PlaybackViewSourceIdentity overlay{base.playbackRevision, base.sourceGeneration, nullptr,
+                                           PlaybackWindowOrigin::Capture, liveLoop.captureContentGeneration()};
+  TEST_ASSERT_TRUE(runtime.viewBuild.beginLiveOverlayContinuation(live, overlay));
+  runtime.frozenCompanionPasses.discard(); // the continuation nulls the baseline: the borrow is released here
+  TEST_ASSERT_TRUE_MESSAGE(drive(), "the live overlay half must re-order the same window");
+  TEST_ASSERT_TRUE(runtime.frozenCompanionPasses.idle()); // released as soon as the base was copied (slice contract)
+  const RuntimePlaybackView* planted = runtime.overdubOverlayCandidate();
+  TEST_ASSERT_NOT_NULL(planted);
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(planted->storage.eventCount));
+  TEST_ASSERT_TRUE(planted->passOriginsReady);
+  TEST_ASSERT_FALSE(planted->canonicalRanksReady);
+  TEST_ASSERT_TRUE(planted->complete);
+
+  // (2) **Retained and current**: the oracle is refused by name, and it does not touch the candidate.
+  {
+    const auto retention = OverdubOverlayLane::candidateRetention(planted, true, base,
+                                                                  liveLoop.captureContentGeneration(), coverage);
+    TEST_ASSERT_TRUE(retention.overlayCandidateRetained);
+    TEST_ASSERT_TRUE_MESSAGE(retention.candidateBaseCurrent, "the committed base identity still answers the demand");
+    TEST_ASSERT_TRUE_MESSAGE(retention.candidateIdentityCurrent, "a matching generation makes the candidate current");
+    OverdubOverlayLane::OracleRebuildDecision decision = OverdubOverlayLane::OracleRebuildDecision::Allowed;
+    TEST_ASSERT_FALSE(runtime.publishStoppedCanonicalOracleView(f.passes, f.source(), f.live(), oracle, 2, coverage,
+                                                                retention, &decision));
+    TEST_ASSERT_EQUAL_MESSAGE(OverdubOverlayLane::OracleRebuildDecision::RefusedRetainedCandidate, decision,
+                              "a live candidate refuses the oracle for this turn");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(planted, runtime.overdubOverlayCandidate(),
+                                  "a refused oracle must not overwrite the retained candidate");
+    TEST_ASSERT_TRUE(planted->complete);
+    TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(planted->storage.eventCount));
+  }
+
+  // The retention rule itself: the committed revision, the coverage or the demand itself moving makes the candidate
+  // **stale** (retire it). The live capture **generation** is different: it advances on every accepted input row, so it
+  // is the append frontier the continuation extends, not a retirement reason. The strict currency a claim compares still
+  // reports not-current until the lane's next turn extends the window.
+  {
+    PlaybackViewSourceIdentity revisionDrift = base;
+    ++revisionDrift.playbackRevision;
+    const auto revisionMoved = OverdubOverlayLane::candidateRetention(
+        planted, true, revisionDrift, liveLoop.captureContentGeneration(), coverage);
+    TEST_ASSERT_FALSE(revisionMoved.candidateBaseCurrent);
+    TEST_ASSERT_TRUE(OverdubOverlayLane::mustRetire(revisionMoved));
+    PlaybackViewSourceIdentity snapshotDrift = base;
+    snapshotDrift.snapshotIdentity = reinterpret_cast<const void*>(static_cast<uintptr_t>(0x1234));
+    TEST_ASSERT_FALSE_MESSAGE(OverdubOverlayLane::candidateRetention(planted, true, snapshotDrift,
+                                                                     liveLoop.captureContentGeneration(),
+                                                                     coverage).candidateBaseCurrent,
+                              "a republication at the same revision is a different committed base");
+    const auto generationDrift = OverdubOverlayLane::candidateRetention(
+        planted, true, base, liveLoop.captureContentGeneration() + 1, coverage);
+    TEST_ASSERT_TRUE_MESSAGE(generationDrift.candidateBaseCurrent,
+                             "an appended row does not retire the candidate; the lane extends it");
+    TEST_ASSERT_FALSE_MESSAGE(generationDrift.candidateIdentityCurrent,
+                              "the strict claim currency is one append behind until the extension lands");
+    TEST_ASSERT_FALSE(OverdubOverlayLane::mustRetire(generationDrift));
+    const PlaybackCoverageInterval other{0, f.length - 1, f.length};
+    TEST_ASSERT_FALSE_MESSAGE(OverdubOverlayLane::candidateRetention(planted, true, base,
+                                                                     liveLoop.captureContentGeneration(),
+                                                                     other).candidateBaseCurrent,
+                              "committed-base coverage mismatch invalidates the retained candidate");
+    TEST_ASSERT_FALSE_MESSAGE(OverdubOverlayLane::candidateRetention(planted, false, base,
+                                                                     liveLoop.captureContentGeneration(),
+                                                                     coverage).candidateBaseCurrent,
+                              "a demand that ended leaves nothing for the candidate to answer");
+    TEST_ASSERT_FALSE_MESSAGE(OverdubOverlayLane::candidateRetention(nullptr, true, base,
+                                                                     liveLoop.captureContentGeneration(),
+                                                                     coverage).overlayCandidateRetained,
+                              "an empty build role is not a candidate");
+  }
+
+  // (3) **Retained and stale**: the oracle retires it inside the call, then continues on its existing path and
+  // publishes. The stale bytes are never reinterpreted as oracle output before the retirement.
+  {
+    // The lead-in oracle call left its workers discarded; the fixture re-establishes the canonical prefix so the
+    // oracle's own admission terms are satisfied (this is the state a stopped report finds).
+    runtime.canonicalPassInputs.discard();
+    runtime.canonicalPrefixPhase = LoopPlaybackRuntime::CanonicalPrefixPhase::Idle;
+    // The demand ends at STOPPED, so the retained candidate's base no longer answers anything.
+    const auto stale = OverdubOverlayLane::candidateRetention(planted, false, base,
+                                                              liveLoop.captureContentGeneration(), coverage);
+    TEST_ASSERT_TRUE(OverdubOverlayLane::mustRetire(stale));
+    OverdubOverlayLane::OracleRebuildDecision decision = OverdubOverlayLane::OracleRebuildDecision::Allowed;
+    TEST_ASSERT_TRUE_MESSAGE(runtime.publishStoppedCanonicalOracleView(f.passes, f.source(), f.live(), oracle, 2,
+                                                                       coverage, stale, &decision),
+                             "after retiring a stale candidate the oracle runs its existing path");
+    TEST_ASSERT_EQUAL(OverdubOverlayLane::OracleRebuildDecision::RetireCandidateFirst, decision);
+    TEST_ASSERT_NULL_MESSAGE(runtime.overdubOverlayCandidate(), "the stale candidate is retired, not left behind");
+    TEST_ASSERT_FALSE(candidate.complete);
+    TEST_ASSERT_FALSE(candidate.passOriginsReady);
+    // And immediately afterwards the oracle sees no candidate at all: the decision returns to `Allowed`.
+    OverdubOverlayLane::OracleRebuildDecision after = OverdubOverlayLane::OracleRebuildDecision::RefusedRetainedCandidate;
+    (void)runtime.publishStoppedCanonicalOracleView(f.passes, f.source(), f.live(), oracle, 2, coverage, {}, &after);
+    TEST_ASSERT_EQUAL(OverdubOverlayLane::OracleRebuildDecision::Allowed, after);
+  }
+  runtime.viewBuild.discard();
+  LoopEventStore::releaseChunkRefs(liveLoop.passes.recordPass.committedChunkIds);
+}
+
 void test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window() {
   // (1) **Combined capacity** — base plus overlay must fit one window. The refusal is named and the window is cleared; no
   // overlay row is truncated and no committed row is evicted.
@@ -8604,5 +8762,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_3_15e_slice1_one_window_carries_the_committed_base_and_the_live_overlay);
   RUN_TEST(test_3_15e_slice1_the_overlay_half_refuses_by_name_and_never_leaves_a_partial_window);
   RUN_TEST(test_3_15e_slice2b_a_base_without_provenance_cannot_take_an_overlay_half);
+  RUN_TEST(test_3_15e_slice2b_the_stopped_oracle_consults_the_overlay_candidate_and_retires_a_stale_one);
   return UNITY_END();
 }

@@ -500,6 +500,19 @@ public:
     PlaybackCoverageInterval coverage{};
   };
   TRACK_COLD_MEM OverdubOverlayDemand overdubOverlayDemandForSlot(uint8_t slotIndex, uint32_t playheadPhase) const;
+  /// **Slice 3.15e/2b-ii-b — whether a retained overlay candidate still answers this slot's demand.** A pure reading of
+  /// the candidate's own `source`/`coverage` against the live demand; it adds no state and is the single identity rule
+  /// the lane turn and the stopped oracle both consume (`OverdubOverlayLane::candidateRetention`). A retired candidate,
+  /// a demand that ended or any of revision / capture generation / coverage moving makes the answer `stale`.
+  TRACK_COLD_MEM OverdubOverlayLane::CandidateRetention overdubOverlayRetentionForSlot(
+      uint8_t slotIndex, uint32_t playheadPhase) const;
+  /// **Slice 3.15e/2b-ii-b — the overlay lane's production owner turn.** Run on the same per-track, off-clock visit as
+  /// the NOTE_EDIT preview service (`main.cpp`, the `PlaybackViewMaintenance` owner): retire a candidate whose identity
+  /// moved before anything else can reuse the borrowed companion storage, otherwise observe the prerequisite and, on
+  /// `BaseReady`, drive one grain of the borrowed base fill → continuation → append-stable tail. Nothing is adopted and
+  /// nothing is emitted; the `ActiveCaptureOverdub` echo stays authoritative. The outcome is **named** so a caller (and
+  /// the fixtures) can tell progress from a wait, a refusal or a deferral instead of inferring it.
+  TRACK_COLD_MEM OverdubOverlayLane::Turn serviceOverdubOverlayWindow();
   /// DEC-108 item 1 / task 3.2: ask the owner to prepare **the window this slot needs**, resolved from the
   /// selected `LoopSnapshot` -- the caller names a **slot and a phase**, never events. `scratch` is the
   /// caller's bounded buffer for the enumeration; the owner neither allocates nor keeps state for it. Returns

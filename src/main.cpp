@@ -491,6 +491,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       // pending is what lets the lane re-cover the playhead before the served interval ends. A track without a
       // NOTE_EDIT session returns at once.
       trackManager.getTrack(i).servicePreviewWindowForNoteEditSession();
+      // Task 3.15e (slice 2b-ii-b): the **overdub overlay lane's** own owner turn, on the same per-track visit. It
+      // borrows the stopped-oracle companion instance only while OVERDUBBING, retires a candidate whose identity moved
+      // before anything can reuse that storage, and drives one grain of the base fill + continuation. Nothing is
+      // adopted and nothing is emitted (slice 3 owns the audible switch).
+      (void)trackManager.getTrack(i).serviceOverdubOverlayWindow();
 #endif
       trackManager.getTrack(i).serviceAdmittedDeadlineMisses(windowClock);
       offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(windowPhase, windowClock);

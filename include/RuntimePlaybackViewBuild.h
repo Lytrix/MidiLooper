@@ -95,6 +95,18 @@ class RuntimePlaybackViewBuild {
   size_t privateOrderedEventCount() const { return order_.complete() ? order_.orderedEventCount() : 0; }
   /// Exact physical generation completed by this builder; caller retains storage.
   bool completedDestinationIs(const RuntimePlaybackView& destination) const;
+  /// True while this builder is *writing* the given destination (any fill/order/snapshot phase). Owner-selection
+  /// queries use it to retire a candidate **with** its in-flight builder instead of guessing from the view's flags.
+  bool activeDestinationIs(const RuntimePlaybackView& destination) const {
+    return active() && destination_ == &destination &&
+           destination.storageGeneration == destinationGeneration_;
+  }
+  /// True while this builder is **bound** to the given destination, regardless of grain currency. Retirement uses this
+  /// rather than the two completion queries: after a re-based capture `nextGrain()` reports `Denied` (and clears the
+  /// view's flags), so a currency-based test would leave the stale builder attached to the very candidate being retired.
+  bool boundToDestination(const RuntimePlaybackView& destination) const {
+    return destination_ == &destination;
+  }
   // Cancel an in-flight build. When a retained view must survive a runtime
   // reset, pass its address so the borrowed destination metadata is kept.
   void discard(const RuntimePlaybackView* preserveDestination = nullptr);
