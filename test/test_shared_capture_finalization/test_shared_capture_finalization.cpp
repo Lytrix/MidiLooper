@@ -7140,6 +7140,20 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
     TEST_ASSERT_EQUAL_MESSAGE(Step::BaseFillRefused, observe(busy),
                               "a busy companion instance is a named refusal, never a silent fill");
     TEST_ASSERT_FALSE(waiting(observe(busy)));
+    // The borrow's collision rule: a retained candidate owns the companion storage until it is retired.
+    CandidateRetention free;
+    TEST_ASSERT_EQUAL(OracleRebuildDecision::Allowed, oracleRebuildDecision(free));
+    CandidateRetention retainedCurrent;
+    retainedCurrent.overlayCandidateRetained = true;
+    retainedCurrent.candidateIdentityCurrent = true;
+    TEST_ASSERT_EQUAL_MESSAGE(OracleRebuildDecision::RefusedRetainedCandidate,
+                              oracleRebuildDecision(retainedCurrent),
+                              "the oracle must not rebuild underneath a live overlay candidate");
+    CandidateRetention retainedStale = retainedCurrent;
+    retainedStale.candidateIdentityCurrent = false;
+    TEST_ASSERT_EQUAL_MESSAGE(OracleRebuildDecision::RetireCandidateFirst,
+                              oracleRebuildDecision(retainedStale),
+                              "a stale candidate is retired first, not overwritten");
   }
 
   // (2b) **Liveness of the prerequisite, measured through the real rotation shape.** The overlay lane may observe canonical

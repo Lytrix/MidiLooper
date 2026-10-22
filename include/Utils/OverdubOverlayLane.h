@@ -57,6 +57,31 @@ inline Step observe(const Observation& observation) {
   return observation.companionAvailable ? Step::BaseReady : Step::BaseFillRefused;
 }
 
+/// **The collision half of the borrow rule.** A retained overlay candidate *owns* the borrowed companion storage until it is
+/// retired, so the stopped-oracle path may not begin another companion build underneath it. This is the decision it must
+/// consult; it is a pure function of two facts its owner already has.
+enum class OracleRebuildDecision : uint8_t {
+  /// No overlay candidate is retained: the oracle may borrow the companion storage as it always has.
+  Allowed,
+  /// A candidate is retained but its identity no longer matches its demand: **retire it first** (the lane's
+  /// `RetireStaleCandidate`), then rebuild. Never rebuild underneath a stale candidate and never leave it unreported.
+  RetireCandidateFirst,
+  /// A candidate is retained and its identity still matches: the oracle is **refused by name** for this turn.
+  RefusedRetainedCandidate,
+};
+
+struct CandidateRetention {
+  bool overlayCandidateRetained = false;
+  /// The retained candidate still matches the committed revision, capture generation and coverage it was built for.
+  bool candidateIdentityCurrent = false;
+};
+
+inline OracleRebuildDecision oracleRebuildDecision(const CandidateRetention& retention) {
+  if (!retention.overlayCandidateRetained) return OracleRebuildDecision::Allowed;
+  return retention.candidateIdentityCurrent ? OracleRebuildDecision::RefusedRetainedCandidate
+                                            : OracleRebuildDecision::RetireCandidateFirst;
+}
+
 /// True while the lane is waiting for a prerequisite it may not advance itself. Named so a caller cannot report a wait as
 /// progress: only `BaseReady` and later steps advance.
 inline bool waiting(const Step step) { return step == Step::WaitingCanonicalBase; }

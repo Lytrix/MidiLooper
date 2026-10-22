@@ -371,3 +371,29 @@ Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 
 step Fill/Order to complete, then `beginLiveOverlayContinuation`), plus the collision proof the borrow needs — a STOPPED
 oracle build after a retained overlay candidate must be refused or invalidate the candidate by name rather than reuse the
 storage under it.
+
+## 2b-ii-b step 2 (b) — the borrow's collision rule, as a decision the oracle must consult (2026-10-22)
+
+A retained overlay candidate **owns** the borrowed companion storage until it is retired, so the stopped-oracle path may not
+begin another companion build underneath it. The rule is now explicit and named
+(`OverdubOverlayLane::oracleRebuildDecision`):
+
+| Retention | Decision |
+|---|---|
+| no overlay candidate | `Allowed` — the oracle borrows as it always has |
+| retained, identity current | `RefusedRetainedCandidate` — refused **by name** for this turn |
+| retained, identity stale | `RetireCandidateFirst` — retire the candidate (the lane's `RetireStaleCandidate`), then rebuild; never rebuild underneath it and never leave it unreported |
+
+Both facts the decision needs (`overlayCandidateRetained`, `candidateIdentityCurrent`) are the owner's own and are already
+derivable from the candidate's `source` identity against the demand; no state is added. The fixture pins all three rows,
+including that a stale candidate is **not** overwritten.
+
+Mutation (header `sha256 999611808cf99920…`, restored byte-identically): making the decision unconditional `Allowed` fails
+exactly the live-candidate row (`Expected 2 Was 0`).
+
+Gates: focused **91/91**, full native **3 400 / 7 skipped / 3 393 succeeded / 0 failed**. Header only; no firmware TU includes
+it, so both images stand.
+
+**Remaining for step 2:** the fill itself (borrowed `RuntimeCompanionPasses` → Fill/Order → `beginLiveOverlayContinuation` →
+append-stable tail) and wiring `oracleRebuildDecision` into the oracle path. The wiring is a firmware change and is the first
+unit of work that needs both builds and the RAM1 gates again.
