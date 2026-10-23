@@ -191,9 +191,24 @@ stays after this.
 
 **Discard fix (same day):** `discardCoverageBuild` no longer clears the ready's position -- the build worker is not the
 ready, and clearing on a worker discard lost the position exactly before H. Only a full runtime reset clears it now.
-The before-H rotation nevertheless persists (observed `cur 2->0, rdy 0->1, bld 1->2`), so the transition is a
-publication/role rotation, not a handoff; the next probe must capture the pair and the role/completion path **at that
-turn** (the timed fixture remains the RED). No scheduling change, no seeded state, no coverage weakening.
+**At-the-turn probe (same day) — the reset is the rotation.** Immediately before the before-H turn:
+
+```
+pairLater=1 pairDeadline=3072 pairEpoch=1 cur=2 rdy=0 bld=1 build=0 pend=0 roll=0
+```
+
+After the turn:
+
+```
+pairLater=0 pairDeadline=0 pairEpoch=0 cur=0 rdy=1 bld=2 build=0 pend=0 roll=0
+witness: firstFalse=3 (positioned tick not reached) wcur=2 wrdy=0 wdeadline=3072
+```
+
+So the preview resolver ran and **correctly refused** the early adoption (`firstFalse=3`), and the roles/pair changed
+anyway: `LoopPlaybackRuntime::reset` cleared the pair and restored the default roles during the turn. The next step is to
+identify the caller of that reset on this turn and make a positioned preview ready survive it (or avoid resetting the
+preview runtime for a positioned demand). That is the remaining RED; the timed fixture stays open. No scheduling change,
+no seeded state, no coverage weakening.
 
 **Measured image lines after the guards:** default `391,752 + 1,464` (was 391,688 + 1,528; +64 B code) and qualification
 `391,992 + 1,224` (was 391,912 + 1,304; +80 B code). Both paddings remain above the 840 floor (no re-base); the runtime
