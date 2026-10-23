@@ -174,11 +174,18 @@ at H=3072:     cur=0 (adopted), firstFalse=0
 ```
 
 So the ready is complete/unpublished with the new revision and full coverage, and the edge adopts it exactly at H.
-The remaining defect is the **before-H turn**: the fixture's `emitTurn(H−1)` adopts early (the ready becomes current)
-because the position lives on the mutable `viewBuildWork`, not on the ready; by that turn the work's deadline/epoch are
-no longer the authority. **Next change:** carry the positioned deadline/epoch on the ready itself (a view or stable
-runtime ready-position pair), so the wait is a property of the ready; then the before-H assertion holds and the timed
-fixture goes green. That is a new runtime-state/pin decision, not a scheduling change, and must be measured.
+The first defect was that the position lived on the mutable `viewBuildWork`. **Landed:** the runtime now carries the
+ready's own position (`readyPositionedLater/DeadlineTick/ClockEpoch`), set at admission, kept when the build publishes
+as a **ready** successor, cleared when it publishes as the authoritative **current** or is adopted/retired. The
+`sizeof(LoopPlaybackRuntime)` pins moved by the measured **+16 B** (7,904 -> 7,920 target, 10,104 -> 10,120 host); the
+runtime is externally allocated per slot and no Track/RAM1 field changed.
+
+**Remaining defect (same witness):** `adoptPreparedPlaybackWindow` now refuses a positioned ready before its tick, but
+the before-H turn still adopts early through a **different** adoption path -- the committed/rolling lane calls
+`handoffReadyCoverage` directly (bypassing `adoptPreparedPlaybackWindow`). The position must be honoured by **every**
+adoption route. Next: guard the direct `handoffReadyCoverage`/`publishCompletedBuildAsReady*` call sites with the
+runtime's ready-position predicate (a runtime helper taking the deadline clock), then the timed fixture goes green. No
+scheduling change, no seeded state, no coverage weakening.
 
 **Earlier witness result (2026-10-23).** A test-only witness now evaluates the exact adoption terms once at the edge and
 records the first false term, `adoptPreparedPlaybackWindow`'s refusal code, the current/ready roles, the work's

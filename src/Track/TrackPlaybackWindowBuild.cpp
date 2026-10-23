@@ -4235,6 +4235,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // supersedes any retained completion (increment 28), so the retention is cleared here: only this promise's own
   // completion can set it, and a successor can never be judged as its predecessor.
   runtime->viewBuildWork = admittedWork;
+  // **3.15f / C:** the admitted position is carried by the runtime until a publication either adopts the build as the
+  // authoritative current window (cleared below) or leaves it as a positioned ready successor (the wait authority).
+  runtime->readyPositionedLater = admittedWork.positionedLater;
+  runtime->readyPositionedDeadlineTick = admittedWork.deadlineTick;
+  runtime->readyPositionedClockEpoch = admittedWork.clockEpoch;
   runtime->completedPromisePendingJudgement = false;
   runtime->admittedPromiseInvalidated = false;
   runtime->countedMissPromiseTick = admittedWork.admittedTick;
@@ -7880,6 +7885,16 @@ TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex, uint8_
   if (set == nullptr) {
     if (refusalOut != nullptr) *refusalOut = 2;
     return false;
+  }
+  // **3.15f / C — the ready's positioned handoff is a property of the handoff, not of one caller.** Every adoption
+  // route (the preview resolver and the committed/rolling lane) must respect the tick the ready was positioned for;
+  // otherwise a boundary that belongs to another lane can adopt it early. Unpositioned ready windows are unaffected.
+  if (runtime->readyPositionedLater && runtime->readyPositionedClockEpoch != 0) {
+    const PlaybackDeadlineClock now = clockManager.getPlaybackDeadlineClock();
+    if (now.epoch != runtime->readyPositionedClockEpoch || now.tick < runtime->readyPositionedDeadlineTick) {
+      if (refusalOut != nullptr) *refusalOut = 7;
+      return false;
+    }
   }
   // Task 3.15g: name the lifecycle's own refusal terms **read-only** before the atomic handoff, so the receipt can say
   // which one stands. The handoff below is unchanged; these reads add no state and no branch on its result.

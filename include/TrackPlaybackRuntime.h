@@ -624,6 +624,11 @@ struct LoopPlaybackRuntime {
   /// the build begins. Read it through `activeViewBuildWork()`, which returns null once the build it describes is no
   /// longer active -- a finished build owes nothing, and its record must not be read as outstanding work.
   PlaybackViewAdmittedWork viewBuildWork;
+  /// **3.15f / C:** the positioned handoff of the completed **ready** successor, carried until adoption. The admitted
+  /// work record describes only an active build, so the wait cannot live there; this pair is the ready's own position.
+  uint64_t readyPositionedDeadlineTick = 0;
+  uint32_t readyPositionedClockEpoch = 0;
+  bool readyPositionedLater = false;
   /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
   /// refused request leaves behind (see `PlaybackViewPendingRequest`). It is per-slot state in this externally
   /// allocated object, so the eight-way DTCM `Track` gains nothing; read it through `pendingViewRequest()`, which
