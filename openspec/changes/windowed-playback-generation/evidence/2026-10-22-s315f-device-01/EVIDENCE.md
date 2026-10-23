@@ -81,6 +81,30 @@ served loop content (all note rows, order, per-cycle counts) is identical betwee
 The verifier's strict inventory equality is blocked by rig CC74 traffic, not by the lane. `storage_matches_effective` is
 true on both.
 
+
+## NOTE_EDIT pair attempt (`edit_full`): not yet a usable baseline
+
+Two default-image attempts, both with the canonical `edit_full` preset (2 bars, host `--tempo-bpm 120`, track 5 /
+slot 1 / channel 5):
+
+1. **At the device's internal 90 BPM** (`…default-editfull-02`, boot-reset): the record prelude's live display check
+   failed (`live_record_display:reca_missing`) and the edit suite reported ~30 markers, all note-edit gestures.
+2. **After setting the loop-edit tempo fader to 120** (pitchbend on the tempo channel: firmware log
+   `TEMPO: PB=-1672 -> 120.0 BPM`, verified in LOOP_EDIT), run **without** boot-reset so the RAM tempo survives
+   (`…default-editfull-03-tempo120`): the record-display failure is gone, but the note-edit markers still fail
+   (`POSITION EDIT`, delete/note-value/move/length/overlap/undo markers all absent).
+
+So the tempo correction fixed the record leg, and the remaining gap is the **edit-session/fader precondition**
+(entering the edit session, selecting a note and the fader bank) on this bench — not a lane/default difference. The lane
+leg was **not** run against a failing default baseline; doing so would not be a parity test. The `edit_full` pair is
+therefore **not yet a parity result**. Candidate next steps: establish the edit precondition (the legacy edit fixture's
+fader bank / note selection) or use a layered note-edit preset (`note_edit_overdub_compose`) designed for this harness,
+then run the pair.
+
+The tempo-fader route is now a reusable device recipe: enter LOOP_EDIT, send pitchwheel on the tempo channel with the
+`TempoMapping` logical value (120 BPM → wire 6520, logical −1672); the firmware answers `TEMPO: PB=-1672 -> 120.0 BPM`.
+Do not boot-reset after setting it, or the saved 90 BPM is restored.
+
 ## Not claimed
 
 - 3.15f is **not passed**: the base stimulus's served-cycle parity is established, but the full registered content
@@ -99,4 +123,4 @@ true on both.
    contention, RAM1/PSRAM high-water).
 3. Decide the short-loop window-route mechanism before claiming route identity for short loops.
 
-**Board left on:** default image `04ea9a8a…` (the final channel-5 default run).
+**Board left on:** default image `04ea9a8a…` (the final channel-5 default run), with the **RAM tempo set to 120**; the saved workspace BPM remains 90, so a reboot restores 90.
