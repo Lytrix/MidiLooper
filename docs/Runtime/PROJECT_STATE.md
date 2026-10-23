@@ -2,10 +2,15 @@
 PASS** on `cbd4703d…` and `dab405b3…`, host 120 and internal (record, both overdubs, post-stop undo/redo, display,
 persistence; RAM2 floor 147,456 B, PSRAM peak 3.97–4.02 MB). Dense/windowed qualification **PASS** (`ok=True`,
 leg/lane/snapshot, readiness 29/29, 0 overruns; two content-pipeline terms deferred); default dense **leg PASS** with
-lane terms not applicable. **Finding:** the qualification base builds the overdub overlay candidate but the edge never
-serves it — overdub reads stay `origin=0` and the echo fallback serves; the device overlay selection needs a RAM1-neutral
-observation. Scenario attempts are blocked by their own seed/preparation preconditions (mixed slot-5 finalization,
-scoped-empty preparation); the edit/overdub scenario's `Path` shadowing host bug is fixed. Evidence:
+lane terms not applicable. **Finding (corrected):** the qualification base builds the overdub overlay candidate and the edge **does** bind it —
+a change-only `overlay_edge` observation (RAM1-neutral, image `9a3157a1…`) shows `ok=fd`→`ok=ff` (`rd=98/131/146`, every
+selector term)→`ok=df`→`ok=00`; the `origin=0` read row is a witness limitation (the live view is not a set role), not a
+non-selection. Scenario attempts are blocked by their own seed/preparation preconditions (mixed slot-5 finalization,
+scoped-empty preparation); the edit/overdub scenario's `Path` shadowing host bug is fixed. **Rolling Record campaign PASS** on the same image (`growth-empty` both legs CLEARED, `held`
+`corrected_frozen_root_return`, `matched` `matching_physical_reader_preserved`; aggregate `PASS`, full recipe, no
+issues). The switch (mixed) scenario reached the B seed commit and canonical release but the host's post-commit wait
+missed it (a marker-window race, not a firmware refusal), so the switch leg is still device-unqualified. Remaining:
+switch, layered/jam (no stimulus), and the dense content-pipeline terms. Evidence:
 [`2026-10-24-s315f-device-04/`](../openspec/changes/windowed-playback-generation/evidence/2026-10-24-s315f-device-04/EVIDENCE.md).
 
 **2026-10-24 — 3.15e overdub-overlay clause CHECKED OFF (native; device parity stays 3.15f).** In scope: the live-overlay single-reader route only. G0 PASS (no architecture change): the primary route is the live overlay window (a mixed-provenance candidate in the slot's **build** role, never `ready`/`current`, no role request), bound by `resolveQualificationPlaybackSourceForTurn` as a live source whose stream is the published `readableEventCount` frontier; on a serving turn the committed walk alone runs and the `ActiveCaptureOverdub` walk + `ensureCaptureEventsSorted()` are skipped, with the ledger applied to committed-origin rows only. The echo remains the **named compatibility fallback** (2b-iii role arbitration deferred by owner) until 3.7b. Added: `test_the_live_overlay_window_serves_a_long_loop_interval` (64-bar loop; the candidate's coverage is the two-bar window, the live row and the committed inside it each served once, ledger closed — the 2-bar W1 is the short half); `ExecutionBounds.md` row 34 (fixed checks + one builder grain per turn, named deferral, canonical preparation never advanced); corrected the stale `Track.h` comment that called the echo authoritative. Gates: overlay **8/8**, finalization **95/95**, prewarm **247/247**, preview **48/48**, full native **3,433 / 7 / 3,426**; both pins exact (391,752+1,464 / 391,992+1,224). No device leg (3.15f), no 2b-iii arbitration, no echo removal (3.7b). Next: the 3.15f remaining matrix, now with the overlay row ready only for its device parity run.

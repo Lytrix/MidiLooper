@@ -20,12 +20,16 @@ windows, 8 with a read); the immediate rerun passed with 10/10, so that term is 
 a repeatable route failure. The first default-host attempt aborted before a report (post-flash serial race); the rerun
 passed.
 
-**Overlay finding (not a pass).** The qualification base shows two `playback_build,overlay` rows (rev 7 and rev 9) and
-the lane's `OverlayRejected`/base-rejection rows, but the `playback_read` stream is `origin=0` (committed) on every
-overdub turn; the only `origin=2` read is the **record** overlay at 29.45 s. So the overdub overlay candidate was
-**built but not served** by the edge in this run — the echo fallback served. The native W1/W8 prove the edge under
-controlled conditions; the device's non-selection is unexplained and needs a RAM1-neutral observation before this route
-can be claimed.
+**Overlay edge — observation and correction.** The first reading (all overdub reads `origin=0`, so "built but not
+served") was wrong. A change-only `overlay_edge` observation (RAM1-neutral, FLASHMEM, qualification `9a3157a1…`) in the
+base overdub shows the selector's full lifecycle: `ok=00` (no candidate, before the overdub) → `ok=fd` (candidate
+exists, `readableEventCount=0`) → `ok=ff` (`rd=98/131/146`, every term: candidate, readable, provenance, no canonical
+ranks, Capture origin, revision, generation, coverage) → `ok=df` (the loop revision moved 3→4) → `ok=00` (retired).
+So the edge **does** bind the live overlay view on device; the `playback_read` witness logs `origin=0` because it
+resolves a source only through the set roles/bridge and the live-view candidate is neither (`observePlaybackReadForTurn`),
+a witness limitation rather than a non-selection. Base content (`ok=True`) plus native W1/W8 close the device overlay
+selection; the witness's origin field is not a route indicator for this source. The diagnostic is removed after this
+run; the final image returns to `cbd4703d…`.
 
 ## Dense / windowed (Session B)
 
@@ -56,3 +60,34 @@ The base and dense legs are recorded. The remaining device rows are: the overlay
 observation of the candidate terms, then a fix or a named refusal), the rolling Record/frozen return (needs a clear bench
 slot or an explicit scoped clear), the switch (same preparation class), and layered/jam (no registered stimulus). The
 host-tooling `Path` fix is committed with this packet; no firmware line changed in this session.
+
+## Rolling Record campaign — PASS on the final image
+
+After the post-load save settled (the first growth attempt refused the clear by name:
+`Clear refused: deferred save temporarily blocked by post_load_holdoff`), the three registered passes ran on the same
+final image `cbd4703d…` and the offline aggregate returned **PASS**:
+
+- `2026-10-24-s315f-closeout-rolling-growth-3` — `growth-empty`, both legs CLEARED;
+- `2026-10-24-s315f-closeout-rolling-held` — `held` → `corrected_frozen_root_return`;
+- `2026-10-24-s315f-closeout-rolling-matched` — `matched` → `matching_physical_reader_preserved`;
+- `2026-10-24-s315f-closeout-rolling-aggregate` — `verdict=PASS`, `ok=true`, `full_recipe_complete=true`, `issues=[]`,
+  `pass_groups=[growth-empty, held, matched]`, all four stop terminals present.
+
+This covers live Record, the frozen Record return and the stop handoff on the final image; the clear refusal is a
+save-settling race, not a route refusal (the same clear succeeded on the retry).
+
+## Switch (mixed) — repeatable harness preparation miss
+
+`accepted_sequence_mixed` (track 8 slots 4/5, `--slot-b 5`) was attempted twice. Both times the B seed **committed**
+(`seed_b_committed: confirmed=True`) and the slot-scoped canonical release **was emitted**
+(`#CAP,76305948,DIAG,canonical_release,4,1,1536,8` and `canon_rel_interval,4,4294967296,1,1536,8` at 76.306 s, followed by
+`PERS,result,…,ok` at 76.949 s), but the flow's post-commit `_await_markers` window did not see it and reported
+`slot 5 seed finalization release unconfirmed within 10s`. The scenario never reached the switch leg, so this is a
+**host-tooling marker-window race**, not a firmware refusal or a switch result. The route remains device-unqualified.
+
+## Final state
+
+The edge diagnostic was removed; the rebuilt qualification HEX is byte-identical to `cbd4703d…` and is the image left on
+the board. Bench slot 8/4 was cleared by the rolling pass (authorized test content); slot 8/5 holds the mixed seed from
+the failed preparation. The remaining 3.15f rows are: switch (the harness race above), layered/jam (no registered
+stimulus), and the dense content-pipeline terms (deferred by the registered verifier).
