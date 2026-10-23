@@ -2664,10 +2664,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCoverageBuild()
   retireCoverageSource();
   completedPromisePendingJudgement = false;
   admittedPromiseInvalidated = false;
+  // **3.15f / C:** discarding the *build worker* must not clear the **ready** window's positioned handoff -- the
+  // ready owns that position until it is adopted or retired. Only a full reset clears it here.
   viewBuildWork = {};
-  readyPositionedLater = false;
-  readyPositionedDeadlineTick = 0;
-  readyPositionedClockEpoch = 0;
   viewBuild.discard();
 }
 

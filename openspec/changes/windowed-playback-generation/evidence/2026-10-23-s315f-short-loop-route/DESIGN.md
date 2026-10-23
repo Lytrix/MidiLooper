@@ -189,6 +189,12 @@ must capture, at the before-H turn, the lifecycle's current/ready/build indices 
 completion/publication path ran -- not another handoff guard. Do not seed state or change scheduling; the device leg
 stays after this.
 
+**Discard fix (same day):** `discardCoverageBuild` no longer clears the ready's position -- the build worker is not the
+ready, and clearing on a worker discard lost the position exactly before H. Only a full runtime reset clears it now.
+The before-H rotation nevertheless persists (observed `cur 2->0, rdy 0->1, bld 1->2`), so the transition is a
+publication/role rotation, not a handoff; the next probe must capture the pair and the role/completion path **at that
+turn** (the timed fixture remains the RED). No scheduling change, no seeded state, no coverage weakening.
+
 **Measured image lines after the guards:** default `391,752 + 1,464` (was 391,688 + 1,528; +64 B code) and qualification
 `391,992 + 1,224` (was 391,912 + 1,304; +80 B code). Both paddings remain above the 840 floor (no re-base); the runtime
 pins stay 7,920 / 10,120. Full native 3,419 / 7 / 3,412.
