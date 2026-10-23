@@ -2315,6 +2315,82 @@ static void test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand() 
   TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
 }
 
+/// **3.15f / C — an own terminal refusal with a void position is re-attempted.** A `CannotCompleteBeforeHandoff`
+/// retained under a different clock epoch no longer describes this transport's position. The obligation survives; the
+/// service must ask again with the current clock instead of returning forever on the terminal name. RED before the
+/// invalidation is consulted.
+static void test_3_15f_c_an_own_terminal_refusal_is_reattempted_after_an_epoch_invalidation() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6650));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const Loop& loop = track.getLoop(0);
+  const uint32_t currentEpoch = clockManager.getPlaybackDeadlineClock().epoch;
+  runtime->pendingViewRequest_ = PlaybackViewPendingRequest{};
+  runtime->pendingViewRequest_.active = true;
+  runtime->pendingViewRequest_.sourceKind = PlaybackViewPendingRequest::SourceKind::Borrowed;
+  runtime->pendingViewRequest_.source.origin = PlaybackWindowOrigin::Preview;
+  runtime->pendingViewRequest_.source.playbackRevision = loop.playbackRevision;
+  runtime->pendingViewRequest_.coverage.startPhase = 0;
+  runtime->pendingViewRequest_.coverage.lengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.coverage.loopLengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
+  runtime->pendingViewRequest_.clockEpoch = currentEpoch + 1u;  // a position from a different epoch
+  runtime->pendingViewRequest_.deadlineTick = 4096;
+  runtime->pendingViewRequest_.loopLengthTicks = loop.loopLengthTicks;
+
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuild.active() || runtime->previewSourceActive,
+                           "a terminal refusal with an invalidated position is re-attempted");
+  drainLane(track, 100);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the re-attempted preview publishes");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+}
+
+/// **3.15f / C — the session preview is requested only while the transport plays.** The resolver that serves a preview
+/// frame requires `isPlaying`; a request made while stopped can only build a window nobody serves and retain a pending
+/// promise that then strands the playing session. The stopped content belongs to the committed/merged route. RED before
+/// the service's playing gate.
+static void test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6660));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  // Stop before the session opens: the open/mutation seams themselves request the preview while the transport plays.
+  track.forceSetState(TRACK_STOPPED);
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(), "a stopped turn does not start a preview build");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->previewSourceActive, "a stopped turn does not freeze a preview source");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active, "a stopped turn does not retain a preview demand");
+
+  track.forceSetState(TRACK_PLAYING);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuild.active() || runtime->previewSourceActive,
+                           "the playing turn requests the session's preview");
+  drainLane(track, 100);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the playing preview publishes");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2749,6 +2825,8 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff);
   RUN_TEST(test_3_15f_c_an_own_prepared_refusal_is_reattempted);
   RUN_TEST(test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand);
+  RUN_TEST(test_3_15f_c_an_own_terminal_refusal_is_reattempted_after_an_epoch_invalidation);
+  RUN_TEST(test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

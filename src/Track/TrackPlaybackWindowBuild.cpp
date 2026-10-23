@@ -7595,6 +7595,13 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     // whether or not the lane is busy: a build in flight for the old revision is exactly what must not land.
     cancelPreviewWindowForSlot(slot, PreviewWindowCancelReason::SourceMutated);
   }
+  if (!isPlaying()) {
+    // **3.15f / C — the request is a playing-transport feature.** The resolver that serves a preview frame requires
+    // `isPlaying`, so a request made while stopped can only build a window nobody serves and retain a pending promise
+    // that then strands the playing session (measured on the device: the stopped-open session never built a preview
+    // after the transport started). The cancellations/retirement above still run; the playing turns request.
+    return;
+  }
   if (runtime->viewBuild.active() || runtime->ownsCoverageSource() ||
       runtime->completedPromisePendingJudgement) {
     return;  // the lane is still busy for another reason; the next seam re-checks rather than stacking a demand
@@ -7608,6 +7615,10 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     // (`SuccessorAlreadyPrepared`, `BuildInFlight`, position invalidations, a cleared interference budget) are
     // promises the free role must re-attempt; the busy/ready guards above already return while the role is occupied.
     const PlaybackViewPendingReason reason = runtime->pendingViewRequest_.reason;
+    // A retained **position** that the clock has voided (a different epoch, a changed geometry) is not a terminal
+    // answer: the obligation survives and must be re-priced under the current clock. Consult the same predicate the
+    // rolling lane reads, so the preview cannot outlive the clock it was priced under.
+    const PlaybackViewPendingReason invalidatedPosition = pendingViewRequestInvalidation(slot, clock);
     const bool retryableOwnRefusal =
         reason == PlaybackViewPendingReason::SuccessorAlreadyPrepared ||
         reason == PlaybackViewPendingReason::BuildInFlight ||
@@ -7615,7 +7626,8 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
         reason == PlaybackViewPendingReason::DeadlineInvalidatedEpoch ||
         reason == PlaybackViewPendingReason::DeadlineInvalidatedGeometry ||
         reason == PlaybackViewPendingReason::DeadlineExpired ||
-        reason == PlaybackViewPendingReason::AwaitingSourceQualification;
+        reason == PlaybackViewPendingReason::AwaitingSourceQualification ||
+        invalidatedPosition != PlaybackViewPendingReason::None;
     if (runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview && !retryableOwnRefusal) {
       return;  // the lane's own terminal preview refusal stands
     }

@@ -2,11 +2,10 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; four focused fixes are green (the lane arbitration included) and the windowed
-preview serves on the device when the lane is free. Remaining: the stopped‑open session's refused preview demand is
-retained as a terminal `CannotCompleteBeforeHandoff` and never re‑attempted after the transport's epoch change; the
-service must consult `pendingViewRequestInvalidation`. Display refresh remains the single revision owner. 3.15f stays
-open.**
+**Status: content oracle paired; six focused fixes are green (lane arbitration, invalidation re‑attempt, playing gate
+included) and the windowed NOTE_EDIT **route now serves** on the device (run 17: 19 preview read rows, first at tick
+4,608). The served preview still carries the pre‑edit content (the live session composition is the next RED). A separate
+`persistence_persist_save_slice_too_large` finding on the seed run is named, not ignored. 3.15f stays open.**
 
 ## Images
 
@@ -238,6 +237,38 @@ the service's own‑terminal guard never consults `pendingViewRequestInvalidatio
 The next RED is exactly that: an own terminal refusal whose clock position has been invalidated must be re‑attempted with
 the current clock (the one revision owner remains the display refresh).
 
+### Invalidation re‑attempt + playing gate (same day)
+
+- **Invalidation re‑attempt:** `servicePreviewWindowForNoteEditSession` now also treats a retained position voided by the
+  clock (`pendingViewRequestInvalidation`: epoch or geometry) as retryable, even when the terminal name is
+  `CannotCompleteBeforeHandoff`. RED/GREEN
+  `test_3_15f_c_an_own_terminal_refusal_is_reattempted_after_an_epoch_invalidation`.
+- **Device run 16** (image `0d874ddd…`): the stopped‑open session still produced no preview build (`playback_build=1`,
+  the snapshot; content PASS `200 -> 1448`). The stopped case is not an epoch invalidation.
+- **Playing gate:** the resolver that serves a preview requires `isPlaying`; the requester did not. A stopped turn could
+  build a window nobody serves and retain a pending promise. The service now returns after the cancel/retire handling but
+  before any request when the transport is stopped. RED/GREEN
+  `test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays` (RED: the stopped turn started a build).
+- **Device run 17** (image `f0540742…`): content PASS (`200 -> 1448`, ack 200) and **route PASS** — the preview now
+  serves after the edit: 19 `origin=1` read rows, first at tick **4,608**, 47 committed rows before it, latency 4,487 from
+  the demand. The windowed NOTE_EDIT route is exercised end‑to‑end on the short loop.
+- **Remaining audibility:** the served preview still carries the **pre‑edit** content — the edited 64@1448 is absent and
+  the committed 64@200 still sounds once after the handoff. The session store/projection is the next suspect: the
+  `NOTE_EDIT_OPEN` shows `store_ids=0` / `only_visual=8`, and the preview composition (`applyNoteEditDeltaToCommittedWindow`)
+  reads the session projection for the moved note while the live movement has only updated the current state until the
+  display projection/commit. The native `mutateSessionAndFlush` writes the store directly; the device's live path relies
+  on the projection refresh timing.
+- **Separate finding (named, not ignored):** the `seed-18` managed run reported
+  `persistence_persist_save_slice_too_large` (`FIRMWARE_CONTRADICTION`) while the content rows were recorded. That is a
+  persistence/load finding (3.15f's persistence contention term), not this preview route; the seed's content was present
+  for the probe.
+- **Gates after both fixes:** preview **42/42**; RWO 239; finalization 95; prewarm 247; overlay 7; full native
+  **3,426 / 7 skipped / 3,419 succeeded**; pins unchanged (`391,752 + 1,464` / `391,992 + 1,224`). HEX: qualification
+  `f0540742…`, default `e659a71c…`.
+
+The next RED is the **live session composition**: the preview frame must carry the edited revision (the current state's
+moved note in the interval), not the committed content. One revision owner (the display refresh) remains.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -250,11 +281,9 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
-The **windowed preview now serves on the device** (runs 07/09) when the lane is free; the display refresh is healthy and
-remains the **single** revision owner (2.3 ms max, 0 over budget; 1.58 s largest stream gap), and the requester‑cadence
-caller was tested and reverted (run 13). The **lane arbitration** is landed natively (a foreign committed ready is
-deferred while NOTE_EDIT is open; RED→GREEN `40/40`). On the device, the stopped‑open flow proves the content
-(`200 -> 1448`, ack 200) but the preview demand is retained as a terminal `CannotCompleteBeforeHandoff` from the
-stopped clock and is never re‑attempted after the transport starts; the service must consult
-`pendingViewRequestInvalidation`. That and the first‑handoff miss (3,072 missed → 4,608) own the next RED. No 3.15f
-checkoff.
+The **windowed NOTE_EDIT route now serves on the device** (run 17: 19 `origin=1` read rows, first at tick 4,608;
+content PASS). The display refresh remains the **single** revision owner (2.3 ms max, 0 over budget; 1.58 s largest
+stream gap); the requester‑cadence caller was tested and reverted; the **lane arbitration**, the **invalidation
+re‑attempt**, and the **playing gate** are landed natively (RED→GREEN each). What remains is the **live session
+composition**: the served preview still carries the pre‑edit content (edited 64@1448 absent), plus the separate
+`persistence_persist_save_slice_too_large` seed finding. No 3.15f checkoff.
