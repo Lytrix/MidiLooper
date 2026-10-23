@@ -280,7 +280,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     // interval's only unpublished source. Skip the destructive reset for that owner and
     // sync the revision; the window is served below.
     if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr &&
-        !runtime.hasBoundRecordReturnWindowForPendingJob()) {
+        !runtime.hasBoundRecordReturnWindowForPendingJob() && !runtime.hasPositionedPreviewReadyOwed()) {
       if (!runtime.reset(true)) return;
     }
     // A bound rolling interval retains its cursor/version until its end.

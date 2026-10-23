@@ -2076,6 +2076,57 @@ static void test_3_15f_c_long_loop_keeps_the_first_handoff() {
 
 
 
+/// **3.15f / C — the successor waits for its positioned tick (Ready → Serving).** The first preview of a revision is
+/// authoritative at completion; the successor after the next edit is positioned, completes early into the ready role
+/// (which carries its own handoff), survives the committed-revision staleness turn, and is adopted only at its tick.
+static void test_3_15f_c_the_successor_waits_for_its_positioned_tick() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6605));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  (void)mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  publishFirstPreview(track, 0, 100);
+  const uint32_t firstRevision = runtime->previewSourceRevision;
+
+  const uint32_t newRevision = mutateSessionAndFlush(track, 1200, 67);
+  TEST_ASSERT_GREATER_THAN_UINT32(firstRevision, newRevision);
+  track.servicePreviewWindowForNoteEditSession();
+  drainLane(track, 100);
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->readyPositionedLater, "the ready carries its positioned handoff");
+  const uint32_t deadline = static_cast<uint32_t>(runtime->readyPositionedDeadlineTick);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, deadline);
+  const uint8_t readyIndex = set->lifecycle.ready;
+  TEST_ASSERT_LESS_THAN(static_cast<uint32_t>(set->views.size()), static_cast<uint32_t>(readyIndex));
+  TEST_ASSERT_TRUE_MESSAGE(set->views[readyIndex].complete, "the successor completed early into the ready role");
+  TEST_ASSERT_FALSE_MESSAGE(set->views[readyIndex].published, "and waits, unpublished, for its positioned tick");
+  TEST_ASSERT_EQUAL_UINT32(newRevision, set->views[readyIndex].source.playbackRevision);
+
+  publishEmissionClock(deadline - 1u);
+  emitTurn(track, deadline - 1u);
+  TEST_ASSERT_FALSE_MESSAGE(set->views[readyIndex].published,
+                            "the successor must not be adopted before its positioned handoff");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(readyIndex), static_cast<int>(set->lifecycle.current),
+                                "the ready role is still waiting, not current");
+
+  publishEmissionClock(deadline);
+  emitTurn(track, deadline);
+  TEST_ASSERT_TRUE_MESSAGE(set->views[readyIndex].published, "the clock edge adopts the successor at H");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(readyIndex), static_cast<int>(set->lifecycle.current),
+                            "the adopted successor is the current role");
+  const RuntimePlaybackView* served = servedPreviewWindowForTurn(track, 0);
+  TEST_ASSERT_NOT_NULL(served);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(newRevision, served->source.playbackRevision,
+                                   "the served frame is the revision the successor was positioned for");
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2505,6 +2556,7 @@ int main(int, char**) {
   // clause read against the serving frame.
   RUN_TEST(test_3_15f_c_short_loop_is_admitted_at_a_later_handoff);
   RUN_TEST(test_3_15f_c_long_loop_keeps_the_first_handoff);
+  RUN_TEST(test_3_15f_c_the_successor_waits_for_its_positioned_tick);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

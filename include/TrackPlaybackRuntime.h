@@ -633,6 +633,9 @@ struct LoopPlaybackRuntime {
   bool readyPositionAllowsAdoption(PlaybackDeadlineClock now) const;
   /// The runtime's own current deadline-clock view (rolling frame), used where the adoption code has no ClockManager.
   PlaybackDeadlineClock currentDeadlineClockForAdoption() const;
+  /// **3.15f / C:** a preview ready positioned at a future handoff is owed across committed-revision changes; the
+  /// hot path's staleness reset must not destroy it (bounded by the ready's own handoff).
+  bool hasPositionedPreviewReadyOwed() const { return readyPositionedLater && previewSourceActive; }
   /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
   /// refused request leaves behind (see `PlaybackViewPendingRequest`). It is per-slot state in this externally
   /// allocated object, so the eight-way DTCM `Track` gains nothing; read it through `pendingViewRequest()`, which

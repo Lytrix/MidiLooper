@@ -205,10 +205,22 @@ witness: firstFalse=3 (positioned tick not reached) wcur=2 wrdy=0 wdeadline=3072
 ```
 
 So the preview resolver ran and **correctly refused** the early adoption (`firstFalse=3`), and the roles/pair changed
-anyway: `LoopPlaybackRuntime::reset` cleared the pair and restored the default roles during the turn. The next step is to
-identify the caller of that reset on this turn and make a positioned preview ready survive it (or avoid resetting the
-preview runtime for a positioned demand). That is the remaining RED; the timed fixture stays open. No scheduling change,
-no seeded state, no coverage weakening.
+anyway: the hot path's committed-revision staleness reset (`LoopPlaybackRuntime::reset`) cleared the pair and restored
+the default roles during the turn.
+
+**Fix (same day): the positioned preview ready is owed across committed-revision changes.** The hot path now skips that
+destructive reset while `hasPositionedPreviewReadyOwed()` (a positioned ready owned by the active preview source); the
+revision still syncs and the committed route continues, and the wait is bounded by the ready's own handoff. A full slot
+reset still clears the position.
+
+**Timed adoption GREEN:** the successor fixture (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`) now passes:
+the ready waits through H-1, survives the staleness turn, and is adopted at H with the positioned revision served.
+Preview **36/36**; full native **3,420 / 7 skipped / 3,413 succeeded**; both image pins unchanged
+(`391,752 + 1,464` / `391,992 + 1,224`).
+
+**Remaining:** device leg (3.15f) and the closeout. The measured two-bar update latency stays **2,972 ticks / 1.94 loop
+periods / ~7.7 s at 120 BPM** as the consequence of preserving the admission envelope, recorded for a separate bound
+reassessment if unacceptable.
 
 **Measured image lines after the guards:** default `391,752 + 1,464` (was 391,688 + 1,528; +64 B code) and qualification
 `391,992 + 1,224` (was 391,912 + 1,304; +80 B code). Both paddings remain above the 840 floor (no re-base); the runtime
