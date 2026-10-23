@@ -2,9 +2,10 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; three focused fixes are green and the windowed preview now **serves** on the device.
-The served revision lags the live edit (the deferred preview-revision flush) and the first handoff missed the priced
-3,072 occurrence (miss→reposition). 3.15f stays open.**
+**Status: content oracle paired; three focused fixes are green and the windowed preview now **serves** on the device
+when the deferred preview‑revision flush runs (run 07). Run 08 (longer play) produced **no** preview build: the
+control‑surface/display loop stall gates the flush. The served revision lags the live edit and the first handoff missed
+the priced 3,072 occurrence. 3.15f stays open.**
 
 ## Images
 
@@ -165,6 +166,27 @@ promptly (the device's `scheduleDeferredNoteEditDisplayRefresh`/`processDeferred
 transport), so the served preview is the edited revision. The C admission/position/wait and the adoption path are now
 green natively and the preview serves on the device.
 
+### Run 08 (32 s play) — the flush/loop stall makes the route non-deterministic
+
+`captures/2026-10-23-s315f-lane-handoff-08` (same image, longer play after the edit): **no `note_edit` build at all**
+(`playback_build=1`, the committed `snapshot`), 129 committed `playback_read` rows, and the committed 64@200 eight times;
+the edited 64@1448 never sounds. The movement was at device time 139.7 s. So the preview route did not even request in a
+32 s window, while run 07 requested/built three revisions (the last 16 s after its movement).
+
+The deferred preview refresh is armed correctly (`Track::invalidateCaches(bool)` defaults true; while playing it calls
+`scheduleDeferredNoteEditDisplayRefresh`), and `processDeferredNoteEditDisplayRefresh` is called from
+`ControlSurfaceManager::update()` on the loop prefix with an 80 ms idle threshold. The observed 16 s / never pattern is
+a **loop‑prefix stall**, not an arm/threshold defect: the `PERF,playback_stop` row reports the `display` child with
+3,616 samples and the capture truncates the row at its `display[s=3616,` timing fields, so the display/DMA child is the
+suspect under the HITL capture load. The preview revision (and therefore the edit's audibility) is hostage to that
+cadence in the captured run.
+
+This is now a **display/loop contention** question (3.15f's display‑contention term; 6.5's service‑gap/latency claims),
+not the window admission/adoption. Two directions, for the owner:
+(a) remove the loop/display stall so the deferred flush runs at its 80 ms contract (the real product behaviour), or
+(b) advance the session's playback preview revision on the window owner's per‑track turn as well as the display refresh
+(a 3.15d deferred‑refresh contract change; one revision source must remain).
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -177,7 +199,9 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
-The **windowed preview now serves on the device** (22 `origin=1` read rows; first at tick 4,608), so the serving route
-itself is exercised — but the **served revision lags the live edit** (the movement's revision reaches the lane ~16 s
-later, after the served window), so the edit is not audible in the play window and the route oracle is not yet met.
-The first served handoff also missed the priced 3,072 (miss→reposition to 4,608). Those own the next RED.
+The **windowed preview now serves on the device** (run 07: 22 `origin=1` read rows; first at tick 4,608) when the
+deferred preview‑revision flush runs — the serving route itself is exercised. But the flush rides the
+control‑surface/display loop: run 07's edited revision reached the lane 16 s after the movement and run 08 (longer play)
+produced **no preview build at all**, so the edit is not audible in the window. The first served handoff also missed the
+priced 3,072 (miss→reposition to 4,608). The **display/loop contention** (and the deferred‑refresh placement) owns the
+next RED; 3.15f stays open.
