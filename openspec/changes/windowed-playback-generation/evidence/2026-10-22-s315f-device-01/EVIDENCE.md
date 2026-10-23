@@ -112,6 +112,21 @@ note selection, coarse move, stored-content result) on both images without the s
 edit matrix (overlap/pitch/length/undo cases remain with the stale fixture work). The probe leaves the note moved;
 re-seed with `--scenarios edit_record_prelude` before each run.
 
+## Memory high-water (from the same runs)
+
+`#HEAP_STATS` rows in the managed session logs:
+
+| Run | RAM2 heap floor (`heap_tail` min) | PSRAM `occupied` max | Free PSRAM |
+|---|---|---|---|
+| default base, ch 5 | **147,456 B** | 3,967,488 B | ~4.3 MB |
+| lane base, ch 5 | **147,456 B** | 4,023,300 B (+55,812) | ~4.3 MB |
+| default base, 120 host | **147,456 B** | 3,971,328 B | ~4.3 MB |
+| lane base, 120 host | **147,456 B** | 4,002,024 B (+30,696) | ~4.3 MB |
+| lane prelude seed | **147,456 B** | 2,439,096 B | — |
+
+The RAM2 floor is identical on both images; the qualification lane's window/overlay builders cost **~31–56 KB** more
+PSRAM during the base run, leaving ~4.3 MB free of the ~8.4 MB pool. No RAM2/PSRAM pressure on either image.
+
 
 ## NOTE_EDIT pair attempt (`edit_full`): not yet a usable baseline
 
