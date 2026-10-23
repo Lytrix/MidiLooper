@@ -7566,9 +7566,15 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
           applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
         }
       } else {
-        // Another owner's successor (committed or capture) holds the role. It is not this lane's to retire, and the
-        // preview can prepare nothing beside it: wait for that owner's boundary.
-        return;
+        // **3.15f / C — lane arbitration.** A committed/capture successor is another owner's preparation, but while
+        // NOTE_EDIT is open the session's preview is the content the transport should carry. Deferring to that
+        // successor starves the preview on the shared runtime (measured on the device: committed reads throughout, no
+        // preview `note_edit` build, `retained_identity_refreshed` from the committed lane). Release the role so the
+        // preview can prepare; the committed lane re-prepares its successor at the session exit, where its handoff is
+        // already owed.
+        if (!set->lifecycle.retireSupersededReady(set->views)) {
+          applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+        }
       }
     } else if (ready.coverage.contains(phase)) {
       return;  // the interval the clock edge adopts **at this boundary**: it must never be retired here

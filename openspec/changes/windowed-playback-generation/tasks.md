@@ -2258,8 +2258,17 @@ suite is not green this turn by design. No Git delivery.
   and `retained_identity_refreshed`; no `note_edit`; 71 committed reads). The caller is **not** the fix and was
   **reverted** (board/build back to `5d16cf96…`; pins unchanged). The blocker is the **committed lane's retained
   demand/source on the shared runtime** (`retained_identity_refreshed`): while NOTE_EDIT is open the session's preview
-  must displace/defer it (the committed handoff is re‑requested at the exit). The next RED is that **lane arbitration**
-  (the native steady‑state edit‑while‑serving fixture covers the simple case). No 3.15f checkoff.
+  must displace/defer it (the committed handoff is re‑requested at the exit). **Lane arbitration landed natively
+  (RED→GREEN):** `test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand` (RED before, **40/40** after); a
+  complete foreign (committed/capture) ready is deferred while NOTE_EDIT is open, and the committed lane re‑prepares at
+  the exit. Gates: preview 40/40; RWO 239; finalization 95; prewarm 247; overlay 7; full native **3,424 / 7 / 3,417**;
+  pins unchanged; HEX qualification `9448c553…`, default `aa7d61a5…`. **Device runs 14–15:** run 14 (playing open) hit
+  the seed‑stop‑phase‑dependent focus (moved 67@392, content failed); run 15 (stopped open + stopped select/ack) proves
+  the content (`200 -> 1448`, ack 200) but the preview **never built** (`playback_build=1`, the snapshot; 66 committed
+  reads). The stopped open's preview request is retained as a **terminal** `CannotCompleteBeforeHandoff` from the stopped
+  clock; after the transport starts its position is invalidated by the epoch change but the service's own‑terminal guard
+  never consults `pendingViewRequestInvalidation`. The next RED is that re‑attempt (one revision owner remains the
+  display refresh). No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

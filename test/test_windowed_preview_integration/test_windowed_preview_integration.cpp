@@ -2273,6 +2273,48 @@ static void test_3_15f_c_an_own_prepared_refusal_is_reattempted() {
   TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
 }
 
+/// **3.15f / C — a committed ready successor must not starve the session's preview.** The committed lane prepares its
+/// own successors on the shared runtime; while NOTE_EDIT is open the session's preview is the content the transport
+/// should carry. A complete **committed** ready must be deferred (it is re-prepared at the exit), not treated as an
+/// owner the preview has to wait behind. RED before the lane arbitration: the service returns on the foreign ready and
+/// the preview never builds.
+static void test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6640));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+
+  // The device shape: the committed lane's successor is complete in the ready role.
+  const Loop& loop = track.getLoop(0);
+  RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+  ready.release();
+  ready.complete = true;
+  ready.published = false;
+  ready.source.origin = PlaybackWindowOrigin::Committed;
+  ready.source.playbackRevision = loop.playbackRevision;
+  ready.coverage.startPhase = 0;
+  ready.coverage.lengthTicks = loop.loopLengthTicks;
+  ready.coverage.loopLengthTicks = loop.loopLengthTicks;
+
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuild.active() || runtime->previewSourceActive,
+                           "a committed ready successor must not starve the session's preview");
+  drainLane(track, 100);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the session's preview publishes");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2706,6 +2748,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_a_foreign_pending_promise_does_not_strand_the_preview_demand);
   RUN_TEST(test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff);
   RUN_TEST(test_3_15f_c_an_own_prepared_refusal_is_reattempted);
+  RUN_TEST(test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

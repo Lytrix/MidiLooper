@@ -2,12 +2,11 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; three focused fixes are green and the windowed preview **serves** on the device
-when the lane is free (runs 07/09). The display/loop‑prefix stall hypothesis is **falsified** (display max 2.3 ms,
-over=0; largest stream gap 1.58 s), so the display refresh stays the single revision owner; a requester‑cadence caller
-was tested and **reverted** (run 13: no preview build ever). The blocker is the **committed lane's retained
-demand/source on the shared runtime** (`retained_identity_refreshed`), which the session's preview must displace while
-NOTE_EDIT is open. 3.15f stays open.**
+**Status: content oracle paired; four focused fixes are green (the lane arbitration included) and the windowed
+preview serves on the device when the lane is free. Remaining: the stopped‑open session's refused preview demand is
+retained as a terminal `CannotCompleteBeforeHandoff` and never re‑attempted after the transport's epoch change; the
+service must consult `pendingViewRequestInvalidation`. Display refresh remains the single revision owner. 3.15f stays
+open.**
 
 ## Images
 
@@ -212,10 +211,32 @@ demand/source on the shared runtime: the session's preview never gets the lane, 
 The caller is **not** the fix and was reverted (the board/build return to `5d16cf96…` = `df05ea78`'s diagnostic image);
 the native suites were not affected and the pins are unchanged. The display refresh remains the sole revision owner.
 
-The next RED is the **lane arbitration**: while NOTE_EDIT is open the session's preview is the content the transport
-should carry, so the committed lane's retained demand/source on the same slot must yield to it (the committed handoff is
-re‑requested at the exit). A native fixture with the committed retained demand/source active plus a NOTE_EDIT preview
-demand must show the preview admitted/served — RED before that arbitration.
+## Lane arbitration landed (native RED→GREEN) and the device's stopped‑open remainder
+
+- **Fix:** in `servicePreviewWindowForNoteEditSession`, a complete **foreign** ready (committed/capture) is no longer an
+  owner the session's preview must wait behind. While NOTE_EDIT is open the session's preview is the content the
+  transport should carry; the foreign successor is deferred (retired/cleared) so the preview can prepare, and the
+  committed lane re‑prepares at the exit, where its handoff is already owed.
+- **RED/GREEN:** `test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand` stages a complete committed ready
+  plus the session's preview demand — **RED** before (`1 failed`), **GREEN** after (**40/40**).
+- **Gates:** preview 40/40; RWO 239/239; finalization 95/95; prewarm 247/247; overlay 7/7; full native **3,424 / 7
+  skipped / 3,417 succeeded**; pins unchanged (`391,752 + 1,464` / `391,992 + 1,224`). New HEX: qualification
+  `9448c553…`, default `aa7d61a5…`.
+
+### Device runs 14–15: content proof vs the stopped‑open preview demand
+
+- **Run 14** (playing open; the stopped positioning resumed from the seed's stop phase): the entry focus was 392 and
+  the playing select did not retarget it, so the coarse moved 67@392 instead of 64@200 — the content check failed. The
+  host flow, not the firmware: the stopped positioning's phase is seed‑stop‑phase dependent.
+- **Run 15** (stopped open + stopped select/ack, the reliable focus): content PASS (`200 -> 1448`, ack
+  `selected_tick=200`), but the preview **never built** (`playback_build=1`, the `snapshot`; 66 committed reads; no
+  `note_edit`; the edited 64@1448 never sounds).
+
+The stopped open requests the preview with the **unqualified/stopped clock**; that refusal is retained as a **terminal**
+`CannotCompleteBeforeHandoff`. After the transport starts, the pending's position is invalidated by the epoch change, but
+the service's own‑terminal guard never consults `pendingViewRequestInvalidation`, so the started session never re‑asks.
+The next RED is exactly that: an own terminal refusal whose clock position has been invalidated must be re‑attempted with
+the current clock (the one revision owner remains the display refresh).
 
 ## Native contract (unchanged; for the comparison)
 
@@ -229,11 +250,11 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
-The **windowed preview now serves on the device** (runs 07/09: `origin=1` read rows; first at tick 4,608) — the serving
-route itself is exercised. The display refresh is healthy and is the **single** revision owner (the dedicated
-`PERF,display` row measured 2.3 ms max / 0 over budget; largest stream gap 1.58 s), so the earlier loop/display‑stall
-suspicion is retracted; no window‑owner revision advancement was added. A per‑loop requester caller was tested
-(run 13) and **reverted**: with it the preview never built (`retained_identity_refreshed`, no `note_edit` row). The
-blocker is the **committed lane's retained demand/source on the shared runtime**: while NOTE_EDIT is open the session's
-preview must displace/defer it (the committed handoff is re‑requested at the exit). The first served handoff also
-missed the priced 3,072 (miss→reposition to 4,608). The lane arbitration owns the next RED; 3.15f stays open.
+The **windowed preview now serves on the device** (runs 07/09) when the lane is free; the display refresh is healthy and
+remains the **single** revision owner (2.3 ms max, 0 over budget; 1.58 s largest stream gap), and the requester‑cadence
+caller was tested and reverted (run 13). The **lane arbitration** is landed natively (a foreign committed ready is
+deferred while NOTE_EDIT is open; RED→GREEN `40/40`). On the device, the stopped‑open flow proves the content
+(`200 -> 1448`, ack 200) but the preview demand is retained as a terminal `CannotCompleteBeforeHandoff` from the
+stopped clock and is never re‑attempted after the transport starts; the service must consult
+`pendingViewRequestInvalidation`. That and the first‑handoff miss (3,072 missed → 4,608) own the next RED. No 3.15f
+checkoff.

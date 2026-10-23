@@ -321,7 +321,30 @@ def main(argv: list[str] | None = None) -> int:
         with lock:
             out.send(mido.Message("stop"))
         time.sleep(0.35)
-        # Start the transport with no session open (its preview state stays clean), then open NOTE_EDIT while playing.
+        # Open NOTE_EDIT while stopped, select the target's **actual nav slot**, and require the firmware's ack. The
+        # stopped selection is the reliable focus path; the transport starts only after it is proved.
+        _tap(out, lock, EDIT_BUTTON_NOTE)
+        if not _wait_mode(collector, "Edit session: NOTE_EDIT", 2.5):
+            print("[handoff-probe] FAILED: NOTE_EDIT did not open (stopped)")
+            return 1
+        focus_tick = None
+        for line in reversed(collector.snapshot()):
+            if "EditSelectNoteState: Found and selected note" in line:
+                focus = re.search(r"at tick (\d+)", line)
+                if focus:
+                    focus_tick = int(focus.group(1))
+                break
+        print(f"[handoff-probe] stopped entry focus tick={focus_tick} (intended {target_tick})")
+        time.sleep(1.6)  # the session-entry fader feedback-ignore period
+        with lock:
+            _send_program_change(out, FADER_SELECT_CHANNEL_1BASED, 1)
+            out.send(mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=select_pb))
+        ack = _wait_select_ack(collector, target_tick, 2.5)
+        if ack is None or ack[0] != target_tick:
+            print(f"[handoff-probe] FAILED: select ack {ack} is not the intended tick {target_tick}")
+            return 1
+        print(f"[handoff-probe] selection ack tick={ack[0]} note_idx={ack[1]} reason={ack[2]}")
+        # Start the transport with the session open and the focus proved; the coarse move is the live edit.
         with lock:
             play_start_host = time.monotonic()
             out.send(mido.Message("start"))
@@ -332,29 +355,8 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(0.005)
         entry_clocks = clock.clocks
         entry_host = time.monotonic()
-        _tap(out, lock, EDIT_BUTTON_NOTE)
-        if not _wait_mode(collector, "Edit session: NOTE_EDIT", 2.5):
-            print("[handoff-probe] FAILED: NOTE_EDIT did not open while playing")
-            return 1
-        print(f"[handoff-probe] NOTE_EDIT opened at clock {entry_clocks} (~tick {entry_clocks * TICKS_PER_CLOCK})")
-        time.sleep(1.1)  # fader feedback-ignore period
-        focus_tick = None
-        for line in reversed(collector.snapshot()):
-            if "EditSelectNoteState: Found and selected note" in line:
-                focus = re.search(r"at tick (\d+)", line)
-                if focus:
-                    focus_tick = int(focus.group(1))
-                break
-        print(f"[handoff-probe] entry focus tick={focus_tick} (intended {target_tick})")
-        select_fallback = focus_tick is not None and focus_tick != target_tick
-        if select_fallback:
-            # A stale bracket leaked through the stopped positioning. While playing the firmware's select decision is
-            # deferred, so the ack is audited from the post-stop rows instead of gating the gesture.
-            print("[handoff-probe] selecting the actual nav slot while playing (ack audited post-stop)")
-            with lock:
-                _send_program_change(out, FADER_SELECT_CHANNEL_1BASED, 1)
-                out.send(mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=select_pb))
-            time.sleep(0.25)
+        print(f"[handoff-probe] transport started; edit at clock {entry_clocks} (~tick {entry_clocks * TICKS_PER_CLOCK})")
+        time.sleep(0.2)
         with lock:
             _send_program_change(out, FADER_COARSE_CHANNEL_1BASED, 2)
             out.send(mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=coarse_pb))
