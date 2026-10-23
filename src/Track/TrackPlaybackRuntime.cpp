@@ -824,6 +824,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::overdubOverlayBuildExc
           canonicalWindowPhase == CanonicalWindowPhase::Denied);
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM PlaybackDeadlineClock LoopPlaybackRuntime::currentDeadlineClockForAdoption()
+    const {
+  return PlaybackDeadlineClock{static_cast<uint64_t>(rolling.lastTick), rolling.epoch};
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::readyPositionAllowsAdoption(
+    PlaybackDeadlineClock now) const {
+  if (!readyPositionedLater || readyPositionedClockEpoch == 0) return true;
+  return now.epoch == readyPositionedClockEpoch && now.tick >= readyPositionedDeadlineTick;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::overdubOverlayBorrowHeld() const {
   return !frozenCompanionPasses.idle() && captureBridgePhase == CaptureBridgePhase::Idle &&
          canonicalTailPhase == CanonicalTailPhase::Idle &&
@@ -1094,7 +1105,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::publishPreflightedFull
   auto& bridge = set->bridges[set->bridgeLifecycle.candidate];
   const auto* base = fullLoopBridgeBase(bridge, bridge.coverage.loopLengthTicks);
   if (set->lifecycle.ready < set->views.size() && base == &set->views[set->lifecycle.ready])
-    (void)set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation);
+    if (readyPositionAllowsAdoption(currentDeadlineClockForAdoption()))
+      (void)set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation);
   // Prepared cycle indexes are relative to admission. The phase checks above
   // retain the prepared closure classification even if construction crossed
   // a wrap; the live ledger must still match before changing this anchor.
@@ -1846,7 +1858,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceBridgeWindow(
           bridgeWindowBuild.discard(&ready);
           bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
         }
-        (void)set->handoffReadyCoverage();
+        if (readyPositionAllowsAdoption(currentDeadlineClockForAdoption()))
+          (void)set->handoffReadyCoverage();
         if (bridgeWindowBuildIndex == RuntimePlaybackViewLifecycle::kNoView &&
             life.build < set->views.size() && set->views[life.build].complete &&
             !set->views[life.build].published && set->views[life.build].source == bridge.source &&
@@ -2500,7 +2513,8 @@ LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& s
   if (set->lifecycle.ready < set->views.size()) {
     RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
     if (covers(ready) && ready.source == sourceIdentity) {
-      if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
+      if (!readyPositionAllowsAdoption(currentDeadlineClockForAdoption()) ||
+          !set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
       ready.published = true;
       return &set->views[set->lifecycle.current];
     }
@@ -2518,7 +2532,8 @@ LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& s
   RuntimePlaybackView& window = set->views[set->lifecycle.ready];
   if (!covers(window) || !sameSourceGeneration(window)) return nullptr;
   window.source = sourceIdentity;
-  if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
+  if (!readyPositionAllowsAdoption(currentDeadlineClockForAdoption()) ||
+      !set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
   window.published = true;
   return &window;
 }

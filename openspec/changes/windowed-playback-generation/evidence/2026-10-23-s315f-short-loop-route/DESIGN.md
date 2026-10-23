@@ -180,12 +180,18 @@ as a **ready** successor, cleared when it publishes as the authoritative **curre
 `sizeof(LoopPlaybackRuntime)` pins moved by the measured **+16 B** (7,904 -> 7,920 target, 10,104 -> 10,120 host); the
 runtime is externally allocated per slot and no Track/RAM1 field changed.
 
-**Remaining defect (same witness):** `adoptPreparedPlaybackWindow` now refuses a positioned ready before its tick, but
-the before-H turn still adopts early through a **different** adoption path -- the committed/rolling lane calls
-`handoffReadyCoverage` directly (bypassing `adoptPreparedPlaybackWindow`). The position must be honoured by **every**
-adoption route. Next: guard the direct `handoffReadyCoverage`/`publishCompletedBuildAsReady*` call sites with the
-runtime's ready-position predicate (a runtime helper taking the deadline clock), then the timed fixture goes green. No
-scheduling change, no seeded state, no coverage weakening.
+**Remaining defect (refined):** every adoption route is now guarded by the runtime's ready-position predicate
+(`adoptPreparedPlaybackWindow` and all direct `handoffReadyCoverage` sites), with a runtime-local clock view
+(`currentDeadlineClockForAdoption`, so the native suite needs no ClockManager include), yet the before-H turn still
+leaves the ready role as the **current** role. That means the early transition is **not** a handoff adoption: it is a
+publication/role rotation during the turn (the ready becomes current without `handoffReadyCoverage`). The next witness
+must capture, at the before-H turn, the lifecycle's current/ready/build indices before and after plus whether a
+completion/publication path ran -- not another handoff guard. Do not seed state or change scheduling; the device leg
+stays after this.
+
+**Measured image lines after the guards:** default `391,752 + 1,464` (was 391,688 + 1,528; +64 B code) and qualification
+`391,992 + 1,224` (was 391,912 + 1,304; +80 B code). Both paddings remain above the 840 floor (no re-base); the runtime
+pins stay 7,920 / 10,120. Full native 3,419 / 7 / 3,412.
 
 **Earlier witness result (2026-10-23).** A test-only witness now evaluates the exact adoption terms once at the edge and
 records the first false term, `adoptPreparedPlaybackWindow`'s refusal code, the current/ready roles, the work's

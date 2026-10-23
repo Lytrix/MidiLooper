@@ -4720,7 +4720,8 @@ bool Track::bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick) {
     return true;
   }
   auto* set = runtime->viewSetIfPrewarmed();
-  if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return false;
+  if (!runtime->readyPositionAllowsAdoption(clockManager.getPlaybackDeadlineClock()) ||
+      !set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return false;
   runtime->launchBoundTick = tick;
   runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Bound;
   runtime->syncRevision(loopForSlot(slotIndex).playbackRevision, playbackGeneration);
@@ -7905,7 +7906,8 @@ TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex, uint8_
   // The successor lane's adoption: one atomic handoff (`RuntimePlaybackViewLifecycle::handoff`), prepared-mode
   // because a window carries no audible-launch semantics of its own. It refuses unless a **complete** successor
   // is waiting, so a caller can poll it safely.
-  if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation)) {
+  if (!runtime->readyPositionAllowsAdoption(clockManager.getPlaybackDeadlineClock()) ||
+      !set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation)) {
     if (refusalOut != nullptr) *refusalOut = readable != 0 ? readable : 6;
     return false;
   }
