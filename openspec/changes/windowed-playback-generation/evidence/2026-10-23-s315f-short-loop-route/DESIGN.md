@@ -163,6 +163,23 @@ current; reposition to the next eligible occurrence with the same cost calculati
 The adoption gate is implemented and the positioned wait is applied to a ready, but the **edge path that turns that
 ready into the served frame** needs its own RED. Do not claim C's timed adoption until it is green.
 
+**Witness result (2026-10-23).** A test-only witness now evaluates the exact adoption terms once at the edge and
+records the first false term, `adoptPreparedPlaybackWindow`'s refusal code, the current/ready roles, the work's
+position identity (`positionedLater`, deadline, admitted, epoch), the ready and preview revisions, and the coverage.
+At the fixture's claimed H it reports:
+
+```
+firstFalse=2 (ready not complete)  refusal=0  current=0  ready=1  newRev=3  readyRev=0
+positionedLater=0  deadline=0  admitted=0  epoch=0  raw=0  phase=0  loop=1536  cov=0+0
+```
+
+So the first false term is **not** the adoption handoff and not a covered/positioned refusal: the successor's ready and
+work are **already reset** by the time the fixture calls H, and the captured deadline is 0 (no qualified position). The
+claim "the ready waits but the edge refuses" is therefore not yet measured at a true positioned H. The next RED must
+witness the same record at three points -- immediately after the mutation's service, after the drain, and at the first
+edge attempt -- to find where the work/ready position is lost. Do not seed a current view, alter scheduling, or weaken
+coverage; the fixture's staging is the suspect, and the witness is committed (test-only) to locate it.
+
 ### Still owed
 
 - The successor-shaped timed adoption fixture (or the first-publication decision above).

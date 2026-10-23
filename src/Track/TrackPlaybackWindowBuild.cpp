@@ -1484,6 +1484,53 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
 ///
 /// **Out of line and FLASH-resident on purpose**: it runs once per MIDI turn while a session is open, and the ITCM
 /// resolver that calls it is the one the RAM1 budget measures.
+#if defined(PIO_UNIT_TEST_NATIVE)
+static Track::PreviewAdoptionWitness sPreviewAdoptionWitness;
+Track::PreviewAdoptionWitness Track::previewAdoptionWitnessForTest() { return sPreviewAdoptionWitness; }
+
+/// Evaluate the adoption terms in the same order as the production condition, record the witness, and perform the
+/// single adoption call. Used **only** by the native fixtures; the target keeps the original condition.
+static bool previewAdoptionWitnessAndAdopt(Track& track, uint8_t slotIndex, LoopPlaybackRuntime* runtime,
+                                           RuntimePlaybackViewSet* set, const RuntimePlaybackView& ready,
+                                           uint32_t previewRevision, const Loop& loop, uint32_t phase,
+                                           bool positionedHandoffReached) {
+  auto& w = sPreviewAdoptionWitness;
+  w = {};
+  w.current = set->lifecycle.current;
+  w.ready = set->lifecycle.ready;
+  w.previewRevision = previewRevision;
+  w.readyRevision = ready.source.playbackRevision;
+  w.phase = phase;
+  w.loopLength = loop.loopLengthTicks;
+  w.coverageStart = ready.coverage.startPhase;
+  w.coverageLength = ready.coverage.lengthTicks;
+  w.deadline = runtime->viewBuildWork.deadlineTick;
+  w.admitted = runtime->viewBuildWork.admittedTick;
+  w.workEpoch = runtime->viewBuildWork.clockEpoch;
+  w.positionedLater = runtime->viewBuildWork.positionedLater;
+  w.readyRaw = ready.rawCoveragePrepared;
+  if (ready.published) w.firstFalse = 1;
+  else if (!ready.complete) w.firstFalse = 2;
+  else if (!positionedHandoffReached) w.firstFalse = 3;
+  else if (ready.source.origin != PlaybackWindowOrigin::Preview) w.firstFalse = 4;
+  else if (ready.source.playbackRevision != previewRevision) w.firstFalse = 5;
+  else if (!ready.coverage.isValid()) w.firstFalse = 6;
+  else if (ready.coverage.loopLengthTicks != loop.loopLengthTicks) w.firstFalse = 7;
+  else if (!ready.coverage.contains(phase)) w.firstFalse = 8;
+  else {
+    uint8_t refusal = 0;
+    if (!track.adoptPreparedPlaybackWindow(slotIndex, &refusal)) {
+      w.firstFalse = 9;
+      w.refusal = refusal;
+    } else if (set->lifecycle.current >= set->views.size()) {
+      w.firstFalse = 10;
+    }
+  }
+  if (w.firstFalse == 0) w.current = set->lifecycle.current;
+  return w.firstFalse == 0;
+}
+#endif
+
 FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
     uint8_t slotIndex, const Loop& loop, uint32_t currentTick, PlaybackViewSourceIdentity& sourceOut,
     const FixedPlaybackBridgeStorage*& bridgeOut, const RuntimePlaybackView*& viewOut) {
@@ -1551,6 +1598,13 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
       (clock.epoch == runtime->viewBuildWork.clockEpoch && clock.tick >= runtime->viewBuildWork.deadlineTick);
   if (set->lifecycle.ready < set->views.size()) {
     const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+#if defined(PIO_UNIT_TEST_NATIVE)
+    const bool readyAdopted = previewAdoptionWitnessAndAdopt(*this, slotIndex, runtime, set, ready, previewRevision,
+                                                             loop, phase, positionedHandoffReached);
+    if (readyAdopted && set->lifecycle.current < set->views.size()) {
+      adopted = &set->views[set->lifecycle.current];
+    }
+#else
     if (!ready.published && ready.complete && positionedHandoffReached &&
         ready.source.origin == PlaybackWindowOrigin::Preview &&
         ready.source.playbackRevision == previewRevision && ready.coverage.isValid() &&
@@ -1558,6 +1612,7 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
         adoptPreparedPlaybackWindow(slotIndex) && set->lifecycle.current < set->views.size()) {
       adopted = &set->views[set->lifecycle.current];
     }
+#endif
   }
   if (adopted == nullptr && set->lifecycle.current < set->views.size()) {
     const RuntimePlaybackView& current = set->views[set->lifecycle.current];

@@ -423,6 +423,29 @@ public:
   /// Test-only witness: MIDI turns that selected the live overlay window (slice 3).
   static uint32_t overlayLiveSelectionCount();
   static void setOverlayEdgeDisabledForTest(bool disabled);
+  /// **3.15f/C diagnostic:** the exact adoption terms witnessed at the last clock-edge adoption attempt. `firstFalse`
+  /// is 0 when all terms held; otherwise the first false term in evaluation order (1 published, 2 incomplete,
+  /// 3 positioned tick not reached, 4 not Preview, 5 revision, 6 coverage invalid, 7 coverage loop length,
+  /// 8 coverage does not contain the phase, 9 adoptPreparedPlaybackWindow refusal (`refusal`), 10 current role moved,
+  /// 11 no ready role). No target code reads it.
+  struct PreviewAdoptionWitness {
+    uint8_t firstFalse = 0;
+    uint8_t refusal = 0;
+    uint8_t current = 255;
+    uint8_t ready = 255;
+    uint32_t previewRevision = 0;
+    uint32_t readyRevision = 0;
+    uint32_t phase = 0;
+    uint32_t loopLength = 0;
+    uint32_t coverageStart = 0;
+    uint32_t coverageLength = 0;
+    uint64_t deadline = 0;
+    uint64_t admitted = 0;
+    uint32_t workEpoch = 0;
+    bool positionedLater = false;
+    bool readyRaw = false;
+  };
+  static PreviewAdoptionWitness previewAdoptionWitnessForTest();
 #endif
   static void resetPlaybackLaneMeasurement();
   static void samplePlaybackLaneOpportunity(PlaybackDeadlineClock clock, bool running, bool eligible,
