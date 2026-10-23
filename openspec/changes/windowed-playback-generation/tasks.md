@@ -2279,7 +2279,17 @@ suite is not green this turn by design. No Git delivery.
   `NOTE_EDIT_OPEN` `store_ids=0`/`only_visual=8`). A separate `seed-18` finding
   `persistence_persist_save_slice_too_large` (`FIRMWARE_CONTRADICTION`) is named; the content rows were recorded. Gates:
   preview 42/42; RWO 239; finalization 95; prewarm 247; overlay 7; full native 3,426/7/3,419; pins unchanged; HEX
-  qualification `f0540742…`, default `e659a71c…`. One revision owner remains the display refresh. No 3.15f checkoff.
+  qualification `f0540742…`, default `e659a71c…`. **Composition fill landed (RED→GREEN):**
+  `applyNoteEditDeltaToCommittedWindow` now fills current‑state overrides the projection has not carried yet (per half)
+  and appends the store only on the current span; `test_3_15f_c_the_preview_composition_refreshes_the_session_projection`.
+  **Device `handoff-18` (`d250d271…`, seed‑19 PASS): content PASS and ROUTE PASS** — 33 `origin=1` read rows, first at
+  tick **3,144** (the C boundary **3,072**), 33 committed before; measured latency from the demand **2,976 ticks
+  (~2,972, the native contract)**. Audibility still fails: the edited 64@1448 is absent and the committed 64@200 sounds
+  after (×2). The live movement is a **pending** `EditSessionAction` — the `pre-commit row start=1448` appears only at the
+  depart — so the playback current state/delta still carries 200. The next RED is applying the pending action to the
+  playback current state at the edit (the geometry op), not at the exit. Gates: preview 43/43; RWO 239; finalization 95;
+  prewarm 247; overlay 7; full native **3,427/7/3,420**; pins unchanged; HEX qualification `d250d271…`, default
+  `4b20eb7f…`. One revision owner remains the display refresh. No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

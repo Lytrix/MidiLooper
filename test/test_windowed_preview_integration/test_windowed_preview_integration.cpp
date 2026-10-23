@@ -2391,6 +2391,42 @@ static void test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays
   TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
 }
 
+void publishRootFromEventsForSlot(Loop& loop, const std::vector<MidiEvent>& events);
+
+/// **3.15f / C — the preview composition uses the current edit state, not a stale projection.** The session projection
+/// (the store) is derived and refreshed by the display turn; a preview can be requested before that turn (measured on
+/// the device: the live movement is in the current state, `session_events=0`, and the served preview kept the committed
+/// note). The composer must carry the current state's override even when the projection has not, so the served interval
+/// reflects the moved note. RED before the delta rule fills unprojected overrides.
+static void test_3_15f_c_the_preview_composition_refreshes_the_session_projection() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6665));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  publishRootFromEventsForSlot(track.getLoop(0), content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  // The live edit exists only in the current state: no refreshNoteEditSessionProjection call here.
+  editManager.noteEditCurrentStateMut().upsertRow(
+      6665, NoteBaseline{60, 100, 300, 500}, NoteBaseline{60, 100, 900, 1100},
+      NoteEditPresenceType::Visible);
+  const uint32_t revision = flushSessionPreviewRevision(track);
+  track.servicePreviewWindowForNoteEditSession();
+  drainLane(track, 100);
+
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the preview serves the session's interval");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+  const std::vector<EventKey> served = servedEventKeys(track, 0, track.playbackWindowEventCountForSlot(0));
+  const std::vector<EventKey> expected = {
+      EventKey{900, 60, true}, EventKey{1100, 60, false}};
+  TEST_ASSERT_TRUE_MESSAGE(sameKeys(served, expected),
+                           "the served preview carries the current state's moved note, not the committed one");
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2827,6 +2863,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_a_committed_ready_does_not_starve_the_preview_demand);
   RUN_TEST(test_3_15f_c_an_own_terminal_refusal_is_reattempted_after_an_epoch_invalidation);
   RUN_TEST(test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays);
+  RUN_TEST(test_3_15f_c_the_preview_composition_refreshes_the_session_projection);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

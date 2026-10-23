@@ -276,8 +276,15 @@ const NoteEditCurrentState& noteEditCurrentStateForPlayback() {
 /// both readers -- the merged NOTE_EDIT fallback and the preview lane's interval composition -- so the two cannot drift
 /// while the switch (task 3.7b) is still ahead. `TRACK_COLD_MEM` because both callers are rebuild-time, and an ITCM copy
 /// of this rule cost 400 B of the pinned budget (392,616 + 600 padding vs 392,216 + 1,000 at the approved pin).
+///
+/// **The current state is the edit authority; the session projection (the store) is derived.** The display turn
+/// refreshes the store, but a reader can run before that turn (measured on the device: the live movement exists in the
+/// current state while `session_events=0`). The store's events are appended only on the current span, and any current-
+/// state override the store has not carried yet is filled per half (On at the current start, Off at the current end),
+/// so the served interval reflects the edit without waiting for a display turn and without duplicating a projected one.
 TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& committed,
-                                                       const PlaybackCoverageInterval& coverage) {
+                                                       const PlaybackCoverageInterval& coverage,
+                                                       uint8_t channel) {
   const NoteEditCurrentState& currentState = noteEditCurrentStateForPlayback();
   const auto& rows = currentState.rows();
   const auto stateRow = [&rows](NoteId noteId) -> const NoteEditCurrentNoteState* {
@@ -292,6 +299,9 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
            row.currentSpan.velocity != row.committedSpan.velocity ||
            row.currentSpan.startTick != row.committedSpan.startTick ||
            row.currentSpan.endTick != row.committedSpan.endTick;
+  };
+  const auto rowIsSuppressed = [](const NoteEditCurrentNoteState& row) {
+    return row.presence == NoteEditPresenceType::Hidden || row.presence == NoteEditPresenceType::Deleted;
   };
   size_t retained = 0;
   for (size_t i = 0; i < committed.size(); ++i) {
@@ -309,12 +319,40 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
     if (!event.isNoteOn() && !event.isNoteOff()) continue;
     if (!coverage.contains(event.tick)) continue;
     const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId ? stateRow(event.noteId) : nullptr;
-    if (row == nullptr || !rowOverridesCommitted(*row) ||
-        row->presence == NoteEditPresenceType::Hidden ||
-        row->presence == NoteEditPresenceType::Deleted) {
+    if (row == nullptr || !rowOverridesCommitted(*row) || rowIsSuppressed(*row)) {
       continue;
     }
+    // A stale projection's old span is not this interval's delta; only the current span is.
+    if (event.tick != row->currentSpan.startTick && event.tick != row->currentSpan.endTick) continue;
     committed.push_back(event);
+  }
+
+  for (const auto& entry : rows) {
+    const NoteId noteId = entry.first;
+    const NoteEditCurrentNoteState& row = entry.second;
+    if (!rowOverridesCommitted(row) || rowIsSuppressed(row)) continue;
+    const bool wantOn = coverage.contains(row.currentSpan.startTick);
+    const bool wantOff = coverage.contains(row.currentSpan.endTick);
+    if (!wantOn && !wantOff) continue;
+    bool hasOn = false;
+    bool hasOff = false;
+    for (const MidiEvent& event : editManager.sessionMidiEvents()) {
+      if (event.noteId != noteId) continue;
+      if (event.isNoteOn() && event.tick == row.currentSpan.startTick) hasOn = true;
+      if (event.isNoteOff() && event.tick == row.currentSpan.endTick) hasOff = true;
+      if (hasOn && hasOff) break;
+    }
+    if (wantOn && !hasOn) {
+      MidiEvent on = MidiEvent::NoteOn(row.currentSpan.startTick, channel, row.currentSpan.pitch,
+                                       static_cast<uint8_t>(row.currentSpan.velocity));
+      on.noteId = noteId;
+      committed.push_back(on);
+    }
+    if (wantOff && !hasOff) {
+      MidiEvent off = MidiEvent::NoteOff(row.currentSpan.endTick, channel, row.currentSpan.pitch, 0);
+      off.noteId = noteId;
+      committed.push_back(off);
+    }
   }
 }
 
@@ -641,7 +679,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
             runtime.mergedMidiEvents.mergedEvents, winStart, winLen, &gatherPath) &&
         gatherPath == Loop::SnapshotWindowGatherPath::Snapshot) {
       applyNoteEditDeltaToCommittedWindow(runtime.mergedMidiEvents.mergedEvents,
-                                          PlaybackCoverageInterval{winStart, winLen, loop.loopLengthTicks});
+                                          PlaybackCoverageInterval{winStart, winLen, loop.loopLengthTicks},
+                                          track.getMidiChannel());
     } else {
       // A current source is required for composition. Keep the failure visible as
       // an empty build rather than mislabeling a stale root as current.
@@ -7289,7 +7328,7 @@ TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex
       out.clear();
       return false;
     }
-    applyNoteEditDeltaToCommittedWindow(out, coverage);
+    applyNoteEditDeltaToCommittedWindow(out, coverage, getMidiChannel());
     return true;
   }
   for (const MidiEvent& event : editManager.sessionMidiEvents()) {

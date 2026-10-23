@@ -2,10 +2,10 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; six focused fixes are green (lane arbitration, invalidation re‑attempt, playing gate
-included) and the windowed NOTE_EDIT **route now serves** on the device (run 17: 19 preview read rows, first at tick
-4,608). The served preview still carries the pre‑edit content (the live session composition is the next RED). A separate
-`persistence_persist_save_slice_too_large` finding on the seed run is named, not ignored. 3.15f stays open.**
+**Status: content and route oracles PASS on the device; the C‑priced handoff and the ~2,972‑tick latency are measured
+(run 18). Seven focused fixes are green. The edited note is still silent because the live NOTE_EDIT action is **pending**
+until the exit commit, so the playback current state/delta still describes the committed note; applying it at the edit is
+the next RED. One revision owner (the display refresh). 3.15f open.**
 
 ## Images
 
@@ -269,6 +269,26 @@ the current clock (the one revision owner remains the display refresh).
 The next RED is the **live session composition**: the preview frame must carry the edited revision (the current state's
 moved note in the interval), not the committed content. One revision owner (the display refresh) remains.
 
+### Composition fix + run 18: the route and the C latency are measured; the live edit is still a pending action
+
+- **Fix:** `applyNoteEditDeltaToCommittedWindow` now fills current‑state overrides the session projection has not carried
+  yet (per half: On at the current start, Off at the current end) and appends the store only on the current span, so a
+  reader that runs before the display turn still sees the edit. The store‑based fixtures remain the projection owner and
+  stay green. RED/GREEN `test_3_15f_c_the_preview_composition_refreshes_the_session_projection`.
+- **Gates:** preview **43/43**; RWO 239; finalization 95; prewarm 247; overlay 7; full native **3,427 / 7 skipped /
+  3,420 succeeded**. Pins unchanged (`391,752 + 1,464` / `391,992 + 1,224`). HEX: qualification `d250d271…`, default
+  `4b20eb7f…`.
+- **Device run 18** (`seed-19` PASS; image `d250d271…`): content PASS (`200 -> 1448`, ack 200) and **route PASS** — 33
+  `origin=1` read rows, first at tick **3,144** (the C boundary **3,072**, first read 72 ticks later), 33 committed rows
+  before it. The measured latency from the demand is **2,976 ticks (~2,972, the native contract)**.
+- **Remaining audibility:** the edited 64@1448 is still absent and the committed 64@200 sounds after the handoff (×2).
+  The live movement is a **pending action**: the `NOTE_EDIT focus rebuild`/`EditSessionAction start=1448` runs at the
+  edit, but the `pre-commit row start=1448` appears only at the **depart** (the exit commit). The playback current
+  state/delta still describes the committed 200, so both the composer and the merged reader correctly serve what the
+  current state says — the action has not been applied to it yet.
+- **Next RED:** the live pending NOTE_EDIT action must reach the playback current state/delta at the edit (the geometry
+  op's application/commit), not at the exit. One revision owner (the display refresh) remains.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -281,9 +301,10 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
-The **windowed NOTE_EDIT route now serves on the device** (run 17: 19 `origin=1` read rows, first at tick 4,608;
-content PASS). The display refresh remains the **single** revision owner (2.3 ms max, 0 over budget; 1.58 s largest
-stream gap); the requester‑cadence caller was tested and reverted; the **lane arbitration**, the **invalidation
-re‑attempt**, and the **playing gate** are landed natively (RED→GREEN each). What remains is the **live session
-composition**: the served preview still carries the pre‑edit content (edited 64@1448 absent), plus the separate
-`persistence_persist_save_slice_too_large` seed finding. No 3.15f checkoff.
+The **windowed NOTE_EDIT route now serves on the device** and the **content and route oracles PASS** (run 18: 33
+`origin=1` read rows, first at the C boundary 3,072; the measured latency **2,976 ticks ≈ the native 2,972**). The
+display refresh remains the **single** revision owner; the lane arbitration, invalidation re‑attempt, playing gate and
+the composition fill are landed natively (RED→GREEN each). What remains is **audibility**: the live movement is a
+pending NOTE_EDIT action until the exit commit, so the playback current state/delta still carries the committed note;
+applying the pending action at the edit is the next RED. The earlier `persistence_persist_save_slice_too_large` finding
+did not recur on `seed-19` (PASS) and remains named. No 3.15f checkoff.
