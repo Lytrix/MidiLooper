@@ -97,9 +97,11 @@ slot 1 / channel 5):
 So the tempo correction fixed the record leg, and the remaining gap is the **edit-session/fader precondition**
 (entering the edit session, selecting a note and the fader bank) on this bench — not a lane/default difference. The lane
 leg was **not** run against a failing default baseline; doing so would not be a parity test. The `edit_full` pair is
-therefore **not yet a parity result**. Candidate next steps: establish the edit precondition (the legacy edit fixture's
-fader bank / note selection) or use a layered note-edit preset (`note_edit_overdub_compose`) designed for this harness,
-then run the pair.
+therefore **not yet a parity result**. The layered `note_edit_overdub_compose` preset was also tried on the default image
+(`…default-necompose-01`, 120 BPM, no boot-reset) and failed at its own precondition: `no later same-pitch live note`.
+So both NOTE_EDIT routes are blocked on fixture setup/seed on this bench, not on the image. Candidate next steps:
+establish the edit precondition (the legacy edit fixture's fader bank / note selection) or seed the compose scenario's
+required later same-pitch live note, then run the pair.
 
 The tempo-fader route is now a reusable device recipe: enter LOOP_EDIT, send pitchwheel on the tempo channel with the
 `TempoMapping` logical value (120 BPM → wire 6520, logical −1672); the firmware answers `TEMPO: PB=-1672 -> 120.0 BPM`.
