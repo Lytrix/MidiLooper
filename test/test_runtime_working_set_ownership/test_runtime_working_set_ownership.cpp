@@ -3290,6 +3290,8 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot, bool lateRoot
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPlaying, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "a demoted target may not commit before its window is built");
   TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "the clock lane may not take the target's occupancy (F-4: no capacity on the edge)");
 
   const auto buildsBeforeProvision = Track::playbackOrderHotRebuildCount();
   TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
@@ -4282,6 +4284,45 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
   TEST_ASSERT_NOT_NULL(outsideWork);
   TEST_ASSERT_TRUE_MESSAGE(outsideWork->positionedLater,
                            "one tick short at the first occurrence moves the handoff a loop later");
+}
+
+/// **F-2 / task 2.2 — the handoff lead is the derived deadline, not a bar count or a fixed millisecond figure.** The
+/// same contract/source shape is evaluated on the 64-bar long loop and the 2-bar short loop: the long loop fits the
+/// derived lead in one occurrence; the short loop does not, so its production entry positions the demand later
+/// (3.15f/C, `test_3_15f_c_short_loop_is_admitted_at_a_later_handoff`). Tempo scales the wall time, never the tick
+/// lead.
+void test_f2_the_derived_handoff_lead_is_the_oracle_on_short_and_long_loops() {
+  MidiEvent source[4];
+  const size_t count = buildWindowOwnerSource(source, 4);
+  CoverageServiceContract expected = Track::playbackViewCoverageContract();
+  expected.deriveGrainsFrom(count);
+  const uint32_t requiredLead =
+      expected.leadTicks + static_cast<uint32_t>(expected.requiredGrains()) *
+          (static_cast<uint32_t>(expected.maximumConsecutiveDeniedTurns) + 1u) *
+          expected.maximumPhaseAdvancePerTurn;
+  constexpr uint32_t kLongLoop = 64u * Config::TICKS_PER_BAR;
+  constexpr uint32_t kShortLoop = 2u * Config::TICKS_PER_BAR;
+
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kLongLoop, requiredLead,
+                                       "the derived lead fits the long loop's first occurrence");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kShortLoop, requiredLead,
+                                          "the derived lead exceeds the short loop's whole pass");
+  // The contract's own tick distance: the long loop can hand off at the required lead; the short loop's widest
+  // possible single pass is one tick short of the loop and still shorter than the derived lead.
+  const uint32_t phase = 100;
+  const uint32_t handoff = (phase + requiredLead) % kLongLoop;
+  TEST_ASSERT_EQUAL_UINT32(requiredLead, handoffLeadTicks(phase, handoff, kLongLoop));
+  const uint32_t shortLead = handoffLeadTicks(0, kShortLoop - 1, kShortLoop);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(requiredLead, shortLead,
+                                       "a short loop cannot meet the derived lead in one pass");
+  // Tempo changes when that tick distance elapses, not the tick distance itself: a fixed-ms oracle would disagree
+  // between 120 and 240 BPM while the contract's answer does not.
+  const double ms120 = static_cast<double>(requiredLead) * 60000.0 /
+                       (120.0 * static_cast<double>(Config::INTERNAL_PPQN));
+  const double ms240 = static_cast<double>(requiredLead) * 60000.0 /
+                       (240.0 * static_cast<double>(Config::INTERNAL_PPQN));
+  TEST_ASSERT_TRUE_MESSAGE(ms240 < ms120,
+                           "the tick-derived lead is tempo-scaled in time, not a fixed millisecond constant");
 }
 
 /// The service-gap declaration is **bounded by the measurement, not by its own claim** (task 3.10 / DEC-108 §13b).
@@ -17587,6 +17628,7 @@ int main() {
   // windowed-playback-generation slice 3.1: the window-build owner's declared contract, its one-grain turn
   // and the naming/non-destructiveness of its refusals.
   RUN_TEST(test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle);
+  RUN_TEST(test_f2_the_derived_handoff_lead_is_the_oracle_on_short_and_long_loops);
   RUN_TEST(test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_its_own_claim);
   RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
   // windowed-playback-generation slice 3.10 increment 3's own fixture: the routed scan serves the urgent holder.
