@@ -2385,6 +2385,17 @@ suite is not green this turn by design. No Git delivery.
   device high-water was measured, the final-image sweep is owed. Multi-track **sounding** contention is the 3.10/6.5
   service gate, not a separate emitter route. The cold legacy reference differential is the common term across (1)–(11).
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
+  **Device parity session 1 (2026-10-24; images `cbd4703d…` / `dab405b3…`):** base matrix **4/4 PASS** (qualification
+  and default, host 120 and internal) — 2-bar record, both overdub passes, post-stop undo/redo, display and persistence
+  terms; dense/windowed **qualification PASS** (`ok=True`, leg/lane/snapshot, readiness 29/29, 0 overruns) with the two
+  content-pipeline terms still deferred, and the default dense **leg PASS** (lane/snapshot correctly not applicable).
+  **Finding:** the qualification base builds the overdub overlay candidate (`playback_build,overlay` rev 7/9) but the
+  edge never serves it — every overdub read is `origin=0`, the only `origin=2` read is the record overlay; the echo
+  fallback served. Device overlay selection is therefore **not yet proven** and needs a RAM1-neutral observation of the
+  candidate terms before a fix or a named refusal. Scenario attempts (`edit_overdub_during_note_edit`,
+  `accepted_sequence_mixed`, `rolling_record growth-empty`) are blocked by their own seed/preparation preconditions
+  (the mixed slot-5 finalization and the scoped-empty preparation), not by the route; the host `Path` shadowing bug in
+  the edit/overdub scenario is fixed. Evidence: [`2026-10-24-s315f-device-04/`](evidence/2026-10-24-s315f-device-04/).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next
       step ("hand the gather the presentation's sealed `rawRange`") is implemented at both owners. `Loop::

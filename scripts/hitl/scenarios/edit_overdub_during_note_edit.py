@@ -469,7 +469,6 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
         exit_code = 0
         if serial_collector is not None:
             from datetime import datetime
-            from pathlib import Path
             import json
 
             from hitl.stimuli import (
