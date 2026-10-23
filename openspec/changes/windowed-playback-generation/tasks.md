@@ -2401,12 +2401,14 @@ suite is not green this turn by design. No Git delivery.
   the edit/overdub scenario is fixed. **Rolling Record campaign PASS** on the same final image: `growth-empty` (both
   legs CLEARED), `held` (`corrected_frozen_root_return`), `matched` (`matching_physical_reader_preserved`); aggregate
   `verdict=PASS`, `full_recipe_complete=true`, `issues=[]`. The first growth attempt refused the clear by name
-  (`deferred save temporarily blocked by post_load_holdoff`) and passed after the save settled. **Switch (mixed):**
-  two attempts reached the B seed commit and the slot-scoped canonical release (`canon_rel_interval,4,…` at 76.306 s,
-  `PERS,result,ok` at 76.949 s) but the flow's post-commit wait missed it (`seed finalization release unconfirmed within
-  10s`), so the switch leg never ran — a host-tooling marker-window race, not a firmware refusal. **Remaining device
-  rows:** switch (that harness race), layered/jam (no registered stimulus), and the dense content-pipeline terms
-  (deferred by the registered verifier). Evidence: [`2026-10-24-s315f-device-04/`](evidence/2026-10-24-s315f-device-04/).
+  (`deferred save temporarily blocked by post_load_holdoff`) and passed after the save settled. **Switch (mixed):** the 10 s seed-settle bound was too short — the slot-scoped release measured **12.57 s** after
+  the stop (63.737 s → 76.306 s; `PERS,result` 76.949 s), and the bound is already allowlisted as
+  `--seed-settle-timeout-s`. Rerunning with **25 s** drove the leg: `b_switch` confirmed (`Loop 5: Switch gesture from
+  slot 4`), B overdub started, `DROVE_LEG`. The offline oracle is then **setup-limited** — the verify-only path lacks
+  the content/timing/teardown inputs and the historical mixed terms `L4_a_capacity_released` (A never retired) and
+  `L5_successor_started` (A's release human-positioned) — so the switch **gesture** is observed on device while the
+  route is not oracle-qualified. **Remaining device rows:** switch (setup-limited oracle), layered/jam (no registered
+  stimulus), and the dense content-pipeline terms (deferred). Evidence: [`2026-10-24-s315f-device-04/`](evidence/2026-10-24-s315f-device-04/).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next
       step ("hand the gather the presentation's sealed `rawRange`") is implemented at both owners. `Loop::

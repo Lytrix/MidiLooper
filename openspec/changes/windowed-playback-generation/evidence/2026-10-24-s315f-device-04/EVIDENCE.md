@@ -91,3 +91,35 @@ The edge diagnostic was removed; the rebuilt qualification HEX is byte-identical
 the board. Bench slot 8/4 was cleared by the rolling pass (authorized test content); slot 8/5 holds the mixed seed from
 the failed preparation. The remaining 3.15f rows are: switch (the harness race above), layered/jam (no registered
 stimulus), and the dense content-pipeline terms (deferred by the registered verifier).
+
+## Switch (mixed) — the leg now drives; the oracle is setup-limited
+
+The 10 s seed-settle bound was the blocker, and the bound is already allowlisted (`--seed-settle-timeout-s` in
+`PASSTHROUGH_FLAGS`), so this needed **no host code change**: the measured release landed **12.57 s** after the seed's own
+stop (record stop 63.737 s → `canon_rel_interval,4` 76.306 s, `PERS,result` 76.949 s). Re-run with
+`--seed-settle-timeout-s 25` (`2026-10-24-s315f-closeout-mixed-3`):
+
+- `b_switch` **confirmed**: `Loop 5: Switch gesture from slot 4`;
+- `b_overdub_start_notes` confirmed, 1 note on channel 7 at 120.03 BPM;
+- `leg mixed: DROVE_LEG`; shutdown complete with two drains.
+
+The offline oracle over that log then reports a **setup-limited** verdict, not a switch failure: it lacks the
+content-parity/timing/teardown evidence inputs through the verify-only path, and its mixed-leg terms
+`L4_a_capacity_released` (“no release edge for A: it never retired”) and `L5_successor_started` (A's release is
+human-positioned only) are the historical mixed-leg setup class. So the device **switch gesture** is observed, but the
+registered mixed oracle does not qualify the route yet.
+
+## 3.15f row status after this session
+
+| Row | Status |
+|---|---|
+| Base (record, overdub, undo/redo, display, persistence) | **PASS** ×4 legs (both images, host/internal) |
+| Live + frozen Record / stop return | **PASS** (roll campaign, full recipe) |
+| NOTE_EDIT (short loop, route + audibility) | **PASS** (run 24/25) |
+| Overlay edge selection | **observed** (`ok=ff`; read-witness origin is not a route indicator) |
+| Dense / windowed | **PASS** (qualification; default content leg), content-pipeline terms deferred |
+| Internal / external clock | **PASS** (base legs) |
+| RAM1 / PSRAM / RAM2 high-water | RAM1 pins exact; RAM2 floor 147,456 B; PSRAM 3.97–4.02 MB |
+| Switch / inbound slot | gesture confirmed; **oracle setup-limited** (A retirement/overlap + missing evidence inputs) |
+| Layered / jam | **no registered device stimulus** |
+| Simultaneous-track Record | **deferred by owner** |
