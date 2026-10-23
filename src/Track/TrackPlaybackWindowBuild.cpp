@@ -362,36 +362,33 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
 /// but another revision is served" from "the composition ran before the edit was applied".
 static void emitPreviewSourceCompositionRow(uint8_t slot, const SessionMidiEventVec& composed) {
   const NoteEditCurrentState& state = editManager.noteEditCurrentState();
-  for (const auto& entry : state.rows()) {
-    const NoteEditCurrentNoteState& row = entry.second;
-    const bool overrides =
-        row.presence == NoteEditPresenceType::Hidden || row.presence == NoteEditPresenceType::Deleted ||
-        row.presence == NoteEditPresenceType::Added ||
-        row.currentSpan.pitch != row.committedSpan.pitch ||
-        row.currentSpan.velocity != row.committedSpan.velocity ||
-        row.currentSpan.startTick != row.committedSpan.startTick ||
-        row.currentSpan.endTick != row.committedSpan.endTick;
-    if (!overrides) continue;
-    uint32_t sourceTick = 0;
-    for (const auto& event : composed) {
-      if (event.noteId == entry.first && event.isNoteOn()) {
-        sourceTick = static_cast<uint32_t>(event.tick);
-        break;
+  const NoteEditFocus& focus = editManager.getEditSession().focus;
+  const NoteId focusNoteId = focus.movingNoteId;
+  if (focusNoteId != kInvalidNoteId) {
+    const NoteEditCurrentNoteState* row = state.find(focusNoteId);
+    if (row != nullptr) {
+      uint32_t sourceTick = 0;
+      for (const auto& event : composed) {
+        if (event.noteId == focusNoteId && event.isNoteOn()) {
+          sourceTick = static_cast<uint32_t>(event.tick);
+          break;
+        }
       }
+      Serial.printf(
+          "#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,focus=%lu,present=1,cur=%lu,%u,%lu,base=%lu,%u,%lu,src=%lu,rows=%u\r\n",
+          (unsigned long)micros(), static_cast<unsigned>(slot),
+          (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)focusNoteId,
+          (unsigned long)row->currentSpan.startTick, static_cast<unsigned>(row->currentSpan.pitch),
+          (unsigned long)row->currentSpan.endTick, (unsigned long)row->committedSpan.startTick,
+          static_cast<unsigned>(row->committedSpan.pitch), (unsigned long)row->committedSpan.endTick,
+          (unsigned long)sourceTick, static_cast<unsigned>(state.rows().size()));
+      return;
     }
-    Serial.printf(
-        "#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,note=%lu,cur=%lu,%u,%lu,base=%lu,%u,%lu,src=%lu\r\n",
-        (unsigned long)micros(), static_cast<unsigned>(slot),
-        (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)entry.first,
-        (unsigned long)row.currentSpan.startTick, static_cast<unsigned>(row.currentSpan.pitch),
-        (unsigned long)row.currentSpan.endTick, (unsigned long)row.committedSpan.startTick,
-        static_cast<unsigned>(row.committedSpan.pitch), (unsigned long)row.committedSpan.endTick,
-        (unsigned long)sourceTick);
-    return;
   }
-  Serial.printf("#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,none\r\n", (unsigned long)micros(),
-                static_cast<unsigned>(slot),
-                (unsigned long)editManager.sessionPlaybackPreviewRevision());
+  Serial.printf("#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,focus=%lu,present=0,rows=%u\r\n",
+                (unsigned long)micros(), static_cast<unsigned>(slot),
+                (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)focusNoteId,
+                static_cast<unsigned>(state.rows().size()));
 }
 #endif
 

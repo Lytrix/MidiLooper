@@ -2527,6 +2527,37 @@ static void test_3_15f_c_the_geometry_resolver_moves_the_current_state_row() {
   TEST_ASSERT_EQUAL_UINT32(1100, row->currentSpan.endTick);
 }
 
+/// **3.15f / C — the current‑root open hydrates every visible note (the device shape).** Eight identified notes, the
+/// target (note 2 at 200) among them: the current state must carry all eight rows, and the target's committed baseline
+/// must remain 200 (so a later move's delta sees the override). RED if the open drops a row or folds the target's
+/// baseline.
+static void test_3_15f_c_the_current_root_open_hydrates_every_visible_note() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 8, 104, 60, static_cast<NoteId>(1));
+  appendIdentifiedNote(content, 200, 296, 64, static_cast<NoteId>(2));
+  appendIdentifiedNote(content, 392, 488, 67, static_cast<NoteId>(3));
+  appendIdentifiedNote(content, 584, 680, 60, static_cast<NoteId>(4));
+  appendIdentifiedNote(content, 872, 968, 64, static_cast<NoteId>(5));
+  appendIdentifiedNote(content, 1064, 1160, 65, static_cast<NoteId>(6));
+  appendIdentifiedNote(content, 1256, 1352, 69, static_cast<NoteId>(7));
+  appendIdentifiedNote(content, 1352, 1448, 55, static_cast<NoteId>(8));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  publishRootFromEventsForSlot(track.getLoop(0), content);
+  track.getLoop(0).rebuildVisualCacheFromPasses();
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  const auto& rows = editManager.noteEditCurrentState().rows();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(8u, static_cast<uint32_t>(rows.size()),
+                                   "every visible note hydrates the current state");
+  const auto target = rows.find(static_cast<NoteId>(2));
+  TEST_ASSERT_TRUE(target != rows.end());
+  TEST_ASSERT_EQUAL_UINT32(200, target->second.currentSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(200, target->second.committedSpan.startTick,
+                                   "the target keeps its committed baseline at the open");
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2965,6 +2996,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays);
   RUN_TEST(test_3_15f_c_the_preview_composition_refreshes_the_session_projection);
   RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual);
+  RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_every_visible_note);
   RUN_TEST(test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row);
   RUN_TEST(test_3_15f_c_the_geometry_resolver_moves_the_current_state_row);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);

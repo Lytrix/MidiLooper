@@ -2322,6 +2322,15 @@ suite is not green this turn by design. No Git delivery.
   remains (the device's `preview_source … none` after the live move), so per the owner's rule device instrumentation is
   authorized; it must be RAM1-neutral (the composer's existing `preview_source` row + the existing focus/action rows).
   Next: extend the composer's row to name the target row when no override, then run the device. No 3.15f checkoff.
+  **Composer row extension + 8-note open reproduction (2026-10-24):** the composer's `preview_source` (image
+  `4f632326…`) names the focus/target row; run 21 shows `rev=3,focus=2,present=1,cur=1448,base=1448,src=200,rows=7` — the
+  target row's **committed baseline already equals the moved span** and the composed source is still 200. The native
+  8-note open (`test_3_15f_c_the_current_root_open_hydrates_every_visible_note`) hydrates **all 8** rows with the target
+  baseline **200** — the open does not drop the target. The remaining seam is the resolver's
+  `ensureVisibleRowsForDisplayNotes(committedDisplayNotes)` fed the **live display's moved span** (1448) as the baseline
+  (plus the device's live state carrying 7 rows at the movement). Native gates: preview **47/47**; full **3,431 / 7 /
+  3,424**. Next native: the resolver with the display note at the moved span, then fix the ensure to keep the
+  causing/moved row's committed baseline; re-run the device with RAM1-neutral rows only. No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

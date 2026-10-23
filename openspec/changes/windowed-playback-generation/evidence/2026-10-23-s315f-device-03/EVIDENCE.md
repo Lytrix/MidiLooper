@@ -364,6 +364,24 @@ RAM1‑neutral (the composer’s existing `preview_source` row and the existing 
 rows; a new apply‑site row tripped the approved 4 KB bss). Next: extend the composer’s existing row to name the target
 row when no override, and run the device with those rows.
 
+## Native 8-note open reproduction disproves the “open drops the target” premise (2026-10-24)
+
+`test_3_15f_c_the_current_root_open_hydrates_every_visible_note` — eight identified notes (the target note 2 at 200
+among them), current root + visual, then the open: the current state carries **all eight rows**, and the target’s
+committed baseline stays **200**. GREEN (preview **47/47**; full native **3,431 / 7 / 3,424**).
+
+So the device’s `rows=7`, `base=1448` is **not** the open. The remaining device seam is the resolver’s
+`ensureVisibleRowsForDisplayNotes(committedDisplayNotes)` being fed the **live display’s moved span** (1448) as the
+baseline, together with the device’s live state/display carrying 7 rows at the movement. The native open (the committed
+display) keeps 8/200; the device’s live display supplies 1448.
+
+- **Next native:** drive the resolver with the display note for the target at the **moved** span (the device shape) and
+  assert the committed baseline/override; the fix is in the resolver’s ensure — the causing/moving row’s baseline must
+  remain the committed root, not the live display’s moved span. Then re-run the device with the RAM1-neutral rows only.
+- **State:** the composer row extension is in image `4f632326…` (budget green, headroom 416/192); the native gates above;
+  production firmware/RAM1 pins were untouched for the native proof itself. 3.15f open.
+
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
