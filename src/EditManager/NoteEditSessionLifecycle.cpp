@@ -262,6 +262,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
 #if defined(SESSION_CAPTURE)
         logNoteEditOpenQ3(loop, editSession.store.readStore());
 #endif
+        // **3.15f / C — the current-root open still hydrates the playback current state.** The store rematerialize is
+        // intentionally skipped here (no analyze/paint rebuild), but the visible rows are what the first live edit
+        // applies through and what the preview delta reads. Leaving them empty made the device composer see no
+        // override and serve the committed content.
+        ensureCurrentStateVisibleRowsFromVisualCache(track);
     }
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;

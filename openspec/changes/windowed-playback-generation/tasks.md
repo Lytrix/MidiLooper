@@ -2300,7 +2300,16 @@ suite is not green this turn by design. No Git delivery.
   notes, so the delta has no row and correctly composes the committed base. The next slice is populating the open's
   store/current state from the committed/visual content (or reading the visual content) before live edits. The
   diagnostic rows cost ITCM (padding +1,256 / +1,032, above the 840 floor; removed when the investigation closes). HEX:
-  qualification `8f21a490…`, default `4a10efde…`. No 3.15f checkoff.
+  qualification `8f21a490…`, default `4a10efde…`. **Open hydration landed (RED→GREEN):** the current‑root open now
+  hydrates the visible current state from the visual (`ensureCurrentStateVisibleRowsFromVisualCache`) while skipping the
+  store rematerialize (`test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual`). **Run 20**
+  (`seed-21` PASS; image `7c620c1e…`): content PASS; the open’s preview current serves at the playhead; the movement’s
+  **revision 3 is adopted at tick 3,072** (`preview_adopt rev=3,session=3`), so the C adoption is measured again; but
+  `preview_source rev=2/3,none` — 84 ms after the movement the current state has no overriding row, the served rev‑3
+  frame carries the committed content, and the edited 64@1448 is silent. The next RED is the live movement’s
+  action→current‑state row (`applyEditSessionAction`/the resolver). Gates: preview 44/44; RWO 239; finalization 95;
+  prewarm 247; overlay 7; full native 3,428/7/3,421; code/padding `391,960+1,256` / `392,184+1,032` (above the 840
+  floor; the approved line is restored at diagnostic removal). No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

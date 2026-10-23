@@ -2427,6 +2427,28 @@ static void test_3_15f_c_the_preview_composition_refreshes_the_session_projectio
                            "the served preview carries the current state's moved note, not the committed one");
 }
 
+/// **3.15f / C — a current‑root NOTE_EDIT open hydrates the visible current state from the visual.** The current‑root
+/// open intentionally skips the store rematerialize, but the playback current state must still carry the committed
+/// visible rows: the first live edit applies through them and the preview delta reads them. Leaving it empty is why the
+/// device's composer saw `none` and served the committed content. RED before the open hydration.
+static void test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6666));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  publishRootFromEventsForSlot(track.getLoop(0), content);
+  track.getLoop(0).rebuildVisualCacheFromPasses();
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  const auto& rows = editManager.noteEditCurrentState().rows();
+  TEST_ASSERT_FALSE_MESSAGE(rows.empty(), "a current-root NOTE_EDIT open hydrates the current state from the visual");
+  const auto found = rows.find(static_cast<NoteId>(6666));
+  TEST_ASSERT_TRUE(found != rows.end());
+  TEST_ASSERT_EQUAL_UINT32(300, found->second.currentSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(500, found->second.currentSpan.endTick);
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2864,6 +2886,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_an_own_terminal_refusal_is_reattempted_after_an_epoch_invalidation);
   RUN_TEST(test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays);
   RUN_TEST(test_3_15f_c_the_preview_composition_refreshes_the_session_projection);
+  RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);
