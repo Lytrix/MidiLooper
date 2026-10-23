@@ -1,3 +1,15 @@
+**2026-10-24 — 3.15f CHECKED OFF (owner scope decision).** The all-route cutover gate is closed against the owner's
+supported-route scope. **Passing:** base record/both overdubs/post-stop undo-redo/display/persistence 4/4 (qualification
+and default, host/internal; RAM2 147,456 B, PSRAM 3.97–4.02 MB); live + frozen Record/stop return (rolling campaign full
+recipe PASS, all four terminals); NOTE_EDIT short-loop route + audibility (runs 24/25); overlay edge selected on device
+(`ok=ff`, native W1/W8); dense/windowed qualification PASS with the default content leg; clocks; RAM high-water.
+**Switch/inbound slot:** the mixed leg drove and the switch gesture is confirmed, but the registered mixed oracle is
+setup-limited (missing content/timing/teardown inputs + `L4`/`L5` A-retirement terms), accepted as a fixture limitation
+with the native switch-while-recording proof. **Deferred as future features:** simultaneous-track Record and layered/jam
+(no registered stimulus). **Not claimed:** 3.7b emitter removal or RWO S7.5 continuity, the dense content-pipeline terms,
+and the mixed A-retirement terms. Images `cbd4703d…` / `dab405b3…`; full native 3,433 / 7 / 3,426. Evidence:
+[`2026-10-24-s315f-device-04/`](../openspec/changes/windowed-playback-generation/evidence/2026-10-24-s315f-device-04/EVIDENCE.md).
+
 **2026-10-24 — 3.15f device parity session 1 (base matrix + dense; overlay device gap found).** Base matrix **4/4
 PASS** on `cbd4703d…` and `dab405b3…`, host 120 and internal (record, both overdubs, post-stop undo/redo, display,
 persistence; RAM2 floor 147,456 B, PSRAM peak 3.97–4.02 MB). Dense/windowed qualification **PASS** (`ok=True`,
