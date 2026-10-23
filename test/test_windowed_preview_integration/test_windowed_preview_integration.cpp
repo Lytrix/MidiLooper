@@ -2127,6 +2127,106 @@ static void test_3_15f_c_the_successor_waits_for_its_positioned_tick() {
                                    "the served frame is the revision the successor was positioned for");
 }
 
+/// **3.15f / C — a foreign committed promise must not strand the NOTE_EDIT preview.** Device session 3 measured the
+/// committed window serving throughout a live edit (every `playback_read` row `origin=Committed`, no preview build, no
+/// audible edit). The lane is one runtime with one pending-demand slot: a committed/capture promise retained there is
+/// a **foreign** promise, not this session's standing demand, and must not block the preview from asking. The session's
+/// preview is admitted normally (the committed handoff is re-requested at the exit), and the first preview publication
+/// is authoritative at completion. RED before the pending re-attempt: the service returns at the shared pending and no
+/// preview build ever starts.
+static void test_3_15f_c_a_foreign_pending_promise_does_not_strand_the_preview_demand() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6610));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_NOT_NULL(runtime->viewSetIfPrewarmed());
+
+  // The device shape: the committed lane owns the shared pending-demand slot with a retained promise.
+  const Loop& loop = track.getLoop(0);
+  runtime->pendingViewRequest_ = PlaybackViewPendingRequest{};
+  runtime->pendingViewRequest_.active = true;
+  runtime->pendingViewRequest_.sourceKind = PlaybackViewPendingRequest::SourceKind::CommittedSnapshot;
+  runtime->pendingViewRequest_.source.origin = PlaybackWindowOrigin::Committed;
+  runtime->pendingViewRequest_.source.playbackRevision = loop.playbackRevision;
+  runtime->pendingViewRequest_.coverage.startPhase = 0;
+  runtime->pendingViewRequest_.coverage.lengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.coverage.loopLengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
+  runtime->pendingViewRequest_.loopLengthTicks = loop.loopLengthTicks;
+
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuild.active() || runtime->previewSourceActive,
+                           "a foreign committed promise must not strand this session's preview demand");
+  drainLane(track, 100);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin),
+                            "the session's first preview publication is authoritative");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+}
+
+/// **3.15f / C — a committed current keeps serving until the positioned handoff, then the preview does.** The device's
+/// committed window was the current role when the session's preview build completed; the build rows appeared but the
+/// reader kept the committed stream. Under C the first preview may wait in the ready role (the committed frame keeps
+/// serving), but the clock edge at the positioned handoff must adopt it and serve the session's revision. RED before the
+/// fix: the ready carries no position (or the edge refuses it), so the committed stream never yields.
+static void test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6620));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+
+  // The device shape: the committed window is the serving current.
+  const Loop& loop = track.getLoop(0);
+  RuntimePlaybackView& current = set->views[set->lifecycle.current];
+  current.release();
+  current.complete = true;
+  current.published = true;
+  current.source.origin = PlaybackWindowOrigin::Committed;
+  current.source.playbackRevision = loop.playbackRevision;
+  current.coverage.startPhase = 0;
+  current.coverage.lengthTicks = loop.loopLengthTicks;
+  current.coverage.loopLengthTicks = loop.loopLengthTicks;
+
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  drainLane(track, 100);
+
+  WindowIdentity before{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, before));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(before.origin),
+                            "the committed frame keeps serving until the positioned handoff");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->readyPositionedLater, "the preview completion is positioned for its handoff");
+  const uint32_t deadline = static_cast<uint32_t>(runtime->readyPositionedDeadlineTick);
+  TEST_ASSERT_GREATER_THAN_UINT32(100, deadline);
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.ready].complete);
+  TEST_ASSERT_EQUAL_UINT32(revision, set->views[set->lifecycle.ready].source.playbackRevision);
+
+  publishEmissionClock(deadline);
+  emitTurn(track, deadline);
+  WindowIdentity after{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, after));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview), static_cast<int>(after.origin),
+                            "the positioned handoff adopts the session's preview over the committed current");
+  TEST_ASSERT_EQUAL_UINT32(revision, after.playbackRevision);
+}
+
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2557,6 +2657,8 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_short_loop_is_admitted_at_a_later_handoff);
   RUN_TEST(test_3_15f_c_long_loop_keeps_the_first_handoff);
   RUN_TEST(test_3_15f_c_the_successor_waits_for_its_positioned_tick);
+  RUN_TEST(test_3_15f_c_a_foreign_pending_promise_does_not_strand_the_preview_demand);
+  RUN_TEST(test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

@@ -7582,7 +7582,14 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     return;  // the lane is still busy for another reason; the next seam re-checks rather than stacking a demand
   }
   if (runtime->pendingViewRequest_.active) {
-    return;  // the lane's request is already its standing demand
+    // **3.15f / C device session 3 — a foreign promise is not this lane's standing demand.** The shared pending slot
+    // can hold the committed (or capture) lane's refused promise. While NOTE_EDIT is open the session's preview is the
+    // content the transport should carry, and the committed handoff is re-requested at the exit; returning here would
+    // strand the preview behind another source's promise (measured on the device: committed reads throughout, no
+    // preview build). This lane's **own** preview promise still stands, so the ordinary cadence never stacks demands.
+    if (runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview) {
+      return;  // the lane's preview request is already its standing demand
+    }
   }
   // The requested interval is the **playhead's own** -- the one the committed route is reading -- so the edge can
   // adopt it as soon as it is complete, and the request's declared lead is the true one.

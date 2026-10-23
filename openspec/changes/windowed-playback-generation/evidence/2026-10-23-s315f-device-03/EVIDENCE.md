@@ -2,7 +2,8 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; route oracle FAILS on the device. 3.15f stays open.**
+**Status: content oracle paired; route oracle FAILS on the device. The focused foreign‑promise fix unblocks the
+preview builds, but the device still serves the committed stream. 3.15f stays open.**
 
 ## Images
 
@@ -84,6 +85,41 @@ NOTE_EDIT preview demand; the preview must be admitted at the C-positioned bound
 content continuing until then. The fix must not add a second admission path, must not change the DEC-136 envelope, and
 must keep the miss/supersession rules.
 
+## Focused fix landed (same day): a foreign promise no longer strands the preview
+
+`servicePreviewWindowForNoteEditSession` now distinguishes **whose** promise holds the shared pending-demand slot. A
+retained committed/capture promise is a foreign promise, not this session's standing demand: the service proceeds to the
+preview request (the preview retains its own promise if refused, and the committed handoff is re-requested at the exit).
+This lane's own preview promise still returns, so the ordinary cadence never stacks demands. No admission path, constant
+or envelope changed.
+
+- `test_3_15f_c_a_foreign_pending_promise_does_not_strand_the_preview_demand` — **RED before** (`1 failed, 36
+  succeeded`), **GREEN after** (37/37 then 38/38). The fixture stages the committed promise in the shared slot, opens
+  NOTE_EDIT, mutates and calls the production service; before the fix the preview never built.
+- `test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff` — the committed current keeps serving until the
+  positioned handoff, then the preview is adopted and served. Green, so the native admission/position/wait is **not** the
+  device defect.
+- Gates after the fix: preview **38/38**; RWO **239/239**; finalization **95/95**; prewarm **247/247**; overlay edge
+  **7/7**; full native **3,422 / 7 skipped / 3,415 succeeded**; both images at the exact pins (default `391,752 + 1,464`,
+  qualification `391,992 + 1,224`). New HEX: qualification
+  `7acd996f78c54af4419e3b4d958c35539987fd1e611356df29387e7f57919ef2`, default
+  `8932881d740dedf0b933f9eb07bfe017943196253c732db355ee62573081e627`.
+
+### Device rerun on the fixed qualification image — builds now, serving still committed
+
+`captures/2026-10-23-s315f-lane-handoff-05`: the same live edit (entry focus 200; 64 `200 -> 1448`; content PASS) now
+produces **three `note_edit` build rows** (previously zero): revisions 1, 2 and 3 at 82.65/82.80/83.88 s. So the fix
+unblocks the preview admission/build on the device. But the served stream still keeps the committed 64@200
+(0.62/2.28/4.53/6.28/8.53/10.28/12.53/14.28/16.53 s), the edited 64@1448 never sounds, and there is no preview
+`playback_read` — only `playback_available` rows with `origin=Committed`. The route oracle therefore still fails.
+
+The remaining gap is therefore **not** the admission/position/wait (the native committed-current fixture adopts at H,
+and the device builds the positioned revision) but the device's **live NOTE_EDIT serving/owner turns**: the positioned
+preview completion is not adopted/served while the committed available reader runs. The next device-facing diagnostic is
+the preview ready's publication/adoption state at its H on the running device (a witness/row for the ready and the
+NOTE_EDIT resolver), or a native fixture that drives the live `playback_available` reader with a positioned preview
+ready.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -94,5 +130,8 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 
 ## Not claimed
 
-No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired on both images; the **route**
-oracle (the windowed preview serving the edit at the positioned boundary) fails on the device and owns the next RED.
+No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
+live probe's content half re-passes on the fixed qualification image), and the focused foreign-promise fix is native
+RED→GREEN and unblocks the device preview **builds**. The **route** oracle (the windowed preview actually serving the
+edit at/after the positioned boundary) still fails on the device, so the device serving/owner-turn path owns the next
+RED.
