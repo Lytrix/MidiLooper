@@ -389,7 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[handoff-probe] run serial lines={len(lines)} integrity={collector.capture_integrity()} "
               f"reason={collector.capture_integrity_reason()!r} error={collector.error()!r}")
         for marker in ("win_gate", "win_readiness", "win_frozen_readiness", "playback_build", "playback_read",
-                       "playback_available", "win_gap", "Note movement", "select_apply", "EditSelectNoteState"):
+                       "playback_available", "win_gap", "Note movement", "select_apply", "EditSelectNoteState",
+                       "preview_source", "preview_adopt"):
             print(f"[handoff-probe] marker {marker}={sum(1 for line in lines if marker in line)}")
         events = recorder.events()
         origin = play_start_host if play_start_host is not None else (events[0][0] if events else time.monotonic())

@@ -3,9 +3,10 @@
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
 **Status: content and route oracles PASS on the device; the C‑priced handoff and the ~2,972‑tick latency are measured
-(run 18). Seven focused fixes are green. The edited note is still silent because the live NOTE_EDIT action is **pending**
-until the exit commit, so the playback current state/delta still describes the committed note; applying it at the edit is
-the next RED. One revision owner (the display refresh). 3.15f open.**
+(run 18). The audibility diagnostic (run 19) rules out a stale served revision: the served revision matches the
+session, but the NOTE_EDIT open leaves the session store/current state empty (`session_events=0`, `store_ids=0`,
+`only_visual=8`), so the live move has no row for the delta. Populating the open’s store/current state is the next
+slice. One revision owner (the display refresh). 3.15f open.**
 
 ## Images
 
@@ -295,6 +296,29 @@ moved note in the interval), not the committed content. One revision owner (the 
 - **Next RED:** with that distinction, either the same‑H supersession/adoption (a) or the apply/request ordering (b).
   One revision owner (the display refresh) remains.
 
+### Run 19 — composer/served‑revision diagnostic: (a) ruled out; the session store/current state is empty
+
+Two diagnostic rows were added (request/adoption cadenced, `SESSION_CAPTURE`):
+
+- `#CAP,…,DIAG,preview_source,s=0,rev=2,none` (85.472 s) and `rev=3,none` (86.030 s) — the composer ran for the
+  session revisions 2 and 3 and found **no overriding current‑state row**.
+- `#CAP,…,DIAG,preview_adopt,s=0,rev=2,session=2,…` (tick 112) and `rev=3,session=3` (tick 4,608) — the served frame’s
+  revision **matches the session revision**; the stale‑revision/adoption suspect (a) is ruled out.
+
+The `NOTE_EDIT_OPEN` explains the `none`: `session_events=0, current_state=0, visual_notes=8, store_ids=0,
+only_visual=8`. The resolver’s live store is the **session store**; at the open it is empty and the current state is
+empty. The movement targets the **visual** notes, so the action has no store/member row to override and
+`applyNoteEditDeltaToCommittedWindow` correctly composes the committed base. The edit becomes a current‑state row only at
+the projection/commit (the depart’s `pre-commit row start=1448`).
+
+- **Next RED:** the NOTE_EDIT session open (or its projection) must populate the store/current state from the
+  committed/visual content before live edits, so the movement’s action has rows to update and the preview/merged delta
+  carries it. (Reading the visual content in the composer is a fallback; the session store is the design’s own source.)
+- **Diagnostic cost (temporary):** the two rows add ITCM; the padding is now default **+1,256**, qualification
+  **+1,032** (both above the 840 floor). The approved pins are restored when the diagnostics are removed.
+- Native gate unchanged for the diagnostics (rows are `SESSION_CAPTURE`-only): preview 43/43. HEX: qualification
+  `8f21a490…`, default `4a10efde…`.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -308,9 +332,10 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
 The **windowed NOTE_EDIT route now serves on the device** and the **content and route oracles PASS** (run 18: 33
-`origin=1` read rows, first at the C boundary 3,072; the measured latency **2,976 ticks ≈ the native 2,972**). The
-display refresh remains the **single** revision owner; the lane arbitration, invalidation re‑attempt, playing gate and
-the composition fill are landed natively (RED→GREEN each). What remains is **audibility**: the live movement is a
-pending NOTE_EDIT action until the exit commit, so the playback current state/delta still carries the committed note;
-applying the pending action at the edit is the next RED. The earlier `persistence_persist_save_slice_too_large` finding
-did not recur on `seed-19` (PASS) and remains named. No 3.15f checkoff.
+`origin=1` read rows, first at the C boundary 3,072; measured latency **2,976 ticks ≈ the native 2,972**). The display
+refresh remains the **single** revision owner. Run 19’s composer/adoption diagnostics rule out a stale served revision
+(served revision = session revision) and show the real gap: the **NOTE_EDIT open leaves the session store/current state
+empty** (`session_events=0`, `store_ids=0`, `only_visual=8`), so the live move has no row for the delta. Populating the
+open’s store/current state (or reading the visual content) is the next slice. The earlier
+`persistence_persist_save_slice_too_large` finding did not recur on `seed-19` (PASS). Temporary diagnostic rows cost
+ITCM (padding +1,256 / +1,032, above the 840 floor) and are removed when the investigation closes. No 3.15f checkoff.

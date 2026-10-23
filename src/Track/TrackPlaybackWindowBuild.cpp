@@ -356,6 +356,45 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
   }
 }
 
+#if defined(SESSION_CAPTURE)
+/// **3.15f diagnostic (request-cadenced, not per tick):** name the current state's overridden row and whether the
+/// composed source actually carries it. Together with the adoption row it distinguishes "the composition has the edit
+/// but another revision is served" from "the composition ran before the edit was applied".
+static void emitPreviewSourceCompositionRow(uint8_t slot, const SessionMidiEventVec& composed) {
+  const NoteEditCurrentState& state = editManager.noteEditCurrentState();
+  for (const auto& entry : state.rows()) {
+    const NoteEditCurrentNoteState& row = entry.second;
+    const bool overrides =
+        row.presence == NoteEditPresenceType::Hidden || row.presence == NoteEditPresenceType::Deleted ||
+        row.presence == NoteEditPresenceType::Added ||
+        row.currentSpan.pitch != row.committedSpan.pitch ||
+        row.currentSpan.velocity != row.committedSpan.velocity ||
+        row.currentSpan.startTick != row.committedSpan.startTick ||
+        row.currentSpan.endTick != row.committedSpan.endTick;
+    if (!overrides) continue;
+    uint32_t sourceTick = 0;
+    for (const auto& event : composed) {
+      if (event.noteId == entry.first && event.isNoteOn()) {
+        sourceTick = static_cast<uint32_t>(event.tick);
+        break;
+      }
+    }
+    Serial.printf(
+        "#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,note=%lu,cur=%lu,%u,%lu,base=%lu,%u,%lu,src=%lu\r\n",
+        (unsigned long)micros(), static_cast<unsigned>(slot),
+        (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)entry.first,
+        (unsigned long)row.currentSpan.startTick, static_cast<unsigned>(row.currentSpan.pitch),
+        (unsigned long)row.currentSpan.endTick, (unsigned long)row.committedSpan.startTick,
+        static_cast<unsigned>(row.committedSpan.pitch), (unsigned long)row.committedSpan.endTick,
+        (unsigned long)sourceTick);
+    return;
+  }
+  Serial.printf("#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,none\r\n", (unsigned long)micros(),
+                static_cast<unsigned>(slot),
+                (unsigned long)editManager.sessionPlaybackPreviewRevision());
+}
+#endif
+
 
 /// Task 3.7a (I1): one bounded slice of a retained interval is **one page** -- the same capacity the legacy paged
 /// stream produces with (`kWindowPageCapacity`), so the retained-source gather and the page producer cannot answer
@@ -1676,6 +1715,16 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
   if (adopted == nullptr) {
     return false;
   }
+#if defined(SESSION_CAPTURE)
+  // **3.15f diagnostic:** the frame actually adopted at the edge, with its revision against the session's. The resolver's
+  // already-serving branch returns before this, so the row marks an adoption/change rather than every turn.
+  Serial.printf(
+      "#CAP,%lu,DIAG,preview_adopt,s=%u,rev=%lu,session=%lu,tick=%lu,phase=%lu,cov=%lu,%lu\r\n",
+      (unsigned long)micros(), static_cast<unsigned>(slotIndex),
+      (unsigned long)adopted->source.playbackRevision, (unsigned long)previewRevision,
+      (unsigned long)currentTick, (unsigned long)phase, (unsigned long)adopted->coverage.startPhase,
+      (unsigned long)adopted->coverage.lengthTicks);
+#endif
   // The merged reader closes a removed identity on its own rebuild (`reconcileDeletedNoteEditPreviewSoundings`); when
   // the preview serves, that rebuild does not run, so adoption is where the obligation is discharged. A crossing note
   // (its Off beyond this interval) is not in the rows and stays open for the route that carries its Off -- which is
@@ -7329,6 +7378,9 @@ TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex
       return false;
     }
     applyNoteEditDeltaToCommittedWindow(out, coverage, getMidiChannel());
+#if defined(SESSION_CAPTURE)
+    emitPreviewSourceCompositionRow(slotIndex, out);
+#endif
     return true;
   }
   for (const MidiEvent& event : editManager.sessionMidiEvents()) {
@@ -7336,6 +7388,9 @@ TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex
       out.push_back(event);
     }
   }
+#if defined(SESSION_CAPTURE)
+  emitPreviewSourceCompositionRow(slotIndex, out);
+#endif
   return true;
 }
 
