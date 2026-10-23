@@ -2285,9 +2285,12 @@ suite is not green this turn by design. No Git delivery.
   **Device `handoff-18` (`d250d271…`, seed‑19 PASS): content PASS and ROUTE PASS** — 33 `origin=1` read rows, first at
   tick **3,144** (the C boundary **3,072**), 33 committed before; measured latency from the demand **2,976 ticks
   (~2,972, the native contract)**. Audibility still fails: the edited 64@1448 is absent and the committed 64@200 sounds
-  after (×2). The live movement is a **pending** `EditSessionAction` — the `pre-commit row start=1448` appears only at the
-  depart — so the playback current state/delta still carries 200. The next RED is applying the pending action to the
-  playback current state at the edit (the geometry op), not at the exit. Gates: preview 43/43; RWO 239; finalization 95;
+  after (×2). The live movement is applied by the geometry resolver (`applyEditSessionActions`, `refreshPlaybackPreview`
+  defaults true; `noteEditCurrentStateForPlayback()` = the live current state), so the action is not held only to the
+  exit; the `pre-commit row start=1448` at the depart is the persist identity. The served pre‑edit content therefore
+  points at either the **revision‑1** current/ready winning the same‑H (3,072) collision or the revision‑2 composition
+  running before the apply. The next diagnostic is a composer row naming the current state's row and the served frame's
+  revision at request/adoption (no guess). Then the corresponding RED. Gates: preview 43/43; RWO 239; finalization 95;
   prewarm 247; overlay 7; full native **3,427/7/3,420**; pins unchanged; HEX qualification `d250d271…`, default
   `4b20eb7f…`. One revision owner remains the display refresh. No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).

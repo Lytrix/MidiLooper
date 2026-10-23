@@ -282,12 +282,18 @@ moved note in the interval), not the committed content. One revision owner (the 
   `origin=1` read rows, first at tick **3,144** (the C boundary **3,072**, first read 72 ticks later), 33 committed rows
   before it. The measured latency from the demand is **2,976 ticks (~2,972, the native contract)**.
 - **Remaining audibility:** the edited 64@1448 is still absent and the committed 64@200 sounds after the handoff (×2).
-  The live movement is a **pending action**: the `NOTE_EDIT focus rebuild`/`EditSessionAction start=1448` runs at the
-  edit, but the `pre-commit row start=1448` appears only at the **depart** (the exit commit). The playback current
-  state/delta still describes the committed 200, so both the composer and the merged reader correctly serve what the
-  current state says — the action has not been applied to it yet.
-- **Next RED:** the live pending NOTE_EDIT action must reach the playback current state/delta at the edit (the geometry
-  op's application/commit), not at the exit. One revision owner (the display refresh) remains.
+  The live movement's action is applied by the geometry resolver (`applyEditSessionActions`, `refreshPlaybackPreview`
+  defaults true in `NoteEditGeometryApply.h`, `bumpSessionPreviewRevision` + `invalidateCaches(true)`), and
+  `noteEditCurrentStateForPlayback()` returns `editManager.noteEditCurrentState()` (the live state) — so the action is
+  not held only to the exit. The `pre-commit row start=1448` at the depart is the persist identity, consistent with
+  that. The served pre‑edit content therefore points at one of: **(a)** the served frame is the **revision‑1**
+  current/ready in the same‑H collision (both the open's and the movement's demands price to 3,072), i.e. the
+  supersession/adoption chose the stale revision; or **(b)** the revision‑2 composition ran before the action's apply.
+  - **Next diagnostic (before another fix):** one composer row naming the current state's row (`noteId`, `currentSpan`,
+    session revision) at the request, and the served frame's revision at adoption. That distinguishes (a) from (b)
+    without guessing.
+- **Next RED:** with that distinction, either the same‑H supersession/adoption (a) or the apply/request ordering (b).
+  One revision owner (the display refresh) remains.
 
 ## Native contract (unchanged; for the comparison)
 
