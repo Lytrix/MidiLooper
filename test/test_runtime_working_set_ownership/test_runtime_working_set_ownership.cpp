@@ -4266,15 +4266,22 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
                     static_cast<int>(inside.requestPlaybackViewMaintenance(
                         0, source, count, identity, coverage, {}, {}, 0,
                         requiredLeadTicks + 1)));
+  const auto* insideWork = TrackCaptureStopTestAccess::runtimeIfAllocated(inside, 0)->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(insideWork);
+  TEST_ASSERT_FALSE_MESSAGE(insideWork->positionedLater,
+                            "at the declared lead the first occurrence is kept");
 
-  // Just outside: one tick short of the required lead is refused, by name, and takes nothing.
+  // Just outside: one tick short of the required lead at the first occurrence; 3.15f/C positions the same demand at
+  // the next occurrence instead of refusing. The margin still decides the occurrence, which is the oracle here.
   Track& outside = prepareWindowOwnerSlot(2);
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(outside.requestPlaybackViewMaintenance(
                         0, source, count, identity, coverage, {}, {}, 0,
                         requiredLeadTicks - 1)));
-  TEST_ASSERT_FALSE_MESSAGE(outside.hasPendingPlaybackViewMaintenance(),
-                            "a refused request must not create an obligation");
+  const auto* outsideWork = TrackCaptureStopTestAccess::runtimeIfAllocated(outside, 0)->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(outsideWork);
+  TEST_ASSERT_TRUE_MESSAGE(outsideWork->positionedLater,
+                           "one tick short at the first occurrence moves the handoff a loop later");
 }
 
 /// The service-gap declaration is **bounded by the measurement, not by its own claim** (task 3.10 / DEC-108 §13b).
@@ -9188,10 +9195,20 @@ void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
     // (the full 32 notes x on/off), while slot 1's longer loop keeps the end boundary outside the half-open window.
     TEST_ASSERT_EQUAL_UINT32(slot == 0 ? 64u : 63u, scratch.size());
     if (slot == 0) {
-      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+      // 3.15f/C: the charged candidate is admitted at a later occurrence instead of refused; the charge still decides
+      // the occurrence and the derived cost is still on the admitted record.
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                                static_cast<int>(result),
-                               "candidate must charge derived work across all eight tracks");
-      TEST_ASSERT_NULL(TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork());
+                               "the charged candidate is positioned, not dropped");
+      const auto* chargedWork = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork();
+      TEST_ASSERT_NOT_NULL(chargedWork);
+      TEST_ASSERT_TRUE_MESSAGE(chargedWork->positionedLater,
+                               "the eight-track charge moves the handoff past the first occurrence");
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(64u, chargedWork->sourceEntries,
+                                       "the derived work is on the admitted record");
+      // C admits the charged candidate (it no longer refuses), so release its build before the sibling slot's
+      // independent request; otherwise its outstanding work charges the sibling, which is a different fixture.
+      TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->viewBuild.discard();
     } else {
       TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted), static_cast<int>(result));
       const auto* work = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork();
@@ -12812,16 +12829,18 @@ void test_rolling_path_budget_charges_qualification_and_retirement_work() {
   publishNotesInBarsRootForSlot(candidateLoop, 12, 13, 20);
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1));
   scratch.clear();
-  const Track::PlaybackViewRequestResult refused =
+  const Track::PlaybackViewRequestResult charged =
       track.requestPlaybackWindow(1, 12 * 768, scratch, {origin + 50000, 1});
   sInterferenceBudgetEnforced = false;
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
-                            static_cast<int>(refused),
-                            "the sibling's qualification work is charged against the candidate's lead");
-  const PlaybackViewPendingRequest* retained = track.pendingViewRequest(1);
-  TEST_ASSERT_NOT_NULL_MESSAGE(retained, "and the refused candidate keeps its obligation");
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
-                                  static_cast<uint8_t>(retained->reason), "named as retained, not dropped");
+  // 3.15f/C: the sibling's charge still applies, but it moves the positioned handoff instead of refusing the demand.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(charged),
+                            "the charged candidate is positioned, not dropped");
+  auto* chargedRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  const auto* chargedWork = chargedRuntime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(chargedWork);
+  TEST_ASSERT_TRUE_MESSAGE(chargedWork->positionedLater,
+                           "the sibling's qualification work moves the handoff past the first occurrence");
 
   // (B) The charge is released with the work: once the qualification/retirement finishes, the very same request is
   // admitted -- so the refusal above was attributable to the charge and to nothing else.
@@ -12833,13 +12852,19 @@ void test_rolling_path_budget_charges_qualification_and_retirement_work() {
                             "the qualification/retirement work had to finish for the pair to be honest");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.playbackViewOutstandingGrains(1)),
                                    "and its charge is gone with it");
+  // Cancel the charged build so the released request can be admitted fresh; the comparison is the positioning.
+  chargedRuntime->viewBuild.discard();
   scratch.clear();
   const Track::PlaybackViewRequestResult admitted =
       track.requestPlaybackWindow(1, 12 * 768, scratch, {origin + 60000, 1});
   sInterferenceBudgetEnforced = wasEnforced;
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(admitted),
-                            "with the charge released the same request is admitted: the charge was the refusal");
+                            "with the charge released the same request is admitted");
+  const auto* releasedWork = chargedRuntime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(releasedWork);
+  TEST_ASSERT_FALSE_MESSAGE(releasedWork->positionedLater,
+                            "released, the first occurrence is kept: the charge had moved the handoff");
 }
 
 /// **Task 6.5 — the native force "A→B→A view-slot reuse with the first A completion arriving last".**
@@ -17357,13 +17382,13 @@ void test_3_10_the_declared_envelope_is_the_admissions_own_boundary() {
   stage(2);
   const Track::PlaybackViewRequestResult refusedOneTickTight =
       request(2, static_cast<uint32_t>(kLoopTicks - requiredLead + 1u));
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(refusedOneTickTight),
-                            "one tick tighter and the production path refuses by name");
-  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2)->activeViewBuildWork(),
-                           "a refused request owes no build grain");
-  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(2),
-                               "and the refusal is retained as a promise rather than dropped");
+                            "one tick tighter moves the handoff to the next occurrence (C), not a refusal");
+  const auto* tightWork = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2)->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(tightWork);
+  TEST_ASSERT_TRUE_MESSAGE(tightWork->positionedLater,
+                           "the one-tick-tight demand is positioned a later occurrence by the same cost rule");
 }
 
 int main() {

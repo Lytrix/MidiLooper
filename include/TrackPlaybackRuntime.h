@@ -292,6 +292,10 @@ struct PlaybackViewAdmittedWork {
   /// rather than on whatever the consumer happens to be reading. `handoffPhase` is that interval's start; this is its
   /// length.
   uint32_t admittedIntervalLength = 0;
+  /// **3.15f / C:** true when the admission positioned this demand at a **later** loop occurrence than its first
+  /// matching phase (the short-loop case). The ready then waits for the positioned absolute tick; an ordinary
+  /// first-occurrence window keeps adopting at its phase as before.
+  bool positionedLater = false;
   /// The same saturating sum the contract uses, so a reader cannot disagree with `requiredGrains()`.
   uint32_t requiredGrains() const {
     const uint32_t total = static_cast<uint32_t>(fillGrains) + orderGrains + promotionGrains;
@@ -1250,12 +1254,13 @@ struct LoopPlaybackRuntime {
                           const PlaybackViewSourceIdentity& sourceIdentity,
                           const PlaybackCoverageInterval& coverage,
                           const EmissionCursor& cursorAnchor,
-                          const LedgerBoundarySummary& ledgerBoundary);
+                          const LedgerBoundarySummary& ledgerBoundary,
+                          uint32_t positionedLead = 0);
   bool beginCoverageBuild(const CoverageServiceContract& contract, uint32_t currentPhase,
                           uint32_t handoffPhase, LoopSnapshot::EventWindowCursor& source,
                           const PlaybackViewSourceIdentity& sourceIdentity,
                           const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-                          const LedgerBoundarySummary& ledgerBoundary);
+                          const LedgerBoundarySummary& ledgerBoundary, uint32_t positionedLead = 0);
   // Establish an empty raw bar-1 view before first-record input. This uses the
   // same fill/order/lifecycle buffers as ordinary playback.
   bool prepareFirstRecordingBar(uint32_t ticksPerBar,

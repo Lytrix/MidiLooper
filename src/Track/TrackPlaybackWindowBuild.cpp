@@ -1542,9 +1542,17 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
   // Adoption has **one** site: a prepared successor that covers the playhead is adopted first, and the current role is
   // otherwise offered as-is (the session's first publication already covers the playhead).
   const RuntimePlaybackView* adopted = nullptr;
+  // **3.15f / C:** a positioned handoff is an absolute tick, not merely a phase match. A ready that finished early
+  // waits here until the clock reaches the occurrence the admission priced; the served frame keeps serving meanwhile.
+  // The lane cannot start a second build while this ready waits (a complete preview successor holds the role), so
+  // `viewBuildWork` still describes this ready's own build.
+  const bool positionedHandoffReached =
+      !runtime->viewBuildWork.positionedLater || runtime->viewBuildWork.clockEpoch == 0 ||
+      (clock.epoch == runtime->viewBuildWork.clockEpoch && clock.tick >= runtime->viewBuildWork.deadlineTick);
   if (set->lifecycle.ready < set->views.size()) {
     const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
-    if (!ready.published && ready.complete && ready.source.origin == PlaybackWindowOrigin::Preview &&
+    if (!ready.published && ready.complete && positionedHandoffReached &&
+        ready.source.origin == PlaybackWindowOrigin::Preview &&
         ready.source.playbackRevision == previewRevision && ready.coverage.isValid() &&
         ready.coverage.loopLengthTicks == loop.loopLengthTicks && ready.coverage.contains(phase) &&
         adoptPreparedPlaybackWindow(slotIndex) && set->lifecycle.current < set->views.size()) {
@@ -4016,6 +4024,27 @@ TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
   return contract;
 }
 
+
+/// **3.15f / C — the earliest future occurrence whose absolute lead admits the demand.** The next occurrence of the
+/// handoff phase is not automatically eligible: on a short loop its lead is smaller than the declared cost. The same
+/// occurrence is retried one loop later at a time until `canCompleteWithinLead` accepts the real absolute lead. `lead`
+/// is the distance to the next occurrence; zero means "the phase is now", whose next future occurrence is a full loop
+/// away. Returns false only when no occurrence within the bounded search fits (a genuinely oversized demand).
+static bool earliestEligibleHandoffLead(const CoverageServiceContract& contract, uint32_t lead, uint32_t loopLength,
+                                        uint16_t additionalGrains, uint64_t& outLead) {
+  if (loopLength == 0) return false;
+  const uint64_t first = lead == 0 ? loopLength : lead;
+  for (uint32_t occurrence = 0; occurrence < 64; ++occurrence) {
+    const uint64_t candidate = first + static_cast<uint64_t>(occurrence) * loopLength;
+    if (candidate > UINT32_MAX) return false;
+    if (contract.canCompleteWithinLead(candidate, additionalGrains)) {
+      outLead = candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMaintenance(
     uint8_t slotIndex, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
@@ -4099,10 +4128,19 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   const bool cold = false;
 #endif
   const uint32_t lead = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
-  if (!cold && clock.epoch != 0 && lead != 0 && clock.tick <= UINT64_MAX - lead) {
-    admittedWork.deadlineTick = clock.tick + lead;
+  // **3.15f / C:** position at the earliest future occurrence whose absolute lead fits the declared cost. The
+  // next occurrence is tried first (long loops are unchanged); a short loop advances whole loops until it fits.
+  uint64_t positionedLead = 0;
+  const bool positioned = !cold &&
+      earliestEligibleHandoffLead(contract, lead, coverage.loopLengthTicks,
+                                  sInterferenceBudgetEnforced ? playbackViewOutstandingGrains(slotIndex) : 0,
+                                  positionedLead);
+  if (positioned && clock.epoch != 0 && clock.tick <= UINT64_MAX - positionedLead) {
+    admittedWork.deadlineTick = clock.tick + positionedLead;
     admittedWork.clockEpoch = clock.epoch;
   }
+  admittedWork.positionedLater = positioned &&
+      positionedLead > (lead == 0 ? coverage.loopLengthTicks : lead);
   // **The interference budget is computed and proved, but deliberately not enforced yet** -- the review's own ordering
   // puts that after the preventing paths are bounded and `Delta-max` is chosen. Charging a sibling's outstanding work
   // against a new window's lead only becomes usable once the per-turn advance inside that charge is the **measured**
@@ -4125,18 +4163,16 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // acceptance surface can tell "the margin was never there" from "the build was refused underneath it". The
   // candidate's own lead is charged the siblings' outstanding work through the contract's own `additionalGrains`
   // term -- the same figure the budget above reads the other way round, and only while that budget is enforced.
-  if (!cold && !contract.canCompleteBeforeHandoff(
-          currentPhase, handoffPhase, coverage.loopLengthTicks,
-          sInterferenceBudgetEnforced ? playbackViewOutstandingGrains(slotIndex) : 0)) {
-    // DEC-108 §13(c) / task 3.10 (increment 24): the declared lead cannot cover this demand **now**, which is a
-    // deferred obligation rather than a lost one -- the same retention the budget refusal above performs, so both
-    // "not now" refusals leave the same promise behind.
+  if (!cold && !positioned) {
+    // The occurrence search (C) refuses only when no future occurrence within its bounded horizon fits, or the clock
+    // is unqualified. Retention is unchanged: the demand is a deferred promise, not a lost one.
     retainRefusedPlaybackViewRequest(slotIndex, runtime, sourceCount, sourceIdentity, coverage, currentPhase,
                                      handoffPhase, clock, PlaybackViewPendingReason::CannotCompleteBeforeHandoff);
     return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
   }
   if (!runtime->beginCoverageBuild(contract, currentPhase, handoffPhase, source, sourceCount, sourceIdentity,
-                                   coverage, cursorAnchor, ledgerBoundary)) {
+                                   coverage, cursorAnchor, ledgerBoundary,
+                                   positioned ? static_cast<uint32_t>(positionedLead) : 0)) {
     return PlaybackViewRequestResult::AdmissionRefused;
   }
   // The admitted request's **bounded work**, recorded where the build begins -- and only once the build really began,

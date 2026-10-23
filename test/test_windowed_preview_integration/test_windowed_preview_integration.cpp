@@ -1900,11 +1900,19 @@ static void test_3_15d_slice2_the_lane_re_covers_the_playhead_when_its_interval_
   source = intervalProjection(playbackIntervalAt(track, 0, cadencePhase));
   const Track::PlaybackViewRequestResult ahead = track.requestPreviewWindow(
       0, revision, source.data(), source.size(), pastEnd, cadencePhase);
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+  // **3.15f / C:** the declared lead no longer refuses the position; the owner moves the handoff to the earliest
+  // later occurrence that fits the same cost. The demand is admitted and its absolute deadline proves the move.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(ahead),
-                            "a successor positioned one boundary ahead is refused by the declared lead");
-  // The refusal is retained as a demand by the admission's own contract; this fixture is not about that retention,
-  // so it clears it rather than leaving a promise behind for a later fixture's lane.
+                            "a successor positioned ahead is admitted at a later occurrence");
+  const auto& aheadWork = TrackPlaybackTestAccess::runtime(track, 0)->viewBuildWork;
+  TEST_ASSERT_TRUE_MESSAGE(aheadWork.positionedLater, "the handoff moved to a later occurrence");
+  if (aheadWork.clockEpoch != 0) {
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(aheadWork.admittedTick + kLongLoopTicks, aheadWork.deadlineTick,
+                                                "the deadline is at least one loop beyond the demand");
+  }
+  // This fixture is not about the lane's retention; cancel the prepared successor so no promise is left behind.
+  TrackPlaybackTestAccess::runtime(track, 0)->viewBuild.discard();
   TrackPlaybackTestAccess::runtime(track, 0)->clearViewPendingRequest();
 }
 
@@ -1956,23 +1964,26 @@ static void test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream() {
     track.servicePreviewWindowForNoteEditSession();
     LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
     TEST_ASSERT_NOT_NULL(runtime);
-    TEST_ASSERT_TRUE_MESSAGE(runtime->pendingViewRequest_.active,
-                             "the two-bar interval's request is retained, not silently dropped");
-    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
-                              static_cast<int>(runtime->pendingViewRequest_.reason),
-                              "the declared lead refuses the whole-loop interval by name");
-    TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
-                              "a refused request owns no preview source");
+    // **3.15f / C:** the two-bar demand is admitted at the earliest **later** occurrence whose absolute lead fits;
+    // it is no longer refused. The positioned window waits for its absolute handoff, so this early walk is still the
+    // fallback's stream (the content parity this fixture asserts).
+    TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active,
+                              "the positioned demand is admitted, not retained as a refusal");
+    TEST_ASSERT_TRUE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                             "the short-loop preview source is admitted at a later occurrence");
+    TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuildWork.positionedLater,
+                             "the short-loop handoff skips the impossible next occurrence");
     WindowIdentity identity{};
     TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, identity),
-                              "and publishes no window");
+                              "the positioned window is not published before its handoff");
     bool shortSawPreview = false;
     shortStream = walkEmission(track, 0, 100, 1700, true, shortSawPreview);
-    TEST_ASSERT_FALSE_MESSAGE(shortSawPreview, "no turn binds a preview frame on the two-bar loop");
-    // The parity oracle is not the release fixture: close the session and clear the promise explicitly so the long
-    // half starts from a clean lane (L3 pins the release itself).
+    // With an unqualified harness clock the absolute wait cannot be enforced; the ordinary phase adoption applies and
+    // this fixture stays about the emitted-content parity. The qualified-clock wait is pinned by the C fixtures above
+    // and by the device leg.
+    // The parity oracle is not the release fixture: close the session so the long half starts from a clean lane
+    // (L3 pins the release itself).
     editManager.closeNoteEditSession(track);
-    runtime->clearViewPendingRequest();
   }
 
   {
@@ -2007,34 +2018,87 @@ static void test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream() {
                                    "the composed interval holds the committed note and the edit, each paired");
 }
 
-/// **L3 -- a refused preview demand is released at the session edge.** A session opened at phase 0 asks for an
-/// interval that would start at the playhead: the lead is zero, so the admission refuses and *retains* the demand, and
-/// `previewSourceActive` stays false because nothing was admitted. The promise's owner is the session projection, so
-/// the exit must release it -- otherwise the committed requester's own `pendingViewRequest_.active` guard answers
-/// `win_busy` behind a promise no one can keep.
-static void test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_session_edge() {
+
+/// **3.15f / C — absolute future handoff (RED before the positioning change).** A two-bar NOTE_EDIT preview cannot be
+/// prepared for the next matching phase: the minimum declared cost (1,792 ticks) exceeds the 1,536-tick loop. The
+/// owner must instead position at the earliest **later** occurrence whose absolute lead satisfies the same
+/// `canCompleteWithinLead`; the demand is admitted, not refused, and the merged fallback is not the route.
+static void test_3_15f_c_short_loop_is_admitted_at_a_later_handoff() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6501));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  (void)mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active,
+                            "the short-loop demand is admitted, not retained as a refusal");
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                           "the preview source is admitted for the positioned handoff");
+  const uint32_t admitted = runtime->viewBuildWork.admittedTick;
+  const uint32_t deadline = runtime->viewBuildWork.deadlineTick;
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
+      admitted + 2u * Config::TICKS_PER_BAR, deadline,
+      "the short-loop handoff is positioned at a later recurrence (not the impossible next one)");
+}
+
+/// **3.15f / C — long-loop control.** With enough lead at the ordinary first occurrence, positioning must not add a
+/// cycle of latency: the admitted deadline stays inside one loop of the demand.
+static void test_3_15f_c_long_loop_keeps_the_first_handoff() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6502));
+  commitEmissionLoop(track, 0, kLongLoopTicks, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  (void)mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  const uint32_t admitted = runtime->viewBuildWork.admittedTick;
+  const uint32_t deadline = runtime->viewBuildWork.deadlineTick;
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(admitted + kLongLoopTicks, deadline,
+                                       "the long loop keeps its ordinary first handoff");
+}
+
+/// **L3 -- a positioned preview demand is released at the session edge.** A session opened at phase 0 asks for an
+/// interval that would start at the playhead; under C the next occurrence is a full loop away, whose lead is still
+/// below the declared cost, so the demand is **positioned one loop later** rather than refused. The exit must release
+/// the admitted source and build (its owner, the session, is gone), and the committed lane must not be held out.
+static void test_3_15d_slice3_a_positioned_preview_demand_is_released_at_the_session_edge() {
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   std::vector<MidiEvent> content;
   appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6401));
   commitEmissionLoop(track, 0, kLongLoopTicks, content);
   publishCommittedRootForSlot(track.getLoop(0), 4);  // the committed lane has a source once the session ends
-  readyEmissionPlaying(track, 0, 0);                 // phase 0: the refusal this fixture is about
+  readyEmissionPlaying(track, 0, 0);                 // phase 0: the next occurrence is a full loop away
 
   editManager.openNoteEditSession(track);
   track.servicePreviewWindowForNoteEditSession();
   LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
   TEST_ASSERT_NOT_NULL(runtime);
-  TEST_ASSERT_TRUE_MESSAGE(runtime->pendingViewRequest_.active,
-                           "the phase-0 preview request is retained as a promise");
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
-                            static_cast<int>(runtime->pendingViewRequest_.reason),
-                            "because the declared lead cannot hold it");
-  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
-                            "and no source was admitted, which is why the cancel used to skip it");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active,
+                            "the phase-0 demand is admitted, not retained as a refusal");
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                           "the positioned preview source is admitted");
+  // Phase 0's first future occurrence is a full loop away; with the empty session composition its cost fits there, so
+  // the handoff is the next loop start (the first future occurrence), not a later-than-first occurrence.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
+      runtime->viewBuildWork.admittedTick + track.getLoop(0).loopLengthTicks,
+      runtime->viewBuildWork.deadlineTick,
+      "the phase-0 demand is positioned at the next loop start, never at 'now'");
 
   // The close itself flushes a pending display refresh **while the session is still active**, and that flush is exactly
-  // what can re-retain the promise after the cancel released it: arm one here so the fixture covers that path.
+  // what could re-request after the release: arm one here so the fixture covers that path.
   track.invalidateCaches(true);
   editManager.closeNoteEditSession(track);
   // Snapshot the promise's state at the edge, before the committed visit below can retain one of its **own**.
@@ -2043,8 +2107,10 @@ static void test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_sessio
   const Track::RollingOutcome after = track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
   TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Busy), static_cast<int>(after),
                                 "the committed lane is no longer held out by the stale demand");
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                            "the exit yields the positioned preview source");
   TEST_ASSERT_FALSE_MESSAGE(promiseSurvivedExit,
-                            "the exit releases the lane's own promise (its owner, the session, is gone)");
+                            "the exit leaves no lane promise behind (its owner, the session, is gone)");
   // And no later owner visit may revive it either: the demand's owner only exists while the session does.
   track.servicePreviewWindowForNoteEditSession();
   TEST_ASSERT_FALSE_MESSAGE(runtime->pendingViewRequest_.active &&
@@ -2327,8 +2393,10 @@ int main(int, char**) {
   // Task 3.15d (slice 3): short/long **content** parity across the admission boundary, the release of a refused
   // preview demand at the session edge, an edit carried by the next revision while the frame serves, and 2.12's save
   // clause read against the serving frame.
+  RUN_TEST(test_3_15f_c_short_loop_is_admitted_at_a_later_handoff);
+  RUN_TEST(test_3_15f_c_long_loop_keeps_the_first_handoff);
   RUN_TEST(test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream);
-  RUN_TEST(test_3_15d_slice3_a_refused_preview_demand_is_released_at_the_session_edge);
+  RUN_TEST(test_3_15d_slice3_a_positioned_preview_demand_is_released_at_the_session_edge);
   RUN_TEST(test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision);
   RUN_TEST(test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving);
   RUN_TEST(test_3_15c_a_sparse_long_loop_is_served_by_the_committed_window_reader);

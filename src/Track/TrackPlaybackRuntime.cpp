@@ -1954,7 +1954,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
     const CoverageServiceContract& contract, uint32_t currentPhase, uint32_t handoffPhase,
     const MidiEvent* source, size_t sourceCount, const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-    const LedgerBoundarySummary& ledgerBoundary) {
+    const LedgerBoundarySummary& ledgerBoundary, uint32_t positionedLead) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   const bool cold = frozenViewRequest.active && rolling.phase == RollingPhase::Requested &&
       rolling.epoch == 0 && rolling.deadlineTick == 0 && frozenViewRequest.clockEpoch == 0 &&
@@ -1963,7 +1963,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
       coverage.lengthTicks == rolling.loopLength && coverage.loopLengthTicks == rolling.loopLength;
   if (set == nullptr || viewBuild.active() || completedPromisePendingJudgement || ownsCoverageSource() ||
       set->lifecycle.build == RuntimePlaybackViewLifecycle::kNoView ||
-      (!cold && !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks))) {
+      (!cold && (positionedLead != 0
+                     ? !contract.canCompleteWithinLead(positionedLead)
+                     : !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)))) {
     return false;
   }
   RuntimePlaybackView& destination = set->views[set->lifecycle.build];
@@ -1977,11 +1979,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
     const CoverageServiceContract& contract, uint32_t currentPhase, uint32_t handoffPhase,
     LoopSnapshot::EventWindowCursor& source, const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-    const LedgerBoundarySummary& ledgerBoundary) {
+    const LedgerBoundarySummary& ledgerBoundary, uint32_t positionedLead) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || viewBuild.active() || completedPromisePendingJudgement || ownsCoverageSource() ||
       set->lifecycle.build == RuntimePlaybackViewLifecycle::kNoView ||
-      !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) return false;
+      (positionedLead != 0 ? !contract.canCompleteWithinLead(positionedLead)
+                           : !contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)))
+    return false;
   auto& destination = set->views[set->lifecycle.build];
   if (!viewBuild.begin(destination, source, sourceIdentity, coverage, cursorAnchor, ledgerBoundary)) return false;
   viewBuild.markCoverageOwned();

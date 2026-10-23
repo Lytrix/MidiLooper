@@ -1,116 +1,149 @@
-# 3.15f — the short-loop window-route mechanism (design)
+# 3.15f — the short-loop window-route mechanism: C, absolute future handoff positioning
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
-**Status: design only, no code.** Owner approved continuing the short-loop mechanism on 2026-10-23.
+**Status: implemented natively (core); supersession/miss fixtures and the device leg remain.** The earlier position-free proposal in this folder was
+rejected as a second admission path; this is the replacement contract.
 
-## The question
+## Owner decision (2026-10-23)
 
-3.15f must choose how a **short loop (≤ 2 bars, ≤ 1 535 ticks)** gets the unified window route for NOTE_EDIT without
-assuming whole-loop coverage. Three options were named: (1) sub-interval coverage with wrap/closure and handoff
-cadence, (2) whole-loop coverage under a measured span/cost policy, (3) position-free preparation in the DEC-136 shape.
+**C — demand/anchor-driven lead, expressed as absolute future handoff positioning.** One windowed playback state machine
+for short and long loops; the DEC-136 safety envelope unchanged; **no second "position-free" admission route**.
 
-## Why options 1 and 2 cannot work under the declared envelope
-
-The ordinary admission's lead test is `CoverageServiceContract::canCompleteWithinLead`:
+The defect is the **positioning assumption**, not the loop category:
 
 ```
-required == leadTicks + grains × (maximumConsecutiveDeniedTurns + 1) × maximumPhaseAdvancePerTurn
+prepare this window
+→ handoff at the next matching phase
+→ available lead < 1 536
+→ required lead ≥ 1 792
+→ impossible forever
 ```
 
-Against a 1 536-tick loop, DEC-136 already measured that **even the smallest possible coverage demand needs 1 792
-ticks** (`768 + 2 × 8 × 64` for one fill/order/promotion grain set), and a five-grain demand needs 3 328. The lead
-available to a window is at most the loop length, so **no interval length fits**:
+The demand names its desired coverage/phase; the owner chooses the **earliest future occurrence of that handoff whose
+absolute lead satisfies the existing cost bound**:
 
-- whole loop (1 536): lead 768 → refused with any grains;
-- one bar (768): entry lead 1 152 → refused with the minimum 2–3 grains;
-- smaller aligned intervals: the minimum demand cost stays 1 792 > 1 535.
+```
+requiredLead = CoverageServiceContract cost for this demand
+handoff      = first eligible occurrence of the target phase
+               such that handoffAbsoluteTick - now >= requiredLead
+```
 
-Options 1 and 2 therefore require **changing the constants or the policy** to make one geometry fit. DEC-136 rejected
-exactly that ("loosening them to make one reproducer fit would erase the information the scheduler currently gives for
-every geometry, and it is a bound-class change needing its own measurement"). The task's own wording also says no
-choice may weaken the DEC-136 envelope.
+A short loop skips one or more recurrences; a long loop's first occurrence already fits. Same algorithm, same rule.
 
-## Chosen mechanism: option 3, position-free preparation in the DEC-136 shape
+## The common route (single state machine)
 
-The route is the one DEC-136 already established for the demand the ordinary envelope can never admit: **impossibility
-is the waiver**. This extends it to the NOTE_EDIT preview demand, with the same narrow, derived rule and no constant
-change.
+```
+current serving window remains authoritative
+        ↓
+new demand appears
+        ↓
+derive coverage + actual build cost
+        ↓
+position at earliest safe future handoff (absolute tick)
+        ↓
+bounded owner builds the window
+        ↓
+ready may finish early and waits for the positioned handoff
+        ↓
+clock edge reaches the positioned handoff
+        ↓
+adopt
+```
 
-### Contract
+`canCompleteWithinLead()` still decides exactly what it decides today; it is simply fed the **real** absolute lead of
+the chosen occurrence, not an artificially impossible next-cycle deadline.
 
-1. **Structural classification.** A preview demand qualifies only when all hold: the slot is the selected track's
-   active slot; NOTE_EDIT is the active session and its playback-preview revision is nonzero; the loop has committed
-   passes and a nonzero length; the ordinary admission **cannot** serve the demand
-   (`Track::ordinaryAdmissionCannotServeDemand` evaluated against the demand's **own derived** cost, i.e.
-   `!canCompleteWithinLead(loopLengthTicks)`); no other owner's successor holds the role; and the served source is the
-   existing NOTE_EDIT fallback (the merged session stream) that already serves the same content.
-2. **Position-free while owed.** The demand is marked with a **named** position-free reason (mirroring
-   `PrivateRootReturnPreparation`; a distinct `PositionFreePreviewPreparation` keeps the two classifications
-   observable), carries **no deadline** (none is fabricated), and the pre-admission position gates tolerate it *only*
-   while (1) holds. The served fallback keeps serving throughout, so no promise is broken by the wait.
-3. **Impossibility is the waiver.** The only term waived is the lead test, and only where the envelope itself proves no
-   legal lead exists for this demand's own cost. If any legal lead exists, the mark is cleared and the ordinary path
-   runs unchanged, including its `CannotCompleteBeforeHandoff` refusal and retention (still observable).
-4. **Everything else is preserved.** The same candidate validation (source identity, preview revision, currency, row
-   count, read units), the same grain accounting, the same single successor role, the same atomic adoption at a real
-   boundary where the completed window's coverage contains the playhead, and the same session-exit handoff to the
-   committed successor. No new owner, queue, view, emitter, resident field or scheduler; no change to
-   `canCompleteWithinLead`, its constants, or another slot's promise.
-5. **Containment.** The fallback is never torn; an edit mutation cancels the preparation by name (the existing
-   `SourceMutated` revision edge) and the next revision re-requests; a refusal for any other reason (role occupied,
-   sibling promise, identity) **defers** rather than destroys the qualified candidate.
-6. **Route identity after adoption.** Once the prepared preview window is complete and adopted, the clock edge serves
-   it (not the merged fallback), and the window's whole-loop coverage contains the playhead for the rest of the session
-   (the preview lane sees `currentServesPlayhead` and owes nothing until the session changes). That is the cutover
-   claim; whole-loop **interval** identity is not required by 3.15f, and is not asserted as such.
+## Latency contract (explicit)
 
-### Where it attaches (implementation sketch, not this step)
+Edits become audible at the **earliest safely positioned adoption boundary**; the previously served immutable window (or
+the current NOTE_EDIT fallback before the first window) continues uninterrupted until then. With a 1 536-tick loop and a
+1 792-tick minimum preparation requirement, that boundary is roughly two recurrences out. If the product requires "my
+edit is audible within the next loop", C cannot satisfy it under the current bound — that would require A / a formal
+bound reassessment, with measurement, not a silent weakening.
 
-- `Track::servicePreviewWindowForNoteEditSession` (preview lane request) → `requestPreviewWindow` admission: consult
-  the classification before the position/lead refusal, mark the demand position-free, and still run the same
-  build/role/currency path.
-- `Track::ordinaryAdmissionCannotServeDemand` (DEC-136's derived impossibility) is the single waiver predicate; the
-  preview demand supplies its own derived cost.
-- `PlaybackViewPendingReason`: add the named position-free preview reason beside `PrivateRootReturnPreparation`.
-- `CoverageServiceContract`: **unchanged**.
-- The served-source selection and clock-edge adoption are unchanged: the fallback serves until the window is adopted.
+## Span is tunable; route identity is not
 
-## Acceptance (fixtures first)
+DEC-116 already allows a tunable span. The split to remove is **short → merged route / long → window route**, not
+"every loop uses one interval size". It is fine that a short loop uses span X and a long loop span Y, provided both go
+through: **request → cost derivation → absolute positioning → bounded owner → ready → edge adoption → the same
+emitter/ledger**. Coverage stays demand-derived; **handoff positioning is universal**.
 
-| # | Case | Expected |
-|---|---|---|
-| **S1** | two-bar NOTE_EDIT (the existing `test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream` case) | after the position-free build, the short route **selects the preview window** (window identity/selection witness), not the merged fallback; the emitted stream still equals the long route (the note at 300–500 is inside the whole-loop coverage, so no boundary split is introduced) |
-| **S2** | waiver derivation | a 1 536-tick loop qualifies (impossible by arithmetic); a loop with a legal lead keeps the ordinary path and its refusal when positioned ahead; no draft when a legal lead exists |
-| **S3** | mutation | disabling the waiver restores the whole-loop request + `CannotCompleteBeforeHandoff`; the short route serves the fallback and S1's route-identity assertion fails (RED) |
-| **S4** | edit during the position-free build | the preparation is cancelled by name (`SourceMutated`), the fallback keeps serving, the next revision re-requests; no stale completion publishes |
-| **S5** | session exit during the build | the existing handoff to the committed successor is unchanged; the position-free demand does not delay the exit handoff |
-| **S6** | role occupied / sibling promise | the qualified candidate is retained and defers; nothing is destroyed |
-| **S7** | ledger/duplicates at adoption | the adopted window emits each row once and the ledger matches the fallback's; switching from fallback to window at the boundary does not duplicate or drop a row |
+## Required behaviour
 
-## Risks
+1. **Absolute future positioning.** Admission computes the cost, then the earliest occurrence of the demanded handoff
+   phase whose absolute lead admits it. The chosen occurrence's absolute tick is recorded on the admitted work/ready.
+2. **Ready-early wait.** A completed window waits for its positioned handoff; it is not adopted at an earlier matching
+   phase.
+3. **Edge adoption.** The clock edge adopts the ready exactly at/after the positioned absolute tick (phase alone is no
+   longer sufficient).
+4. **Miss → reposition, not permanent refusal.** If the selected handoff passes while the demand is current, the owner
+   repositions to the next eligible occurrence with the same cost calculation (DEC-147's pattern), rather than latching
+   `CannotCompleteBeforeHandoff` forever.
+5. **Supersession.** A demand positioned several cycles ahead is cancelled/repositioned by identity when the source or
+   edit revision changes; a stale ready is never adopted.
+6. **No envelope change.** `canCompleteWithinLead`, its constants (`leadTicks`, advance, denial allowance) are
+   untouched. No position-free reason, no short-loop classification.
 
-1. **Fallback-to-window handoff at adoption.** The fallback and the window must not both emit a row at the switch
-   boundary. The existing preview adoption boundary plus the S7 ledger/duplicate witness bound it.
-2. **Wait length.** A position-free build has no deadline; its grains are the same as any window. A very large edit
-   session interval could make the build long, but the fallback serves throughout and an edit cancels/rebuilds.
-3. **Classification over-inclusion.** The waiver must be derived from the demand's own cost, not from "loop length ≤ N".
-   S2's 1 536/legal-lead split is the discriminator.
-4. **Role capacity.** The preview lane already competes for the single successor role; the position-free demand is the
-   same role and the same deferral rules, so no new capacity is introduced.
-5. **The parity test's premise.** The existing test's content fits the whole-loop coverage; a future note that straddles
-   the loop end is the normal wrap/closure rule, not a new split. If a sub-interval were ever chosen later, that test
-   would need its premise restated; this design does not choose one.
+## Code touch points (for the G2 packet)
 
-## Rejected alternatives
+- `Track::requestPlaybackViewMaintenance` — replace the next-occurrence `canCompleteBeforeHandoff` gate with the
+  absolute-occurrence search (`handoffLeadTicks + k × loopLength`, smallest `k ≥ 0` that admits); record the absolute
+  `deadlineTick` (already a field) and the occurrence.
+- `Track::requestPreviewWindow` — the preview demand passes its coverage/phase and lets the owner position; no
+  whole-loop special case for admission.
+- The ready/adoption path (`resolveNoteEditPreviewSourceForTurn` and the clock edge) — require the positioned absolute
+  tick, not merely the phase; the ready waits.
+- The miss/lag path (`lagState`, `countedMissPromiseTick`) — reposition on a missed positioned handoff while the demand
+  is current (DEC-147).
+- `Track::servicePreviewWindowForNoteEditSession` — the re-cover cadence stays; a positioned demand is not re-asked
+  while it is in flight.
 
-- **Sub-interval coverage (option 1).** Cannot admit any interval on a ≤ 1 535-tick loop under the declared lead
-  (minimum demand 1 792); would require a policy/constant change.
-- **Whole-loop span/cost policy (option 2).** Same arithmetic; a policy exemption is exactly the "make one reproducer
-  fit" change DEC-136 rejected.
-- **Changing the constants (advance/denial/lead).** A bound-class change needing its own measurement; erases the
-  scheduler's information for every geometry.
+## RED before production code (owner's three cases)
+
+1. **Short-loop currently impossible.** Two-bar loop; required lead > one recurrence; the **next** occurrence fails; the
+   owner positions at the first **later** occurrence satisfying the same `canCompleteWithinLead()`; reaches
+   `Ready → Serving`; **no merged fallback**.
+2. **Long-loop control.** Enough lead at the ordinary first handoff; positioning stays at the first occurrence; no extra
+   cycle of latency.
+3. **Supersession.** Demand positioned several cycles ahead; source/edit revision changes before adoption; the old
+   demand/window is cancelled/repositioned by identity; a stale ready is never adopted.
+
+Plus the named miss rule: **missing the selected handoff does not become a permanent refusal while the demand is
+current; reposition to the next eligible occurrence with the same cost calculation.**
+
+## Acceptance and gates
+
+- The three RED cases above, plus the existing short/long stream-parity fixture updated to the new premise (the short
+  route selects the window).
+- Measure the actual NOTE_EDIT latency (positioned handoff minus demand tick) for a two-bar loop and record it as the
+  product contract evidence; do not trade the bound for it.
+- Focused preview/RWO/prewarm suites, full native, both firmware builds at their pins, strict OpenSpec validation, diff
+  check. Device leg after the native contract is green.
+
+## Implementation landed (2026-10-23, native)
+
+- `requestPlaybackViewMaintenance` now searches occurrences (`earliestEligibleHandoffLead`: the next occurrence first,
+  then whole loops) and admits the first whose **absolute** lead passes the unchanged `canCompleteWithinLead`; the
+  chosen occurrence is on `PlaybackViewAdmittedWork` (`deadlineTick`, `positionedLater`).
+- `beginCoverageBuild` accepts the positioned lead (both overloads; default 0 keeps the phase check for other callers).
+- `resolveNoteEditPreviewSourceForTurn` adopts a positioned ready only at/after its absolute tick; an ordinary
+  first-occurrence window keeps the phase adoption, and an unqualified clock keeps the legacy phase path.
+- `Track::playbackWindowInterval` is **unchanged** (span tunable); the short/long split is gone at the **route** level:
+  both are admitted, positioned and adopted by the same path.
+- **Measured latency:** the two-bar NOTE_EDIT demand positions at **2,972 ticks** (1.94 loop periods; ≈7.7 s at
+  120 BPM). Edits remain on the previously served source until that boundary.
+- **Gates:** `test_windowed_preview_integration` 32/32, `test_runtime_working_set_ownership` 239/239, full native
+  **3,416 / 7 skipped / 3,409 succeeded**, both images at the exact pins (`391,688 + 1,528` / `391,912 + 1,304`).
+
+### Still owed
+
+- The **supersession** RED (positioned several cycles ahead, revision changes, stale ready never adopted) and the
+  **miss → reposition** rule (DEC-147) are not yet fixtures; the existing mutation fixtures cover the ordinary
+  revision edge.
+- An end-to-end fixture that drives the clock to the positioned tick and asserts `Ready → Serving` with the fallback
+  stopped (the short fixture pins admission/positioning; the adoption gate is implemented but not end-to-end timed).
+- Device leg after the native contract is complete. No checkbox.
 
 ## Not claimed
 
-No implementation, no checkbox, no device parity yet. The device leg (3.15f) consumes this design after the native
-fixtures land; the short-loop route remains on the merged fallback until then.
+No device parity; no 3.15f checkoff. The supersession/miss slice and the end-to-end adoption timing are the next REDs.
