@@ -97,11 +97,21 @@ slot 1 / channel 5):
 So the tempo correction fixed the record leg, and the remaining gap is the **edit-session/fader precondition**
 (entering the edit session, selecting a note and the fader bank) on this bench — not a lane/default difference. The lane
 leg was **not** run against a failing default baseline; doing so would not be a parity test. The `edit_full` pair is
-therefore **not yet a parity result**. The layered `note_edit_overdub_compose` preset was also tried on the default image
+therefore **not yet a parity result**. **The fixture, not the edit entry, is the blocker.** The run log shows the session entering correctly
+(`Edit session: NOTE_EDIT (Program 1, Note 0 trigger)`, select-fader routing, `EditSelectNoteState: Found and selected
+note 1 at tick 240`), so the precondition is not note-edit entry. Comparing the last archived `edit_full` run
+(`captures/host_midi_automation_edit_baseline_20260804_174049.json`, same track 5 / channel 5): it has the **same** core
+markers missing (`m0_moved_events_low:0`, `m0_missing_before_length_edit`, `POSITION EDIT`, `Note value …`) and also
+`capture:ring_overflow`. The legacy `edit_full` fixture is therefore **chronically failing on this bench**, not newly
+broken by this tree; its missing markers are not evidence about the lane and it is **not a usable 3.15f oracle**.
+
+The layered `note_edit_overdub_compose` preset was also tried on the default image
 (`…default-necompose-01`, 120 BPM, no boot-reset) and failed at its own precondition: `no later same-pitch live note`.
-So both NOTE_EDIT routes are blocked on fixture setup/seed on this bench, not on the image. Candidate next steps:
-establish the edit precondition (the legacy edit fixture's fader bank / note selection) or seed the compose scenario's
-required later same-pitch live note, then run the pair.
+Archived `note_edit_overdub_compose` reports are **also all `ok=False`** in the recent history
+(`captures/host_midi_hitl_note_edit_overdub_compose_2026-09-10*`), so this is not a one-off seed miss. **Both NOTE_EDIT
+device oracles are stale on this bench.** This is a host-fixture/oracle gap, not an image or lane finding; qualifying the
+NOTE_EDIT route needs a repaired or new device oracle (a host-tooling task), or the NOTE_EDIT term is explicitly deferred
+with this named gap. The lane was not run.
 
 The tempo-fader route is now a reusable device recipe: enter LOOP_EDIT, send pitchwheel on the tempo channel with the
 `TempoMapping` logical value (120 BPM → wire 6520, logical −1672); the firmware answers `TEMPO: PB=-1672 -> 120.0 BPM`.
