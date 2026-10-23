@@ -49,9 +49,22 @@ dense base, and the reselect preset cannot run on it. This is a **fixture/seed**
 - `edit_record_prelude --edit-record-fixture` (host clock 120) exits 0 but the slot content is still the dense grid; the
   seed's clear/record does not replace it.
 
-**Next:** a dedicated minimal sparse-seed tool: clear the scratch slot (canonical pre-transport clear), arm, stream the
-known 8-note pattern at 120 BPM with a host clock, stop -- then the NOTE_EDIT probe's step mapping is valid again. This
-is host tooling, not a C change. The board is left on the qualification image with the dense content.
+**Sparse seed found (same session).** The prelude scenario is a no-op outside `edit_full`; the sparse seed is the
+**edit fixture**, produced by `host_midi_hitl.py run --preset base --record-only --edit-record-fixture ...` (exit 0,
+PASS). It records 8 notes at `8/60, 200/64, 392/67, 584/60, 872/64, 1064/65, 1256/69, 1352/55` -- the fixture phase is
+**+8 ticks off the 48-tick step grid** (the earlier 2026-10-22 seed was on-grid at 49/240/432...).
+
+**Two remaining probe issues (device state, not C):**
+
+1. **The step-based select does not reliably focus the off-grid note.** Selecting step 4 (the step containing the note
+   at 200) and moving to step 6 moved **note 55** (1352 -> 344), not pitch 64; the edit session's **focus persisted
+   from the previous probe run**, so the coarse fader applied to the stale focus.
+2. The seed phase (+8) is outside the step mapping the probe uses for the source note.
+
+**Next (host tooling):** the probe must establish a **fresh edit session/focus** per run (exit then enter NOTE_EDIT, or
+start from a known unfocused state) and select by the seed's **actual nav slot** (or align the record phase so the seed
+is on-grid). Then the lane/default NOTE_EDIT pair can run. This is not a C change. Board left on the qualification image
+with the sparse seed.
 
 ## Native C contract (for the device comparison)
 
