@@ -2345,8 +2345,23 @@ suite is not green this turn by design. No Git delivery.
   (final image) shows the post-edit revision adopted at **4,632** (`storage_generation` 15→16) with the switch in the MIDI
   stream (the probe’s first-preview handoff heuristic is conservative there); runs 26/27 recorded the lane requesting no
   preview after the seed/depart (content still PASS) as a probe/transport-state miss. Measured NOTE_EDIT latency: 2,976
-  (run 18) and 4,457 (run 24) ticks from demand. **3.15f stays unchecked** — simultaneous-track Record and the rest of
-  the all-route matrix remain owed.
+  (run 18) and 4,457 (run 24) ticks from demand. **3.15f stays unchecked.**
+  **Owner scope decision (2026-10-24): simultaneous-track Record is deferred as a future feature** — it is not a 3.15f
+  cutover blocker and no scenario/oracle is owed for it now. The remaining matrix (the routes 3.15f still owes, one line
+  each): (1) **live Record / late last-bar input / changed final geometry / stop return** — the rolling Record campaign
+  is a device acceptance, but 3.15f still needs its own per-route differential against the cold legacy reference;
+  (2) **frozen Record return** — DEC-143/144 device-proven on the campaign, 3.15f route parity not separately claimed;
+  (3) **overdub overlay** — 3.15e native slices landed, the live overlay still has the echo tail and the single-reader
+  migration is unchecked, so device parity is owed; (4) **short-loop Record/overdub routes** — the C mechanism is
+  implemented and short NOTE_EDIT is proven, the other short routes are not; (5) **switch / inbound slot** — native
+  switch-while-recording and preview-yield fixtures, no 3.15f device route run; (6) **undo/redo** — native preview
+  revision/checkpoint parity, no 3.15f device route run; (7) **layered/jam** — the preview defers under a jam, no route
+  qualification; (8) **restored/dense legacy content** — bounded-page native proof, 3.15f device owed; (9) **internal vs
+  external clock** — the host-clock 120 BPM profile is measured, the internal-clock route is not; (10)
+  **persistence/display contention** — the display refresh stall is falsified and the save fixtures are native, but the
+  combined under-load contention is not qualified; (11) **RAM1/PSRAM high-water** — the current pins are exact and the
+  device high-water was measured, the final-image sweep is owed. Multi-track **sounding** contention is the 3.10/6.5
+  service gate, not a separate emitter route. The cold legacy reference differential is the common term across (1)–(11).
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next
