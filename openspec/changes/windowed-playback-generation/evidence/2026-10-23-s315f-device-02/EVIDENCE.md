@@ -38,10 +38,20 @@ dense base, and the reselect preset cannot run on it. This is a **fixture/seed**
 - the device probe entered NOTE_EDIT and drove the session, but its fixed steps/pitch do not match the dense seed, and
   the dense seed has no empty target for a simple position move.
 
-**Next:** record the sparse seed directly with a minimal seed probe (clear the scratch slot, arm, stream the known
-8-note pattern at 120 BPM, stop), or extend the minimal probe to select a dense-grid note with an **empty** target step
-and prove the move. Then run the NOTE_EDIT probe on the qualification and default images and compare the post-move rows
-(as in `2026-10-22-s315f-default/lane-noteedit-probe-0x`).
+**Further dense-grid attempts (same session, all negative):**
+
+- step 18 -> 20 (occupied target): no move;
+- 18 -> 16 (midpoint): zero-delta fader, no move;
+- 18 -> 6: no move;
+- 18 -> 14 (empty target): the dump shows a **different** note moved (pitch 79, 1488 -> 336); the step-based select
+  mapping picks a nav slot, and the dense grid's off-grid/stacked notes make that slot the wrong note. The probe's
+  one-note-per-step assumption is invalid here.
+- `edit_record_prelude --edit-record-fixture` (host clock 120) exits 0 but the slot content is still the dense grid; the
+  seed's clear/record does not replace it.
+
+**Next:** a dedicated minimal sparse-seed tool: clear the scratch slot (canonical pre-transport clear), arm, stream the
+known 8-note pattern at 120 BPM with a host clock, stop -- then the NOTE_EDIT probe's step mapping is valid again. This
+is host tooling, not a C change. The board is left on the qualification image with the dense content.
 
 ## Native C contract (for the device comparison)
 
