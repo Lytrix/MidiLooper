@@ -2558,6 +2558,65 @@ static void test_3_15f_c_the_current_root_open_hydrates_every_visible_note() {
                                    "the target keeps its committed baseline at the open");
 }
 
+/// **3.15f / C — the composition distinguishes a live edit from the committed source by geometry, not only by the
+/// row's `committedSpan`.** `applyEditSessionAction(MoveNote)` carries the row's committed baseline with the current
+/// span (the macro-seal rule), so a moved row can report `committed == current`. The served window must still drop the
+/// committed source pair at the old tick and serve the live pair from the session store. RED if the old pair survives.
+static void test_3_15f_c_the_composition_serves_a_moved_row_with_a_shifted_baseline() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  const uint8_t channel = track.getMidiChannel();
+  const NoteId movedId = static_cast<NoteId>(7201);
+  const NoteId untouchedId = static_cast<NoteId>(7202);
+
+  NoteEditCurrentState& state = editManager.noteEditCurrentStateMut();
+  state.clear();
+  state.upsertRow(movedId, NoteBaseline{64, 100, 1448, 1544}, NoteBaseline{64, 100, 1448, 1544},
+                  NoteEditPresenceType::Visible);
+  state.upsertRow(untouchedId, NoteBaseline{67, 100, 392, 488}, NoteBaseline{67, 100, 392, 488},
+                  NoteEditPresenceType::Visible);
+
+  MidiEventVec& store = editManager.sessionMidiEvents();
+  store.clear();
+  MidiEvent movedOn = MidiEvent::NoteOn(1448, channel, 64, 100);
+  movedOn.noteId = movedId;
+  store.push_back(movedOn);
+  MidiEvent movedOff = MidiEvent::NoteOff(1544, channel, 64, 0);
+  movedOff.noteId = movedId;
+  store.push_back(movedOff);
+
+  SessionMidiEventVec composed;
+  MidiEvent sourceOn = MidiEvent::NoteOn(200, channel, 64, 100);
+  sourceOn.noteId = movedId;
+  composed.push_back(sourceOn);
+  MidiEvent sourceOff = MidiEvent::NoteOff(296, channel, 64, 0);
+  sourceOff.noteId = movedId;
+  composed.push_back(sourceOff);
+  MidiEvent untouchedOn = MidiEvent::NoteOn(392, channel, 67, 100);
+  untouchedOn.noteId = untouchedId;
+  composed.push_back(untouchedOn);
+  MidiEvent untouchedOff = MidiEvent::NoteOff(488, channel, 67, 0);
+  untouchedOff.noteId = untouchedId;
+  composed.push_back(untouchedOff);
+
+  const PlaybackCoverageInterval coverage{0, 1536, 1536};
+  applyNoteEditDeltaToCommittedWindow(composed, coverage, channel);
+
+  uint32_t movedOns = 0;
+  uint32_t staleSourceEvents = 0;
+  uint32_t untouchedOns = 0;
+  for (const MidiEvent& event : composed) {
+    if (event.noteId == movedId) {
+      if (event.isNoteOn() && event.tick == 1448) ++movedOns;
+      if (event.tick == 200 || event.tick == 296) ++staleSourceEvents;
+    }
+    if (event.noteId == untouchedId && event.isNoteOn() && event.tick == 392) ++untouchedOns;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, movedOns, "the moved row's live On is served once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, staleSourceEvents, "the stale committed pair is dropped");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, untouchedOns, "an untouched row keeps exactly one source On");
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2997,6 +3056,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_the_preview_composition_refreshes_the_session_projection);
   RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual);
   RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_every_visible_note);
+  RUN_TEST(test_3_15f_c_the_composition_serves_a_moved_row_with_a_shifted_baseline);
   RUN_TEST(test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row);
   RUN_TEST(test_3_15f_c_the_geometry_resolver_moves_the_current_state_row);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);

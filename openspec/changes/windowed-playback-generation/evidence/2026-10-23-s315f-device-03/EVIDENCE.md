@@ -402,3 +402,48 @@ content and the edited 64@1448 is silent. The next RED is the live movement’s 
 (`applyEditSessionAction`/the resolver). The `persistence_persist_save_slice_too_large` finding did not recur on
 `seed-19`/`seed-21` (both PASS). Temporary diagnostic rows cost ITCM (code/padding `391,960+1,256` / `392,184+1,032`,
 above the 840 floor) and are removed when the investigation closes. No 3.15f checkoff.
+
+## NOTE_EDIT leg closed: the composition, not the open, was the last seam (2026-10-24)
+
+**The open was already right.** The id-bitset diagnostic (image `9c051a96…`, run 23) reported the open’s current state
+as `rows=8, ids_lo=0x1fe` (bits 1–8) with the target present, and the native 8-note open already hydrated all eight rows
+(`test_3_15f_c_the_current_root_open_hydrates_every_visible_note`). Run 21’s `rows=7` was not reproduced.
+
+**Root cause — the `MoveNote` committed shift vs the delta predicate.** `NoteEditCurrentState::applyEditSessionAction`
+translates `committedSpan` with the movement (the macro-seal rule pinned by
+`test_move_note_translates_committed_span`), so after a live move the row can report `current == committed`. The
+composition’s `rowOverridesCommitted` then said “no edit” and kept the committed source pair at 200, while the live store
+already carried 1448 (`preview_source … cur=1448, base=1448, src=200` on runs 21/23). The movement itself was proven
+correct natively (apply/resolver) and committed on the device (`post` rows 200 → 1448).
+
+**RED → GREEN (native).** New `test_3_15f_c_the_composition_serves_a_moved_row_with_a_shifted_baseline`: a row at
+`current == committed == 1448`, the live store pair at 1448, and the committed source pair at 200; RED `Expected 1 Was 0`
+(the moved On is not served). Fix in `applyNoteEditDeltaToCommittedWindow` (no change to `MoveNote`’s pinned semantics):
+the source On/Off is retained only when it sits at the row’s live start/end; the live store pair is served once for any
+visible row (identity membership prevents duplicating an untouched source); the missing-half fill reads the served
+window rather than the store. Untouched rows keep exactly one source pair. Preview **48/48**; full native **3,432 / 7 /
+3,425**.
+
+**RAM1 / final image.** Temporary diagnostics removed (`preview_source`, `preview_adopt`, the id-bitset helper); the
+approved line is restored exactly: default **391,752 + 1,464**, qualification **391,992 + 1,224**, floor 840
+(headroom 624 / 384). Final qualification HEX **`cbd4703d661de0b2b91848ed224c7992c24155dce799ddfe7b0fecde79a273d6`**
+(`teensy_loader_cli 2.3`, Found HalfKay → Programming → Booting verified separately).
+
+**Device results.**
+- **Run 24** (fix + diagnostics, HEX `e8e424e6…`): **content/route/audible all PASS** — composer `src=1448`; adoption
+  at tick **4,608**; edited 64@1448 after the handoff ×1; committed 64@200 after ×0; latency 4,457 from the demand,
+  4,528 from entry. This is the clean C-contract sample (the positioned occurrence chosen after the preparation bound).
+- **Run 25** (final clean image, `cbd4703d…`): content PASS; the lane’s first preview publication at the playhead (rev 2)
+  is followed by the post-edit **revision 3 adoption at tick 4,632** (`storage_generation` 15 → 16). The MIDI stream
+  then carries the edited note ×1 and only the two legitimate pre-handoff committed-200 loops ×2, i.e. the old note stops
+  at the adoption. The probe’s route/audible terms derive the handoff from the *first* preview row (the authoritative
+  playhead publication), so its PASS flag is conservative; the adoption and the switch are measured in the read/MIDI rows.
+- **Runs 26/27** (same final image, fresh seeds): content PASS but **zero preview reads** — the lane never requested a
+  preview after the seed/depart (no `origin=1` row, no build gate row, while committed reads advanced). The edit still
+  committed. Recorded as a probe/transport-state miss, not smoothed and not a composition refusal; the native gates and
+  run 25 cover the behavior. **Measured NOTE_EDIT latency** across qualifying device runs: **2,976** (run 18) and
+  **4,457** (run 24) ticks from demand — the contract selects the earliest occurrence whose absolute lead clears
+  `canCompleteWithinLead`, so the value follows preparation readiness and the phase at the demand.
+
+**Not claimed.** 3.15f stays unchecked: only the NOTE_EDIT route is proven here; simultaneous-track Record and the
+remaining all-route matrix are still open, and no cutover/3.7b work was touched.

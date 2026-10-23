@@ -2331,6 +2331,22 @@ suite is not green this turn by design. No Git delivery.
   (plus the device's live state carrying 7 rows at the movement). Native gates: preview **47/47**; full **3,431 / 7 /
   3,424**. Next native: the resolver with the display note at the moved span, then fix the ensure to keep the
   causing/moved row's committed baseline; re-run the device with RAM1-neutral rows only. No 3.15f checkoff.
+  **NOTE_EDIT leg closed (2026-10-24; task stays unchecked for the remaining routes).** The open is correct: the
+  id-bitset diagnostic (run 23) shows `rows=8, ids_lo=0x1fe`, and the native 8-note open hydrates all eight. The actual
+  seam is the composition’s delta predicate: `applyEditSessionAction(MoveNote)` translates `committedSpan` with the move
+  (the macro-seal rule pinned by `test_move_note_translates_committed_span`), so `current == committed` and
+  `rowOverridesCommitted` kept the stale source pair at 200. RED
+  `test_3_15f_c_the_composition_serves_a_moved_row_with_a_shifted_baseline` (`Expected 1 Was 0`) → GREEN by retaining a
+  committed source On/Off only when it sits at the row’s live start/end, serving the live store pair once, and filling
+  missing halves from the served window; `MoveNote`’s pinned semantics untouched. Preview **48/48**; full native **3,432
+  / 7 / 3,425**. Diagnostics removed; approved RAM1 line exactly restored (default **391,752 + 1,464**, qualification
+  **391,992 + 1,224**, floor 840). Final HEX **`cbd4703d…`**. Device: run 24 (fix + diagnostics) **content/route/audible
+  PASS** — `src=1448`, adoption at 4,608, edited after ×1, committed 200 after ×0, latency 4,457 from demand; run 25
+  (final image) shows the post-edit revision adopted at **4,632** (`storage_generation` 15→16) with the switch in the MIDI
+  stream (the probe’s first-preview handoff heuristic is conservative there); runs 26/27 recorded the lane requesting no
+  preview after the seed/depart (content still PASS) as a probe/transport-state miss. Measured NOTE_EDIT latency: 2,976
+  (run 18) and 4,457 (run 24) ticks from demand. **3.15f stays unchecked** — simultaneous-track Record and the rest of
+  the all-route matrix remain owed.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

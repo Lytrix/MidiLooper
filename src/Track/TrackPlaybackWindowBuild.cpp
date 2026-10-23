@@ -303,11 +303,24 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
   const auto rowIsSuppressed = [](const NoteEditCurrentNoteState& row) {
     return row.presence == NoteEditPresenceType::Hidden || row.presence == NoteEditPresenceType::Deleted;
   };
+  /// A committed source event is still the note's own geometry only when it sits at the row's live tick. `MoveNote`
+  /// carries `committedSpan` with the current span for a macro-sealed row, so `rowOverridesCommitted` alone would
+  /// keep serving the source pair at its old tick; the source tick is the identity-qualified check.
+  const auto committedEventSitsAtLiveGeometry = [](const NoteEditCurrentNoteState& row, const MidiEvent& event) {
+    if (event.isNoteOn()) {
+      return event.tick == row.currentSpan.startTick;
+    }
+    if (event.isNoteOff()) {
+      return event.tick == row.currentSpan.endTick;
+    }
+    return true;
+  };
   size_t retained = 0;
   for (size_t i = 0; i < committed.size(); ++i) {
     const MidiEvent& event = committed[i];
     const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId ? stateRow(event.noteId) : nullptr;
-    if ((event.isNoteOn() || event.isNoteOff()) && row != nullptr && rowOverridesCommitted(*row)) {
+    if ((event.isNoteOn() || event.isNoteOff()) && row != nullptr &&
+        (rowOverridesCommitted(*row) || !committedEventSitsAtLiveGeometry(*row, event))) {
       continue;
     }
     if (retained != i) committed[retained] = event;
@@ -319,24 +332,34 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
     if (!event.isNoteOn() && !event.isNoteOff()) continue;
     if (!coverage.contains(event.tick)) continue;
     const NoteEditCurrentNoteState* row = event.noteId != kInvalidNoteId ? stateRow(event.noteId) : nullptr;
-    if (row == nullptr || !rowOverridesCommitted(*row) || rowIsSuppressed(*row)) {
+    if (row == nullptr || rowIsSuppressed(*row)) {
       continue;
     }
     // A stale projection's old span is not this interval's delta; only the current span is.
     if (event.tick != row->currentSpan.startTick && event.tick != row->currentSpan.endTick) continue;
+    // The live store is the authority for an edited row; an untouched row's identical source event stays once.
+    bool alreadyServed = false;
+    for (const MidiEvent& served : committed) {
+      if (served.noteId == event.noteId && served.tick == event.tick &&
+          served.isNoteOn() == event.isNoteOn()) {
+        alreadyServed = true;
+        break;
+      }
+    }
+    if (alreadyServed) continue;
     committed.push_back(event);
   }
 
   for (const auto& entry : rows) {
     const NoteId noteId = entry.first;
     const NoteEditCurrentNoteState& row = entry.second;
-    if (!rowOverridesCommitted(row) || rowIsSuppressed(row)) continue;
+    if (rowIsSuppressed(row)) continue;
     const bool wantOn = coverage.contains(row.currentSpan.startTick);
     const bool wantOff = coverage.contains(row.currentSpan.endTick);
     if (!wantOn && !wantOff) continue;
     bool hasOn = false;
     bool hasOff = false;
-    for (const MidiEvent& event : editManager.sessionMidiEvents()) {
+    for (const MidiEvent& event : committed) {
       if (event.noteId != noteId) continue;
       if (event.isNoteOn() && event.tick == row.currentSpan.startTick) hasOn = true;
       if (event.isNoteOff() && event.tick == row.currentSpan.endTick) hasOff = true;
@@ -355,43 +378,6 @@ TRACK_COLD_MEM void applyNoteEditDeltaToCommittedWindow(SessionMidiEventVec& com
     }
   }
 }
-
-#if defined(SESSION_CAPTURE)
-/// **3.15f diagnostic (request-cadenced, not per tick):** name the current state's overridden row and whether the
-/// composed source actually carries it. Together with the adoption row it distinguishes "the composition has the edit
-/// but another revision is served" from "the composition ran before the edit was applied".
-static void emitPreviewSourceCompositionRow(uint8_t slot, const SessionMidiEventVec& composed) {
-  const NoteEditCurrentState& state = editManager.noteEditCurrentState();
-  const NoteEditFocus& focus = editManager.getEditSession().focus;
-  const NoteId focusNoteId = focus.movingNoteId;
-  if (focusNoteId != kInvalidNoteId) {
-    const NoteEditCurrentNoteState* row = state.find(focusNoteId);
-    if (row != nullptr) {
-      uint32_t sourceTick = 0;
-      for (const auto& event : composed) {
-        if (event.noteId == focusNoteId && event.isNoteOn()) {
-          sourceTick = static_cast<uint32_t>(event.tick);
-          break;
-        }
-      }
-      Serial.printf(
-          "#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,focus=%lu,present=1,cur=%lu,%u,%lu,base=%lu,%u,%lu,src=%lu,rows=%u\r\n",
-          (unsigned long)micros(), static_cast<unsigned>(slot),
-          (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)focusNoteId,
-          (unsigned long)row->currentSpan.startTick, static_cast<unsigned>(row->currentSpan.pitch),
-          (unsigned long)row->currentSpan.endTick, (unsigned long)row->committedSpan.startTick,
-          static_cast<unsigned>(row->committedSpan.pitch), (unsigned long)row->committedSpan.endTick,
-          (unsigned long)sourceTick, static_cast<unsigned>(state.rows().size()));
-      return;
-    }
-  }
-  Serial.printf("#CAP,%lu,DIAG,preview_source,s=%u,rev=%lu,focus=%lu,present=0,rows=%u\r\n",
-                (unsigned long)micros(), static_cast<unsigned>(slot),
-                (unsigned long)editManager.sessionPlaybackPreviewRevision(), (unsigned long)focusNoteId,
-                static_cast<unsigned>(state.rows().size()));
-}
-#endif
-
 
 /// Task 3.7a (I1): one bounded slice of a retained interval is **one page** -- the same capacity the legacy paged
 /// stream produces with (`kWindowPageCapacity`), so the retained-source gather and the page producer cannot answer
@@ -1712,16 +1698,6 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
   if (adopted == nullptr) {
     return false;
   }
-#if defined(SESSION_CAPTURE)
-  // **3.15f diagnostic:** the frame actually adopted at the edge, with its revision against the session's. The resolver's
-  // already-serving branch returns before this, so the row marks an adoption/change rather than every turn.
-  Serial.printf(
-      "#CAP,%lu,DIAG,preview_adopt,s=%u,rev=%lu,session=%lu,tick=%lu,phase=%lu,cov=%lu,%lu\r\n",
-      (unsigned long)micros(), static_cast<unsigned>(slotIndex),
-      (unsigned long)adopted->source.playbackRevision, (unsigned long)previewRevision,
-      (unsigned long)currentTick, (unsigned long)phase, (unsigned long)adopted->coverage.startPhase,
-      (unsigned long)adopted->coverage.lengthTicks);
-#endif
   // The merged reader closes a removed identity on its own rebuild (`reconcileDeletedNoteEditPreviewSoundings`); when
   // the preview serves, that rebuild does not run, so adoption is where the obligation is discharged. A crossing note
   // (its Off beyond this interval) is not in the rows and stays open for the route that carries its Off -- which is
@@ -7375,9 +7351,6 @@ TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex
       return false;
     }
     applyNoteEditDeltaToCommittedWindow(out, coverage, getMidiChannel());
-#if defined(SESSION_CAPTURE)
-    emitPreviewSourceCompositionRow(slotIndex, out);
-#endif
     return true;
   }
   for (const MidiEvent& event : editManager.sessionMidiEvents()) {
@@ -7385,9 +7358,6 @@ TRACK_COLD_MEM bool Track::composePreviewIntervalSourceForSlot(uint8_t slotIndex
       out.push_back(event);
     }
   }
-#if defined(SESSION_CAPTURE)
-  emitPreviewSourceCompositionRow(slotIndex, out);
-#endif
   return true;
 }
 
