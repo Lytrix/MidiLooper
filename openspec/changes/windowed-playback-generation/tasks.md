@@ -2252,9 +2252,14 @@ suite is not green this turn by design. No Git delivery.
   cadence), not 16 s. The display refresh is therefore **not starved** and stays the **single** preview‑revision owner;
   no window‑owner revision advancement was added. Run 09 shows the real delay: the movement at 82.831 s, the served
   revision‑1 preview at 4,608 (93.041 s), and the edited revision‑3 `note_edit` build only at 99.053 s — the **preview
-  service's re‑attempt cadence after a revision bump** while the previous preview completes/serves. The next RED is that
-  re‑attempt cadence (the native steady‑state edit‑while‑serving fixture covers the simple case; the device adds the
-  completion‑pending‑judgement/role transition). No 3.15f checkoff.
+  service's re‑attempt cadence after a revision bump** while the previous preview completes/serves. The cadence was
+  then tested: a per‑loop requester caller in `ControlSurfaceManager::update` (not a revision owner) was added and
+  measured in `handoff-13` (image `5b3d1e89…`) — the edit committed but the preview **never built** (only `snapshot`
+  and `retained_identity_refreshed`; no `note_edit`; 71 committed reads). The caller is **not** the fix and was
+  **reverted** (board/build back to `5d16cf96…`; pins unchanged). The blocker is the **committed lane's retained
+  demand/source on the shared runtime** (`retained_identity_refreshed`): while NOTE_EDIT is open the session's preview
+  must displace/defer it (the committed handoff is re‑requested at the exit). The next RED is that **lane arbitration**
+  (the native steady‑state edit‑while‑serving fixture covers the simple case). No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

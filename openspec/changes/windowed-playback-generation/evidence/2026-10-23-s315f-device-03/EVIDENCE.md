@@ -2,11 +2,12 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; three focused fixes are green and the windowed preview now **serves** on the device
-when the deferred preview‑revision flush runs (runs 07/09). The display/loop‑prefix stall hypothesis is **falsified**
-(display max 2.3 ms, over=0; largest stream gap 1.58 s), so the single revision owner stays the display refresh. The
-remaining delay is the preview service's re‑attempt cadence after a revision bump while the previous preview
-completes/serves. 3.15f stays open.**
+**Status: content oracle paired; three focused fixes are green and the windowed preview **serves** on the device
+when the lane is free (runs 07/09). The display/loop‑prefix stall hypothesis is **falsified** (display max 2.3 ms,
+over=0; largest stream gap 1.58 s), so the display refresh stays the single revision owner; a requester‑cadence caller
+was tested and **reverted** (run 13: no preview build ever). The blocker is the **committed lane's retained
+demand/source on the shared runtime** (`retained_identity_refreshed`), which the session's preview must displace while
+NOTE_EDIT is open. 3.15f stays open.**
 
 ## Images
 
@@ -192,10 +193,29 @@ movement's revision‑3 `note_edit` build only starts at **99.053 s**, after the
 reach the lane (the revision‑3 build exists) — the request after the flush is refused/deferred by the lane's
 serving/completion/ready state and re‑attempted only on the window‑owner turn.
 
-The next RED is therefore the preview service's **re‑attempt cadence after a revision bump**: with the previous preview
-completion/serving state present, the service must ask again on the next free turn (the native
-`test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision` covers the steady case; the device
-adds the completion‑pending‑judgement/role‑transition timing). One revision owner remains.
+The working hypothesis at run 09 was the preview service's **re‑attempt cadence after a revision bump** (the native
+`test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision` covers the steady case). Run 13
+below tests a requester‑cadence caller and shows the real blocker is the committed lane's retained demand, not the
+cadence.
+
+### Run 13 — the requester‑cadence caller was tested and reverted; the blocker is the committed lane's retained demand
+
+A per‑loop requester caller was added to `ControlSurfaceManager::update` (after the deferred refresh; **not** a revision
+owner — the display refresh still bumps the revision) and measured in `captures/2026-10-23-s315f-lane-handoff-13`
+(image `5b3d1e89…`). The playing session opened at focus 200, the edit committed `200 -> 1448` (content PASS), but the
+preview **never built**: the only build rows are `snapshot` (393.898 s) and **`retained_identity_refreshed`**
+(426.951 s); there is no `note_edit` row, 71 read rows are all committed, and the committed 64@200 sounds five times.
+
+`retained_identity_refreshed` is the **committed** lane's retained demand (`refreshRetainedIdentity…` on the shared
+`pendingViewRequest_`). The preview request therefore coalesces/refuses behind the committed lane's active
+demand/source on the shared runtime: the session's preview never gets the lane, even with a more frequent requester.
+The caller is **not** the fix and was reverted (the board/build return to `5d16cf96…` = `df05ea78`'s diagnostic image);
+the native suites were not affected and the pins are unchanged. The display refresh remains the sole revision owner.
+
+The next RED is the **lane arbitration**: while NOTE_EDIT is open the session's preview is the content the transport
+should carry, so the committed lane's retained demand/source on the same slot must yield to it (the committed handoff is
+re‑requested at the exit). A native fixture with the committed retained demand/source active plus a NOTE_EDIT preview
+demand must show the preview admitted/served — RED before that arbitration.
 
 ## Native contract (unchanged; for the comparison)
 
@@ -210,9 +230,10 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
 live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
 The **windowed preview now serves on the device** (runs 07/09: `origin=1` read rows; first at tick 4,608) — the serving
-route itself is exercised. The display refresh is healthy and remains the **single** revision owner (the dedicated
+route itself is exercised. The display refresh is healthy and is the **single** revision owner (the dedicated
 `PERF,display` row measured 2.3 ms max / 0 over budget; largest stream gap 1.58 s), so the earlier loop/display‑stall
-suspicion is retracted. What remains is the **preview service's re‑attempt cadence after a revision bump** while the
-previous preview completes/serves: run 09's edited revision‑3 build starts at 99.053 s against a movement at 82.831 s,
-after the revision‑1 preview already served at 4,608. The first served handoff also missed the priced 3,072
-(miss→reposition to 4,608). Those own the next RED.
+suspicion is retracted; no window‑owner revision advancement was added. A per‑loop requester caller was tested
+(run 13) and **reverted**: with it the preview never built (`retained_identity_refreshed`, no `note_edit` row). The
+blocker is the **committed lane's retained demand/source on the shared runtime**: while NOTE_EDIT is open the session's
+preview must displace/defer it (the committed handoff is re‑requested at the exit). The first served handoff also
+missed the priced 3,072 (miss→reposition to 4,608). The lane arbitration owns the next RED; 3.15f stays open.

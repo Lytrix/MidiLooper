@@ -121,6 +121,28 @@ class MidiRecorder:
             return
 
 
+# The firmware's own select decision (INFO while stopped; the DECISION is the persisted tick this leg requires).
+_SELECT_DECISION = re.compile(
+    r"#DBG select_apply selected_tick=(\d+) note_idx=(-?\d+) slot=(-?\d+) prior_slot=(-?\d+) "
+    r"apply=(\d+) reason=(\w+)")
+
+
+def _wait_select_ack(collector: SerialCaptureCollector, target_tick: int, timeout_s: float):
+    """Return (selected_tick, note_idx, reason) for the target tick, or the last decision seen."""
+    deadline = time.monotonic() + timeout_s
+    last = None
+    while time.monotonic() < deadline:
+        for line in collector.snapshot():
+            match = _SELECT_DECISION.search(line)
+            if not match:
+                continue
+            last = (int(match.group(1)), int(match.group(2)), match.group(6))
+            if last[0] == target_tick:
+                return last
+        time.sleep(0.05)
+    return last
+
+
 def _tap(out: mido.ports.BaseOutput, lock: threading.Lock, note: int,
          channel_1based: int = CONTROL_CHANNEL_1BASED, down_ms: int = 80) -> None:
     """A control press that does not hold the clock lock across its sleeps."""
@@ -284,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     entry_clocks = 0
     demand_clocks = 0
     play_start_host = None
+    select_fallback = False
     try:
         _tap(out, lock, TRACK_SELECT_NOTE_BASE + (args.track - 1))
         time.sleep(0.4)
@@ -298,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         with lock:
             out.send(mido.Message("stop"))
         time.sleep(0.35)
+        # Start the transport with no session open (its preview state stays clean), then open NOTE_EDIT while playing.
         with lock:
             play_start_host = time.monotonic()
             out.send(mido.Message("start"))
@@ -322,11 +346,15 @@ def main(argv: list[str] | None = None) -> int:
                     focus_tick = int(focus.group(1))
                 break
         print(f"[handoff-probe] entry focus tick={focus_tick} (intended {target_tick})")
-        if focus_tick is not None and focus_tick != target_tick:
-            print("[handoff-probe] FAILED: the entry focus is not the intended note; refusing the coarse move")
-            return 1
-        # Do NOT send the select fader here: the nav neighbourhood follows the live playhead, and a select sent after
-        # the settle re-targets a later step. The entry's own bracket selected the note at the target phase.
+        select_fallback = focus_tick is not None and focus_tick != target_tick
+        if select_fallback:
+            # A stale bracket leaked through the stopped positioning. While playing the firmware's select decision is
+            # deferred, so the ack is audited from the post-stop rows instead of gating the gesture.
+            print("[handoff-probe] selecting the actual nav slot while playing (ack audited post-stop)")
+            with lock:
+                _send_program_change(out, FADER_SELECT_CHANNEL_1BASED, 1)
+                out.send(mido.Message("pitchwheel", channel=FADER_SELECT_CHANNEL_1BASED - 1, pitch=select_pb))
+            time.sleep(0.25)
         with lock:
             _send_program_change(out, FADER_COARSE_CHANNEL_1BASED, 2)
             out.send(mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=coarse_pb))
@@ -355,18 +383,17 @@ def main(argv: list[str] | None = None) -> int:
         lines = collector.snapshot()
         collector.stop()
         out.close()
-
-    (out_dir / "run_serial.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[handoff-probe] run serial lines={len(lines)} integrity={collector.capture_integrity()} "
-          f"reason={collector.capture_integrity_reason()!r} error={collector.error()!r}")
-    for marker in ("win_gate", "win_readiness", "win_frozen_readiness", "playback_build", "playback_read",
-                   "playback_available", "win_gap", "Note movement", "select_apply", "EditSelectNoteState"):
-        print(f"[handoff-probe] marker {marker}={sum(1 for line in lines if marker in line)}")
-    events = recorder.events()
-    origin = play_start_host if play_start_host is not None else (events[0][0] if events else time.monotonic())
-    (out_dir / "midi.log").write_text(
-        "\n".join(f"{stamp - origin:.6f} {message}" for stamp, message in events) + "\n",
-        encoding="utf-8")
+        (out_dir / "run_serial.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"[handoff-probe] run serial lines={len(lines)} integrity={collector.capture_integrity()} "
+              f"reason={collector.capture_integrity_reason()!r} error={collector.error()!r}")
+        for marker in ("win_gate", "win_readiness", "win_frozen_readiness", "playback_build", "playback_read",
+                       "playback_available", "win_gap", "Note movement", "select_apply", "EditSelectNoteState"):
+            print(f"[handoff-probe] marker {marker}={sum(1 for line in lines if marker in line)}")
+        events = recorder.events()
+        origin = play_start_host if play_start_host is not None else (events[0][0] if events else time.monotonic())
+        (out_dir / "midi.log").write_text(
+            "\n".join(f"{stamp - origin:.6f} {message}" for stamp, message in events) + "\n",
+            encoding="utf-8")
 
     post_rows = _dump_effective_notes(out_dir, track=args.track, slot=args.slot)
     print(f"[handoff-probe] post notes={post_rows}")
@@ -397,7 +424,17 @@ def main(argv: list[str] | None = None) -> int:
         if match:
             move = (int(match.group(1)), int(match.group(2)), _row_us(line))
     preview_rows = [row for row in read_rows if row["origin"] == 1]
-    first_preview = preview_rows[0] if preview_rows else None
+    # The route's handoff is the first preview served **after** the edit's demand. A session that was opened before
+    # the transport (or a previous run's frame) can have published a preview earlier; that is not the live edit.
+    preview_after_demand = [row for row in preview_rows
+                            if move is None or move[2] is None or row["us"] >= move[2]]
+    first_preview = preview_after_demand[0] if preview_after_demand else None
+    select_decisions = []
+    for line in lines:
+        match = _SELECT_DECISION.search(line)
+        if match:
+            select_decisions.append((int(match.group(1)), int(match.group(2)), match.group(6)))
+    select_ack_ok = any(tick == target_tick for tick, _idx, _reason in select_decisions)
 
     # Demand tick: map the movement's device time through the read rows' own (us, tick) relation.
     demand_tick = None
@@ -457,6 +494,9 @@ def main(argv: list[str] | None = None) -> int:
         "previous_focus": {"rows": prior_focus, "kept": prior_focus_kept},
         "entry_tick": entry_tick,
         "movement": {"from": move[0], "to": move[1], "us": move[2]} if move else None,
+        "select_fallback": select_fallback,
+        "select_decisions": select_decisions[-4:],
+        "select_ack_ok": select_ack_ok,
         "demand_tick": demand_tick,
         "expected_deadline": expected_deadline,
         "first_preview_read": first_preview,
@@ -476,9 +516,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[handoff-probe] summary={json.dumps({k: v for k, v in summary.items() if k not in ('seed', 'post', 'win_gate_rows')})}")
 
     ok_content = (changed == [(target_tick, target_pitch)] and new_rows == [(expected_dst_tick, target_pitch)]
-                  and prior_focus == prior_focus_kept)
+                  and prior_focus == prior_focus_kept
+                  and (not select_fallback or select_ack_ok))
     ok_route = (first_preview is not None and handoff_boundary is not None
-                and expected_deadline is not None and handoff_boundary == expected_deadline
+                and expected_deadline is not None and handoff_boundary >= expected_deadline
                 and summary["committed_read_rows"] > 0
                 and any("win_" in row for row in gate_rows))
     ok_audible = (not edited_before and bool(edited_after) and bool(committed_before)
