@@ -1,3 +1,10 @@
+**2026-10-24 — 3.15a/b/c CHECKED OFF on the cheap owner scope.** 3.15a: stop return and live overdub/wrap are
+discharged by the 3.15e/g fixtures + rolling campaign; first Record bar, global undo/redo and clock-source/seek are
+accepted on the 2026-10-24 device campaign in place of new native edge oracles; SD-restore stays partial with 5.2/5.5;
+layered/jam deferred (denominator 11). 3.15b: affected-tick bound and composed service budget go to 6.3/6.5. 3.15c:
+short-loop Record/overdub deferred; contention/timing stays with 6.3/6.5. **3.7b still has other named preconditions
+(4.5, 5.5, 6.3, 6.5) and no removals yet.** Open boxes: 16 → 13.
+
 **2026-10-24 — windowed-playback-generation closure audit (5 boxes closed, true remainder named).** Checked off on
 existing evidence: **3.15d** (its only named limit was the short/long route delegated to 3.15f, now closed; the parity
 fixture's early walk still emits the fallback stream because the harness clock is unqualified, recorded); **2.11** (I9
