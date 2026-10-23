@@ -10,6 +10,10 @@
 #endif
 #define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_REAL_CAPTURE_STOP
+// The switch-while-recording fixture drives the production `TrackManager::setSelectedTrack`; departing the note-edit
+// session is a neighbour, not the subject, so enable the harness's observable no-op for that notification.
+#define HARNESS_OBSERVABLE_TRACK_SELECT
+#define HARNESS_OBSERVABLE_SLOT_CHANGE
 
 // windowed-playback-generation (the switch leg's second diagnostic): the `Snapshot` deferred owner's **gate row**,
 // substituted through the `#ifndef`-guarded `SC_SNAPSHOT_GATE` seam exactly as the capture suites substitute their
@@ -709,6 +713,53 @@ void rotation(bool aOverdub, bool bOverdub) {
   assertContent(t, 0, aOverdub, 60);
   assertContent(t, 1, bOverdub, 62);
 }
+
+// Owner rule (2026-10-23): switching tracks while the current track is recording must leave that take live; only
+// play/stop or a second record press ends it. The production switch entry is `TrackManager::setSelectedTrack` (the
+// button action calls it directly). The take must keep accepting rows and commit complete at the explicit stop.
+void test_switching_tracks_while_recording_keeps_the_take_live_and_complete() {
+  LoopEventStore::initPool();
+  trackManager.setSelectedTrack(4);  // track 5
+  Track& t = trackManager.getTrack(4);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);  // 60 on @12/off @96
+  TEST_ASSERT_TRUE(t.isRecording());
+  TEST_ASSERT_EQUAL_UINT(2, t.getLoop(0).capture.store.size());
+
+  // Production switch: the recording track is no longer selected.
+  trackManager.setSelectedTrack(5);  // track 6
+  TEST_ASSERT_EQUAL_UINT8(5, trackManager.getSelectedTrackIndex());
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getTrack(5).isRecording(), "the new track must not inherit the take");
+  TEST_ASSERT_TRUE_MESSAGE(t.isRecording(), "switching tracks must not end the recording");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, t.getLoop(0).capture.store.size(),
+                                 "the switch must not clear or seal the live take");
+
+  // The same take still accepts rows after the switch.
+  t.noteOn(1, 62, 100, 212);
+  t.noteOff(1, 62, 0, 296);
+  TEST_ASSERT_EQUAL_UINT(4, t.getLoop(0).capture.store.size());
+
+  // Only the explicit stop ends and commits it.
+  stop(t, false, 768);
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE(t.isRecording());
+  const Loop& loop = t.getLoop(0);
+  TEST_ASSERT_EQUAL_UINT32(768, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT(0, loop.passes.overdubPasses.size());  // a Record take, not an overdub pass
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  unsigned firstOn = 0, secondOn = 0;
+  for (const MidiEvent& row : rows) {
+    if (!row.isNoteOn()) continue;
+    if (row.data.noteData.note == 60) ++firstOn;
+    if (row.data.noteData.note == 62) ++secondOn;
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, firstOn, "the pre-switch row stays in the take");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, secondOn, "the post-switch row is captured into the same take");
+}
+
 void test_record_to_record() { rotation(false, false); }
 void test_record_to_overdub() { rotation(false, true); }
 void test_overdub_to_record() { rotation(true, false); }
@@ -8073,6 +8124,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_length_summary_handles_out_of_order_input_and_removal);
   RUN_TEST(test_actual_start_stamps_once_and_duplicate_keeps_capture);
   RUN_TEST(test_invalid_record_start_does_not_reset_overdub_or_stamp);
+  RUN_TEST(test_switching_tracks_while_recording_keeps_the_take_live_and_complete);
   RUN_TEST(test_record_to_record);
   RUN_TEST(test_record_to_overdub);
   RUN_TEST(test_overdub_to_record);

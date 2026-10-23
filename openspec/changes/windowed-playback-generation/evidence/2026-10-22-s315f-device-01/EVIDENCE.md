@@ -112,6 +112,33 @@ note selection, coarse move, stored-content result) on both images without the s
 edit matrix (overlap/pitch/length/undo cases remain with the stale fixture work). The probe leaves the note moved;
 re-seed with `--scenarios edit_record_prelude` before each run.
 
+
+## Track switch while recording (owner rule, 2026-10-23)
+
+**Rule:** selecting another track while track N is recording must leave that take running; only play/stop or a second
+record press ends it.
+
+**Authoritative proof (native, production switch entry):**
+`test_switching_tracks_while_recording_keeps_the_take_live_and_complete` in
+`test_shared_capture_finalization` (95/95; full native **3,414 / 7 skipped / 3,407 succeeded**). Through
+`TrackManager::setSelectedTrack` (the button action calls it directly):
+
+- track 6 becomes selected and does **not** inherit the take;
+- track 5 remains `RECORDING`; the switch does not clear or seal the live store (2 rows before, still 2 after);
+- the same take accepts the post-switch pair (4 rows);
+- only the explicit stop (`stopRecordingToStopped` + the deferred stop owner) ends it, committing a Record take that
+  contains both the pre- and post-switch note pairs.
+
+The suite opts into `HARNESS_OBSERVABLE_TRACK_SELECT` and `HARNESS_OBSERVABLE_SLOT_CHANGE` for this fixture because the
+note-edit departure and display invalidation are neighbours of the switch, not the subject.
+
+**Device (supporting only):** a purpose-built injection probe reached `ARMED→RECORDING` and showed **zero** transitions
+out of `RECORDING` in the switch window (`captures/2026-10-23-s315f-default-record-switch-04`). Its take was empty
+because its own record geometry/timing is not the base preset's, and the managed capture log lags ~5 s so log-triggered
+injection cannot hit a 4 s take; a later attempt did not arm at all. The probe was therefore not kept as an oracle. The
+base preset's paired device runs already cover the record/stop path itself. **No device parity claim is made for this
+rule**; the native fixture is the proof.
+
 ## Memory high-water (from the same runs)
 
 `#HEAP_STATS` rows in the managed session logs:
