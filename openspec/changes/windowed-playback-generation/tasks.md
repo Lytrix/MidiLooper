@@ -2309,7 +2309,11 @@ suite is not green this turn by design. No Git delivery.
   frame carries the committed content, and the edited 64@1448 is silent. The next RED is the live movement’s
   action→current‑state row (`applyEditSessionAction`/the resolver). Gates: preview 44/44; RWO 239; finalization 95;
   prewarm 247; overlay 7; full native 3,428/7/3,421; code/padding `391,960+1,256` / `392,184+1,032` (above the 840
-  floor; the approved line is restored at diagnostic removal). No 3.15f checkoff.
+  floor; the approved line is restored at diagnostic removal). No 3.15f checkoff. **Apply-site diagnostic blocked:** an
+  apply row (action/member) was attempted via `Serial.printf` and the cold `logGeomApplyPhase`; both add a 4 KB
+  bss/RAM1 footprint and the budget gate rejects it (`variables 100,288` vs approved `96,192`). It was removed; the
+  image/budget are restored (`7c620c1e…`, headroom 416/192). The movement→member edge needs a RAM1-neutral/native
+  observation or a deliberate re-base, not another capture row.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

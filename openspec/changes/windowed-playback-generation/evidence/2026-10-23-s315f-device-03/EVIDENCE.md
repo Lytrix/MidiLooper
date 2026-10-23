@@ -337,6 +337,11 @@ the projection/commit (the depart’s `pre-commit row start=1448`).
   (`applyEditSessionAction`/the geometry resolver) — the open hydration is a prerequisite and is green; the movement’s
   member update is the remaining edge. Probe‑analysis note: the first preview after the demand can be the pre‑move current
   at the playhead; the C adoption is the `preview_adopt` row at 3,072.
+- **Apply‑site diagnostic blocked by the approved RAM1 line.** An apply row (action target/start/end + the member’s row)
+  was attempted both as a direct `Serial.printf` and through the existing cold `logGeomApplyPhase`; both add a 4 KB
+  bss/RAM1 footprint and the budget gate rejects it (`variables 100,288` vs the approved `96,192`). The row was removed;
+  the image and budget are restored (`7c620c1e…`, headroom 416/192). The movement→member edge needs a RAM1‑neutral/native
+  observation (or a deliberate re‑base), not another capture row.
 
 ## Native contract (unchanged; for the comparison)
 
