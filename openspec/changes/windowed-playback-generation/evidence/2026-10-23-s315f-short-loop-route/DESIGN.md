@@ -132,16 +132,36 @@ current; reposition to the next eligible occurrence with the same cost calculati
   both are admitted, positioned and adopted by the same path.
 - **Measured latency:** the two-bar NOTE_EDIT demand positions at **2,972 ticks** (1.94 loop periods; ≈7.7 s at
   120 BPM). Edits remain on the previously served source until that boundary.
-- **Gates:** `test_windowed_preview_integration` 32/32, `test_runtime_working_set_ownership` 239/239, full native
-  **3,416 / 7 skipped / 3,409 succeeded**, both images at the exact pins (`391,688 + 1,528` / `391,912 + 1,304`).
+- **Gates (after the lifecycle slice):** `test_windowed_preview_integration` **35/35**,
+  `test_runtime_working_set_ownership` **239/239**, full native **3,419 / 7 skipped / 3,412 succeeded**, both images at
+  the exact pins (`391,688 + 1,528` / `391,912 + 1,304`).
+
+### Lifecycle slice landed (2026-10-23, native)
+
+- **Miss → reposition:** a positioned attempt whose absolute handoff passes while the demand is still current has only
+  that attempt retired; the same unchanged cost rule positions the next occurrence. The fixture asserts
+  `newDeadline > oldDeadline`, `newDeadline ≥ oldDeadline + loopLength` (the missed occurrence is not retried), and
+  `canCompleteWithinLead(newDeadline − newAdmitted)` on the replacement. **RED-proved** by disabling the miss check
+  (`Expected 3072 to be greater than 3072`).
+- **Supersession:** a stale preview ready is retired by identity rather than treated as a foreign successor, and the
+  adoption requires the demand's revision, so reaching the old H never adopts the stale candidate. The fixture stages
+  the ready with the source already yielded (isolating the identity check from the mutation's cancel) and asserts the
+  replacement revision and that the old H does not adopt the old identity.
+- **Negative control:** if the demand becomes obsolete before/at the missed boundary, only retirement happens; the
+  replacement identity is the new revision, never a reposition of the old one.
+
+### Immediate next RED — the timed adoption is not yet proven end-to-end
+
+The timed fixture exposed a real gap: the **first** preview window for a revision publishes as the *current* at
+completion (the initial publication is authoritative), so it bypasses the positioned wait; the `Ready → Serving` wait
+applies to a **successor** (a second window after the first publication). The next slice must either (a) stage the timed
+fixture as a successor (first preview current, then a mutation and the positioned replacement), or (b) make the first
+publication also honor the position. That is a decision for the next RED; the adoption gate is implemented and the
+successor path carries the wait.
 
 ### Still owed
 
-- The **supersession** RED (positioned several cycles ahead, revision changes, stale ready never adopted) and the
-  **miss → reposition** rule (DEC-147) are not yet fixtures; the existing mutation fixtures cover the ordinary
-  revision edge.
-- An end-to-end fixture that drives the clock to the positioned tick and asserts `Ready → Serving` with the fallback
-  stopped (the short fixture pins admission/positioning; the adoption gate is implemented but not end-to-end timed).
+- The successor-shaped timed adoption fixture (or the first-publication decision above).
 - Device leg after the native contract is complete. No checkbox.
 
 ## Not claimed

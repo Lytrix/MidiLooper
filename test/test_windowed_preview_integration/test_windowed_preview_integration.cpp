@@ -2069,6 +2069,111 @@ static void test_3_15f_c_long_loop_keeps_the_first_handoff() {
                                        "the long loop keeps its ordinary first handoff");
 }
 
+
+
+/// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
+/// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
+/// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
+static void test_3_15f_c_a_missed_positioned_handoff_repositions_later() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6601));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  (void)mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t oldDeadline = runtime->viewBuildWork.deadlineTick;
+  const uint32_t oldAdmitted = runtime->viewBuildWork.admittedTick;
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuildWork.positionedLater, "the fixture starts positioned later");
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+
+  // Deliberately miss H: the build is still in flight at the boundary.
+  publishEmissionClock(oldDeadline + 1u);
+  track.servicePreviewWindowForNoteEditSession();
+  const auto& next = runtime->viewBuildWork;
+  TEST_ASSERT_TRUE_MESSAGE(next.positionedLater, "the replacement is positioned, not adopted at the missed H");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(oldDeadline, next.deadlineTick,
+                                          "the replacement is later than the missed handoff");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
+      oldDeadline + track.getLoop(0).loopLengthTicks, next.deadlineTick,
+      "the missed occurrence is not retried; the next occurrence is a loop later");
+  // The replacement's absolute lead still satisfies the unchanged cost rule.
+  CoverageServiceContract contract = Track::playbackViewCoverageContract();
+  contract.deriveGrainsFrom(next.sourceEntries);
+  TEST_ASSERT_TRUE_MESSAGE(contract.canCompleteWithinLead(next.deadlineTick - next.admittedTick),
+                           "the new occurrence's absolute lead passes the same cost calculation");
+}
+
+/// **3.15f / C — supersession during the wait: a completed old ready is invalidated by identity.** Position H, let the
+/// old build complete to a waiting ready, then change the session revision. The old ready must be retired, the
+/// replacement positioned from the new revision, and reaching the old H must never adopt the stale candidate.
+static void test_3_15f_c_a_superseded_positioned_ready_is_never_adopted() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6602));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  const uint32_t oldRevision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t oldDeadline = runtime->viewBuildWork.deadlineTick;
+  // Complete the old build into a waiting ready (not adopted: the edge has not reached H).
+  drainLane(track, 100);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(), "the old build completed into the ready role");
+
+  // The source was already yielded (e.g. a re-focus), so the mutation's cancel path cannot retire the waiting ready;
+  // the lane's own identity check must. This isolates supersession from the cancel edge.
+  runtime->previewSourceActive = false;
+  const uint32_t newRevision = mutateSessionAndFlush(track, 1200, 67);
+  TEST_ASSERT_GREATER_THAN_UINT32(oldRevision, newRevision);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(newRevision, runtime->previewSourceRevision,
+                                   "the replacement demand is positioned from the new revision");
+  // Reaching the old H must not adopt the old revision: the served preview, if any, is the new revision.
+  publishEmissionClock(oldDeadline);
+  emitTurn(track, oldDeadline);
+  const RuntimePlaybackView* served = servedPreviewWindowForTurn(track, 0);
+  if (served != nullptr) {
+    TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(oldRevision, served->source.playbackRevision,
+                                         "the stale ready is never adopted at the old handoff");
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(newRevision, runtime->previewSourceRevision,
+                                   "the lane kept the replacement identity");
+}
+
+/// **3.15f / C — negative control: obsolete at the missed boundary retires, it does not reposition.** The session
+/// moves on before H, so the positioned attempt is retired without a replacement carrying the old revision.
+static void test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6603));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  const uint32_t oldRevision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t oldDeadline = runtime->viewBuildWork.deadlineTick;
+
+  // The session moves on (a new revision) before the old H, then the old H is missed.
+  const uint32_t newRevision = mutateSessionAndFlush(track, 1200, 67);
+  publishEmissionClock(oldDeadline + 1u);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(newRevision, runtime->previewSourceRevision,
+                                   "only the new revision's demand remains after the obsolete miss");
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(oldRevision, runtime->previewSourceRevision,
+                                       "the obsolete attempt was not repositioned under its old identity");
+}
+
 /// **L3 -- a positioned preview demand is released at the session edge.** A session opened at phase 0 asks for an
 /// interval that would start at the playhead; under C the next occurrence is a full loop away, whose lead is still
 /// below the declared cost, so the demand is **positioned one loop later** rather than refused. The exit must release
@@ -2395,6 +2500,9 @@ int main(int, char**) {
   // clause read against the serving frame.
   RUN_TEST(test_3_15f_c_short_loop_is_admitted_at_a_later_handoff);
   RUN_TEST(test_3_15f_c_long_loop_keeps_the_first_handoff);
+  RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
+  RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
+  RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);
   RUN_TEST(test_3_15d_slice3_short_and_long_note_edit_emit_the_same_stream);
   RUN_TEST(test_3_15d_slice3_a_positioned_preview_demand_is_released_at_the_session_edge);
   RUN_TEST(test_3_15d_slice3_an_edit_while_the_preview_serves_is_carried_by_the_next_revision);

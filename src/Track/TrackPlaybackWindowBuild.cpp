@@ -7449,6 +7449,28 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
   if (set == nullptr || set->lifecycle.current >= RuntimePlaybackViewConfig::kViewCount) {
     return;
   }
+  // **3.15f / C — the missed positioned handoff.** A positioned attempt stays valid across loop cycles; if its
+  // absolute handoff passes while it is still the current demand, retire only that attempt and let the ordinary
+  // request below position the next eligible occurrence (the search starts from the playhead, so the missed occurrence
+  // cannot be chosen again). If the demand is obsolete, the mutation/exit edge owns it: retire it, never reposition it.
+  const bool positionedAttempt =
+      runtime->viewBuildWork.clockEpoch != 0 && runtime->viewBuildWork.positionedLater;
+  if (positionedAttempt && clock.epoch == runtime->viewBuildWork.clockEpoch &&
+      clock.tick > runtime->viewBuildWork.deadlineTick) {
+    const bool demandStillCurrent = runtime->previewSourceActive &&
+        runtime->previewSourceRevision == previewRevision;
+    if (runtime->viewBuild.active()) runtime->viewBuild.discard();
+    if (set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
+        set->views[set->lifecycle.ready].complete &&
+        set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Preview) {
+      if (!set->lifecycle.retireSupersededReady(set->views)) {
+        applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+      }
+    }
+    if (!demandStillCurrent) {
+      return;  // obsolete before/at the missed boundary: retire only, never reposition the old demand
+    }
+  }
   const RuntimePlaybackView& current = set->views[set->lifecycle.current];
   const bool currentServesPlayhead =
       current.complete && current.source.origin == PlaybackWindowOrigin::Preview &&
@@ -7462,11 +7484,20 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
         ready.source.playbackRevision == previewRevision && ready.coverage.isValid() &&
         ready.coverage.loopLengthTicks == loop.loopLengthTicks;
     if (!readyIsSessionWindow) {
-      // Another owner's successor (committed or capture) holds the role. It is not this lane's to retire, and the
-      // preview can prepare nothing beside it: wait for that owner's boundary.
-      return;
-    }
-    if (ready.coverage.contains(phase)) {
+      if (ready.source.origin == PlaybackWindowOrigin::Preview &&
+          ready.source.playbackRevision != previewRevision) {
+        // **3.15f / C — supersession.** This is this lane's own successor for a revision the session has left; it must
+        // be retired by identity before the replacement demand is positioned, or it could hold the role and be adopted
+        // after H. A foreign successor (committed/capture) is still not ours to retire.
+        if (!set->lifecycle.retireSupersededReady(set->views)) {
+          applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+        }
+      } else {
+        // Another owner's successor (committed or capture) holds the role. It is not this lane's to retire, and the
+        // preview can prepare nothing beside it: wait for that owner's boundary.
+        return;
+      }
+    } else if (ready.coverage.contains(phase)) {
       return;  // the interval the clock edge adopts **at this boundary**: it must never be retired here
     }
     // Its interval is behind the playhead, so no boundary can adopt it. Retire it **without** invalidating the
