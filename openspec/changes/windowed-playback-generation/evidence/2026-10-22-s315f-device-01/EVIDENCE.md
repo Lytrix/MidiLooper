@@ -81,6 +81,37 @@ served loop content (all note rows, order, per-cycle counts) is identical betwee
 The verifier's strict inventory equality is blocked by rig CC74 traffic, not by the lane. `storage_matches_effective` is
 true on both.
 
+## NOTE_EDIT minimal oracle (built this session) — pair PASS
+
+Because the legacy `edit_full` and the layered compose oracles are stale on this bench, a minimal device oracle was
+written: [`scripts/hitl_note_edit_min_probe.py`](../../../../../scripts/hitl_note_edit_min_probe.py) (host tooling).
+It seeds from `edit_record_prelude` (2-bar, one note per step), enters NOTE_EDIT, selects the step-5 note (pitch 64 at
+tick 240) with the select fader, moves it to step 7 with the coarse fader, then reads the **content dump** as the
+oracle (the plain serial console hides the DEBUG session markers; the managed capture raises the level).
+
+Protocol facts measured while building it:
+
+- the device may already be in NOTE_EDIT, so the probe **toggles until the firmware says `Edit session: NOTE_EDIT`**;
+- the select target must be **on the 16th grid** (the seed's step-1 note sits at tick 49 and selects nothing; step 5 at
+  240 does);
+- the fader sequences are **PC 1 + pitchbend** on the select channel (1-based 16 / mido 15) and **PC 2 + pitchbend** on
+  the coarse channel (1-based 14 / mido 13);
+- **do not send the note-0 motor-gate back**: `MOTOR_TRIGGER_NOTE` is firmware→DROID feedback, and feeding it in
+  suppresses the selection (observed: `Note edit kind=1 (no program change)` and no selected note);
+- the move registers as `POSITION EDIT: Note moved from step 5 to 7 (tick 240 -> 336)`.
+
+Pair result (fresh seed before each, host clock 120):
+
+| Image | Probe | Served/stored rows after the move |
+|---|---|---|
+| default (`…default-noteedit-probe-02`) | **PASS** | `49/60, 336/64, 432/67, 624/60, 912/64, 1104/65, 1296/69, 1392/55` |
+| lane (`…lane-noteedit-probe-01`) | **PASS** | `49/60, 336/64, 432/67, 624/60, 912/64, 1104/65, 1296/69, 1392/55` |
+
+The post-move inventories are **identical**. This establishes the NOTE_EDIT route's minimal acceptance (session entry,
+note selection, coarse move, stored-content result) on both images without the stale legacy fixtures. It is not the full
+edit matrix (overlap/pitch/length/undo cases remain with the stale fixture work). The probe leaves the note moved;
+re-seed with `--scenarios edit_record_prelude` before each run.
+
 
 ## NOTE_EDIT pair attempt (`edit_full`): not yet a usable baseline
 
@@ -135,4 +166,4 @@ Do not boot-reset after setting it, or the saved 90 BPM is restored.
    contention, RAM1/PSRAM high-water).
 3. Decide the short-loop window-route mechanism before claiming route identity for short loops.
 
-**Board left on:** default image `04ea9a8a…` (the final channel-5 default run), with the **RAM tempo set to 120**; the saved workspace BPM remains 90, so a reboot restores 90.
+**Board left on:** default image `04ea9a8a…` (the final NOTE_EDIT probe run), seed layout with the step-5 pitch-64 note moved to step 7; saved workspace BPM remains 90.
