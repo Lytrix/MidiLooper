@@ -135,10 +135,22 @@ PERF_MEM_ATTR void emitSummary(const char* checkpoint) {
       static_cast<unsigned long>(averageUs(telemetryState.displayUpdateMetric)),
       static_cast<unsigned long>(telemetryState.displayUpdateMetric.overBudget),
       static_cast<unsigned long>(telemetryState.maxUndoDepth));
+  // The combined row is capped at 256 bytes; the display metric is the last child and is what a loop-stall
+  // investigation reads first. Emit it separately as well (short, so it survives the capture text limit) rather than
+  // re-ordering the established row for every existing reader.
+  char displayLine[96];
+  snprintf(displayLine, sizeof(displayLine),
+           "PERF,display,s=%lu,max=%lu,avg=%lu,over=%lu",
+           static_cast<unsigned long>(telemetryState.displayUpdateMetric.samples),
+           static_cast<unsigned long>(telemetryState.displayUpdateMetric.maxUs),
+           static_cast<unsigned long>(averageUs(telemetryState.displayUpdateMetric)),
+           static_cast<unsigned long>(telemetryState.displayUpdateMetric.overBudget));
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::appendCaptureTextLine(line);
+  DebugSessionCapture::appendCaptureTextLine(displayLine);
 #else
   Serial.println(line);
+  Serial.println(displayLine);
 #endif
 }
 

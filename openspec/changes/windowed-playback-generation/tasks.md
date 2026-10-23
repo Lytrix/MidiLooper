@@ -2245,12 +2245,16 @@ suite is not green this turn by design. No Git delivery.
   (the deferred preview-revision flush), so the edited 64@1448 never sounds and the committed 64@200 continues. The
   next RED is the live revision flush under transport (`scheduleDeferredNoteEditDisplayRefresh`/
   `processDeferredNoteEditDisplayRefresh`); the C admission/adoption path is green. **Run `handoff-08` (32 s play, same
-  image) produced no preview build at all** (`playback_build=1`, the committed snapshot; committed 64@200 ×8), so the
-  flush is gated by a **loop-prefix/display stall** (the `PERF,playback_stop` row's `display` child has 3,616 samples
-  and is truncated in the capture). The route is therefore non-deterministic in the captured runs: it serves when the
-  flush runs (run 07) and doesn't when the display/loop stalls (run 08). Next: remove the loop/display stall, or advance
-  the playback preview revision on the window-owner turn as well as the display refresh (a 3.15d deferred-refresh
-  contract decision; one revision source must remain). No 3.15f checkoff.
+  image) produced no preview build at all** (`playback_build=1`, the committed snapshot; committed 64@200 ×8). The
+  display/loop‑prefix stall was then **tested and falsified**: the combined `PERF` row is capped at 256 bytes, so a
+  dedicated `PERF,display` row was added; run `handoff-09` (image `5d16cf96…`) measures display `max=2306 µs, avg=322–344,
+  over=0` against a 30 ms budget, and the largest device‑timestamped stream gap is **1.58 s** (the ~1.5 s display‑frame
+  cadence), not 16 s. The display refresh is therefore **not starved** and stays the **single** preview‑revision owner;
+  no window‑owner revision advancement was added. Run 09 shows the real delay: the movement at 82.831 s, the served
+  revision‑1 preview at 4,608 (93.041 s), and the edited revision‑3 `note_edit` build only at 99.053 s — the **preview
+  service's re‑attempt cadence after a revision bump** while the previous preview completes/serves. The next RED is that
+  re‑attempt cadence (the native steady‑state edit‑while‑serving fixture covers the simple case; the device adds the
+  completion‑pending‑judgement/role transition). No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next
