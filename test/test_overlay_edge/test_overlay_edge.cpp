@@ -760,6 +760,73 @@ void test_the_live_overlay_window_serves_and_the_echo_is_suppressed() {
 }
 
 
+// **W8 — long loop: the overlay window is the committed route's two-bar interval, not the whole loop.** The same
+// live-source edge and echo suppression as W1 must hold when `shouldAvoidFullVisualRebuild` demotes the interval, and
+// the candidate's coverage must stay the window-sized shape the capacity envelope admits.
+void test_the_live_overlay_window_serves_a_long_loop_interval() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  commitLongLoop(t, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(t, 0);
+  Loop& loop = t.getLoop(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = UINT32_MAX;
+  loop.nextEventIndex = 0;
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+
+  const uint32_t start = kContentPhase;
+  clockManager.assignCurrentTickSilently(start);
+  nativePlaybackDeadlineClock = {start, 1};
+  t.startOverdubbing(start);
+  t.noteOn(1, 70, 100, start + 200);
+  if (!loop.overdubSourceSpanCacheReady()) {
+    loop.rebuildOverdubSourceSpanCacheForTest(0, loop.loopLengthTicks);
+  }
+  uint8_t nextTrack = 0;
+  for (unsigned turn = 0; turn < 400 && !rt.canonicalPassInputs.ready(); ++turn) {
+    (void)serviceCanonicalTurn(t, nextTrack);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPassInputs.ready(),
+                           "the committed owner prepares the long loop's interval base");
+  const RuntimePlaybackView* candidate = nullptr;
+  for (unsigned turn = 0; turn < 600 && candidate == nullptr; ++turn) {
+    (void)t.serviceOverdubOverlayWindow();
+    const RuntimePlaybackView* now = rt.overdubOverlayCandidate();
+    if (now != nullptr && now->complete) candidate = now;
+  }
+  TEST_ASSERT_NOT_NULL_MESSAGE(candidate, "the long loop's combined candidate completes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kLongLoopTicks, candidate->coverage.loopLengthTicks,
+                                   "the candidate still answers the 64-bar loop");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * Config::TICKS_PER_BAR, candidate->coverage.lengthTicks,
+                                   "the interval is the two-bar window, not whole-loop materialization");
+
+  const uint32_t selectionsBefore = Track::overlayLiveSelectionCount();
+  MidiSendCapture::reset();
+  const uint32_t first = candidate->coverage.startPhase;
+  const uint32_t end = first + candidate->coverage.lengthTicks;
+  for (uint32_t tick = first; tick < end; tick += 16) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+    t.playMidiEvents(tick, true);
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(selectionsBefore, Track::overlayLiveSelectionCount(),
+                                          "the edge binds the long loop's live overlay interval");
+  unsigned liveOns = 0;
+  unsigned committedOns = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (event.isNoteOn() && event.data.noteData.note == 70) ++liveOns;
+    if (event.isNoteOn() && event.data.noteData.note == 60) ++committedOns;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, liveOns, "the live row is served once from the interval window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, committedOns, "the committed note inside the interval is served once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, rt.ledger.openCount(),
+                                   "the overlay row is never ledgered as committed-pass content");
+}
+
 // **W2 — DEC-136 guard: the live route takes no role.** A complete committed-origin successor is planted in `ready`; the
 // overlay edge serves from the live view and leaves that successor exactly where its own lane put it (complete, same
 // identity, still in `ready`, unpublished). No retirement, no replacement, no role request.
@@ -1098,6 +1165,7 @@ void test_the_stop_boundary_releases_a_borrow_that_is_still_in_flight() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_the_live_overlay_window_serves_and_the_echo_is_suppressed);
+  RUN_TEST(test_the_live_overlay_window_serves_a_long_loop_interval);
   RUN_TEST(test_the_live_overlay_edge_never_touches_a_foreign_ready_successor);
   RUN_TEST(test_the_live_overlay_edge_falls_back_to_the_echo_without_duplicating);
   RUN_TEST(test_the_pass_commit_retires_the_live_view_and_the_seam_does_not_duplicate);
