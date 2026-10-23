@@ -1548,6 +1548,11 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
       currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
   // Written out at each use rather than captured in a lambda: this object file's `*(.text*)` is routed to ITCM, so every
   // lambda here would cost ITCM bytes the RAM1 budget does not have.
+  // **3.15f / C:** a positioned handoff is an absolute tick, not merely a phase match. A ready that finished early waits
+  // until the clock reaches the occurrence the admission priced; the served frame keeps serving meanwhile.
+  const bool positionedHandoffReached =
+      !runtime->viewBuildWork.positionedLater || runtime->viewBuildWork.clockEpoch == 0 ||
+      (clock.epoch == runtime->viewBuildWork.clockEpoch && clock.tick >= runtime->viewBuildWork.deadlineTick);
   auto& frame = runtime->rolling;
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
     // **Only a preview frame is this seam's business.** A frame the committed or capture lane bound to its own
@@ -1559,7 +1564,20 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
         set->views[frame.boundView].complete && set->views[frame.boundView].published &&
         set->views[frame.boundView].source.origin != PlaybackWindowOrigin::Preview &&
         frame.boundStorageGeneration == set->views[frame.boundView].storageGeneration;
-    if (boundToOtherLanesWindow) {
+    // **3.15f / C — a prepared preview successor at its positioned handoff is this seam's own business.** The committed
+    // reader's frame is bound to the committed current on the device; deferring to it would leave the session's
+    // positioned replacement unadopted forever (measured: the preview builds, the committed stream keeps serving). At
+    // the positioned handoff the session's successor outranks that binding; before it, the committed frame still owns
+    // the traversal.
+    bool previewSuccessorDue = false;
+    if (set->lifecycle.ready < set->views.size()) {
+      const RuntimePlaybackView& candidate = set->views[set->lifecycle.ready];
+      previewSuccessorDue = positionedHandoffReached && candidate.complete && !candidate.published &&
+          candidate.source.origin == PlaybackWindowOrigin::Preview &&
+          candidate.source.playbackRevision == previewRevision && candidate.coverage.isValid() &&
+          candidate.coverage.loopLengthTicks == loop.loopLengthTicks && candidate.coverage.contains(phase);
+    }
+    if (boundToOtherLanesWindow && !previewSuccessorDue) {
       return false;  // the resolver continues into that lane's own frame handling
     }
     if (frame.epoch == clock.epoch && frame.generation == playbackGeneration &&
@@ -1589,13 +1607,7 @@ FLASHMEM bool Track::resolveNoteEditPreviewSourceForTurn(
   // Adoption has **one** site: a prepared successor that covers the playhead is adopted first, and the current role is
   // otherwise offered as-is (the session's first publication already covers the playhead).
   const RuntimePlaybackView* adopted = nullptr;
-  // **3.15f / C:** a positioned handoff is an absolute tick, not merely a phase match. A ready that finished early
-  // waits here until the clock reaches the occurrence the admission priced; the served frame keeps serving meanwhile.
-  // The lane cannot start a second build while this ready waits (a complete preview successor holds the role), so
-  // `viewBuildWork` still describes this ready's own build.
-  const bool positionedHandoffReached =
-      !runtime->viewBuildWork.positionedLater || runtime->viewBuildWork.clockEpoch == 0 ||
-      (clock.epoch == runtime->viewBuildWork.clockEpoch && clock.tick >= runtime->viewBuildWork.deadlineTick);
+  // `positionedHandoffReached` was resolved above, where it also decides whether a bound committed frame may defer.
   if (set->lifecycle.ready < set->views.size()) {
     const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
 #if defined(PIO_UNIT_TEST_NATIVE)
@@ -7586,9 +7598,20 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
     // can hold the committed (or capture) lane's refused promise. While NOTE_EDIT is open the session's preview is the
     // content the transport should carry, and the committed handoff is re-requested at the exit; returning here would
     // strand the preview behind another source's promise (measured on the device: committed reads throughout, no
-    // preview build). This lane's **own** preview promise still stands, so the ordinary cadence never stacks demands.
-    if (runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview) {
-      return;  // the lane's preview request is already its standing demand
+    // preview build). This lane's **own** terminal refusal still stands, but its own **"not now"** refusals
+    // (`SuccessorAlreadyPrepared`, `BuildInFlight`, position invalidations, a cleared interference budget) are
+    // promises the free role must re-attempt; the busy/ready guards above already return while the role is occupied.
+    const PlaybackViewPendingReason reason = runtime->pendingViewRequest_.reason;
+    const bool retryableOwnRefusal =
+        reason == PlaybackViewPendingReason::SuccessorAlreadyPrepared ||
+        reason == PlaybackViewPendingReason::BuildInFlight ||
+        reason == PlaybackViewPendingReason::InterferenceBudget ||
+        reason == PlaybackViewPendingReason::DeadlineInvalidatedEpoch ||
+        reason == PlaybackViewPendingReason::DeadlineInvalidatedGeometry ||
+        reason == PlaybackViewPendingReason::DeadlineExpired ||
+        reason == PlaybackViewPendingReason::AwaitingSourceQualification;
+    if (runtime->pendingViewRequest_.source.origin == PlaybackWindowOrigin::Preview && !retryableOwnRefusal) {
+      return;  // the lane's own terminal preview refusal stands
     }
   }
   // The requested interval is the **playhead's own** -- the one the committed route is reading -- so the edge can

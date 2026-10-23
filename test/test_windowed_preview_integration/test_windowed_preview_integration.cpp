@@ -2217,6 +2217,15 @@ static void test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff() 
   TEST_ASSERT_TRUE(set->views[set->lifecycle.ready].complete);
   TEST_ASSERT_EQUAL_UINT32(revision, set->views[set->lifecycle.ready].source.playbackRevision);
 
+  // The device shape: the committed reader's frame is **bound** to the committed current. That binding is what the
+  // NOTE_EDIT seam defers to on the device; the positioned preview successor must still be adopted.
+  runtime->rolling.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+  runtime->rolling.boundView = set->lifecycle.current;
+  runtime->rolling.boundStorageGeneration = set->views[set->lifecycle.current].storageGeneration;
+  runtime->rolling.epoch = clockManager.getPlaybackDeadlineClock().epoch;
+  runtime->rolling.loopLength = loop.loopLengthTicks;
+  runtime->rolling.lastTick = 100;
+
   publishEmissionClock(deadline);
   emitTurn(track, deadline);
   WindowIdentity after{};
@@ -2226,6 +2235,43 @@ static void test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff() 
   TEST_ASSERT_EQUAL_UINT32(revision, after.playbackRevision);
 }
 
+/// **3.15f / C — the preview's own "not now" refusal is re-attempted once the role frees.** A `SuccessorAlreadyPrepared`
+/// / `BuildInFlight` refusal is a promise, not a terminal answer. The device can leave the preview's **own** promise in
+/// the shared slot (the session-open request loses to the committed ready); returning on it forever would produce no
+/// preview build at all. The service re-attempts only a retryable reason; a terminal refusal still stands.
+static void test_3_15f_c_an_own_prepared_refusal_is_reattempted() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, static_cast<NoteId>(6630));
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  readyEmissionPlaying(track, 0, 100);
+  LoopPlaybackRuntime* runtime = TrackPlaybackTestAccess::runtime(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const Loop& loop = track.getLoop(0);
+  runtime->pendingViewRequest_ = PlaybackViewPendingRequest{};
+  runtime->pendingViewRequest_.active = true;
+  runtime->pendingViewRequest_.sourceKind = PlaybackViewPendingRequest::SourceKind::Borrowed;
+  runtime->pendingViewRequest_.source.origin = PlaybackWindowOrigin::Preview;
+  runtime->pendingViewRequest_.source.playbackRevision = loop.playbackRevision;
+  runtime->pendingViewRequest_.coverage.startPhase = 0;
+  runtime->pendingViewRequest_.coverage.lengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.coverage.loopLengthTicks = loop.loopLengthTicks;
+  runtime->pendingViewRequest_.reason = PlaybackViewPendingReason::SuccessorAlreadyPrepared;
+  runtime->pendingViewRequest_.loopLengthTicks = loop.loopLengthTicks;
+
+  editManager.openNoteEditSession(track);
+  const uint32_t revision = mutateSessionAndFlush(track, 900, 64);
+  track.servicePreviewWindowForNoteEditSession();
+  TEST_ASSERT_TRUE_MESSAGE(runtime->viewBuild.active() || runtime->previewSourceActive,
+                           "a retryable own refusal is re-attempted once the role is free");
+  drainLane(track, 100);
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, identity));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
+                            static_cast<int>(identity.origin), "the re-attempted preview publishes");
+  TEST_ASSERT_EQUAL_UINT32(revision, identity.playbackRevision);
+}
 
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
@@ -2659,6 +2705,7 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_the_successor_waits_for_its_positioned_tick);
   RUN_TEST(test_3_15f_c_a_foreign_pending_promise_does_not_strand_the_preview_demand);
   RUN_TEST(test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff);
+  RUN_TEST(test_3_15f_c_an_own_prepared_refusal_is_reattempted);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

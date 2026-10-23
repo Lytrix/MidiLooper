@@ -2,8 +2,9 @@
 
 **Change:** `windowed-playback-generation` · **Task:** 3.15f · **Branch:** `feature/unified-rolling-playback-path` ·
 **Commit:** `26912ab6` (firmware unchanged; host tooling and this record follow) ·
-**Status: content oracle paired; route oracle FAILS on the device. The focused foreign‑promise fix unblocks the
-preview builds, but the device still serves the committed stream. 3.15f stays open.**
+**Status: content oracle paired; three focused fixes are green and the windowed preview now **serves** on the device.
+The served revision lags the live edit (the deferred preview-revision flush) and the first handoff missed the priced
+3,072 occurrence (miss→reposition). 3.15f stays open.**
 
 ## Images
 
@@ -120,6 +121,50 @@ the preview ready's publication/adoption state at its H on the running device (a
 NOTE_EDIT resolver), or a native fixture that drives the live `playback_available` reader with a positioned preview
 ready.
 
+## Second/third focused fixes (same day): the preview serves on the device
+
+The native fixtures found the two remaining mechanisms and both are green:
+
+- **A bound committed frame must not defer the prepared successor at its H.**
+  `resolveNoteEditPreviewSourceForTurn` returned early on `boundToOtherLanesWindow` before its adoption block. On the
+  device the committed reader's frame is bound to the committed current, so the positioned preview was never adopted.
+  The seam now computes `positionedHandoffReached`/`previewSuccessorDue` before that check and lets a due successor
+  outrank the binding. RED: `test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff` with the committed
+  frame staged (`38 test cases: 1 failed`), GREEN after.
+- **The preview's own retryable "not now" refusal is re-attempted.** A `SuccessorAlreadyPrepared`/`BuildInFlight`
+  (or a position-invalidated / cleared-budget) own promise is not terminal; when the role frees the service proceeds to
+  the request. The next device run (`handoff-06`) showed the failure shape: the preview's **own** session-open promise
+  was retained, so **no** `note_edit` build appeared at all. RED:
+  `test_3_15f_c_an_own_prepared_refusal_is_reattempted` (`1 failed`), GREEN after (`39/39`).
+- Gates after the three fixes: preview **39/39**; full native **3,423 / 7 skipped / 3,416 succeeded**; pins unchanged
+  (`391,752 + 1,464` / `391,992 + 1,224`). New HEX: qualification
+  `49d849eec1476bfe265b92c9022612a95a2e730f3b3b8f100d70e1c5054dfca8`, default
+  `d9350f365b26985cce351f9b0e1fea314e5f5c67963e9dee7e1ee9e10f37d68e`.
+
+### Device rerun on `49d849ee…` — the preview now serves; the served revision lags the edit
+
+`captures/2026-10-23-s315f-lane-handoff-07` (same gesture; content PASS):
+
+- **The preview serves.** 22 `playback_read` rows with `origin=1`; the first at absolute tick **4,608** (host 89.2 s),
+  storage generation 15. The committed stream serves before it. This is the first device evidence of the windowed
+  NOTE_EDIT route actually serving on the short loop.
+- **Two remaining defects, both measured:**
+  1. **The first served handoff is 4,608, not the C-priced 3,072.** The build/ready missed the 3,072 occurrence and
+     the miss→reposition path (DEC-147) selected the next loop; the latency from the demand is **3,937 ticks** (from
+     the entry 4,512). C's rule is honoured (4,608 is the next eligible boundary: lead 3,937 ≥ the bound), but the
+     device's first H was missed, so the measured latency is one loop above the native 2,972 figure.
+  2. **The served preview carries the pre-edit session revision.** The movement is at device time 78.956 s
+     (`EditSessionAction type=3 start=1448`); the preview's revision-3 `note_edit` build only appears at **95.17 s**
+     (16 s later), after the revision-1/2 preview has already been served at 4,608. The emitted channel-4 stream keeps
+     the committed 64@200 (12.53/16.53 s) and the edited 64@1448 never sounds. The session's **preview revision bump**
+     runs on `flushDeferredNoteEditDisplayRefresh` (the control-surface deferred refresh); on the device it did not
+     reach the lane within the play window.
+
+The next RED is therefore the live revision flush: the NOTE_EDIT movement's preview revision must reach the lane
+promptly (the device's `scheduleDeferredNoteEditDisplayRefresh`/`processDeferredNoteEditDisplayRefresh` cadence under
+transport), so the served preview is the edited revision. The C admission/position/wait and the adoption path are now
+green natively and the preview serves on the device.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
@@ -131,7 +176,8 @@ the device's demand phase (~665) targets the same 3,072 boundary, i.e. a latency
 ## Not claimed
 
 No 3.15f checkoff, no route parity, no cutover. The NOTE_EDIT **content** oracle is paired (on the pre-fix images; the
-live probe's content half re-passes on the fixed qualification image), and the focused foreign-promise fix is native
-RED→GREEN and unblocks the device preview **builds**. The **route** oracle (the windowed preview actually serving the
-edit at/after the positioned boundary) still fails on the device, so the device serving/owner-turn path owns the next
-RED.
+live probe's content half re-passes on the fixed qualification image), and three focused fixes are native RED→GREEN.
+The **windowed preview now serves on the device** (22 `origin=1` read rows; first at tick 4,608), so the serving route
+itself is exercised — but the **served revision lags the live edit** (the movement's revision reaches the lane ~16 s
+later, after the served window), so the edit is not audible in the play window and the route oracle is not yet met.
+The first served handoff also missed the priced 3,072 (miss→reposition to 4,608). Those own the next RED.

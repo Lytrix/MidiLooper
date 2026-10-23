@@ -2230,6 +2230,21 @@ suite is not green this turn by design. No Git delivery.
   64@1448 never sounds (no preview `playback_read`; only `playback_available` origin=Committed). The remaining RED is the
   device's live NOTE_EDIT serving/owner turns, not the admission/position/wait (the native committed-current H adoption
   is green). No 3.15f checkoff.
+  **Two more focused fixes (same day) — the preview now serves on the device.** (1) `resolveNoteEditPreviewSourceForTurn`
+  returned on `boundToOtherLanesWindow` before its adoption block; the device's committed frame is bound, so the
+  positioned preview was never adopted. It now resolves `positionedHandoffReached`/`previewSuccessorDue` first and lets
+  a due successor outrank the binding (RED `test_3_15f_c_a_committed_current_yields_at_the_positioned_handoff` with the
+  committed frame staged). (2) A preview's **own** retryable refusal (`SuccessorAlreadyPrepared`, `BuildInFlight`,
+  position invalidations, cleared budget) is re-attempted when the role frees; a terminal refusal still stands (RED
+  `test_3_15f_c_an_own_prepared_refusal_is_reattempted`; the run without it produced **no** `note_edit` build).
+  Gates: preview **39/39**; full native **3,423 / 7 skipped / 3,416**; pins unchanged (`391,752 + 1,464` /
+  `391,992 + 1,224`); HEX qualification `49d849ee…`, default `d9350f36…`. **Device run `handoff-07` on `49d849ee…`:**
+  the preview **serves** (22 `playback_read` rows `origin=1`, first at tick **4,608**), but (a) the first priced
+  3,072 occurrence was missed and the miss→reposition path served at 4,608 (latency 3,937 from the demand), and (b) the
+  served preview carries the **pre-edit** session revision: the movement at 78.956 s reached the lane only at 95.17 s
+  (the deferred preview-revision flush), so the edited 64@1448 never sounds and the committed 64@200 continues. The
+  next RED is the live revision flush under transport (`scheduleDeferredNoteEditDisplayRefresh`/
+  `processDeferredNoteEditDisplayRefresh`); the C admission/adoption path is green. No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

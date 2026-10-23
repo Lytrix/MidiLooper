@@ -173,7 +173,7 @@ def _row_us(line: str) -> int | None:
 
 
 READ_ROW = re.compile(
-    r"#CAP,(\d+),DIAG,playback_read,1,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)")
+    r"#CAP,(\d+),DIAG,playback_(?:read|available),1,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)")
 GATE_ROW = re.compile(r"#CAP,(\d+),DIAG,win_gate,([^\r\n]*)")
 MOVE_ROW = re.compile(r"Note movement with overlap handling: from=(\d+) to=(\d+)")
 
@@ -208,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--track", type=int, default=5)
     parser.add_argument("--slot", type=int, default=1)
     parser.add_argument("--pitch", type=int, default=64)
+    parser.add_argument("--midi-channel", type=int, default=5,
+                        help="the track's MIDI channel (1-based); the USB input echoes fader feedback on other channels")
     parser.add_argument("--previous-focus-pitch", type=int, default=55)
     parser.add_argument("--loop-length", type=int, default=DEFAULT_LOOP_LENGTH)
     parser.add_argument("--entry-tick", type=int, default=200,
@@ -427,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     # the untouched committed note 64@200 follows 60@8 by 192 ticks (0.5 s). The other 64@872 follows 60@584
     # by 288 ticks (0.75 s), so the three are separable by their predecessor and gap.
     note_ons = [(stamp, m.note) for stamp, m in events
-                if m.type == "note_on" and m.velocity > 0]
+                if m.type == "note_on" and m.velocity > 0 and m.channel == args.midi_channel - 1]
     edited_hits: list[float] = []
     committed_200_hits: list[float] = []
     for index, (stamp, note) in enumerate(note_ons):
