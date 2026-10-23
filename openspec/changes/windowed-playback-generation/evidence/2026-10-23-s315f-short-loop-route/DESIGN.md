@@ -150,14 +150,18 @@ current; reposition to the next eligible occurrence with the same cost calculati
 - **Negative control:** if the demand becomes obsolete before/at the missed boundary, only retirement happens; the
   replacement identity is the new revision, never a reposition of the old one.
 
-### Immediate next RED — the timed adoption is not yet proven end-to-end
+### Immediate next RED — the timed adoption is not yet proven end-to-end (two findings)
 
-The timed fixture exposed a real gap: the **first** preview window for a revision publishes as the *current* at
-completion (the initial publication is authoritative), so it bypasses the positioned wait; the `Ready → Serving` wait
-applies to a **successor** (a second window after the first publication). The next slice must either (a) stage the timed
-fixture as a successor (first preview current, then a mutation and the positioned replacement), or (b) make the first
-publication also honor the position. That is a decision for the next RED; the adoption gate is implemented and the
-successor path carries the wait.
+1. **The first preview window for a revision is authoritative at completion**, so it publishes as the *current* and
+   bypasses the positioned wait; the wait applies to a **successor**.
+2. **The successor's waiting ready was not adopted at its positioned tick** in the steady-state fixture either: after
+   the first preview serves, the mutation's new demand completes into the ready role (complete, unpublished, positioned
+   `H`), but the clock edge at `H` did not publish/adopt it. The likely interaction is the serving old preview (or the
+   `adoptPreparedPlaybackWindow` refusal) in `resolveNoteEditPreviewSourceForTurn`; that is the next investigation, not
+   a fixture tweak.
+
+The adoption gate is implemented and the positioned wait is applied to a ready, but the **edge path that turns that
+ready into the served frame** needs its own RED. Do not claim C's timed adoption until it is green.
 
 ### Still owed
 
