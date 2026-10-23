@@ -71,6 +71,8 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 - [ ] 2.2 Land **F-2** (readiness per affected tick inside the deadline) — verify the oracle is the **derived** deadline
   (tempo, quantisation, phase advance, service availability) rather than a bar count or a fixed millisecond figure, and
   that it covers a short and a much longer loop in the same shape
+  **Closure transfer 2026-10-24 — NOT claimed.** The derived-deadline fixture over one short and one long loop was not
+  landed; the task is carried by `shipping-rolling-activation`'s verification track. No success claim.
 - [x] 2.3 Land **F-3** (one pass late, and only that) — verify the previous revision of *that interval* stays
   authoritative for the traversal, that a **second** miss is reported as a named breach, that the allowance is not reset
   by a further edit, and that the consumer is never blocked
@@ -80,6 +82,8 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   byte-identically ([`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md)). Nothing in the task remains owed.
 - [ ] 2.4 Land **F-4** (nothing allocates or blocks on the edge) — verify the fixture fails when the commit edge takes
   capacity or builds inline, in the S4b.6/S4b.7 shape
+  **Closure transfer 2026-10-24 — NOT claimed.** The commit-edge allocation/inline-build mutation in the S4b.7 shape was
+  not landed; carried by `shipping-rolling-activation`'s verification track. No success claim.
 - [x] 2.5 Land the **empty-interval readiness** fixture — verify a completed publication over an interval with no events
   is ready and sounds as silence, and that the fixture fails under today's non-empty term
   *Checked off 2026-10-04 in [`RECONCILIATION.md`](RECONCILIATION.md) §1:* `test_window_readiness_names_its_holder_and_an_empty_interval_is_ready` (registered)
@@ -112,10 +116,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   that slice and the file is restored byte-identically, with the focused suite green **once its behaviour exists** (a
   fixture whose behaviour has not landed yet is established and expected-red, never counted as passing)
 
+  **Closure transfer 2026-10-24 — NOT claimed.** The consolidated red-proof accounting for 2.2/2.9 is blocked on their
+  fixtures; carried by `shipping-rolling-activation`'s verification track.
 - [ ] 2.9 **Retained-source hold/release fixture** — *slice §3.6*. Pause a window build, replace the published root, undo
   and reclaim passes, run the direct reset/replacement path (IDs reused), attempt slot release and load, then resume:
   assert exact old-version **effective** content, no stale aliasing, protection on both the reclamation consumer and the
   reset path, and eventual release. *(G2 pass 2, row 7)*
+  **Closure transfer 2026-10-24 — NOT claimed.** The integrated retained-source hold/release matrix is not one fixture,
+  and `retainPlaybackSourceForSlot` still has no production caller; carried by `shipping-rolling-activation`'s
+  verification track (with an explicit retainer-consumer decision).
 - [x] 2.10 **Inspected-work bound fixture** — *slice §3.2; landed with it*. Keep the requested window identical while adding
   non-intersecting chunks across progressively longer loops, including a window that intersects nothing: assert inspected
   work per grain is bounded (rejected chunks and lookup included) and total preparation cost does not grow with unrelated
@@ -728,6 +737,12 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   service-envelope claim, no `ExecutionBounds.md` row change, and 3.7b stays the final ladder stage.
   Detail: [`2026-10-07-s37c-active-slot-first-window/EXECUTION.md`](evidence/2026-10-07-s37c-active-slot-first-window/EXECUTION.md).
 - [ ] 3.7b **Remove the legacy playback emission branches — final ladder stage (4)** only after 3.7a and **3.15a–f — single-path migration** establish production use for every supported short/long, Record, overdub, NOTE_EDIT, layered/jam, switch and restored-density route; tasks 3.12, 3.13, 3.14 and 4.5, F-7/F-8, service/timing and compatibility gates also remain required. Retire mutable merged, pair, fixed/bridge and separate paged **emission** selections without truncating accepted content; retain a cold parity oracle. Verify no supported slot reaches an old reader and reclassify `ExecutionBounds.md` row 2 only with evidence. Each temporary branch has removal trigger **3.7b**, not permanent authority; rollback before this stage retains today's serving route.
+  **Deferred — product activation/removal change (2026-10-24).** Removing the compatibility emitters requires enabling
+  `PLAYBACK_WINDOW_ROLLING_ENABLED` in the shipping image. This is an activation boundary rather than residual
+  implementation cleanup and will be performed under a separate change with full device requalification. It is
+  **deferred, not waived**: the task remains the real architectural destination. See `CLOSURE.md` and the new change
+  `shipping-rolling-activation`, which begins with rolling enabled without removing anything, proves parity on the
+  shipping configuration, and then removes the five families one at a time with a rollback story.
 - [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that
   no second publication scheduler exists
@@ -2872,6 +2887,9 @@ suite is not green this turn by design. No Git delivery.
 - [ ] 4.1 Land **F-5** (checkpoint parity, undo) — verify an undo restores exactly what its entry named, including the lagging case, whose outcome must be named rather than reported as current.
   *Increment 4.1 landed 2026-10-02 — parity is named (`CheckpointParity` and `resolveCheckpointParity`; `Loop::checkpointParity()` reads the loop's own three figures without new state), and the lagging case is named through the production undo path with `publishedSnapshotIdentity()` null: selected, never presented as current. This establishes a named precondition for 3.14's refresh, but does not implement its requester. The task stays open on content-level comparison through 4.3's content-verification pipeline; save parity is 4.2. No production caller consumes the outcome yet. Detail: [`evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md`](evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md).*
 
+  **Closure transfer 2026-10-24 — NOT claimed.** The content-level undo parity comparison and the parity-consumer
+  decision (`Loop::checkpointParity()` still has no caller) are carried by `shipping-rolling-activation`'s verification
+  track. No success claim.
 - [ ] 4.2 Land **F-6** (checkpoint parity, save) — verify a persisted body is equivalent to the root it was serialized
   from and a restore's outcome is either current **or** named as stale; the fixture must falsify today's
   `storePublishedSnapshot(…, kSnapshotCoverageCurrent)`-without-reconcile path
@@ -2882,6 +2900,9 @@ suite is not green this turn by design. No Git delivery.
   load reconciliation is another unresolved design option, not permission to change the format. This open parity
   work does not block unrelated request/handoff implementation with fallback retained.
 
+  **Closure transfer 2026-10-24 — NOT claimed.** The content-divergence oracle and the repair choice (persisted
+  provenance vs bounded load reconciliation) are carried by `shipping-rolling-activation`'s verification track. No
+  success claim.
 - [x] 4.3 Land **F-7** (content parity across a window boundary) — verify the windowed stream equals the whole-loop
   stream across the boundary, including **boundary note closures**, driven through the project's existing
   content-verification pipeline rather than a second one
@@ -3179,11 +3200,23 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
 
 ## 5. Capacity, envelope and placement
 
-- [ ] 5.1 Record the window capacity and span as **provisional** — verify the 2,048-event ceiling is carried as the
+  **Closure split 2026-10-24.** Demonstrated on the qualification image/natively: the second-miss latch, serve-last-
+  coherent containment, last-resort targeted silence, cross-generation closures I6/I9/I11, and recovery. **Transferred**
+  to the activation change's device parity: the device closure-ordering/last-resort leg, the
+  `serviceAdmittedDeadlineMisses` boundary, and the multi-track contention interaction; displayed provenance remains RWO
+  S4e. No device success claim is made.
+- [x] 5.1 Record the window capacity and span as **provisional** — verify the 2,048-event ceiling is carried as the
   **window storage capacity itself** under the **sliding window-span invariant** (no partition multiplier; every `W`-wide
   interval including wrap fits, with the closure reserve inside the limit), that the two-bar span is the initial
   comparison configuration, that the derivation recomputes from the target-ABI `sizeof`s, and that neither is reported as
   a supported-density claim
+  **CHECKED OFF 2026-10-24 — the provisional capacity/span declaration is carried at its sources, with the distinction
+  recorded.** 2,048 events is the window storage capacity itself under the sliding span invariant
+  (`static_assert(kWindowAdmissionLimit == kEventsPerView)`, reserve inside `L`); the two-bar span is the initial policy;
+  storage cost is derived from target-ABI `sizeof`s (`RuntimePlaybackView.cpp`); the capacity itself remains a
+  **declared provisional 2,048**, not a sizeof-derived number, and is not reported as a supported-density claim.
+  Fixture: `test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l`;
+  `S33-REPRESENTATION-BUDGET.md` §3.
 - [x] 5.2 Verify no accepted content is truncated to fit — verify a dense interval reports capacity pressure by name and
   serves every accepted event (the "Accepted content is never truncated" requirement)
   **CHECKED OFF 2026-10-24 — admission refuses by name and never truncates; the served-path half is pinned.**
@@ -3250,6 +3283,11 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
 
 ## 6. Gates, sweeps and closeout
 
+  **Closure split 2026-10-24.** Demonstrated: the declared envelope (370/4,200 events dropped was falsified and
+  repaired; acceptance 2,120 > `L`; high-water 109; `skipped == 0`), the by-name refusal, and the paged path within the
+  `ActiveNoteLedger` capacity. **Transferred:** 6.3 sweeps of ring 3×128/reserve 128, the device leg, and the two named
+  criterion residuals (a mis-paired orphan-off inside capacity is not detected; unpaired-excess wrap-crossing content is
+  over-refused deliberately).
 - [x] 6.1 Run the full native suite (`pio test -e native`) — verify every case passes and that no skipped or errored
   suite is counted as green
   *Verified 2026-10-05:* **2796 cases / 2789 succeeded / 7 skipped / 0 failed**, and at suite granularity **107 PASSED, 0
@@ -3291,6 +3329,10 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   cannot establish physical timing; the measured advance at tempo is 6.5's hardware claim, and the fixture says so rather
   than implying it. With the earlier grid (loop length, density, span, competing deferred work) 6.3's native axes are now
   all present; **6.3 stays open on its device leg** — and no single configuration is presented as the acceptance.
+  **Closure split 2026-10-24.** Demonstrated natively: H×K contention, density, span and boundary-pair sweeps, plus the
+  tempo axis (`test_window_contention_sweep_chord_density_costs_the_same_as_spread`,
+  `test_window_contention_sweep_tempo_is_a_time_scale_not_a_cost`). **Transferred:** the device sweep leg (loop length,
+  density, tempo, span, competing deferred work) and the evidence file for the 2026-10-21 cells.
 - [x] 6.4 Add a dedicated **windowed HITL profile** through the existing content-verification pipeline (canonical
   stimuli preserved, never edited to chase a condition) — verify the profile is registered, authorized and used for the
   F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
@@ -3721,6 +3763,9 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   external clock and boundary content parity; **not claimed:** NOTE_EDIT integration (3.15d) and any device observation
   of the closure ordering. See
   [`s65-rolling-ab-revision-trace`](evidence/2026-10-17-s65-rolling-ab-revision-trace/EVIDENCE.md).
+  **Closure split 2026-10-24.** Demonstrated on hardware: grain duration 595 µs, gap 40/64 ticks, `overruns=0`, PSRAM
+  high-water 4,097 KB, boundary content parity (F-7/F-8), host/internal clock, RAM2 floor 147,456 B. **Transferred:**
+  sustained multi-track sounding contention and DIN/external clock. No claim for those two.
 - [x] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)
@@ -3744,7 +3789,7 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   this task list reflects the same state, including the items that stay open. `openspec validate
   windowed-playback-generation --strict` and `runtime-working-set-ownership --strict` are both valid, and
   `git diff --check` is clean.
-- [ ] 6.8 **Continuity evidence handoff** — reference the runtime spec's *Continuous runtime operation has
+- [x] 6.8 **Continuity evidence handoff** — reference the runtime spec's *Continuous runtime operation has
   one end-to-end acceptance contract* and its task S7.5a — envelope/timing oracle, rather than inventing
   local end-to-end thresholds. Before enabling the affected production paths, allocate and verify the
   window/index/retention/page/closure work against that shared service and memory budget. Under simultaneous
@@ -4338,3 +4383,7 @@ each did not give a clean red-proof. Verified: focused **140/140**, full native 
 0 failed**, capture build SUCCESS with the RAM1 line byte-identical, strict validation valid, `git diff --check` clean.
 **No production line changed**; no upload; no optimization series. Detail:
 [`evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md`](evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md).
+  **CHECKED OFF 2026-10-24 — the handoff is reissued with the post-2026-10-17 hardware evidence and the residual
+  transfer.** The §3 "not measured" list is corrected: grain/gap/high-water/boundary parity/host-internal clock and the
+  rolling Record campaign are supplied; sustained multi-track contention and DIN/external clock transfer to
+  `shipping-rolling-activation`'s device parity; S7.5a remains upstream/open. No end-to-end threshold is claimed.

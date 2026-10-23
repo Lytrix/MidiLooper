@@ -81,6 +81,14 @@ hardware half is **NOT RUN** in that sense, and the reason is measured rather th
 window demand (the next step is a leg that drives a demoted slot switch), and the lane's coverage/overrun rows needed the
 F-14 classification and the post-stop drain before they could be read at all.
 
+**2026-10-24 — the §3 list is partly stale; measured and transferred parts are separated.** Hardware evidence since
+2026-10-17 now supplies grain duration **595 µs**, gap **40/64 ticks**, `overruns=0`, PSRAM high-water **4,097 KB**,
+boundary content parity (F-7/F-8), host/internal clock, RAM2 floor **147,456 B**, and the rolling Record campaign
+(growth-empty, held, matched; aggregate **PASS**). **Still not measured / transferred** to
+`shipping-rolling-activation`'s device parity: sustained multi-track playback with capture/persistence contention and
+DIN/external clock; route-specific physical MIDI output timing remains that packet's device-parity item. No numeric
+end-to-end limit is asserted here.
+
 **The instrument that read was missing (2026-10-05, `rolling-gate-row`) — it changes what the *next* read will be, not
 what has been measured.** The reason the hardware half could not be read is now itself addressable: the lane's **demand**
 path (`Track::serviceRollingPlaybackWindow`, the off-clock turn `src/main.cpp` drives) returned a typed `RollingOutcome`

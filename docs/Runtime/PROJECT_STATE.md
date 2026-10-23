@@ -1,3 +1,13 @@
+**2026-10-24 — windowed-playback-generation CLOSED on the qualification/supported-route scope; activation/removal
+spun out.** The change establishes and qualifies the unified rolling reader under `PLAYBACK_WINDOW_ROLLING_ENABLED=1`;
+shipping-default activation and removal of the compatibility emitters are intentionally deferred (not waived) to
+**`shipping-rolling-activation`**, which begins with rolling enabled **without removals**, proves shipping parity
+against the cold reference, then removes the five families one at a time with a rollback. Archived as
+`openspec/changes/archive/2026-10-24-windowed-playback-generation` (spec merged) with 11 incomplete tasks explicitly
+deferred/transferred: 3.7b (product activation/removal), 2.2/2.4/2.8/2.9/4.1/4.2 (verification residuals) and the
+device/product-wide legs of 4.5/5.5/6.3/6.5. The 2026-10-24 device campaign is the supported-route evidence; legacy
+emitters remain the shipping fallback behind `ROLLING=0` until the activation change removes them.
+
 **2026-10-24 — 3.15a/b/c CHECKED OFF on the cheap owner scope.** 3.15a: stop return and live overdub/wrap are
 discharged by the 3.15e/g fixtures + rolling campaign; first Record bar, global undo/redo and clock-source/seek are
 accepted on the 2026-10-24 device campaign in place of new native edge oracles; SD-restore stays partial with 5.2/5.5;
