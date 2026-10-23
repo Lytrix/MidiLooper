@@ -2072,6 +2072,8 @@ static void test_3_15f_c_long_loop_keeps_the_first_handoff() {
 
 
 
+
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).

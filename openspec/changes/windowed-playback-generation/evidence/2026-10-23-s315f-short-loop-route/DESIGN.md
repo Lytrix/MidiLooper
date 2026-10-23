@@ -163,7 +163,24 @@ current; reposition to the next eligible occurrence with the same cost calculati
 The adoption gate is implemented and the positioned wait is applied to a ready, but the **edge path that turns that
 ready into the served frame** needs its own RED. Do not claim C's timed adoption until it is green.
 
-**Witness result (2026-10-23).** A test-only witness now evaluates the exact adoption terms once at the edge and
+**Three-point witness (2026-10-23) — the H adoption itself works.** The same successor staged through the production
+first publication, then a mutation, then the drain reports:
+
+```
+after service: build=1 posLater=1 deadline=3072 admitted=100 epoch=1 cur=2 ready=1 (empty) preRev=3
+after drain:   build=0 posLater=1 deadline=3072 admitted=100 epoch=1 cur=2 ready=0 complete=1 pub=0
+               rRev=3 cov=0+1536 preRev=3
+at H=3072:     cur=0 (adopted), firstFalse=0
+```
+
+So the ready is complete/unpublished with the new revision and full coverage, and the edge adopts it exactly at H.
+The remaining defect is the **before-H turn**: the fixture's `emitTurn(H−1)` adopts early (the ready becomes current)
+because the position lives on the mutable `viewBuildWork`, not on the ready; by that turn the work's deadline/epoch are
+no longer the authority. **Next change:** carry the positioned deadline/epoch on the ready itself (a view or stable
+runtime ready-position pair), so the wait is a property of the ready; then the before-H assertion holds and the timed
+fixture goes green. That is a new runtime-state/pin decision, not a scheduling change, and must be measured.
+
+**Earlier witness result (2026-10-23).** A test-only witness now evaluates the exact adoption terms once at the edge and
 records the first false term, `adoptPreparedPlaybackWindow`'s refusal code, the current/ready roles, the work's
 position identity (`positionedLater`, deadline, admitted, epoch), the ready and preview revisions, and the coverage.
 At the fixture's claimed H it reports:
