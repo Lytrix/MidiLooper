@@ -2313,7 +2313,15 @@ suite is not green this turn by design. No Git delivery.
   apply row (action/member) was attempted via `Serial.printf` and the cold `logGeomApplyPhase`; both add a 4 KB
   bss/RAM1 footprint and the budget gate rejects it (`variables 100,288` vs approved `96,192`). It was removed; the
   image/budget are restored (`7c620c1e…`, headroom 416/192). The movement→member edge needs a RAM1-neutral/native
-  observation or a deliberate re-base, not another capture row.
+  observation or a deliberate re-base, not another capture row. **Native movement→resolver→apply proof (2026-10-24):**
+  `test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row` (controlled MoveNote → the row's
+  `currentSpan` 900/1100 + the store pair) and
+  `test_3_15f_c_the_geometry_resolver_moves_the_current_state_row` (real session + focus → the row 900/1100) both
+  GREEN — preview **46/46**, full native **3,430 / 7 / 3,423**. The suite includes `EditSessionActionBuilder.cpp` with a
+  scoped `baselineSpansEqual` rename; production firmware/RAM1 pins untouched (image `7c620c1e…`). The production seam
+  remains (the device's `preview_source … none` after the live move), so per the owner's rule device instrumentation is
+  authorized; it must be RAM1-neutral (the composer's existing `preview_source` row + the existing focus/action rows).
+  Next: extend the composer's row to name the target row when no override, then run the device. No 3.15f checkoff.
   [`EVIDENCE.md`](evidence/2026-10-23-s315f-device-03/EVIDENCE.md).
 - [x] 3.15g **Wrapped short-loop Record finalization — separate immutable presentation lifetime from the interaction FIFO.** Owner-approved mechanism: **DEC-142 — Record presentation lifetime split**. The stable slot-owned extent is admitted before finalization; nonempty `RecordPublished` activates presentation reader ownership, releases the finalizer and pops the interaction FIFO synchronously. The accepted successor stop can then close its own slice while the frozen reader remains represented. Preserve the live-finalizer pre-publication reader path, off-clock preparation/E2 adoption, ordinary admission, current-root takeover and bounded stopped-successor expiry. No ring-owned RecordPublished impersonation, speculative retirement hold, deadline bypass, default rolling activation or RAM1 budget change. The earlier positioned-demand diagnosis below is retained as historical evidence, not the current repair contract.
       *2026-10-19 — DEC-143's overlay now reads the sealed extent (native + builds green; device owed).* The recorded next

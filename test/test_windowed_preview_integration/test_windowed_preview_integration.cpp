@@ -131,8 +131,12 @@ inline long map(long x, long inMin, long inMax, long outMin, long outMax) {
 #include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/EditManager/ApplyOwnedEditPassRows.cpp"
 #include "../../src/EditManager/ApplyEditSessionActions.cpp"
-// `EditSessionActionBuilder.cpp` is deliberately absent: `EditSessionInteraction.cpp` (included below)
-// already provides its `baselineSpansEqual` helper in this concatenated TU.
+// The resolver's native half needs the action builder. It was deliberately absent because its
+// `baselineSpansEqual` helper collides with `EditSessionInteraction.cpp`'s in this concatenated TU; rename it for this
+// include only (test-only; the production TUs and RAM1 pins are untouched).
+#define baselineSpansEqual baselineSpansEqualActionBuilder
+#include "../../src/EditManager/EditSessionActionBuilder.cpp"
+#undef baselineSpansEqual
 #include "../../src/EditManager/NoteEditFocusBaseline.cpp"
 #include "../../src/EditManager/NoteEditFocusRebuild.cpp"
 #include "../../src/EditManager/NoteEditFocusState.cpp"
@@ -2449,6 +2453,80 @@ static void test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_t
   TEST_ASSERT_EQUAL_UINT32(500, found->second.currentSpan.endTick);
 }
 
+/// **3.15f / C — native half A: the apply writes the current‑state row and the live store.** A controlled `MoveNote`
+/// action for a known noteId, on a current state carrying that note's committed row, must leave the row's `currentSpan`
+/// at the action's span and move the store's pair. This isolates the apply from any device/production seam.
+static void test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  const uint8_t channel = track.getMidiChannel();
+  const NoteId noteId = static_cast<NoteId>(6667);
+  MidiEventVec store;
+  MidiEvent on = MidiEvent::NoteOn(300, channel, 60, 100);
+  on.noteId = noteId;
+  store.push_back(on);
+  MidiEvent off = MidiEvent::NoteOff(500, channel, 60, 0);
+  off.noteId = noteId;
+  store.push_back(off);
+  NoteEditCurrentState state;
+  state.upsertRow(noteId, NoteBaseline{60, 100, 300, 500}, NoteBaseline{60, 100, 300, 500},
+                  NoteEditPresenceType::Visible);
+  NoteEditFocus focus{};
+  EditSessionActions actions;
+  EditSessionAction move{};
+  move.type = EditSessionActionType::MoveNote;
+  move.targetNoteId = noteId;
+  move.startTick = 900;
+  move.endTick = 1100;
+  move.pitch = 60;
+  move.velocity = 100;
+  actions.push_back(move);
+
+  applyEditSessionActions(actions, store, focus, channel, 1536, nullptr, &state);
+
+  const NoteEditCurrentNoteState* row = state.find(noteId);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL_UINT32(900, row->currentSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1100, row->currentSpan.endTick);
+  bool onAt900 = false;
+  bool offAt1100 = false;
+  for (const MidiEvent& event : store) {
+    if (event.noteId != noteId) continue;
+    if (event.isNoteOn() && event.tick == 900) onAt900 = true;
+    if (event.isNoteOff() && event.tick == 1100) offAt1100 = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(onAt900, "the apply moves the store's On to the action start");
+  TEST_ASSERT_TRUE_MESSAGE(offAt1100, "the apply moves the store's Off to the action end");
+}
+
+/// **3.15f / C — native half B: the geometry resolver applies a real move to the current state.** The real session is
+/// opened on a committed note, the focus is established for that note, and the resolver is asked for the moved span. The
+/// resulting current‑state row must carry the moved span (the action target identity is the focus note). RED if the
+/// resolver/action build targets another identity or the apply misses the row.
+static void test_3_15f_c_the_geometry_resolver_moves_the_current_state_row() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  const NoteId noteId = static_cast<NoteId>(6667);
+  std::vector<MidiEvent> content;
+  appendIdentifiedNote(content, 300, 500, 60, noteId);
+  commitEmissionLoop(track, 0, 2u * Config::TICKS_PER_BAR, content);
+  publishRootFromEventsForSlot(track.getLoop(0), content);
+  track.getLoop(0).rebuildVisualCacheFromPasses();
+  readyEmissionPlaying(track, 0, 100);
+  editManager.openNoteEditSession(track);
+  const NoteUtils::DisplayNote note{noteId, 60, 100, 300, 500};
+  editManager.ensureNoteEditFocusForLiveEdit(track, note);
+  const NoteBaseline editedSpan{60, 100, 900, 1100};
+  const NoteBaseline priorLatch{60, 100, 300, 500};
+  const bool resolved = NoteGeometryResolver::resolveForCausingNote(
+      track, editManager, noteId, editedSpan, priorLatch, std::nullopt, std::nullopt, false);
+  TEST_ASSERT_TRUE_MESSAGE(resolved, "the resolver applies the move");
+  const NoteEditCurrentNoteState* row = editManager.noteEditCurrentState().find(noteId);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL_UINT32(900, row->currentSpan.startTick);
+  TEST_ASSERT_EQUAL_UINT32(1100, row->currentSpan.endTick);
+}
+
 /// **3.15f / C — a missed positioned handoff repositions later.** The demand stays valid across cycles; when its
 /// absolute H passes while the build is not ready, only that attempt is retired and the same unchanged cost rule
 /// positions the **next** occurrence (never the missed H, never first-occurrence semantics).
@@ -2887,6 +2965,8 @@ int main(int, char**) {
   RUN_TEST(test_3_15f_c_the_preview_is_requested_only_while_the_transport_plays);
   RUN_TEST(test_3_15f_c_the_preview_composition_refreshes_the_session_projection);
   RUN_TEST(test_3_15f_c_the_current_root_open_hydrates_the_current_state_from_the_visual);
+  RUN_TEST(test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row);
+  RUN_TEST(test_3_15f_c_the_geometry_resolver_moves_the_current_state_row);
   RUN_TEST(test_3_15f_c_a_missed_positioned_handoff_repositions_later);
   RUN_TEST(test_3_15f_c_a_superseded_positioned_ready_is_never_adopted);
   RUN_TEST(test_3_15f_c_an_obsolete_positioned_attempt_retires_instead_of_repositioning);

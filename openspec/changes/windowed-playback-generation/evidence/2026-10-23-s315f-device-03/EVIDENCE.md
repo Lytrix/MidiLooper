@@ -343,6 +343,27 @@ the projection/commit (the depart’s `pre-commit row start=1448`).
   the image and budget are restored (`7c620c1e…`, headroom 416/192). The movement→member edge needs a RAM1‑neutral/native
   observation (or a deliberate re‑base), not another capture row.
 
+## Native movement → resolver → apply proof (2026-10-24)
+
+Both native halves pass, with controlled identity and current-state assertions:
+
+- **Half A — the apply:** `test_3_15f_c_apply_edit_session_actions_updates_the_current_state_row` builds a controlled
+  `MoveNote` (target noteId 6667, span 900–1100) on a `NoteEditCurrentState` row carrying that note's committed span
+  (300–500) and a live store pair; `applyEditSessionActions` leaves the row's `currentSpan` at 900/1100 **and** moves the
+  store's On/Off.
+- **Half B — the resolver:** `test_3_15f_c_the_geometry_resolver_moves_the_current_state_row` opens a real session on a
+  committed note (current root, hydrated state), establishes the focus for that note, and calls
+  `NoteGeometryResolver::resolveForCausingNote` with the moved span; the resulting current-state row is 900/1100.
+- **Gates:** preview **46/46**; full native **3,430 / 7 skipped / 3,423**. The suite now includes
+  `EditSessionActionBuilder.cpp` with a scoped `baselineSpansEqual` rename (the resolver’s half needs it in this
+  concatenated TU). **Production firmware and RAM1 pins are untouched** (image `7c620c1e…`, headroom 416/192).
+
+**The production seam remains:** the device’s composer still reports `preview_source … none` after the live move while
+both native pieces are proven. Per the owner’s rule, device instrumentation is now authorized — but it must be
+RAM1‑neutral (the composer’s existing `preview_source` row and the existing `NOTE_EDIT focus rebuild`/`EditSessionAction`
+rows; a new apply‑site row tripped the approved 4 KB bss). Next: extend the composer’s existing row to name the target
+row when no override, and run the device with those rows.
+
 ## Native contract (unchanged; for the comparison)
 
 Timed successor adoption GREEN (`test_3_15f_c_the_successor_waits_for_its_positioned_tick`); preview **36/36**; RWO
