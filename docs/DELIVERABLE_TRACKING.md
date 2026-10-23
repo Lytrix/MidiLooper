@@ -1,3 +1,14 @@
+**2026-10-24 — windowed-playback-generation closure audit (5 boxes closed, true remainder named).** Checked off on
+existing evidence: **3.15d** (its only named limit was the short/long route delegated to 3.15f, now closed; the parity
+fixture's early walk still emits the fallback stream because the harness clock is unqualified, recorded); **2.11** (I9
+discharged the last term on 2026-10-06, never written back); **3.12** (a–f landed, with the closure-capacity silence,
+the declared ring 3×128/reserve 128 and the absent device leg recorded); **4.3** (F‑7 device sweep + overlap + 6.4);
+**5.2** (refusal-by-name and no truncation). **3.15a/b/c are NOT ready:** 3.15a still lacks native ordered-wire oracles
+for the first Record bar, global undo/redo, clock-source/seek and the restore acceptance path (device PASS is not a
+native edge fixture); 3.15b still lacks the affected-tick remaining-work bound and the 6.3/6.5 service budget; 3.15c
+still lacks the short-loop Record/overdub cutover and the contention/timing gate. **3.7b is blocked** by 3.15a–d (and
+5.5/6.3/6.5) and has no removals yet. Open boxes: 21 → 16.
+
 **2026-10-24 — 3.15f CHECKED OFF (owner scope decision).** The all-route cutover gate is closed against the owner's
 supported-route scope. **Passing:** base record/both overdubs/post-stop undo-redo/display/persistence 4/4 (qualification
 and default, host/internal; RAM2 147,456 B, PSRAM 3.97–4.02 MB); live + frozen Record/stop return (rolling campaign full
