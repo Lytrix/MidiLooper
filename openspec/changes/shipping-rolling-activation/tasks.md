@@ -22,10 +22,15 @@ for every family not yet removed.
   [`evidence/2026-10-24-verification-residuals/PROGRESS.md`](evidence/2026-10-24-verification-residuals/PROGRESS.md):
   the derived-deadline short/long/tempo fixture, the S4b.7 edge-capacity assertion (both mutations: 28 red, restored),
   the retained-source paused-build/replacement matrix (test-driven; no production retainer consumer by decision), and
-  the exact-root undo identity (parity remains an oracle; the 4.2 load path is its first consumer). 4.2's full design is
-  [`evidence/2026-10-24-4.2-design/DESIGN.md`](evidence/2026-10-24-4.2-design/DESIGN.md): content-divergence oracle +
-  bounded load reconciliation recommended (no LSV1 format change). Remaining: 4.2 implementation and the 2.8 red-proof
-  accounting for 2.9/4.1.
+  the exact-root undo identity (parity remains an oracle; the 4.2 load path is its first consumer). 4.2's design is
+  [`evidence/2026-10-24-4.2-design/DESIGN.md`](evidence/2026-10-24-4.2-design/DESIGN.md) **rev 2**: the code-backed
+  coverage source (LSV1 carries a passes snapshot + the published root, **no coverage field**; the domain is the whole
+  loop), a pre-publication comparison of the two staged snapshots (no live-root read), the canonical equivalence tuple
+  (tick/type/channel/pitch-or-controller/data/velocity-or-value/pair closure; IDs only when guaranteed; no raw
+  structs), the passes-only reconstruction **control as a prerequisite**, transactional slot-level failure (old slot
+  wholly authoritative until atomic commit), and a bounded streaming comparison (no pre-emptive bound change). Repair
+  **B** stands; no LSV1 provenance. Remaining: 4.2 implementation in the design's order (control → divergent RED →
+  pre-publication parity → bounded reconcile → transactional failure → device) and the 2.8 accounting.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
