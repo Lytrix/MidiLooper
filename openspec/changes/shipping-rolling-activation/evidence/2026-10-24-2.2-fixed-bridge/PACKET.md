@@ -94,6 +94,15 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   6333; its cold-frame reset at 6573 and the preview reset at 7654 are the only other `rolling = {}` sites besides
   `cancelRollingPlaybackWindow` 4980). Next trace: a `SWITCHEND` marker after the switch block, a `playMidiEvents` entry
   marker, and a marker at `stepPlaybackViewMaintenance` entry/exit; then re-seed after the reset.
+  **Final diagnostic (owner-authorized last run).** There is **no Serving→Idle transition at the target.** With the
+  seed at the end of `commitQueuedPlaybackStart`, the just-seeded allowance, and the turn's deadline clock stamped in
+  the helper, the commit tick order is `COMMITEND slot=2 tick=1536 reason=0 phase=3 (Serving)` -> `HPEV active=2
+  phase=3` -> `HPPRE slot=2 phase=3`. The `+3` rebuilds are the rolling suite's **stale expected counters**, written
+  for the old fixed-view wrapper / Idle start. The transition fix is therefore: (1) seed at the commit; (2) keep the
+  just-seeded frame through the queued-start guard; (3) stamp the turn's deadline clock where the consumer resolves it;
+  (4) re-point the rolling tests' expected demand/build counters to the seeded start. The RED for the transition is
+  `targetRuntime->rolling.phase == Serving` at the first target tick (it fails with the wrapper removed and no seed).
+  No further probes; the remaining work is the test re-point plus the native/device gates.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -125,4 +134,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Six `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
+Seven `boundLaunchView` editing attempts (**reverted**; findings above). The final run proved no Serving->Idle at the target; the remaining +3 is stale test expectations. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
