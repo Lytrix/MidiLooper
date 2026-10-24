@@ -2743,6 +2743,72 @@ void test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused() {
   releasePersistedLoopSnapshotChunks(divergentOracle);
 }
 
+/// **4.2 streaming scale — a dense coherent body round-trips through the per-tick streaming compare.** A spread of
+/// note pairs plus a same-tick group exercises the walk at the capacity scale without whole-stream key buffers.
+void test_4_2_a_dense_checkpoint_streams_within_capacity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  constexpr uint32_t kLoopTicks = 32u * Config::TICKS_PER_BAR;
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = kLoopTicks;
+  source.beginCapture(CapturePhase::Record);
+  // A same-tick group: 32 notes on at 1000, off at 1030.
+  for (uint8_t i = 0; i < 32; ++i) {
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(1000, 1, static_cast<uint8_t>(40 + i), 100)));
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(1030, 1, static_cast<uint8_t>(40 + i), 0)));
+  }
+  // A spread of pairs across the loop.
+  for (uint32_t i = 0; i < 256; ++i) {
+    const uint32_t on = 2000u + i * 70u;
+    const uint32_t off = on + 30u;
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(
+        MidiEvent::NoteOn(on, 1, static_cast<uint8_t>(60 + (i % 12u)), 100)));
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(
+        MidiEvent::NoteOff(off, 1, static_cast<uint8_t>(60 + (i % 12u)), 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, kLoopTicks));
+  drainPendingSnapshotPublish(source);
+  const ImmutableLoopSnapshotRef sourceRoot = source.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(sourceRoot.get());
+  const uint32_t bars = kLoopTicks / Config::TICKS_PER_BAR;
+  uint32_t expectedEvents = 0;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    expectedEvents += static_cast<uint32_t>(
+        snapshotMembershipCount(sourceRoot->eventMembership(bar).get()));
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32(512u, expectedEvents);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  Loop restored;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(parseState.loopSnapshot));
+  TEST_ASSERT_NOT_NULL_MESSAGE(restored.publishedSnapshot().get(),
+                               "the dense coherent body passes the streaming compare");
+  TEST_ASSERT_TRUE(restored.publishedSnapshotIsCurrent());
+  uint32_t restoredEvents = 0;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    restoredEvents += static_cast<uint32_t>(
+        snapshotMembershipCount(restored.publishedSnapshot()->eventMembership(bar).get()));
+  }
+  TEST_ASSERT_EQUAL_UINT32(expectedEvents, restoredEvents);
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2983,6 +3049,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_4_2_a_velocity_divergence_is_not_published_as_current);
   RUN_TEST(test_4_2_a_wrap_note_checkpoint_round_trips);
   RUN_TEST(test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused);
+  RUN_TEST(test_4_2_a_dense_checkpoint_streams_within_capacity);
   RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
   return UNITY_END();
 }

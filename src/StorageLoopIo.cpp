@@ -1424,43 +1424,70 @@ STORAGE_LOOP_IO_MEM CheckpointEventKey checkpointEventKey(const MidiEvent& event
 
 /// 4.2 canonical event parity: the staged root's committed event stream versus the staged passes' effective stream.
 /// Both sides are staged load data; the target loop is untouched. Sort-then-compare is the first (non-streaming) form.
-STORAGE_LOOP_IO_MEM bool checkpointEventsEquivalent(const LoopSnapshot& root, SessionMidiEventVec& passEvents) {
-  std::vector<CheckpointEventKey> rootKeys;
-  const uint32_t loopLength = root.loopLengthTicks();
-  const uint32_t bars = loopLength == 0
-      ? 0
-      : (loopLength + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
-  for (uint32_t bar = 0; bar < bars; ++bar) {
-    forEachSnapshotMembershipReference(root.eventMembership(bar).get(),
-                                       [&](const LoopSnapshotEventRef& ref) {
-      if (ref) rootKeys.push_back(checkpointEventKey(ref->value));
-    });
-  }
-  std::vector<CheckpointEventKey> passKeys;
-  passKeys.reserve(passEvents.size());
-  for (const MidiEvent& event : passEvents) passKeys.push_back(checkpointEventKey(event));
-  if (rootKeys.size() != passKeys.size()) return false;
-  // Canonical same-tick comparison: both streams are tick-nondecreasing; each tick's group is compared as a multiset
-  // (insertion-sorted in place, no global sort). This is the source-order-independent compare, bounded per tick.
-  size_t i = 0;
-  size_t j = 0;
-  while (i < rootKeys.size() && j < passKeys.size()) {
-    const uint32_t tick = rootKeys[i].tick;
-    if (passKeys[j].tick != tick) return false;
-    size_t rootEnd = i;
-    while (rootEnd < rootKeys.size() && rootKeys[rootEnd].tick == tick) ++rootEnd;
-    size_t passEnd = j;
-    while (passEnd < passKeys.size() && passKeys[passEnd].tick == tick) ++passEnd;
-    if (rootEnd - i != passEnd - j) return false;
-    sortCheckpointKeyGroup(rootKeys, i, rootEnd);
-    sortCheckpointKeyGroup(passKeys, j, passEnd);
-    for (size_t k = 0; k < rootEnd - i; ++k) {
-      if (!(rootKeys[i + k] == passKeys[j + k])) return false;
+/// Streaming reader over the staged root's event membership: one reference at a time, bar by bar, with no
+/// whole-stream key buffer. The canonical membership order is the root's committed order.
+struct RootEventStream {
+  explicit RootEventStream(const LoopSnapshot& root)
+      : root_(root),
+        bars_(root.loopLengthTicks() == 0
+                  ? 0
+                  : (root.loopLengthTicks() + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR) {}
+
+  const LoopSnapshotEvent* next() {
+    while (true) {
+      if (!page_) {
+        if (bar_ >= bars_) return nullptr;
+        page_ = root_.eventMembership(bar_);
+        index_ = 0;
+        if (!page_) {
+          ++bar_;
+          continue;
+        }
+      }
+      if (index_ < page_->count) return page_->references[index_++].get();
+      page_ = page_->next;
+      index_ = 0;
+      if (!page_) ++bar_;
     }
-    i = rootEnd;
-    j = passEnd;
   }
-  return i == rootKeys.size() && j == passKeys.size();
+
+  const LoopSnapshot& root_;
+  uint32_t bars_;
+  uint32_t bar_ = 0;
+  SnapshotMembershipRef<LoopSnapshotEventRef> page_;
+  uint8_t index_ = 0;
+};
+
+/// 4.2 canonical event parity, streaming form: walk the staged root's membership and the staged passes' effective
+/// stream together; at each tick compare the group as a multiset. The only buffers are the current tick's groups, so
+/// the compare is a bounded walk rather than two whole-stream copies. The caller charges the walk to the load turn.
+STORAGE_LOOP_IO_MEM bool checkpointEventsEquivalent(const LoopSnapshot& root, SessionMidiEventVec& passEvents) {
+  RootEventStream rootStream(root);
+  std::vector<CheckpointEventKey> rootGroup;
+  std::vector<CheckpointEventKey> passGroup;
+  size_t passIndex = 0;
+  const LoopSnapshotEvent* rootEvent = rootStream.next();
+  while (rootEvent != nullptr || passIndex < passEvents.size()) {
+    if (rootEvent == nullptr || passIndex >= passEvents.size()) return false;
+    const uint32_t tick = rootEvent->value.tick;
+    if (passEvents[passIndex].tick != tick) return false;
+    rootGroup.clear();
+    passGroup.clear();
+    while (rootEvent != nullptr && rootEvent->value.tick == tick) {
+      rootGroup.push_back(checkpointEventKey(rootEvent->value));
+      rootEvent = rootStream.next();
+    }
+    while (passIndex < passEvents.size() && passEvents[passIndex].tick == tick) {
+      passGroup.push_back(checkpointEventKey(passEvents[passIndex++]));
+    }
+    if (rootGroup.size() != passGroup.size()) return false;
+    sortCheckpointKeyGroup(rootGroup, 0, rootGroup.size());
+    sortCheckpointKeyGroup(passGroup, 0, passGroup.size());
+    for (size_t i = 0; i < rootGroup.size(); ++i) {
+      if (!(rootGroup[i] == passGroup[i])) return false;
+    }
+  }
+  return true;
 }
 }  // namespace
 

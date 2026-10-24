@@ -228,3 +228,21 @@ full native **3,441 / 7 / 3,434**; both builds at the pins (`391,944 + 1,272` / 
 
 **Remaining:** the compare still collects both event streams into per-load vectors; the **bounded streaming walk** (no
 whole-stream buffers, per-turn load bound) and the **device leg** remain. **4.2 is not complete.**
+
+## Step 6 result (2026-10-24) — streaming compare: GREEN
+
+`checkpointEventsEquivalent` is now a **streaming walk**: `RootEventStream` yields the staged root's events one
+membership reference at a time (bar → page → reference), and the staged passes' effective stream is walked in lockstep.
+Only the **current tick's group** is buffered; the previous whole-stream key vectors are gone. Each tick's group is
+compared as a multiset (in-place insertion sort, no global sort).
+`test_4_2_a_dense_checkpoint_streams_within_capacity` round-trips a dense coherent body (512+ spread pairs plus a
+32-note same-tick group) through the writer → parser → guard. The passes projection is still the body's own working
+set (the design's "the two sources are already materialized in the body"), not an extra whole-stream copy.
+
+Gates: storage **62/62**; full native **3,442 / 7 / 3,435**; both builds at the pins (`391,944 + 1,272` /
+`392,184 + 1,032`). **The per-turn device bound is still a measurement, not a claim:** the walk is O(events) with
+per-tick group buffers, but the load-turn bound must be measured on the qualification image with a diverged/dense body.
+That is the device leg below.
+
+**Remaining for 4.2:** the device leg — place a diverged body on a scratch slot, load it, assert the named outcome and
+the passes-derived/no-current result, and measure the per-turn load bound. **4.2 is not complete.**

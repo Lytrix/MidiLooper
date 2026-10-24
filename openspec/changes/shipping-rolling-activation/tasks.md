@@ -44,8 +44,11 @@ for every family not yet removed.
   compare false-rejected it (different wrap-span representation), so the note guard is retired and the canonical event
   tuple is the sole pre-publication authority. **Same-tick canonical compare landed:** per-tick groups are compared as
   multisets (in-place insertion sort, no global sort); a coherent same-tick body round-trips and a same-tick velocity
-  divergence is refused. Storage 61/61; full native 3,441/7/3,434; pins 391,944+1,272 / 392,184+1,032. The compare
-  still buffers both streams; the bounded streaming walk and the device leg remain.
+  divergence is refused. **Streaming walk landed:** `RootEventStream` yields the staged root membership one reference
+  at a time and the passes stream is walked in lockstep; only the current tick's group is buffered. A dense coherent
+  body (512+ pairs plus a same-tick group) round-trips. Storage 62/62; full native 3,442/7/3,435; pins 391,944+1,272 /
+  392,184+1,032. The **per-turn device bound** and the device leg remain (the walk is O(events) with per-tick buffers;
+  the bound is a device measurement, not a claim).
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
