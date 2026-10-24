@@ -2503,6 +2503,119 @@ void test_4_2_a_velocity_divergence_is_not_published_as_current() {
   releasePersistedLoopSnapshotChunks(oracle);
 }
 
+/// **4.2 serialized-root divergence.** Both bodies are produced by the production writers: the coherent one by
+/// `writeLoopPersisted`, the diverged one by re-serializing the same oracle with a root whose NoteOn velocity is 90
+/// instead of the passes' 100. The positive bite is re-parsed from the *bytes*, so a serialization normalization
+/// cannot hide the mutation. This is a **native** serialization guard: `MidiEvent` is 32 B here and 20 B on the
+/// device (64-bit vs 32-bit union), so host bodies are not device-valid; the device leg used the device-written
+/// body with one patched velocity byte (see `shipping-rolling-activation/evidence/2026-10-24-4.2-device-leg`).
+void test_4_2_a_serialized_root_divergence_is_refused() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+
+  // Match the bench slot's geometry (downloaded original: loopId 4, 2 bars) so the device adopts the body
+  // into the workspace instead of hanging on a length mismatch.
+  Loop source;
+  source.loopId = 4;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 2u * Config::TICKS_PER_BAR));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> coherentBody;
+  MemoryStorageIo coherentMem(&coherentBody);
+  TEST_ASSERT_TRUE(writeLoopPersisted(coherentMem.io(), source));
+
+  // Parse the production body, then build the diverged root from the same staged sources.
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(coherentBody.data(), coherentBody.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  TEST_ASSERT_NOT_NULL(parseState.loopSnapshot.get());
+  const auto notePages = parseState.loopSnapshot->noteMembership(62, 0);
+  TEST_ASSERT_NOT_NULL(notePages.get());
+  TEST_ASSERT_GREATER_THAN_UINT8(0, notePages->count);
+  const LoopSnapshotNoteRef noteRef = notePages->references[0];
+  LoopSnapshotEventRef onRef;
+  forEachSnapshotMembershipReference(parseState.loopSnapshot->eventMembership(0).get(),
+                                     [&](const LoopSnapshotEventRef& ref) {
+    if (ref->value.isNoteOn() && ref->value.data.noteData.note == 62) onRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL(onRef.get());
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Replace;
+  noteChange.previous = noteRef;
+  noteChange.next = *noteRef;
+  noteChange.next.velocity = 90;
+  changes.notes.push_back(noteChange);
+  SnapshotEventChange eventChange{};
+  eventChange.kind = SnapshotChangeKind::Replace;
+  eventChange.previous = onRef;
+  eventChange.next = *onRef;
+  eventChange.next.value.data.noteData.velocity = 90;
+  changes.events.push_back(eventChange);
+  LoopSnapshotConstruction construction(parseState.loopSnapshot, changes);
+  while (!construction.complete()) TEST_ASSERT_TRUE(construction.step(128));
+  const ImmutableLoopSnapshotRef diverged = construction.freeze();
+  TEST_ASSERT_NOT_NULL(diverged.get());
+
+  std::vector<uint8_t> divergedBody;
+  MemoryStorageIo divergedMem(&divergedBody);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1(divergedMem.io(), parseState.metadata, oracle,
+                                                 *diverged));
+
+  // Positive bite from the bytes: the coherent body installs a current checkpoint; the diverged body is refused.
+  LoopSnapshotBodyFormatV1LoadParseState coherentState{};
+  PersistedLoopSnapshot coherentOracle{};
+  stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(coherentBody.data(), coherentBody.size(),
+                                                       coherentOracle, coherentState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  Loop accepted;
+  alignas(16) static unsigned char acceptedTrackStorage[16] = {};
+  Track& acceptedTrack = *reinterpret_cast<Track*>(acceptedTrackStorage);
+  applyLoadedLoopSlotBodyCommit(accepted, acceptedTrack, 0, true, coherentOracle,
+                                std::move(coherentState.loopSnapshot));
+  TEST_ASSERT_NOT_NULL_MESSAGE(accepted.publishedSnapshot().get(),
+                               "the coherent serialized body is accepted");
+  TEST_ASSERT_TRUE(accepted.publishedSnapshotIsCurrent());
+  releasePersistedLoopSnapshotChunks(coherentOracle);
+
+  LoopSnapshotBodyFormatV1LoadParseState divergedState{};
+  PersistedLoopSnapshot divergedOracle{};
+  stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(divergedBody.data(), divergedBody.size(),
+                                                       divergedOracle, divergedState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  Loop refused;
+  alignas(16) static unsigned char refusedTrackStorage[16] = {};
+  Track& refusedTrack = *reinterpret_cast<Track*>(refusedTrackStorage);
+  applyLoadedLoopSlotBodyCommit(refused, refusedTrack, 0, true, divergedOracle,
+                                std::move(divergedState.loopSnapshot));
+  TEST_ASSERT_NULL_MESSAGE(refused.publishedSnapshot().get(),
+                           "the diverged serialized body is never installed as current");
+  TEST_ASSERT_FALSE_MESSAGE(refused.passes.hasRecordPass(),
+                            "the candidate passes are not installed when parity fails");
+  releasePersistedLoopSnapshotChunks(divergedOracle);
+
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 void test_4_2_a_divergent_root_is_not_published_as_current() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3047,6 +3160,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root);
   RUN_TEST(test_4_2_a_divergent_root_is_not_published_as_current);
   RUN_TEST(test_4_2_a_velocity_divergence_is_not_published_as_current);
+  RUN_TEST(test_4_2_a_serialized_root_divergence_is_refused);
   RUN_TEST(test_4_2_a_wrap_note_checkpoint_round_trips);
   RUN_TEST(test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused);
   RUN_TEST(test_4_2_a_dense_checkpoint_streams_within_capacity);

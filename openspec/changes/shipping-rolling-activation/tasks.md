@@ -53,6 +53,19 @@ for every family not yet removed.
   production-written coherent/diverged bodies with a positive bite, host-side file injection (or a test-only chunked
   receive fallback), a temporary `LOAD,parity` row for the named outcome and `walk_us`, and the load-turn/rollback
   checklist. Execution awaits the scratch-slot raw-body write authorization and the injection choice.
+  **4.2 device leg PASS 2026-10-24 (bench track 8 / slot 5 = firmware 7/4).** With the device-written mixed-seed body
+  (34 events), the guard reports `t=7,s=4,result=ok,events=34,walk_us=120–125`; the **same body uploaded through the
+  seam** is also `ok`; a **one-byte root-velocity patch** of that body (tick 320 note 64, 100→90; passes byte-identical)
+  is **`result=divergent,events=34,walk_us=61`**, the slot has **no current** (`content_identity=0`, `root_identity=0`),
+  and `CAPTURE_CONTENT` is empty — the diverged root is never served. The original was restored and re-verified
+  (`ok`, identities back). An **existing** device body on track 8 slot 4 also reports `result=divergent,events=26` —
+  independent evidence, not only a fixture. Walk share is 10% of `LoadLoopBudget::FocusRestoreUs = 1,200 µs`; no
+  apply-overshoot row. **Host/device layout finding:** `sizeof(MidiEvent)` is 32 B native vs 20 B device (64-bit vs
+  32-bit union), so host-written LSV1 bodies are not device-valid; the leg uses the device-written body and a one-byte
+  patch. The seam/`LOAD_PARITY_ROW` row and the temporary qualification RAM1 re-base were removed; clean qualification
+  HEX `8c7d546d…`; full native 3,443 / 7 / 3,436; storage 63/63. Evidence:
+  [`evidence/2026-10-24-4.2-device-leg/EVIDENCE.md`](evidence/2026-10-24-4.2-device-leg/EVIDENCE.md). **4.2 is
+  complete; 2.8 (the consolidated red-proof accounting) is the remaining 1.2 item.**
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
