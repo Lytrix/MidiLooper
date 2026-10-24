@@ -130,6 +130,12 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   reset did not change the count. The 35 therefore include a harness/order interaction independent of the seed
   transition; the seed is **not landable** until a single-test/run-order isolation names the shared term. No production
   edit retained; the tree is the green 2.1 state.
+  **Isolation answer (2026-10-24).** Moving `test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed`
+  to the **front** of the suite makes it **PASS** (it fails later in the original order). The 35 are therefore
+  **cross-test resource retention**: the seed's `Adopted` early return in `serviceRollingPlaybackWindow` skips the
+  lane's ordinary coverage/snapshot source retirement, so the next tests see the retained source and their owner request
+  returns `11` (capacity-class). The fix is the coverage/snapshot retirement on the seed path (and in the fixture drop),
+  not a counter/order edit. Clean packet is **243/243**; 2.2 stays unchecked.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -161,4 +167,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Ten `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed; the residual 35 are a harness/order interaction (request 11) plus the demand-vs-seed split. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
+Eleven `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed; the residual 35 are cross-test retention of the launch coverage/snapshot source (request 11), not order/counters. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
