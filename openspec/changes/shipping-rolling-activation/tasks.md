@@ -113,6 +113,11 @@ for every family not yet removed.
   the shipping dense capture was blocked by the attach/display leg (transport running / 25 boot rows), not the lane.
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
+  **Drill run 2026-10-24 (not checked):** current-source cold control `e7e4b4fc…` built/flashed; the legacy image
+  boots and records the base (32/32, loop 1536), but the full base run is `INCONCLUSIVE_CAPTURE` (overdubs 0/0)
+  because the bench set/transport state blocks the capture. Rollback pair: shipping `09a5ae69…` ↔ cold
+  `e7e4b4fc…`; the 1.1 `dab405b3…` artifact is not preserved. A clean-bench run is owed before removals. Evidence:
+  [`evidence/2026-10-24-1.5-rollback/ROLLBACK.md`](evidence/2026-10-24-1.5-rollback/ROLLBACK.md).
 
 ## 2. Family removals (one at a time; each keeps the cold parity oracle)
 
