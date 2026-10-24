@@ -117,6 +117,11 @@ for every family not yet removed.
   set records 32/32/1536 but the full run is `INCONCLUSIVE_CAPTURE` (overdubs 0/0). 1.4 switch = named gap; 1.5 full
   base owed. Evidence:
   [`evidence/2026-10-24-1.4-switch-cleanbench/FINDING.md`](evidence/2026-10-24-1.4-switch-cleanbench/FINDING.md).
+  **Empty-bench run 2026-10-24 (authorized quarantine):** base content parity on cold+shipping (32/32,
+  16/16, 8/8, 1536, display, RAM2 180,224); shipping dense **overrun_rows=0**, leg True, 386 build_complete,
+  416/416; labels `SETUP_UNCONFIRMED`/`EVIDENCE_MISSING` are host setup/readback gates; switch is a host
+  evidence gap (`fresh_boot_unconfirmed`, no `LIB_OBSERVE`); `snap_gate` is qualification-only. Evidence:
+  [`evidence/2026-10-24-1.4-empty-bench/EVIDENCE.md`](evidence/2026-10-24-1.4-empty-bench/EVIDENCE.md).
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
   **Drill run 2026-10-24 (not checked):** current-source cold control `e7e4b4fc…` built/flashed; the legacy image
