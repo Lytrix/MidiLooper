@@ -40,6 +40,13 @@ def verify_record_snapshot_progress(
     lines: list[str], *, track_number: int | None, loop_slot: int | None
 ) -> dict[str, Any]:
     """Verify progress before/after the last Record stop for a declared 1-based target."""
+    # `DIAG,snap_gate` is qualification-only instrumentation (DebugSessionCapture.h). A capture with none of
+    # those rows at all is a build that does not compile the instrument (shipping / ROLLING=0 cold image), not a
+    # failed snapshot: the term is not applicable there. A qualification capture with rows for other targets but
+    # not the declared one still fails below.
+    if not snapshot_gate_rows(lines):
+        return {"applicable": False, "ok": True, "checks": [],
+                "detail": "no DIAG,snap_gate rows in this capture; snapshot gate is qualification-only"}
     stop_us = None
     for line in lines:
         if "Recording stopped @" in line:

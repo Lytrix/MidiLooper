@@ -59,6 +59,7 @@ from hitl.actions.correlation import (
     Wire,
 )
 from hitl.actions.observation import await_markers
+from hitl.boot_handoff import fresh_boot_in_window
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
@@ -1133,8 +1134,14 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
 
     boot_mode = getattr(capture, "boot_reset_mode", None)
     boot_seen = getattr(capture, "boot_banner_seen", None)
-    boot_unconfirmed = (request.clear_targets and boot_mode == "force"
-                        and callable(boot_seen) and not boot_seen())
+    boot_unconfirmed = False
+    if request.clear_targets and boot_mode == "force":
+        banner_seen = bool(boot_seen()) if callable(boot_seen) else False
+        if not banner_seen:
+            # The scenario-owned capture may not expose the managed capture's banner predicate; the capture log
+            # is the same evidence, so read the banner from it rather than treating a missing hook as a missing boot.
+            banner_seen = fresh_boot_in_window(_lines(capture_log))
+        boot_unconfirmed = not banner_seen
     if boot_unconfirmed:
         events.append({"event": "fresh_boot_unconfirmed",
                        "host_gate": "fresh_boot_required",

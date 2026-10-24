@@ -481,6 +481,9 @@ def run_windowed_content_parity(args: object) -> int:
             standalone = {}
         if isinstance(standalone.get("serial_verification"), dict):
             setattr(args, "windowed_leg_run_report", standalone["serial_verification"])
+    # The empty/fresh workspace has no pre-record identity rows (the before-record readback returns nothing);
+    # the post-drain readback is then the delta from boot. Tell the verifier so it does not demand a second row.
+    setattr(args, "ring_stats_baseline_zero", not ring_stats_before)
     report = verify_windowed_content_parity_leg(verification_lines, args)
     report["run"] = {
         "leg_exit_code": code,

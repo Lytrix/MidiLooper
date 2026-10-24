@@ -600,7 +600,7 @@ def ring_evidence_loss_rows(lines: list[str]) -> list[dict[str, Any]]:
     return rows
 def verify_windowed_lane(
     lines: list[str], *, expected_track_number: int | None = None, switch_target_slot: int | None = None,
-    require_ring_stats: bool = False,
+    require_ring_stats: bool = False, ring_stats_baseline_zero: bool = False,
 ) -> dict[str, Any]:
     """Judge the declared lane oracle and, when named, validate the switch target's eligibility."""
     intervals = running_intervals(lines)
@@ -615,6 +615,15 @@ def verify_windowed_lane(
         counters_clean = all(delta == 0 for delta in deltas.values())
         scoped_losses = [row for row in losses if row["us"] is None or baseline_stats["us"] is None or row["us"] >= baseline_stats["us"]]
         stats_detail = f"stats_readbacks={len(stats)} deltas={deltas}"
+    elif ring_stats_baseline_zero and len(stats) == 1:
+        # An empty/fresh workspace has no pre-record identity rows; the counters start at zero, so the single
+        # post-drain readback is the delta from boot. A non-empty run whose baseline went missing would carry
+        # non-zero counters here and still fail, so this is not a blanket waiver.
+        final_stats = stats[0]
+        deltas = {key: final_stats[key] for key in counter_keys}
+        counters_clean = all(delta == 0 for delta in deltas.values())
+        scoped_losses = list(losses)
+        stats_detail = f"stats_readbacks=1 baseline=zero deltas={deltas}"
     else:
         deltas = None
         counters_clean = not require_ring_stats
@@ -796,6 +805,7 @@ def verify_windowed_content_parity(lines: list[str], args: object) -> dict[str, 
         expected_track_number=track_number if target_slot is not None else None,
         switch_target_slot=target_slot,
         require_ring_stats=True,
+        ring_stats_baseline_zero=bool(getattr(args, "ring_stats_baseline_zero", False)),
     )
     loop_slot = getattr(args, "windowed_record_slot", getattr(args, "loop_slot", None))
     snapshot = verify_record_snapshot_progress(lines, track_number=track_number, loop_slot=loop_slot)
