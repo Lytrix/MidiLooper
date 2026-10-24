@@ -83,6 +83,16 @@ for every family not yet removed.
 - [ ] 1.4 **Prove shipping parity on device.** Flash the 1.3 image; boot/drain; run the registered route matrix and
   compare ordered MIDI + ledger to the 1.1 cold reference; record named missed deadlines/refusals, ring integrity,
   PSRAM/RAM2 high-water and the exact HEX. A fallback pass is not a parity pass.
+  **Finding 2026-10-24 — base route is NOT a parity pass yet.** The shipping image (`2fab59ab…`, `ROLLING=1`
+  without qualification receipts) passes the base content/ledger verifier (record 32/32, overdub 16/16, second 8/8,
+  loop 1536, RAM2 floor 147,456, display undo/redo), but the **serving route is not named**: shipping reports
+  `win_readiness,4,0,not_servable` during the record and the **bridge** handoff rows at both overdub stops, while the
+  cold reference reports `ready` and `fallback`. Timing differs materially (`max_pers` 75.7/76.1 ms vs 37.2/40.8;
+  second overdub 44.3 s vs 37.2 s; host messages 1,397 vs 842; display snapshots 3 vs 5). Either the 2-bar base is a
+  whole-take route outside the lane's supported window scope, or the compatibility bridge served it (the task's
+  “fallback pass is not a parity pass”). **Campaign paused** for the scope decision: run the parity on the
+  qualification-receipt image to name the route, and record the base scope explicitly (or wire the 3.7b demand).
+  Evidence: [`evidence/2026-10-24-1.4-parity/FINDING.md`](evidence/2026-10-24-1.4-parity/FINDING.md).
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
 
