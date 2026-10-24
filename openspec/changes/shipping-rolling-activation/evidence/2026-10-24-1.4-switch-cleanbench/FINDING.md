@@ -21,3 +21,22 @@ The accepted-sequence mixed switch is **setup-limited on this bench**, not lane-
 
 **Not claimed:** no switch parity, no full cold base parity. The production-demand lane parity (dense,
 qualification image) and the shipping base content parity stand.
+
+
+## Set-browser attempt (owner-selected clean-bench path) — cannot provide an empty master
+
+- `!REV_COMMIT` committed the current bench as **S3 v20** ("Revision commit complete S3 v20"), preserving it.
+- The set-browser **root/save row** is a **revision commit of the current workspace**
+  (`beginOverlaySaveRowCommit` → `requestCommitRevision`), not a new empty set. The root list exposes the saved
+  sets/revisions; there is no "create empty set" action.
+- The S3 revision history contains campaign states: **v1** is a 65-bar track-8 / 26-bar track-5 set
+  (`LIBOBS,S,t=7,s=0,…l=49920` and `t=4,s=0,…l=19968`), and **v20** is the current 24-bar state. The **base
+  2-bar** state is not among them. Loading v1 does not produce a 2-bar master; the accepted-sequence seed_b
+  still records into a long master.
+- Conclusion: the switch/display/full-rollback runs cannot be obtained through the set browser or revision load.
+  They need either the **workspace quarantine** (a true empty workspace; explicitly declined for now) or an
+  explicit **empty/new set** capability. The user's S3 revisions are preserved; the current bench is restored
+  from the revision state (v20 load requested; the device settles the load).
+
+**Not claimed:** switch parity and full cold-base parity. The production-demand activation, shipping base
+content parity, qualification dense lane parity, and the cold rollback image stand.
