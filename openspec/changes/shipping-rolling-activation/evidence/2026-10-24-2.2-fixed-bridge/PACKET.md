@@ -58,7 +58,19 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   rolling lane still rejects on `hasQueuedPlaybackStart()`, so the first target tick falls to the merged fallback.
   Direction chosen by the owner: seed the frame at the **commit/bind inside the lane** (the `launchBoundTick` adopt,
   allowed through the queued-start guard for that one commit tick), and re-point the shared helper + the rolling tests
-  to start from the seeded frame. That is a bounded rolling-suite re-point, not a wrapper deletion alone.
+  to start from the seeded frame.
+  **Third finding (cold hot path).** The native RWO suite's **firmware hot path is compiled cold**: the native env
+  carries `PIO_UNIT_TEST_NATIVE` but not `PLAYBACK_WINDOW_ROLLING_ENABLED`; the suite's own `#define` only covers the
+  test TU. The shared first-tick invariant is therefore the **cold** `boundLaunchView` source, not the rolling lane.
+  A bind seed was measured to adopt (`BINDSEED r=0` at the commit) but the cold hot path never calls
+  `resolveRollingPlaybackWindow`, so the +3 first-tick rebuilds remained. The slice split must be explicit:
+  - **rolling/shipping path:** remove the resolver's `boundLaunchView` use and seed the lane at the commit — the
+    shipping device proof;
+  - **cold compatibility (`ROLLING=0`):** keep `boundLaunchView` until 2.5 (the cold image is the rollback/reference,
+    and the native suite runs this path), exactly as 2.1 kept the merged fallback. Removing it from the cold build
+    changes the cold reference and requires re-pointing the shared helper.
+  The owner's directive ("remove boundLaunchView, seed the lane") is satisfied on the rolling path; the cold wrapper is
+  the named compatibility, not a second family removal.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -90,4 +102,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Two `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
+Three `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
