@@ -21,6 +21,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -1366,7 +1367,7 @@ void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
 namespace {
 /// 4.2 pre-publication note parity (narrow first slice): the staged root's note content versus the passes-derived
 /// projection. Note-level only; velocity/channel/event-tuple and closure parity are a later slice.
-bool checkpointNotesEquivalent(const NoteUtils::DisplayNoteVec& rootNotes,
+STORAGE_LOOP_IO_MEM bool checkpointNotesEquivalent(const NoteUtils::DisplayNoteVec& rootNotes,
                                const NoteUtils::DisplayNoteVec& passNotes) {
   if (rootNotes.size() != passNotes.size()) {
     return false;
@@ -1377,6 +1378,68 @@ bool checkpointNotesEquivalent(const NoteUtils::DisplayNoteVec& rootNotes,
         rootNotes[i].endTick != passNotes[i].endTick) {
       return false;
     }
+  }
+  return true;
+}
+
+/// Canonical committed-event tuple: tick, type (On/Off/other), channel, pitch or controller, velocity or value.
+/// NoteIds and raw structs are deliberately not compared (identities/order are not persistence semantics here).
+struct CheckpointEventKey {
+  uint32_t tick = 0;
+  uint8_t kind = 0;
+  uint8_t channel = 0;
+  uint8_t first = 0;
+  uint8_t second = 0;
+  bool operator==(const CheckpointEventKey& other) const {
+    return tick == other.tick && kind == other.kind && channel == other.channel &&
+           first == other.first && second == other.second;
+  }
+};
+
+STORAGE_LOOP_IO_MEM CheckpointEventKey checkpointEventKey(const MidiEvent& event) {
+  CheckpointEventKey key{};
+  key.tick = event.tick;
+  if (event.isNoteOn()) {
+    key.kind = 1;
+    key.channel = event.channel;
+    key.first = event.data.noteData.note;
+    key.second = event.data.noteData.velocity;
+  } else if (event.isNoteOff()) {
+    key.kind = 2;
+    key.channel = event.channel;
+    key.first = event.data.noteData.note;
+    key.second = event.data.noteData.velocity;
+  } else {
+    key.kind = 3;
+    key.channel = event.channel;
+    key.first = event.data.ccData.cc;
+    key.second = event.data.ccData.value;
+  }
+  return key;
+}
+
+/// 4.2 canonical event parity: the staged root's committed event stream versus the staged passes' effective stream.
+/// Both sides are staged load data; the target loop is untouched. Sort-then-compare is the first (non-streaming) form.
+STORAGE_LOOP_IO_MEM bool checkpointEventsEquivalent(const LoopSnapshot& root, SessionMidiEventVec& passEvents) {
+  std::vector<CheckpointEventKey> rootKeys;
+  const uint32_t loopLength = root.loopLengthTicks();
+  const uint32_t bars = loopLength == 0
+      ? 0
+      : (loopLength + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    forEachSnapshotMembershipReference(root.eventMembership(bar).get(),
+                                       [&](const LoopSnapshotEventRef& ref) {
+      if (ref) rootKeys.push_back(checkpointEventKey(ref->value));
+    });
+  }
+  std::vector<CheckpointEventKey> passKeys;
+  passKeys.reserve(passEvents.size());
+  for (const MidiEvent& event : passEvents) passKeys.push_back(checkpointEventKey(event));
+  if (rootKeys.size() != passKeys.size()) return false;
+  // First event slice: the two staged streams are compared in their own committed order (the root's membership order
+  // and the passes' tick order). Same-tick reordering is part of the bounded canonical-sort slice, not claimed here.
+  for (size_t i = 0; i < rootKeys.size(); ++i) {
+    if (!(rootKeys[i] == passKeys[i])) return false;
   }
   return true;
 }
@@ -1394,6 +1457,12 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
     LoopContentResolution::resolveDisplayNotes(*loadedLoopSnapshot, rootNotes);
     LoopContentResolution::resolveDisplayNotes(persistedOracle.passes, persistedOracle.loopLengthTicks, passNotes);
     if (!checkpointNotesEquivalent(rootNotes, passNotes)) {
+      return;
+    }
+    SessionMidiEventVec passEvents;
+    copyEffectiveCommittedEventsFromPasses(persistedOracle.passes, persistedOracle.loopLengthTicks, 0,
+                                           persistedOracle.loopLengthTicks, passEvents);
+    if (!checkpointEventsEquivalent(*loadedLoopSnapshot, passEvents)) {
       return;
     }
   }

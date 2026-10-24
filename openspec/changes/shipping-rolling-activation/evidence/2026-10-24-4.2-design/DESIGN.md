@@ -182,3 +182,22 @@ root/passes generation is possible. Storage suite **58/58**; full native **3,438
 Still owed in 4.2: the canonical event-tuple/closure comparison (the next slice; it requires a passes-derived
 effective-event projection usable on staged passes, because `copyEffectiveCommittedEventsInRange` is a `Loop` method),
 the bounded streaming walk, and the device leg.
+
+## Step 3 result (2026-10-24) — event-tuple guard (order-preserving first slice): GREEN
+
+- **Passes-derived projection:** `copyEffectiveCommittedEventsFromPasses(const LoopPasses&, loopLengthTicks, …)` is
+  extracted from `Loop::copyEffectiveCommittedEventsInRange` (the method now delegates), so the loader compares the
+  **staged** passes without installing them.
+- **Guard:** after the note compare, the loader compares the staged root's event stream (`eventMembership` per bar)
+  with the passes-derived effective stream on the canonical tuple — tick, type (On/Off/other), channel,
+  pitch-or-controller, velocity-or-value — **in their own committed order**. NoteIds and raw structs are not compared.
+- **Velocity RED → GREEN:** `test_4_2_a_velocity_divergence_is_not_published_as_current` changes the staged root's
+  NoteOn velocity (and note velocity) 100 → 90; the note-level projections still agree (pitch/start/end/noteId), so the
+  note guard is blind, and the old loader published it. The event guard refuses. Red-proof: disabling only the event
+  comparison makes **exactly** the velocity case fail; the pitch case (note guard) and the transactional case stay
+  green. Restored byte-identically.
+- **Pins:** both builds SUCCESS — default `391,944 + 1,272`, qualification `392,184 + 1,032` (+192 code from the
+  guard; both above the 840 floor). Storage **59/59**; full native **3,439 / 7 / 3,432**.
+
+**Still owed:** same-tick canonical ordering and the bounded streaming walk (the order-preserving compare is the first
+slice, not the final canonical sort), explicit closure-edge assertions, the device leg. **4.2 is not complete.**

@@ -167,10 +167,12 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) 
   }
 }
 
-LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out,
-                                                             uint32_t windowStart,
-                                                             uint32_t windowLength,
-                                                             bool includeActiveEditRows) const {
+LOOP_COLD_MEM void copyEffectiveCommittedEventsFromPasses(const LoopPasses& passes,
+                                                          uint32_t loopLengthTicks,
+                                                          uint32_t windowStart,
+                                                          uint32_t windowLength,
+                                                          SessionMidiEventVec& out,
+                                                          bool includeActiveEditRows) {
   if (loopLengthTicks == 0 || windowLength == 0) {
     out.clear();
     return;
@@ -267,6 +269,14 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec
     InvestigationCaptureLog::maybeLogCommittedEventRangeDiag(rangeTiming, passes, kRangeReportUs);
   }
 #endif
+}
+
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out,
+                                                             uint32_t windowStart,
+                                                             uint32_t windowLength,
+                                                             bool includeActiveEditRows) const {
+  copyEffectiveCommittedEventsFromPasses(passes, loopLengthTicks, windowStart, windowLength, out,
+                                         includeActiveEditRows);
 }
 
 namespace {

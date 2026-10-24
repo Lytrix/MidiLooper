@@ -2373,6 +2373,136 @@ void test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact() {
   releasePersistedLoopSnapshotChunks(divergentOracle);
 }
 
+namespace {
+bool snapshotHasNoteOnVelocity(const LoopSnapshot& root, uint8_t pitch, uint8_t velocity) {
+  const uint32_t bars = (root.loopLengthTicks() + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  bool found = false;
+  for (uint32_t bar = 0; bar < bars && !found; ++bar) {
+    forEachSnapshotMembershipReference(root.eventMembership(bar).get(),
+                                       [&](const LoopSnapshotEventRef& ref) {
+      if (ref && ref->value.isNoteOn() && ref->value.data.noteData.note == pitch &&
+          ref->value.data.noteData.velocity == velocity) found = true;
+    });
+  }
+  return found;
+}
+
+bool passesHaveNoteOnVelocity(const LoopPasses& passes, uint32_t loopLengthTicks, uint8_t pitch,
+                              uint8_t velocity) {
+  SessionMidiEventVec events;
+  copyEffectiveCommittedEventsFromPasses(passes, loopLengthTicks, 0, loopLengthTicks, events);
+  for (const MidiEvent& event : events) {
+    if (event.isNoteOn() && event.data.noteData.note == pitch &&
+        event.data.noteData.velocity == velocity) return true;
+  }
+  return false;
+}
+}  // namespace
+
+void test_4_2_a_velocity_divergence_is_not_published_as_current() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+
+  // Coherent production state and a coherent production body.
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+
+  // Parse the body: the passes (persistedOracle) and the staged root (parseState.loopSnapshot).
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  TEST_ASSERT_NOT_NULL(parseState.loopSnapshot.get());
+
+  // Locate the root note (pitch 62) and its matching On/Off pair in the staged root.
+  const auto notePages = parseState.loopSnapshot->noteMembership(62, 0);
+  TEST_ASSERT_NOT_NULL(notePages.get());
+  TEST_ASSERT_GREATER_THAN_UINT8(0, notePages->count);
+  const LoopSnapshotNoteRef noteRef = notePages->references[0];
+  TEST_ASSERT_NOT_NULL(noteRef.get());
+  TEST_ASSERT_EQUAL_UINT8(62, noteRef->pitch);
+  LoopSnapshotEventRef onRef;
+  LoopSnapshotEventRef offRef;
+  forEachSnapshotMembershipReference(parseState.loopSnapshot->eventMembership(0).get(),
+                                     [&](const LoopSnapshotEventRef& ref) {
+    if (ref->value.data.noteData.note != 62) return;
+    if (ref->value.isNoteOn()) onRef = ref;
+    if (ref->value.isNoteOff()) offRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL_MESSAGE(onRef.get(), "the staged root has the 62 NoteOn");
+  TEST_ASSERT_NOT_NULL_MESSAGE(offRef.get(), "the staged root has the 62 NoteOff");
+
+  // Mutate only the staged root: both pair members and the note pitch, 62 -> 63. The passes stay untouched.
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Replace;
+  noteChange.previous = noteRef;
+  noteChange.next = *noteRef;
+  noteChange.next.velocity = 90;
+  changes.notes.push_back(noteChange);
+  {
+    SnapshotEventChange eventChange{};
+    eventChange.kind = SnapshotChangeKind::Replace;
+    eventChange.previous = onRef;
+    eventChange.next = *onRef;
+    eventChange.next.value.data.noteData.velocity = 90;
+    changes.events.push_back(eventChange);
+  }
+  LoopSnapshotConstruction construction(parseState.loopSnapshot, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef divergent = construction.freeze();
+  TEST_ASSERT_NOT_NULL(divergent.get());
+
+  // Positive bite: the note-level projections still agree (pitch/start/end/noteId), so only the event tuple can see
+  // the changed velocity. The diverged root's NoteOn is 90; the passes' is 100.
+  NoteUtils::DisplayNoteVec stagedNotes, passNotes;
+  LoopContentResolution::resolveDisplayNotes(*divergent, stagedNotes);
+  LoopContentResolution::resolveDisplayNotes(oracle.passes, oracle.loopLengthTicks, passNotes);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(passNotes.size()), static_cast<uint32_t>(stagedNotes.size()));
+  for (size_t i = 0; i < passNotes.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT8(passNotes[i].note, stagedNotes[i].note);
+    TEST_ASSERT_EQUAL_UINT32(passNotes[i].startTick, stagedNotes[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(passNotes[i].endTick, stagedNotes[i].endTick);
+    TEST_ASSERT_EQUAL(passNotes[i].noteId, stagedNotes[i].noteId);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(snapshotHasNoteOnVelocity(*divergent, 62, 90),
+                           "the staged root's NoteOn velocity is 90");
+  TEST_ASSERT_TRUE_MESSAGE(passesHaveNoteOnVelocity(oracle.passes, oracle.loopLengthTicks, 62, 100),
+                           "the passes-derived NoteOn velocity is still 100");
+
+  // Load the divergent staged root. The target is a fresh slot: the required outcome is no current checkpoint and no
+  // candidate passes installed.
+  Loop restored;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(divergent));
+  TEST_ASSERT_NULL_MESSAGE(restored.publishedSnapshot().get(),
+                           "a velocity-divergent root is never published as current");
+  TEST_ASSERT_FALSE_MESSAGE(restored.passes.hasRecordPass(),
+                            "the candidate passes are not installed when parity fails");
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::NoCheckpoint),
+                        static_cast<int>(restored.checkpointParity()));
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 void test_4_2_a_divergent_root_is_not_published_as_current() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2712,6 +2842,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_save_parity_is_judged_on_the_serialized_root);
   RUN_TEST(test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root);
   RUN_TEST(test_4_2_a_divergent_root_is_not_published_as_current);
+  RUN_TEST(test_4_2_a_velocity_divergence_is_not_published_as_current);
   RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
   return UNITY_END();
 }

@@ -37,7 +37,11 @@ for every family not yet removed.
   load-commit fixture was a synthetic passes/root pair and now writes a coherent production body. **Not 4.2 complete:**
   velocity/channel/event-tuple/closure, the bounded streaming walk and the device leg remain. **The existing-slot
   transactional proof landed:** a coherent load followed by a fully parsed divergent body leaves the same root object,
-  pass and parity, with no diverged pitch (storage 58/58; full native 3,438/7/3,431).
+  pass and parity, with no diverged pitch. **Event-tuple slice landed:** the passes-derived free projection
+  (`copyEffectiveCommittedEventsFromPasses`) and an order-preserving canonical event compare (tick/type/channel/
+  pitch-or-cc/velocity-or-value) reject a velocity divergence the note guard cannot see; disabling the event compare
+  fails exactly that case. Storage 59/59; full native 3,439/7/3,432; pins 391,944+1,272 / 392,184+1,032. Same-tick
+  canonical ordering/streaming, closure edges and the device leg remain.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.

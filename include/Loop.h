@@ -1593,4 +1593,11 @@ struct Loop {
   void applyPendingSnapshotCompanionsToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
 };
 
+/// 4.2 checkpoint parity: the effective committed events of a **staged** pass state, without a Loop instance.
+/// Same projection the playback fallback uses (`Loop::copyEffectiveCommittedEventsInRange` delegates here).
+void copyEffectiveCommittedEventsFromPasses(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                            uint32_t windowStart, uint32_t windowLength,
+                                            SessionMidiEventVec& out,
+                                            bool includeActiveEditRows = false);
+
 #endif  // LOOP_H
