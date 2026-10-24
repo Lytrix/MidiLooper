@@ -48,7 +48,11 @@ for every family not yet removed.
   at a time and the passes stream is walked in lockstep; only the current tick's group is buffered. A dense coherent
   body (512+ pairs plus a same-tick group) round-trips. Storage 62/62; full native 3,442/7/3,435; pins 391,944+1,272 /
   392,184+1,032. The **per-turn device bound** and the device leg remain (the walk is O(events) with per-tick buffers;
-  the bound is a device measurement, not a claim).
+  the bound is a device measurement, not a claim). **Device-leg packet drafted:**
+  [`evidence/2026-10-24-4.2-device-leg/PACKET.md`](evidence/2026-10-24-4.2-device-leg/PACKET.md) — scratch slot 8/5,
+  production-written coherent/diverged bodies with a positive bite, host-side file injection (or a test-only chunked
+  receive fallback), a temporary `LOAD,parity` row for the named outcome and `walk_us`, and the load-turn/rollback
+  checklist. Execution awaits the scratch-slot raw-body write authorization and the injection choice.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
