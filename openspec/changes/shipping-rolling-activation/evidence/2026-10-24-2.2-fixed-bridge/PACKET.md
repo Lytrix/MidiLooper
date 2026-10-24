@@ -80,6 +80,12 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   commit, or the hot path's pre-resolution stale reset. The removed wrapper served because it does not depend on the
   rolling frame's lifecycle. Next concrete step: trace `rolling.phase` at the hot-path entry and after each early
   branch, pin the reset, and re-seed after it (or make the reset preserve a just-seeded launch frame).
+  **Fifth finding (reset narrowing).** The frame is already `phase=0 (Idle)` at the mid-function `HPPRE` inside
+  `Track::playCommittedLoopMidi` (hot-path entry for the target, line ~228/255), and `cancelRollingPlaybackWindow` is
+  **not** called for slot 2 at the commit tick. The reset is therefore between the commit seed and that point:
+  `playMidiEvents`/`playMidiEventsForSlot`, `playCommittedLoopMidi`'s early code (228-255), or a manager call after the
+  commit. Next concrete trace: `playCommittedLoopMidi` entry (228), `playMidiEventsForSlot` (621), and the commit end
+  (`commitQueuedPlaybackStart` after the seed); one of those three will show the Serving→Idle transition.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -111,4 +117,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Four `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
+Five `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
