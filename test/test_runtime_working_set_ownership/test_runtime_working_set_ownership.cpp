@@ -10150,6 +10150,45 @@ LoopPlaybackRuntime* prepareCommittedRetrySlot(Track& track, uint8_t slot, uint3
 /// with the turn's clock; a whole-take (2-bar) slot must request nothing and keep its existing route, and a
 /// ready window must not be re-requested. This is the seam the shipping activation was missing: the lane
 /// could be compiled but no production caller ever asked, so the bridge/merged fallback served.
+/// **2.1 prepared pair -- the full-take switch route must not publish one.** The demoted launch/switch routes are
+/// already served by the unified window (`preparePlaybackLaunchForSlot` requires demoted content, and
+/// `publishPreparedPlaybackPairFromWorkingWindow` requires a full-loop window, which a demoted loop never builds).
+/// The pair's only production route is the **full-take legacy switch** below: once the target is active, the clock
+/// path's consume miss requests a replacement and the off-clock owner publishes it. After 2.1 that route falls to
+/// the merged fallback (2.5's family, still compiled and reachable) and the pair is gone.
+void test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);  // 768 ticks, a full-take (undemoted) target
+  publishBarSpacedRootForSlot(track.getLoop(0), 1);
+  publishBarSpacedRootForSlot(track.getLoop(1), 1);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackProjection(0, false);
+  trackManager.requestSlotSwitch(0, 1, SlotQuantization::LoopEnd, 96);
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_TRUE(runtime->prewarmPreparedPlaybackPair());
+  for (uint32_t tick = 0; tick <= 3 * Config::TICKS_PER_BAR; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    trackManager.updateAllTracks(tick);
+    (void)trackManager.servicePendingPreparedPlaybackPair();
+  }
+  char state[160];
+  snprintf(state, sizeof(state), "active=%u pair=%d merged=%u order=%u len=%u req=%d",
+           static_cast<unsigned>(track.getActiveLoopIndex()), runtime->preparedPair.ready ? 1 : 0,
+           static_cast<unsigned>(runtime->mergedMidiEvents.mergedEvents.size()),
+           static_cast<unsigned>(track.getLoop(1).getPlaybackOrder().size()),
+           static_cast<unsigned>(track.getLoop(1).loopLengthTicks),
+           runtime->preparedPairRequestPending ? 1 : 0);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.getActiveLoopIndex(), state);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->preparedPair.ready, state);
+}
+
 void test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take() {
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
@@ -17599,6 +17638,7 @@ int main() {
   RUN_TEST(test_committed_retry_clock_stamp_projects_nonzero_slot_origin);
   RUN_TEST(test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request);
   RUN_TEST(test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take);
+  RUN_TEST(test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair);
   RUN_TEST(test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling);
   RUN_TEST(test_committed_retry_cancel_drains_source_and_epoch_invalidation_never_regrants);
   RUN_TEST(test_committed_retry_residual_lead_and_empty_two_bar_envelope_refuse_without_new_lap);

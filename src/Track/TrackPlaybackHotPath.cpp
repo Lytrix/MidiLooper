@@ -317,29 +317,11 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 #if RUNTIME_TIMING_ENABLED
   const uint32_t rebuildStartUs = micros();
 #endif
-  // Task 2.4 slice 2 -- request/consume.
-  //
-  // The merged fallback consumes only an immutable `PreparedPlaybackPair`: one
-  // coherent (events, order, cursor seed) triple published atomically by the
-  // off-clock owner. A source change therefore *requests* a replacement and keeps
-  // consuming the last coherent pair, instead of folding accepted capture into the
-  // window this tick is emitting and rebuilding the order underneath the cursor.
-  //
-  // The pair path covers the full-loop window, which is where the reachable active
-  // rebuild (seal admission) is concentrated. A long-loop windowed gather keeps its
-  // own coverage handoff; that path is recorded as its own slice rather than
-  // absorbed here.
-  const bool pairApplicable =
-      fixedView == nullptr && !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+  // 2.1 (prepared-pair removal, increment 1): the pair is no longer a production source. The supported
+  // (demoted) launch/switch routes already serve the unified window; the full-take legacy route falls to the
+  // merged fallback below (2.5's family, still compiled and reachable) until 2.5 removes it.
   const PreparedPlaybackPair* livePair = nullptr;
-  bool pairHeld = false;
-  if (pairApplicable) {
-    const PreparedPairConsumeDecision decision = resolvePreparedPairConsume(
-        runtime, loop, loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity(),
-        loop.hasPendingOverdubSealAdmission(), currentTick);
-    livePair = decision.pair;
-    pairHeld = decision.held;
-  }
+  const bool pairHeld = false;
   // The legacy in-place builder is now reachable only as (a) the STOPPED/off-clock
   // oracle, (b) the long-loop windowed path, and (c) the cold first audible turn of a
   // slot with no pair yet. The detector counts it, so case (c) cannot grow silently.

@@ -61,47 +61,6 @@ void test_real_reader_witnesses_silent_turn_without_crediting_preparation() {
   TEST_ASSERT_EQUAL_UINT32(valid, ReadRows::count);
 }
 
-void test_selected_prepared_pair_has_a_real_reader_witness() {
-  Track& track = trackManager.getTrack(0);
-  prepareSlot(track, 0, true);
-  track.forceSetState(TRACK_PLAYING);
-  TrackCaptureStopTestAccess::unmute(track);
-  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(track, 0);
-  auto& loop = track.getLoop(0);
-  auto* set = runtime.viewSetIfPrewarmed();
-  set->lifecycle.current = RuntimePlaybackViewLifecycle::kNoView;
-  TEST_ASSERT_TRUE(runtime.prewarmPreparedPlaybackPair());
-  const PlaybackViewSourceIdentity source{loop.playbackRevision,
-      TrackCaptureStopTestAccess::playbackGenerationOf(track), loop.publishedSnapshotIdentity()};
-  const MidiEvent events[] = {MidiEvent::NoteOn(12, 1, 60, 100), MidiEvent::NoteOff(96, 1, 60, 0)};
-  const uint16_t order[] = {0, 1};
-  TEST_ASSERT_TRUE(runtime.publishPreparedPlaybackPair(events, 2, order, 2,
-      source, PlaybackCoverageInterval{0, 768, 768}, 100));
-  loop.lastTickInLoop = 100;
-  nativePlaybackDeadlineClock = {};
-  clockManager.assignCurrentTickSilently(120);
-  MidiSendCapture::reset();
-  track.playMidiEvents(120, true);
-  TEST_ASSERT_EQUAL_UINT32(1, ReadRows::count);
-  TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
-  TEST_ASSERT_EQUAL_UINT64(runtime.preparedPair.generation, ReadRows::last.storageGeneration);
-  TEST_ASSERT_EQUAL(PlaybackWindowOrigin::Committed, ReadRows::last.origin);
-  TEST_ASSERT_EQUAL_UINT32(120, ReadRows::last.tick);
-
-  // Guard-level bridge controls: only the exact complete selected compiled context can be credited.
-  set->bridgeLifecycle.selected = 0;
-  auto& bridge = set->bridges[0];
-  bridge.source = source; bridge.coverage = {0, 768, 768}; bridge.storageGeneration = 91;
-  bridge.complete = bridge.selected = bridge.streamPrepared = true;
-  track.observePlaybackReadForTurn(0, nullptr, &bridge);
-  TEST_ASSERT_EQUAL_UINT32(2, ReadRows::count);
-  bridge.complete = false; track.observePlaybackReadForTurn(0, nullptr, &bridge); bridge.complete = true;
-  bridge.selected = false; track.observePlaybackReadForTurn(0, nullptr, &bridge); bridge.selected = true;
-  bridge.streamPrepared = false; track.observePlaybackReadForTurn(0, nullptr, &bridge); bridge.streamPrepared = true;
-  set->bridgeLifecycle.selected = 1; track.observePlaybackReadForTurn(0, nullptr, &bridge);
-  TEST_ASSERT_EQUAL_UINT32(2, ReadRows::count);
-}
-
 void test_current_snapshot_availability_is_not_claimed_as_a_completed_late_reader() {
   Track& track = trackManager.getTrack(0);
   prepareSlot(track, 0, false);
@@ -155,7 +114,6 @@ void test_current_snapshot_availability_is_not_claimed_as_a_completed_late_reade
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_real_reader_witnesses_silent_turn_without_crediting_preparation);
-  RUN_TEST(test_selected_prepared_pair_has_a_real_reader_witness);
   RUN_TEST(test_current_snapshot_availability_is_not_claimed_as_a_completed_late_reader);
   return UNITY_END();
 }

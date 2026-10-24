@@ -2064,10 +2064,8 @@ TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) 
       // Otherwise the first target tick resets the cache we just prepared.
       runtime->syncRevision(loop.playbackRevision, playbackGeneration);
     }
-    // Task 2.4 slice 2: the working window just became coherent, so publish the
-    // immutable pair the clock path consumes. Publication is the atomic authority
-    // change; the clock path itself never builds or reanchors.
-    (void)publishPreparedPlaybackPairFromWorkingWindow(slotIndex);
+    // 2.1: the prepared pair is no longer published. The supported (demoted) launch/switch routes serve the
+    // unified window; the full-take legacy route uses the merged fallback until 2.5.
     // The full vector/order build is the STOPPED oracle until task 2.4 moves
     // the active clock path to the fixed view. Publish its completed window
     // only while every track is stopped; active transport must never turn the

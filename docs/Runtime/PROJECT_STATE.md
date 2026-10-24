@@ -1,3 +1,23 @@
+**2026-10-24 — shipping-rolling-activation 2.1 prepared pair: increment 1 (production path removed; 2.1 open).**
+The pair is no longer published or consumed on any production route: removed the
+`publishPreparedPlaybackPairFromWorkingWindow` call in `Track::ensurePlaybackMergedEventsForSlot` and the
+`resolvePreparedPairConsume` block in `TrackPlaybackHotPath.cpp`. **Scope finding:** the demoted launch/switch routes
+already serve the unified window and never reach the pair; the window lane deliberately refuses undemoted/full-take
+slots (the 1.4 scope split), and the pair publishes only a full-loop window, so its only production route is the
+**full-take legacy switch**, which now falls to the **merged fallback** (2.5's family, still compiled and reachable).
+The earlier "whole-loop window extension for full-take" idea is rejected as a 2.5 scope change. RED→GREEN: the
+full-take switch owner route (`servicePendingSlotProvision` → `updateAllTracks` across the boundary → owner service)
+published the pair (`active=1 pair=1 merged=2 order=2 len=768 req=0`) and now does not (`pair=0`), test
+`test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair`. Eight pair-own tests were retired (seven
+`test_continuous_capture` publication/consume/hold oracles + the read-witness pair row). Gates: focused **607/607**,
+full native **3437 / 7 skipped / 3430 passed**, both builds **96,192 / 392,040 + 1,176 / 34,880** (ITCM 393,216,
+floor 840, 336 B headroom), shipping HEX `15103188953f919d`, qualification `8e4216c797e95225`. **Increment 2 (open):**
+delete the dead `PreparedPlaybackPair`/runtime storage/API, `resolvePreparedPairConsume`, the publish/service owner
+and the dead hot-path branches; re-point/delete the three direct-seed pair tests and the prewarm/whole-take storage
+assertions; then device requalification + cold parity + rollback. Rollback pair unchanged: shipping `09a5ae69…` ↔
+cold `e7e4b4fc…`. Evidence:
+`openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`.
+
 **2026-10-24 — shipping-rolling-activation: 1.2–1.5 CLOSED (activation, shipping parity, rollback; no removals).**
 The shipping env builds `PLAYBACK_WINDOW_ROLLING_ENABLED=1` with the explicit marker
 `PLAYBACK_WINDOW_ROLLING_SHIPPING_ACTIVATED=1` (distinct from the qualification instrumentation); the activation
