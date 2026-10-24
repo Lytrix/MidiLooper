@@ -33,3 +33,34 @@ capacity form is the discriminating mutation.
 - **2.8** — consolidated red-proof accounting; 2.2/2.4 are recorded above, 2.9 is pending.
 
 No 1.2 checkoff; only 2.2 and 2.4 are claimed.
+
+## 2.9 — retained-source hold/release matrix: LANDED (test-driven)
+
+New registered `test_retained_source_holds_a_paused_build_across_a_replacement_pass` (`test_runtime_working_set_ownership`):
+retain a revision, admit a window build and pause it after one grain, replace the committed pass with different content
+(the revision moves), attempt release (refused: the paused build still needs the source), resume to completion, and
+compare the served window's interval rows to the **old** revision's effective content element-for-element. Combined with
+the existing W-14…W-17 fixture (roles/pins/owned bodies, root replacement, pass reclamation, the reset path, the
+served-window hold, release after a newer window), this covers the matrix's sequence. **Owner decision recorded:** the
+matrix is test-driven; a production retainer consumer is not added (`retainPlaybackSourceForSlot` remains without a
+production caller), and that consumer is the activation change's follow-up if the shipping route needs it.
+
+## 4.1 — content-level undo parity: LANDED (exact root identity)
+
+The existing `test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag` now also asserts that the undo
+installs the **exact root object the entry named** (`publishedSnapshot().get()` identity), not a re-derived one, in
+addition to the coverage it carried and the named `OwesReconciliation`/never-current lagging case. **Owner decision:**
+`checkpointParity` remains an oracle (no production consumer in the undo path); the 4.2 load path will be its first
+production consumer per the design. The stronger event-set comparison through the 4.3 content pipeline belongs to the
+4.2 oracle, where it is specified.
+
+## 4.2 — full design written
+
+[`2026-10-24-4.2-design/DESIGN.md`](../2026-10-24-4.2-design/DESIGN.md): the content-divergence oracle (production
+writer + restore edge; mutate committed MIDI content, not the `nextNoteId` counter), the two repair options (persisted
+provenance vs bounded load reconciliation), and the recommendation: **bounded load reconciliation** — compare the
+persisted root's content to the loaded passes at the restore edge, name `OwesReconciliation` and rebuild/stale rather
+than presenting a diverged root as current; no LSV1 format change. Implementation is the next slice.
+
+**Still open in 1.2:** 4.2 implementation (oracle + repair), and the 2.8 consolidated red-proof accounting for 2.9/4.1
+(2.2/2.4 are recorded).

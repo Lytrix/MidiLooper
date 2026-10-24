@@ -18,11 +18,14 @@ for every family not yet removed.
   allocation/inline-build mutation, 2.9 retained-source hold/release matrix (+ the `retainPlaybackSourceForSlot`
   consumer decision), 4.1 content-level undo parity + consumer decision, 4.2 content-divergence oracle + repair choice,
   and the 2.8 consolidated red-proof accounting. No residual is checked by declaration alone.
-  **Progress 2026-10-24 — 2.2 and 2.4 landed and red-proved; 2.9/4.1/4.2/2.8 remain, so 1.2 stays unchecked.**
+  **Progress 2026-10-24 — 2.2, 2.4, 2.9 and 4.1 landed; 4.2 designed; 2.8 remains, so 1.2 stays unchecked.**
   [`evidence/2026-10-24-verification-residuals/PROGRESS.md`](evidence/2026-10-24-verification-residuals/PROGRESS.md):
-  the derived-deadline short/long/tempo fixture and the S4b.7 edge-capacity assertion are in; both mutations turned 28
-  tests red and were restored byte-identically. 2.9 needs the retainer-consumer decision; 4.1 the parity-consumer
-  decision; 4.2 the content-divergence oracle/repair choice.
+  the derived-deadline short/long/tempo fixture, the S4b.7 edge-capacity assertion (both mutations: 28 red, restored),
+  the retained-source paused-build/replacement matrix (test-driven; no production retainer consumer by decision), and
+  the exact-root undo identity (parity remains an oracle; the 4.2 load path is its first consumer). 4.2's full design is
+  [`evidence/2026-10-24-4.2-design/DESIGN.md`](evidence/2026-10-24-4.2-design/DESIGN.md): content-divergence oracle +
+  bounded load reconciliation recommended (no LSV1 format change). Remaining: 4.2 implementation and the 2.8 red-proof
+  accounting for 2.9/4.1.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.

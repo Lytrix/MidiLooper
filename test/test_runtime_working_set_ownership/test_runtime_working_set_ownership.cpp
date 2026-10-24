@@ -4952,6 +4952,80 @@ void test_retained_source_is_admitted_with_roles_and_survives_both_destruction_p
   TEST_ASSERT_FALSE(windowTrack.hasRetainedPlaybackSourceForSlot(0));
 }
 
+/// **2.9 — a retained source survives a paused build and a replacement pass, and serves the old revision's exact
+/// content.** The sequence the matrix names: retain, admit a build and pause it, replace the committed pass (the
+/// revision moves), attempt release (the paused build still owes the source), resume, and compare the served window's
+/// content to the retained gather of the **old** revision. The production retainer consumer is deliberately not
+/// claimed (test-driven matrix; `retainPlaybackSourceForSlot` has no production caller yet).
+void test_retained_source_holds_a_paused_build_across_a_replacement_pass() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 24);
+  track.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  Loop& loop = track.getLoop(0);
+  SessionMidiEventVec oldContent;
+  loop.copyEffectiveCommittedEventsInRange(oldContent, 0, loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(oldContent.empty());
+  const uint32_t retainedRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 51)));
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(
+                        0, kWindowOwnerExpectedRequiredLead, scratch)));
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                           "the fixture must admit a build it can pause");
+  (void)track.stepPlaybackViewMaintenance();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                           "the fixture must stop before the build completes");
+
+  // Replace the committed pass with different content: the loop's revision moves past the retained one.
+  commitBarSpacedPassIntoTrackSlot(track, 0, 25);
+  TEST_ASSERT_TRUE(loop.playbackRevision > retainedRevision);
+  TEST_ASSERT_FALSE_MESSAGE(track.tryReleaseRetainedPlaybackSource(0),
+                            "a paused build still needs its source");
+  TEST_ASSERT_TRUE(track.hasRetainedPlaybackSourceForSlot(0));
+
+  // Resume: the build completes from the retained old revision, not the replacement pass.
+  for (int turn = 0; turn < 64 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedRevision, served.playbackRevision,
+                                   "the paused build serves the revision it was admitted for");
+
+  // The exact old content: the served window is the revision's own rows, element for element (tick and note
+  // identity), and it is not the replacement pass's different content.
+  size_t windowCount = 0;
+  while (true) {
+    MidiEvent event{};
+    if (!track.playbackWindowEventAtForSlot(0, static_cast<uint16_t>(windowCount), event)) {
+      break;
+    }
+    ++windowCount;
+  }
+  // The window serves the interval; the old revision's rows inside that same interval are the oracle.
+  std::vector<MidiEvent> expectedInInterval;
+  for (const MidiEvent& event : oldContent) {
+    const uint32_t phase = event.tick % loop.loopLengthTicks;
+    if (served.interval.contains(phase)) expectedInInterval.push_back(event);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expectedInInterval.size()),
+                                   static_cast<uint32_t>(windowCount),
+                                   "the served window is exactly the retained old revision's interval rows");
+  for (size_t i = 0; i < expectedInInterval.size(); ++i) {
+    MidiEvent event{};
+    TEST_ASSERT_TRUE(track.playbackWindowEventAtForSlot(0, static_cast<uint16_t>(i), event));
+    TEST_ASSERT_EQUAL_UINT32(expectedInInterval[i].tick, event.tick);
+    TEST_ASSERT_EQUAL(expectedInInterval[i].isNoteOn(), event.isNoteOn());
+    TEST_ASSERT_EQUAL(expectedInInterval[i].data.noteData.note, event.data.noteData.note);
+  }
+}
+
 /// 3.6b (AC-5 / F-3): the **lag rule** -- a missed deadline keeps the previous revision authoritative for *that*
 /// traversal, a second consecutive miss is a named breach reported once, a further edit never resets the allowance,
 /// and the resolution is total (so a consumer is never blocked).
@@ -7637,7 +7711,8 @@ void test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag()
   entry.slotIndex = 0;
   entry.editPassType = EditPassType::Note;
   entry.editPassIds.push_back(4242);
-  entry.beforePublishedSnapshot = rootForState();
+  const auto entryRoot = rootForState();
+  entry.beforePublishedSnapshot = entryRoot;
   entry.beforePublishedCoverage = revisionBeforeUndo;
   EditPass batch{};
   batch.id = 4242;
@@ -7648,6 +7723,8 @@ void test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag()
   TrackUndo::undoForLoop(track, track.getActiveLoop());
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionBeforeUndo, loop.publishedSnapshotCoveredRevision(),
                                    "the undo restores the root its entry named, with the coverage it carried");
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(entryRoot.get(), loop.publishedSnapshot().get(),
+                                "the restored checkpoint is the exact root the entry named, not a re-derived one");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionBeforeUndo + 1, loop.committedPassRevision(),
                                    "fixture precondition: the undo advanced the committed-pass revision");
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::OwesReconciliation),
@@ -17642,6 +17719,7 @@ int main() {
   // windowed-playback-generation slice 3.6a: the retained source revision, its roles, and the two destruction paths
   // it must survive (the pass-level reclamation consumer and the direct pass-timeline reset).
   RUN_TEST(test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths);
+  RUN_TEST(test_retained_source_holds_a_paused_build_across_a_replacement_pass);
   // windowed-playback-generation slice 3.6b: the lag rule -- one pass late and only that, the second miss named once.
   RUN_TEST(test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss);
   RUN_TEST(test_an_admitted_deadline_miss_is_serviced_per_turn_once_per_traversal_and_never_re_granted);
