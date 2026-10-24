@@ -6,8 +6,9 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 ## Identity and scope
 
 - Task: **2.1 prepared pair**. Status: **implementation complete** (increments 1+2: the family is removed; no pair
-  type, API, storage or owner remains). The **device gate** (qualified launch/switch on shipping + cold control, cold
-  parity, rollback) is still pending, so 2.1 stays unchecked.
+  type, API, storage or owner remains). The **device gate is partially executed and bench-limited** (both images
+  flashed/booted; base distinct inventory matches; stored totals differ on the non-empty `151444` bench; mixed switch
+  not rerun). 2.1 stays unchecked.
 - Remove: `Track::resolvePreparedPairConsume` (`src/Track/TrackPlaybackWindowBuild.cpp`, decl
   `include/TrackInternal.h`), the `PreparedPlaybackPair` publication/clearing path
   (`LoopPlaybackRuntime::requestPreparedPlaybackPair` / `publishPreparedPlaybackPair` /
@@ -70,9 +71,13 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   suite removed/retired; expected **0 failures**.
 - Broad: full native (**3432 cases, 7 skipped, 3425 passed**); both builds at **96,192 / 392,040 + 1,176 / 34,880**
   (ITCM total 393,216; approved floor padding >= 840; 336 B headroom); strict OpenSpec; `git diff --check`.
-- Device: **pending**. The qualified launch/switch gesture on the shipping image `e5a26dd68ecf9a46` (and the cold
-  control `e7e4b4fc…` for the legacy route), the source/identity/content/ledger oracle; the mixed-oracle finalization
-  limitation named; the cold parity comparison and the rollback (`09a5ae69…` ↔ `e7e4b4fc…`).
+- Device: **partial / bench-limited** (`EVIDENCE-DEVICE-PARTIAL.md`). Shipping `e5a26dd68ecf9a46` and cold
+  `e7e4b4fc…` both flashed/booted; the base preset ran on each. Distinct inventory/spans/bars match (15/7,
+  1296/1209, 2/2) and display passes, but the stored totals differ (shipping 16/20 vs cold 32/40) because the
+  non-empty `151444` bench is not reset by the preset. The mixed switch was not rerun (setup-limited; campaign slots
+  4/5). The runner metadata pins the build artifact for all runs, so the cold pin is the loader output + cold HEX.
+  Next: park the workspace (needs this session's explicit authorization) or a clean-slot procedure, then rerun base
+  + mixed switch on both images.
 - Evidence path: `openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/`.
 
 ## Completion record
@@ -102,6 +107,7 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   Full native **3432 / 7 skipped / 3425 passed**; both builds unchanged at **96,192 / 392,040 + 1,176 / 34,880**
   (FLASH 1,197,696 shipping / 1,202,888 qualification); shipping HEX `e5a26dd68ecf9a46`, qualification
   `9b0e1d3f10054699`. Evidence: `EVIDENCE-INCREMENT-2.md`.
-- **Device gate (open):** qualified launch/switch on shipping `e5a26dd6…` + cold control `e7e4b4fc…`, cold parity,
-  rollback record. 2.1 is not checked until it lands.
+- **Device gate (partial, open):** see `EVIDENCE-DEVICE-PARTIAL.md`; base distinct inventory matches but the stored
+  totals differ on the non-empty bench, and the mixed switch was not rerun. 2.1 is not checked until a clean pair
+  lands.
 - Rollback: prior shipping `09a5ae69…` (stable-demand), cold control `e7e4b4fc…`.

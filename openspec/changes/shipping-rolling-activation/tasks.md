@@ -150,10 +150,12 @@ remove two families in one slice.
     `resolvePreparedPairConsume`, the publish/service owner, the dead hot-path branches, the metrics/read-witness
     paths) and re-pointed the remaining tests. The full-take legacy switch serves the raw merged fallback (2.5's
     family); the demoted launch/switch keeps the unified window. Full native **3432/7/3425**; both builds
-    **96,192 / 392,040 + 1,176 / 34,880**; shipping `e5a26dd6…`, qualification `9b0e1d3f…`. **Remaining:** the device
-    gate (qualified launch/switch on shipping + cold control, cold parity, rollback); 2.1 stays unchecked until then.
-    Evidence: `evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`,
-    `EVIDENCE-INCREMENT-2.md`.
+    **96,192 / 392,040 + 1,176 / 34,880**; shipping `e5a26dd6…`, qualification `9b0e1d3f…`. **Device gate partial
+    (bench-limited):** both images flashed/booted and ran the base preset; distinct inventory/spans/bars match
+    (15/7) but the non-empty `151444` bench stores 16/20 vs 32/40, and the mixed switch was not rerun. Next: park the
+    workspace (this session's authorization required) or a clean-slot procedure. 2.1 stays unchecked. Evidence:
+    `evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`, `EVIDENCE-INCREMENT-2.md`,
+    `EVIDENCE-DEVICE-PARTIAL.md`.
 - [ ] 2.2 **Fixed/bridge.** Remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection and
   `boundLaunchView`; prove the committed routes serve from the window reader.
 - [ ] 2.3 **First-Record / Record-return.** Remove `adoptFirstRecordingBarReturnWindow` and
