@@ -2605,6 +2605,59 @@ void test_4_2_a_divergent_root_is_not_published_as_current() {
   releasePersistedLoopSnapshotChunks(oracle);
 }
 
+/// **4.2 closure edge — a wrap note's persisted checkpoint round-trips through the note + event guard.** The note's
+/// On is at the loop end and its Off after the wrap; the two staged projections must agree on both halves and the
+/// restored root must remain current.
+void test_4_2_a_wrap_note_checkpoint_round_trips() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(1500, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(50, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 1536));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+  TEST_ASSERT_NOT_NULL(parseState.loopSnapshot.get());
+
+  Loop restored;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(parseState.loopSnapshot));
+  TEST_ASSERT_NOT_NULL_MESSAGE(restored.publishedSnapshot().get(),
+                               "a coherent wrap-note body is current after the guard");
+  TEST_ASSERT_TRUE(restored.publishedSnapshotIsCurrent());
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(*restored.publishedSnapshot(), notes);
+  bool wrapNote = false;
+  for (const auto& note : notes) {
+    if (note.note == 62) {
+      wrapNote = true;
+      TEST_ASSERT_TRUE_MESSAGE(note.startTick > note.endTick / 1u || note.endTick < note.startTick,
+                               "the wrap note keeps its cross-boundary span");
+      TEST_ASSERT_EQUAL_UINT32(1500, note.startTick);
+      TEST_ASSERT_EQUAL_UINT32(50, note.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(wrapNote, "the wrap note survives the checkpoint round trip");
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2843,6 +2896,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root);
   RUN_TEST(test_4_2_a_divergent_root_is_not_published_as_current);
   RUN_TEST(test_4_2_a_velocity_divergence_is_not_published_as_current);
+  RUN_TEST(test_4_2_a_wrap_note_checkpoint_round_trips);
   RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
   return UNITY_END();
 }

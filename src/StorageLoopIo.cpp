@@ -3,7 +3,6 @@
 
 #include "StorageLoopIo.h"
 
-#include "LoopContentResolution.h"
 #if !defined(PIO_UNIT_TEST_NATIVE)
 #include "Track.h"
 #include "TrackUndo.h"
@@ -1367,21 +1366,6 @@ void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
 namespace {
 /// 4.2 pre-publication note parity (narrow first slice): the staged root's note content versus the passes-derived
 /// projection. Note-level only; velocity/channel/event-tuple and closure parity are a later slice.
-STORAGE_LOOP_IO_MEM bool checkpointNotesEquivalent(const NoteUtils::DisplayNoteVec& rootNotes,
-                               const NoteUtils::DisplayNoteVec& passNotes) {
-  if (rootNotes.size() != passNotes.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < rootNotes.size(); ++i) {
-    if (rootNotes[i].note != passNotes[i].note ||
-        rootNotes[i].startTick != passNotes[i].startTick ||
-        rootNotes[i].endTick != passNotes[i].endTick) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /// Canonical committed-event tuple: tick, type (On/Off/other), channel, pitch or controller, velocity or value.
 /// NoteIds and raw structs are deliberately not compared (identities/order are not persistence semantics here).
 struct CheckpointEventKey {
@@ -1452,13 +1436,6 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
   // the target loop is untouched until the pre-publication comparison passes. A divergent body applies neither the
   // candidate root nor the candidate passes, so an existing slot keeps its complete previous generation.
   if (usesLoopSnapshotBodyFormatV1 && loadedLoopSnapshot) {
-    NoteUtils::DisplayNoteVec rootNotes;
-    NoteUtils::DisplayNoteVec passNotes;
-    LoopContentResolution::resolveDisplayNotes(*loadedLoopSnapshot, rootNotes);
-    LoopContentResolution::resolveDisplayNotes(persistedOracle.passes, persistedOracle.loopLengthTicks, passNotes);
-    if (!checkpointNotesEquivalent(rootNotes, passNotes)) {
-      return;
-    }
     SessionMidiEventVec passEvents;
     copyEffectiveCommittedEventsFromPasses(persistedOracle.passes, persistedOracle.loopLengthTicks, 0,
                                            persistedOracle.loopLengthTicks, passEvents);

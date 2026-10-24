@@ -201,3 +201,18 @@ the bounded streaming walk, and the device leg.
 
 **Still owed:** same-tick canonical ordering and the bounded streaming walk (the order-preserving compare is the first
 slice, not the final canonical sort), explicit closure-edge assertions, the device leg. **4.2 is not complete.**
+
+## Step 4 result (2026-10-24) — closure edge; the note-level guard is retired
+
+- **Closure test:** `test_4_2_a_wrap_note_checkpoint_round_trips` — a coherent body with On@1500 / Off@50 (a wrap
+  note) must restore current. The **note-level** compare rejected this coherent body: the passes-derived display note
+  and the snapshot note represent the wrap span differently. That is a false rejection, not a divergent body.
+- **Retirement:** the note-level guard is removed. The canonical **event tuple** is now the sole pre-publication parity
+  authority; it accepts the coherent wrap body and still rejects the pitch-pair and velocity divergences. The
+  note-level slice was a first approximation, not the content authority.
+- **Gates:** storage **60/60**; full native **3,440 / 7 / 3,433**; both builds SUCCESS at the pins
+  (`391,944 + 1,272` / `392,184 + 1,032`).
+
+**Still owed:** same-tick canonical ordering and the bounded streaming walk (the current compare is order-preserving:
+the root's bar/membership order against the passes' tick order; a same-tick reorder case is the next test), and the
+device leg. **4.2 is not complete.**

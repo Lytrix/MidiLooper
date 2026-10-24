@@ -40,8 +40,10 @@ for every family not yet removed.
   pass and parity, with no diverged pitch. **Event-tuple slice landed:** the passes-derived free projection
   (`copyEffectiveCommittedEventsFromPasses`) and an order-preserving canonical event compare (tick/type/channel/
   pitch-or-cc/velocity-or-value) reject a velocity divergence the note guard cannot see; disabling the event compare
-  fails exactly that case. Storage 59/59; full native 3,439/7/3,432; pins 391,944+1,272 / 392,184+1,032. Same-tick
-  canonical ordering/streaming, closure edges and the device leg remain.
+  fails exactly that case. **Closure edge:** a coherent wrap note (On@1500/Off@50) round-trips current; the note-level
+  compare false-rejected it (different wrap-span representation), so the note guard is retired and the canonical event
+  tuple is the sole pre-publication authority. Storage 60/60; full native 3,440/7/3,433; pins 391,944+1,272 /
+  392,184+1,032. Same-tick canonical ordering/streaming and the device leg remain.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
