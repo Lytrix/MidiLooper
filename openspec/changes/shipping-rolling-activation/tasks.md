@@ -143,19 +143,15 @@ Each slice: remove one family, prove no supported route reaches it (native RED�
 device-requalify the affected routes, re-run the cold parity comparison, and record the rollback (prior HEX). Do not
 remove two families in one slice.
 
-- [ ] 2.1 **Prepared pair.** Remove `resolvePreparedPairConsume` / `PreparedPlaybackPair` publication and clearing /
+- [x] 2.1 **Prepared pair.** Remove `resolvePreparedPairConsume` / `PreparedPlaybackPair` publication and clearing /
   `TrackManager::servicePendingPreparedPlaybackPair`; prove the launch/switch routes serve from the unified reader.
-  - **Implementation complete (2026-10-24; device gate open):** increment 1 removed the production publication/consume
-    (`pair=1` → `pair=0`); increment 2 deleted the family (`PreparedPlaybackPair`, runtime storage/API,
-    `resolvePreparedPairConsume`, the publish/service owner, the dead hot-path branches, the metrics/read-witness
-    paths) and re-pointed the remaining tests. The full-take legacy switch serves the raw merged fallback (2.5's
-    family); the demoted launch/switch keeps the unified window. Full native **3432/7/3425**; both builds
-    **96,192 / 392,040 + 1,176 / 34,880**; shipping `e5a26dd6…`, qualification `9b0e1d3f…`. **Device gate partial
-    (bench-limited):** both images flashed/booted and ran the base preset; distinct inventory/spans/bars match
-    (15/7) but the non-empty `151444` bench stores 16/20 vs 32/40, and the mixed switch was not rerun. Next: park the
-    workspace (this session's authorization required) or a clean-slot procedure. 2.1 stays unchecked. Evidence:
-    `evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`, `EVIDENCE-INCREMENT-2.md`,
-    `EVIDENCE-DEVICE-PARTIAL.md`.
+  **Checked (2026-10-24):** the family is fully removed (production publication/consume, type, runtime storage/API,
+  owner wiring, dead hot-path branches, tests). The demoted launch/switch already served the unified window; the
+  pair's only production route was the full-take legacy switch, which now runs the raw merged fallback (2.5's family).
+  Native: full 3432/7/3425; both builds 96,192 / 392,040 + 1,176 / 34,880; runtime 7,768 target / 9,896 host.
+  Device: clean cold/shipping base pair matches (16/15 + 20/7, spans 1296/1209, 2/2, display ok); shipping's
+  `record_stored_revt_missing` is the known host gate. Mixed switch carried (setup-limited). Images shipping
+  `e5a26dd6…` / cold `e7e4b4fc…`. Evidence: `evidence/2026-10-24-2.1-prepared-pair/`.
 - [ ] 2.2 **Fixed/bridge.** Remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection and
   `boundLaunchView`; prove the committed routes serve from the window reader.
 - [ ] 2.3 **First-Record / Record-return.** Remove `adoptFirstRecordingBarReturnWindow` and

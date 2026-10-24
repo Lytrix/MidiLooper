@@ -1,5 +1,4 @@
-**2026-10-24 — shipping-rolling-activation 2.1 prepared pair: family removed (implementation complete; device gate
-open).** The pair is gone from the codebase: removed the production publication (`ensurePlaybackMergedEventsForSlot`)
+**2026-10-24 — shipping-rolling-activation 2.1 prepared pair: CHECKED (family removed; clean device pair).** The pair is gone from the codebase: removed the production publication (`ensurePlaybackMergedEventsForSlot`)
 and consume (`TrackPlaybackHotPath`), `PreparedPlaybackPair`, the runtime pair storage/fields/API, the pair prewarm
 reservation, `resolvePreparedPairConsume`, `publishPreparedPlaybackPairFromWorkingWindow`,
 `servicePendingPreparedPlaybackPair`(+Slot/predicate/metrics) and its `TrackManager`/`main`/`StorageManager` owner
@@ -10,11 +9,11 @@ route published the pair (`active=1 pair=1 merged=2 order=2 len=768 req=0`) and 
 window test was re-pointed to the merged working window and its independent reference order. `sizeof(LoopPlaybackRuntime)`
 **7,768 target / 9,896 host** (was 7,920 / 10,120). Gates: full native **3432 / 7 skipped / 3425 passed**; both builds
 **96,192 / 392,040 + 1,176 / 34,880** (ITCM 393,216, floor 840, 336 B headroom); FLASH 1,197,696 shipping / 1,202,888
-qualification; shipping HEX `e5a26dd68ecf9a46`, qualification `9b0e1d3f10054699`. **Device gate partial
-(bench-limited):** shipping `e5a26dd6…` and cold `e7e4b4fc…` both flashed/booted and ran the base preset; distinct
-inventory/spans/bars match (15/7) but the non-empty `151444` bench stores 16/20 vs 32/40, and the mixed switch was
-not rerun. Next: park the workspace (this session's authorization required) or a clean-slot procedure. 2.1 stays
-unchecked. Rollback pair unchanged: shipping `09a5ae69…` ↔ cold `e7e4b4fc…`. Evidence:
+qualification; shipping HEX `e5a26dd68ecf9a46`, qualification `9b0e1d3f10054699`. **Device gate PASS (clean pair):** after clearing only the
+authorized scratch slot, shipping `e5a26dd6…` and cold `e7e4b4fc…` both store 16/15 + 20/7 with the same spans
+(1296/1209), 2/2 bars and display ok; shipping's `record_stored_revt_missing` is the known host gate. The mixed
+switch is carried (setup-limited), not waived. **2.1 checked; next 2.2.** Rollback pair: shipping `e5a26dd6…` ↔
+cold `e7e4b4fc…` (prior `09a5ae69…`). Evidence:
 `openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/`.
 
 **2026-10-24 — shipping-rolling-activation: 1.2–1.5 CLOSED (activation, shipping parity, rollback; no removals).**
