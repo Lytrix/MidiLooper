@@ -1141,6 +1141,13 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
             # The scenario-owned capture may not expose the managed capture's banner predicate; the capture log
             # is the same evidence, so read the banner from it rather than treating a missing hook as a missing boot.
             banner_seen = fresh_boot_in_window(_lines(capture_log))
+            if not banner_seen:
+                # The leg's own capture log can start after the boot; the session log in the same run directory
+                # carries the banner (`DIAG,boot_reset`) written by the reset this scenario forwarded.
+                for session_log in sorted(capture_log.parent.glob("session_*.log")):
+                    if fresh_boot_in_window(_lines(session_log)):
+                        banner_seen = True
+                        break
         boot_unconfirmed = not banner_seen
     if boot_unconfirmed:
         events.append({"event": "fresh_boot_unconfirmed",
