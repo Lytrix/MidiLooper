@@ -103,6 +103,19 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   (4) re-point the rolling tests' expected demand/build counters to the seeded start. The RED for the transition is
   `targetRuntime->rolling.phase == Serving` at the first target tick (it fails with the wrapper removed and no seed).
   No further probes; the remaining work is the test re-point plus the native/device gates.
+  **Re-point attempt (owner-requested landing).** Re-applied the seed/guard/stamp on the rolling path, stamped the
+  shared helper clock, asserted `targetRuntime->rolling.phase == Serving` at the first target tick, and cleared the
+  seeded frame in `dropLaunchBinding` (the demand-path fixtures). Focused RWO: **35 failed / 244**. The failures are
+  not all stale counters:
+  - ~20 `Expected 0 Was 11` (a shared/global counter, e.g. the window-owner/retained-source/preview/2.11 fixtures;
+    `request=11 pending=0` in the 2.11 messages);
+  - ~10 `3→6 / 2→6 / 3→8` (demand/rebuild counts in fixtures that do not drop the launch binding);
+  - semantic: the envelope contract `2816 → 12032`, the episode release boolean, and the generation-change
+    `Not-Equal` case.
+  A blanket expected-value edit would mask the shared counter and the envelope/episode differences, so the seed/guard/
+  stamp is **not landed**; the tree is reverted to the 2.1-checked state. Next: re-point the rolling fixture properly
+  (reset/own the shared counter, decide which fixtures test the demand path vs the seeded start), then rerun the
+  native full gate; only then the 3.7e device launch/handoff gate. 2.2 stays unchecked.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -134,4 +147,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Seven `boundLaunchView` editing attempts (**reverted**; findings above). The final run proved no Serving->Idle at the target; the remaining +3 is stale test expectations. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
+Eight `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed, but the rolling fixture re-point is 35 tests incl. shared-counter and semantic terms, so the seed is not landed. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
