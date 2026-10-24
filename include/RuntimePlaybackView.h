@@ -806,8 +806,7 @@ struct RuntimePlaybackViewSet {
   bool prewarmed = false;
   /// Whether `prewarm` reserved the whole-take representation (the two bridges and their
   /// immutable bases). RC-MEM-2: every full-take publication requires an exactly full-loop
-  /// coverage interval (`publishStoppedOracleView`, `publishStoppedCanonicalOracleView`,
-  /// `publishPreparedPlaybackPairFromWorkingWindow` -> `isFullLoopMergedPlaybackWindow`), so a
+  /// coverage interval (`publishStoppedOracleView`, `publishStoppedCanonicalOracleView`), so a
   /// loop that cannot produce one must not reserve the capacity -- and must be refused, not
   /// merely unable, if a full-take publication is ever attempted. False means the windowed
   /// representation is the only authoritative one for this slot.

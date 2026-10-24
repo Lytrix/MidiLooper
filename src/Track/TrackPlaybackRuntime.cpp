@@ -385,10 +385,6 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(
   bridgeStream.reset();
   bridgeProjectionCycle = 0;
   mergedMidiEvents.clear();
-  // Task 2.4 slice 2: a cache reset is a new playback generation. The pair buffer is
-  // prewarmed and stable, but its contents belong to the retired generation, so the
-  // published pair is dropped rather than held across the reset.
-  clearPreparedPlaybackPair();
   // Preserve one view across the reset: the non-audible first-record return view
   // (the retained raw bar) takes priority, then the bound record-session return
   // window. The bound window has no other source once the take is sealed, so the
@@ -524,145 +520,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
   RUNTIME_PREWARM_TAGGED(prewarmPassesOk, ExternalPoolAccounting::TagCompanionPasses, frozenCompanionPasses.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
   RUNTIME_PREWARM_TAGGED(prewarmCanonicalInputsOk, ExternalPoolAccounting::TagCanonicalPassInputs, canonicalPassInputs.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
 #undef RUNTIME_PREWARM_TAGGED
-  // Task 2.4 slice 2: the prepared pair is a consume authority, so its storage is part
-  // of the same capture-admission reserve. A slot that never records (boot/load only)
-  // therefore carries no pair buffer and keeps the cache-hit merged fallback, which is
-  // exactly the pre-existing path with no rebuild; the reachable active rebuild lives in
-  // the seal-admission window, which only a capture-admitted slot can enter.
-  //
-  // RC-MEM-2: the pair's only publisher is `publishPreparedPlaybackPairFromWorkingWindow`,
-  // which requires `isFullLoopMergedPlaybackWindow`, so a slot whose loop cannot produce a
-  // full-loop window can never publish a pair. Reserving its buffer would be dead
-  // reservation, and admission must not report a reserve the capture path can never use.
   if (!fullTakeAdmissible) {
     viewSet->releaseWholeTakeViews();
-    clearPreparedPlaybackPair();
-    preparedPairStorage.release();
     return true;
   }
-  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
-  const bool pairReady = prewarmPreparedPlaybackPair();
-  ExternalPoolAccounting::endTag();
-  if (!pairReady) return false;
-  return true;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmPreparedPlaybackPair() {
-  return preparedPairStorage.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::preparedPairIsCurrent(
-    uint32_t playbackRevision, uint32_t sourceGeneration, const void* snapshotIdentity,
-    uint32_t loopLengthTicks) const {
-  if (!preparedPair.ready || preparedPair.storage == nullptr || preparedPair.eventCount == 0) {
-    return false;
-  }
-  if (loopLengthTicks == 0 || preparedPair.coverage.loopLengthTicks != loopLengthTicks ||
-      preparedPair.coverage.startPhase != 0 ||
-      preparedPair.coverage.lengthTicks != loopLengthTicks) {
-    return false;
-  }
-  return preparedPair.source.playbackRevision == playbackRevision &&
-         preparedPair.source.sourceGeneration == sourceGeneration &&
-         preparedPair.source.snapshotIdentity == snapshotIdentity;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::requestPreparedPlaybackPair(
-    uint32_t playbackRevision, uint32_t sourceGeneration, const void* snapshotIdentity,
-    uint32_t loopLengthTicks, uint32_t tick) {
-  const PlaybackViewSourceIdentity wanted{playbackRevision, sourceGeneration, snapshotIdentity};
-  const bool sameRequest = preparedPairRequestPending &&
-                           preparedPairRequestedSource == wanted &&
-                           preparedPair.coverage.loopLengthTicks == loopLengthTicks;
-  if (sameRequest) {
-    return;
-  }
-  // A new miss: record it once. Repeated ticks for the same source do not inflate
-  // the request count; the hold tick counter measures the wait instead.
-  preparedPairRequestPending = true;
-  preparedPairRequestedSource = wanted;
-  preparedPairRequestTick = tick;
-  ++preparedPairRequestCount;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::notePreparedPairHoldTick() {
-  ++preparedPairHoldTicks;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::resetPreparedPairCounters() {
-  preparedPairRequestCount = 0;
-  preparedPairPublishCount = 0;
-  preparedPairHoldTicks = 0;
-  preparedPairMaxLatencyTicks = 0;
-  preparedPairRebuildUnits = 0;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::clearPreparedPlaybackPair() {
-  preparedPair.ready = false;
-  preparedPair.generation = 0;
-  preparedPair.source = PlaybackViewSourceIdentity{};
-  preparedPair.coverage = PlaybackCoverageInterval{};
-  preparedPair.storage = nullptr;
-  preparedPair.eventCount = 0;
-  preparedPair.cursorSeed = 0;
-  preparedPairRequestPending = false;
-  preparedPairRequestedSource = PlaybackViewSourceIdentity{};
-  preparedPairRequestTick = 0;
-  preparedPairConsumedGeneration = 0;
-}
-
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishPreparedPlaybackPair(
-    const MidiEvent* events, size_t eventCount, const uint16_t* order, size_t orderCount,
-    const PlaybackViewSourceIdentity& source, const PlaybackCoverageInterval& coverage,
-    uint32_t publicationPhase) {
-  if (!preparedPairStorage.isPrewarmed() || !coverage.isValid() || coverage.startPhase != 0 ||
-      coverage.lengthTicks != coverage.loopLengthTicks || eventCount != orderCount ||
-      eventCount > preparedPairStorage.capacity || (eventCount != 0 && (events == nullptr || order == nullptr))) {
-    return false;
-  }
-  MidiEvent* dstEvents = preparedPairStorage.events;
-  uint16_t* dstOrder = preparedPairStorage.order;
-  uint32_t* dstPhases = preparedPairStorage.phases;
-  // One pass builds the emission-ordered buffer and resolves the cursor/reanchor seed
-  // inside the publication turn, so the consumer adopts a complete
-  // (data, order, anchor) triple and never searches. The source order is phase-sorted,
-  // so the first row after `publicationPhase` is the seed.
-  size_t seed = eventCount;
-  bool seeded = false;
-  for (size_t index = 0; index < eventCount; ++index) {
-    const uint16_t sourceIndex = order[index];
-    if (sourceIndex >= eventCount) {
-      return false;
-    }
-    const MidiEvent& event = events[sourceIndex];
-    const uint32_t phase =
-        IntervalProjection::playbackEventPhase(event.tick, coverage.loopLengthTicks);
-    dstEvents[index] = event;
-    dstOrder[index] = static_cast<uint16_t>(index);
-    dstPhases[index] = phase;
-    if (!seeded && phase > publicationPhase) {
-      seed = index;
-      seeded = true;
-    }
-  }
-  preparedPairStorage.eventCount = eventCount;
-  // Publication is a non-yielding turn: the buffer is filled first, then the entire
-  // descriptor (identity, coverage, storage, seed and generation) is replaced by one
-  // assignment. No consumer turn can observe a half-updated pair.
-  PreparedPlaybackPair next;
-  next.ready = true;
-  next.generation = preparedPair.generation + 1;
-  next.source = source;
-  next.coverage = coverage;
-  next.storage = &preparedPairStorage;
-  next.eventCount = eventCount;
-  next.cursorSeed = static_cast<uint16_t>(seed);
-  preparedPair = next;
-  preparedPairRequestPending = false;
-  preparedPairRequestedSource = PlaybackViewSourceIdentity{};
-  preparedPairRequestTick = 0;
-  ++preparedPairPublishCount;
-  preparedPairRebuildUnits += static_cast<uint32_t>(eventCount);
   return true;
 }
 
@@ -3178,7 +3039,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // Task 3.15f/C: the ready-carried positioned handoff (uint64 deadline + uint32 epoch + bool) adds 16 B on both
 // ABIs (7,904 -> 7,920 target, 10,104 -> 10,120 host); the runtime stays externally allocated per slot and no Track
 // field or RAM1 budget changes.
-static_assert(sizeof(LoopPlaybackRuntime) == 7920,
+// 2.1: removing the prepared pair descriptor + counters shrinks the same runtime (7,920 -> 7,768 target,
+// 10,120 -> 9,896 host), compiler measured; the pair's fixed event storage was external, so RAM1 is unchanged
+// apart from the external-pool accounting.
+static_assert(sizeof(LoopPlaybackRuntime) == 7768,
               "I5: target per-slot runtime measured after presentation owner");
 static_assert(sizeof(Loop) == 1008,
               "I5: LoopPool shell 1,008 B including Capture phase identity "
@@ -3215,7 +3079,9 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Task 3.15d: the preview interval composition scratch (one vector header) adds 24 B on this ABI
 // (10,080 -> 10,104); the capacity it grows is the external pool's, not the runtime's, and the runtime is
 // extmem-allocated per slot.
-static_assert(sizeof(LoopPlaybackRuntime) == 10120,
+// 2.1: removing the prepared pair descriptor + its counters shrinks the host runtime 10,120 -> 9,896 B
+// (compiler measured); the pair's fixed event storage was external, so RAM1 pins are re-baselined below.
+static_assert(sizeof(LoopPlaybackRuntime) == 9896,
               "I5: host per-slot runtime measured after presentation owner");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

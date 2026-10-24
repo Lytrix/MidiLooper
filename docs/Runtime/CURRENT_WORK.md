@@ -5808,22 +5808,20 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
-**shipping-rolling-activation — 2.1 prepared pair, increment 1 landed; 2.1 still open (2026-10-24).** 1.1–1.5 are
-checked. 2.1's production path is now **pair-free**: the publication in `Track::ensurePlaybackMergedEventsForSlot` and
-the `resolvePreparedPairConsume` consume in `TrackPlaybackHotPath.cpp` are removed, so the pair is never published or
-consumed on a production route. **Scope finding:** the demoted launch/switch already serves the unified window; the
-pair's only production route was the **full-take legacy switch**, which now falls to the **merged fallback** (2.5's
-family, still compiled and reachable). The window lane's refusal of undemoted slots is the 1.4 scope split, not a 2.1
-gap. RED→GREEN: `test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair` (`active=1 pair=1` → `pair=0`);
-focused **607/607**; full native **3437 / 7 / 3430**; both builds **96,192 / 392,040 + 1,176 / 34,880** (floor 840);
-shipping HEX `15103188953f919d`, qualification `8e4216c797e95225`. **Increment 2 (open, still 2.1):** delete the dead
-`PreparedPlaybackPair`/runtime storage/API, `resolvePreparedPairConsume`, the publish/service owner
-(`TrackManager`/`main`/`StorageManager`) and the dead hot-path branches; re-point/delete the three direct-seed pair
-tests and the prewarm/whole-take storage assertions; remove the increment-1 test's pair reference. **Then the slice
-gate:** device-requalify the qualified launch/switch gesture on shipping + cold control, cold parity and the rollback
-record. The accepted-sequence mixed-oracle limitation is carried, not waived. Packet/evidence:
-[`PACKET.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/PACKET.md) /
-[`EVIDENCE-INCREMENT-1.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md).
+**shipping-rolling-activation — 2.1 prepared pair implementation complete; device gate open (2026-10-24).** 1.1–1.5
+are checked. The pair family is fully removed: production publication/consume, `PreparedPlaybackPair`, the runtime
+storage/API, `resolvePreparedPairConsume`, the publish/service owner (`TrackManager`/`main`/`StorageManager`), the dead
+hot-path branches and the read-witness/metrics paths. **Scope finding:** the demoted launch/switch already served the
+unified window; the pair's only production route was the **full-take legacy switch**, which now runs the **merged
+fallback** (2.5's family) until 2.5. RED→GREEN: the full-take switch owner route left the pair (`pair=1` → `pair=0`) and
+the family deletion followed; full native **3432 / 7 / 3425**; both builds **96,192 / 392,040 + 1,176 / 34,880**
+(floor 840); `sizeof(LoopPlaybackRuntime)` **7,768 target / 9,896 host**; shipping HEX `e5a26dd68ecf9a46`,
+qualification `9b0e1d3f10054699`. **Remaining:** the device gate (qualified launch/switch on shipping + cold control,
+cold parity, rollback record); **2.1 stays unchecked** until it lands. The accepted-sequence mixed-oracle limitation is
+carried, not waived. Packet/evidence:
+[`PACKET.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/PACKET.md),
+[`EVIDENCE-INCREMENT-1.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md),
+[`EVIDENCE-INCREMENT-2.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-2.md).
 Bench: `151444` active; `61768` base, `185599` v1, S3 revisions/quarantines intact; 4.2 original host copy.
 
 **I5 — 3.15e slice 3 DESIGN: edge adoption, echo suppression and the provenance ledger (2026-10-22; design only, no code).** Owner decision: 2b-iii stays deferred, the Record-return/launch routes stay untouched, and arbitration reopens only on a real competing production claim. The packet ([`EXECUTION-PACKET.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-22-s315e-edge-adoption/EXECUTION-PACKET.md)) settles the slice-3 shape without the resolver: **C1** publish the completed overlay candidate as `ready` **only when the role is free**, using the lifecycle's one-successor rule — never retire/replace a foreign candidate, never defer another lane; a foreign `ready` (Record-return/launch/preview) is a **named** role-occupied outcome and the echo keeps serving. **C2** an overdub branch in the `FLASHMEM` `resolveQualificationPlaybackSourceForTurn` binds a published/complete/base-current window whose coverage contains the phase, setting the same `rollingViewSelected` flag the preview lane uses. **C3** adoption is at a conservative **next-interval boundary** (whole-loop: next pass's phase 0; long-loop: the interval's `startPhase`), never mid-interval while the echo may have served the same rows; the window's `cursorSeed` positions the first served row. **C4** while the window serves, the `ActiveCaptureOverdub` walk and `ensureCaptureEventsSorted()` are skipped; the committed walk is the only traversal, and the echo remains the named fallback for every state the branch does not select (including the default image). **C5** the ledger applies only to committed-origin rows (`passOrigins[order[cursor]].pass != kLiveOverlayPassOrigin`), preserving `221334`/`224719`; overlay rows sound once without ledger ownership. **C6** a wrap/stop retirement fails the C2 match and the echo serves the remainder; the wrap-held continuation is slice 4. **Gating probe:** `advancePlaybackCursor` sends the event only, and the stream's `consume` hook runs **after** send, so the origin must be exposed by a data-only optional `originAt(ctx, cursor)` (preferred; no allocation, no ITCM cost) or the ledger split waits. Fixtures: W1 window adoption/parity vs the 2026-10-22 oracle, W2 role occupied (DEC-136 guard), W3 pass commit/fallback without a seam duplicate, W4 ledger split, W5 echo re-enabled → duplicate (RED), W6 branch forced off → echo oracle stays green, W7 refusals named. Gates: focused (finalization incl. both routes, preview, prewarm), full native, both builds at the pins, strict, diff; **no device leg** (3.15f). **Gating probe PASSED (native, `test_3_15e_slice3_probe_row_origin_is_visible_at_emission_time`):** the real `advancePlaybackCursor` over a real slice-1 window records each row's own `passOrigins` at `eventAt` time before send — 5 rows / 5 `eventAt` calls (one traversal), 2 committed + 3 overlay emissions, 0 overlay rows ledgered — so the production delta is one conditional store in `fixedPlaybackStreamEventAt` plus a provenance/origin slot on `FixedPlaybackStreamCtx`, with `consume`-after-send and a duplicated walk rejected. **Edge-oracle home established (2026-10-22; no code change).** `test_shared_capture_finalization` runs with `PLAYBACK_WINDOW_ROLLING_ENABLED == 0` by default (`UNIFIED_RECORD_RETURN_READER_ORACLE` is never defined by the build), so it is the echo gate and the edge resolver/hot-path branch is compiled out there. The lane/frontier fixtures still run (direct lane calls), but the edge fixtures need a rolling-1 suite with the real hot path and the captured-overdub setup; the edge prototype was reverted uncommitted rather than landed without its oracle.

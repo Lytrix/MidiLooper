@@ -5,9 +5,9 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Identity and scope
 
-- Task: **2.1 prepared pair**. Status: **increment 1 landed** (the pair is no longer published or consumed on any
-  production route). Increment 2 (delete the now-dead type/API/storage/owner wiring and re-point the remaining
-  pair-own tests) is still open; 2.1 stays unchecked.
+- Task: **2.1 prepared pair**. Status: **implementation complete** (increments 1+2: the family is removed; no pair
+  type, API, storage or owner remains). The **device gate** (qualified launch/switch on shipping + cold control, cold
+  parity, rollback) is still pending, so 2.1 stays unchecked.
 - Remove: `Track::resolvePreparedPairConsume` (`src/Track/TrackPlaybackWindowBuild.cpp`, decl
   `include/TrackInternal.h`), the `PreparedPlaybackPair` publication/clearing path
   (`LoopPlaybackRuntime::requestPreparedPlaybackPair` / `publishPreparedPlaybackPair` /
@@ -68,9 +68,9 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 - Focused: the launch/switch/source-identity/hot-path suites (exact IDs after the fixture re-point), the prepared-pair
   suite removed/retired; expected **0 failures**.
-- Broad: full native (**3437 cases, 7 skipped, 3430 passed**); both builds at **96,192 / 392,040 + 1,176 / 34,880**
+- Broad: full native (**3432 cases, 7 skipped, 3425 passed**); both builds at **96,192 / 392,040 + 1,176 / 34,880**
   (ITCM total 393,216; approved floor padding >= 840; 336 B headroom); strict OpenSpec; `git diff --check`.
-- Device: **pending**. The qualified launch/switch gesture on the shipping image `15103188953f919d` (and the cold
+- Device: **pending**. The qualified launch/switch gesture on the shipping image `e5a26dd68ecf9a46` (and the cold
   control `e7e4b4fc…` for the legacy route), the source/identity/content/ledger oracle; the mixed-oracle finalization
   limitation named; the cold parity comparison and the rollback (`09a5ae69…` ↔ `e7e4b4fc…`).
 - Evidence path: `openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/`.
@@ -94,9 +94,14 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   `test_gathered_pair_holds_then_replaces_atomically_when_the_root_changes_mid_window`,
   `test_gathered_pair_waits_for_the_record_stop_root_then_publishes`,
   `test_selected_prepared_pair_has_a_real_reader_witness`.
-- Increment 2 (open): delete `PreparedPlaybackPair` + the runtime pair fields/storage/API, `resolvePreparedPairConsume`,
-  `publishPreparedPlaybackPairFromWorkingWindow`, the service owner (`TrackManager`/`main`/`StorageManager`), the dead
-  hot-path variables/branches, the post-reload clear and the metrics row; re-point/delete the three direct-seed pair
-  tests and the prewarm/whole-take storage assertions; remove the increment-1 test's pair reference; re-baseline the
-  docs pin text. Device requalification + cold parity + rollback record remain as the slice gate.
+- **Increment 2 (family deletion) — DONE:** removed `PreparedPlaybackPair`, the runtime pair fields/storage/API,
+  `resolvePreparedPairConsume`, `publishPreparedPlaybackPairFromWorkingWindow`, the service owner
+  (`TrackManager`/`main`/`StorageManager`), the dead hot-path branches, the post-reload clear, the read-witness pair
+  branch and the metrics row; re-pointed the remaining pair tests and the long-loop window reference; removed the
+  prewarm pair-storage assertions. `sizeof(LoopPlaybackRuntime)` **7,768 target / 9,896 host** (was 7,920 / 10,120).
+  Full native **3432 / 7 skipped / 3425 passed**; both builds unchanged at **96,192 / 392,040 + 1,176 / 34,880**
+  (FLASH 1,197,696 shipping / 1,202,888 qualification); shipping HEX `e5a26dd68ecf9a46`, qualification
+  `9b0e1d3f10054699`. Evidence: `EVIDENCE-INCREMENT-2.md`.
+- **Device gate (open):** qualified launch/switch on shipping `e5a26dd6…` + cold control `e7e4b4fc…`, cold parity,
+  rollback record. 2.1 is not checked until it lands.
 - Rollback: prior shipping `09a5ae69…` (stable-demand), cold control `e7e4b4fc…`.

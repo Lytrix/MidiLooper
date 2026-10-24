@@ -317,15 +317,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 #if RUNTIME_TIMING_ENABLED
   const uint32_t rebuildStartUs = micros();
 #endif
-  // 2.1 (prepared-pair removal, increment 1): the pair is no longer a production source. The supported
-  // (demoted) launch/switch routes already serve the unified window; the full-take legacy route falls to the
-  // merged fallback below (2.5's family, still compiled and reachable) until 2.5 removes it.
-  const PreparedPlaybackPair* livePair = nullptr;
-  const bool pairHeld = false;
   // The legacy in-place builder is now reachable only as (a) the STOPPED/off-clock
   // oracle, (b) the long-loop windowed path, and (c) the cold first audible turn of a
-  // slot with no pair yet. The detector counts it, so case (c) cannot grow silently.
-  // Task 3.7a (I3c-b): **the paged delivery's selection.** A slot with no served window, no bridge and no prepared pair
+  // slot with no served source. The detector counts it, so case (c) cannot grow silently.
+  // Task 3.7a (I3c-b): **the paged delivery's selection.** A slot with no served window and no bridge
   // is exactly the shape that falls back to the merged store today; when the deferred lane has **admitted** a paged
   // delivery for this slot -- one cached boolean it maintains off-clock, so this path loads and tests and judges
   // nothing -- the ring serves the tick instead, and the unbounded merged build is not made at all. Nothing is
@@ -342,9 +337,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     servicePagedPassBoundaryForTurn(slotIndex, currentTick);
     servicePagedOwedTailTurn(slotIndex, currentTick, prevTickForTail);
   }
-  const bool pagedEmission = fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr &&
+  const bool pagedEmission = fixedView == nullptr && fixedBridge == nullptr &&
                              runtime.pagedEmission.admittedForEmission();
-  const bool useMergedFallback = fixedView == nullptr && livePair == nullptr && !pagedEmission;
+  const bool useMergedFallback = fixedView == nullptr && !pagedEmission;
   const SessionMidiEventVec* mergedEvents = nullptr;
   if (useMergedFallback) {
     mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
@@ -352,7 +347,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 
   // ---- Task 4.5: the owner-level **"no serving route at all"** predicate, beside route selection ---------------------
   // 4.5's first wiring was withdrawn because a *resolver rejection* is not "nothing can serve this slot": the bridge, a
-  // bound view, the prepared pair, the paged ring and the retained merged fallback may each serve the very same turn. So
+  // bound view, the paged ring and the retained merged fallback may each serve the very same turn. So
   // containment is asked **only** when every alternative is out for **this phase** -- never inferred from one route's
   // refusal. Availability, never content: an event-empty source still counts as a route ("no new events" is not silence).
   //
@@ -360,7 +355,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // bounded-window coverage and the containment decision all live in FLASH (the first inline form cost +192 B of ITCM,
   // moving the projection arithmetic into the cold owner brought it back to the budget line below).
   const bool anyServingRouteSelected =
-      fixedBridge != nullptr || fixedView != nullptr || livePair != nullptr || pagedEmission;
+      fixedBridge != nullptr || fixedView != nullptr || pagedEmission;
   if (!anyServingRouteSelected) {
     // Every reader above is out, so the merged catch-all is the only remaining candidate -- it is the one branch that is
     // always selectable. The cold owner decides whether *its* window covers this phase and asks containment only if not.
@@ -374,9 +369,8 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           ? fixedBridge->baseEventCount + fixedBridge->insertions.eventCount
           : (fixedView != nullptr
                  ? fixedView->storage.eventCount
-                 : (livePair != nullptr ? livePair->eventCount
-                                        : (mergedEvents != nullptr ? mergedEvents->size()
-                                                                   : (pagedEmission ? 1u : 0u))));
+                 : (mergedEvents != nullptr ? mergedEvents->size()
+                                            : (pagedEmission ? 1u : 0u)));
   if (eventCount == 0 && fixedBridge == nullptr
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
       && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle
@@ -509,22 +503,6 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     return;
   }
 
-  if (livePair != nullptr) {
-    // Adopt the pair's cursor seed on the first tick after a publication. The seed is
-    // part of the pair (resolved inside the publication turn), so this is a copy, not
-    // a content-sized reanchor. A wrap already rewound the cursor; the new cycle must
-    // start at 0 rather than at a pre-wrap phase.
-    if (runtime.preparedPairConsumedGeneration != livePair->generation) {
-      if (!wrappedBackward) {
-        loop.nextEventIndex = livePair->cursorSeed;
-      }
-      runtime.preparedPairConsumedGeneration = livePair->generation;
-    }
-    if (pairHeld) {
-      runtime.notePreparedPairHoldTick();
-    }
-  }
-
   PlaybackTickFrame frame{&playbackContext, tickInLoop, prevTickInLoop, atLoopStart};
   MergedPlaybackStreamCtx mergedCtx{};
   if (useMergedFallback) {
@@ -540,7 +518,6 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
   FixedPlaybackStreamCtx fixedCtx{emissionWindow ? &emissionWindow->storage
       : fixedView != nullptr ? &fixedView->storage
-      : livePair != nullptr ? livePair->storage
                             : nullptr};
   if (overlayLiveSelected && fixedView != nullptr) {
     fixedCtx.passOrigins = fixedView->passOrigins;
@@ -551,13 +528,13 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       pagedEmission ? makePagedEmissionStream(pagedCtx)
       : emissionWindow ? makeFixedPlaybackStream(fixedCtx)
       : bridgeStream != nullptr ? bridgeStream->stream()
-                              : (fixedView != nullptr || livePair != nullptr
+                              : (fixedView != nullptr
                                      ? (overlayLiveSelected ? makeOverlayPlaybackStream(fixedCtx)
                                                             : makeFixedPlaybackStream(fixedCtx))
                                      : makeMergedPlaybackStream(mergedCtx));
   PlaybackCursorAdvanceState mergedAdvance{
       !emissionWindow && bridgeStream != nullptr ? &bridgeStream->playbackIndex : &loop.nextEventIndex,
-      (fixedView != nullptr || livePair != nullptr) ? nullptr : &loop.playbackOrderDirty};
+      (fixedView != nullptr) ? nullptr : &loop.playbackOrderDirty};
 
   // Wrap-tick ledger catch-up lives in FLASHMEM. Occupy reads Entry.noteId;
   // this is not a special occupy path.

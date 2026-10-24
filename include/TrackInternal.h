@@ -163,23 +163,6 @@ struct PagedEmissionStreamCtx {
 
 TRACK_INTERNAL_MEM PlaybackEventStream makePagedEmissionStream(PagedEmissionStreamCtx& ctx);
 
-/// Task 2.4 slice 2 consume decision, kept as a pure function of the runtime pair state
-/// so the clock path and its native fixtures share one implementation. It never builds:
-/// a miss only records a request, and the last coherent pair (if any) is what the tick
-/// keeps consuming until the off-clock owner publishes the replacement.
-struct PreparedPairConsumeDecision {
-  const PreparedPlaybackPair* pair = nullptr;
-  /// True when `pair` is the previous coherent pair, held because the source changed.
-  bool held = false;
-  /// True when this call recorded a replacement request.
-  bool requested = false;
-};
-
-TRACK_INTERNAL_MEM PreparedPairConsumeDecision resolvePreparedPairConsume(
-    LoopPlaybackRuntime& runtime, const Loop& loop, uint32_t playbackRevision,
-    uint32_t sourceGeneration, const void* snapshotIdentity, bool sealAdmissionPending,
-    uint32_t tick);
-
 /// Task 2.4 slice 2 cold merged fallback (FLASH-resident): a tick with no consumable pair
 /// runs the existing in-place builder once, so the first audible turn is not silent. The
 /// clock-path detector counts that build, so this fallback cannot grow silently.

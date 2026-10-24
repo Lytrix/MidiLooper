@@ -169,7 +169,6 @@ void test_whole_take_reservation_is_released_once_the_loop_is_known_long() {
   RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
   TEST_ASSERT_TRUE(set.wholeTakeViewsReserved());
   const size_t wholeTakeBytes = set.fixedExternalBytes();
-  TEST_ASSERT_TRUE(runtime.preparedPairStorage.isPrewarmed());
 
   TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
                                        /*fullTakeAdmissible=*/false));
@@ -181,7 +180,6 @@ void test_whole_take_reservation_is_released_once_the_loop_is_known_long() {
     TEST_ASSERT_NULL(set.bridgeBases[i].passOrigins);
     TEST_ASSERT_NULL(set.bridgeBases[i].canonicalRanks);
   }
-  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
   TEST_ASSERT_FALSE(set.beginCandidateBridge());
   // The windowed views and both stagings survive the release.
   for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kViewCount; ++i) {
@@ -252,7 +250,6 @@ void test_windowed_only_slot_reserves_no_whole_take_representation() {
     TEST_ASSERT_EQUAL_UINT32(0, set.bridges[i].capacity);
     TEST_ASSERT_EQUAL_UINT32(0, set.bridgeBases[i].storage.capacity);
   }
-  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
 
   // `fixedExternalBytes()` is the windowed reservation only, and the difference from a
   // whole-take slot is exactly the two bridges plus their two immutable bases (512,000 B on
@@ -304,8 +301,6 @@ void test_windowed_only_slot_refuses_the_whole_take_publishers() {
   TEST_ASSERT_TRUE(wholeTakeSet.beginCandidateBridge());
   TEST_ASSERT_FALSE(set.beginCandidateBridge());
   TEST_ASSERT_FALSE(set.selectCandidateBridge(EmissionCursor{}));
-  TEST_ASSERT_TRUE(wholeTake.preparedPairStorage.isPrewarmed());
-  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
 
   // A full-loop canonical oracle publication requires an exactly full-loop coverage, which
   // only a whole-take reservation can back.
@@ -345,7 +340,6 @@ void test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission() {
   TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kRecordsPerBridge, set.bridges[0].capacity);
   TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kEventsPerView,
                            set.bridgeBases[0].storage.capacity);
-  TEST_ASSERT_TRUE(runtime.preparedPairStorage.isPrewarmed());
   // The upgrade reuses the admitted staging instead of resetting it.
   TEST_ASSERT_EQUAL_PTR(liveEvents, set.liveCaptureStaging().storage.events);
 

@@ -252,16 +252,6 @@ struct TrackCaptureStopTestAccess {
     auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr && rt->ownsLiveFinalization();
   }
-  static bool ownsInFlightPreparedHandover(Track& track, uint8_t slot) {
-    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
-    return rt != nullptr && rt->ownsInFlightPreparedHandover();
-  }
-  /// Hold the *state the term reads*: there is no production API that requests a pair replacement
-  /// without a consume miss, so the fixture sets the flag the consume path sets.
-  static void setInFlightPreparedHandover(Track& track, uint8_t slot, bool pending) {
-    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
-    if (rt != nullptr) rt->preparedPairRequestPending = pending;
-  }
   /// The production consumption entry for the accepted interaction (S4f.1/S4f.2).
   /// The production consumption entry for the accepted interaction (S4f.1/S4f.2). `reason` is the edge's own
   /// outcome literal, reported by the latch's sequenced evidence (task 2.2); fixtures that assert the
@@ -1666,63 +1656,7 @@ const MidiEvent& differentialStreamEventAt(const void* ctx, uint16_t cursor) {
 uint32_t differentialStreamPhase(const MidiEvent& evt, const ProjectionContext&) {
   return evt.tick;
 }
-
-/// Seed the prepared pair directly. 2.5a's first testable unit is the *pair consumption*
-/// contract: the merged window and the order it indexes must be consumed coherently, without
-/// the consumer rebuilding either. (Gathering a real window needs Loop's published snapshot
-/// root, i.e. the publication pipeline; that fixture is the next 2.5 increment.)
-void seedPreparedPair(Loop& loop, LoopPlaybackRuntime& runtime,
-                      const SessionMidiEventVec& events) {
-  runtime.mergedMidiEvents.mergedEvents = events;
-  runtime.mergedMidiEvents.windowStartTick = 0;
-  runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
-  runtime.mergedMidiEvents.builtFromRevision = loop.playbackRevision;
-  runtime.mergedMidiEvents.builtFromSnapshotIdentity = loop.publishedSnapshotIdentity();
-  ProjectionContext ctx{};
-  ctx.loopLength = loop.loopLengthTicks;
-  // The off-clock owner's pair completion: order rebuild + reanchor, then the pair is coherent.
-  ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, ctx);
-  reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(), ctx);
-}
-
-/// Consume the currently prepared pair over (fromTick, toTick] and record the emitted rows.
-void consumePairOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fromTick,
-                          uint32_t toTick, DifferentialTrace& out) {
-  DifferentialPairStream pairStream{&runtime.mergedMidiEvents.mergedEvents,
-                                    &loop.getPlaybackOrder()};
-  const PlaybackEventStream stream{&pairStream, differentialStreamSize, nullptr,
-                                   differentialStreamEventAt, differentialStreamPhase};
-  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
-    ProjectionContext ctx{};
-    ctx.loopLength = loop.loopLengthTicks;
-    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
-    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, &loop.playbackOrderDirty};
-    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
-                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
-  }
-}
-
-/// OpenSpec 2.4 slice 2: consume the *published* immutable pair over (fromTick, toTick]
-/// through the same production stream adapter the clock path uses. The pair supplies both
-/// members and its own cursor seed, so nothing is rebuilt and nothing is reanchored.
-void consumePublishedPairOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fromTick,
-                                   uint32_t toTick, DifferentialTrace& out) {
-  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
-  TEST_ASSERT_TRUE(runtime.preparedPair.storage != nullptr);
-  FixedPlaybackStreamCtx pairCtx{runtime.preparedPair.storage};
-  const PlaybackEventStream stream = makeFixedPlaybackStream(pairCtx);
-  loop.nextEventIndex = runtime.preparedPair.cursorSeed;
-  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
-    ProjectionContext ctx{};
-    ctx.loopLength = loop.loopLengthTicks;
-    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
-    // Immutable source: no playbackOrderDirty invalidation pointer.
-    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, nullptr};
-    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
-                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
-  }
-}
-
+/// Independent trace equality (tick/type/channel/note/value).
 bool differentialTracesEqual(const DifferentialTrace& a, const DifferentialTrace& b) {
   if (a.rows.size() != b.rows.size()) return false;
   for (size_t i = 0; i < a.rows.size(); ++i) {
@@ -1735,13 +1669,6 @@ bool differentialTracesEqual(const DifferentialTrace& a, const DifferentialTrace
   }
   return true;
 }
-
-// ------------------------------------------- 2.5a gathering fixtures (real snapshot root)
-//
-// The 2.5a harness could compare a pair built from a *synthetic* (events, order) window. These
-// helpers drive the production gather instead: a published snapshot root supplies the window,
-// `ensurePlaybackMergedEventsForSlot` / `servicePendingPreparedPlaybackPair` run the synchronous
-// builder and publish the pair, and the two consumers must emit byte-identical ordered rows.
 
 struct FixtureSnapshotNote {
   uint8_t pitch = 60;
@@ -1814,24 +1741,6 @@ ImmutableLoopSnapshotRef buildFixtureRoot(Loop& loop,
   return root;
 }
 
-/// Compare the published pair against the synchronous merged/order path from the pair's own
-/// anchor. The pair is stored in emission order with an identity `order`, so its `cursorSeed`
-/// indexes the same emission position in the synchronous order; anchoring both consumers is what
-/// makes the comparison about the pair, not about where each cursor happened to start.
-void assertPairMatchesSynchronousPathFromAnchor(Loop& loop, LoopPlaybackRuntime& runtime,
-                                                uint32_t toTick, DifferentialTrace& oracleOut,
-                                                DifferentialTrace& candidateOut) {
-  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
-  loop.nextEventIndex = runtime.preparedPair.cursorSeed;
-  consumePairOverRange(loop, runtime, 0, toTick, oracleOut);
-  consumePublishedPairOverRange(loop, runtime, 0, toTick, candidateOut);
-  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(oracleOut, candidateOut),
-      "the published pair must emit the synchronous path's rows in the same order");
-}
-
-/// Independent reference order for the long-loop window fixture: phase, then tick, then the
-/// canonical equal-phase NoteOff-before-NoteOn key. Built here in the test so the reference is
-/// not the production builder it is checking.
 struct DifferentialRefStream {
   const SessionMidiEventVec* events = nullptr;
   const std::vector<uint16_t>* order = nullptr;
@@ -1844,6 +1753,22 @@ size_t differentialRefStreamSize(const void* ctx) {
 const MidiEvent& differentialRefStreamEventAt(const void* ctx, uint16_t cursor) {
   const auto* stream = static_cast<const DifferentialRefStream*>(ctx);
   return (*stream->events)[(*stream->order)[cursor]];
+}
+
+void consumeMergedWindowOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fromTick,
+                          uint32_t toTick, DifferentialTrace& out) {
+  DifferentialPairStream pairStream{&runtime.mergedMidiEvents.mergedEvents,
+                                    &loop.getPlaybackOrder()};
+  const PlaybackEventStream stream{&pairStream, differentialStreamSize, nullptr,
+                                   differentialStreamEventAt, differentialStreamPhase};
+  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
+    ProjectionContext ctx{};
+    ctx.loopLength = loop.loopLengthTicks;
+    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
+    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, &loop.playbackOrderDirty};
+    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
+  }
 }
 
 void buildReferenceEmissionOrder(const SessionMidiEventVec& events, uint32_t loopLength,
@@ -1879,175 +1804,6 @@ void consumeReferenceOverRange(Loop& loop, const SessionMidiEventVec& events,
 }
 
 }  // namespace
-
-/// Fixture 1 -- plain immutable loop playback. The prepared pair and the independently
-/// re-prepared pair must emit the identical ordered stream, so the harness itself is proven
-/// non-vacuous before any transition fixture can use it.
-void test_prepared_pair_stream_matches_synchronous_oracle_plain_playback() {
-  Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
-  SessionMidiEventVec committed;
-  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
-  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
-  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
-  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
-  // ORACLE: prepare the pair, consume it, then prepare + consume it again independently.
-  seedPreparedPair(loop, runtime, committed);
-  DifferentialTrace oracle;
-  consumePairOverRange(loop, runtime, 0, 768, oracle);
-  // CANDIDATE: a second consumer over a freshly prepared pair.
-  seedPreparedPair(loop, runtime, committed);
-  DifferentialTrace candidate;
-  consumePairOverRange(loop, runtime, 0, 768, candidate);
-  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(oracle.rows.size()));
-  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(oracle, candidate),
-      "the prepared pair must emit the same ordered stream as the synchronous path");
-}
-
-/// Negative control -- the comparison must actually detect a different pair, otherwise every
-/// green differential above is meaningless.
-void test_differential_harness_detects_a_perturbed_pair() {
-  Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
-  SessionMidiEventVec committed;
-  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
-  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
-  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
-  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
-  seedPreparedPair(loop, runtime, committed);
-  DifferentialTrace oracle;
-  consumePairOverRange(loop, runtime, 0, 768, oracle);
-  // Perturb the candidate pair: drop the last order row, so the tail event cannot be emitted.
-  PlaybackOrderVec& order = loop.getPlaybackOrder();
-  TEST_ASSERT_GREATER_THAN_UINT32(1u, static_cast<uint32_t>(order.size()));
-  order.pop_back();
-  DifferentialTrace perturbed;
-  consumePairOverRange(loop, runtime, 0, 768, perturbed);
-  TEST_ASSERT_FALSE_MESSAGE(differentialTracesEqual(oracle, perturbed),
-      "the harness must detect a perturbed pair");
-}
-
-/// Fixture 2 (owner priority #1) -- an overdub seal admitted into the merged window. This is the
-/// transition that invalidated literal request+hold: `tryAdmitLastOverdubSealIntoMergedEvents`
-/// appends the sealed pass's events and sets `playbackOrderDirty`, so the pair's members are from
-/// different generations until the order is rebuilt. The oracle (full replacement) publishes the
-/// sealed rows; continuing to consume the stale pair loses them. Slice 2's atomic pair publication
-/// is what makes the losing case unreachable; this pins the boundary.
-void test_seal_admitted_into_pair_requires_atomic_replacement() {
-  Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
-  SessionMidiEventVec committed;
-  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
-  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
-  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
-  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
-  seedPreparedPair(loop, runtime, committed);
-  DifferentialTrace before;
-  consumePairOverRange(loop, runtime, 0, 192, before);
-
-  // The seal admission: the window gains the sealed pass and the order is now stale.
-  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOn(240, 1, 60, 80));
-  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOff(288, 1, 60, 0));
-  loop.playbackOrderDirty = true;
-  TEST_ASSERT_TRUE(loop.playbackOrderDirty);
-
-  // Stale pair: consumed without replacement, so the sealed rows cannot reach the output.
-  DifferentialTrace stale;
-  consumePairOverRange(loop, runtime, 192, 384, stale);
-  bool stale_has_sealed = false;
-  for (const DifferentialRow& row : stale.rows) {
-    if (row.note == 60) stale_has_sealed = true;
-  }
-  TEST_ASSERT_FALSE_MESSAGE(stale_has_sealed,
-      "a stale pair cannot emit the newly admitted seal -- this is why replacement is required");
-
-  // Full replacement (the oracle): rebuild the order + reanchor, then consume the same range.
-  const SessionMidiEventVec replacedEvents = runtime.mergedMidiEvents.mergedEvents;
-  seedPreparedPair(loop, runtime, replacedEvents);
-  DifferentialTrace replaced;
-  consumePairOverRange(loop, runtime, 192, 384, replaced);
-  bool replaced_has_sealed = false;
-  for (const DifferentialRow& row : replaced.rows) {
-    if (row.note == 60) replaced_has_sealed = true;
-  }
-  TEST_ASSERT_TRUE_MESSAGE(replaced_has_sealed,
-      "the replacement pair must publish the admitted seal (no accepted audio lost)");
-  TEST_ASSERT_FALSE_MESSAGE(differentialTracesEqual(stale, replaced),
-      "the transition must be observable as a stream difference before slice 2 makes it atomic");
-}
-
-/// Fixture 3 (owner priority #2) -- same-tick NoteOff/NoteOn ordering. The pair's order rebuild
-/// carries the equal-phase Off-before-On key; a prepared pair must preserve it exactly.
-void test_prepared_pair_preserves_same_tick_off_before_on_order() {
-  Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
-  SessionMidiEventVec committed;
-  // Closing Off and a new On share tick 192.
-  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
-  committed.push_back(MidiEvent::NoteOff(192, 1, 48, 0));
-  committed.push_back(MidiEvent::NoteOn(192, 1, 55, 90));
-  committed.push_back(MidiEvent::NoteOff(336, 1, 55, 0));
-  seedPreparedPair(loop, runtime, committed);
-  DifferentialTrace trace;
-  consumePairOverRange(loop, runtime, 0, 384, trace);
-  size_t off_index = trace.rows.size();
-  size_t on_index = trace.rows.size();
-  for (size_t i = 0; i < trace.rows.size(); ++i) {
-    const DifferentialRow& row = trace.rows[i];
-    if (row.tick != 192) continue;
-    const bool is_off = row.type == static_cast<uint8_t>(midi::NoteOff);
-    const bool is_on = row.type == static_cast<uint8_t>(midi::NoteOn);
-    if (is_off && row.note == 48 && off_index == trace.rows.size()) off_index = i;
-    if (is_on && row.note == 55 && on_index == trace.rows.size()) on_index = i;
-  }
-  TEST_ASSERT_NOT_EQUAL(trace.rows.size(), off_index);
-  TEST_ASSERT_NOT_EQUAL(trace.rows.size(), on_index);
-  TEST_ASSERT_TRUE_MESSAGE(off_index < on_index,
-      "a same-tick NoteOff must precede its NoteOn in the prepared pair");
-}
-
-/// Fixture 4 (owner priority #3) -- the reanchor case. The anchor/cursor seed is part of the
-/// pair's identity: a pair anchored at a mid-loop playhead must not re-emit what is already behind
-/// it, and two pairs anchored differently must not produce the same stream.
-void test_prepared_pair_anchor_is_part_of_its_identity() {
-  Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
-  SessionMidiEventVec committed;
-  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
-  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
-  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
-  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
-  // P0 playing: the cursor is ahead of tick 0, so nothing before it may be emitted again.
-  seedPreparedPair(loop, runtime, committed);
-  loop.lastTickInLoop = 192;
-  ProjectionContext ctx{};
-  ctx.loopLength = loop.loopLengthTicks;
-  reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(), ctx);
-  DifferentialTrace anchored;
-  consumePairOverRange(loop, runtime, 192, 448, anchored);
-  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(anchored.rows.size()));
-  for (const DifferentialRow& row : anchored.rows) {
-    TEST_ASSERT_TRUE_MESSAGE(row.tick > 192,
-        "a pair anchored at 192 must not re-emit the events behind its anchor");
-  }
-  // A pair anchored at the loop start is a different pair: consumed from tick 0 it also emits
-  // the rows the anchored pair had already passed, so the anchor seed is part of the identity.
-  loop.nextEventIndex = 0;
-  DifferentialTrace fromStart;
-  consumePairOverRange(loop, runtime, 0, 448, fromStart);
-  TEST_ASSERT_TRUE_MESSAGE(fromStart.rows.size() > anchored.rows.size(),
-      "an unanchored pair emits from the loop start; the anchor seed is part of the pair");
-}
-
-// ---------------------------------------------------- 2.4 slice 2: prepared pair
-// The pinned invariant: playback never observes `mergedEvents` and `playbackOrder` from
-// different generations; a pair becomes consumable only when both members and their
-// cursor/reanchor state are complete for the same source generation.
 void test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_reference() {
   Track& track = preparePlayingTrack();
   Loop& loop = track.getActiveLoop();
@@ -2064,10 +1820,6 @@ void test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_refer
   loop.lastTickInLoop = playhead;
   clockManager.assignCurrentTickSilently(playhead);
   track.ensurePlaybackMergedEventsForSlot(0);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, track.preparedPairMetrics(0).publishCount,
-      "a windowed long-loop gather is not a full-loop pair (documented boundary)");
-  TEST_ASSERT_FALSE(runtime.preparedPair.ready);
-
   const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
   const uint32_t winLength = runtime.mergedMidiEvents.windowLengthTicks;
   TEST_ASSERT_TRUE(winLength > 0);
@@ -2088,7 +1840,7 @@ void test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_refer
 
   DifferentialTrace windowed;
   loop.nextEventIndex = 0;
-  consumePairOverRange(loop, runtime, winStart, winStart + winLength, windowed);
+  consumeMergedWindowOverRange(loop, runtime, winStart, winStart + winLength, windowed);
   DifferentialTrace reference;
   consumeReferenceOverRange(loop, fullGather, referenceOrder, winStart, winStart + winLength,
                             reference);
@@ -4854,7 +4606,6 @@ CancelledArmResidence cancelledArmResidence(Track& track, uint8_t slot) {
       result.eventCapacity += staging.storage.capacity;
     result.liveStorage = rt->viewSet->liveCaptureStaging().storage.events;
   }
-  result.eventCapacity += rt->preparedPairStorage.capacity;
   return result;
 }
 
@@ -5013,22 +4764,8 @@ void test_s3_2_liveness_predicates_are_discriminating_per_owner_kind() {
   TEST_ASSERT_FALSE_MESSAGE(track.hasLiveCaptureStopJobForSlot(kFree),
                             "the ring scan must be per slot");
 
-  // Owner kind 4: a prepared handover still being built. Independent of the ring and of the
-  // finalization owner, so the fixture holds the state that term reads -- but the slot needs a
-  // runtime first, which is the record arm's own admission.
-  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(kFree, true),
-                           "the fixture needs a runtime on the second slot");
-  TrackCaptureStopTestAccess::setInFlightPreparedHandover(track, kFree, true);
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsInFlightPreparedHandover(track, kFree),
-                           "the runtime must report the in-flight handover owner");
-  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kFree),
-                            "an in-flight prepared handover must refuse release");
-  TrackCaptureStopTestAccess::setInFlightPreparedHandover(track, kFree, false);
-  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kFree),
-                           "retiring the handover must free the slot");
-
-  // Control (b): a **published** prepared pair is the slot's playback authority, not an owner. Retire
-  // the stop job first, then assert the slot releases while it still holds a prepared working set.
+  // Control (b): an admitted playback working set is not an owner. Retire the stop job first,
+  // then assert the slot releases while it still holds that working set.
   for (int turn = 0; turn < 4096 && track.hasPendingDeferredOverdubStop(); ++turn) {
     (void)TrackCaptureStopTestAccess::step(track);
   }
@@ -5038,9 +4775,8 @@ void test_s3_2_liveness_predicates_are_discriminating_per_owner_kind() {
                             "a retired job must not stay the finalization owner");
   TEST_ASSERT_FALSE_MESSAGE(track.hasLiveCaptureStopJobForSlot(kOwned),
                             "a retired job must leave the ring's live window");
-  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsInFlightPreparedHandover(track, kOwned));
   TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
-                           "a published pair and an admitted working set are not owners");
+                           "an admitted working set is not an owner");
 }
 
 
@@ -5283,11 +5019,6 @@ int main() {
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
-  RUN_TEST(test_prepared_pair_stream_matches_synchronous_oracle_plain_playback);
-  RUN_TEST(test_differential_harness_detects_a_perturbed_pair);
-  RUN_TEST(test_seal_admitted_into_pair_requires_atomic_replacement);
-  RUN_TEST(test_prepared_pair_preserves_same_tick_off_before_on_order);
-  RUN_TEST(test_prepared_pair_anchor_is_part_of_its_identity);
   RUN_TEST(test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_reference);
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);

@@ -1,22 +1,19 @@
-**2026-10-24 — shipping-rolling-activation 2.1 prepared pair: increment 1 (production path removed; 2.1 open).**
-The pair is no longer published or consumed on any production route: removed the
-`publishPreparedPlaybackPairFromWorkingWindow` call in `Track::ensurePlaybackMergedEventsForSlot` and the
-`resolvePreparedPairConsume` block in `TrackPlaybackHotPath.cpp`. **Scope finding:** the demoted launch/switch routes
-already serve the unified window and never reach the pair; the window lane deliberately refuses undemoted/full-take
-slots (the 1.4 scope split), and the pair publishes only a full-loop window, so its only production route is the
-**full-take legacy switch**, which now falls to the **merged fallback** (2.5's family, still compiled and reachable).
-The earlier "whole-loop window extension for full-take" idea is rejected as a 2.5 scope change. RED→GREEN: the
-full-take switch owner route (`servicePendingSlotProvision` → `updateAllTracks` across the boundary → owner service)
-published the pair (`active=1 pair=1 merged=2 order=2 len=768 req=0`) and now does not (`pair=0`), test
-`test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair`. Eight pair-own tests were retired (seven
-`test_continuous_capture` publication/consume/hold oracles + the read-witness pair row). Gates: focused **607/607**,
-full native **3437 / 7 skipped / 3430 passed**, both builds **96,192 / 392,040 + 1,176 / 34,880** (ITCM 393,216,
-floor 840, 336 B headroom), shipping HEX `15103188953f919d`, qualification `8e4216c797e95225`. **Increment 2 (open):**
-delete the dead `PreparedPlaybackPair`/runtime storage/API, `resolvePreparedPairConsume`, the publish/service owner
-and the dead hot-path branches; re-point/delete the three direct-seed pair tests and the prewarm/whole-take storage
-assertions; then device requalification + cold parity + rollback. Rollback pair unchanged: shipping `09a5ae69…` ↔
-cold `e7e4b4fc…`. Evidence:
-`openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`.
+**2026-10-24 — shipping-rolling-activation 2.1 prepared pair: family removed (implementation complete; device gate
+open).** The pair is gone from the codebase: removed the production publication (`ensurePlaybackMergedEventsForSlot`)
+and consume (`TrackPlaybackHotPath`), `PreparedPlaybackPair`, the runtime pair storage/fields/API, the pair prewarm
+reservation, `resolvePreparedPairConsume`, `publishPreparedPlaybackPairFromWorkingWindow`,
+`servicePendingPreparedPlaybackPair`(+Slot/predicate/metrics) and its `TrackManager`/`main`/`StorageManager` owner
+wiring, `ownsInFlightPreparedHandover`, the read-witness pair branch and the post-reload clear. **Scope finding:** the
+demoted launch/switch already served the unified window; the pair's only production route was the **full-take legacy
+switch**, which now runs the **merged fallback** (2.5's family, still compiled and reachable) until 2.5. RED→GREEN: that
+route published the pair (`active=1 pair=1 merged=2 order=2 len=768 req=0`) and now does not; the surviving long-loop
+window test was re-pointed to the merged working window and its independent reference order. `sizeof(LoopPlaybackRuntime)`
+**7,768 target / 9,896 host** (was 7,920 / 10,120). Gates: full native **3432 / 7 skipped / 3425 passed**; both builds
+**96,192 / 392,040 + 1,176 / 34,880** (ITCM 393,216, floor 840, 336 B headroom); FLASH 1,197,696 shipping / 1,202,888
+qualification; shipping HEX `e5a26dd68ecf9a46`, qualification `9b0e1d3f10054699`. **Remaining:** the device gate
+(qualified launch/switch on shipping + cold control, cold parity, rollback). 2.1 stays unchecked. Rollback pair
+unchanged: shipping `09a5ae69…` ↔ cold `e7e4b4fc…`. Evidence:
+`openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.1-prepared-pair/`.
 
 **2026-10-24 — shipping-rolling-activation: 1.2–1.5 CLOSED (activation, shipping parity, rollback; no removals).**
 The shipping env builds `PLAYBACK_WINDOW_ROLLING_ENABLED=1` with the explicit marker

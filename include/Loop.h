@@ -285,14 +285,11 @@ struct Loop {
   ///
   /// Every full-take publisher requires an exactly full-loop coverage interval --
   /// `publishStoppedOracleView` / `publishStoppedCanonicalOracleView` reject
-  /// `coverage.lengthTicks != coverage.loopLengthTicks`, and
-  /// `publishPreparedPlaybackPairFromWorkingWindow` requires
-  /// `isFullLoopMergedPlaybackWindow` -- while the windowed policy never builds a
-  /// full-loop window once `shouldAvoidFullVisualRebuild` holds. Past that point the
+  /// `coverage.lengthTicks != coverage.loopLengthTicks` -- while the windowed policy never
+  /// builds a full-loop window once `shouldAvoidFullVisualRebuild` holds. Past that point the
   /// three views' worth of windowed capacity is still needed (the live-record and
-  /// handoff lanes use them), but the bridges, their immutable bases and the prepared
-  /// pair can never be published, so reserving them is dead reservation by
-  /// construction.
+  /// handoff lanes use them), but the bridges and their immutable bases can never be
+  /// published, so reserving them is dead reservation by construction.
   bool fullTakePlaybackViewAdmissible() const {
     return !shouldAvoidFullVisualRebuild(loopLengthTicks);
   }

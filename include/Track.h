@@ -808,27 +808,6 @@ public:
   /// runtime, so a switch to a slot without occupancy stays pending until the off-clock provisioning owner
   /// (`TrackManager::provisionSlotForSwitch`) has taken it. Answered without allocating.
   bool hasPlaybackOccupancyForSlot(uint8_t slotIndex) const;
-  /// Task 2.4 slice 2: satisfy a pending prepared-pair request off the MIDI tick.
-  /// Runs the existing gather + order builder, publishes the immutable
-  /// `PreparedPlaybackPair` in one atomic authority change and clears the request.
-  /// Services at most one slot (the first pending) per call; returns true when one
-  /// was serviced. Never call from the clock path.
-  bool servicePendingPreparedPlaybackPair();
-  /// True when any slot has an unsatisfied prepared-pair request (off-clock owner hint).
-  bool hasPendingPreparedPlaybackPairRequest() const;
-  /// Read-only measurement accessors for the prepared-pair conversion
-  /// (ARCHITECTURE-REVIEW § phase gate for task 2.4).
-  struct PreparedPairMetrics {
-    uint32_t requestCount = 0;
-    uint32_t publishCount = 0;
-    uint32_t holdTicks = 0;
-    uint32_t maxLatencyTicks = 0;
-    uint32_t rebuildUnits = 0;
-    uint64_t publishedGeneration = 0;
-    size_t publishedEventCount = 0;
-  };
-  PreparedPairMetrics preparedPairMetrics(uint8_t slotIndex) const;
-  void resetPreparedPairMetrics();
   /// Task 2.4 instrumentation: count of content-sized playback-order builds (merged
   /// gather/assign, order resize/phase fill/sort, full reanchor) that ran while a track was
   /// timing-critical. Must be zero on the active clock path; the builder is the STOPPED oracle.
@@ -1560,12 +1539,6 @@ private:
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   /// The selected Snapshot owner turn; shared with RecordPublished retirement so its current root can catch up.
   void processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits);
-  /// Task 2.4 slice 2: publish the slot's current working merged window + order as
-  /// the coherent prepared pair. Off-clock only; false when the working window and
-  /// its order are not a complete full-loop pair.
-  bool publishPreparedPlaybackPairFromWorkingWindow(uint8_t slotIndex);
-  /// One slot's pending pair request (the scan in `servicePendingPreparedPlaybackPair`).
-  bool servicePendingPreparedPlaybackPairSlot(uint8_t slotIndex);
   void snapshotOverlapHoldCandidates(PendingNote& pending);
   void collectOverlapHoldPlaybackNoteOn(NoteId noteId, uint8_t pitch);
 

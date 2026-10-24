@@ -920,14 +920,14 @@ void test_the_first_frozen_return_window_covers_the_playhead_interval() {
   snprintf(served, sizeof(served),
       "sent=%u cur=%u ready=%u curComp=%d curPub=%d curRaw=%d curFirst=%d curOrigin=%d curStart=%u curLen=%u "
       "readyComp=%d readyPub=%d readyRaw=%d readyStart=%u servable=%d bound=%d "
-      "rollingPhase=%d boundView=%d paged=%d pair=%d permits=%d jobFrozen=%llu readyFirst=%d firstIdx=%d owns=%d",
+      "rollingPhase=%d boundView=%d paged=%d permits=%d jobFrozen=%llu readyFirst=%d firstIdx=%d owns=%d",
       (unsigned)MidiSendCapture::count(), views->lifecycle.current, views->lifecycle.ready,
       (int)rc.complete, (int)rc.published, (int)rc.rawCoveragePrepared, (int)rc.firstRecordReturnWindow,
       (int)rc.source.origin, rc.coverage.startPhase, rc.coverage.lengthTicks,
       (int)ready.complete, (int)ready.published, (int)ready.rawCoveragePrepared, ready.coverage.startPhase,
       (int)runtime.hasServableDeferredRecordView(), (int)runtime.hasBoundRecordReturnWindowForPendingJob(),
       (int)runtime.rolling.phase, (int)runtime.rolling.boundView,
-      (int)runtime.pagedEmission.bound, (int)runtime.preparedPair.ready,
+      (int)runtime.pagedEmission.bound,
       (int)TrackCaptureStopTestAccess::head(t).admission.permitsPlaybackEmission(),
       (unsigned long long)TrackCaptureStopTestAccess::head(t).frozenCaptureContentGeneration,
       (int)ready.firstRecordReturnWindow, (int)views->firstRecordReturnWindowIndex(),

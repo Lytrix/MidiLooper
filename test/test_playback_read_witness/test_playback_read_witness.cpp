@@ -77,7 +77,6 @@ void test_current_snapshot_availability_is_not_claimed_as_a_completed_late_reade
   TrackCaptureStopTestAccess::unmute(track);
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(track, 0);
   runtime.viewSetIfPrewarmed()->lifecycle.current = RuntimePlaybackViewLifecycle::kNoView;
-  runtime.clearPreparedPlaybackPair();
   loop.lastTickInLoop = UINT32_MAX;
   clockManager.assignCurrentTickSilently(900);
   nativePlaybackDeadlineClock = {};

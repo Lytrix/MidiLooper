@@ -145,14 +145,15 @@ remove two families in one slice.
 
 - [ ] 2.1 **Prepared pair.** Remove `resolvePreparedPairConsume` / `PreparedPlaybackPair` publication and clearing /
   `TrackManager::servicePendingPreparedPlaybackPair`; prove the launch/switch routes serve from the unified reader.
-  - **Increment 1 landed (2026-10-24):** the pair is no longer published (`ensurePlaybackMergedEventsForSlot`) or
-    consumed (`TrackPlaybackHotPath`); the demoted launch/switch already served the unified window, and the pair's only
-    production route -- the full-take legacy switch -- now falls to the raw merged fallback (2.5's family). RED→GREEN
-    `test_2_1_the_full_take_switch_does_not_publish_a_prepared_pair` (`pair=1` → `pair=0`); focused 607/607, full
-    native 3437/7/3430, both builds 96,192 / 392,040 + 1,176 / 34,880. **Remaining (increment 2):** delete the dead
-    `PreparedPlaybackPair`/storage/API, the publish/service owner and the dead hot-path branches; re-point/delete the
-    three direct-seed pair tests and the prewarm/whole-take storage assertions; then the device gate, cold parity and
-    rollback. Evidence: `evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`.
+  - **Implementation complete (2026-10-24; device gate open):** increment 1 removed the production publication/consume
+    (`pair=1` → `pair=0`); increment 2 deleted the family (`PreparedPlaybackPair`, runtime storage/API,
+    `resolvePreparedPairConsume`, the publish/service owner, the dead hot-path branches, the metrics/read-witness
+    paths) and re-pointed the remaining tests. The full-take legacy switch serves the raw merged fallback (2.5's
+    family); the demoted launch/switch keeps the unified window. Full native **3432/7/3425**; both builds
+    **96,192 / 392,040 + 1,176 / 34,880**; shipping `e5a26dd6…`, qualification `9b0e1d3f…`. **Remaining:** the device
+    gate (qualified launch/switch on shipping + cold control, cold parity, rollback); 2.1 stays unchecked until then.
+    Evidence: `evidence/2026-10-24-2.1-prepared-pair/EVIDENCE-INCREMENT-1.md`,
+    `EVIDENCE-INCREMENT-2.md`.
 - [ ] 2.2 **Fixed/bridge.** Remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection and
   `boundLaunchView`; prove the committed routes serve from the window reader.
 - [ ] 2.3 **First-Record / Record-return.** Remove `adoptFirstRecordingBarReturnWindow` and

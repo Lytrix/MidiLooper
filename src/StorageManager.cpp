@@ -301,8 +301,7 @@ STORAGE_PERSIST_MEM void StorageManager::emitPostRestoreCensusIfReady(const Loop
         PersistenceWorkQueue::queueDepth() > 0) {
         return;
     }
-    if (trackManager.hasPendingPreparedPlaybackPairRequest() ||
-        trackManager.hasPendingDeferredPlaybackPrewarm()) {
+    if (trackManager.hasPendingDeferredPlaybackPrewarm()) {
         return;
     }
     emitted = true;

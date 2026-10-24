@@ -73,24 +73,6 @@ void TrackManager::prewarmPlaybackRuntime() {
 #endif
 }
 
-FLASHMEM bool TrackManager::hasPendingPreparedPlaybackPairRequest() const {
-  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-    if (tracks[t].hasPendingPreparedPlaybackPairRequest()) {
-      return true;
-    }
-  }
-  return false;
-}
-
-FLASHMEM bool TrackManager::servicePendingPreparedPlaybackPair() {
-  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-    if (tracks[t].hasPendingPreparedPlaybackPairRequest()) {
-      return tracks[t].servicePendingPreparedPlaybackPair();
-    }
-  }
-  return false;
-}
-
 FLASHMEM void TrackManager::requestDeferredPlaybackPrewarm(uint8_t trackIndex, uint8_t slotIndex) {
   deferredPlaybackPrewarmPending_ = true;
   deferredPlaybackPrewarmTrack_ = trackIndex;
