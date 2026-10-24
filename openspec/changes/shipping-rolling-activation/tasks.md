@@ -13,12 +13,12 @@ for every family not yet removed.
   **Landed 2026-10-24:** baseline [`evidence/2026-10-24-cold-baseline/BASELINE.md`](evidence/2026-10-24-cold-baseline/BASELINE.md)
   — `dab405b3…`, code 391,752 + padding 1,464, cold route matrix (base host/internal PASS, dense default leg PASS,
   NOTE_EDIT default content pair; no cold switch run named as a gap).
-- [ ] 1.2 **Close the transferred verification residuals** (from `windowed-playback-generation/CLOSURE.md`), each with
+- [x] 1.2 **Close the transferred verification residuals** (from `windowed-playback-generation/CLOSURE.md`), each with
   its own RED→GREEN where a fixture is owed: 2.2 derived-deadline fixture (short + long loop), 2.4 commit-edge
   allocation/inline-build mutation, 2.9 retained-source hold/release matrix (+ the `retainPlaybackSourceForSlot`
   consumer decision), 4.1 content-level undo parity + consumer decision, 4.2 content-divergence oracle + repair choice,
   and the 2.8 consolidated red-proof accounting. No residual is checked by declaration alone.
-  **Progress 2026-10-24 — 2.2, 2.4, 2.9 and 4.1 landed; 4.2 designed; 2.8 remains, so 1.2 stays unchecked.**
+  **Progress 2026-10-24 — all six residuals landed; 1.2 checked.**
   [`evidence/2026-10-24-verification-residuals/PROGRESS.md`](evidence/2026-10-24-verification-residuals/PROGRESS.md):
   the derived-deadline short/long/tempo fixture, the S4b.7 edge-capacity assertion (both mutations: 28 red, restored),
   the retained-source paused-build/replacement matrix (test-driven; no production retainer consumer by decision), and
@@ -65,7 +65,11 @@ for every family not yet removed.
   patch. The seam/`LOAD_PARITY_ROW` row and the temporary qualification RAM1 re-base were removed; clean qualification
   HEX `8c7d546d…`; full native 3,443 / 7 / 3,436; storage 63/63. Evidence:
   [`evidence/2026-10-24-4.2-device-leg/EVIDENCE.md`](evidence/2026-10-24-4.2-device-leg/EVIDENCE.md). **4.2 is
-  complete; 2.8 (the consolidated red-proof accounting) is the remaining 1.2 item.**
+  complete. **2.8 landed:** [`evidence/2026-10-24-verification-residuals/RED-PROOF-ACCOUNTING.md`](evidence/2026-10-24-verification-residuals/RED-PROOF-ACCOUNTING.md)
+  consolidates every residual's discriminating RED, exact failures, byte-identical restore and GREEN
+  gate: 2.2 (28 red), 2.4 (28 red), 2.9 (paused-build hold clause removed → 1 red), 4.1 (root re-derived
+  in the undo select → 1 red, exact-root assertion), 4.2 (compare disabled → 5 red), plus the device
+  capstone. Storage 63/63; RWO 241/241; full native 3,443/7/3,436.**
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.

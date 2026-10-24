@@ -62,5 +62,11 @@ provenance vs bounded load reconciliation), and the recommendation: **bounded lo
 persisted root's content to the loaded passes at the restore edge, name `OwesReconciliation` and rebuild/stale rather
 than presenting a diverged root as current; no LSV1 format change. Implementation is the next slice.
 
-**Still open in 1.2:** 4.2 implementation (oracle + repair), and the 2.8 consolidated red-proof accounting for 2.9/4.1
-(2.2/2.4 are recorded).
+## 2.8 — consolidated accounting: LANDED
+
+[`RED-PROOF-ACCOUNTING.md`](RED-PROOF-ACCOUNTING.md) is the single record: 2.2 (28 red), 2.4 (28 red), 2.9
+(hold clause removed → the paused-build test fails at “a paused build still needs its source”; 1 failed/240,
+restored byte-identically, `TrackPlaybackWindowBuild.cpp` `2793f5b3…`), 4.1 (root re-derived in the undo
+select → the exact-root assertion fails; 1 failed/240, restored, `TrackUndo.cpp` `f708d8b7…`), 4.2 (compare
+disabled → 5 red; restored, `StorageLoopIo.cpp` `b2cc5076…`), plus the device capstone. Clean gates:
+storage **63/63**, RWO **241/241**, full native **3,443 / 7 / 3,436**. **1.2 is complete.**
