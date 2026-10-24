@@ -139,3 +139,15 @@ Only if the comparison measures too expensive on device; A is then a fast path o
 - A second content authority or a second reader.
 - Revision equality as a correctness primitive (it is a secondary consistency check only).
 - The `nextNoteId` counter as a parity signal.
+
+## Step 1 result (2026-10-24) — passes-only reconstruction control: GREEN
+
+Registered `test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root` (`test_storage_loop_io`):
+a settled writer loop is committed and published; `sharePassesSnapshot()` is adopted into a **scratch loop with no
+published root**, and `resolveDisplayNotes(passesOnly.passes, …)` is compared to `resolveDisplayNotes(writerRoot, …)`.
+The note content agrees element-for-element (pitch, start, end, noteId), and `copyEffectiveCommittedEventsInRange`
+on the scratch loop reads the **passes**, not the root. So the persisted pass representation is a reconstruction
+authority for the committed note projection; the event-tuple/closure domain remains the next control extension.
+
+This gates B: the comparison can be built from the passes-derived projection without borrowing the root being
+validated. No firmware line changed; `test_storage_loop_io` 56/56.

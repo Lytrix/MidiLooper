@@ -2222,6 +2222,52 @@ void test_diagnostic_decoder_reads_captured_teensy_lsv1() {
 /// root.** Through the production writer and the production restore edge, the restored root is equivalent
 /// to the root that was serialized, the committed state the body carried arrives with it, and the
 /// restore's coverage outcome is **named** (4.1's `CheckpointParity`) rather than silently current.
+/// **4.2 control (design rev 2, step 1): the persisted pass representation alone reconstructs the writer root.**
+/// The passes are the body's pass state (`sharePassesSnapshot`), the root is the body's published root. Resolve the
+/// note content from the **passes only** (a scratch loop with no published root) and from the root; the two projections
+/// must agree before any parity comparison can trust the passes as a reconstruction authority.
+void test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 65, 90)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 65, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 400));
+  drainPendingSnapshotPublish(source);
+  const ImmutableLoopSnapshotRef root = source.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(root.get());
+
+  // The persisted pass state, and a scratch loop that has **only** those passes (no published root).
+  LoopSnapshotRef passes = source.sharePassesSnapshot();
+  TEST_ASSERT_NOT_NULL(passes.get());
+  Loop passesOnly;
+  passesOnly.loopId = passes->loopId;
+  passesOnly.loopLengthTicks = passes->loopLengthTicks;
+  passesOnly.adoptPersistedSnapshot(*passes);
+  TEST_ASSERT_EQUAL(source.loopLengthTicks, passesOnly.loopLengthTicks);
+
+  NoteUtils::DisplayNoteVec rootNotes;
+  NoteUtils::DisplayNoteVec passNotes;
+  LoopContentResolution::resolveDisplayNotes(*root, rootNotes);
+  LoopContentResolution::resolveDisplayNotes(passesOnly.passes, passesOnly.loopLengthTicks, passNotes);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(rootNotes.size()),
+                                   static_cast<uint32_t>(passNotes.size()),
+                                   "the passes alone resolve the writer root's note content");
+  for (size_t i = 0; i < rootNotes.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT8(rootNotes[i].note, passNotes[i].note);
+    TEST_ASSERT_EQUAL_UINT32(rootNotes[i].startTick, passNotes[i].startTick);
+    TEST_ASSERT_EQUAL_UINT32(rootNotes[i].endTick, passNotes[i].endTick);
+    TEST_ASSERT_EQUAL(rootNotes[i].noteId, passNotes[i].noteId);
+  }
+}
+
 void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2457,5 +2503,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_rejects_duplicate_loop_snapshot_section);
   // windowed-playback-generation slice 4.2: save parity judged on the serialized root (F-6).
   RUN_TEST(test_lsv1_save_parity_is_judged_on_the_serialized_root);
+  RUN_TEST(test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root);
   return UNITY_END();
 }
