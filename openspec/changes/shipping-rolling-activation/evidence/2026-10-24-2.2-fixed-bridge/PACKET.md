@@ -116,6 +116,14 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   stamp is **not landed**; the tree is reverted to the 2.1-checked state. Next: re-point the rolling fixture properly
   (reset/own the shared counter, decide which fixtures test the demand path vs the seeded start), then rerun the
   native full gate; only then the 3.7e device launch/handoff gate. 2.2 stays unchecked.
+  **Coverage-source finding from the re-point (2026-10-24).** The lane's `serviceRollingPlaybackWindow` seed path
+  returns `Serving` immediately on `Adopted` (`TrackPlaybackWindowBuild.cpp` ~5248-5256), which **skips the lane's
+  ordinary coverage-source retirement** below it. The launch's coverage source/request therefore stays owned
+  (`request=11 pending=0 ... ownsCoverageSource`), which is the shared term behind the `Expected 0 Was 11` rows and
+  the envelope `2816 -> 12032`. The demand-path fixtures drop the seeded **frame** (`dropLaunchBinding`) but not the
+  launch's **coverage source**. Next fix: on the seed path (and in the demand-path fixture drop), retire the launch's
+  coverage source with the same owner step the ordinary lane uses; then rerun the focused/native gates. This is a
+  resource-release fix, not an expected-value edit.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -147,4 +155,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Eight `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed, but the rolling fixture re-point is 35 tests incl. shared-counter and semantic terms, so the seed is not landed. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
+Nine `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed; the residual 35 are the launch coverage-source/request retirement plus the demand-vs-seed fixture split. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
