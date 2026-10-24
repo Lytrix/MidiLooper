@@ -108,7 +108,9 @@ for every family not yet removed.
   while the playhead is inside its coverage (and skipping while the view build is active) gives the
   qualification dense **`ok=True`, overrun_rows=0**, 429/429, build_complete 392, leg+snapshot ok. Native RED
   (coverage 9216→9280), RWO 242/242, full native 3,444/7/3,437. Qualification HEX `6762b8e6…`, shipping
-  `09a5ae69…`. Remaining 1.4: shipping dense/base behavior, switch cold+shipping, 1.5 rollback.
+  `09a5ae69…`. Remaining 1.4: shipping dense from a clean STOPPED boot (or accept the qualification receipt image as the dense
+  parity instrument), switch cold+shipping, 1.5 rollback. Shipping base content/ledger PASS on the demand image;
+  the shipping dense capture was blocked by the attach/display leg (transport running / 25 boot rows), not the lane.
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
 

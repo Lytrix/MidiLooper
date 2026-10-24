@@ -128,14 +128,36 @@ every refusal still keeps the bridge/merged fallback.
 The committed-demand service budget is therefore **within the declared envelope** when the demand is stable.
 1.4 remains unchecked for the **shipping** image, base, switch and rollback runs below.
 
+## Shipping image (stable demand) — harness/receipt limit, lane not at fault
+
+Two shipping dense attempts on `09a5ae69…` did **not** produce a content-parity report:
+
+1. `--boot-reset`: `!REBOOT` was refused because the transport was running after the flash; the attach stream
+   had only 25 rows (the receipt-less image's boot stream is below the harness's 40-line attach threshold).
+2. `--no-boot-reset`: attached (1,213 rows) but the long-loop/display leg exited 2
+   (`insufficient_disp_during_play_stop_hold count=1`), so `build_complete_under_transport=0` and the snapshot
+   rows were absent. This is a **display/attach evidence** failure on the shipping image, not a lane failure:
+   the identical lane code on the qualification image passed the same dense route with `ok=True`.
+
+The shipping image's **base** host route was already measured on the demand image (`captures/2026-10-24-1.4-base-shipping-host`,
+content/ledger PASS; the stable hold is inert for whole-take slots). The shipping **lane** served in the demand-image
+dense run (`build_complete=394`, 25 receipts); the zero-overrun proof is the qualification dense above.
+
+**1.4 status:** base content/ledger parity = PASS (shipping); dense lane parity = PASS (qualification receipt image,
+same lane code); shipping-image dense/display capture = **blocked by receipt/attach instrumentation**; switch
+(cold+shipping) and 1.5 rollback not yet run. The 1.1 cold HEX `dab405b3…` remains unpreserved; the current cold
+control is `e485f542…` (same source with `ROLLING=0`).
+
 ## Recommended next step
 
-1. **Shipping behavior gate:** flash `09a5ae69…`, run the dense route (lane rows + `overrun_rows=0`; the
-   `snap_gate` term is qualification-only and remains expected-absent) and the base host route (whole-take
-   content/ledger parity). The lane parity itself is established on `6762b8e6…`.
+1. **Close the shipping evidence gap** — either run the shipping dense from a **clean STOPPED boot** (stop/clear
+   the 24-bar slot before the flash so the transport is not running and the display leg can attach), or accept the
+   **qualification receipt image** as the dense parity instrument and record the shipping image's lane-serving/base
+   evidence as the behavior smoke. The former is preferred for a shipping pass.
 2. **Switch route:** run the cold control (`e485f542…`, `ROLLING=0`) and the shipping image on the same queued
    switch scenario; compare ordered content/ledger. The 1.1 matrix had no cold switch, so this closes that gap.
-3. **1.5 rollback:** the cold flash itself is the rollback drill; record the HEX pair and the legacy route.
+3. **1.5 rollback:** build/flash the current-source `ROLLING=0` image (or `e485f542…`), confirm the base/legacy
+   route, and record the exact rollback pair; the 1.1 HEX `dab405b3…` is not preserved.
 2. **Snapshot gate term:** it is qualification-only by design; run the dense lane/snapshot content parity on the
    **qualification-receipt image** (same lane) and record the shipping image's `build_complete`/demand rows as the
    behavior proof — or add a shipping-safe route receipt without enabling the qualification instrumentation.
