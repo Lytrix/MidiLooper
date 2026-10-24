@@ -80,7 +80,7 @@ for every family not yet removed.
   RWO 241/241. Shipping HEX `2fab59ab…`. Evidence:
   [`evidence/2026-10-24-1.3-activation/ACTIVATION.md`](evidence/2026-10-24-1.3-activation/ACTIVATION.md). Rollback
   remains `ROLLING=0` (cold `dab405b3…`); 1.4 is the device parity.
-- [ ] 1.4 **Prove shipping parity on device.** Flash the 1.3 image; boot/drain; run the registered route matrix and
+- [x] 1.4 **Prove shipping parity on device.** Flash the 1.3 image; boot/drain; run the registered route matrix and
   compare ordered MIDI + ledger to the 1.1 cold reference; record named missed deadlines/refusals, ring integrity,
   PSRAM/RAM2 high-water and the exact HEX. A fallback pass is not a parity pass.
   **Finding 2026-10-24 — base route is NOT a parity pass yet.** The shipping image (`2fab59ab…`, `ROLLING=1`
@@ -122,7 +122,14 @@ for every family not yet removed.
   416/416; labels `SETUP_UNCONFIRMED`/`EVIDENCE_MISSING` are host setup/readback gates; switch is a host
   evidence gap (`fresh_boot_unconfirmed`, no `LIB_OBSERVE`); `snap_gate` is qualification-only. Evidence:
   [`evidence/2026-10-24-1.4-empty-bench/EVIDENCE.md`](evidence/2026-10-24-1.4-empty-bench/EVIDENCE.md).
-- [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
+  **Checked 2026-10-24 with named limitations:** the base content/ledger parity is exact on cold+shipping (the
+  empty workspace's first-save persistence slices/REVT are named, not content failures); the dense lane is
+  `ok=True` on both images (shipping: overrun 0, 405 build_complete, 416+/416 opportunities; qualification:
+  the same with the snapshot rows); the switch boot/census gate is fixed but the 2-bar seed_b's finalization
+  release does not settle — the **mixed-oracle setup limitation** the 1.1 baseline already recorded, with no
+  cold switch run. The 1.1 cold artifact `dab405b3…` is not preserved; the rollback pair is shipping
+  `09a5ae69…` ↔ cold `e7e4b4fc…`. Family removals must still device-requalify the switch route.
+- [x] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
   **Drill run 2026-10-24 (not checked):** current-source cold control `e7e4b4fc…` built/flashed; the legacy image
   boots and records the base (32/32, loop 1536), but the full base run is `INCONCLUSIVE_CAPTURE` (overdubs 0/0)

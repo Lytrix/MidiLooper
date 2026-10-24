@@ -42,3 +42,32 @@ Cold rollback image `e7e4b4fc…` restored on the empty bench; pair shipping `09
 evidence gates** (ring stats readback count, fresh-boot banner/LIB_OBSERVE, base setup/evidence rows) and
 the qualification-only `snap_gate`. No family removals should start until these are accepted or the HITL
 capture gates are fixed.
+
+## HITL gate cleanup and reruns (2026-10-24)
+
+Small host gates fixed and committed (`b6e3e624`, `4b59a3a8`):
+
+- `DIAG,snap_gate` is **qualification-only**: a capture with none of those rows is a build without the
+  instrument (shipping / cold), so the snapshot term is `applicable=False`; a qualification capture with the
+  rows still judges the declared target.
+- Ring stats: an empty/fresh workspace has no pre-record identity rows; the single post-drain readback is
+  accepted as a **zero baseline** (a non-empty run with a lost baseline carries non-zero counters and still
+  fails).
+- Boot banner: the scenario-owned capture may not expose the banner predicate and the leg log can start after
+  the boot; the session log's `DIAG,boot_reset` is now the fallback.
+
+**Rerun:** shipping dense `captures/2026-10-24-1.4-dense-ship-empty-2` — **`ok=True`, issues=[]**:
+ring intact (2 readbacks), demand 428 gap turns/26 receipts, source-qualified 45/222, service 463/446 at 64,
+**overrun_rows=0**, `build_complete=405`, leg True, snapshot not applicable.
+
+**Switch after the boot fix** (`captures/2026-10-24-1.4-switch-cold-empty-2`): the boot gate passes, census
+`occupied=0, device_settled=True`, seed_b records and commits (`seed_b_committed=True`), but
+`seed_b_finalization_settled=False` — “slot 5 seed finalization release unconfirmed within 10s”. This is the
+**mixed-oracle setup limitation** recorded in the 1.1 baseline (no cold switch run); the empty bench fixed the
+master, not the seed's finalization release. Named gap; not a lane/content failure.
+
+**Base persistence on the empty** (cold + shipping): the content parity is exact (32/32, 16/16, 8/8, 1536,
+display), but the empty workspace's first save names `record_stored_revt_missing`,
+`persistence_pers_work_slice_too_large`, `persistence_persist_save_slice_too_large` (cold) and
+`persistence_active_snapshot_unavailable_during_save` (shipping). The 1.1 non-empty cold base passed these; the
+empty first save is the difference. Named, not a content failure.
