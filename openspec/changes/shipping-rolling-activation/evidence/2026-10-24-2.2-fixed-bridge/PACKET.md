@@ -41,10 +41,17 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   committed/rolling traversal. Ordered actions: the ordinary playback turns. Expected after: the selected source is the
   **rolling/published window** (its source identity/coverage; `win_*` rows), and the fixed resolver returns no bridge.
   Counterexample: the old `selectedFullLoopBridge`/`fullLoopBridgeBase` selection still serving after the removal.
-- **Case B (launch seed).** Initial: the 3.7e committed switch target. Ordered actions: the launch preparation and the
-  rolling lane turns. Expected after: `boundLaunchView` is gone; the lane opens its own window demand and serves the
-  published window (the 3.7e "redundant demand" is now the ordinary path). The existing 3.7e seed test is re-pointed to
-  the demand/serve assertion; a reinstated seed (mutation) must fail it.
+- **Case B (launch seed) — SCOPE FINDING from the first edit attempt.** `boundLaunchView` is the **first target tick's
+  fixed source**, not only a launch helper: the shared rolling helper asserts "launch and first target tick must reuse
+  preparation, including empty coverage" (RWO line 3343), and removing the view makes the first tick open **3** window
+  demands across ~20 rolling tests (`0→3`, `30→33`, …) because the rolling lane's own seed (`launchBoundTick`) runs on a
+  later turn. The slice must therefore choose **before** the removal:
+  - **(a) wire the lane seed into the first tick** (the `launchBoundTick`-based seed/adopt, no `boundLaunchView`), so
+    the reuse and the demand counters survive; or
+  - **(b) accept the first-tick demand** and re-point the helper invariant/counters (the 3.7e reuse optimization is
+    intentionally given up).
+  The 3.7e seed test stays the proof; a reinstated fixed-view seed (mutation) must fail the chosen assertion. Do not
+  delete the view before this decision.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -76,4 +83,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-NOT RUN (specified). Record each command/result when the slice starts; never copy a planned result as a pass.
+First `boundLaunchView` edit attempted and **reverted** (packet finding above). NOT RUN otherwise. Record each command/result when the slice starts; never copy a planned result as a pass.
