@@ -124,6 +124,12 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   launch's **coverage source**. Next fix: on the seed path (and in the demand-path fixture drop), retire the launch's
   coverage source with the same owner step the ordinary lane uses; then rerun the focused/native gates. This is a
   resource-release fix, not an expected-value edit.
+  **Isolation result (2026-10-24).** The clean packet tree is **243/243 RWO**. With the seed/guard/stamp and the
+  suite's `RollingGateRows` reset, the same **35** failures remain, all carrying request result `11`
+  (`WindowOverCapacity`-class) in window-owner/preview/2.11/I8 fixtures that do **not** use the launch seed. The gate-rows
+  reset did not change the count. The 35 therefore include a harness/order interaction independent of the seed
+  transition; the seed is **not landable** until a single-test/run-order isolation names the shared term. No production
+  edit retained; the tree is the green 2.1 state.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -155,4 +161,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Nine `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed; the residual 35 are the launch coverage-source/request retirement plus the demand-vs-seed fixture split. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
+Ten `boundLaunchView` editing attempts (**reverted**; findings above). The target transition is fixed; the residual 35 are a harness/order interaction (request 11) plus the demand-vs-seed split. No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass. Record each command/result when the slice starts; never copy a planned result as a pass.
