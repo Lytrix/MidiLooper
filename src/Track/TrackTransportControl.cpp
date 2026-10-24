@@ -110,4 +110,17 @@ void Track::commitQueuedPlaybackStart(uint32_t commitTick) {
   loop.nextEventIndex = 0;
   loop.lastTickInLoop = UINT32_MAX;
   clearQueuedPlaybackStart();
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  auto* commitRuntime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (commitRuntime != nullptr &&
+      commitRuntime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Bound &&
+      commitRuntime->launchBoundTick == commitTick) {
+    PlaybackDeadlineClock seedClock = clockManager.getPlaybackDeadlineClock();
+    if (seedClock.epoch == 0) seedClock.epoch = 1;
+    seedClock.tick = commitTick;
+    const uint32_t seedPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        commitTick, projectionCycleStartTick, loopLength);
+    (void)seedRollingFrameFromBoundLaunch(activeLoopIndex, playbackGeneration, seedClock, seedPhase);
+  }
+#endif
 }

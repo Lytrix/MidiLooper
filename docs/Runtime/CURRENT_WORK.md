@@ -5814,10 +5814,11 @@ reservation and `selectedFullLoopBridge`/`fullLoopBridgeBase`/candidate selectio
 committed routes serve the rolling/published window and the full-take base falls to the merged fallback until 2.5.
 **Finding:** the bridge is selected by both the hot path and the overdub closure (`TrackOverdubLifecycle.cpp`), and
 `boundLaunchView` is the 3.7e launch seed (removing it turns the seed into an ordinary window demand) — so the slice
-needs a committed-route RED, a launch-seed re-point and an overlay re-point, not a mechanical deletion. No production
-edit yet. Packet:
-[`PACKET.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/PACKET.md).
-Next: the committed-route RED fixture, then the removal.
+needs a committed-route RED, a launch-seed re-point and an overlay re-point, not a mechanical deletion. **Increment 1 landed:** the rolling commit seed + guard + bind work release; the rolling
+resolver no longer uses `boundLaunchView` (the cold wrapper is the compatibility). RWO **243/243**, full native
+**3432/7/3425**, both builds **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`.
+**Remaining:** the 3.7e device launch/handoff gate, then the bridge-storage/cold-wrapper retirement; 2.2 unchecked.
+Evidence: [`EVIDENCE-INCREMENT-1.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/EVIDENCE-INCREMENT-1.md).
 
 **shipping-rolling-activation — 2.1 prepared pair CHECKED (2026-10-24); next 2.2 fixed/bridge.** 1.1–1.5
 are checked. The pair family is fully removed: production publication/consume, `PreparedPlaybackPair`, the runtime

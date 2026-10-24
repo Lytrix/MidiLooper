@@ -370,6 +370,7 @@ struct TrackCaptureStopTestAccess {
     // 3.7e: the **bind's tick** is the seed's witness, so a fixture that wants "this slot carries no launch" has to
     // drop both halves. Clearing only the preparation is the *device's* sticky handoff shape, which still seeds.
     runtime->launchBoundTick = 0;
+    runtime->rolling = LoopPlaybackRuntime::RollingFrame{};
   }
   static void seedPreRoll(Track& track) {
     track.armedPreRollNotes[{1,65}] = PendingNote{65,1,120,91};
@@ -680,6 +681,7 @@ constexpr uint8_t kLiveCaptureBit = static_cast<uint8_t>(WorkingSetRole::LiveCap
 
 void setUp() {
   PlaybackSourceMaskFixture::reset();
+  sInterferenceBudgetEnforced = false;
   LoopPool::setDestroyObserverForTests(nullptr);
   nativePlaybackDeadlineClock = {};
   nativeTransportRunning = true;
@@ -3336,11 +3338,15 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot, bool lateRoot
       const uint32_t base = clockManager.getCurrentTick();
       for (uint32_t tick = base + 1; tick <= base + kBar; ++tick) {
         clockManager.assignCurrentTickSilently(tick);
-        const uint32_t buildsBefore = Track::playbackOrderHotRebuildCount();
+        nativePlaybackDeadlineClock = {tick, 1};
         trackManager.updateAllTracks(tick);
         if (track.getActiveLoopIndex() == kTarget) {
-          TEST_ASSERT_EQUAL_UINT32_MESSAGE(buildsBefore, Track::playbackOrderHotRebuildCount(),
-              "launch and first target tick must reuse preparation, including empty coverage");
+          auto* targetRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kTarget);
+          TEST_ASSERT_NOT_NULL(targetRuntime);
+          TEST_ASSERT_EQUAL_MESSAGE(
+              static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+              static_cast<int>(targetRuntime->rolling.phase),
+              "the commit bind must seed the rolling frame and the consumer must see it Serving");
           break;
         }
       }
@@ -12511,6 +12517,7 @@ void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes
 void test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   nativePlaybackDeadlineClock = {origin, 1};
@@ -12623,6 +12630,7 @@ void test_rolling_handoff_across_natural_wrap_uses_absolute_frame() {
 void test_rolling_empty_interval_preserves_sustain_and_fallback_closure() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   auto& loop = track.getLoop(2);
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
@@ -12934,6 +12942,7 @@ void test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement() {
 void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
   // The dense root sits exactly inside the interval the selector targets first (bars 6..7 = [4608, 5376)), so the
@@ -12984,9 +12993,9 @@ void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
                            "the served view is that span, not the launch's");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
                                    "the refusal is not a crossed promise: nothing is served late");
-  // Playback continues through the fallback: the dense root's 600 events (bars 6..7) plus three of the launch's four
-  // (the drive starts one tick past the launch's bar-0 note-on, so that first event is outside the captured range).
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(603u, MidiSendCapture::count(),
+  // Playback continues through the fallback: the dense root's 600 events (bars 6..7). The demand fixture drops the
+  // launch, so its own four events are not part of this traversal (the seed path is covered by the 3.7e fixtures).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(600u, MidiSendCapture::count(),
                                    "playback continues through the fallback, unaffected by the refusal");
 }
 /// **Task 3.10 -- the rolling path's admission boundary, half 3: the budget charges work, not only an admitted builder.**
@@ -12999,6 +13008,7 @@ void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
 void test_rolling_path_budget_charges_qualification_and_retirement_work() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 3.7e: the demand path's shape, not the adopted window
   auto* target = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   const uint64_t origin = clockManager.getCurrentTick();
@@ -13087,6 +13097,7 @@ void test_rolling_path_budget_charges_qualification_and_retirement_work() {
 void test_rolling_path_reuses_the_view_slot_after_a_refused_completion() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
   auto* set = runtime->viewSetIfPrewarmed();
@@ -13434,6 +13445,10 @@ void test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_an
 void test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_revision() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
+  // 2.2: the launch is dropped here; release what it was sounding so the whole-loop closure sees only this
+  // fixture's own obligation (the shared drop stays note-neutral for the emission fixtures).
+  track.sendAllNotesOff();
   auto& loop = track.getLoop(2);
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
   TEST_ASSERT_NOT_NULL(runtime);
@@ -13661,6 +13676,7 @@ void test_rolling_path_interval_ab_revision_trace_serves_each_interval_its_own_r
 void test_s45_the_moving_closure_closes_when_an_edit_moves_the_note_off_behind_the_playhead() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
   constexpr uint8_t kSlot = 2;
   constexpr uint8_t kHeld = 70;   // the obligation whose end the edit moves behind the playhead
   constexpr uint8_t kKept = 72;   // the obligation the edit re-states unchanged: it must keep sounding

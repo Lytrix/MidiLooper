@@ -1483,13 +1483,6 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     }
   }
   resolveFixedPlaybackSourceForTurn(slotIndex, loop, eligible, sourceOut, bridgeOut, viewOut);
-  if (viewOut == nullptr && eligible && !isJamPlaybackActive() && !isJamming()) {
-    if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex)) {
-      const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
-          currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
-      viewOut = runtime->boundLaunchView(sourceOut, loop.loopLengthTicks, phase, currentTick);
-    }
-  }
   if (viewOut == nullptr && eligible) {
     const RuntimePlaybackView* rollingView =
         resolveRollingPlaybackWindow(slotIndex, currentTick, clockManager.getPlaybackDeadlineClock()).view;
@@ -4671,6 +4664,10 @@ bool Track::bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick) {
   runtime->launchBoundTick = tick;
   runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Bound;
   runtime->syncRevision(loopForSlot(slotIndex).playbackRevision, playbackGeneration);
+  // 2.2: the adopted window's admitted work is discharged by the serve. Leaving it recorded charges the launch
+  // as an outstanding sibling against the next interval's admission (the 3.7e launch would cost the demand its
+  // own margin). The frame serves the view; the work record is done.
+  runtime->viewBuildWork = {};
   return true;
 }
 
@@ -5363,7 +5360,10 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
 #else
   RollingMetadataGuard guard;
   auto* runtime = playbackRuntime.slotIfAllocated(slot);
-  if (!runtime || runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle)
+  if (!runtime) return {RollingOutcome::Excluded, nullptr};
+  const bool launchedThisTick = runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+                                runtime->launchBoundTick == tick;
+  if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle)
     return {RollingOutcome::Excluded, nullptr};
   auto& frame = runtime->rolling;
   auto& loop = loopForSlot(slot);
@@ -5381,7 +5381,7 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
                                    loop);
   if ((slot != activeLoopIndex && !layeredCold) ||
       (!isPlaying() && !(layeredCold && isAudiblePlaybackActive())) ||
-      isJamPlaybackActive() || isJamming() || hasQueuedPlaybackStart() ||
+      isJamPlaybackActive() || isJamming() || (hasQueuedPlaybackStart() && !launchedThisTick) ||
       editManager.isNoteEditActive() || hasPendingDeferredOverdubStop())
     return rejectRollingFrame(*runtime, loop);
   const bool coldReady = frame.phase == LoopPlaybackRuntime::RollingPhase::Ready &&
