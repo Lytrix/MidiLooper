@@ -111,6 +111,12 @@ for every family not yet removed.
   `09a5ae69…`. Remaining 1.4: shipping dense from a clean STOPPED boot (or accept the qualification receipt image as the dense
   parity instrument), switch cold+shipping, 1.5 rollback. Shipping base content/ledger PASS on the demand image;
   the shipping dense capture was blocked by the attach/display leg (transport running / 25 boot rows), not the lane.
+  **Switch/clean-bench finding 2026-10-24:** the accepted-sequence mixed is setup-limited on this set — track 8's
+  master is 24 bars (the dense) and the seed_b is 2 bars, so the cold run ends `PREPARATION_FAILED`; slot clears do
+  not reset the master. Switch parity needs a clean set with a base master (new workspace/set). The cold base on this
+  set records 32/32/1536 but the full run is `INCONCLUSIVE_CAPTURE` (overdubs 0/0). 1.4 switch = named gap; 1.5 full
+  base owed. Evidence:
+  [`evidence/2026-10-24-1.4-switch-cleanbench/FINDING.md`](evidence/2026-10-24-1.4-switch-cleanbench/FINDING.md).
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
   **Drill run 2026-10-24 (not checked):** current-source cold control `e7e4b4fc…` built/flashed; the legacy image
