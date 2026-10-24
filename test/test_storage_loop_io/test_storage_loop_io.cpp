@@ -2658,6 +2658,91 @@ void test_4_2_a_wrap_note_checkpoint_round_trips() {
   releasePersistedLoopSnapshotChunks(oracle);
 }
 
+/// **4.2 same-tick canonical compare.** A coherent body with a NoteOff and a NoteOn at the same tick round-trips
+/// current (the per-tick group is order-independent), while a same-tick velocity divergence in the staged root is
+/// refused. The group compare is the canonical form; the passes' tick order and the root's membership order need not
+/// agree within the tick.
+void test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(300, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 300));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+
+  const auto parseBody = [&](LoopSnapshotBodyFormatV1LoadParseState& parseState,
+                             PersistedLoopSnapshot& oracle) {
+    LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+      stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                         parseState, 0, 1);
+    }
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                          static_cast<int>(stepResult));
+  };
+  LoopSnapshotBodyFormatV1LoadParseState coherentState{};
+  PersistedLoopSnapshot coherentOracle{};
+  parseBody(coherentState, coherentOracle);
+  TEST_ASSERT_NOT_NULL(coherentState.loopSnapshot.get());
+  Loop restored;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, coherentOracle,
+                                std::move(coherentState.loopSnapshot));
+  TEST_ASSERT_NOT_NULL_MESSAGE(restored.publishedSnapshot().get(),
+                               "a coherent same-tick body is current after the guard");
+
+  // A second parse: mutate only the staged root's 200-tick NoteOn velocity (64, 100 -> 90) and its note velocity.
+  LoopSnapshotBodyFormatV1LoadParseState divergentState{};
+  PersistedLoopSnapshot divergentOracle{};
+  parseBody(divergentState, divergentOracle);
+  LoopSnapshotEventRef onRef;
+  forEachSnapshotMembershipReference(divergentState.loopSnapshot->eventMembership(0).get(),
+                                     [&](const LoopSnapshotEventRef& ref) {
+    if (ref && ref->value.isNoteOn() && ref->value.tick == 200 &&
+        ref->value.data.noteData.note == 64) onRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL_MESSAGE(onRef.get(), "the staged same-tick NoteOn exists");
+  const auto notePages = divergentState.loopSnapshot->noteMembership(64, 0);
+  TEST_ASSERT_NOT_NULL(notePages.get());
+  TEST_ASSERT_GREATER_THAN_UINT8(0, notePages->count);
+  const LoopSnapshotNoteRef noteRef = notePages->references[0];
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Replace;
+  noteChange.previous = noteRef;
+  noteChange.next = *noteRef;
+  noteChange.next.velocity = 90;
+  changes.notes.push_back(noteChange);
+  SnapshotEventChange eventChange{};
+  eventChange.kind = SnapshotChangeKind::Replace;
+  eventChange.previous = onRef;
+  eventChange.next = *onRef;
+  eventChange.next.value.data.noteData.velocity = 90;
+  changes.events.push_back(eventChange);
+  LoopSnapshotConstruction construction(divergentState.loopSnapshot, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef divergent = construction.freeze();
+  Loop refused;
+  applyLoadedLoopSlotBodyCommit(refused, track, 0, true, divergentOracle, std::move(divergent));
+  TEST_ASSERT_NULL_MESSAGE(refused.publishedSnapshot().get(),
+                           "a same-tick velocity divergence is refused");
+  releasePersistedLoopSnapshotChunks(divergentOracle);
+}
+
 void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2897,6 +2982,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_4_2_a_divergent_root_is_not_published_as_current);
   RUN_TEST(test_4_2_a_velocity_divergence_is_not_published_as_current);
   RUN_TEST(test_4_2_a_wrap_note_checkpoint_round_trips);
+  RUN_TEST(test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused);
   RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
   return UNITY_END();
 }

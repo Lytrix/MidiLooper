@@ -1374,11 +1374,31 @@ struct CheckpointEventKey {
   uint8_t channel = 0;
   uint8_t first = 0;
   uint8_t second = 0;
+  bool operator<(const CheckpointEventKey& other) const {
+    if (tick != other.tick) return tick < other.tick;
+    if (kind != other.kind) return kind < other.kind;
+    if (channel != other.channel) return channel < other.channel;
+    if (first != other.first) return first < other.first;
+    return second < other.second;
+  }
   bool operator==(const CheckpointEventKey& other) const {
     return tick == other.tick && kind == other.kind && channel == other.channel &&
            first == other.first && second == other.second;
   }
 };
+
+STORAGE_LOOP_IO_MEM void sortCheckpointKeyGroup(std::vector<CheckpointEventKey>& keys, size_t begin,
+                                                size_t end) {
+  for (size_t i = begin + 1; i < end; ++i) {
+    const CheckpointEventKey key = keys[i];
+    size_t j = i;
+    while (j > begin && key < keys[j - 1]) {
+      keys[j] = keys[j - 1];
+      --j;
+    }
+    keys[j] = key;
+  }
+}
 
 STORAGE_LOOP_IO_MEM CheckpointEventKey checkpointEventKey(const MidiEvent& event) {
   CheckpointEventKey key{};
@@ -1420,12 +1440,27 @@ STORAGE_LOOP_IO_MEM bool checkpointEventsEquivalent(const LoopSnapshot& root, Se
   passKeys.reserve(passEvents.size());
   for (const MidiEvent& event : passEvents) passKeys.push_back(checkpointEventKey(event));
   if (rootKeys.size() != passKeys.size()) return false;
-  // First event slice: the two staged streams are compared in their own committed order (the root's membership order
-  // and the passes' tick order). Same-tick reordering is part of the bounded canonical-sort slice, not claimed here.
-  for (size_t i = 0; i < rootKeys.size(); ++i) {
-    if (!(rootKeys[i] == passKeys[i])) return false;
+  // Canonical same-tick comparison: both streams are tick-nondecreasing; each tick's group is compared as a multiset
+  // (insertion-sorted in place, no global sort). This is the source-order-independent compare, bounded per tick.
+  size_t i = 0;
+  size_t j = 0;
+  while (i < rootKeys.size() && j < passKeys.size()) {
+    const uint32_t tick = rootKeys[i].tick;
+    if (passKeys[j].tick != tick) return false;
+    size_t rootEnd = i;
+    while (rootEnd < rootKeys.size() && rootKeys[rootEnd].tick == tick) ++rootEnd;
+    size_t passEnd = j;
+    while (passEnd < passKeys.size() && passKeys[passEnd].tick == tick) ++passEnd;
+    if (rootEnd - i != passEnd - j) return false;
+    sortCheckpointKeyGroup(rootKeys, i, rootEnd);
+    sortCheckpointKeyGroup(passKeys, j, passEnd);
+    for (size_t k = 0; k < rootEnd - i; ++k) {
+      if (!(rootKeys[i + k] == passKeys[j + k])) return false;
+    }
+    i = rootEnd;
+    j = passEnd;
   }
-  return true;
+  return i == rootKeys.size() && j == passKeys.size();
 }
 }  // namespace
 

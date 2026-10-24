@@ -216,3 +216,15 @@ slice, not the final canonical sort), explicit closure-edge assertions, the devi
 **Still owed:** same-tick canonical ordering and the bounded streaming walk (the current compare is order-preserving:
 the root's bar/membership order against the passes' tick order; a same-tick reorder case is the next test), and the
 device leg. **4.2 is not complete.**
+
+## Step 5 result (2026-10-24) — same-tick canonical compare: GREEN
+
+`checkpointEventsEquivalent` now compares **per-tick groups as multisets** (an in-place insertion sort of each tick's
+group; no global `std::sort` — that version blew ITCM by 32 KB). The root's membership order and the passes' tick
+order need not agree within a tick.
+`test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused`: a coherent body with NoteOff@200/60 and
+NoteOn@200/64 round-trips current; a same-tick NoteOn velocity mutation (64, 100 → 90) is refused. Storage **61/61**;
+full native **3,441 / 7 / 3,434**; both builds at the pins (`391,944 + 1,272` / `392,184 + 1,032`).
+
+**Remaining:** the compare still collects both event streams into per-load vectors; the **bounded streaming walk** (no
+whole-stream buffers, per-turn load bound) and the **device leg** remain. **4.2 is not complete.**
