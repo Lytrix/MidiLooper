@@ -93,6 +93,15 @@ for every family not yet removed.
   “fallback pass is not a parity pass”). **Campaign paused** for the scope decision: run the parity on the
   qualification-receipt image to name the route, and record the base scope explicitly (or wire the 3.7b demand).
   Evidence: [`evidence/2026-10-24-1.4-parity/FINDING.md`](evidence/2026-10-24-1.4-parity/FINDING.md).
+  **Production-demand slice + dense re-run 2026-10-24.** `Track::requestActiveCommittedPlaybackWindow` now asks for
+  the **active demoted** slot on the control-owner turn (whole-take slots request nothing; legacy paths intact). RED
+  proof: the request removed fails the new seam test (`Expected 12 Was 4`); RWO 242/242, full native 3,444/7/3,437,
+  both builds at the line; shipping HEX `225a12ea…`. The dense 24-bar re-run **demands and serves** the lane
+  (410 gap-work turns, 25 readiness receipts, 24 source-qualified, 394 `build_complete`, 423/423 opportunities at
+  permitted 64; display leg `ok=True`) but the verifier fails on **one overrun (121 > 64)**; the missing
+  `snap_gate` rows are **qualification-only instrumentation** (the shipping image cannot emit them), so that term
+  belongs to the qualification-receipt parity image. **1.4 remains unchecked:** next is the leading demand (record stop / slot activation),
+  then the snapshot-gate gap, then the full 1.4 matrix.
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
 

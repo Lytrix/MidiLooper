@@ -482,6 +482,15 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
         windowTrackCount < kWindowHolderOffers ? windowTrackCount : kWindowHolderOffers;
     MidiServiceDrain::PlaybackHolder offers[kWindowHolderOffers] = {};
     for (uint8_t i = 0; i < offerCount; ++i) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      // 1.4 production demand: a **playing**, settled track asks for the window its **active demoted** slot
+      // needs, with this turn's qualified clock. Whole-take slots request nothing here, a ready window is left
+      // alone, and every refusal keeps the existing bridge/merged fallback serving (no branch is removed).
+      Track& demandTrack = trackManager.getTrack(i);
+      if (demandTrack.isPlaying() && !demandTrack.isRecording() && !demandTrack.isOverdubbing()) {
+        (void)demandTrack.requestActiveCommittedPlaybackWindow(windowPhase, windowClock);
+      }
+#endif
       // Deadlines outlive worker eligibility (completed candidates may await revalidation).
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
       (void)trackManager.getTrack(i).serviceRollingPlaybackWindow(windowClock);

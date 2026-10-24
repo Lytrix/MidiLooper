@@ -560,6 +560,12 @@ public:
   /// own qualified frame and are refused rather than borrowing the active phase.
   PlaybackViewRequestResult requestCommittedPlaybackWindow(uint8_t slotIndex,
       const PlaybackCoverageInterval& coverage, PlaybackDeadlineClock clock);
+  /// 1.4 production-demand seam: ask for the window the **active demoted slot** needs on the control-owner
+  /// turn, with the qualified transport clock and the turn's playhead phase. A whole-take (undemoted) slot
+  /// returns `NotServable` and keeps its existing route; a `Ready` window is left alone. The request is
+  /// additive: the legacy bridge/merged fallbacks stay reachable while the lane is not ready.
+  PlaybackViewRequestResult requestActiveCommittedPlaybackWindow(uint32_t playheadPhase,
+                                                                PlaybackDeadlineClock clock);
   bool rootQualificationWaitsForCaptureReady(uint8_t slotIndex,
       const LoopPlaybackRuntime& runtime, PlaybackDeadlineClock clock) const;
   /// Task 3.15g: a retained Committed demand is *for* the current published root, so a stamp captured before that

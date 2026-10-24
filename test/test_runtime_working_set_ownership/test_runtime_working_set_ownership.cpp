@@ -10146,6 +10146,56 @@ LoopPlaybackRuntime* prepareCommittedRetrySlot(Track& track, uint8_t slot, uint3
   return TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
 }
 
+/// **1.4 production-demand seam.** The control owner must ask for the active **demoted** slot's window,
+/// with the turn's clock; a whole-take (2-bar) slot must request nothing and keep its existing route, and a
+/// ready window must not be re-requested. This is the seam the shipping activation was missing: the lane
+/// could be compiled but no production caller ever asked, so the bridge/merged fallback served.
+void test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  LoopPlaybackRuntime* runtime = prepareCommittedRetrySlot(track, 0, 32);
+  TEST_ASSERT_NOT_NULL(runtime);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t phase = 13 * bar;
+  nativePlaybackDeadlineClock = {1000, 1};
+
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+                    static_cast<int>(track.requestActiveCommittedPlaybackWindow(
+                        phase, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+
+  PlaybackWindowIdentity published{};
+  for (unsigned turn = 0; turn < 4096; ++turn) {
+    nativePlaybackDeadlineClock.tick += 64;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, false, nativePlaybackDeadlineClock);
+    if (track.publishedPlaybackWindowIdentityForSlot(0, published)) break;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                           "the production demand must publish the window the lane serves");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_UINT32(2 * bar, published.interval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(track.getLoop(0).playbackRevision, published.playbackRevision);
+
+  // A ready window is left alone (no per-turn churn).
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+                    static_cast<int>(track.requestActiveCommittedPlaybackWindow(
+                        phase, nativePlaybackDeadlineClock)));
+
+  // Whole-take control: a 2-bar slot is not the windowed scope, so the demand requests nothing.
+  Track& shortTrack = trackManager.getTrack(1);
+  shortTrack.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(shortTrack, 0);
+  shortTrack.getLoop(0).loopLengthTicks = 2 * bar;
+  TEST_ASSERT_TRUE(shortTrack.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+                    static_cast<int>(shortTrack.requestActiveCommittedPlaybackWindow(
+                        phase, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_FALSE(shortTrack.hasPendingPlaybackViewMaintenance());
+}
+
 void test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request() {
   LoopEventStore::initPool();
   auto& track = trackManager.getTrack(0);
@@ -17536,6 +17586,7 @@ int main() {
   RUN_TEST(test_committed_retry_capacity_refusal_counts_bounded_source_without_partial_publication);
   RUN_TEST(test_committed_retry_clock_stamp_projects_nonzero_slot_origin);
   RUN_TEST(test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request);
+  RUN_TEST(test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take);
   RUN_TEST(test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling);
   RUN_TEST(test_committed_retry_cancel_drains_source_and_epoch_invalidation_never_regrants);
   RUN_TEST(test_committed_retry_residual_lead_and_empty_two_bar_envelope_refuse_without_new_lap);

@@ -4611,6 +4611,35 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
 }
 
 
+TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestActiveCommittedPlaybackWindow(
+    uint32_t playheadPhase, PlaybackDeadlineClock clock) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  const uint8_t slot = getActiveLoopIndex();
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) return PlaybackViewRequestResult::NoRuntime;
+  Loop& loop = loopForSlot(slot);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  // Whole-take (undemoted) slots keep their existing route; the windowed lane's production scope is the
+  // demoted shape (the 1.4 scope split). The legacy fallbacks remain for every refusal below.
+  const bool demoted = loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+  if (!demoted) return PlaybackViewRequestResult::NotServable;
+  if (playbackWindowReadinessForSlot(slot) == PlaybackWindowReadiness::Ready) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  PlaybackCoverageInterval coverage{};
+  if (!playbackWindowInterval(loop.loopLengthTicks, demoted, playheadPhase, coverage)) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  const uint32_t phase = playheadPhase % loop.loopLengthTicks;
+  return requestCommittedPlaybackWindow(slot, coverage, phase, clock);
+#else
+  (void)playheadPhase;
+  (void)clock;
+  return PlaybackViewRequestResult::NotServable;
+#endif
+}
+
 TRACK_COLD_MEM void Track::cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool includeBound) {
   auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (!runtime || runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::None ||

@@ -47,10 +47,46 @@ The 1.4 campaign is **paused** at this decision. The cold control env
 (`teensy41-capture-serial-cold-control`, `e485f542…`) and the shipping image are built; the switch and dense
 routes have not been run.
 
+## Production-demand slice (2026-10-24) — the lane now serves, with a lead gap
+
+Narrow implementation, no removals:
+
+- `Track::requestActiveCommittedPlaybackWindow(phase, clock)` asks for the **active demoted** slot's window; a
+  whole-take 2-bar slot requests nothing (`NotServable`), a `Ready` window is left alone, and every refusal keeps
+  the bridge/merged fallback reachable.
+- The `PlaybackViewMaintenance` owner calls it for each **playing, settled** track before the offers, with the
+  turn's qualified clock. Files: `include/Track.h`, `src/Track/TrackPlaybackWindowBuild.cpp`, `src/main.cpp`;
+  the native seam test is `test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take`.
+- RED proof: removing the request call fails exactly that test (`Expected 12 Was 4`, i.e.
+  `DeferredSourceQualification` vs `NotServable`), restored byte-identically (`93b24c6d…`). Clean: RWO
+  **242/242**, full native **3,444 / 7 / 3,437**, both builds at `96,192 / 392,184 + 1,032 / 34,880`.
+  Shipping HEX **`225a12ea…`** (artifact `captures/device-images/shipping-rolling-demand.hex`).
+
+**Dense 24-bar re-run** (`captures/2026-10-24-1.4-dense-shipping`, same preset/args as the cold reference):
+the lane is now **demanded and serving** — `window_demand_observed` (410 gap-work turns), 25 readiness
+receipts, 24 source-qualified, `windowed_service_coverage` 423/423 opportunities at permitted 64,
+`build_complete_under_transport` **394** (loop_len 768, revisions 0/1). The long-loop display leg is `ok=True`.
+The verifier still fails on **two named issues**:
+
+1. `lane: no_windowed_overrun_under_transport: overrun_rows=1 under_transport=1 worst=121` — one service gap
+   above the permitted 64, likely the **first interval after the record stop** (the demand is issued on the
+   first PLAYING owner turn, so the window can be late for the first handoff).
+2. `snapshot: no DIAG,snap_gate rows for record target t=7 s=3` — **expected on this image**: `snap_gate`
+   (with `launch_gate`) is a **qualification-only diagnostic** (`include/Utils/DebugSessionCapture.h:30`), and the
+   shipping env deliberately does not define `PLAYBACK_WINDOW_ROLLING_QUALIFICATION`. The shipping image therefore
+   cannot emit that term; the lane/snapshot content parity must be judged on the **qualification-receipt image**
+   (same lane) or with a shipping-safe route receipt. It is an evidence gate, not a functional failure.
+
+**Status:** the shipping image now demonstrably *runs* the rolling route, but 1.4 is still **not a parity
+pass** (one named overrun + the missing snapshot-gate rows). The base 2-bar route remains whole-take and its
+content/ledger parity stands; the scope split is confirmed by `not_servable`/no demand on the undemoted slot.
+
 ## Recommended next step
 
-Run the parity on the **qualification receipt image** (same `ROLLING=1` lane, with
-`PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1`) to obtain a **named serving route** for the base and the dense/long
-routes, then compare the content to the cold reference; use the shipping image for a final content/behavior
-smoke only. If the base is intended as a whole-take route, record that scope decision explicitly; if not, wire
-the production window demand (3.7b) before claiming 1.4.
+1. **Lead the demand earlier** — issue it at the **record stop / slot activation / transport start** (where the
+   playhead and the qualified clock are already known), not only on the first PLAYING owner turn, so the first
+   interval is built within the declared lead. Re-run the dense route and require `overrun_rows=0`.
+2. **Snapshot gate term:** it is qualification-only by design; run the dense lane/snapshot content parity on the
+   **qualification-receipt image** (same lane) and record the shipping image's `build_complete`/demand rows as the
+   behavior proof — or add a shipping-safe route receipt without enabling the qualification instrumentation.
+3. **Then** re-run 1.4 (base content/ledger + dense lane + switch with a cold control) before any removal.
