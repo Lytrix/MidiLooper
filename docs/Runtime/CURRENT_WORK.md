@@ -5808,6 +5808,17 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**shipping-rolling-activation — 2.2 fixed/bridge G2 packet specified (2026-10-24).** 2.1 is checked. 2.2's scope is
+pinned: remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection (the whole-take bridge
+reservation and `selectedFullLoopBridge`/`fullLoopBridgeBase`/candidate selection) and `boundLaunchView`; prove the
+committed routes serve the rolling/published window and the full-take base falls to the merged fallback until 2.5.
+**Finding:** the bridge is selected by both the hot path and the overdub closure (`TrackOverdubLifecycle.cpp`), and
+`boundLaunchView` is the 3.7e launch seed (removing it turns the seed into an ordinary window demand) — so the slice
+needs a committed-route RED, a launch-seed re-point and an overlay re-point, not a mechanical deletion. No production
+edit yet. Packet:
+[`PACKET.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/PACKET.md).
+Next: the committed-route RED fixture, then the removal.
+
 **shipping-rolling-activation — 2.1 prepared pair CHECKED (2026-10-24); next 2.2 fixed/bridge.** 1.1–1.5
 are checked. The pair family is fully removed: production publication/consume, `PreparedPlaybackPair`, the runtime
 storage/API, `resolvePreparedPairConsume`, the publish/service owner (`TrackManager`/`main`/`StorageManager`), the dead

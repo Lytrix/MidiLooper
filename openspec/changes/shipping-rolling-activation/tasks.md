@@ -154,6 +154,11 @@ remove two families in one slice.
   `e5a26dd6…` / cold `e7e4b4fc…`. Evidence: `evidence/2026-10-24-2.1-prepared-pair/`.
 - [ ] 2.2 **Fixed/bridge.** Remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection and
   `boundLaunchView`; prove the committed routes serve from the window reader.
+  - **G2 packet specified (2026-10-24; no production edit yet):** the bridge is selected by both the hot path and the
+    overdub closure (`TrackOverdubLifecycle.cpp`), and `boundLaunchView` is the 3.7e launch seed (removing it turns the
+    seed into an ordinary window demand). The committed (rolling) routes already serve the window; the full-take base
+    falls to the merged fallback (2.5). The slice needs a committed-route RED, a launch-seed re-point and an overlay
+    re-point. Evidence: `evidence/2026-10-24-2.2-fixed-bridge/PACKET.md`.
 - [ ] 2.3 **First-Record / Record-return.** Remove `adoptFirstRecordingBarReturnWindow` and
   `adoptOrServiceOnwardRecordWindow`; prove the Record/stop-return routes serve from the ordinary owner.
 - [ ] 2.4 **Paged emission selection.** Remove the legacy `pagedEmission` selection while retaining the paginated
