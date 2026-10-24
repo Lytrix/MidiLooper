@@ -170,3 +170,15 @@ validated. No firmware line changed; `test_storage_loop_io` 56/56.
 **Deliberately narrow:** note-level parity only. Velocity/channel/event-tuple/closure comparison, the explicit
 existing-slot transactional proof (the guard returns before apply; the test is still owed), the bounded streaming
 walk, and the device leg remain. **4.2 is not complete.**
+
+## Step 2 transactional result (2026-10-24) — existing-slot generation intact: GREEN
+
+`test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact`: a coherent body is loaded into a slot; a second,
+independently parsed body whose staged root is pitch-mutated is then refused. The existing slot keeps the **same root
+object**, the **same pass id** and the **same parity** (`Current`), and the diverged pitch never appears in its notes.
+This proves "apply neither" on an existing slot: the guard returns before `applySnapshotToLoop`, so no mixed
+root/passes generation is possible. Storage suite **58/58**; full native **3,438 / 7 / 3,431**.
+
+Still owed in 4.2: the canonical event-tuple/closure comparison (the next slice; it requires a passes-derived
+effective-event projection usable on staged passes, because `copyEffectiveCommittedEventsInRange` is a `Loop` method),
+the bounded streaming walk, and the device leg.

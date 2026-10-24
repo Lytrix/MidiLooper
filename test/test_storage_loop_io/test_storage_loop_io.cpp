@@ -2271,6 +2271,108 @@ void test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root() {
 /// body; only the **staged root representation** from the parse is then mutated (both pair members' pitch plus the
 /// root note's pitch), leaving the passes, IDs and metadata untouched. The positive bite check proves the staged
 /// projections really disagree before the loader is asked to reject them.
+/// **4.2 step 2 (transactional half): a failed parity check leaves the complete previous slot generation intact.**
+/// A coherent body is loaded first; then a second, independently parsed body whose staged root is pitch-mutated is
+/// refused. The existing slot keeps its root object, its pass and its parity, and never sees the mutated pitch.
+void test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+
+  const auto parseBody = [&](LoopSnapshotBodyFormatV1LoadParseState& parseState,
+                             PersistedLoopSnapshot& oracle) {
+    LoopSnapshotBodyFormatV1LoadStepResult stepResult = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+      stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                         parseState, 0, 1);
+    }
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                          static_cast<int>(stepResult));
+  };
+  LoopSnapshotBodyFormatV1LoadParseState coherentState{};
+  PersistedLoopSnapshot coherentOracle{};
+  parseBody(coherentState, coherentOracle);
+  TEST_ASSERT_NOT_NULL(coherentState.loopSnapshot.get());
+
+  Loop existing;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(existing, track, 0, true, coherentOracle,
+                                std::move(coherentState.loopSnapshot));
+  TEST_ASSERT_NOT_NULL(existing.publishedSnapshot().get());
+  const ImmutableLoopSnapshotRef oldRoot = existing.publishedSnapshot();
+  const PassId oldPassId = existing.passes.recordPass.id;
+  const CheckpointParity oldParity = existing.checkpointParity();
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::Current), static_cast<int>(oldParity));
+
+  // A second, independently parsed body, mutated only in its staged root.
+  LoopSnapshotBodyFormatV1LoadParseState divergentState{};
+  PersistedLoopSnapshot divergentOracle{};
+  parseBody(divergentState, divergentOracle);
+  const auto notePages = divergentState.loopSnapshot->noteMembership(62, 0);
+  TEST_ASSERT_NOT_NULL(notePages.get());
+  TEST_ASSERT_GREATER_THAN_UINT8(0, notePages->count);
+  const LoopSnapshotNoteRef noteRef = notePages->references[0];
+  LoopSnapshotEventRef onRef;
+  LoopSnapshotEventRef offRef;
+  forEachSnapshotMembershipReference(divergentState.loopSnapshot->eventMembership(0).get(),
+                                     [&](const LoopSnapshotEventRef& ref) {
+    if (ref->value.data.noteData.note != 62) return;
+    if (ref->value.isNoteOn()) onRef = ref;
+    if (ref->value.isNoteOff()) offRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL(onRef.get());
+  TEST_ASSERT_NOT_NULL(offRef.get());
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Replace;
+  noteChange.previous = noteRef;
+  noteChange.next = *noteRef;
+  noteChange.next.pitch = 63;
+  changes.notes.push_back(noteChange);
+  for (const LoopSnapshotEventRef& ref : {onRef, offRef}) {
+    SnapshotEventChange eventChange{};
+    eventChange.kind = SnapshotChangeKind::Replace;
+    eventChange.previous = ref;
+    eventChange.next = *ref;
+    eventChange.next.value.data.noteData.note = 63;
+    changes.events.push_back(eventChange);
+  }
+  LoopSnapshotConstruction construction(divergentState.loopSnapshot, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef divergent = construction.freeze();
+  TEST_ASSERT_NOT_NULL(divergent.get());
+
+  applyLoadedLoopSlotBodyCommit(existing, track, 0, true, divergentOracle, std::move(divergent));
+
+  // The old slot generation is wholly intact: same root object, same pass, same parity, no 63.
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(oldRoot.get(), existing.publishedSnapshot().get(),
+                                "a failed parity must not replace the existing root");
+  TEST_ASSERT_EQUAL_MESSAGE(oldPassId, existing.passes.recordPass.id,
+                            "a failed parity must not install the candidate passes");
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(oldParity), static_cast<int>(existing.checkpointParity()));
+  NoteUtils::DisplayNoteVec existingNotes;
+  LoopContentResolution::resolveDisplayNotes(*existing.publishedSnapshot(), existingNotes);
+  for (const auto& note : existingNotes) {
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(63, note.note, "the diverged pitch never reaches the existing slot");
+  }
+  releasePersistedLoopSnapshotChunks(divergentOracle);
+}
+
 void test_4_2_a_divergent_root_is_not_published_as_current() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2610,5 +2712,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_save_parity_is_judged_on_the_serialized_root);
   RUN_TEST(test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root);
   RUN_TEST(test_4_2_a_divergent_root_is_not_published_as_current);
+  RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
   return UNITY_END();
 }
