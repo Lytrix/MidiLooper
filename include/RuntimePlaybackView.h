@@ -16,8 +16,10 @@
 static_assert(PLAYBACK_WINDOW_ROLLING_ENABLED == 0 || PLAYBACK_WINDOW_ROLLING_ENABLED == 1,
               "rolling playback gate must be 0 or 1");
 #if PLAYBACK_WINDOW_ROLLING_ENABLED && !defined(PIO_UNIT_TEST_NATIVE) && \
-    !(defined(SESSION_CAPTURE) && defined(PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
-#error "rolling playback requires native or an explicit capture qualification build"
+    !(defined(SESSION_CAPTURE) && \
+      (defined(PLAYBACK_WINDOW_ROLLING_QUALIFICATION) || \
+       defined(PLAYBACK_WINDOW_ROLLING_SHIPPING_ACTIVATED)))
+#error "rolling playback requires native, a qualification build, or the explicit shipping activation"
 #endif
 
 /// Fixed storage owned by one slot's playback runtime.  The capacities are a

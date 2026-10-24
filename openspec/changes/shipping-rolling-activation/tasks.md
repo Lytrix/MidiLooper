@@ -70,9 +70,16 @@ for every family not yet removed.
   gate: 2.2 (28 red), 2.4 (28 red), 2.9 (paused-build hold clause removed → 1 red), 4.1 (root re-derived
   in the undo select → 1 red, exact-root assertion), 4.2 (compare disabled → 5 red), plus the device
   capstone. Storage 63/63; RWO 241/241; full native 3,443/7/3,436.**
-- [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
+- [x] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
+  **Landed 2026-10-24:** the shipping env carries `PLAYBACK_WINDOW_ROLLING_ENABLED=1` plus the explicit marker
+  `PLAYBACK_WINDOW_ROLLING_SHIPPING_ACTIVATED=1` (not the qualification instrumentation flag); the activation guard
+  accepts either named marker and still rejects any other capture build. Two files changed, **no branch/route
+  removed**. Both builds at `96,192 / 392,184 + 1,032 / 34,880` (floor 840); full native 3,443/7/3,436; storage 63/63;
+  RWO 241/241. Shipping HEX `2fab59ab…`. Evidence:
+  [`evidence/2026-10-24-1.3-activation/ACTIVATION.md`](evidence/2026-10-24-1.3-activation/ACTIVATION.md). Rollback
+  remains `ROLLING=0` (cold `dab405b3…`); 1.4 is the device parity.
 - [ ] 1.4 **Prove shipping parity on device.** Flash the 1.3 image; boot/drain; run the registered route matrix and
   compare ordered MIDI + ledger to the 1.1 cold reference; record named missed deadlines/refusals, ring integrity,
   PSRAM/RAM2 high-water and the exact HEX. A fallback pass is not a parity pass.
