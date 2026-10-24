@@ -50,8 +50,15 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
     the reuse and the demand counters survive; or
   - **(b) accept the first-tick demand** and re-point the helper invariant/counters (the 3.7e reuse optimization is
     intentionally given up).
-  The 3.7e seed test stays the proof; a reinstated fixed-view seed (mutation) must fail the chosen assertion. Do not
-  delete the view before this decision.
+  The 3.7e seed test stays the proof; a reinstated fixed-view seed (mutation) must fail the chosen assertion.
+  **Refined finding from the second attempt (owner-lane seed is too broad):** the seed lives only in
+  `serviceRollingPlaybackWindow`'s owner turn; the hot-path resolver cannot seed without changing the rolling suite's
+  intended `Idle` start (~20 tests, +3 hot rebuilds each: `handoff_shortfall`, `blocked_demand`, `queued_zero_start`,
+  `natural_wrap`, `empty_interval`, …). The removed wrapper was the **commit-tick** source: at the commit tick the
+  rolling lane still rejects on `hasQueuedPlaybackStart()`, so the first target tick falls to the merged fallback.
+  Direction chosen by the owner: seed the frame at the **commit/bind inside the lane** (the `launchBoundTick` adopt,
+  allowed through the queued-start guard for that one commit tick), and re-point the shared helper + the rolling tests
+  to start from the seeded frame. That is a bounded rolling-suite re-point, not a wrapper deletion alone.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -83,4 +90,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-First `boundLaunchView` edit attempted and **reverted** (packet finding above). NOT RUN otherwise. Record each command/result when the slice starts; never copy a planned result as a pass.
+Two `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
