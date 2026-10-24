@@ -151,3 +151,22 @@ authority for the committed note projection; the event-tuple/closure domain rema
 
 This gates B: the comparison can be built from the passes-derived projection without borrowing the root being
 validated. No firmware line changed; `test_storage_loop_io` 56/56.
+
+## Step 2 result (2026-10-24) — divergent-root RED and the note-level guard: GREEN
+
+- **RED:** `test_4_2_a_divergent_root_is_not_published_as_current` writes a coherent production body, then mutates **only
+  the parsed staged root** (both pair members' pitch plus the root note's pitch; passes/IDs/metadata untouched). The
+  positive bite check proves the staged root carries 63 while the passes-derived projection still carries 62 before the
+  loader is asked to act. Against the old loader the divergent root was published `Current` (the RED).
+- **Guard:** `applyLoadedLoopSlotBodyCommit` now compares the two staged sources **before** `applySnapshotToLoop`:
+  `resolveDisplayNotes(persistedOracle.passes, …)` vs `resolveDisplayNotes(*loadedLoopSnapshot, …)` (note pitch/start/
+  end). Unequal → return without applying either source; a fresh slot exposes no current checkpoint.
+- **Tests:** the storage suite **57/57** (control, coherent save parity, divergent refusal); full native
+  **3,437 / 7 skipped / 3,430**; both firmware builds at the exact pins (code 391,752 + 1,464 / 391,992 + 1,224).
+- **Fixture correction:** `test_lsv1_load_commit_rebuilds_undo_and_preserves_root` previously built a synthetic
+  passes/root pair that was not a writer state; the guard correctly refused it, so the fixture now writes a coherent
+  production body. This is the invariant the guard introduces.
+
+**Deliberately narrow:** note-level parity only. Velocity/channel/event-tuple/closure comparison, the explicit
+existing-slot transactional proof (the guard returns before apply; the test is still owed), the bounded streaming
+walk, and the device leg remain. **4.2 is not complete.**

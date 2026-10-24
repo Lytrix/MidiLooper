@@ -31,6 +31,12 @@ for every family not yet removed.
   wholly authoritative until atomic commit), and a bounded streaming comparison (no pre-emptive bound change). Repair
   **B** stands; no LSV1 provenance. Remaining: 4.2 implementation in the design's order (control → divergent RED →
   pre-publication parity → bounded reconcile → transactional failure → device) and the 2.8 accounting.
+  **4.2 step 2 landed 2026-10-24:** the staged pitch-pair+note mutation RED (the old loader published the divergent
+  root) is GREEN under the pre-publication **note-level** guard; the divergent body applies neither root nor passes, and
+  a fresh slot has no current. Storage **57/57**, full native **3,437 / 7 / 3,430**, both pins exact. The old
+  load-commit fixture was a synthetic passes/root pair and now writes a coherent production body. **Not 4.2 complete:**
+  velocity/channel/event-tuple/closure, the explicit existing-slot transactional test, the bounded streaming walk and
+  the device leg remain.
 - [ ] 1.3 **Activate without removing anything.** Set `PLAYBACK_WINDOW_ROLLING_ENABLED=1` on the shipping env; keep
   every compatibility branch compiled and reachable as the named fallback. Build both images; native gates; RAM1 at the
   approved pins. No route is removed and no branch is deleted.
