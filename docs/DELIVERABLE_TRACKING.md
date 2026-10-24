@@ -1,3 +1,12 @@
+**2026-10-24 — shipping-rolling-activation 1.2–1.5 CLOSED (activation + parity + rollback; no removals).**
+The shipping image now runs the rolling lane (`PLAYBACK_WINDOW_ROLLING_ENABLED=1` + the shipping-activation marker),
+with every compatibility branch retained. Verification: the 2.8 red-proof accounting and the 4.2 device leg
+(diverged checkpoint refused, no current, the diverged content never served). Parity: the **shipping dense is
+`ok=True`** (0 overruns) and the base content/ledger is exact on cold+shipping (32/32, 16/16, 8/8, 1536, display);
+the accepted-sequence switch is the named mixed-oracle finalization limitation. Rollback pair
+`09a5ae69…` ↔ `e7e4b4fc…`. 1.2–1.5 checked; **2.1 prepared pair is the next removal**. Evidence:
+`openspec/changes/shipping-rolling-activation/evidence/`.
+
 **2026-10-24 — windowed-playback-generation CLOSED on the qualification/supported-route scope; activation/removal
 spun out.** The change establishes and qualifies the unified rolling reader under `PLAYBACK_WINDOW_ROLLING_ENABLED=1`;
 shipping-default activation and removal of the compatibility emitters are intentionally deferred (not waived) to

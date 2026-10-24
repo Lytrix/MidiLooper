@@ -1,3 +1,24 @@
+**2026-10-24 — shipping-rolling-activation: 1.2–1.5 CLOSED (activation, shipping parity, rollback; no removals).**
+The shipping env builds `PLAYBACK_WINDOW_ROLLING_ENABLED=1` with the explicit marker
+`PLAYBACK_WINDOW_ROLLING_SHIPPING_ACTIVATED=1` (distinct from the qualification instrumentation); the activation
+guard accepts those named markers only. **No compatibility branch or route was removed.** 1.2's residuals closed with
+the 2.8 red-proof accounting (2.2 28 red, 2.4 28 red, 2.9 hold clause 1 red, 4.1 exact-root 1 red, 4.2 compare-disabled
+5 red) and the 4.2 device leg: a device-written diverged root is refused (`result=divergent`), no current, the
+diverged content never served; the host/device `MidiEvent` 32/20 B layout finding made host-written bodies invalid, so
+the leg used the device body and a one-byte root patch; the original was restored. The production demand was wired
+(active demoted slot on the owner turn; record-stop lead; **stable-demand hold** of one coverage), which cleared the
+dense sliding-demand overrun: **shipping dense `ok=True`** (overrun 0, 405 build_complete, 416/416 opportunities at
+64) and the **qualification dense `ok=True`** (snapshot included). **Base content/ledger parity is exact on
+cold+shipping** (record 32/32, overdub 16/16, second 8/8, loop 1536, display; RAM2 180,224 on the empty bench). The
+accepted-sequence mixed **switch remains setup-limited**: the 2-bar seed_b finalization release does not settle (the
+empty bench fixed the master, not the release; the 1.1 baseline had no cold switch). Small HITL gates fixed
+(qualification-only `snap_gate`; empty ring baseline; session-log boot banner). Rollback pair: shipping
+`09a5ae69…` ↔ cold `e7e4b4fc…`; the 1.1 `dab405b3…` artifact is not preserved. Both builds at
+`96,192 / 392,184 + 1,032 / 34,880`; full native **3,444 / 7 / 3,437**. **1.2–1.5 checked; family removals not
+started** — 2.1 prepared pair is next. Bench: the `151444` tree active; `61768` base, `185599` v1, S3 revisions and
+the quarantines intact; the 4.2 original host copy at `captures/4.2-device-leg/original_loop_07_04.bin`. Evidence:
+`openspec/changes/shipping-rolling-activation/evidence/`.
+
 **2026-10-24 — windowed-playback-generation CLOSED on the qualification/supported-route scope; activation/removal
 spun out.** The change establishes and qualifies the unified rolling reader under `PLAYBACK_WINDOW_ROLLING_ENABLED=1`;
 shipping-default activation and removal of the compatibility emitters are intentionally deferred (not waived) to
