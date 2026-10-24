@@ -5,7 +5,7 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Identity and scope
 
-- Task: **2.2 fixed/bridge**. Status: **increment 1 landed** (the rolling launch seed + guard + bind work release; the cold wrapper kept). Native full green; the **3.7e device gate is pending**, so 2.2 stays unchecked.
+- Task: **2.2 fixed/bridge**. Status: **increment 1 landed and device-qualified** (the rolling launch seed + guard + bind work release; the cold wrapper kept). Native full green; the **3.7e launch/handoff device gate PASSES** on the qualification image (the host Tier-A ring eviction excluded by owner decision as a separate root cause). The family's bridge-storage / fixed-resolver removal and cold-wrapper retirement remain, so the 2.2 checkbox stays open.
 - Remove:
   - `Track::resolveFixedPlaybackSourceForTurn` (`src/Track/TrackPlaybackWindowBuild.cpp`, decl `include/Track.h`) and
     the hot-path `fixedBridge`/`fixedView` selection it feeds (`TrackPlaybackHotPath.cpp`).
@@ -167,4 +167,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-**Increment 1 (rolling launch seed) — LANDED; 2.2 unchecked (device gate pending).** Production: the commit seed, the just-seeded guard, and the bind's `viewBuildWork` release; the rolling resolver's `boundLaunchView` use removed, the cold `ROLLING=0` wrapper kept. Fixtures re-pointed (interference-budget `setUp` reset, the seed-Serving RED + deadline stamp, the demand-path drops, the closure note release, the fallback 600). RWO **243/243**; full native **3432 / 7 / 3425**; both builds **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`. Evidence: `EVIDENCE-INCREMENT-1.md`. The bridge-storage removal and the cold-wrapper retirement remain the rest of the family. Record each command/result when the slice starts; never copy a planned result as a pass.
+**Increment 1 (rolling launch seed) — LANDED; device gate PASS (qualification image).** Production: the commit seed, the just-seeded guard, and the bind's `viewBuildWork` release; the rolling resolver's `boundLaunchView` use removed, the cold `ROLLING=0` wrapper kept. Fixtures re-pointed (interference-budget `setUp` reset, the seed-Serving RED + deadline stamp, the demand-path drops, the closure note release, the fallback 600). RWO **243/243**; full native **3432 / 7 / 3425**; both builds **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`. Evidence: `EVIDENCE-INCREMENT-1.md`. The bridge-storage removal and the cold-wrapper retirement remain the rest of the family. Record each command/result when the slice starts; never copy a planned result as a pass.

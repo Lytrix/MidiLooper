@@ -158,9 +158,29 @@ remove two families in one slice.
     guard + bind `viewBuildWork` release) replaces the rolling `boundLaunchView` use; the cold `ROLLING=0` wrapper is
     the named compatibility until 2.5. Fixtures re-pointed (interference-budget reset, seed-Serving RED, demand-path
     drops, closure note release, fallback 600). RWO **243/243**; full native **3432/7/3425**; both builds
-    **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`. **Remaining:** the 3.7e
-    device launch/handoff gate and the bridge-storage/cold-wrapper retirement. 2.2 stays unchecked. Evidence:
+    **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`. **3.7e device launch/handoff gate PASS** on the
+    qualification image `77a8f562…` (`switch_target_span_alignment` PASS; snapshot 170/170; the host Tier-A ring
+    eviction excluded by owner decision as a separate root cause). **Remaining:** the bridge-storage/fixed-resolver
+    removal and the cold-wrapper retirement. 2.2 stays unchecked. Evidence:
     `evidence/2026-10-24-2.2-fixed-bridge/`.
+  - **Restore/launch correction and device rerun (2026-10-24; NOT checked):** rolling source selection now transfers
+    the view's own identity and clears the compatibility bridge. RED source revision1 vs2; focused291/291,
+    full3432/7skip/3425pass; both builds retain the pins; focused review no findings. Shipping `4ce466e0…`,
+    qualification `de4d6a6f…`. NOTE_EDIT stop→reboot crash not reproduced; display/prepare/slice/pair captured.
+    Authorized qualification reruns: odd33-bar target alignment refusal corrected by reseeding scratch8/5 to24 bars
+    (384/384,persistenceok); aligned run commits→serves in39ms, but after4s repeats `handoff_unreachable` and ends
+    `win_blocked_by_budget`; Tier-A eviction3 also fails the gate. **Next: post-seed successor admission and intact
+    evidence, not family retirement.** Board restored to fixed shipping; stopped reboot crash0/loadok.
+    [Restore transition and non-PASS gate](evidence/2026-10-24-2.2-fixed-bridge/RESTORE-TRANSITION.md).
+  - **Successor/display slice (2026-10-24; native verified, device gate NOT closed):** owner approved DEC-156's
+    bounded later absolute occurrence with unchanged service price. Position/deadline preserved across main requester
+    revision supersession (review RED18432 vs13824 fixed). Partial visual-cache slice revision invalidation fixed
+    (stationary16-note RED1→GREEN). Combined302/302, full3433/7skip/3426pass; both images unchanged pins.
+    Shipping1924b90c…, qualificationb11f18a5…. Owner closes NOTE_EDIT stop→reboot crash. No-upload/no-reset reruns
+    after owner's2 reboots: display/snapshot PASS, targetReady118ms on02, later adoption still unproven;03 lacks target
+    commit/gate. Ringloss prevents qualification. Exact post-Record bars2–16 fixed-window freshness remains owed.
+    Board left qualificationb11f18a5…; **2.2 stays unchecked**, no family retirement.
+    [Successor/display evidence and remaining gates](evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md).
 - [ ] 2.3 **First-Record / Record-return.** Remove `adoptFirstRecordingBarReturnWindow` and
   `adoptOrServiceOnwardRecordWindow`; prove the Record/stop-return routes serve from the ordinary owner.
 - [ ] 2.4 **Paged emission selection.** Remove the legacy `pagedEmission` selection while retaining the paginated

@@ -5808,6 +5808,33 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**2.2 — successor/display continuation (2026-10-24; current):** owner-approved DEC-156 — bounded committed
+future-occurrence positioning implemented; same service price, selected absolute deadline retained. Independent
+main requester preserves rolling debt across revision supersession (review finding RED→GREEN). Partial-cache
+publication revision fixed, stationary visual fallback16 exact notes vs stale1 RED→GREEN. Combined302/302;
+full3433/7skip/3426pass; both builds at unchanged pins. **NOTE_EDIT stop→reboot crash CLOSED by owner.**
+Qualificationb11f18a5… stays on board per no-upload rerun request. No-upload/no-reset runs02/03 had no disconnects:
+02 reaches target successorReady118ms (no captured old storm), but later occurrence adoption unproven;03 lacks
+target commit/gate. Ring evictions3 (pluswipe1 in02) fail qualification. Display-window/snapshot checks pass,
+but exact stationary post-Record bars2–16 content remains owed; retained source/handoff policy is not proved by
+the partial-cache fixture. **3.7e — device continuation open; 2.2 — fixed/bridge unchecked.** Next device fixture
+must prove active/target and wait through H with intact evidence, plus exact first-window notes before movement.
+Do not repeat identical long runs or retire bridge/cold-wrapper on these results.
+Evidence: [successor/display fixes and device limits](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md).
+
+
+**2.2 — fixed/bridge immediate blocker update (2026-10-24):** source-tuple correction is native/build/review verified:
+the rolling selection now carries its own source identity and no compatibility bridge (RED revision1 vs2).
+Focused291/291, full3432/7skip/3425pass; both images at unchanged pins. The explicitly pinned shipping NOTE_EDIT
+stop→reboot crash was **not reproduced**; display/prepare/slice/pair captured. Qualification device gate rerun on an
+aligned24-bar target (scratch track8 slot5 reseeded,384/384,persistok) commits→serves in39ms, then after4s enters
+`handoff_unreachable` retries→`win_blocked_by_budget`; evidence-ring Tier-A eviction3 also fails. **Do not check off
+3.7e — launch/continuation or 2.2 — fixed/bridge removal.** Continue with the measured post-seed successor admission,
+not bridge/cold-wrapper retirement, then rerun with intact evidence. Board restored to fixed shipping `4ce466e0…`,
+stopped reboot crash0/loadok/display/pair progress. Qualification `de4d6a6f…`. No non-scratch clears/quarantine.
+Evidence: [restore transition and failed continuation](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/RESTORE-TRANSITION.md).
+
+
 **shipping-rolling-activation — 2.2 fixed/bridge G2 packet specified (2026-10-24).** 2.1 is checked. 2.2's scope is
 pinned: remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection (the whole-take bridge
 reservation and `selectedFullLoopBridge`/`fullLoopBridgeBase`/candidate selection) and `boundLaunchView`; prove the
@@ -5817,7 +5844,10 @@ committed routes serve the rolling/published window and the full-take base falls
 needs a committed-route RED, a launch-seed re-point and an overlay re-point, not a mechanical deletion. **Increment 1 landed:** the rolling commit seed + guard + bind work release; the rolling
 resolver no longer uses `boundLaunchView` (the cold wrapper is the compatibility). RWO **243/243**, full native
 **3432/7/3425**, both builds **96,192 / 392,040 + 1,176 / 34,880**; shipping `14e2192e…`, qualification `77a8f562…`.
-**Remaining:** the 3.7e device launch/handoff gate, then the bridge-storage/cold-wrapper retirement; 2.2 unchecked.
+The **3.7e device launch/handoff gate PASSES** on the qualification image
+`77a8f562…` (`switch_target_span_alignment` PASS; snapshot 170/170; the host Tier-A ring eviction excluded by owner
+decision as a separate root cause). **Remaining:** the bridge-storage/fixed-resolver removal and the cold-wrapper
+retirement; 2.2 unchecked.
 Evidence: [`EVIDENCE-INCREMENT-1.md`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/EVIDENCE-INCREMENT-1.md).
 
 **shipping-rolling-activation — 2.1 prepared pair CHECKED (2026-10-24); next 2.2 fixed/bridge.** 1.1–1.5

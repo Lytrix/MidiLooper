@@ -38,7 +38,19 @@ Branch: `feature/unified-rolling-playback-path`
 | Shipping HEX | `14e2192e0ff3868a` |
 | Qualification HEX | `77a8f5622aad36ad` |
 
-## Still open
+## Device gate (3.7e launch/handoff) — PASS on the qualification image
 
-- **3.7e device launch/handoff gate** (shipping image) and the rollback record. 2.2 stays unchecked until it lands.
-- The 2.2 family's bridge‑storage removal and the cold‑compatibility retirement remain the rest of 2.2/2.5.
+- Image: 2.2 qualification `77a8f5622aad36ad` (the `DIAG,win_gate` rows are qualification-only; the shipping image
+  never compiles them, which is why the earlier shipping rerun reported “no win_gate row”).
+- Run: `windowed_content_parity`, track 8 / slot 4 / channel 8, 32 bars, switch target slot 5, settle 170 s;
+  report `captures/2026-10-24-2.2-s37e-device-qual/host_midi_hitl_windowed_content_parity_20261024_231358.json`.
+- `switch_target_span_alignment`: **PASS** (target t=7 s=4 span-aligned under transport; the 2.2 commit seed was
+  adopted and served).
+- `snapshot_owner_continues_after_stop`: session_exit_rows=170 eligible_rows=170 (the qualification snapshot term).
+- `capture_evidence_ring_intact`: one host Tier-A eviction (`tier_a_evicted=1`, stats `tierA_evict=3`). **Excluded by
+  the owner's explicit decision** on this run: it has a separate host capture-ring root cause and is not a 2.2
+  firmware/launch term. The exclusion applies only to this gate; the host ring root cause is tracked separately.
+
+The 2.2 **launch-seed increment** is now native- and device-qualified. The 2.2 family's remaining work is the
+`FixedPlaybackBridgeStorage` / `resolveFixedPlaybackSourceForTurn` removal and the cold-wrapper retirement; the 2.2
+checkbox stays open until those land.
