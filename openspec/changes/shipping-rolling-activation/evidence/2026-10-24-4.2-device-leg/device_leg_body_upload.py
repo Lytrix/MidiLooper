@@ -12,6 +12,9 @@ The upload protocol is the qualification-only `LOAD_PARITY_ROW` seam in the firm
 `!BODY_END` appends the `SAVE` token and renames the temp file over the slot path. The first
 upload parks the original file as `<slot>.legbak`; later uploads keep that backup.
 
+**Evidence artifact only.** The `!BODY_*` commands belong to the temporary `LOAD_PARITY_ROW` seam, which was
+removed at 4.2 closeout. On the clean image only `download`/`probe`/`capture` (production `!SLOT_BYTES`) work.
+
 Readback uses the existing read-only `!SLOT_BYTES <track> <slot> <offset>` command.
 """
 
