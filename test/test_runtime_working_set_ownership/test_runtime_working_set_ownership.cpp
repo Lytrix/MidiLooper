@@ -10165,6 +10165,18 @@ void test_1_4_production_demand_requests_the_active_demoted_window_and_skips_who
                     static_cast<int>(track.requestActiveCommittedPlaybackWindow(
                         phase, nativePlaybackDeadlineClock)));
   TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+  // The demand is **stable**: a second request while the playhead is still inside the pending window's coverage
+  // must not re-retain/re-centre it (the per-turn slide is what starved the lane). A different phase inside the
+  // window is the discriminator: without the hold, the pending's requestedPhase would move with it.
+  const auto* pendingBefore = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL(pendingBefore);
+  const uint32_t heldStart = pendingBefore->coverage.startPhase;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+                    static_cast<int>(track.requestActiveCommittedPlaybackWindow(
+                        phase + 64, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(heldStart, track.pendingViewRequest(0)->coverage.startPhase,
+                                   "a demand inside the pending window is held, not re-centred");
 
   PlaybackWindowIdentity published{};
   for (unsigned turn = 0; turn < 4096; ++turn) {

@@ -97,13 +97,45 @@ gap-work turns, 25 receipts, 24 source-qualified, 390 build_complete) and the **
 lead**: it is a **service-budget gap** introduced by the committed demand (or by the shipping image's
 receipt-less lane), most plausibly at the record-stop/handoff turn. 1.4 remains unchecked.
 
+## Stable-demand hold (2026-10-24) — dense lane parity PASSES on the qualification image
+
+The production demand was **re-centred every owner turn** (the 2-bar window follows the playhead), so each turn
+coalesced a new coverage and the committed build never settled. The fix holds **one committed demand** while the
+playhead is inside the pending/frozen coverage for the current revision, and skips while the slot's view build is
+active:
+
+```
+if (runtime->viewBuild.active()) return DeferredSourceQualification;
+if (holds(runtime->pendingViewRequest_) || holds(runtime->frozenViewRequest))
+  return DeferredSourceQualification;
+```
+
+where `holds` requires `CommittedSnapshot`, the same `playbackRevision`, and `phase` inside
+`[coverage.startPhase, start+length)`. The existing active/whole-take gates and the record-stop lead are unchanged;
+every refusal still keeps the bridge/merged fallback.
+
+- Native seam test extended: a second request at `phase + 64` retains the **coverage start** (`9216`), where the
+  mutation (hold removed) moves it to **9280** — RED, restored byte-identically (`9d29cfd3…`). RWO **242/242**,
+  full native **3,444 / 7 / 3,437**, both builds at `96,192 / 392,184 + 1,032 / 34,880`.
+- Qualification+stable-demand image **`6762b8e6…`**; shipping+stable-demand image **`09a5ae69…`**.
+
+**Decisive dense run** (`captures/2026-10-24-1.4-dense-qual-stable`, qualification image, same preset/args):
+**`ok=True`, issues=[]** — `no_windowed_overrun_under_transport` **0** (was 109 sliding / 0 pre-demand),
+`windowed_service_coverage` **429/429** at permitted 64, `build_complete_under_transport` **392**,
+`window_demand_observed` (406 gap turns, 24 receipts, 26 source-qualified of 221), leg `ok=True`, and the
+`snap_gate`/snapshot term passes on the receipt image.
+
+The committed-demand service budget is therefore **within the declared envelope** when the demand is stable.
+1.4 remains unchecked for the **shipping** image, base, switch and rollback runs below.
+
 ## Recommended next step
 
-1. **Isolate the demand's service cost** — run the same dense route on the **qualification+demand** image
-   (receipts on, same lane/build). If the overrun persists there, it is the committed demand's service budget
-   (3.10/6.3 scope: the owner turn's one-grain budget/rotation under the combined live+committed demand); if it
-   does not, the shipping image's receipt-less lane differs and needs its own timing evidence. Either way, the
-   next change is a **bounded service** fix, not another demand.
+1. **Shipping behavior gate:** flash `09a5ae69…`, run the dense route (lane rows + `overrun_rows=0`; the
+   `snap_gate` term is qualification-only and remains expected-absent) and the base host route (whole-take
+   content/ledger parity). The lane parity itself is established on `6762b8e6…`.
+2. **Switch route:** run the cold control (`e485f542…`, `ROLLING=0`) and the shipping image on the same queued
+   switch scenario; compare ordered content/ledger. The 1.1 matrix had no cold switch, so this closes that gap.
+3. **1.5 rollback:** the cold flash itself is the rollback drill; record the HEX pair and the legacy route.
 2. **Snapshot gate term:** it is qualification-only by design; run the dense lane/snapshot content parity on the
    **qualification-receipt image** (same lane) and record the shipping image's `build_complete`/demand rows as the
    behavior proof — or add a shipping-safe route receipt without enabling the qualification instrumentation.

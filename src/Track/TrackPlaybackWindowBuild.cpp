@@ -4637,6 +4637,21 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
     return PlaybackViewRequestResult::NotServable;
   }
   const uint32_t phase = playheadPhase % loop.loopLengthTicks;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime != nullptr) {
+    const auto holds = [&](const PlaybackViewPendingRequest& req) {
+      if (!req.active || req.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) {
+        return false;
+      }
+      if (req.source.playbackRevision != loop.playbackRevision) return false;
+      return phase >= req.coverage.startPhase &&
+             phase < req.coverage.startPhase + req.coverage.lengthTicks;
+    };
+    if (runtime->viewBuild.active()) return PlaybackViewRequestResult::DeferredSourceQualification;
+    if (holds(runtime->pendingViewRequest_) || holds(runtime->frozenViewRequest)) {
+      return PlaybackViewRequestResult::DeferredSourceQualification;
+    }
+  }
   return requestCommittedPlaybackWindow(slot, coverage, phase, clock);
 #else
   (void)playheadPhase;

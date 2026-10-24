@@ -104,7 +104,11 @@ for every family not yet removed.
   then the snapshot-gate gap, then the full 1.4 matrix. **Record-stop lead landed 2026-10-24** (slot-specific demand
   at the finalize, before `startPlaying`); the dense re-run still shows one overrun (`worst=118`), while the
   pre-demand qualification dense had 0 — so the breach is the committed demand's **service budget**, not the lead.
-  Next: isolate on the qualification+demand image, then a bounded-service fix; no removals.
+  **Stable-demand hold landed 2026-10-24:** the per-turn re-centring was the cause; holding one committed demand
+  while the playhead is inside its coverage (and skipping while the view build is active) gives the
+  qualification dense **`ok=True`, overrun_rows=0**, 429/429, build_complete 392, leg+snapshot ok. Native RED
+  (coverage 9216→9280), RWO 242/242, full native 3,444/7/3,437. Qualification HEX `6762b8e6…`, shipping
+  `09a5ae69…`. Remaining 1.4: shipping dense/base behavior, switch cold+shipping, 1.5 rollback.
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
 
