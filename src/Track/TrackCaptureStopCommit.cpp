@@ -528,6 +528,13 @@ TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination des
                  static_cast<unsigned long>(finalLength));
     }
   }
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  // 1.4 lead: ask for the committed window **at the stop finalize**, while the first-record/frozen view still
+  // covers the first bar, so the lane's handoff is built within the lead instead of starting on the first
+  // PLAYING owner turn. The demand is additive; every refusal keeps the existing return/bridge route.
+  (void)requestCommittedPlaybackWindowForSlot(slot, playbackTick,
+                                               clockManager.getPlaybackDeadlineClock());
+#endif
   startPlaying(playbackTick, true);
   displayManager.refreshViewportAfterRecordStop(*this, slot, storagePhaseTickAtStop);
 }

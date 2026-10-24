@@ -4613,8 +4613,13 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
 
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestActiveCommittedPlaybackWindow(
     uint32_t playheadPhase, PlaybackDeadlineClock clock) {
+  return requestCommittedPlaybackWindowForSlot(getActiveLoopIndex(), playheadPhase, clock);
+}
+
+TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackWindowForSlot(
+    uint8_t slotIndex, uint32_t playheadPhase, PlaybackDeadlineClock clock) {
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-  const uint8_t slot = getActiveLoopIndex();
+  const uint8_t slot = slotIndex;
   if (slot >= Config::MAX_LOOPS_PER_TRACK) return PlaybackViewRequestResult::NoRuntime;
   Loop& loop = loopForSlot(slot);
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {

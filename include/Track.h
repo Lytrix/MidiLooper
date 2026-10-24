@@ -566,6 +566,11 @@ public:
   /// additive: the legacy bridge/merged fallbacks stay reachable while the lane is not ready.
   PlaybackViewRequestResult requestActiveCommittedPlaybackWindow(uint32_t playheadPhase,
                                                                 PlaybackDeadlineClock clock);
+  /// The same demand for a named slot, used at the **record-stop finalize** (before the PLAYING transition) so
+  /// the first interval is built within the lead rather than starting on the first PLAYING owner turn.
+  PlaybackViewRequestResult requestCommittedPlaybackWindowForSlot(uint8_t slotIndex,
+                                                                 uint32_t playheadPhase,
+                                                                 PlaybackDeadlineClock clock);
   bool rootQualificationWaitsForCaptureReady(uint8_t slotIndex,
       const LoopPlaybackRuntime& runtime, PlaybackDeadlineClock clock) const;
   /// Task 3.15g: a retained Committed demand is *for* the current published root, so a stamp captured before that

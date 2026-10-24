@@ -81,11 +81,29 @@ The verifier still fails on **two named issues**:
 pass** (one named overrun + the missing snapshot-gate rows). The base 2-bar route remains whole-take and its
 content/ledger parity stands; the scope split is confirmed by `not_servable`/no demand on the undemoted slot.
 
+## Record-stop lead (2026-10-24) — implemented, overrun NOT fixed
+
+The committed demand is now also issued at the **record-stop finalize** (`finalizeLoopAtStop`, before
+`startPlaying`), via the slot-specific `requestCommittedPlaybackWindowForSlot(slot, stopPhase, clock)`. The
+active-slot method delegates to it; the owner-turn demand is unchanged. The finalize call runs while the
+first-record/frozen view still covers the first bar, so the committed handoff has the first bar's lead.
+Builds stay at `96,192 / 392,184 + 1,032 / 34,880`; full native **3,444 / 7 / 3,437**; RWO **242/242**; shipping
+HEX **`c1618f14…`**.
+
+**Dense re-run with the lead** (`captures/2026-10-24-1.4-dense-shipping-lead`): the lane still serves (405
+gap-work turns, 25 receipts, 24 source-qualified, 390 build_complete) and the **one overrun remains**
+(`overrun_rows=1, worst=118`). The **pre-demand qualification dense** reference
+(`2026-10-24-s315f-closeout-dense-qual-24bar`) had **0** overruns. So the breach is **not the first-window
+lead**: it is a **service-budget gap** introduced by the committed demand (or by the shipping image's
+receipt-less lane), most plausibly at the record-stop/handoff turn. 1.4 remains unchecked.
+
 ## Recommended next step
 
-1. **Lead the demand earlier** — issue it at the **record stop / slot activation / transport start** (where the
-   playhead and the qualified clock are already known), not only on the first PLAYING owner turn, so the first
-   interval is built within the declared lead. Re-run the dense route and require `overrun_rows=0`.
+1. **Isolate the demand's service cost** — run the same dense route on the **qualification+demand** image
+   (receipts on, same lane/build). If the overrun persists there, it is the committed demand's service budget
+   (3.10/6.3 scope: the owner turn's one-grain budget/rotation under the combined live+committed demand); if it
+   does not, the shipping image's receipt-less lane differs and needs its own timing evidence. Either way, the
+   next change is a **bounded service** fix, not another demand.
 2. **Snapshot gate term:** it is qualification-only by design; run the dense lane/snapshot content parity on the
    **qualification-receipt image** (same lane) and record the shipping image's `build_complete`/demand rows as the
    behavior proof — or add a shipping-safe route receipt without enabling the qualification instrumentation.

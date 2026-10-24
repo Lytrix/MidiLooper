@@ -101,7 +101,10 @@ for every family not yet removed.
   permitted 64; display leg `ok=True`) but the verifier fails on **one overrun (121 > 64)**; the missing
   `snap_gate` rows are **qualification-only instrumentation** (the shipping image cannot emit them), so that term
   belongs to the qualification-receipt parity image. **1.4 remains unchecked:** next is the leading demand (record stop / slot activation),
-  then the snapshot-gate gap, then the full 1.4 matrix.
+  then the snapshot-gate gap, then the full 1.4 matrix. **Record-stop lead landed 2026-10-24** (slot-specific demand
+  at the finalize, before `startPlaying`); the dense re-run still shows one overrun (`worst=118`), while the
+  pre-demand qualification dense had 0 — so the breach is the committed demand's **service budget**, not the lead.
+  Next: isolate on the qualification+demand image, then a bounded-service fix; no removals.
 - [ ] 1.5 **Rollback drill.** Return `ROLLING=0`, build/flash, and confirm the legacy route restores exactly (the 1.1
   HEX); record the exact rollback pair. This is the accepted rollback until the last family is removed.
 
