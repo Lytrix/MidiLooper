@@ -86,6 +86,14 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
   `playMidiEvents`/`playMidiEventsForSlot`, `playCommittedLoopMidi`'s early code (228-255), or a manager call after the
   commit. Next concrete trace: `playCommittedLoopMidi` entry (228), `playMidiEventsForSlot` (621), and the commit end
   (`commitQueuedPlaybackStart` after the seed); one of those three will show the Serving→Idle transition.
+  **Sixth finding (static inspection).** The three entry paths contain no reset: `playMidiEvents` (line 608),
+  `playMidiEventsForSlot` (621) and `playCommittedLoopMidi` (228) only check the stop/barrier/audibility predicates and
+  resolve the source; `playCommittedLoopMidi` reaches `HPPRE` without touching `rolling`. The reset is therefore
+  **before** `playCommittedLoopMidi`: the manager's post-commit switch block (edge effects / enabled-set replacement /
+  the `commitQueuedPlaybackStart` at 314) or `stepPlaybackViewMaintenance` (the owner lane, `TrackPlaybackWindowBuild.cpp`
+  6333; its cold-frame reset at 6573 and the preview reset at 7654 are the only other `rolling = {}` sites besides
+  `cancelRollingPlaybackWindow` 4980). Next trace: a `SWITCHEND` marker after the switch block, a `playMidiEvents` entry
+  marker, and a marker at `stepPlaybackViewMaintenance` entry/exit; then re-seed after the reset.
 - **Case C (overlay).** Initial: a committed note-edit/overdub overlay route that today selects a committed bridge.
   Ordered actions: the overlay/serve turns. Expected after: the live/preview window serves the rows (3.15e/d), or the
   named fallback; the bridge is not selected. Counterexample: an overlay still reading the bridge storage.
@@ -117,4 +125,4 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Completion record
 
-Five `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
+Six `boundLaunchView` editing attempts (**reverted**; findings above). No production edit retained. Record each command/result when the slice starts; never copy a planned result as a pass.
