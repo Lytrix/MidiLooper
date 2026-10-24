@@ -21,9 +21,10 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 - Preconditions present: 1.3 activation, 1.4 base/dense parity, the stable-demand demand; the unified window reader and
   the compatibility bridge are compiled. **External named limitation:** the accepted-sequence mixed switch is
   setup-limited (seed_b finalization release); its ordered cold/shipping parity is **not** claimed.
-- Mutation/postconditions: the pair no longer exists as a source; the launch/switch route's selected source origin is
-  the unified reader; the remaining routes that used the pair's merged source fall to the **raw merged fallback**
-  (owned by 2.5, still compiled and reachable) — no second family removed.
+- Mutation/postconditions: the pair no longer exists as a source; **the launch/switch full-loop target's selected
+  source origin is the unified whole-loop window** (the scope correction); the remaining full-loop routes that used
+  the pair's merged source fall to the **raw merged fallback** (owned by 2.5, still compiled and reachable) — no
+  second family removed.
 - Non-goals: 2.2–2.5, the merged fallback/echo removal, `ExecutionBounds.md` row 2, any switch full-parity claim, any
   bound or RAM1 re-base.
 - Commit boundary: the pair removal + the re-pointed oracle/tests; independently buildable; `ROLLING=0` cold image and
@@ -31,14 +32,15 @@ change spec `openspec/changes/shipping-rolling-activation/specs/windowed-playbac
 
 ## Oracle fixed before behavior edits
 
-- **Case A (launch/switch source identity).** Initial: a committed slot with a selected switch/launch target; ordered
-  actions: the qualified launch/switch gesture; expected after: the served source identity is a **unified window**
-  (origin `Committed`/`Preview`/`Overlay`) with its own interval/revision; the prepared pair is not published or
-  consumed. Counterexample that must fail: a route that selects the pair (the old `livePair` branch) after the removal
+- **Case A (launch/switch source identity).** Initial: a committed **full-loop** slot with a selected switch/launch
+  target; ordered actions: the qualified launch/switch gesture; expected after: the served source identity is a
+  **unified whole-loop window** (origin `Committed`/`Preview`/`Overlay`) with its own interval/revision; the prepared
+  pair is not published or consumed. This is the scope-correction RED: today the target publishes/consumes the pair. Counterexample that must fail: a route that selects the pair (the old `livePair` branch) after the removal
   (the test observes the pair/absence).
 - **Case B (pair publication/request absence).** A launch/switch that previously queued a prepared pair must now leave
-  no pending pair request/published pair and still serve the window; a route with no window (the named
-  `SourceUnavailable`/fallback) must fall to the **raw merged fallback**, not a silent pair.
+  no pending pair request/published pair and still serve the whole-loop window; a **non-launch/switch** route with no
+  window (the named `SourceUnavailable`/fallback) may fall to the **raw merged fallback** until 2.5, never to a silent
+  pair.
 - **Case C (RED before the change).** The existing prepared-pair fixture (the publication/consume route) is RED by
   construction after the removal; it is retired/re-pointed to the window oracle. The **discriminating** control is a
   reinstated pair path (mutation) that makes the launch/switch choose the pair and fails the window-identity
