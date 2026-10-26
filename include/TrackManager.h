@@ -92,6 +92,12 @@ public:
   bool hasQueuedRecordingTrack(uint8_t trackIndex) const;
   /// True when any track is recording, armed, or has a pending record queue.
   bool hasActiveOrPendingCapture() const;
+  /// Capture state that must block a transport start's playback fan-out: a track that is
+  /// live (recording / armed / overdubbing / winding down an inline stop) or holds a
+  /// queued record. A track in TRACK_STOPPED that only owes an offline deferred stop
+  /// job does NOT count — its capture role is already closed at its own stop edge, so
+  /// transport start resumes it like any other stopped loop (session_20261026_223337).
+  bool hasLiveCaptureBlockingTransportStart() const;
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   /// Read-only point guard: bit0 Capture-clear, bit1 all stopped/no pending actions.
   /// Caller holds the saved IRQ mask; this is not admission or synchronization.

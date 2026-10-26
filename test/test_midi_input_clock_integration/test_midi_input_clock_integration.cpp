@@ -216,6 +216,49 @@ void transportFirst(uint8_t route) {
   TEST_ASSERT_EQUAL_UINT32(0, clockManager.getCurrentTick());
 }
 void usbTransportFirst() { transportFirst(0); }
+
+/// Regression (captures/session_20261026_223337): after record + several overdubs, a MIDI Stop
+/// retargets the interval to an offline deferred stop job. While that job stays pending, the
+/// track sits in TRACK_STOPPED; every MIDI Start must still resume it. The old gate
+/// (`hasActiveOrPendingCapture`, which had begun to count the deferred stop job itself)
+/// skipped the whole resume fan-out for as long as the job's finalization/retirement took,
+/// and only a track-level record/stop gesture restored PLAYING.
+void transportStartResumesTrackWithPendingDeferredOverdubStop() {
+  LoopEventStore::initPool();
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    Track& other = trackManager.getTrack(i);
+    if (i != 0) other.forceSetState(TRACK_EMPTY);
+    trackManager.cancelPendingRecordArm(i);
+  }
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
+                           "the record arm must admit the working set");
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "the fixture needs a live overdub interval");
+  TEST_ASSERT_TRUE(track.getActiveLoop().appendCaptureEvent(MidiEvent::NoteOn(96, 1, 60, 100)));
+  TEST_ASSERT_TRUE(track.getActiveLoop().appendCaptureEvent(MidiEvent::NoteOff(120, 1, 60, 0)));
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::admitStopForSlot(track, PendingStopDestination::Stopped, 96, 0,
+                                                   /*interval=*/1),
+      "the production stop admission must accept the deferred job");
+  // Mirror the transport stop's retarget: the live overdub leaves, the track is STOPPED and
+  // only the offline finalization job is owed.
+  clockManager.onMidiStop();
+  track.forceSetState(TRACK_STOPPED);
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "the fixture needs the pending deferred stop in place");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.hasLiveCaptureBlockingTransportStart(),
+                            "an offline deferred stop is not a live capture at the start edge");
+  clockManager.onMidiStart();
+  TEST_ASSERT_TRUE_MESSAGE(track.isPlaying(),
+                           "MIDI Start must resume a STOPPED track that only owes a deferred stop job");
+}
+
 void dinTransportFirst() { transportFirst(1); }
 void hostPreservesFifoBeforeStart() { transportFirst(2); }
 void routeCap(uint8_t route) {
@@ -579,6 +622,7 @@ int main(int, char**) {
   RUN_TEST(usbQueuedRecordPreparationRetriesAtRealClockBoundary);
   RUN_TEST(helperBoundedScanAndFrozenCapacity);
   RUN_TEST(helperGenerationExhaustionIsTerminal);
+  RUN_TEST(transportStartResumesTrackWithPendingDeferredOverdubStop);
   RUN_TEST(usbTransportFirst);
   RUN_TEST(dinTransportFirst);
   RUN_TEST(hostPreservesFifoBeforeStart);

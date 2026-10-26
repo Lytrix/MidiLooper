@@ -337,7 +337,9 @@ CLOCK_COLD_MEM void ClockManager::onMidiStart() {
 
   // Do not auto-play other loops while a capture is active or armed — playback
   // bleeds back through MIDI thru and gets recorded as a spurious downbeat note.
-  if (!trackManager.hasActiveOrPendingCapture()) {
+  // A track that only owes an offline deferred stop job is not a live capture;
+  // its capture role closed at its own stop edge and it must resume here.
+  if (!trackManager.hasLiveCaptureBlockingTransportStart()) {
     for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
       Track& t = trackManager.getTrack(i);
       if (t.isStopped()) {
@@ -426,11 +428,11 @@ CLOCK_COLD_MEM void ClockManager::toggleTransport() {
       assignCurrentTickSilently(0);  // Align with Start — downbeat at tick 0
       midiHandler.sendStart();
       midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
-      if (trackManager.hasActiveOrPendingCapture()) {
+      if (trackManager.hasLiveCaptureBlockingTransportStart()) {
         trackManager.updateAllTracks(0);  // Armed record + pending actions at downbeat
       }
     }
-    if (!trackManager.hasActiveOrPendingCapture()) {
+    if (!trackManager.hasLiveCaptureBlockingTransportStart()) {
       for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
         Track& t = trackManager.getTrack(i);
         if (t.isStopped()) {

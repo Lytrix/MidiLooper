@@ -234,6 +234,23 @@ bool TrackManager::hasActiveOrPendingCapture() const {
   return false;
 }
 
+bool TrackManager::hasLiveCaptureBlockingTransportStart() const {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    const Track& t = tracks[i];
+    // The live roles and a still-winding inline stop behave as captures at this edge,
+    // but a purely offline deferred stop (TRACK_STOPPED with a queued finalization
+    // job) does not: including it here made every MIDI Start skip the resume fan-out
+    // for as long as the job's finalization/retirement took (`hasPendingDeferredOverdubStop`
+    // outlived the capture itself), which only a track-level record/stop gesture could
+    // break. The job's own roles stay guarded where they run.
+    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || t.isOverdubStopping() ||
+        pendingRecord[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 #if defined(__IMXRT1062__)
 FLASHMEM
