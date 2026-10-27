@@ -39,7 +39,9 @@ constexpr StopAdmissionContract kDeferredStopContract{
     kDeferredStopOrderQuantum,
 };
 
-constexpr uint16_t kDeferredStopPreparationQuantum = 32;
+/// CONTRACTS.md C3.2: the contract's declared grain. One definition (`Config::`), aliased here so the
+/// stop lane's 20+ call sites keep their local name and the private-source cursor cannot drift from it.
+constexpr uint16_t kDeferredStopPreparationQuantum = Config::DEFERRED_STOP_PREPARATION_QUANTUM;
 
 /// S4f.17: upper bound on the **Record** stop chain's bounded preparation service turns.
 /// The Record route has no companion, ranked or history-recycle preparation, so what it must
@@ -87,6 +89,11 @@ constexpr uint16_t kProtectedUndoPrewarmEntries = kUndoStackProtectedCapacity;
 /// than this bound simply publishes no prepared undo entry and takes the plain
 /// commit.
 constexpr size_t kUndoCollectionReserveRows = 64;
+/// Consecutive turns a job may retain a refused/denied session-identity collection before the
+/// fallback takes the identities from the interval's own session-exit receipt. DEC-070's scale for
+/// the same shape: a healthy collection settles in a few grains, and only a source that can no
+/// longer be recomputed reaches the bound.
+constexpr uint16_t kUndoCollectionRetentionLimit = 512;
 
 }  // namespace
 
@@ -127,9 +134,12 @@ TRACK_COLD_MEM Track::RecordStopGeometryState Track::recordStopGeometryForSlot(
   if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) {
     return RecordStopGeometryState::PendingStop;
   }
-  // Slot-scoped on purpose: a *different* interval's finalization must not make this one look
-  // undecided, exactly as `hasStopInFlightForSlot` is slot-scoped for the same reason.
-  if (hasStopInFlightForSlot(slot)) return RecordStopGeometryState::PendingStop;
+  // Final Record geometry is independent of an accepted successor Start. The Start
+  // remains a live owner, but must not postpone master-length adoption after publication.
+  const auto* latch = interactionLatch();
+  if (hasLiveCaptureStopJobForSlot(slot) ||
+      (latch != nullptr && latch->kind == PendingInteractionLatch::Kind::Stop && latch->slot == slot))
+    return RecordStopGeometryState::PendingStop;
   loopLengthOut = getLoop(slot).loopLengthTicks;
   return RecordStopGeometryState::Final;
 }
@@ -187,6 +197,76 @@ TRACK_COLD_MEM bool Track::pinnedStopSlot(uint8_t& slotOut) const {
 TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
   const PendingInteractionLatch* latch = interactionLatch();
   return latch != nullptr ? latch->waitCount : 0;
+}
+
+TRACK_COLD_MEM bool Track::hasPendingOverdubStart() const {
+  const auto* latch = interactionLatch();
+  return latch != nullptr && latch->kind == PendingInteractionLatch::Kind::Start;
+}
+
+TRACK_COLD_MEM void Track::cancelPendingOverdubStart() {
+  if (hasPendingOverdubStart()) interactionLatch()->clear();
+}
+
+TRACK_COLD_MEM size_t Track::captureStopPreviewCount() const {
+  return captureStopJobs_ ? captureStopJobs_->count : 0;
+}
+
+TRACK_COLD_MEM const CapturePreview* Track::captureStopPreviewForSlot(
+    uint8_t slot, size_t ordinal, uint32_t* closureTick) const {
+  if (!captureStopJobs_ || ordinal >= captureStopJobs_->count ||
+      !loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return nullptr;
+  const auto& job = captureStopJobs_->entries[(captureStopJobs_->head + ordinal) % CaptureStopJobs::kCapacity];
+  const Loop& loop = getLoop(slot);
+  if (job.slot != slot || job.owner != &loop || job.loopId != loop.loopId ||
+      job.mode == CapturePhase::None) return nullptr;
+  if (closureTick) *closureTick = job.loopLengthTicks == 0 ? 0 :
+      std::min(job.phaseTick, job.loopLengthTicks - 1);
+  return &job.preview;
+}
+
+TRACK_COLD_MEM const CapturePreview* Track::recordStopPreviewForSlot(uint8_t slot, uint32_t* closureTick) const {
+  if (!captureStopJobs_) return nullptr;
+  for (size_t ordinal = 0; ordinal < captureStopJobs_->count; ++ordinal) {
+    const auto& job = captureStopJobs_->entries[(captureStopJobs_->head + ordinal) % CaptureStopJobs::kCapacity];
+    if (job.mode != CapturePhase::Record || job.admission.phase == PendingStopPhase::RecordEmpty ||
+        job.admission.phase == PendingStopPhase::RecordPublished) continue;
+    const CapturePreview* preview = captureStopPreviewForSlot(slot, ordinal);
+    if (preview && !preview->notes.empty()) {
+      if (closureTick) *closureTick = job.loopLengthTicks == 0 ? 0 :
+          std::min(job.phaseTick, job.loopLengthTicks - 1);
+      return preview;
+    }
+  }
+  return nullptr;
+}
+
+
+TRACK_COLD_MEM bool Track::hasPrivateRecordPredecessorForOverdub() const {
+  const auto* job = captureStopJobHead();
+  // B/C/later intervals still share this qualified private Record base. Stop advances the
+  // capture interval again, so equality to only A+1 wrongly classifies the next Start as empty.
+  return job && isPlaying() && job->mode == CapturePhase::Record &&
+      job->slot == activeLoopIndex && job->interval < captureInterval_ &&
+      job->owner == &getActiveLoop() && job->loopId == getActiveLoop().loopId &&
+      job->admission.destination == PendingStopDestination::Playing &&
+      !getActiveLoop().hasCommittedPasses();
+}
+
+TRACK_COLD_MEM bool Track::retainOverdubStartAfterRecord() {
+  auto* latch = interactionLatch();
+  const auto* job = captureStopJobHead();
+  if (!latch || !hasPrivateRecordPredecessorForOverdub()) return false;
+  if (latch->matches(PendingInteractionLatch::Kind::Start, job->slot, 0, captureInterval_) &&
+      latch->loopId == job->loopId) return true;
+  // A live Stop remains authoritative; this path never replaces another accepted operation.
+  if (latch->isSet()) return true;
+  latch->kind = PendingInteractionLatch::Kind::Start;
+  latch->slot = job->slot;
+  latch->loopId = job->loopId;
+  latch->interval = captureInterval_;
+  latch->mode = CapturePhase::Overdub;
+  return true;
 }
 
 /// S4f.1: retain an accepted stop against the interval's own slot and generation. The identity
@@ -295,6 +375,28 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   const PendingInteractionLatch* latch = interactionLatch();
   if (latch == nullptr) return false;
   const PendingInteractionLatch request = *latch;
+  if (request.kind == PendingInteractionLatch::Kind::Start) {
+    // The qualified private predecessor is a legal base; publication is not an admission gate.
+    if (!loopsAllocated() || request.slot >= Config::MAX_LOOPS_PER_TRACK ||
+        request.slot != activeLoopIndex || request.interval != captureInterval_ ||
+        getLoop(request.slot).loopId != request.loopId || !isPlaying() ||
+        !clockManager.isTransportRunning() || getLoop(request.slot).loopLengthTicks == 0) {
+      cancelPendingOverdubStart();
+      return true;
+    }
+    if (!hasPrivateRecordPredecessorForOverdub() &&
+        !getLoop(request.slot).hasCommittedPasses()) {
+      cancelPendingOverdubStart(); // Empty/filtered result: no base exists to overdub.
+      return true;
+    }
+    const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+    trackManager.startOverdubbingTrack(trackIndex);
+    if (isOverdubbing() && captureInterval_ != request.interval) {
+      cancelPendingOverdubStart();
+      return true;
+    }
+    return false; // Ordinary admission refused: retain the exact request for recovery.
+  }
   if (request.kind != PendingInteractionLatch::Kind::Stop) return false;
   // S4f.4 transition 3 (load/replacement): a load or a replacement interval can leave the slot *number*
   // unchanged while the interval the request identified is gone. Such a request must not bind to the
@@ -351,18 +453,15 @@ TRACK_COLD_MEM bool Track::admitOverdubStartWorkingSet() {
       if (!ok) MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
     }
   } denial;
-  // Slot-owned descriptors are dormant after load; this cold start admits its one tail.
-  if (!captureStopJobs_) { denial.ok = false; return false; }
-  auto& presentation = captureStopJobs_->presentations[activeLoopIndex];
-  if (!presentation.ownsExtent && runtime.captureStopOwner == nullptr &&
-      !presentation.rawRange.reservedEmpty() && !presentation.rawRange.reserveTail()) {
-    denial.ok = false; return false;
-  }
+  // Custody and physical staging are cold-admitted for this active capture role.
+  if (!captureStopJobs_ || !prewarmCaptureStopJobs(activeLoopIndex)) { denial.ok = false; return false; }
   // (1) The view/bridge/companion scratch. The stop's declared preparation estimates are
   // `UINT64_MAX` without it (`LoopPlaybackRuntime::requiredStopRankedGrains` returns UINT64_MAX when
   // `viewSetIfPrewarmed()` is null), so admission would deny as `preparation_service_unavailable`
-  // forever. Guarded, so a record-armed or successor slot reserves nothing.
-  if (runtime.viewSetIfPrewarmed() == nullptr) {
+  // forever. Guarded, so a record-armed or successor slot reserves nothing. A slot whose
+  // surplus roles were returned after its last custody also re-admits here: the views stay
+  // prewarmed across that release, so the view test alone would leave ingress without roles.
+  if (runtime.viewSetIfPrewarmed() == nullptr || !runtime.captureStagingsAdmitted()) {
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
     const bool viewsAdmitted = runtime.prewarmViews(loop.companionRowHorizonBound(),
                                                    loop.fullTakePlaybackViewAdmissible());
@@ -407,6 +506,36 @@ TRACK_COLD_MEM bool Track::admitOverdubStartWorkingSet() {
   return true;
 }
 
+/// Task 4.20: the overdub admission's reservation of its future session-exit publication obligation.
+/// FLASH-resident for the same reason as the working-set admission above: the caller is ITCM and this
+/// is a cold, allocation-bearing turn (`ensureSessionExitReceiptRing`). The claim is deliberately
+/// sparse — a state byte in the shell, the payload in the externally allocated record — so a start
+/// that is refused here costs nothing to unwind.
+TRACK_COLD_MEM bool Track::claimOverdubSessionExitObligation() {
+  Loop& loop = getActiveLoop();
+  if (loop.claimSessionExitPublishOwner()) return true;
+  // An occupied obligation is a *named bounded refusal*, not a silent second slot: the predecessor's
+  // session-exit publication has not reached the publisher yet, so this interval has nowhere durable
+  // to put its own stop. Reported by name so a capture can tell it apart from a heap or pool denial.
+  const char* state = "reserved";
+  switch (loop.sessionExitPublishClaimState()) {
+    case Loop::SessionExitPublishClaim::Populated: state = "populated"; break;
+    case Loop::SessionExitPublishClaim::Publishing: state = "publishing"; break;
+    default: break;
+  }
+  logger.log(CAT_TRACK, LOG_WARNING,
+             "Overdub start refused: the session-exit publication obligation is still owned "
+             "(slot=%u state=%s)",
+             static_cast<unsigned>(activeLoopIndex), state);
+  return false;
+}
+
+/// The start's one rollback anchor: a claim that never reached a live interval is payload-free, and a
+/// reservation left behind would refuse the next start by name.
+TRACK_COLD_MEM void Track::releaseOverdubSessionExitObligation() {
+  (void)getActiveLoop().releaseSessionExitPublishOwner(0);
+}
+
 TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs(uint8_t captureSlot) {
   if (!captureStopJobs_) {
     auto* storage = ExternalMemoryFirstAllocator<CaptureStopJobs>{}.allocate(1);
@@ -416,12 +545,16 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs(uint8_t captureSlot) {
   // Stable slot descriptors do not imply eight resident tails. Cold capture admission reserves
   // only the requested slot (or the active slot for direct cold callers); sealed owners keep theirs.
   // Boot/load without capture admission leaves these descriptors dormant.
-  const uint8_t admittedSlot = captureSlot == UINT8_MAX ? activeLoopIndex : captureSlot;
+  const bool captureAdmission = captureSlot == UINT8_MAX || captureSlot < Config::MAX_LOOPS_PER_TRACK;
+  for (uint8_t i = 0; i < CaptureStopJobs::kCustodyCapacity; ++i) {
+    auto& receipt = captureStopJobs_->custodies[i];
+    receipt.custodyIndex = i;
+    if (!captureAdmission) continue;
+    receipt.armed = true;
+    if (receipt.state == CaptureCustodyState::Free && !receipt.ownsExtent && !receipt.rawRange.reservedEmpty() &&
+        !receipt.rawRange.reserveTail()) return false;
+  }
   for (size_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-    CaptureStopPresentation& presentation = captureStopJobs_->presentations[slot];
-    presentation.slot = static_cast<uint8_t>(slot);
-    if (slot == admittedSlot && !presentation.ownsExtent && !presentation.rawRange.ready() &&
-        !presentation.rawRange.reserveTail()) return false;
     // The bounded undo collection requires caller-supplied, pre-reserved private
     // outputs; it never grows them itself (a growth would be a denied collection).
     const size_t rows = std::min<size_t>(RuntimePlaybackViewConfig::kRecordsPerBridge,
@@ -432,7 +565,7 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs(uint8_t captureSlot) {
   }
   // S4f.1: the accepted-interaction latch is cold admission too; the stop edge must never
   // allocate one, and a missing latch would silently degrade acceptance back to a denial.
-  return prewarmInteractionLatch() && prewarmProtectedUndo();
+  return prewarmInteractionLatch() && (hasPendingDeferredOverdubStop() || prewarmProtectedUndo());
 }
 
 TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop,
@@ -441,6 +574,7 @@ TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop
     // Legacy producer path: this job never took ownership of a sealed extent.
     return loop.retireCopiedCaptureSourceGrain(closeCapture);
   }
+  if (job.presentation->obligations != 0) return false;
   const bool complete = job.presentation->rawRange.releaseGrain(1);
   if (!complete) return false;
   // The owned extent is fully released. Drop the Loop's read borrow only while it
@@ -448,7 +582,10 @@ TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop
   // The borrow is keyed on the **presentation record's** identity, which is the stable
   // owner of the extent; the job only ever referenced it.
   (void)loop.releaseSealedCaptureRangeBorrow(job.presentation);
+  (void)loop.releaseCapturePreviewBorrow(&job.admission);
+  if (job.mode == CapturePhase::Record) job.preview.clear();
   job.clearOwnedRawRange();
+  job.presentation->state = CaptureCustodyState::Free;
   // Re-arm this descriptor's reserved destination directory for a future
   // admission. Bounded cold work in a deferred turn (one pool chunk plus the
   // retained directory); if it fails, the admission denies explicitly instead of reserving at the
@@ -467,8 +604,10 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopDescriptorReservations() {
     return true;  // the cold path owns admission until the ring exists
   }
   bool allReady = true;
-  for (size_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-    auto& range = captureStopJobs_->presentations[slot].rawRange;
+  for (size_t slot = 0; slot < CaptureStopJobs::kCustodyCapacity; ++slot) {
+    auto& receipt = captureStopJobs_->custodies[slot];
+    auto& range = receipt.rawRange;
+    if (!receipt.armed || receipt.obligations != 0) continue;
     // Healthy descriptors owe nothing: a sealed extent belongs to the presentation record
     // that sealed it, and a reserved-empty directory is exactly what the next admission
     // needs. Only the third state -- released (or never reserved) but not re-armed -- is
@@ -485,7 +624,10 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopDescriptorReservations() {
       allReady = false;
       continue;
     }
-    if (!range.needsSourceRelease()) captureStopJobs_->presentations[slot].ownsExtent = false;
+    if (!range.needsSourceRelease()) {
+      receipt.ownsExtent = false;
+      receipt.state = CaptureCustodyState::Free;
+    }
     if (range.reserveTail()) {
       SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, static_cast<uint32_t>(slot), 0,
                          "ready", resolveTrackIndexForPersistence(*this));
@@ -500,11 +642,138 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopDescriptorReservations() {
 }
 
 
+TRACK_COLD_MEM Track::CaptureStopPresentation* Track::freeCaptureCustody() {
+  if (!captureStopJobs_) return nullptr;
+  for (auto& receipt : captureStopJobs_->custodies)
+    if (receipt.state == CaptureCustodyState::Free && !receipt.ownsExtent) return &receipt;
+  return nullptr;
+}
+TRACK_COLD_MEM bool Track::hasPendingStopForInterval(uint64_t interval) const {
+  if (!captureStopJobs_) return false;
+  for (const auto& job : captureStopJobs_->entries)
+    if (job.admission.pending && job.interval == interval) return true;
+  return false;
+}
+TRACK_COLD_MEM bool Track::hasCaptureStopWorkerForSlot(uint8_t slot) const {
+  const auto* runtime = playbackRuntime.slotIfAllocated(slot);
+  return runtime && runtime->captureStopOwner != nullptr;
+}
+TRACK_COLD_MEM bool Track::captureIntervalPermitsPlayback(uint64_t interval) const {
+  if (!captureStopJobs_) return true;
+  for (const auto& job : captureStopJobs_->entries)
+    if (job.admission.pending && job.interval == interval)
+      return job.admission.permitsPlaybackEmission();
+  return true;
+}
+TRACK_COLD_MEM void Track::releaseSurplusCaptureStaging() {
+  // Staging is an active-role lease, not a per-recorded-slot resident: once this
+  // Track owns no live capture and no custody record still owes rows, only the two
+  // baseline roles stay resident and the A/B/C overlap capacity returns to the pool.
+  if (!captureStopJobs_ || captureStopJobs_->count != 0) return;
+  if (isRecording() || isOverdubbing()) return;
+  for (const auto& receipt : captureStopJobs_->custodies)
+    if (receipt.ownsExtent || receipt.retirementActive ||
+        receipt.state != CaptureCustodyState::Free) return;
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime != nullptr) (void)runtime->releaseSurplusCaptureStagings();
+  }
+}
+TRACK_COLD_MEM bool Track::hasLiveOrSealedSuccessorForSlot(uint8_t slot, LoopId loopId,
+                                                          uint64_t interval) const {
+  if (slot >= Config::MAX_LOOPS_PER_TRACK || loopId == kInvalidLoopId) return false;
+  // A newer interval already owns ingress on this slot: its rows, pending changes and
+  // geometry are exactly what an empty predecessor must not reset. Checked before the
+  // seal exists, because the successor is live at that moment.
+  if (activeLoopIndex == slot && captureInterval_ > interval &&
+      (isRecording() || isOverdubbing()) && loopsAllocated() &&
+      loopIdForSlot(slot) == loopId) {
+    return true;
+  }
+  if (!captureStopJobs_) return false;
+  // A sealed successor keeps its own custody receipt; it may be running canonical work
+  // or already be retiring a frozen reader.
+  for (const auto& receipt : captureStopJobs_->custodies)
+    if (receipt.interval > interval && receipt.slot == slot && receipt.loopId == loopId &&
+        (receipt.ownsExtent || receipt.retirementActive ||
+         receipt.state != CaptureCustodyState::Free)) {
+      return true;
+    }
+  // A successor stop that has been admitted but has not sealed its receipt yet.
+  for (const auto& queued : captureStopJobs_->entries)
+    if (queued.admission.pending && queued.interval > interval && queued.slot == slot &&
+        queued.loopId == loopId) {
+      return true;
+    }
+  return false;
+}
+TRACK_COLD_MEM void Track::settleEmptyRecordGeometry() {
+  if (!captureStopJobs_ || captureStopJobs_->count != 0) return;
+  if (isRecording() || isOverdubbing()) return;
+  for (const auto& receipt : captureStopJobs_->custodies)
+    if (receipt.ownsExtent || receipt.retirementActive ||
+        receipt.state != CaptureCustodyState::Free) return;
+  // One slot per turn keeps the grain bounded; the caller re-enters while any slot owes a reset.
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    if (captureStopJobs_->emptyGeometryOwed[slot] == 0) continue;
+    captureStopJobs_->emptyGeometryOwed[slot] = 0;
+    if (!loopsAllocated()) return;
+    Loop& loop = getLoop(slot);
+    // A successor that published content owns this geometry now; an active pass means the
+    // slot is mid-take again. Either way the predecessor's empty policy no longer applies.
+    if (loop.hasCommittedPasses() || loop.activeCapturePassCount() != 0) return;
+    if (loop.loopLengthTicks == 0) return;
+    loop.resetPassTimeline();
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
+    loop.startLoopTick = 0;
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = 0;
+    loop.invalidatePlaybackCaches();
+    loop.markDisplayCachesStale();
+    if (slot == activeLoopIndex) setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
+    return;
+  }
+}
+TRACK_COLD_MEM void Track::releaseCustodyObligation(CaptureStopPresentation& receipt, uint8_t bit) {
+  receipt.obligations &= static_cast<uint8_t>(~bit);
+  if (receipt.obligations == 0 && receipt.state != CaptureCustodyState::Free)
+    receipt.state = CaptureCustodyState::Retiring;
+}
 TRACK_COLD_MEM Track::CaptureStopPresentation* Track::captureStopPresentationForSlot(uint8_t slot) {
-  return captureStopJobs_ && slot < Config::MAX_LOOPS_PER_TRACK ? &captureStopJobs_->presentations[slot] : nullptr;
+  return const_cast<CaptureStopPresentation*>(
+      static_cast<const Track*>(this)->captureStopPresentationForSlot(slot));
 }
 TRACK_COLD_MEM const Track::CaptureStopPresentation* Track::captureStopPresentationForSlot(uint8_t slot) const {
-  return captureStopJobs_ && slot < Config::MAX_LOOPS_PER_TRACK ? &captureStopJobs_->presentations[slot] : nullptr;
+  if (!captureStopJobs_ || !loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return nullptr;
+  const auto& handle = captureStopJobs_->presentations[slot];
+  return captureCustodyForInterval(handle.custodyIndex, handle.interval, getLoop(slot));
+}
+TRACK_COLD_MEM const Track::CaptureStopPresentation* Track::captureCustodyForInterval(
+    uint8_t index, uint64_t interval, const Loop& loop) const {
+  if (!captureStopJobs_ || index >= CaptureStopJobs::kCustodyCapacity) return nullptr;
+  const auto& receipt = captureStopJobs_->custodies[index];
+  return receipt.state != CaptureCustodyState::Free && receipt.interval == interval &&
+      receipt.owner == &loop && receipt.loopId == loop.loopId &&
+      receipt.generation == presentationGenerationFor(interval) ? &receipt : nullptr;
+}
+TRACK_COLD_MEM bool Track::bindCaptureStopWorker(CaptureStopJob& job) {
+  auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  if (!runtime) return false;
+  if (runtime->captureStopOwner == &job.admission)
+    return runtime->captureStopOwnerGeneration == job.admission.frozenGeneration;
+  if (runtime->captureStopOwner != nullptr || !runtime->canonicalCaptureOutputAdmitted()) return false;
+  runtime->discardFrozenCaptureOrder();
+  runtime->discardFrozenCaptureCanonicalOrder();
+  if (job.frozenStagingIndex != UINT8_MAX) {
+    auto* set = runtime->viewSetIfPrewarmed();
+    if (!set || job.frozenStagingIndex >= set->captureStagings.size()) return false;
+    set->frozenStagingIndex = job.frozenStagingIndex;
+  }
+  runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  // The single Loop borrow describes the serialized worker, not the newest seal.
+  if (job.ownsRawRange()) (void)job.owner->borrowSealedCaptureRange(job.presentation->rawRange, job.presentation);
+  return true;
 }
 TRACK_COLD_MEM bool Track::hasRecordReaderOwnerForSlot(uint8_t slot) const {
   const auto* presentation = captureStopPresentationForSlot(slot);
@@ -532,8 +801,12 @@ TRACK_COLD_MEM bool Track::publishRecordPresentation(CaptureStopJob& job) {
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
   if (runtime == nullptr) return false;
   presentation->retirementActive = true;
+  presentation->state = CaptureCustodyState::Retiring;
+  releaseCustodyObligation(*presentation, CaptureStopJobs::kCustodyFinalizer);
   runtime->setPresentationOwner(presentation, presentation->generation);
   (void)runtime->clearCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  if (job.owner) (void)job.owner->releaseCapturePreviewBorrow(&job.admission);
+  job.preview.clear(); // deferred terminal: no retired row may re-enter a later producer via swap
   job.owner = nullptr; job.loopId = kInvalidLoopId; job.mode = CapturePhase::None; job.presentation = nullptr;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
   --captureStopJobs_->count; job.admission.reset();
@@ -541,12 +814,14 @@ TRACK_COLD_MEM bool Track::publishRecordPresentation(CaptureStopJob& job) {
 }
 TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
   if (!captureStopJobs_) return false;
-  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-    CaptureStopPresentation& presentation = captureStopJobs_->presentations[slot];
+  for (auto& presentation : captureStopJobs_->custodies) {
+    const uint8_t slot = presentation.slot;
     if (!presentation.retirementActive) continue;
+    const bool cancelled = presentation.loopId == kInvalidLoopId ||
+        presentation.owner == nullptr || presentation.owner->loopId != presentation.loopId;
     // Ordinary deferred turns remain available after the window holder has no more work.
     // Before takeover do not consume the turn: the accepted successor interaction must progress.
-    if (isAudiblePlaybackActive() || isPlaying()) {
+    if (!cancelled && (isAudiblePlaybackActive() || isPlaying())) {
       PlaybackViewSourceIdentity served{};
       PlaybackCoverageInterval coverage{};
       const Loop* loop = presentation.owner;
@@ -556,7 +831,7 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
           served.sourceGeneration != playbackGeneration ||
           served.snapshotIdentity != loop->publishedSnapshotIdentity()) continue;
     }
-    if (presentation.owner != nullptr &&
+    if (!cancelled && presentation.owner != nullptr &&
         presentation.owner->pendingSnapshotSessionExitQueued() &&
         !presentation.owner->publishedSnapshotIsCurrent()) {
       return true;
@@ -568,11 +843,21 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
     worker.presentation = &presentation; worker.admission.pending = true;
     worker.admission.phase = PendingStopPhase::RecordPublished;
     worker.admission.frozenGeneration = presentation.generation;
-    const auto result = stepDeferredRecordRetirement(worker);
+    auto result = LoopEventStoreRewriteResult::Pending;
+    if (cancelled && presentation.owner) {
+      auto* runtime = playbackRuntime.slotIfAllocated(slot);
+      if (runtime && !runtime->releaseFrozenRecordWindow()) return true;
+      if (runtime) (void)runtime->clearPresentationOwner(&presentation, presentation.generation);
+      releaseCustodyObligation(presentation, CaptureStopJobs::kCustodyReader);
+      if (retireJobCaptureSourceGrain(worker, *presentation.owner, false))
+        result = LoopEventStoreRewriteResult::Complete;
+    } else {
+      result = stepDeferredRecordRetirement(worker);
+    }
     if (result == LoopEventStoreRewriteResult::Complete && !presentation.ownsExtent) {
       if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot))
         (void)runtime->clearPresentationOwner(&presentation, presentation.generation);
-      presentation.retirementActive = false; presentation.armed = false; presentation.owner = nullptr;
+      presentation.retirementActive = false; presentation.owner = nullptr;
       presentation.loopId = kInvalidLoopId; presentation.interval = 0;
       presentation.frozenCaptureContentGeneration = 0; presentation.generation = 0;
     }
@@ -596,9 +881,15 @@ TRACK_COLD_MEM bool Track::supersedeDeferredStopJob(CaptureStopJob& job) {
     if (job.owner != nullptr) {
       (void)job.owner->releasePendingNoteChangesBorrow(&job.admission);
       (void)job.owner->releaseCapturePreviewBorrow(&job.admission);
+      job.preview.clear();
     }
     if (runtime != nullptr) {
-      if (CaptureAdmissionStaging* views = runtime->captureStagingIfPrewarmed()) views->reset();
+      auto* set = runtime->viewSetIfPrewarmed();
+      if (set && job.frozenStagingIndex < set->captureStagings.size()) {
+        auto& staging = set->captureStagings[job.frozenStagingIndex];
+        if (staging.frozenGeneration == job.admission.frozenGeneration) staging.reset();
+        job.frozenStagingIndex = UINT8_MAX;
+      }
       if (!runtime->canonicalCaptureOutput.store.empty()) {
         runtime->canonicalCaptureOutput.store.clear();
         runtime->canonicalCaptureOutput.phase = CapturePhase::None;
@@ -616,6 +907,7 @@ TRACK_COLD_MEM bool Track::supersedeDeferredStopJob(CaptureStopJob& job) {
   }
   // The owned extent returns one grain per turn, exactly as retirement does, so a superseded long
   // take cannot blow the deferred owner's turn budget.
+  if (job.presentation) job.presentation->obligations = 0;
   if (job.ownsRawRange() && job.owner != nullptr) {
     if (!retireJobCaptureSourceGrain(job, *job.owner, false)) return false;
   } else {
@@ -732,6 +1024,19 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
       loopsAllocated() && getActiveLoop().hasDeferredVisualCacheWrapAppend(),
       static_cast<unsigned>(captureStopQueueDepth()),
       static_cast<unsigned>(captureStopQueueCapacity()));
+  if (const auto* job = captureStopJobHead(); job && job->mode == CapturePhase::Record) {
+    const auto* recordRuntime = playbackRuntime.slotIfAllocated(job->slot);
+    const auto& prep = captureStopJobs_->recordPreparation;
+    const RecordPreparation::Role::Key key{job->slot, job->loopId, job->interval,
+                                          job->admission.frozenGeneration};
+    Serial.printf("#STOP_RECORD,slot=%u,interval=%llu,prep=%u,bound=%u,match=%u,denied=%u,reason=%u,units=%u,rows=%u,chunks=%u,append=%u\r\n",
+        job->slot, static_cast<unsigned long long>(job->interval), prep.phaseCode(), prep.bound(),
+        prep.matches(key), prep.denied(), static_cast<unsigned>(prep.denyReason()),
+        static_cast<unsigned>(prep.lastStepUnits()),
+        static_cast<unsigned>(recordRuntime ? recordRuntime->canonicalCaptureOutput.store.size() : 0),
+        static_cast<unsigned>(recordRuntime ? recordRuntime->canonicalCaptureOutput.store.chunkIds().size() : 0),
+        recordRuntime && recordRuntime->canonicalCaptureOutput.store.reservedAppendReady());
+  }
   if (loopsAllocated() && runtime) {
     const auto* set = runtime->viewSetIfPrewarmed();
     Serial.printf("#STOP_PREFIX,phase=%u,window=%u,attached=%u,inputs=%u,apply=%u,passes=%u,build_active=%u,index=%u,current=%u,ready=%u,build=%u,retained=%u\r\n",
@@ -801,9 +1106,7 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   if (!captureStopJobs_) {
     return deny("no_stop_job_ring");
   }
-  if (hasPendingDeferredOverdubStop()) {
-    return deny("overdub_stop_pending");
-  }
+  if (hasPendingStopForInterval(interval)) return deny("overdub_stop_pending");
   if (slot >= Config::MAX_LOOPS_PER_TRACK || interval != captureInterval_) {
     return deny("superseded_or_bad_slot");  // a superseded request is not a refusal of a user interaction
   }
@@ -818,9 +1121,8 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   if (runtime == nullptr) {
     return deny("no_playback_runtime");
   }
-  if (runtime->captureStopOwner != nullptr) {
-    return deny("finalizer_owner_held");  // the slot's finalizer is still busy
-  }
+  if (!loop.capture.store.empty() && !freeCaptureCustody()) return deny("custody_cap_denied");
+  // Admission is independent of the serialized worker lease.
   CaptureStopJob* admission = captureStopJobTail();
   if (admission == nullptr) {
     return deny("no_free_stop_job");
@@ -845,13 +1147,14 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   if (!captureStopJobs_ || slot >= Config::MAX_LOOPS_PER_TRACK) {
     return deny("no_presentation_slot");
   }
-  job.presentation = &captureStopJobs_->presentations[slot];
+  job.presentation = hasRawExtent ? freeCaptureCustody() : nullptr;
+  if (hasRawExtent && !job.presentation) return deny("custody_cap_denied");
   if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.presentation->rawRange)) {
     return deny("raw_range_unsealable");
   }
   // The private prepared output is reserved at the record start; admission only checks it,
   // so no allocation happens at the stop edge.
-  if (!runtime->canonicalCaptureOutputAdmitted()) {
+  if (!hasPendingDeferredOverdubStop() && !runtime->canonicalCaptureOutputAdmitted()) {
     return deny("canonical_output_not_admitted");
   }
   // Pure predicate, resolved before the seal so no fallible step follows the transfer.
@@ -862,8 +1165,10 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // discard the retired interval's order/rewrite binding before the new worker
   // uses it. A reused Record runtime otherwise enters ReservedClosure with the
   // previous stop's sourceOwner/generation and can never advance.
-  runtime->discardFrozenCaptureOrder();
-  runtime->discardFrozenCaptureCanonicalOrder();
+  if (!hasPendingDeferredOverdubStop()) {
+    runtime->discardFrozenCaptureOrder();
+    runtime->discardFrozenCaptureCanonicalOrder();
+  }
   // The interval's final geometry is a scalar the caller continuations read at the stop
   // edge (the inline route stamped it here too). It is the same value the worker publishes.
   loop.loopLengthTicks = finalLength;
@@ -883,7 +1188,8 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   job.frozenCaptureContentGeneration = 0;
   if (hasRawExtent) {
     if (!loop.sealCaptureRangeForJob(job.presentation->rawRange, job.frozenCaptureContentGeneration) ||
-        !loop.borrowSealedCaptureRange(job.presentation->rawRange, job.presentation)) {
+        (runtime->captureStopOwner == nullptr &&
+         !loop.borrowSealedCaptureRange(job.presentation->rawRange, job.presentation))) {
       return deny("raw_transfer_failed");
     }
     job.presentation->ownsExtent = true;
@@ -891,6 +1197,7 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // The presentation record now carries this interval's whole extent identity, so the
   // obligation can outlive the interaction job at `RecordPublished` without a move: the
   // sealed bytes never change address and never change owner.
+  if (job.presentation) {
   job.presentation->owner = &loop;
   job.presentation->loopId = loop.loopId;
   job.presentation->slot = slot;
@@ -903,6 +1210,14 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // small frozen counter here instead made that guard unsatisfiable, so every frozen Record-return
   // lane (E2 adoption, root-return preparation, the bar-two lookahead) refused its own source.
   job.presentation->generation = presentationGenerationFor(job.presentation->interval);
+  job.presentation->state = CaptureCustodyState::Sealed;
+  job.presentation->obligations = CaptureStopJobs::kCustodyFinalizer | CaptureStopJobs::kCustodyReader;
+  auto& handle = captureStopJobs_->presentations[slot];
+  if (captureStopPresentationForSlot(slot) == nullptr || !captureStopPresentationForSlot(slot)->ownsExtent) {
+    handle.custodyIndex = job.presentation->custodyIndex;
+    handle.interval = interval;
+  }
+  }
   // The held-note receipt moves to the job: the closure grain emits one terminal Off per
   // entry from the job's own map, so a successor's input cannot rewrite it.
   takeHeldNotesInto(job);
@@ -929,13 +1244,19 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
     job.admission.setPhase(PendingStopPhase::RecordEmpty);
     job.admission.remainingClosureGrains = 0;
   }
-  runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  if (captureStopJobs_->count == 0 && runtime->captureStopOwner == nullptr)
+    runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
   captureRecordGeometryReceipt(job);
   ++captureStopJobs_->count;
+  // The preview is the same interval-owned representation as an overdub job's preview.
+  // Preserve it before a successor clears the live producer; constant-work move, no reconstruction.
+  loop.swapCapturePreview(job.preview);
+  (void)loop.borrowCapturePreview(job.preview, &job.admission);
   // The interval is frozen into the job and the producer directory is free, so the transport
   // edge runs here: every admission route (the live stop and the accepted-stop drive) gets the
   // same destination behaviour from this one place.
   completeAdmittedRecordStop(destination, currentTick, slot, rawLength);
+  ++captureInterval_; // input cut: later input can never extend this Record interval
   // The record stop owns the same deferred successor window as the overdub stop. Keep the
   // evidence at this admission boundary so mixed acceptance can attribute A's frozen
   // predecessor before B's successor starts; this is diagnostic only and does not alter
@@ -951,7 +1272,7 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestination destination,
                                                            uint32_t currentTick, uint8_t slot,
                                                            uint64_t interval) {
-  if (!captureStopJobs_ || !isOverdubbing() || hasPendingDeferredOverdubStop()) {
+  if (!captureStopJobs_ || !isOverdubbing() || hasPendingStopForInterval(interval)) {
     return false;
   }
   // DEC-078 item 3 / S4f.0: the request names the interval it belongs to. A drive whose
@@ -964,6 +1285,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // The ring is the FIFO admission authority. A new stop interval always takes
   // the tail descriptor; a full ring is an explicit exhaustion denial, never
   // ordinary finalization latency.
+  if (!getLoop(slot).capture.store.empty() && !freeCaptureCustody()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 0, 0, "custody_cap_denied");
+    return false;
+  }
   CaptureStopJob* admission = captureStopJobTail();
   if (admission == nullptr || !admission->pendingNotes.empty()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
@@ -994,10 +1319,9 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // They are checked here, and not at the interval's START, because none of them is
   // used before this edge. Each denial is explicit and non-destructive: no stop
   // descriptor is taken, and the interval stays the live recording interval.
-  if (runtime->captureStopOwner != nullptr) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1,
-                       loop.hasActiveOverdubTransferAdmission(), "finalizer_busy", resolveTrackIndexForPersistence(*this));
-    DENY_REENTRY_RESOURCE();
+  auto* roleSet = runtime->viewSetIfPrewarmed();
+  if (!roleSet || roleSet->freeCaptureStagingIndex() == UINT8_MAX) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "finalizer_busy", resolveTrackIndexForPersistence(*this));
     return false;
   }
   if (!loop.hasActiveOverdubTransferAdmission()) {
@@ -1005,12 +1329,15 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
     DENY_REENTRY_RESOURCE();
     return false;
   }
-  if (!runtime->canonicalCaptureOutputAdmitted()) {
+  if (!hasPendingDeferredOverdubStop() && !runtime->canonicalCaptureOutputAdmitted()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
   }
-  if (!loop.canHandoffSessionExitSnapshot()) {
+  // Task 4.20: the tail needs a durable destination, not a receipt slot specifically. When the ring is
+  // full the interval's admission-reserved obligation record is that destination, so a full ring no
+  // longer denies the stop (`session_exit_handoff_full` stays for the case where neither exists).
+  if (!loop.canCaptureSessionExitTail()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
@@ -1026,8 +1353,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // here: this interval's CanonicalOrder phase binds them for its own frozen rows, and
   // `beginFrozenCaptureOrder` denies a build whose binding does not match the role
   // (a successor job stalled in CanonicalOrder until this moved out of `startOverdubbing`).
-  runtime->discardFrozenCaptureOrder();
-  runtime->discardFrozenCaptureCanonicalOrder();
+  if (!hasPendingDeferredOverdubStop()) {
+    runtime->discardFrozenCaptureOrder();
+    runtime->discardFrozenCaptureCanonicalOrder();
+  }
   CaptureAdmissionStaging& staging = *views;
   const size_t openReservations = staging.openReservationCount();
   const size_t finalFrozenCount = staging.storage.eventCount + openReservations;
@@ -1112,7 +1441,11 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   const bool hasRawExtent = !loop.capture.store.empty();
   // An empty successor owns no range. Never let its cleanup mutate the still-live Record
   // presentation in this slot; that descriptor belongs to the prior immutable slice until takeover.
-  job.presentation = hasRawExtent ? &captureStopJobs_->presentations[slot] : nullptr;
+  job.presentation = hasRawExtent ? freeCaptureCustody() : nullptr;
+  if (hasRawExtent && !job.presentation) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 0, 0, "custody_cap_denied");
+    return false;
+  }
   if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.presentation->rawRange)) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        job.ownsRawRange(), static_cast<uint32_t>(loop.capture.store.size()),
@@ -1138,6 +1471,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // frozen role becomes clean ingress ownership for the next interval. This is
   // a constant-work index exchange: neither staging is copied or shared with
   // the other, and the job's reserved ranges stay intact.
+  job.frozenStagingIndex = roleSet->liveStagingIndex;
   runtime->exchangeCaptureStagingRoles();
   // There is no closure grain when every captured NoteOn already has its
   // matching NoteOff. Advance directly to canonical ordering; otherwise the
@@ -1148,7 +1482,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   }
   job.admission.destination = destination;
   job.owner = &loop;
-  runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  if (captureStopJobs_->count == 0 && runtime->captureStopOwner == nullptr) {
+    roleSet->frozenStagingIndex = job.frozenStagingIndex;
+    runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  }
 #if defined(SESSION_CAPTURE)
   // S4f.3 L5: the accepted stop is **bound** -- the interval the request named is now the job's. The
   // denial record (`DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth>`) carries the request's interval,
@@ -1162,14 +1499,16 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
 #endif
   // DEC-068: admission is now committed and no fallible step remains, so take this interval's own
   // session-exit tail. The shared session state is still this interval's (the successor's window
-  // opens below), and this receipt is the only record of our identities once it swaps them out.
+  // opens below), and the receipt — or, at a full ring, the obligation record this interval reserved
+  // at its admission — is the only record of our identities once it swaps them out.
   const CommitReason sessionExitReason =
       destination == PendingStopDestination::Playing ? CommitReason::OverdubStop
                                                      : CommitReason::OverdubStopToStopped;
   const size_t sessionExitReceiptRing = loop.captureSessionExitTail(sessionExitReason);
   if (sessionExitReceiptRing == Loop::kInvalidSessionExitReceipt) {
-    // `canHandoffSessionExitSnapshot` admitted the ring above, so this is unexpected; the
-    // deferred commit falls back to the legacy one-shot handoff when the ring is invalid.
+    // `canCaptureSessionExitTail` admitted a destination above, so this is unexpected; the deferred
+    // commit falls back to the legacy one-shot handoff when neither the ring nor the reservation took
+    // the tail.
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_tail_denied");
   }
   // DEC-067: the predecessor now owns the frozen role and the live role is clean, so a
@@ -1204,7 +1543,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   if (hasRawExtent &&
       loop.sealCaptureRangeForJob(job.presentation->rawRange, job.frozenCaptureContentGeneration)) {
     job.presentation->ownsExtent = true;
-    (void)loop.borrowSealedCaptureRange(job.presentation->rawRange, job.presentation);
+    if (runtime->captureStopOwner == &job.admission)
+      (void)loop.borrowSealedCaptureRange(job.presentation->rawRange, job.presentation);
     job.presentation->owner = &loop;
     job.presentation->loopId = loop.loopId;
     job.presentation->slot = slot;
@@ -1214,16 +1554,34 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
     // Interval-derived, exactly as the Record admission above and as the qualification guard reads it.
     job.presentation->generation = presentationGenerationFor(job.presentation->interval);
     job.presentation->armed = true;
+    job.presentation->state = CaptureCustodyState::Sealed;
+    job.presentation->obligations = CaptureStopJobs::kCustodyFinalizer;
+    if (captureStopPresentationForSlot(slot) == nullptr || !captureStopPresentationForSlot(slot)->ownsExtent) {
+      auto& handle = captureStopJobs_->presentations[slot];
+      handle.custodyIndex = job.presentation->custodyIndex;
+      handle.interval = interval;
+    }
   } else {
     job.clearOwnedRawRange();
+    // The seal refused, so this receipt owns nothing and `freeCaptureCustody()` may
+    // hand it to a later interval. Drop the reference: this job keeps running, and a
+    // stale presentation here would later release a successor's grains and drop its
+    // Loop borrow while its own reader is still owed.
+    job.presentation = nullptr;
     if (hasRawExtent) {
       SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                          finalFrozenCount, openReservations, "raw_seal_unexpected");
     }
   }
-  // Job-owned pending note changes (Add/Shorten/Hide intents). Constant-work
-  // swap: this job resolves against its own set while the live session keeps an
-  // independent, prewarmed set for a successor interval.
+  // CONTRACTS.md C3.4's deadline on the deferred route: this swap is the last moment the interval's
+  // pending set belongs to the Loop. A decision this interval owedit but never materialized (its
+  // private predecessor published while the derived-view lane was owned by that predecessor's
+  // presentation retirement) is taken here against the source that answers now -- or denied by name --
+  // instead of being handed to a successor's set or dropped with the session.
+  loop.materializeDeferredPrivateHoldsAtDeadline();
+  // Job-owned pending note changes (Add/Shorten/Hide intents). Constant-work swap: this job resolves
+  // against its own set while the live session keeps an independent, prewarmed set for a successor
+  // interval.
   loop.swapPendingNoteChanges(job.pendingChanges);
   (void)loop.borrowPendingNoteChanges(job.pendingChanges, &job.admission);
   // Job-owned capture preview: the deferred cleanup seals this interval's preview
@@ -1252,6 +1610,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // `job.admission` remains the capture-admission and transport-stop
   // barrier until the joint commit and cleanup retire it.
   trackState = TRACK_OVERDUB_STOPPING;
+  ++captureInterval_; // accepting Stop ends ingress for this interval in this turn
 #if RUNTIME_TIMING_ENABLED
   RuntimeTimingTelemetry::recordStopStateTransition(
       resolveTrackIndexForPersistence(*this), slot,
@@ -1524,6 +1883,9 @@ TRACK_COLD_MEM bool Track::prepareDeferredOverdubUndoEntryFromReceipt(CaptureSto
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   if (!hasPendingDeferredOverdubStop()) return;
+  for (auto& queued : captureStopJobs_->entries)
+    if (queued.admission.pending && &queued != captureStopJobHead())
+      queued.admission.requestTransportStop();
   CaptureStopJob& job = captureStopJob();
   const uint8_t phaseAtRetarget = static_cast<uint8_t>(job.admission.phase);
   job.admission.requestTransportStop();
@@ -1546,7 +1908,7 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
     // not a user transport stop -- the interval's retained window is still the sounding source
     // (S4f.19), so the transport state must not be forced to STOPPED from there.
     if (job.admission.destination == PendingStopDestination::Stopped &&
-        job.interval == captureInterval_ && job.slot == activeLoopIndex &&
+        (job.interval == captureInterval_ || job.interval + 1 == captureInterval_) && job.slot == activeLoopIndex &&
         trackState != TRACK_STOPPED && trackState != TRACK_EMPTY) {
       silenceTrackMidiOutput();
       setState(TRACK_STOPPED);
@@ -1593,9 +1955,10 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
 
 namespace {
 /// Grain budget for one phase of a retargeted job's companion preparation before the raw-only
-/// fallback takes over (DEC-070). Generous: the device completes healthy phases in a few grains.
-constexpr uint16_t kRetargetStallGrainLimit = 512;
-/// Grain budget for the S4f.19 `RecordPublished` retirement wait with an unchanged frozen-window
+/// The companion family's grain budget now lives beside the phase enum
+/// (`kCompanionStallGrainLimit`, `include/TrackPlaybackRuntime.h`) so the bound and the escape that
+/// consumes it are one decision table, pinned natively. The canonical base's own bound
+/// (`kCanonicalBaseStallGrainLimit`) is the second entry of that table.
 /// build phase, before the stale build is given up (DEC-070's shape for a predicate that can no
 /// longer become true). Generous for the same reason as the retarget bound above: a healthy build
 /// advances its own phase within a few grains, and progress restarts the count either way.
@@ -1695,8 +2058,13 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(Capt
   MidiEvent terminal = MidiEvent::NoteOff(
       std::min(job.phaseTick, job.loopLengthTicks - 1), held.channel, held.note, 0);
   terminal.noteId = held.recordNoteId;
-  if (!output.store.appendReserved(terminal, runtime->canonicalCaptureChunks))
-    return LoopEventStoreRewriteResult::Denied;
+  // Closure rows belong to the same private prepared output as source staging.
+  // A full chunk must not enter persistence before canonical ordering; keep the
+  // ephemeral seal local to this append, including an unsuccessful append.
+  LoopEventStore::enterEphemeralSeal();
+  const bool appended = output.store.appendReserved(terminal, runtime->canonicalCaptureChunks);
+  LoopEventStore::leaveEphemeralSeal();
+  if (!appended) return LoopEventStoreRewriteResult::Denied;
   ++cursor.sourceIndex;
   job.pendingNotes.erase(pending);
   (void)stop.consumeClosureGrain(); // credit preflight above makes this infallible
@@ -1780,8 +2148,29 @@ NoteId nextRecordPreparationNoteId(void* context) {
 }
 }  // namespace
 
+TRACK_COLD_MEM const char* recordNormalizationDenialName(RecordNormalizationDenial denial) {
+  switch (denial) {
+    case RecordNormalizationDenial::None: return "none";
+    case RecordNormalizationDenial::JobIdentity: return "job_identity";
+    case RecordNormalizationDenial::OwnerLost: return "owner_lost";
+    case RecordNormalizationDenial::OutputNotReady: return "output_not_ready";
+    case RecordNormalizationDenial::ChunkStarvation: return "chunk_starvation";
+    case RecordNormalizationDenial::RoleBindRefused: return "role_bind_refused";
+    case RecordNormalizationDenial::PreparationDenied: return "preparation_denied";
+  }
+  return "unnamed";
+}
+
 TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalization(
-    CaptureStopJob& job) {
+    CaptureStopJob& job, RecordNormalizationDenial* denial) {
+  // DEC-166: name the refusing predicate. Diagnostic only -- every branch below is unchanged, and the
+  // named value is written to the job so the row and the native fixture read the same thing.
+  const auto refuse = [&](RecordNormalizationDenial reason) {
+    job.lastNormalizationDenial = reason;
+    if (denial != nullptr) *denial = reason;
+    return LoopEventStoreRewriteResult::Denied;
+  };
+  if (denial != nullptr) *denial = RecordNormalizationDenial::None;
   auto& stop = job.admission;
   if (!stop.pending || job.mode != CapturePhase::Record || !job.owner ||
       job.loopId == kInvalidLoopId || !job.loopLengthTicks || !job.ownsRawRange() ||
@@ -1790,13 +2179,13 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
       job.owner->loopId != job.loopId ||
       stop.phase != PendingStopPhase::CanonicalOrder || !job.pendingNotes.empty() ||
       !captureStopJobs_)
-    return LoopEventStoreRewriteResult::Denied;
+    return refuse(RecordNormalizationDenial::JobIdentity);
   auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
   if (!runtime || runtime->captureStopOwner != &stop ||
       runtime->captureStopOwnerGeneration != stop.frozenGeneration)
-    return LoopEventStoreRewriteResult::Denied;
+    return refuse(RecordNormalizationDenial::OwnerLost);
   auto& output = runtime->canonicalCaptureOutput.store;
-  if (!output.reservedAppendReady()) return LoopEventStoreRewriteResult::Denied;
+  if (!output.reservedAppendReady()) return refuse(RecordNormalizationDenial::OutputNotReady);
 
   auto& role = captureStopJobs_->recordPreparation;
   const RecordPreparation::Role::Key key{job.slot, job.loopId, job.interval,
@@ -1809,7 +2198,7 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
       if (!runtime->replenishCanonicalCaptureChunk()) break;
     }
     if (runtime->canonicalCaptureChunks.availableChunks() == 0)
-      return LoopEventStoreRewriteResult::Denied;
+      return refuse(RecordNormalizationDenial::ChunkStarvation);
     RecordPreparation::Geometry geometry{};
     geometry.loopLengthTicks = job.loopLengthTicks;
     // The inline Record stop closes an open tail at the stop playhead's loop phase
@@ -1824,7 +2213,7 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
     const RecordPreparation::NoteIdSource ids{job.owner, nextRecordPreparationNoteId};
     role.discard();
     if (!role.begin(key, output, geometry, runtime->canonicalCaptureChunks, ids))
-      return LoopEventStoreRewriteResult::Denied;
+      return refuse(RecordNormalizationDenial::RoleBindRefused);
   }
   const RecordPreparation::Step step = role.step(kDeferredStopPreparationQuantum);
   if (step == RecordPreparation::Step::Denied) {
@@ -1833,7 +2222,7 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
     // over that store would re-read temporary filter markers as original events.
     // The job fails closed on this binding instead of duplicating or corrupting
     // rows; a distinct interval or output store binds a fresh role.
-    return LoopEventStoreRewriteResult::Denied;
+    return refuse(RecordNormalizationDenial::PreparationDenied);
   }
   if (step == RecordPreparation::Step::Pressure ||
       step == RecordPreparation::Step::Pending) {
@@ -1973,8 +2362,11 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
   if (publishedPassId == kInvalidPassId) return LoopEventStoreRewriteResult::Denied;
   job.recordAfterGeometry =
       UndoLoopGeometry{loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
+  // DEC-160: the entry carries this interval's identity so a predecessor prunes only
+  // causally-earlier checkpoints and a successor's entry survives.
   TrackUndo::pushRecordPassAdded(*this, job.slot, publishedPassId, job.loopId,
-                                 job.recordBeforeGeometry, job.recordAfterGeometry);
+                                 job.recordBeforeGeometry, job.recordAfterGeometry,
+                                 job.interval);
   loop.markDisplayCachesStale();
   // S4f.20 parity -- the inline Record stop's last side effect. `Loop::commitPendingCapturePass` ends
   // by queuing the interval's session-exit snapshot publication, and that queue is the only thing that
@@ -2023,7 +2415,22 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordEmptyResult(
   // job-owned raw range carries this interval's rows, and a live successor may
   // already own the Loop's producer directory.
   Loop& loop = *job.owner;
-  const bool resetGeometry = loop.activeCapturePassCount() == 0;
+  (void)loop.releaseCapturePreviewBorrow(&job.admission);
+  job.preview.clear();
+  // DEC-160: cleanup is predecessor-local. `resetPassTimeline` is global -- it clears every
+  // pass, the published snapshot, the playback revision, the overdub source view, the pending
+  // changes and the session -- so it may run only when this Loop has no active pass AND no
+  // live or sealed successor interval owns this slot. With a successor, this grain releases
+  // only its own custody obligation (the retirement path) and leaves geometry untouched.
+  const bool successor = hasLiveOrSealedSuccessorForSlot(job.slot, job.loopId, job.interval);
+  const bool resetGeometry = loop.activeCapturePassCount() == 0 && !successor;
+  // The policy is owed, not dropped: if a successor blocks it now, the slot keeps the debt and
+  // `settleEmptyRecordGeometry` applies it once nothing owes the slot -- so an overdub successor
+  // that also ends empty cannot leave a silent non-zero loop, and one that publishes content
+  // simply clears the debt.
+  if (!resetGeometry && loop.activeCapturePassCount() == 0) {
+    captureStopJobs_->emptyGeometryOwed[job.slot] = job.interval;
+  }
   if (resetGeometry) {
     loop.resetPassTimeline();
     loop.loopLengthTicks = 0;
@@ -2038,7 +2445,8 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordEmptyResult(
   // grain, so it may have optimistically entered PLAYING. The inline empty take ended
   // STOPPED/EMPTY and never started playback; resolve that here, once, and only while this
   // interval still owns the live transport.
-  if (resetGeometry && job.interval == captureInterval_ && job.slot == activeLoopIndex) {
+  if (resetGeometry && (job.interval == captureInterval_ ||
+      (job.interval + 1 == captureInterval_ && !isRecording() && !isOverdubbing())) && job.slot == activeLoopIndex) {
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
   }
   stop.setPhase(PendingStopPhase::RecordPublished);
@@ -2249,6 +2657,11 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   if (runtime != nullptr && !currentRootWindowServed && !runtime->releaseFrozenRecordWindow())
     return LoopEventStoreRewriteResult::Pending;
   // Bounded: one raw-extent grain per call until the frozen source is gone.
+  if (job.presentation) {
+    if (runtime) (void)runtime->clearPresentationOwner(job.presentation, job.presentation->generation);
+    releaseCustodyObligation(*job.presentation, CaptureStopJobs::kCustodyReader);
+    releaseCustodyObligation(*job.presentation, CaptureStopJobs::kCustodyFinalizer);
+  }
   if (job.ownsRawRange() && !retireJobCaptureSourceGrain(job, loop, false))
     return LoopEventStoreRewriteResult::Pending;
   if (runtime != nullptr) {
@@ -2328,6 +2741,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   Loop& loop = *job.owner;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  if (!bindCaptureStopWorker(job)) return false;
   // Record jobs own no live capture staging: they run the closure, bounded source
   // staging and (later) the preparation composition over the job's frozen range.
   // Overdub keeps the staging-dependent path below.
@@ -2348,7 +2762,36 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       return advance(stepDeferredRecordSourceStaging(job));
     }
     if (stop.phase == PendingStopPhase::CanonicalOrder) {
-      return advance(stepDeferredRecordNormalization(job));
+      const auto result = stepDeferredRecordNormalization(job);
+      // DEC-166 -- **report only**. The Record lane had no stall reporter at all, so a job parked here was
+      // indistinguishable from a job nobody serviced (device, 2026-10-27: 32 s at phase 2 with eight stops
+      // queued behind it). Nothing is bypassed, no credit is consumed on a denial, and the phase is not
+      // touched: the row exists so the next reproduction names its term instead of costing another guess.
+      const uint8_t code = static_cast<uint8_t>(stop.phase);
+      if (retargetStallPhase_ != code) {
+        retargetStallPhase_ = code;
+        retargetStallGrains_ = 0;
+      }
+      if (result == LoopEventStoreRewriteResult::Denied) {
+        if (retargetStallGrains_ < kRecordNormalizationDenialReportLimit) ++retargetStallGrains_;
+        if (retargetStallGrains_ >= kRecordNormalizationDenialReportLimit) {
+          noteStallOnce(recordNormalizationDenialName(job.lastNormalizationDenial));
+          logger.log(CAT_TRACK, LOG_WARNING,
+                     "Deferred Record stop stalled: normalization %s phase=%u closure=%u order=%u "
+                     "canonical=%llu ranked=%llu notes=%u track=%u",
+                     recordNormalizationDenialName(job.lastNormalizationDenial),
+                     static_cast<unsigned>(code),
+                     static_cast<unsigned>(stop.remainingClosureGrains),
+                     static_cast<unsigned>(stop.remainingOrderGrains),
+                     static_cast<unsigned long long>(stop.remainingCanonicalPreparationGrains),
+                     static_cast<unsigned long long>(stop.remainingRankedPreparationGrains),
+                     static_cast<unsigned>(job.pendingNotes.size()),
+                     static_cast<unsigned>(resolveTrackIndexForPersistence(*this)));
+        }
+      } else {
+        retargetStallGrains_ = 0;
+      }
+      return advance(result);
     }
     if (stop.phase == PendingStopPhase::RecordPrepared) {
       return advance(stepDeferredRecordPassTransfer(job));
@@ -2376,27 +2819,49 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     noteStallOnce("frozen capture staging generation lost");
     return false;
   }
-  // DEC-070 bounded fallback. A retargeted job keeps its PLAYING-route companion preparation so the
-  // STOPPED publication can carry the note-edit representation the display resolves the overdubbed
-  // notes from. If that preparation cannot complete -- its bindings no longer describe the interval
-  // after the transport stopped -- the job must not park: retire the companion estimates, drop the
-  // horizon and commit the staged pass alone, which is the raw-only route the slot used to take.
-  // Progress resets the count, so only a phase that truly makes no progress reaches the bound.
-  if (stop.retargetedFromPlaying &&
-      stop.phase >= PendingStopPhase::CanonicalTail &&
-      stop.phase <= PendingStopPhase::CompanionBridge) {
-    if (retargetStallPhase_ != static_cast<uint8_t>(stop.phase)) {
-      retargetStallPhase_ = static_cast<uint8_t>(stop.phase);
+  // DEC-070 bounded fallback, generalised (DEC-165). A job holds the FIFO head and the ring holds
+  // eight, so a preparation phase that cannot advance behind it stops the *instrument*: every press
+  // behind it is admitted until the ring is full, then retained -- "cannot stop overdubbing after
+  // around 8 times". Measured 2026-10-27 (`session_20261027_160050.log`, `134320.log`): `CanonicalPrefix`
+  // held 9,370 / 9,607 grains -- 25 s -- without advancing while the same job advanced on its first
+  // grain once the destination retargeted to STOPPED (that branch skips the base), and healthy stops
+  // finish the same phase in 68..471 grains. Both escapes below keep the captured rows: the base is a
+  // companion-only input, and the companion family's raw-only route is DEC-070's existing answer.
+  // Progress resets the count, so only a phase that truly makes no progress reaches a bound.
+  const uint8_t stopPhaseCode = static_cast<uint8_t>(stop.phase);
+  // The base's bound is gated on its cause, not on a bare count: a *successor* interval capturing on
+  // this slot is the state in which the shared canonical machinery (and therefore the base) cannot be
+  // advanced, and it is the state both device captures were in.
+  const bool successorIntervalCapturing = isOverdubbing() || isRecording();
+  if (stopPreparationIsBounded(stopPhaseCode, stop.retargetedFromPlaying, successorIntervalCapturing)) {
+    if (retargetStallPhase_ != stopPhaseCode) {
+      retargetStallPhase_ = stopPhaseCode;
       retargetStallGrains_ = 0;
-    } else if (retargetStallGrains_ < kRetargetStallGrainLimit) {
+    } else if (retargetStallGrains_ < stopPreparationStallGrainLimit(stopPhaseCode)) {
       ++retargetStallGrains_;
     }
-    if (retargetStallGrains_ >= kRetargetStallGrainLimit) {
+    const StopPreparationEscape escape =
+        stopPreparationEscape(stopPhaseCode, retargetStallGrains_, stop.retargetedFromPlaying,
+                               successorIntervalCapturing);
+    if (escape == StopPreparationEscape::AbandonBase) {
+      // The rows do not need the base: ordering, the canonical copy and the transfer staging all read
+      // the frozen staging rows. The tail cannot succeed without a ready base, so its own bound takes
+      // over once the copy has run, instead of failing silently here forever.
+      noteStallOnce("canonical base stalled; stop continues without it");
+      // Remember it on the job (sentinel in the per-job stall phase), so the tail below cannot be
+      // tempted by a base that a successor interval builds later.
+      retargetStallPhase_ = kCanonicalBaseAbandonedPhase;
+      retargetStallGrains_ = 0;
+      stop.setPhase(PendingStopPhase::CanonicalOrder);
+    } else if (escape == StopPreparationEscape::RawPassOnly) {
+      noteStallOnce("companion path stalled; raw pass only");
       stop.setPhase(PendingStopPhase::PrepareTransfer);
       (void)stop.retireSkippedCompanionPreparation(false);
       loop.discardPreparedCompanionHistory(stop.intervalToken());
       logger.log(CAT_TRACK, LOG_WARNING,
-                 "Overdub stop retarget: companion path stalled; raw pass only");
+                 "Overdub stop: companion path stalled; raw pass only (phase=%u retargeted=%u)",
+                 static_cast<unsigned>(stopPhaseCode),
+                 stop.retargetedFromPlaying ? 1u : 0u);
       stop.setPhase(PendingStopPhase::AtomicTransfer);
     }
   }
@@ -2431,9 +2896,17 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       }
       return false;
     }
-    if (!appendReservedCaptureNoteOffForOwner(loop, staging, *reservation, phaseTick)) {
-      return false;
+    MidiEvent terminal = MidiEvent::NoteOff(
+        std::min(phaseTick, job.loopLengthTicks - 1), reservation->channel, reservation->note, 0);
+    terminal.noteId = reservation->noteId;
+    bool retainPair = true;
+    if (noteMinLengthRemoveEnabled && noteMinLengthTicks != 0 &&
+        reservation->noteOnStagingIndex < staging.storage.eventCount) {
+      const auto& on = staging.storage.events[reservation->noteOnStagingIndex];
+      retainPair = terminal.tick < on.tick || terminal.tick - on.tick >= noteMinLengthTicks;
     }
+    // Frozen closure consumes its own reservation; never append to live successor Capture.
+    if (!staging.appendReservedNoteOff(terminal, retainPair)) return false;
     (void)stop.consumeClosureGrain();
     if (stop.remainingClosureGrains == 0) {
       stop.setPhase(
@@ -2462,19 +2935,65 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       return false;
     }
     const auto anchor = runtime->currentCycleCursor(phaseTick, baseSource.sourceGeneration);
-    if (runtime->stepCanonicalBase(loop.passes, baseSource, currentSource, anchor,
-                                   kDeferredStopPreparationQuantum) ==
-        RuntimePlaybackOrderBuildResult::Complete)
+    const RuntimePlaybackOrderBuildResult prefixResult = runtime->stepCanonicalBase(
+        loop.passes, baseSource, currentSource, anchor, kDeferredStopPreparationQuantum);
+    if (prefixResult == RuntimePlaybackOrderBuildResult::Complete) {
       stop.setPhase(PendingStopPhase::CanonicalOrder);
+      return false;
+    }
+#if defined(SESSION_CAPTURE)
+    // DEC-170: name the *first* term that made the base refuse. `prefixFirstDenialReason` is the original transition
+    // (a sticky `Denied` latch would otherwise hide it behind "already denied"), reset when the build restarts or
+    // completes. Emitted on the reason change, once per job, and a rate-limited `prefix_still_denied` while it holds.
+    const uint8_t denial = static_cast<uint8_t>(runtime->prefixFirstDenialReason);
+    if (denial != 0 && !runtime->prefixDeniedFirstReported) {
+      const char* name = PSTR("unknown");
+      switch (static_cast<LoopPlaybackRuntime::CanonicalPrefixDenial>(denial)) {
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::BridgeActive: name = PSTR("bridge_active"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::CaptureAttached: name = PSTR("capture_attached"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::RevisionMismatch: name = PSTR("revision_mismatch"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::GenerationMismatch: name = PSTR("generation_mismatch"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::InputGenerationMismatch: name = PSTR("input_generation_mismatch"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::StepDenied: name = PSTR("step_denied"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::InputsBusy: name = PSTR("inputs_busy"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::ApplyUnavailable: name = PSTR("apply_unavailable"); break;
+        case LoopPlaybackRuntime::CanonicalPrefixDenial::None: name = PSTR("none"); break;
+      }
+      char line[192];
+      snprintf_P(line, sizeof(line),
+                 PSTR("#CAP,%lu,DIAG,prefix_denied_first,reason=%s,interval=%lu,phase=%u,bridge=%u,attached=%u,"
+                      "genmatch=%u,stormatch=%u,apply=%u,succ=%u"),
+                 static_cast<unsigned long>(micros()), name,
+                 static_cast<unsigned long>(job.interval),
+                 static_cast<unsigned>(runtime->canonicalPrefixPhase),
+                 runtime->captureBridgePhase != LoopPlaybackRuntime::CaptureBridgePhase::Idle ? 1u : 0u,
+                 runtime->canonicalPassInputs.captureAttached() ? 1u : 0u,
+                 runtime->canonicalPassInputs.generation() == runtime->canonicalPrefixGeneration ? 1u : 0u,
+                 runtime->canonicalPrefixStorageOwner != nullptr &&
+                     loop.canonicalStorageGeneration == runtime->canonicalPrefixStorageGeneration ? 1u : 0u,
+                 runtime->frozenCompanionApply.available() ? 1u : 0u,
+                 (isOverdubbing() || isRecording()) ? 1u : 0u);
+      DebugSessionCapture::appendCaptureTextLine(line);
+      runtime->prefixDeniedFirstReported = true;
+    }
+#endif
     return false;
   }
   if (stop.phase == PendingStopPhase::CanonicalOrder) {
-    if (!runtime->beginFrozenCaptureCanonicalOrder(stop.frozenGeneration)) {
+    // Named, because this phase had no reporter at all: every predicate below returned a bare
+    // `false`, the only stall notice above it checks `frozenGeneration` alone, and that notice is
+    // once-per-Track -- so a job that could never advance was indistinguishable from one nobody
+    // serviced. `noteStallOnce` now carries which predicate refused.
+    const FrozenCaptureCanonicalOrderBegin admitted =
+        runtime->beginFrozenCaptureCanonicalOrder(stop.frozenGeneration);
+    if (admitted != FrozenCaptureCanonicalOrderBegin::Ready) {
+      noteStallOnce(frozenCaptureCanonicalOrderBeginName(admitted));
       return false;
     }
     const RuntimePlaybackOrderBuildResult result =
         runtime->stepFrozenCaptureCanonicalOrder(kDeferredStopOrderQuantum);
     if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      noteStallOnce("canonical order step denied");
       return false;
     }
     (void)stop.consumeOrderGrain();
@@ -2492,9 +3011,8 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     (void)stop.consumeOrderGrain();
     if (result == LoopEventStoreRewriteResult::Complete) {
       const size_t count = runtime->frozenCaptureCanonicalOrder.orderedEventCount();
-      // The prepared output owns different physical chunks. Retire only one
-      // copied raw chunk per turn; never rewrite sealed persistence input.
-      if (!retireJobCaptureSourceGrain(job, loop, false)) return false;
+      // The receipt retains its raw extent until its finalizer obligation ends.
+      // Canonical output owns separate chunks; successor ingress is independent.
       // An empty successor capture has no audible rows to project.  Skip the
       // zero-work audible-order builder and continue with the already-admitted
       // transfer tail; this keeps a clean stop from parking on an unnecessary
@@ -2557,15 +3075,52 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     return false;
   }
   if (stop.phase == PendingStopPhase::CanonicalTail) {
-    if (!runtime->frozenCanonicalTailReady(targetSource)) {
-      if (runtime->beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)) {
-        return false;
-      }
-      const auto result = runtime->stepReservedFrozenCanonicalTail(
-          stop, kDeferredStopPreparationQuantum);
-      if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
-      if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
+    // DEC-165: a tail cannot begin without a ready canonical base, so a job whose base was abandoned
+    // takes the raw-only route here deterministically -- by cause, not by a grain budget, so a healthy
+    // job (base ready) is untouched. Without this the base escape would merely move the wedge one
+    // phase later.
+    if (stopCompanionPathIsUnreachable(static_cast<uint8_t>(stop.phase),
+                                       stop.retargetedFromPlaying,
+                                       retargetStallPhase_ == kCanonicalBaseAbandonedPhase)) {
+      noteStallOnce("canonical base unavailable; companion path skipped");
+      stop.setPhase(PendingStopPhase::PrepareTransfer);
+      // Named refusal: this route is destination-Playing by construction, so the destination-gated
+      // `retireSkippedCompanionPreparation` refused 100% of the time here and the surviving
+      // estimates kept the stop from ever committing -- the wedge DEC-165's cause route had merely
+      // moved one phase later (evidence 2026-10-27-STOP-RETIREMENT-REVIEW Finding 1).
+      if (!stop.retireCompanionSkippedForBaseAbandonment()) return false;
+      loop.discardPreparedCompanionHistory(stop.intervalToken());
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub stop: companion path skipped (no canonical base); raw pass only");
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+      return false;
     }
+    // DEC-168: the same cause for a **retargeted** job. Its base was never built -- the STOPPED route
+    // skips `CanonicalPrefix`, so `canonicalBaseReady()` is false and `beginFrozenCanonicalTail`
+    // cannot begin (it requires a ready base). `retargetStoppedRecovery` only rebinds a base that
+    // already exists, so it cannot help; the job sat out DEC-070's 512-grain bound and escaped
+    // raw-only anyway. Device `session_20261027_172742.log`: seven queued retargeted jobs, ~2.1 s
+    // each, held the reserved session-exit record `Populated` and refused every overdub start for
+    // ~26 s. Escape by cause here: identical output (the companion representation was already lost
+    // at the bound), none of the latency. A retargeted job whose base IS ready (the DEC-070 head
+    // flow) is untouched.
+    if (stop.retargetedFromPlaying && !runtime->canonicalBaseReady()) {
+      noteStallOnce("retargeted stop has no canonical base; raw pass only");
+      stop.setPhase(PendingStopPhase::PrepareTransfer);
+      if (!stop.retireSkippedCompanionPreparation(false)) return false;
+      loop.discardPreparedCompanionHistory(stop.intervalToken());
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub stop: companion path skipped (no canonical base for retargeted job); raw pass only");
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+      return false;
+    }
+    if (runtime->beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)) {
+      return false;
+    }
+    const auto result = runtime->stepReservedFrozenCanonicalTail(
+        stop, kDeferredStopPreparationQuantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
+    if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
     stop.setPhase(PendingStopPhase::CompanionHistory);
     return false;
   }
@@ -2608,16 +3163,50 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // prepared OverdubPassAdded entry built from this job's slot and baseline,
     // then the protected transaction's prepare (begin + detach redo).
     if (!stepDeferredUndoCollection(job, loop, stop)) return false;
-    // Entry preparation consumes a completed collection back to Cold. A denied
-    // or absent collection is not proof that the undo obligation was fulfilled.
-    if (!job.undoCollectable ||
-        job.undoCollection.phase != Loop::SessionUndoCollection::Phase::Cold) return false;
-    if (!stepDeferredUndoPublication(job, stop)) return false;
-    if (!job.undoPublicationReady) {
-      // A refused begin retains the entry. Retry when admission recovers;
-      // never retire its estimate and publish the pass without its undo.
-      job.undoPublicationStarted = false;
-      return false;
+    // Entry preparation consumes a **complete** collection back to `Cold`; that is the only
+    // collected answer. A refused identity source, or a collection the Loop denied because a
+    // successor advanced the revision/tail it was bound to, never becomes `Cold`.
+    //
+    // The obligation is retained, not dropped: the pass must never publish without its undo level.
+    // Retention is bounded by this job's own retention counter (`kUndoCollectionRetentionLimit`,
+    // DEC-070's shape) rather than by an open-ended wait. Device `session_20261026_204731` showed the
+    // unbounded form: `phase=8` (`UndoCollection`) held for ~20 s while all thirteen later presses
+    // reported `Overdub stop refused: stop_job_pending slot=3 interval=23 phase=8`, with the stop
+    // owner, frozen role and session-exit receipt never released.
+    //
+    // Past the bound the obligation cannot be met from these inputs, so the interval's own
+    // session-exit receipt supplies the identities -- the fail-open rule the atomic transfer already
+    // applies to an unnamed entry -- and the stop advances. A receipt that names nothing yields no
+    // entry, and only then does the transfer publish without an undo level.
+    const bool collectionConsumed =
+        job.undoCollectable &&
+        job.undoCollection.phase == Loop::SessionUndoCollection::Phase::Cold;
+    if (!collectionConsumed) {
+      if (job.undoCollectionRetentions < kUndoCollectionRetentionLimit) {
+        // Retention edge: the obligation is kept, and the pass still cannot publish without its
+        // undo level. Only the *wait* is bounded, so an input set that can no longer be recomputed
+        // cannot hold the stop owner, the frozen role and the interval's receipt indefinitely.
+        ++job.undoCollectionRetentions;
+        return false;
+      }
+      if (!job.undoPublicationStarted && job.undoEntry.passId == kInvalidPassId) {
+        (void)prepareDeferredOverdubUndoEntryFromReceipt(job, loop, stop);
+      }
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub stop: undo collection estimate exhausted; identities from the session-exit "
+                 "receipt slot=%u interval=%lu named=%u",
+                 static_cast<unsigned>(job.slot), static_cast<unsigned long>(job.interval),
+                 job.undoEntry.passId != kInvalidPassId ? 1u : 0u);
+    }
+    // forever -- gating the drive on that refusal is the parking shape this recovery removes.
+    if (job.undoEntry.passId != kInvalidPassId) {
+      if (!stepDeferredUndoPublication(job, stop)) return false;
+      if (!job.undoPublicationReady) {
+        // A refused begin retains the entry. Retry when admission recovers;
+        // never retire its estimate and publish the pass without its undo.
+        job.undoPublicationStarted = false;
+        return false;
+      }
     }
     // Collection/publication preparation is complete; unused estimates are not work.
     if (!stop.retireCompletedPreparation()) return false;
@@ -2634,7 +3223,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (!causalBaseCurrent) {
       // Retire the ranked (bridge) estimate: no bridge will be built. The atomic
       // transfer then commits the accepted capture without a successor window.
-      if (!stop.retireSupersededPreparation()) return false;
+      if (!stop.retireSupersededPreparation()) {
+        noteStallOnce("superseded causal base could not retire its estimate");
+        return false;
+      }
       stop.setPhase(PendingStopPhase::AtomicTransfer);
       return false;
     }
@@ -2649,14 +3241,27 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
               stop.transportCommandEpoch, loop.loopLengthTicks, anchor)) {
         return false;
       }
+      // Name the refusals the wedged job used to cycle through silently (DEC-166 standard:
+      // the next wedge must be attributable from serial capture alone).
+      noteStallOnce("companion bridge begin refused for this job");
       const auto result = runtime->stepReservedFrozenCaptureBridge(
           stop, kDeferredStopPreparationQuantum);
-      if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
-      return false;
+      if (result == RuntimePlaybackOrderBuildResult::Denied) {
+        noteStallOnce("companion bridge step denied for this job");
+        return false;
+      }
+      if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
+      // The last bounded preparation grain and the scalar handoff share one
+      // emission boundary. Still prove the live ledger/cursor after the grain;
+      // a stale closure must refresh on a later turn, never publish unchecked.
+      if (!runtime->canSelectFrozenCaptureBridge(stop.frozenGeneration,
+              stop.transportCommandEpoch, loop.loopLengthTicks, anchor)) return false;
     }
     if (!stop.retireCompletedPreparation()) return false;
     stop.setPhase(PendingStopPhase::AtomicTransfer);
-    return false;
+    // Do not yield a selectable candidate to another MIDI emission before the
+    // existing atomic preflight/publication below. No second preparation or
+    // cleanup grain executes on this turn.
   }
   if (stop.phase == PendingStopPhase::AtomicTransfer) {
     // Deferred-route only, and a no-op for the full CompanionHistory/UndoCollection route (its entry
@@ -2680,8 +3285,17 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         return false;
       }
     }
-    if (!causalBaseCurrent) {
-      if (!stop.retireSupersededPreparation()) return false;
+    // DEC-165 follow-up: a job whose canonical base was abandoned can never pass
+    // `canSelectReservedFrozenCaptureBridge`, so the plain Playing commit is unreachable for it
+    // forever; its successor window is void and the staged pass commits without one -- exactly the
+    // stale-base terminal, taken by cause instead of by waiting for a revision move.
+    if (!causalBaseCurrent ||
+        (!stop.retargetedFromPlaying &&
+         retargetStallPhase_ == kCanonicalBaseAbandonedPhase)) {
+      if (!stop.retireSupersededPreparation()) {
+        noteStallOnce("superseded causal base could not retire its estimate");
+        return false;
+      }
       SC_ODUB_STOP_STAGE("atomic_transfer", 0, 0, UINT32_MAX, UINT32_MAX,
                          stop.remainingHistoryRecycleGrains, job.causalBase.playbackRevision,
                          "causal_base_superseded");
@@ -2739,6 +3353,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       committed = TrackPreparedStopCommit::advanceAtomicTransfer(
           loop, *runtime, stop, playbackGeneration, anchor, transferred, jobPass);
     }
+    // Once per job, DEC-166 standard: a refused commit was exactly the silent wedge that
+    // DEC-165's cause route moved here; the next wedge must name itself (a transient
+    // bounded-transfer turn costs one false report, never a policy).
+    if (!committed) noteStallOnce("atomic transfer commit refused for this job");
     // Publication consumed this job's receipt. Cleanup must not replay admission,
     // and the current active/selected slot may already belong to a successor.
     if (committed) {
@@ -2785,9 +3403,14 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // storage is exhausted, finish this accepted job; the next admission must
   // explicitly deny until a later refill succeeds.
   if (runtime->replenishCanonicalCaptureChunk()) return false;
-  const bool ownsTrackState = job.interval == captureInterval_ &&
+  const bool ownsTrackState = (job.interval == captureInterval_ ||
+      (job.interval + 1 == captureInterval_ && !isOverdubbing() && !isRecording())) &&
       job.slot == activeLoopIndex;
   const PendingStopDestination destination = stop.destination;
+  if (stop.finalizationComplete() && !stop.historyRecycleOwner && job.presentation) {
+    releaseCustodyObligation(*job.presentation, CaptureStopJobs::kCustodyFinalizer);
+    if (job.ownsRawRange() && !retireJobCaptureSourceGrain(job, loop, false)) return false;
+  }
   if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop, job.preview,
                                                          ownsTrackState)) {
     if (stop.phase == PendingStopPhase::DeferredCleanup &&
@@ -2800,6 +3423,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // borrows them. The role then returns to clean ingress ownership on the next
   // exchange; no live ingress state is touched here.
   views->reset();
+  job.frozenStagingIndex = UINT8_MAX;
   // The deferred completion is the normal route for an overdub stop (both destinations).
   // The synchronous fallback `commitCaptureForStop(OverdubStopToStopped, ...)` requests the
   // stored-MIDI verification from `finalizeCommitSideEffects`; mirror it here so both commit
@@ -2846,7 +3470,6 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
   --captureStopJobs_->count;
   if (!ownsTrackState) return true;
-  (void)retireJobCaptureSourceGrain(job, loop, true);
   if (destination == PendingStopDestination::Stopped) {
     silenceTrackMidiOutput();
     setState(TRACK_STOPPED);
@@ -3047,11 +3670,22 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (trackState == TRACK_EMPTY && active.loopLengthTicks > 0) {
     forceSetState(TRACK_STOPPED);
   }
+  // Task 4.20: reserve this interval's future session-exit publication obligation — never a receipt
+  // slot — at the narrowest point after every admission guard and before `beginCaptureInterval`, so
+  // no mutation of the interval is reachable without a durable destination for its stop. The claim and
+  // its named refusal live in FLASH: this function is ITCM and every instruction here is RAM1 padding.
+  // The interval's own open stamps the identity the claim is held for.
+  if (!claimOverdubSessionExitObligation()) {
+    return;
+  }
   const uint32_t stateAdvanceStartUs = micros();
   if (!beginCaptureInterval(TRACK_OVERDUBBING)) {
     SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                   DebugSessionCapture::kUnsampledHeapBytes,
                   DebugSessionCapture::kUnsampledHeapBytes, "failed");
+    // The one rollback anchor inside this function: the interval never went live, so its reservation
+    // is payload-free and is released rather than left to refuse the next start.
+    releaseOverdubSessionExitObligation();
     return;
   }
 
@@ -3078,6 +3712,11 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // interval must not join the draining session state.
   loop.openOverdubSession(playheadPhase, hasPendingDeferredOverdubStop());
   loop.beginCapture(CapturePhase::Overdub, playheadPhase);
+  // CONTRACTS.md C3.1/C3.2: qualify this session's private predecessor at its open edge, before any
+  // note-on can ask for a hold decision. Binding performs no content work -- it records the identity
+  // (receipt, interval, frozen content generation) the deferred grains will scan, so a note-on that
+  // arrives before the first grain still knows a private source is owed and retains its intent.
+  (void)bindPrivatePredecessorSourceForOverdub(loop);
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -3146,7 +3785,9 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
       (stopRuntime->captureStopOwner != nullptr ||
        !stopRuntime->canonicalCaptureOutputAdmitted() ||
        !loop.hasActiveOverdubTransferAdmission() ||
-       !loop.canHandoffSessionExitSnapshot());
+       // Task 4.20: a full receipt ring is not "busy" when this interval's admission reserved the
+       // obligation record; only the absence of *both* destinations is a capacity answer.
+       !loop.canCaptureSessionExitTail());
   if (hasPendingDeferredOverdubStop() || finalizationResourcesBusy) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        captureStopQueueDepth(), 0, "successor_stop_denied_capacity");
@@ -3186,7 +3827,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
       // (measured on device 2026-09-27: this branch produced the run's only denial, with no slot/interval, so
       // L2 fell back to UNKNOWN and the run could not be a verdict).
       logger.log(CAT_TRACK, LOG_INFO,
-                 "Overdub stop refused: %s slot=%u interval=%lu phase=%u dest=%u closure=%u recycle_owner=%u "
+                 "Overdub stop retained (capacity): %s slot=%u interval=%lu phase=%u dest=%u closure=%u recycle_owner=%u "
                  "recycle_started=%u undo_ready=%u track=%u",
                  busyReason, static_cast<unsigned>(activeLoopIndex),
                  static_cast<unsigned long>(captureInterval_),
@@ -3201,7 +3842,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
       // Name the slot and the interval. The human row is the timely edge, and without the identity it cannot
       // attribute the denial: "which slot was refused" was previously readable only from the deferred `#CAP`
       // row, which the timing-critical shed could remove.
-      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s slot=%u interval=%lu track=%u", busyReason,
+      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retained (capacity): %s slot=%u interval=%lu track=%u", busyReason,
                  static_cast<unsigned>(activeLoopIndex),
                  static_cast<unsigned long>(captureInterval_),
                  static_cast<unsigned>(resolveTrackIndexForPersistence(*this)));
@@ -3334,7 +3975,10 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
     // Transport Stop wins over a pending return to PLAYING. The frozen source
     // remains valid, but its continuation may resolve only to STOPPED.
     requestDeferredOverdubStopToStopped();
-    return;
+    if (!isOverdubbing()) {
+      if (isPlaying()) setState(TRACK_STOPPED);
+      return;
+    }
   }
   overdubStopDebtProbeArmed_ = false;
   // DEC-069: this interval's own rows are sealed below, so no deferred wrap commit survives it.
@@ -3354,6 +3998,10 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   }
   if (beginDeferredOverdubStop(PendingStopDestination::Stopped, currentTick)) {
     consumeAcceptedStopObligation("admitted");
+    return;
+  }
+  if (hasPendingDeferredOverdubStop()) {
+    latchAcceptedStop(PendingStopDestination::Stopped, activeLoopIndex, captureInterval_);
     return;
   }
   finalizePendingNotes(currentTick);

@@ -6,6 +6,57 @@
 
 ---
 
+## Overdub intent during private first-Record publication
+
+`MidiButtonActions` classifies an identity-qualified private Record predecessor through Track,
+so Record/Overdub does not become an empty-slot mute/record operation. TrackManager immediately
+attempts ordinary overdub admission against the existing sealed custody and private-source owners,
+without waiting for canonical publication. All staging/memory/interval checks remain in force.
+On resource denial only, the existing32-byte interaction latch retains the qualified Start; recovery
+uses ordinary admission and supersedes on clear, slot exit, transport reset, or replaced identity.
+Track focus alone does not retarget it. A later filtered-empty predecessor cannot erase an already
+accepted live successor (DEC-159/DEC-160); a denied Start with no remaining base is cancelled.
+
+The private-base query applies to every newer successor interval while the same identity-qualified
+Record job remains private, not only to `A+1`. Stop advances the interval again, so restricting to that
+first value misroutes the second overdub Start into empty-slot handling. This changes classification,
+not ordinary admission or capacity. Stopped capture-build `!STOP_STATUS` can additionally report
+`#STOP_RECORD` for the head Record job's own preparation role/output (pure request-only scalar read).
+It does not progress/rebind/recover a stalled cursor or establish playback correctness.
+[Later-start correction and unresolved stall](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-162915-REENTRY.md).
+
+
+An accepted Start is a live resource owner, not unsettled Record geometry: the final geometry query
+waits on actual stop jobs/accepted Stop only. Master-length adoption need not wait for Start admission.
+[Contract and evidence](../../../openspec/changes/shipping-rolling-activation/evidence/2026-10-25-post-record-overdub/EXECUTION.md).
+
+The clock-side frozen Record reader and main rolling-maintenance owner preserve the same qualified
+Serving frame during PLAYING and OVERDUBBING. Epoch, generation, receipt, storage and coverage checks
+still control reuse; stale identity, Stop and clock-epoch changes cancel normally. Exact native
+main/clock interleaving is tested across four subsequent bars with an active empty overdub; this
+does not qualify nonempty overlay parity, full-loop wrap or physical output timing.
+[Immediate-handoff regression evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
+Record pass publication changes canonical revision, not the qualified sealed Capture interval. Frozen
+ready/in-flight playback work retains its own source stamp while token, playback generation and loop
+geometry still match. Canonical bridge-base setup detaches a completed shared-builder witness with
+the existing protected-destination discard; it must not reset that exact complete current/ready role.
+Default native integration also covers nonempty overdub Stop → late Record publication → subsequent
+PLAYING or overdub, checking recorded events after every tick across five bars through current-root
+return. This filtered recorded-stream oracle is not full record+overdub overlay/hardware parity.
+[Publication/stop handoff regression evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-152128-PLAYBACK.md).
+
+The ordinary active-slot committed requester does not admit demand while a qualified frozen
+Record reader owns the interval and no current root exists. Pass publication alone is not root
+readiness: admitting committed debt at that point would take holder priority over frozen preparation
+and strand the audible reader. Frozen coverage continues through the existing owner; current-root
+publication re-enables the ordinary request/handoff. The registered native oracle drives main's
+requester before rolling maintenance, gradual finalization, Stop and successor reentry, and checks
+every recorded edge over16bars, including NoteId and original tick/channel/velocity. This is not
+device timing or full overlay parity.
+[Requester starvation repair](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-233615-PLAYBACK.md).
+
+
 ## Runtime request
 
 ```
@@ -73,6 +124,20 @@ not silence. Stale/late/unsupported transitions retain mutable fallback.
 is required to enable it. Later lookahead plus fallback gaps is not continuous
 service. Capacity, service constants and fallback-removal prerequisites are unchanged.
 See the window change's `evidence/requester-retry-integration/ROLLING_HANDOFF.md`.
+
+Committed successor positioning reuses the bounded absolute future-occurrence search when the derived work cannot
+fit the first handoff. The chosen absolute deadline transfers unchanged through pending/frozen/admitted/ready;
+an earlier same-phase occurrence cannot adopt it. Main's ordinary committed requester preserves a matching rolling
+obligation while the rolling owner refreshes a superseded source revision. Service quanta, denial allowance,
+currency/miss guards and fallback-gap policy do not change. DEC-156 supersedes only DEC-155's one-traversal cap;
+[native proof and pending device adoption gate](../../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md).
+
+Whole-bar loops need not contain an even number of bars. Rolling starts use the loop-local two-bar
+grid; the final window is clamped at the loop end (one bar for odd-bar loops), and the next legal
+boundary is phase zero. Work pricing includes that terminal interval; ready adoption and serving
+expiry validate its exact span. Fractional-bar geometry remains excluded from this committed
+requester. Source/role/storage generations, paid deadlines and fallback policy are unchanged.
+[33-bar native repair and device limit](../../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/ODD-BAR-REPAIR.md).
 
 ## Native cold live-Capture qualification
 

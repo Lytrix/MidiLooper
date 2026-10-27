@@ -4288,6 +4288,9 @@ def _await_collector_marker(collector: Any, marker: str, *, baseline: int, timeo
 # device log carried the refusal (`captures/successor-ownership-03`).
 REENTRY_DENIAL_MARKERS = (
     "Overdub stop refused: stop_job_pending",
+    # 2026-10-27 wording: the press is accepted and retained (DEC-078), so naming it a refusal was wrong;
+    # the reason list is unchanged.
+    "Overdub stop retained (capacity): stop_job_pending",
     "Overdub stop deferred: deferred/frozen admission role is occupied",
 )
 

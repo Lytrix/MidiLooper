@@ -479,6 +479,27 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                            "the per-route lateness split row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,late_routex,1"),
                             "and a longer subtag is not swept in");
+  // Task 4.20 allocation census: the row is rate-limited rather than event-shaped, and it is raised while a transport
+  // may be running (that is when the census matters), so it needs the same Tier-A boundary. Pinned by its own
+  // boundary: a longer subtag is not swept in.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,alloc_census,heap=48213,hmin=28016,chunks=477,cap=129,"
+                      "edit=104,undo=8,ib=131072,eb=32768,ub=4096,xb=65536"),
+      "the allocation census survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,alloc_censusx,1"),
+                            "and a longer subtag is not swept in");
+  // Task 4.20 allocatability probe: on demand from the host (`!HEAP_PROBE`) but it has to survive the same
+  // timing-critical flush, because the denial it explains is felt while a transport runs.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,heap_probe,tail=45056,want=16384,malloc=1,pool=0"),
+      "the allocatability probe survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,heap_probex,1"),
+                            "and a longer subtag is not swept in");
+  // Task 4.20 denial-edge capacity ladder: same family, second shape (`ladder,...`), raised at the denial itself and
+  // therefore under transport. Pinned as a shape so a later reader cannot "helpfully" retag it and drop the tier.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,heap_probe,ladder,tail=36864,need=49152,largest=32768,mask=7"),
+      "the denial-edge capacity ladder survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,launch_gatex,1"),
                             "and a longer subtag is not swept in");
   // ...and the publication owner's gate row beside it: the refusal it names is taken in the same regime (the Snapshot

@@ -247,6 +247,9 @@ LOOP_COLD_MEM void Loop::emitVisualCacheIdleGatherPath() const {
     case VisualCacheIdleGatherSource::PassesResolve:
       source = "PassesResolve";
       break;
+    case VisualCacheIdleGatherSource::BoundedContinuation:
+      source = "BoundedContinuation";
+      break;
     case VisualCacheIdleGatherSource::None:
       break;
   }
@@ -281,6 +284,132 @@ LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNote
                                Config::TICKS_PER_BAR);
   applyPendingNoteChangesToVisualCacheNotes();
   emitVisualCacheState("adopt_partial", -1);
+}
+
+// C5.2a / P-D: the derived-view lane's bounded content source. One grain per turn, before the
+// slice, so the slice observes a published frame instead of starting a whole-pass resolve.
+LOOP_COLD_MEM bool Loop::stepVisualCacheSourceContinuation() {
+  if (loopLengthTicks == 0 || !hasCommittedPasses()) {
+    return false;
+  }
+  if (!isPlaybackSessionExitPublicationGap() && !LoopContentResolution::boundedDisplayNeedsProducer(passes)) {
+    // Outside a publication gap, the capped synchronous cache slice supplies
+    // small pass sets. Inside the gap that slice cannot run, so use this producer.
+    return false;
+  }
+  LoopContentResolution::BoundedDisplayRequest request;
+  request.owner = this;
+  request.loopId = loopId;
+  request.loopLengthTicks = loopLengthTicks;
+  request.playbackRevision = playbackRevision;
+  request.canonicalStorageGeneration = canonicalStorageGeneration;
+  if (!LoopContentResolution::boundedDisplayRequest(request, passes)) {
+    return false;
+  }
+  return LoopContentResolution::boundedDisplayStep(passes);
+}
+
+// C5.6 — the composition contract's provider side. A retained frame is authoritative only over its own
+// recorded coverage and generation, so a request that leaves that coverage may only be served by a source
+// that is *independently qualified for this interval at the current generation*. Three such sources exist
+// and each proves its qualification at the call: the continuation's publish edge, the prepared window's
+// revision stamp, and the visual cache's `builtFromRevision` plus clean-bar coverage. Nothing here reads a
+// private cursor, stretches a source beyond its coverage, or invents rows for an unqualified interval.
+// C5.6 — the composition contract's provider side. A retained frame is authoritative only over its own
+// recorded coverage and generation, so a request that leaves that coverage may only be served by a source
+// that is *independently qualified for this interval at the current generation*. Four such sources exist
+// and each proves its qualification at the call: the continuation's publish edge, the retained display
+// source envelope's exact live prefix, the prepared window's revision stamp, and the visual cache's
+// `builtFromRevision` plus clean-bar coverage. Nothing here reads a private cursor, stretches a source
+// beyond its coverage, or invents rows for an unqualified interval.
+LOOP_COLD_MEM bool Loop::collectQualifiedCommittedDisplayNotes(uint32_t windowStart,
+                                                             uint32_t windowLength,
+                                                             NoteUtils::DisplayNoteVec& out) const {
+  out.clear();
+  lastQualifiedDisplaySource_ = QualifiedDisplaySource::None;
+  if (loopLengthTicks == 0 || windowLength == 0 || windowStart >= loopLengthTicks) {
+    return false;
+  }
+  LoopContentResolution::BoundedDisplayRequest request;
+  request.owner = this;
+  request.loopId = loopId;
+  request.loopLengthTicks = loopLengthTicks;
+  request.playbackRevision = playbackRevision;
+  request.canonicalStorageGeneration = canonicalStorageGeneration;
+  if (LoopContentResolution::boundedDisplayReady(request, passes)) {
+    const NoteUtils::DisplayNoteVec& produced = LoopContentResolution::boundedDisplayNotes();
+    if (!produced.empty() &&
+        MemoryMonitor::admitDisplayProjectionReserve(
+            sizeof(NoteUtils::DisplayNote) * produced.size())) {
+      out.reserve(produced.size());
+      for (const NoteUtils::DisplayNote& note : produced) {
+        if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
+                                                     windowLength, loopLengthTicks)) {
+          out.push_back(note);
+        }
+      }
+      if (!out.empty()) {
+        lastQualifiedDisplaySource_ = QualifiedDisplaySource::BoundedContinuation;
+        return true;
+      }
+    }
+  }
+  // Task 4.19 retained display source: the promoted generation still serves while every pass inside its
+  // recorded prefix is unchanged, so a wrap's appended pass does not take the Record base off the glass.
+  // A wrap's *appended* rows are the one part the envelope cannot contain, so retention serves only while
+  // the sealed-capture-preview tier is still owed for it (`!sealedCapturePreviewIsCovered()`); once that
+  // tier is released those rows live only in the cache/gather path, which then serves instead.
+  if (LoopContentResolution::boundedDisplayRetainedReady(request, passes) &&
+      !(passes.capturePassCount() >
+            static_cast<size_t>(LoopContentResolution::boundedDisplayRetainedPassCount()) &&
+        sealedCapturePreviewIsCovered())) {
+    const NoteUtils::DisplayNoteVec& retainedNotes =
+        LoopContentResolution::boundedDisplayRetainedNotes();
+    if (!retainedNotes.empty() &&
+        MemoryMonitor::admitDisplayProjectionReserve(
+            sizeof(NoteUtils::DisplayNote) * retainedNotes.size())) {
+      out.reserve(retainedNotes.size());
+      for (const NoteUtils::DisplayNote& note : retainedNotes) {
+        if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
+                                                     windowLength, loopLengthTicks)) {
+          out.push_back(note);
+        }
+      }
+      if (!out.empty()) {
+        lastQualifiedDisplaySource_ = QualifiedDisplaySource::RetainedEnvelope;
+        return true;
+      }
+    }
+  }
+  SessionMidiEventVec events;
+  if (LoopContentResolution::tryResolvePreparedWindow(passes.editPasses, loopLengthTicks,
+                                                      windowStart, windowLength, playbackRevision,
+                                                      events)) {
+    if (!events.empty()) {
+      const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+      NoteUtils::DisplayNoteVec rebuilt =
+          NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false, false);
+      if (MemoryMonitor::displayProjectionRefusalCount() == refusalsBefore) {
+        // `tryResolvePreparedWindow` already filtered the events to the requested window.
+        out = std::move(rebuilt);
+        if (!out.empty()) {
+          lastQualifiedDisplaySource_ = QualifiedDisplaySource::PreparedWindow;
+          return true;
+        }
+      }
+    }
+  }
+  if (!visualCache.notes.empty() && visualCache.builtFromRevision == playbackRevision &&
+      visualCacheCoversWindow(visualCacheDirty, visualCache.dirtyBars, windowStart, windowLength,
+                              loopLengthTicks, Config::TICKS_PER_BAR)) {
+    out = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(visualCache.notes, windowStart,
+                                                                windowLength, loopLengthTicks);
+    if (!out.empty()) {
+      lastQualifiedDisplaySource_ = QualifiedDisplaySource::VisualCache;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Idle cache fill is reuse optimization only. A delayed or skipped wrap-append
@@ -400,10 +529,41 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
       fallbackGatherComplete = true;
     }
   }
+  // C5.1 (CONTRACTS.md) attempt order, step 3/4: a real-time source miss above the declared cap
+  // never selects the whole-pass route. The bounded continuation publishes the exact pass-local
+  // notes for this loop; until it does, the previous complete frame stays authoritative and this
+  // slice is a named deferral. Below the cap the declared, capped synchronous resolve still runs.
+  bool usedContinuation = false;
+  LoopContentResolution::BoundedDisplayRequest continuationRequest;
+  const bool continuationRequired =
+      !usedSnapshot && !usedPrepared && !isPlaybackSessionExitPublicationGap() &&
+      LoopContentResolution::boundedDisplayNeedsProducer(passes);
+  if (continuationRequired) {
+    continuationRequest.owner = this;
+    continuationRequest.loopId = loopId;
+    continuationRequest.loopLengthTicks = loopLengthTicks;
+    continuationRequest.playbackRevision = playbackRevision;
+    continuationRequest.canonicalStorageGeneration = canonicalStorageGeneration;
+    if (LoopContentResolution::boundedDisplayReady(continuationRequest, passes)) {
+      usedContinuation = true;
+    } else {
+      // Admit (or re-key) and keep the frame: the producer is the progress, not this slice.
+      const bool admitted = LoopContentResolution::boundedDisplayRequest(continuationRequest, passes);
+      lastVisualCacheIdleGatherSource_ = admitted ? VisualCacheIdleGatherSource::BoundedContinuation
+                                                  : VisualCacheIdleGatherSource::None;
+      emitVisualCacheIdleGatherPath();
+#if defined(SESSION_CAPTURE)
+      RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
+#endif
+      return;
+    }
+  }
   if (usedSnapshot) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Snapshot;
   } else if (usedPrepared) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Prepared;
+  } else if (usedContinuation) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::BoundedContinuation;
   } else if (isPlaybackSessionExitPublicationGap()) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   } else if (fallbackGatherComplete) {
@@ -413,13 +573,10 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
   emitVisualCacheIdleGatherPath();
 #if defined(SESSION_CAPTURE)
-  if (usedSnapshot || !usedPrepared) {
+  if (usedSnapshot || usedContinuation || !usedPrepared) {
     RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);
   }
 #endif
-  if (!usedPrepared && !fallbackGatherComplete) {
-    return;
-  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_VCACHE_SLICE
   Serial.print(F("VCACHE,slice_gathered,ev,"));
   Serial.println(static_cast<unsigned>(flat.size()));
@@ -428,7 +585,23 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const uint32_t reconstructStartUs = micros();
 #endif
   if (!lastVisualCacheIdleCopiedSnapshotNotes_) {
-    if (usedSnapshot || usedPrepared) {
+    if (usedContinuation) {
+      // C5.2a: the bounded continuation published the exact pass-local note set for this loop.
+      // Only the window filter runs here, exactly as the capped fallback filters its own list.
+      const NoteUtils::DisplayNoteVec& produced = LoopContentResolution::boundedDisplayNotes();
+      if (!MemoryMonitor::admitDisplayProjectionReserve(
+              sizeof(NoteUtils::DisplayNote) * produced.size())) {
+        return;
+      }
+      sliceNotes.reserve(produced.size());
+      for (const NoteUtils::DisplayNote& note : produced) {
+        if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
+                                                     windowLength, loopLengthTicks)) {
+          sliceNotes.push_back(note);
+        }
+      }
+      flat.clear();
+    } else if (usedSnapshot || usedPrepared) {
       // DEC-115: the projection is built aside and adopted only when it was not refused -- the cache
       // keeps its previous content and this slice is re-attempted on the next idle turn.
       const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
@@ -441,6 +614,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     } else if (isPlaybackSessionExitPublicationGap()) {
       sliceNotes.clear();
     } else {
+      // Declared, capped synchronous pass resolve (`kBoundedDisplaySynchronousEventCap`). Work is
+      // bounded by the cap, not by the loop; above it the continuation branch above has handled the
+      // miss and this slice never reaches here with whole-pass work.
       NoteUtils::DisplayNoteVec paired;
       LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
       if (!MemoryMonitor::admitDisplayProjectionReserve(
@@ -535,6 +711,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
   applyPendingNoteChangesToVisualCacheNotes();
   DisplayWindowUtils::keepShortestEndAtPitchStart(visualCache.notes);
+  // Each successful slice publishes content, even while other bars stay dirty.
+  // Stationary draw-source consumers key their committed prefix by this revision.
+  ++visualCache.revision;
 
   for (uint32_t bar = startBar; bar <= endBar; ++bar) {
     visualCache.dirtyBars[bar] = 0;
@@ -550,9 +729,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (!anyDirty) {
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
-    ++visualCache.revision;
     if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
-            lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared, false)) {
+            lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared || usedContinuation,
+            false)) {
       visualCache.builtFromRevision = playbackRevision;
       // Current-root Snapshot gather stamps identity; prepared/fallback do not
       // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).

@@ -87,6 +87,7 @@ Gates consult **internal heap free** plus tier-specific estimates. They do **not
 | Global undo trim | `HEAP_RESERVE_BYTES`, chunk reserve | `undo-memory-trim` spec |
 | Deferred save | `INTERNAL_HEAP_SAFETY_FLOOR_BYTES` | Non-critical persistence |
 | Chunk seal | `CHUNK_RESERVE` | `canAllocChunkWithReserve` |
+| Snapshot publication | 32 KiB floor + 8 KiB working margin | Add the 32 KiB slab only on internal-slab targets; EXTMEM slabs cannot consume internal heap. Pool refusal and allocation park/recovery remain active (DEC-157). |
 
 ### Session undo admission (split tier)
 

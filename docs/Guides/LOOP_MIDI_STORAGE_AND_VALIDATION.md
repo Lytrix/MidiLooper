@@ -212,8 +212,18 @@ abandoned sort leaves partial order and is not a publishable pass. The caller mu
 exclude concurrent mutation, readers and persistence admission. Source replacement
 or pool reuse invalidates the cursor. Canonical publication/persistence integration
 must explicitly handle the prepared chunks afterward; the sorter does not enqueue,
-publish or restore abandoned output. Production Record still uses its existing path.
+publish or restore abandoned output.
 [Ordering execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
+
+The production Record worker composes closure Offs and frozen raw input into that
+private output before normalization. `Track::stepDeferredRecordClosure` encloses
+each closure append in the same turn-local ephemeral seal used by source staging
+and synthetic tail repair. Filling a closure chunk must never queue it for
+persistence; the scope ends even on append denial, before the grain returns.
+A terminal preparation denial remains sticky: it does not authorize resetting
+the cursor over partially reordered output. The capture's observed `OrderDenied`
+does not by itself identify the failed ordering guard.
+[Closure regression and limits](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-175905-ORDER.md).
 
 ## Private prepared canonical filtering
 
@@ -229,10 +239,10 @@ input ticks. Do not publish, persist, sort or otherwise borrow intermediate outp
 Discarding the cursor does not restore output; abandon it and retain frozen raw
 input for recovery. Shared/persistence-admitted chunks and stale receipts deny.
 The filter does not establish the minimum policy's Off/On/other input order or
-change its legacy no-removal ordering. It is verified with the real decision
-cursor but is not dispatched by the production Record worker yet. The prepared
-output still requires explicit publication/persistence integration.
-[Filter execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
+change its legacy no-removal ordering. The production Record normalization worker
+composes ordering, tail repair and minimum-length filtering before pass transfer;
+private output requires explicit publication/persistence integration afterward.
+[Filter prerequisite evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
 
 ## Mental model
 
@@ -756,6 +766,7 @@ protected-publication begin retains the prepared entry and retries admission.
 
 - **One entry, every pass.** `Loop::collectOverdubSessionUndoPasses` collects the session's sealed wrap passes; the stop pass is appended. `UndoEntry::passIds` carries them all (legacy/STK2 rows carry a single `passId`). `applyUndoEntry` iterates `appendOverdubCapturePassIds` and disables each one, and refuses the whole entry if any id is missing — so an incomplete list must never be published.
 - **The deferred route reads its own session-exit receipt.** `Loop::captureSessionExitTail` swaps the interval's wrap identities out of the shared loop into its own receipt at stop admission (DEC-068), so a successor opens a clean session. The deferred undo collection must therefore source `Loop::SessionUndoCollection` from `job.admission.sessionExitReceiptRing` (`sessionExitReceiptByRingIndex`), not from the now-empty `overdubSessionPassIds_`. The bound `receiptIdentity` also replaces the live `overdubSessionUndoGeneration_` guard: a successor opening its session must not deny the predecessor's own collection.
+- **A full receipt ring no longer refuses the tail or the start.** The interval **reserves** its publication obligation at overdub admission (`Track::claimOverdubSessionExitObligation` → `Loop::claimSessionExitPublishOwner`), never a receipt slot; `captureSessionExitTail` still takes a free receipt when one exists, and at a full ring it swaps the same identities into that reserved record beside the ring (`Loop::transferSessionExitToReservedPublishOwner`, `Reserved → Populated`, source cleared in the same operation). The publisher moves it through the receipt FIFO exactly once (`Publishing → Empty`) and the ordinary per-turn consumer publishes it, so a `sessionExitReceiptRing` value of `Loop::kReservedSessionExitReceipt` means "reserved, not a FIFO slot" — job-side readers must use the index-qualified accessors (`markSessionExitTailReady`, `sessionExitReceiptByRingIndex`) rather than assuming `< kSessionExitReceiptCapacity`. `canCaptureSessionExitTail()` — a free slot **or** this interval's reservation — is the stop/start admission predicate; `canHandoffSessionExitSnapshot()` is only the receipt-writer gate. An obligation still owned by a predecessor is a **named bounded refusal**, never a second slot (DEC-163 supersedes DEC-068's "a full ring is the documented stop denial").
 - **The tail capture happens only after admission is committed.** `Track::beginDeferredOverdubStop` must not call `captureSessionExitTail` before the causal-base, credit, raw-range and freeze checks that can still deny it: a denial would leave the synchronous fallback (`pushOverdubSessionOnStop`) reading an emptied live session and recording only the final pass.
 
 ### Protected publication capacity (invariant)

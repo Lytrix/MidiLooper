@@ -775,12 +775,10 @@ struct RuntimePlaybackViewSet {
   // of the three rolling emission windows. Cleanup may release preparation
   // workers without invalidating a source still supplying future windows.
   std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kBridgeCount> bridgeBases;
-  // Two independently prewarmed admission stagings. Live ingress owns the
-  // `live` role for the open interval; the one admitted stop job borrows the
-  // `frozen` role. Punch-out exchanges the two indexes in constant work, so the
-  // job keeps its immutable frozen rows while a successor interval can own a
-  // separate ingress buffer. One staging is never shared between the two roles.
-  std::array<CaptureAdmissionStaging, 2> captureStagings;
+  // Five independently leased frozen intervals plus one live ingress role.
+  // Physical rows are admitted only for a capturing runtime, never at boot.
+  static constexpr size_t kCaptureStagingRoles = 10;
+  std::array<CaptureAdmissionStaging, kCaptureStagingRoles> captureStagings;
   uint8_t liveStagingIndex = 0;
   uint8_t frozenStagingIndex = 1;
   CaptureAdmissionStaging& liveCaptureStaging() { return captureStagings[liveStagingIndex]; }
@@ -791,15 +789,52 @@ struct RuntimePlaybackViewSet {
   const CaptureAdmissionStaging& frozenCaptureStaging() const {
     return captureStagings[frozenStagingIndex];
   }
-  /// Constant-work role exchange. The caller has frozen the live role first.
+  uint8_t freeCaptureStagingIndex() const {
+    for (uint8_t i = 0; i < captureStagings.size(); ++i)
+      if (i != liveStagingIndex && captureStagings[i].storage.isPrewarmed() &&
+          !captureStagings[i].frozen && captureStagings[i].storage.eventCount == 0 &&
+          captureStagings[i].openReservationCount() == 0) return i;
+    return UINT8_MAX;
+  }
+  // Does not change the worker binding when another interval owns it.
   void exchangeCaptureStagingRoles() {
-    const uint8_t previousLive = liveStagingIndex;
-    liveStagingIndex = frozenStagingIndex;
-    frozenStagingIndex = previousLive;
+    const uint8_t next = freeCaptureStagingIndex();
+    if (next == UINT8_MAX) return;
+    if (!captureStagings[frozenStagingIndex].frozen)
+      frozenStagingIndex = liveStagingIndex;
+    liveStagingIndex = next;
+  }
+  bool prewarmCaptureStagings() {
+    for (auto& staging : captureStagings)
+      if (!staging.prewarm()) return false;
+    return true;
   }
   bool captureStagingsPrewarmed() const {
-    return liveCaptureStaging().storage.isPrewarmed() &&
-           frozenCaptureStaging().storage.isPrewarmed();
+    for (const auto& staging : captureStagings)
+      if (!staging.storage.isPrewarmed()) return false;
+    return true;
+  }
+  /// Return the surplus frozen roles once this slot owes no interval any staging.
+  /// The two baseline roles stay resident (the pre-P-A footprint), so a slot that
+  /// recorded once does not keep five 2,048-row roles for the session; the extra
+  /// roles exist only for the admitted A/B/C/next-Stop overlap. Refused, and
+  /// reported as false, while any role still holds rows, reservations or a freeze.
+  bool releaseSurplusCaptureStagings() {
+    for (const auto& staging : captureStagings)
+      if (staging.frozen || staging.storage.eventCount ||
+          staging.openReservationCount()) return false;
+    bool released = false;
+    for (size_t i = 2; i < captureStagings.size(); ++i) {
+      if (!captureStagings[i].storage.isPrewarmed()) continue;
+      captureStagings[i].storage.release();
+      captureStagings[i].reset();
+      released = true;
+    }
+    if (released) {
+      liveStagingIndex = 0;
+      frozenStagingIndex = 1;
+    }
+    return released;
   }
   RuntimePlaybackViewLifecycle lifecycle;
   RuntimePlaybackBridgeLifecycle bridgeLifecycle;

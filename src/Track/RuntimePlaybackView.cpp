@@ -918,7 +918,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::releaseWholeTakeView
 RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake, bool reserveCapture) {
   if (prewarmed) {
     // Rolling-only launch reservation may later upgrade to capture in place.
-    if (reserveCapture && (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm())) return false;
+    if (reserveCapture && !prewarmCaptureStagings()) return false;
     if (!reserveWholeTake) {
       // Windowed-only request on an already-prewarmed slot: the loop is now known to be long,
       // so the whole-take reservation is dead and must be returned rather than held for the
@@ -969,15 +969,14 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserve
     }
     wholeTakeReserved = true;
   }
-  if (reserveCapture && (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm())) {
+  if (reserveCapture && !prewarmCaptureStagings()) {
     for (RuntimePlaybackView& allocated : views) {
       allocated.storage.release();
     }
     for (FixedPlaybackBridgeStorage& allocated : bridges) {
       allocated.release();
     }
-    liveCaptureStaging().storage.release();
-    frozenCaptureStaging().storage.release();
+    for (auto& staging : captureStagings) staging.storage.release();
     return false;
   }
   resetMetadata();
@@ -993,8 +992,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
   for (FixedPlaybackBridgeStorage& bridge : bridges) {
     bridge.resetMetadata();
   }
-  liveCaptureStaging().reset();
-  frozenCaptureStaging().reset();
+  for (auto& staging : captureStagings) staging.reset();
   liveStagingIndex = 0;
   frozenStagingIndex = 1;
   lifecycle.reset();
@@ -1061,10 +1059,11 @@ size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
                                 sizeof(uint16_t) + sizeof(uint8_t);
   // Rolling views are reserved; capture staging is counted only when admitted.
   // A cold launch does not reserve capture or whole-take backing.
+  size_t stagingBytes = 0;
+  for (const auto& staging : captureStagings) stagingBytes += staging.storage.capacity * eventBytes;
   const size_t viewBytes =
       RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
-          (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
-      (captureStagings[0].storage.capacity + captureStagings[1].storage.capacity) * eventBytes;
+          (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) + stagingBytes;
   if (!wholeTakeReserved) {
     return viewBytes;
   }

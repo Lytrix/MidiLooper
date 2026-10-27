@@ -1008,6 +1008,21 @@ NOTE_EDIT_MEM void NoteUtils::appendCanonicalSpansFromMidi(const SessionMidiEven
                                       build.impl->wrappedTailOnTicks);
 }
 
+/// Bounded-continuation form (CONTRACTS.md C5.2a): the same pairing over a non-external layer,
+/// so a producer can advance one event range per turn without a whole-vector copy.
+NOTE_EDIT_MEM void NoteUtils::appendCanonicalSpansFromMidi(const MidiEventVec& midiEvents,
+                                                          uint32_t loopLength,
+                                                          uint32_t beginEvent,
+                                                          uint32_t endEventExclusive,
+                                                          CanonicalSpanBuild& build) {
+    if (build.impl == nullptr) {
+        build.impl.reset(new CanonicalSpanBuild::Impl());
+    }
+    appendCanonicalSpansFromMidiRange(midiEvents, loopLength, false, beginEvent, endEventExclusive,
+                                      build.impl->spans, build.impl->activeNoteStacks,
+                                      build.impl->wrappedTailOnTicks);
+}
+
 NOTE_EDIT_MEM void NoteUtils::finishCanonicalSpansFromMidi(uint32_t loopLength,
                                                            CanonicalSpanBuild& build) {
     if (build.impl == nullptr) {

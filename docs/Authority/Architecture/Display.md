@@ -48,6 +48,11 @@ Display **does not** mutate passes or session store.
 
 Window move should adjust step 2 only when representation revision unchanged.
 
+`Loop::rebuildVisualCacheIdleSlice` publishes an existing cache revision on each successful partial content slice,
+not only when all dirty bars are clean. Stationary draw-source reuse must observe newly rebuilt visible bars;
+no-op/denied slices do not publish a revision. This does not bypass the Record publication-gap held-frame policy.
+[Partial-cache regression and end-to-end limits](../../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md).
+
 ### Record publication gap with live Capture
 
 The no-published-root session-exit hold retains the complete **committed prefix**
@@ -66,6 +71,79 @@ existing Track stop metadata; it does not read playback-view storage. Live Recor
 without such a stopped obligation and already-published sources keep their
 ordinary selection rules.
 [Production regression and verification](../../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-live-display-regression/EXECUTION.md).
+
+During an audible committed publication gap, `Track::processDeferredIdleMaintenance` also services
+the existing bounded display-source continuation on VisualCache turns, after stop/Snapshot priority
+and only when private predecessor work is not owed. This wakeup is independent of cache reconstruction:
+the latter intentionally waits during the gap and active overdub. Small pass sets use the same
+continuation in this state because their capped synchronous cache slice cannot run there either.
+The selected display's active-slot gap source is protected from unrelated background cache production
+until it can be consumed; ordinary background production remains available outside that gap/focus.
+No new lease/state, paint gather, playback change or whole-root completion is introduced.
+Sparse/dense24bar and two-audible-track native tests require original recorded identities in bars16–24
+plus the closed overdub identity before root publication. The separate early pre-RecordPublished
+NoteOff hardware report remains unconfirmed by the passing dense early-frame control.
+[Production source wakeup and limits](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md).
+
+**084714 correction/limit:** the initial wakeup sat after the pending-Stop early return and therefore
+did not serve the continuous Stop workload. A local, unshipped correction reuses the paired VisualCache
+source opportunity after the stop grain: owed private source first, otherwise the committed gap source.
+That is not a complete continuity repair. The enforced first-post-wrap fixture has a complete qualified
+source before wrap and its original Record identity still allocated afterward, but the painted frame
+omits it. Current-request identity qualification rejects the prior result, and re-keying clears it;
+the retained frame covers only its old interval. Explicit current/candidate result lifetime, coverage,
+destructive invalidation and peak-memory contract is required before changing that model. Earlier
+eventual-drain tests must not be cited as first-wrap or device acceptance.
+[Failing continuity oracle and proposed contract](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-084714-DISPLAY.md).
+
+An admitted stop's borrowed preview is not the live successor preview. `capturePreviewView()`
+selects a populated producer preview before a predecessor borrow. Detail/overview paint also query
+`Track::captureStopPreviewForSlot` over its bounded live stop-ring window, rejecting slot/LoopId
+replacement and reading each existing job-owned preview before the live tier. These synchronous
+non-owning reads retain no pointers or extra resource state. The overview keeps incremental append/
+open-tail folding and resets its existing mask/cursor when preview identities/replacements change.
+No MIDI-storage scan or preview copy runs on Start/Stop. Native tests retain A/B/C identities through
+C's Stop before A publication, and preserve finalizing/live overview density bands.
+[Preview regression evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
+When a completed overdub job no longer owns the live session, deferred cleanup still retires its
+closed preview through the existing `retiredSealedDisplayNotes_` handoff. It does not close or reset
+the successor session. Leaving these rows in the shared sealed tier would let a later
+`openOverdubSession` clear them before a committed display source covers them. The retired tier
+remains a display-only overlay with existing coverage-qualified release and pass-disable/reset
+cleanup; no MIDI pass, published-root currency or live-capture ownership changes. This reuses the
+existing deferred row merge/upsert, not a command-edge gather or a new timing guarantee.
+Native frame tests preserve both earlier overdub NoteIds through third/fourth Starts while snapshot
+publication is withheld and their stop descriptors have retired.
+[Completed-predecessor display regression](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-185957-DISPLAY.md).
+
+
+### Truncated Record stop and closed-note retention
+
+Record Stop moves its existing complete CapturePreview into the stop job by constant-work swap,
+before a successor can clear the producer preview. `recordStopPreviewForSlot` provides the qualified
+display-only representation and frozen closure tick; it never advertises committed currency.
+When truncation makes the prior tail window incompatible with the rewound viewport, draw-source
+gather can publish a coherent replacement from that complete preview. Trimmed trailing rows do not
+wrap into bar one; open Record holds use the same frozen endpoint as canonical closure. The normal
+held-window policy remains when no complete replacement representation exists. Closed live-overdub
+notes remain in compose after NoteOff; they cannot depend solely on temporary open-tail paint.
+Record preview borrow/reuse cleanup is predecessor-local on publication, empty, retirement and
+supersession. No raw MIDI scan or full-loop reconstruction is added to Stop; capacity is reused by
+the existing active/finalizing roles, with physical memory/timing qualification still separate.
+[Native regression and review evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-DISPLAY-NOTEOFF.md).
+
+Rounded-up Record Stop leaves the prior tail viewport valid but does not make it the only coherent
+interval. While the complete qualified stopped Record preview remains available, ordinary follow can
+project it into the wrapped playhead's requested interval; otherwise the existing held-window fallback
+still applies. This prevents new first-bar overdub input from being hidden outside an old tail window.
+Live-tail growth reads only the producer `capturePreview`, never a borrowed predecessor from
+`capturePreviewView()`. Stopped-job open rows are locally projected to their job's frozen closure
+endpoint before window intersection/composition, so an empty successor cannot extend predecessor
+geometry or manufacture transient wrap tails. No source preview/body is changed by paint.
+[Rounded-stop and frozen-tail evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-160416-DISPLAY.md).
+
+
 
 ## Overdub-stop handoff
 

@@ -217,7 +217,7 @@ struct TrackCaptureStopTestAccess {
     return tail != nullptr && tail->pendingNotes.empty();
   }
   static bool rawExtentSealable(Track& track, uint8_t slot) {
-    const auto* presentation = track.captureStopPresentationForSlot(slot);
+    const auto* presentation = track.freeCaptureCustody();
     return presentation != nullptr && track.loopForSlot(slot).capture.store.canSealCaptureRange(presentation->rawRange);
   }
   static size_t liveStagingEvents(Track& track, uint8_t slot) {
@@ -355,6 +355,17 @@ struct TrackCaptureStopTestAccess {
     return loop.hasPendingCapturePass() ? &loop.pendingCapturePass_ : nullptr;
   }
   static auto generation(const Track& track) { return track.playbackGeneration; }
+  // Capacity failure controls remove only unowned physical destinations.
+  static void withholdStopDestinations(Track& track) {
+    auto* set = runtime(track).viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    for (uint8_t i = 0; i < set->captureStagings.size(); ++i)
+      if (i != set->liveStagingIndex && !set->captureStagings[i].frozen)
+        set->captureStagings[i].storage.release();
+  }
+  static void restoreStopDestinations(Track& track) {
+    TEST_ASSERT_TRUE(runtime(track).prewarmCaptureStaging());
+  }
   static size_t liveReservations(Track& track) {
     auto* staging = runtime(track).liveCaptureStagingIfPrewarmed();
     return staging != nullptr ? staging->openReservationCount() : 0;
@@ -371,8 +382,9 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStop(destination, tick);
   }
   static auto& rawRange(Track& track) { return track.captureStopJob().presentation->rawRange; }
-  static const auto& slotRawRange(Track& track, uint8_t slot) {
-    return track.captureStopJobs_->presentations[slot].rawRange;
+  static bool slotRawRangeReady(Track& track, uint8_t slot) {
+    const auto* receipt = track.captureStopPresentationForSlot(slot);
+    return receipt && receipt->rawRange.ready();
   }
   /// Published playback root identity, for the 5.3 stale-window assertion.
   static const void* publishedRootIdentity(Track& track) {
@@ -532,6 +544,7 @@ void test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive
   TEST_ASSERT_EQUAL(2, rowsBefore);
   // Denied stop: no descriptor, no consumed rows/notes, still recording.
   clockManager.assignCurrentTickSilently(240);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   track.stopOverdubbing();
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
       "an occupied deferred role must deny the stop without ending the live interval");
@@ -548,6 +561,7 @@ void test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive
       "the predecessor's completion must not end the live successor");
   TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
   TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   // The same interval's subsequent stop is admitted and transfers exactly once.
   inputNote(63, 241, 264);
   clockManager.assignCurrentTickSilently(288);
@@ -591,6 +605,7 @@ void test_button_a_successor_stop_denied_until_deferred_role_available() {
   TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
   // B stop at 240 while A owns the frozen role: explicit, non-destructive denial.
   clockManager.assignCurrentTickSilently(240);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
       "a denied successor stop must leave the live interval recording");
@@ -608,6 +623,7 @@ void test_button_a_successor_stop_denied_until_deferred_role_available() {
       "A's completion must not end B's live interval");
   TEST_ASSERT_EQUAL(bRowsBeforeStop, loop.capture.store.size());
   TEST_ASSERT_EQUAL(bNotesBeforeStop, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   // B's subsequent stop request is admitted: the same interval transfers once.
   inputNote(63, 241, 264);
   clockManager.assignCurrentTickSilently(288);
@@ -725,6 +741,7 @@ void assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute route) {
   TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, routeName);
   TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, routeName);
   // Deny: a stop that exceeds the declared capacity is explicit and non-destructive.
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   stopSuccessorThrough(route, track, 240);
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
       "an occupied deferred role must deny the stop through every route");
@@ -740,6 +757,7 @@ void assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute route) {
   TEST_ASSERT_EQUAL_MESSAGE(1, queueAfterAdmit, routeName);
   // Leave the fixture clean for the next route: the denial above deliberately keeps this
   // job parked, so retire it (and the interval) before the next route reuses the track.
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   stopSuccessorThrough(route, track, 288);
   for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
     (void)TrackCaptureStopTestAccess::step(track);
@@ -750,7 +768,9 @@ void assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute route) {
 
 void test_reentry_routes_agree_on_admission_and_capacity_denial() {
   assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::Manager);
+  setUp(); // routes are independent production-path fixtures
   assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::ButtonA);
+  setUp();
   assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::TrackDirect);
 }
 
@@ -992,7 +1012,7 @@ void test_successor_same_interval_transfers_exactly_once() {
   inputNote(62, 193, 216);
   inputNote(64, 217, 240);
   const uint64_t bInterval = TrackCaptureStopTestAccess::interval(track);
-  TEST_ASSERT_EQUAL_UINT64(2u, bInterval);
+  TEST_ASSERT_EQUAL_UINT64(3u, bInterval); // A Stop cut and B Start each advance identity
   MidiEventVec bAccepted;
   for (size_t row = 0; row < loop.capture.store.size(); ++row) {
     bAccepted.push_back(loop.capture.store.at(row));
@@ -1000,6 +1020,7 @@ void test_successor_same_interval_transfers_exactly_once() {
   TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(bAccepted.size()));
   // B's stop while A owns those resources: refused, nothing consumed, same interval.
   clockManager.assignCurrentTickSilently(240);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   track.stopOverdubbing();
   TEST_ASSERT_TRUE(track.isOverdubbing());
   TEST_ASSERT_EQUAL_UINT64(bInterval, TrackCaptureStopTestAccess::interval(track));
@@ -1009,6 +1030,7 @@ void test_successor_same_interval_transfers_exactly_once() {
     (void)TrackCaptureStopTestAccess::step(track);
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   const size_t passesBeforeB = loop.passes.overdubPasses.size();
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   // The same interval's stop is admitted, once, and it belongs to B's interval identity.
   clockManager.assignCurrentTickSilently(288);
   track.stopOverdubbing();
@@ -1106,9 +1128,10 @@ void test_start_request_while_successor_is_live_is_not_a_second_interval() {
   clockManager.assignCurrentTickSilently(336);
   track.startOverdubbing(336);
   TEST_ASSERT_TRUE(track.isOverdubbing());
-  TEST_ASSERT_EQUAL_UINT64(bInterval + 1, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_EQUAL_UINT64(bInterval + 2, TrackCaptureStopTestAccess::interval(track));
   TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(loop.capture.store.size()));
   clockManager.assignCurrentTickSilently(400);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   track.stopOverdubbing();
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
                            "a successor stop must wait for the previous job's resources");
@@ -1455,11 +1478,12 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
   // predecessor's companion preparation admits only while it exists. Asserting identity -- not row
   // counts -- catches a shared container that happens to hold the right number of rows. Earlier
   // checkpoints never staged a pass (nothing to protect yet), so the assertion is scoped there.
-  // The staged pass exists from `PrepareTransfer` through the companion work; at
-  // `AtomicTransfer` the job has already consumed it, so there is nothing to protect.
+  // The staged pass exists through CompanionBridge; its final bounded grain
+  // now preflights and publishes atomically, without a resting transfer phase.
   const bool passStaged = pauseAtStagedPassOwnership ||
       checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CanonicalTail) ||
-      checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CompanionHistory);
+      checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CompanionHistory) ||
+      checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CompanionBridge);
   const PassId aStagedBeforeB = TrackCaptureStopTestAccess::stagedPassId(track);
   // The successor starts at the checkpoint, on the live role, and accepts its own row.
   clockManager.assignCurrentTickSilently(192);
@@ -1918,8 +1942,8 @@ void test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint() {
 }
 
 void test_adversarial_reentry_at_the_publication_checkpoint() {
-  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::AtomicTransfer),
-                                "paused at the atomic transfer");
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CompanionBridge),
+                                "paused before bridge preparation/publication");
 }
 
 void test_stop_job_owns_held_notes_and_closes_original_slot() {
@@ -1944,18 +1968,18 @@ void test_stop_job_owns_held_notes_and_closes_original_slot() {
   TrackCaptureStopTestAccess::selectSlot(track, 1);
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::step(track));
   TEST_ASSERT_EQUAL(0, job.admission.remainingClosureGrains);
-  // The captured NoteOn belongs to the job-owned sealed extent. The reserved
-  // terminal Off is appended afterwards to the successor producer extent, which
-  // is why the readable capture interval exposes both sources.
+  // Closure consumes only the job's frozen reservation, never successor ingress.
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
   const SessionMidiEventVec sealedRows =
       sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
   TEST_ASSERT_EQUAL(1, sealedRows.size());
   TEST_ASSERT_TRUE(sealedRows[0].isNoteOn());
   TEST_ASSERT_EQUAL(97, sealedRows[0].tick);
-  TEST_ASSERT_EQUAL(1, original.capture.store.size());
-  TEST_ASSERT_TRUE(original.capture.store.at(0).isNoteOff());
-  TEST_ASSERT_EQUAL(144, original.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(0, original.capture.store.size());
+  const auto* frozen = TrackCaptureStopTestAccess::runtime(track).captureStagingIfPrewarmed();
+  TEST_ASSERT_EQUAL(2, frozen->storage.eventCount);
+  TEST_ASSERT_TRUE(frozen->storage.events[1].isNoteOff());
+  TEST_ASSERT_EQUAL(144, frozen->storage.events[1].tick);
   TEST_ASSERT_EQUAL(1, other.capture.store.size());
   TEST_ASSERT_EQUAL(11, other.capture.store.at(0).tick);
   TEST_ASSERT_EQUAL(193, TrackCaptureStopTestAccess::liveNotes(track).at({60, 1}).startNoteTick);
@@ -1979,7 +2003,8 @@ void test_stop_job_denies_changed_geometry_before_closure_mutation() {
   TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
   original.loopLengthTicks = 768;
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::step(track));
-  TEST_ASSERT_EQUAL(1, original.capture.store.size());
+  TEST_ASSERT_EQUAL(0, original.capture.store.size());
+  TEST_ASSERT_EQUAL(2, TrackCaptureStopTestAccess::runtime(track).captureStagingIfPrewarmed()->storage.eventCount);
   TEST_ASSERT_EQUAL(0, job.admission.remainingClosureGrains);
 }
 
@@ -2031,6 +2056,88 @@ void test_populated_stop_runs_existing_worker_to_completion() {
     TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::job(track).pendingNotes.empty());
     TEST_ASSERT_EQUAL(1, track.getActiveLoop().passes.overdubPasses.size());
   }
+}
+
+void test_retained_canonical_prefix_allows_next_populated_stop() {
+  Track& track = preparePlayingTrack();
+  auto& runtime = TrackCaptureStopTestAccess::runtime(track);
+  for (unsigned interval = 0; interval < 2; ++interval) {
+    clockManager.assignCurrentTickSilently(0);
+    midiButtonActions.handleToggleRecord();
+    TEST_ASSERT_TRUE(track.isOverdubbing());
+    inputNote(48, 24 + interval * 2, 36 + interval * 2);
+    clockManager.assignCurrentTickSilently(40);
+    midiButtonActions.handleToggleRecord();
+    for (unsigned turn = 0; turn < 10000 && track.hasPendingDeferredOverdubStop(); ++turn)
+      TrackCaptureStopTestAccess::step(track);
+    TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+    TEST_ASSERT_TRUE(track.isPlaying());
+    TEST_ASSERT_EQUAL_UINT32(interval + 1, track.getActiveLoop().passes.overdubPasses.size());
+    TEST_ASSERT_EQUAL(LoopPlaybackRuntime::CanonicalTailPhase::Idle, runtime.canonicalTailPhase);
+    TEST_ASSERT_FALSE(runtime.canonicalPassInputs.captureAttached());
+    TEST_ASSERT_TRUE(runtime.frozenCaptureCompanions.idle());
+    TEST_ASSERT_TRUE(runtime.frozenCompanionPasses.idle());
+  }
+}
+
+static void runCompletedStopBridgeEmissionBoundary(bool initiallyHeld) {
+  Track& track = preparePlayingTrack();
+  auto& loop = track.getActiveLoop();
+  auto& runtime = TrackCaptureStopTestAccess::runtime(track);
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  inputNote(48, 24, 36); // Shortens the original note: its ledger entry is affected.
+  clockManager.assignCurrentTickSilently(40);
+  midiButtonActions.handleToggleRecord();
+  auto& job = TrackCaptureStopTestAccess::job(track);
+  SessionMidiEventVec baseRows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, baseRows);
+  TEST_ASSERT_TRUE(baseRows.front().isNoteOn());
+  unsigned completedButUnpublished = 0;
+  bool held = initiallyHeld;
+  if (held) runtime.ledger.noteOn(1, 48, baseRows.front().noteId, 0, 100);
+  for (unsigned turn = 0; turn < 2000 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    // Moving clock, with a controllable MIDI emission between owner turns.
+    // Every completed preparation is followed by an affected-ledger transition.
+    const uint32_t phase = 1 + turn / 4;
+    clockManager.assignCurrentTickSilently(768 + phase);
+    loop.lastTickInLoop = phase;
+    if (job.admission.phase == PendingStopPhase::CompanionBridge &&
+        runtime.captureBridgePhase == LoopPlaybackRuntime::CaptureBridgePhase::Complete) {
+      ++completedButUnpublished;
+      held = !held;
+      runtime.ledger.clear();
+      if (held) runtime.ledger.noteOn(1, 48, baseRows.front().noteId, 0, 100);
+      auto& set = *runtime.viewSetIfPrewarmed();
+      const auto& bridge = set.bridges[set.bridgeLifecycle.candidate];
+      TEST_ASSERT_FALSE(bridge.matchesAffectedLedger(runtime.ledger));
+    }
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, completedButUnpublished,
+      "completed bridge yielded across a live affected-ledger boundary");
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(track.isPlaying());
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_FALSE(loop.passes.editPasses.empty());
+  SessionMidiEventVec captureRows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, captureRows);
+  TEST_ASSERT_EQUAL_UINT32(2, captureRows.size());
+  TEST_ASSERT_EQUAL_UINT32(24, captureRows.front().tick);
+  TEST_ASSERT_EQUAL_UINT32(36, captureRows.back().tick);
+  SessionMidiEventVec audibleRows;
+  loop.passes.materializeToEventVector(audibleRows, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(4, audibleRows.size());
+  TEST_ASSERT_EQUAL_UINT32(0, audibleRows[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(23, audibleRows[1].tick);
+  TEST_ASSERT_EQUAL_UINT32(24, audibleRows[2].tick);
+  TEST_ASSERT_EQUAL_UINT32(36, audibleRows[3].tick);
+}
+
+void test_completed_stop_bridge_publishes_before_next_emission_boundary() {
+  runCompletedStopBridgeEmissionBoundary(false);
+  setUp();
+  runCompletedStopBridgeEmissionBoundary(true);
 }
 
 void test_job_note_retirement_does_not_clear_live_notes() {
@@ -2200,6 +2307,10 @@ void test_cache_reset_at_each_stop_phase_keeps_accepted_capture() {
     midiButtonActions.handleToggleRecord();
     auto& job = TrackCaptureStopTestAccess::job(track);
     auto& runtime = TrackCaptureStopTestAccess::runtime(track);
+    // Audible publication no longer rests at AtomicTransfer. The stopped
+    // route still does, so exercise cache invalidation there explicitly.
+    if (phases[phaseIndex] == PendingStopPhase::AtomicTransfer)
+      track.stopOverdubbingToStopped();
     for (unsigned i = 0; i < 20000 && job.admission.phase != phases[phaseIndex]; ++i)
       TrackCaptureStopTestAccess::step(track);
     TEST_ASSERT_EQUAL(phases[phaseIndex], job.admission.phase);
@@ -2785,7 +2896,7 @@ void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
   TEST_ASSERT_EQUAL(TrackCaptureStopTestAccess::queueCapacity(),
                     TrackCaptureStopTestAccess::queueSize(track));
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsRawRange(track));
-  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::slotRawRange(track, track.getActiveLoopIndex()).ready());
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::slotRawRangeReady(track, track.getActiveLoopIndex()));
   TrackCaptureStopTestAccess::setQueueCount(track, 0); // synthetic occupancy owns no jobs
 }
 
@@ -3068,6 +3179,101 @@ void test_transport_stop_retarget_retires_a_midflight_playing_job() {
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
       "the slot must accept a later stop once the retargeted job retired");
+}
+
+/// Device `session_20261026_204731`: interval 23's Stop was accepted and retained (DEC-078), but its
+/// deferred job never left `UndoCollection` -- the device reported `phase=8` on every one of the
+/// thirteen later Stop presses (`Overdub stop refused: stop_job_pending slot=3 interval=23 phase=8`)
+/// until a transport stop retargeted it. `stepDeferredUndoCollection` treats an uncollectable or
+/// `Denied` session-identity set as "collected", but the phase gate below it requires
+/// `undoCollection.phase == Cold`, and only entry preparation sets that -- entry preparation needs a
+/// `Complete` collection. Nothing clears a refused collection, so the job parks forever holding the
+/// stop owner, the frozen role and the interval's session-exit receipt.
+///
+/// The refused collection is reachable without a fault: any successor wrap or publication that
+/// advances `playbackRevision` after `CompanionHistory` prepared disqualifies the prepared-history
+/// receipt the collection is built from.
+void test_refused_undo_collection_does_not_park_the_overdub_stop() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // Walk the job to its collection phase. The phase is entered on CompanionHistory's own turn, so
+  // the collection itself is begun by the first `UndoCollection` grain.
+  bool reachedCollection = false;
+  for (unsigned grain = 0; grain < 20000; ++grain) {
+    if (!track.hasPendingDeferredOverdubStop()) break;
+    if (TrackCaptureStopTestAccess::jobPhase(track) ==
+        static_cast<uint8_t>(PendingStopPhase::UndoCollection)) {
+      reachedCollection = true;
+      break;
+    }
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(reachedCollection,
+                           "the fixture must reach the collection phase it is about");
+  // A successor wrap/publication lands between the collection's admission and its first grain.
+  TrackCaptureStopTestAccess::setPlaybackRevision(
+      track, TrackCaptureStopTestAccess::playbackRevision(track) + 1);
+  const size_t passesBefore = loop.passes.overdubPasses.size();
+  // The accepted stop must still execute exactly once: the job retires, releases the stop owner and
+  // publishes the interval's own pass with its undo level.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a refused undo collection parked the deferred stop job");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureStopOwnerClear(track),
+                           "the retired job must release the stop owner");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(passesBefore + 1),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  TEST_ASSERT_GREATER_THAN_UINT32(
+      0, static_cast<uint32_t>(TrackCaptureStopTestAccess::undoStack(track).entries.size()));
+}
+
+/// The other half of the device report: while a predecessor's stop job is pending, the live
+/// successor keeps recording (DEC-078), so every accepted NoteOn of the successor interval must
+/// reach canonical capture with its own identity. On the device the interval took a single note and
+/// then logged `NoteOff for note N on ch 8 with no matching NoteOn` for the rest.
+void test_successor_overdub_admits_every_note_while_the_predecessor_finalizes() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // Successor interval B, admitted while A finalizes.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // Three ordinary chords, each an On/Off pair, all inside the successor interval.
+  inputNote(39, 193, 200);
+  inputNote(45, 203, 210);
+  inputNote(51, 213, 220);
+  TEST_ASSERT_EQUAL_UINT32(6, static_cast<uint32_t>(loop.capture.store.size()));
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_TRUE(loop.capture.store.at(0).isNoteOn());
+  TEST_ASSERT_EQUAL(200, loop.capture.store.at(1).tick);
+  TEST_ASSERT_TRUE(loop.capture.store.at(1).isNoteOff());
+  TEST_ASSERT_EQUAL(203, loop.capture.store.at(2).tick);
+  TEST_ASSERT_EQUAL(210, loop.capture.store.at(3).tick);
+  TEST_ASSERT_EQUAL(213, loop.capture.store.at(4).tick);
+  TEST_ASSERT_EQUAL(220, loop.capture.store.at(5).tick);
+  // Each pair shares one identity, and the identities are distinct per note.
+  TEST_ASSERT_EQUAL(loop.capture.store.at(0).noteId, loop.capture.store.at(1).noteId);
+  TEST_ASSERT_EQUAL(loop.capture.store.at(2).noteId, loop.capture.store.at(3).noteId);
+  TEST_ASSERT_EQUAL(loop.capture.store.at(4).noteId, loop.capture.store.at(5).noteId);
+  TEST_ASSERT_NOT_EQUAL(loop.capture.store.at(0).noteId, loop.capture.store.at(2).noteId);
+  TEST_ASSERT_NOT_EQUAL(loop.capture.store.at(2).noteId, loop.capture.store.at(4).noteId);
+  // No note stayed open: every accepted On has its Off in the same interval.
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveNotes(track).size()));
 }
 
 /// Openspec 5.3: the transport-stop ordering case with the explicit state under test. A deferred
@@ -3742,9 +3948,9 @@ void test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve() {
            static_cast<unsigned>(full.freeBeforeProbe));
   TEST_ASSERT_EQUAL_INT32_MESSAGE(expectedPerLoop, chunksPerLoop, message);
 
-  // Cold capture admission adds the canonical copy and this slot's one sealed-range tail.
-  // Dormant boot/load descriptors reserve no tails; do not hide that extra admitted chunk.
-  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(full.freeBeforeProbe) - 1u -
+  // Cold capture admission reserves K=9 independent raw destinations (owner capacity bump,
+  // FIFO 8 / custody 9), once per Track, plus the canonical transfer credits.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(full.freeBeforeProbe) - 9u -
                                static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
                            full.freeAfterProbe);
   // And the reason cannot be exhaustion: the pool keeps its own reserve plus the admitted set.
@@ -4265,7 +4471,7 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   // slot, with its admission still pending. Nothing was silently dropped or re-created.
   TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
   TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
-  TEST_ASSERT_EQUAL_UINT64(TrackCaptureStopTestAccess::interval(track),
+  TEST_ASSERT_EQUAL_UINT64(TrackCaptureStopTestAccess::interval(track) - 1,
                            TrackCaptureStopTestAccess::jobInterval(track));
   // Drain the retargeted job. This half is only reachable now that `silenceTrackMidiOutput` is a
   // counting output boundary instead of a fail-closed stub; the `Stopped`-destination retire block is
@@ -5015,6 +5221,7 @@ int main() {
   RUN_TEST(test_cache_reset_at_each_stop_phase_keeps_accepted_capture);
   RUN_TEST(test_empty_stop_runs_existing_worker_to_completion);
   RUN_TEST(test_populated_stop_runs_existing_worker_to_completion);
+  RUN_TEST(test_completed_stop_bridge_publishes_before_next_emission_boundary);
   RUN_TEST(test_completed_job_cannot_transition_a_newer_track_interval);
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
@@ -5050,6 +5257,10 @@ int main() {
   RUN_TEST(test_s4_5_joined_finalization_wait_and_successor_lease);
   RUN_TEST(test_transport_stop_retarget_retires_a_midflight_playing_job);
   RUN_TEST(test_transport_stop_while_successor_is_live_keeps_its_rows_and_root);
+  // Device `session_20261026_204731`: a refused undo collection must not park the accepted stop, and
+  // a successor interval must keep every note it accepts while the predecessor finalizes.
+  RUN_TEST(test_refused_undo_collection_does_not_park_the_overdub_stop);
+  RUN_TEST(test_successor_overdub_admits_every_note_while_the_predecessor_finalizes);
   RUN_TEST(test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending);
   RUN_TEST(test_successor_wrap_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off);

@@ -1,3 +1,655 @@
+**2026-10-27 — boot repair bound fixed: a present-but-corrupt loop slot retried forever at the title screen because the restore retry counter was never incremented (DEC-171; one-line fix, native + build green, flashed).** After DEC-170 the device hung at the title screen on `LoadLoopJob parse failed` ×73 — not a boot crash and not the DEC-170 change, but a **pre-existing bug**: `scheduleLoopSlotRestoreRetry` compares `loopSlotRestoreAttempts_[track][slot] >= kMaxLoopSlotRestoreAttempts (3)` but the counter is declared and never incremented, so `0 >= 3` never fires and a corrupt slot retried forever. The corrupt slot was track 7 / slot 3 (`/MidiLooper/current/slots/loop_07_03.bin`); the other 7 saved loops are intact. **Fix (one line):** `++loopSlotRestoreAttempts_[track][slot]` before the bound check, so a corrupt slot reaches a named `Refused` terminal after 3 attempts, the slot is treated as empty, and the rest of the set restores (a *missing* file already short-circuits to empty in `beginLoadLoopJob`). Updated the pin `test_c6_transient_failure_is_retried_not_latched` to drive 2 turns (2 attempts < bound) instead of 8 (which had re-encoded the unbounded-retry defect as the oracle). `test_storage_manager_load` 35/35, full native **3,526 / 7 skip / 3,519 / 0 fail**, build SUCCESS at RAM1 `variables 96,192` (unchanged). **Partial-content salvage of the corrupt slot is not attempted** — the file has a valid SAVE token but a structurally invalid body, so there is no intact prefix to recover; the corrupt slot is dropped, the other 7 survive. **Flashed + device-verified 2026-10-27:** loader 2.3 (PROGRAM press), exit 0, HEX `sha256 49154f8f…`; `captures/session_20261027_201722.log` shows `parse failed` ×3 then `RRQ,7,3,terminal,none,refused`, and the rest of the set — 63 slots — each `terminal,committed`, with `Current workspace loaded successfully` / `BOOT,load,ok`. No commit. [DEC-171](../../docs/DECISION_LOG.md#dec-171).
+
+**2026-10-27 — the DEC-165 exit is repaired where it wedged: an abandoned-base **Playing** stop now retires and commits without a successor window (DEC-167; native + build green, review-found, not flashed).** One more device run was never needed — the escape's `(void)`-discarded `retireSkippedCompanionPreparation` is destination-gated and its route is destination-Playing by construction, so it returned `false` 100% of the time: `finalizationComplete()` stayed false, `canCommit` refused both plain variants and the job ping-ponged bridge/commit holding the 8-deep head. **Landed two parts + naming + cleanup:** `retireCompanionSkippedForBaseAbandonment()` retires order/ranked/canonical/undo at the escape with no destination gate (recorded honestly: behavior-neutral at this shape because the handler's superseded branch retires the same fields one turn later); the real lever is route-by-cause — the `AtomicTransfer` superseded branch now also fires when the job is non-retargeted and its base sentinel is abandoned, so `commitSupersededCausalBase` commits the staged pass **without waiting for a revision move** (exact +1 pin in the fixture = only the head's own commit publication; the 140-row pass commits intact and the receipt-prepared undo entry publishes in the same commit). Bridge begin/step refusals, both superseded retirements and an atomic-commit refusal now name themselves once per job; the duplicate `CanonicalTail` guard left by the DEC-165 insertion is gone, and the three legacy call sites are byte-identical. **Verification:** RED first (`Expected 0 Was 1`), route mutation red-proved (8 s→5:20 runtime), restore byte-identical; `test_shared_capture_finalization` **112/112** (new fixture: retirement, +1 revision, rows, undo published, successor stop admitted not retained then drained), `test_playback_prewarm` 252/252, full native **3,524 / 7 skipped / 3,517 pass / 0 fail**, build SUCCESS at RAM1 `variables 96,192` / `padding 2,744`. No upload, no device, no commit. [§30](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-STOP-RETIREMENT-REVIEW.md).
+
+**2026-10-27 — the Record lane names the predicate refusing its normalization (DEC-166; native + build green, not flashed).** §28 proved the ring wedged behind a **Record** job at `CanonicalOrder`, a lane with six `Denied` returns and no reporter at all. Now `RecordNormalizationDenial` (`job_identity`, `owner_lost`, `output_not_ready`, `chunk_starvation`, `role_bind_refused`, `preparation_denied`) is written to the job by the lane, and the grain raises `Deferred stop stalled: <term>` once per job at 64 consecutive denials plus one detail line with the phase and the four remaining credits. **Report only:** same predicates, same order, no credit consumed on denial, phase untouched — no successor gating, no normalization bypass. The new field sits in existing struct padding, so `sizeof(CaptureStopJobs)` stays 33,088 (pin unmodified) and `sizeof(Track)` 384; build SUCCESS at `variables 96,192` / `padding 2,744`. `test_shared_capture_finalization` 111/111 (new fixture red-proved by mutation), `test_playback_prewarm` 252/252, full native **3,523 / 7 skipped / 3,516 succeeded / 0 failed**. **Next:** one reproduction; the named term picks the repair. [§29](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — the stop fix did not solve the symptom, and the log names the real lane: the head job was a **Record** stop parked at `CanonicalOrder` (device; native green, no flash from me).** `Record stop retarget: phase=2 dest=1` with **zero** `Overdub stop retarget` rows proves the FIFO head was the Record job admitted at 68.746 s in `captures/session_20261027_161759.log`; eight overdub stops queued behind it and four presses were retained (`phase=2 interval=17 closure=0`) until the transport stop. The previous change lives in the overdub branch, which the Record branch returns before. **Two lanes, one shared ring, one symptom: lane-by-lane budgets are the wrong shape.** The unconditional 2,048-grain base bound shipped an hour earlier was caught by full native (`test_shared_capture_finalization` 3 failures — those fixtures declare 5e8 preparation grains) and is replaced by a **cause-gated** bound (only while a successor interval captures), with the abandonment remembered per job and the tail exit made causal rather than counted; DEC-070's companion bound stays 512 and retargeted-only. `test_playback_prewarm` 252/252, `test_shared_capture_finalization` 110/110, full native **3,522 / 7 skipped / 3,515 succeeded / 0 failed**, build SUCCESS at `variables 96,192` / `padding 2,744`. **Next is a decision:** the Record lane has no stall reporter, so first a per-job report on `stepDeferredRecordNormalization`, then either a raw-publication route for an unnormalizable take or gating successor admission behind a stalled head. [§28](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — the stop wedge is located in code: a single dead job refused every later stop, because the `CanonicalOrder` phase was the only one that could not advance *and* could not say why (native + build green; no flash).** Owner's "find it in the code" followed literally. **Verified:** the device row `Overdub stop refused: stop_job_pending …` is *stale text* — `stopOverdubbing` latches an accepted obligation (DEC-078) and logs "refused" anyway; the re-drive `serviceAcceptedInteractionTurn()` yields while `hasPendingDeferredOverdubStop()`, so **one wedged job refuses every later stop permanently** (fail log: three rows at 83.9/85.4/93.6 s all naming the same `slot=3 interval=17 phase=2 dest=0 closure=0`, with a successor interval admitted at 82.9 s on top of it); and phase 2 was gated by two calls with **five bare `false` returns and no reporter**, while `beginFrozenCaptureCanonicalOrder` is the phase's only re-bind site — so a binding that named another interval could never grow a matching one and its `return false` was terminal by construction. **Landed:** `FrozenCaptureCanonicalOrderBegin` names all nine outcomes and feeds `noteStallOnce` (so the device now prints *which* predicate refused); the binding self-heals **only** when it names another interval with nothing in flight (a same-interval move stays `StagingContentMoved`, an in-flight build stays `BindingBusy` — the pre-existing byte-exact guards are preserved); the human row is now `Overdub stop retained (capacity): …`, and every host matcher addresses the row by family so both verbs parse (`retention_probe`'s L2 had the literal verb in two places, the same defect one layer up). **Also corrected, because two earlier readings rested on it:** `stop_grain`/`stop_phase`/`ODUB` are not Tier-A, so the budget-8 flush shed the whole stop family for the entire failing session — "0 `stop_grain` rows" never proved the grain never ran, and a missing `Deferred stop stalled:` row proves nothing because that latch is once-per-admission. **Verification:** `test_playback_prewarm` 251/251; the new RED is red-proved by mutation (`if (true)` → `Expected 0 Was 6`) and the in-flight control fails under the same mutation (`Expected 5 Was 6`), so the controls pin the named reasons rather than mere refusal; host 44 + 63 + 194 + 33 + 33 + 14 green; full native **3,521 / 7 skipped / 3,514 succeeded / 0 failed**; `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` / `padding 2,744` (floor 840), no re-base. **Not claimed:** which predicate the device hit — the next ~8-cycle run answers it with one `Deferred stop stalled: <reason>` row. No commit (still inseparable from the ~1,770 in-flight display/playback lines). [§26](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — "after a few overdubs nothing starts" is now explained end-to-end, and the cause is the metric: the failing session ran its *entire* length at a 28 KB tail (device, `session_20261027_105518.log`).** Cross-check against the session behind the original report: 54 `[Memory] ext` rows, **every one** `heap_free=28KB` (one unique value in the whole log), **308** `#MEM_DENIED` (177 `op=snapshot_reserve,need=8192B`, 134 `op=overdub_start,need=16384B`), **0** `Overdubbing started`, **14,169** `DIAG,reclaim` rows. The chain, each link measured: (1) early transients raise `__brkval` from 192,512 B to a 24–45 KB tail — in `session_20261027_140638.log` the first 65 KB of that happens while `cap=0`, i.e. **before any overdub**; (2) `_sbrk` is a pure bump, so the tail never recovers and every later admission is judged against the same low value — 28 KB at the first row and at the last; (3) the predicate compares it to floor + margin (48 KB for `OverdubStart`, 40 KB for `snapshot_reserve`), so starts are refused; (4) the refusal is **not** a shortage — §22 measured a 16 KB internal malloc succeeding at a 24,576 B tail on this board, so even the 8 KB `snapshot_reserve` denial at 28 KB was false. The reclamation storm was the system trying to buy back a number that was never capacity. **Fix order this implies:** the admission metric is the defect that blocks the user and is fixable independently of which transient sets the peak; naming the peak (per-`_sbrk` accounting: calls/bytes/largest/call-site) matters only for reclaiming headroom; and the one remaining unknown worth measuring first is the **largest allocatable block** at the low tail — a ladder on the existing probe (16/24/32/48/64 KB), which is the quantity any replacement metric must compare against the floor. No policy change, no flash, floor untouched, image `7b4ebc25…`. [§24](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — root cause separated, and one of my own attributions retracted: the start refusal is a **measurement** bug, not a memory shortage; the arena's low tail is transient peak-setting with no named owner yet (device, image `7b4ebc25…`).** Two different questions had been tangled, and the answer differs for each. **(1) Why the overdub start is refused — established:** `admitOperationMemory(OverdubStart)` denies on `getInternalHeapFreeBytes() < 32 KB floor + 16 KB margin`, and that number is `&_heap_end − __brkval`, the arena's *untouched tail* (`_sbrk` is a pure bump; `free()` returns blocks to newlib's list below it). On hardware, at `tail = 24,576 B`, a 16 KB `malloc` from the internal heap **succeeded** (`HEAP_PROBE,tail=24576,want=16384,malloc=1,pool=0`) while the same image denied the start with `need=16384B,heap_free=24KB`, `pool_refused=0/0B`. So the blocking cause is a lower bound used as a verdict: a false denial. The 32 KB floor is not implicated. **(2) Why the tail sits at 24–45 KB on a 188 KB fresh boot — narrowed, owner unnamed:** 3–4 discrete steps of 8–45 KB, then flat for hundreds of seconds across 8–13 further overdubs; **not** content (`ib`/`eb`/`ub` 0–2 KB total, `xb` ~5.8 KB), **not** retained pins (`pin1=pin24=0` in every `[Memory]`/`snapshot_alloc` row), **not** undo storage, and — **retraction of my §23 hint** — **not** snapshot allocation: the `DIAG,snapshot_alloc` counters (64 rows/session) show no movement at the two steps where I had claimed publication ownership (−8,192 B at 16.6 s and −45,056 B at 132.7 s), and the neighbour row I misread (`win_frozen_readiness … published_as_current`) is a playback-window *readiness* edge, not an allocation. What survives: each step is a moment a request had to be served from the tail instead of a free-list hole — a new transient peak, reused thereafter — and naming that peak needs **per-`_sbrk` accounting** (calls, bytes, largest request, call-site tag), which is a small wrapper around one weak core symbol, not another class census. **Consequence for what to fix first:** the admission metric is the defect that blocks the user, and it is fixable independently of the peak's identity; the peak's owner matters only for reclaiming headroom. No policy change, no flash, floor untouched. [§23 + retraction](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 mechanism candidate named: the arena's step lands on **snapshot-publication completions**, not on content (device, image `7b4ebc25…`, `captures/session_20261027_140638.log`).** Fresh boot in this session: 192,512 → 159,744 → 151,552 → 126,976 → 118,784 → 81,920 → **36,864** (a −45,056 B step at 132.7 s, `DIAG,pressure,Normal->Low,36864,388,0`), and the step's own neighbour is `DIAG,win_frozen_readiness,7,3,build_drop,published_as_current,…` — **a snapshot publication completing**, with `cap=13`/`undo=10` unchanged across it. That is the third independent instance of the same shape (§20's two + this one), each on a publication/stop-completion turn and none on pass cardinality, and it matches the publication gate's own declared cost (`kSnapshotPublicationReserveBytes` = one pool slab **plus the internal-heap fragment working set**). **Hypothesis (not proven):** `__brkval`'s high-water is set by the **largest publication working set**, which is why two minutes of overdubbing leaves the tail at whatever one publication transient established and why the number never recovers. **The census also earned its keep here:** in this shape the undo nested ids *do* allocate — `ib`/`ub` grew **+256 B per overdub** (0 → 2,048 over 8 entries), `eb=0`, `xb` +16 B/pass — so the instrument reports growth when growth exists, and it is still 2 KB against 110 KB of steps. `[Memory]`: `live 4,475 → 4,497 KB`, `slab_live 7 → 17`, `snap 171 → 435 KB`, `pin1=0, pin24=0` — content where it belongs, nothing pinned. At 36,864 B the 48 KB admission sum is missed, so the next overdub press is a guaranteed `heap_low` denial, and §22 already showed a 16 KB internal malloc succeeding at 24,576 — it would be false again at a higher tail. **Two actions await the owner, neither taken:** widen `!HEAP_PROBE`'s stopped-only gate (or fold the probe answer into the `#MEM_DENIED` row, where the question is actually asked), and the admission-metric RED + replacement (probe-authoritative or free-list-aware) with the publication working set as the quantity to preserve. No policy change, floor untouched, image `7b4ebc25…`. [§23](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 proven on hardware: at a 24 KB arena tail a 16 KB **internal** malloc succeeds while the same image denies the overdub start — the admission metric is RED (device, image `7b4ebc25…`).** Owner said flash; second upload on the same path (loader **2.3**, `Found HalfKay Bootloader`, `Programming`, `Booting`, **exit 0**, `sha256 7b4ebc25be9a3382d5be453155dfb1bc611f463b0c57d25b6e39505a53c1958c`, RAM1 `variables 96,192` / `code 390,280 + padding 2,936`), boot proved separately (`boot_reset,crash=0`, `BOOT,load,start`, `BOOT,ram1,196608`, `BOOT,load,ok`, `16C0:0489`). The board restored the previous session's content and reached the failure on its own: `#MEM_DENIED,op=overdub_start,reason=heap_low,need=16384B,heap_free=24KB,pool_refused=0/0B` (three times), with the census beside it at `heap=24576,hmin=24576`. The new on-demand probe then answered the owner's question directly: `HEAP_PROBE,tail=24576B,want=16384B,malloc=1,pool=0` — **the 16,384-byte block was served by the internal heap, PSRAM not needed, at exactly the value the start was refused for.** So `getInternalHeapFreeBytes()` (`&_heap_end − __brkval`, the arena's untouched tail — `_sbrk` is a pure bump and `free()` returns blocks to newlib's list below it) is a **lower bound being used as a verdict**: it can never false-admit and it just false-denied. Per the rule pre-registered in §21, that **REDs the admission metric**, and the owner's own boundary is exactly what the evidence supports — the 32 KB floor may be fine, *how the floor is measured* is not. Not settled, and stated as such: which free region served the block, and whether the whole operation has margin (the floor is headroom, not one block), so **no policy change was made** and the floor is untouched; the replacement metric (probe-authoritative or free-list-aware) is the next slice with its own native RED — `test_heap_allocatability_probe_separates_tail_from_a_servable_request` already pins the asymmetry on the host, and `test_memory_pressure_policy` 10/10, `test_capture_ring` 38/38, full native 3,516 / 7 skip / 3,509 pass / 0 fail, build SUCCESS. Honest gate note: `!HEAP_PROBE` is stopped-only and the device was playing, so the reading needed a poll for a stopped window (`HEAP_PROBE,denied,transport_running` precedes the success) — but the failing press happens *while playing*, so that gate needs widening in the next slice rather than a silent change now. [§21/§22](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 verdict on the pre-registered fork: the census classes do NOT explain the device decline, and retained pins are zero (device, image `f1603da2…`, owner's live session).** Rule applied as fixed in §18 *before* the run. From `captures/session_20261027_134320.log`: internal heap 192,512 → 45,056 B (**−144 KB**) in four discrete steps (−32,768, −40,960, −36,864, −36,864) while **`ib = eb = ub = 0` in every sample** — no edit payloads (`edit=0` throughout: no note edits in the session), no undo nested-id capacity, no live session lists. Then, after the last step, **eight further overdubs** (`cap` 2 → 10, `undo` 3 → 10) cost **0 internal bytes** and ~144 B external (`xb` 5,648 → 5,776) — the device confirmation of §17's host finding that persistent pass cardinality is linear and lives in PSRAM. **Retained pins are excluded too:** all **221** `[Memory] ext` rows report `pin1=0,pin24=0`; the `editPins=778` is the reclaimer's candidate reference set, not retained memory, and `passesReclaimed=0` in all 25 reclaim rows (nothing ever becomes disabled in this shape). **What moved is the four steps, none pass-driven:** the last two coincide with stop/publication turns (`stop_grain`/`stop_phase`, `ODUB,stop,atomic_transfer`, `gus,publish_begin`, and the single `DIAG,pressure,Normal->Low,45056,388,0` at 105.08 s) and the third with a record-return/frozen-readiness completion; nothing steps afterwards. **So the fork resolves to its fallback branch:** the "may old committed generations be compacted after their undo/reference lifetime expires" decision is **not** the next lever and undo storage stays untouched, as instructed; within the fallback pair the data already excludes retained pins, leaving fragmentation/high-water growth from internal reserves the census does not enumerate (stop/publication roles, view sets, capture stagings, stop descriptors, transfer horizon). **Honest limit:** `heap` is `&_heap_end − __brkval`, a brk high-water mark, so a −36,864 B step proves brk was raised by that much, not that one 36,864 B allocation exists — "bounded per-role reserve at stop" and "many small allocations failing reuse" produce the same trace, and separating them needs allocation *events and sizes* (a counted internal allocation census), not resident capacity. No leak, no fragmentation verdict, no storage change, no second image; session still live, series scoped to the active slot. No `#MEM_DENIED` yet, and at 44 KB free the 32 KB floor + 16 KB margin is at its edge — the next start attempt is the one to watch. [§20](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — census image `f1603da2…` flashed on owner authorization; the new row is live and the first ~72 KB of heap loss carries no census class (device; boot verified separately).** Homebrew `teensy_loader_cli` **2.3** by explicit path (never `pio -t upload`, no GUI), one uploader: `Read 1333248 bytes, 16.4% usage` → `Found HalfKay Bootloader` → `Programming` complete, no parse error → `Booting`, **exit 0**. Image `sha256 f1603da2dc0fdd7e97131b6dc8ac7ae5c0d4c85fa0756035c62f3877e216d7e5`, built first at RAM1 `variables 96,192` / `code 390,216 + padding 3,000` (floor 840). **Boot proved separately:** USB `Teensy MIDI` `16C0:0489`, serial 15494480, then `DIAG,boot_reset,crash=0`, `BOOT,load,start`, `BOOT,ram1,196608`, `BOOT,load,ok`, **0** `CrashReport`, and — the decisive new-image evidence — **30** `DIAG,alloc_census` rows in the first 63 s, a row that did not exist before this image. The device session is the **owner's own** (`captures/session_20261027_134320.log`, `capture_session.py`, started 13:43:20); I did not touch that process or the port once identified (disclosure: before that, a 25 s boot read of mine took ~32 lines from the same CDC stream, so the log is short those at its head). **First readings:** fresh boot `heap=192512` (188 KB, not 512 KB) with `chunks=512`; after one Record pass `heap=159744`; then `118784` — **−73,728 B while `ib=0, eb=0, ub=0, xb=0`**, i.e. the internal-first classes this row names did not move on that shape. **Caveats recorded, not smoothed over:** `heap`/`hmin` are `_heap_end − __brkval`, a **high-water** measure that never recovers on free, so a step proves "the heap grew", never "these bytes are live"; and the census is scoped to the **active slot** (`cap=1 → cap=0` at 25.6 s is a focus change, not a free), so a verdict must be read over a contiguous slot segment. **Gap found by the data, deliberately not fixed mid-session:** `xb` omits the Record pass's own `committedChunkIds` (`LoopPasses::recordPass`), which is why `xb=0` at `cap=1`; it affects only the external control, never `ib`. No verdict claimed — the owner's session is still running. [§19](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 device allocation census landed: one Tier-A row per 2 s by owner class, built to the owner's directive (build green; no flash, no device leg, no commit).** Owner's instruction after the host measurement: *leave undo alone; treat the 128-cycle run as proof that persistent pass cardinality is linear; add a tiny device-side allocation census by owner class and correlate internal-heap loss with capture/edit pass growth; only if those classes do not explain the decline return to retained pins/fragmentation; if they do, decide separately whether old committed generations can be compacted after their undo/reference lifetime expires.* **Landed:** `#CAP,<us>,DIAG,alloc_census,heap=,hmin=,chunks=,cap=,edit=,undo=,ib=,eb=,ub=,xb=` from `DebugSessionCapture::allocationCensusRow`, rate-limited to **one row per 2 s** on the existing `main.cpp` diagnostics turn (never per turn, never per event — it cannot become the storm it measures), delivered by the two `readinessReceiptImmediate` rules (direct when USB has room, ring fallback) because the census matters most while a transport runs. The walk is `Track::allocationCensus()`: read-only, allocation-free, `TRACK_COLD_MEM`, over the active slot at **resident capacity**, and it reports the **internal-first** classes (`eb` = each `EditPass::addedEvents`, `ub` = the undo entries' nested `passIds`/`editPassIds`, plus the live session lists) **separately** from the **external-first** ones (`xb` = pass vectors + `committedChunkIds` via `CommittedChunkIdAllocator`, which is `extmem_malloc` first). That split is the instrument's whole point: pass content that grows with every overdub is deliberately PSRAM, so a big census with a quiet internal heap must read as the healthy shape rather than a contradiction. `DIAG,alloc_census,` is classified in `isTierATextLine` (`DebugSessionCapture.cpp`, not the header literal list) and pinned by both boundaries in `test_capture_ring`; pre-flight `OK DIAG,alloc_census,… (18/31 bytes)`; the TLS macro is single-line on purpose (a continued macro in that header previously mangled its backslashes). **Cost:** RAM1 `variables 96,192` **unchanged** (literals are `SC_FMT`/`PSTR` → flash), ITCM `code 390,008 → 390,216` (+208 B), `padding 3,208 → 3,000`, floor 840, headroom 2,160 B, **no re-base**. **Verified before any device time:** `test_4_20_allocation_census_matches_the_owners_it_reports` pins the three properties the interpretation depends on — cardinality follows the owners, each class's bytes are **exactly** capacity × element size, and `ib` is exactly the sum of its three parts (no class counted twice, so a wrong instrument cannot masquerade as a finding). `test_capture_ring` 38/38, `test_shared_capture_finalization` 110/110, full native **3,515 / 7 skipped / 3,508 passed / 0 failed**, `teensy41-capture-serial` **SUCCESS**. **Verdict rule for the run:** normalise to bytes per retained pass; `ib` rising while `heap`/`hmin` fall (attributable to `eb`/`ub`) ⇒ the classes explain the decline and the next decision is *whether old committed generations may be compacted after their undo/reference lifetime expires*; a flat `ib` with a falling `heap` ⇒ they do not, and only then the retained-pin/`editPins` and fragmentation line. **Not done:** no flash, no device capture — [recipe](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-ALLOC-CENSUS-HITL-RECIPE.md) is filled (no new stimulus; the row self-reports, so an ordinary long session reproduces the reported shape) and stops at the owner's flash gate plus an authorized track/slot for the wrapper's destructive clear. Task 4.20 stays open. [§18](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 heap-plateau measurement: the undo stack is a plateau, so storage policy is not the device defect (native only; no device leg, no upload, no commit).** Owner's ladder after the §16 repair — *measure, then attribute* — so the repeated-small-overdub experiment is now a measurement rather than another investigation. `test_4_20_settled_overdub_heap_plateau_measurement_128_cycles` runs 128 settled start → note → stop → retire → publish-drain cycles and samples, after every cycle, exactly the owners the owner named. **Stable result:** undo entries **1 → 8 then flat** (capacity 32 → 32), `UndoEntry::editPassIds` **size 0 throughout** with a one-time capacity reserve 64 → 512, `passIds` never used (0/0), capture passes 2 → 129 and edit passes 0 → 104 (+1 per cycle, i.e. retained content), `overdubPasses` capacity 16 → 128 (the transfer horizon, external-first on the device), chunk pool free 492 → 365 (one chunk per retained pass), disabled/reclaimed passes **0** throughout, and the session-exit claim `Empty` at every settled point (the §16 control). **The host footprint is arena-inclusive and cannot be a per-owner oracle:** +213 KB to +1.49 MB across three runs of the same binary, with occasional single-cycle steps of `+540,672 … +606,272 B` that no enumerated owner moves with (`dUndo=0`, `dEdits=+1`, placement 46/110/absent) — allocator arena, not firmware, since one edit pass cannot cost half a megabyte. Marginal cost per added pass does **not** grow (clean run: first half +2,080 vs second half +1,280 B/pass). **Conclusion:** native heap does not climb with the undo-entry count and the nested internal-heap id vectors do not staircase, so undo storage and allocation policy must **not** be redesigned on this evidence — the device's 28 KB free is a low-heap/fragmentation regime the host cannot reproduce. Next measurement is device-side attribution of the 778 `editPins` and the `DIAG,reclaim` storm (`passesReclaimed=0`: pin problem or candidacy problem); the 32 KB floor and 16 KB start reserve stay untouched. **Task 4.20 stays open** — DEC-163 settles the receipt-ring coupling natively, not the heap question. `test_shared_capture_finalization` **109/109**, full native **3,514 / 7 skipped / 3,507 passed / 0 failed**; test-only change, firmware source untouched by it. **Commit status:** the §16 slice is **not** cleanly separable from the in-flight working tree (the same nine files carry ~1,770 unrelated live lines from a concurrent display/playback slice), so it was left uncommitted rather than risk staging someone else's work — isolating it needs either that slice landed first or explicit leave to stage hunks with `git apply --cached`. [§17](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.20 admission coupling removed: overdub start reserves its session-exit obligation instead of waiting for a receipt slot (native + build; nothing on device, not committed).** The lapse-boundary RED is **GREEN**. `OverdubStart` no longer inherits the snapshot publisher's cadence: `ensureSessionExitReceiptRing()` is split out of `prewarmSessionExitSnapshotHandoff()` (allocation only) and the transfer-horizon prewarm asks only for the ring's *existence*, so a settled shape with a full ring and a lapsed horizon now starts (measured before: `REFUSED at cycle=16: receipts=8/8 admission=0`). The obligation itself is **reserved at overdub admission** (`Track::claimOverdubSessionExitObligation`, after every admission guard and before `beginCaptureInterval`, with the one rollback anchor on the interval-failure exit), the interval's own `openOverdubSession` stamps the identity it is held for, and at a full ring `captureSessionExitTail` **swaps** the identities into that reserved record beside the ring (`Reserved → Populated`), the source cleared in the same operation — never a copy, never an allocation at the stop boundary. The interval's final-pass commit makes it `Publishing`, the publisher moves it through the receipt FIFO exactly once (`→ Empty`), and the existing one-receipt-per-turn consumer publishes it. An occupied obligation is a **named bounded refusal** (never a second slot, never a silent queue). The payload lives in the allocation beside the ring, not in `pendingSnapshotPublishBox_`: the box flattens companions (a copy, not a swap) and creating it at admission would deny a *predecessor's* `beginCloseOverdubSession` for a successor's whole interval. `canHandoffSessionExitSnapshot()` is no longer an admission condition anywhere — both stop gates read `canCaptureSessionExitTail()` — and `pendingSnapshotSessionExitQueued`/`hasPendingSnapshotPublish` include the reserved record so the idle lane, the display's publication gap and the session-close guard agree. **Verification:** the RED green with the ring still full at start, the stop accepted while it stays full, session vectors empty, the claim owning the obligation, and capacity returning publishing exactly once and clearing claim/box/receipt (a second publisher step cannot advance the pinned revision); a new direct fixture `test_4_20_reserved_transfer_keeps_exactly_one_owner_of_the_session_ids` drives the ownership edge itself — the in-suite "authorship transferred" assertion was **not** sufficient, because `closeOverdubSession` clears the vectors before the lapse fixture inspects them and a copy-instead-of-swap passed; both mutation proofs red (claim removed → the RED fails at ownership, `claim=0` and the legacy one-shot handoff silently picking the ids up; source clearing removed → the direct fixture fails "the live session must not still own the ids"); the 64-cycle plateau run is **unrestricted** (cycle-16 escape deleted; the publication lane is driven only *after* a full-ring start is proved, because a bounded single obligation cannot outlive 64 stops on a lane that never gets a turn — the ring is a dead end in that shape). `test_shared_capture_finalization` **108/108**; full native **3,513 / 7 skipped / 3,506 passed / 0 failed** (the pre-change tree carried the single RED failure); `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` / `ITCM 393,216 (code 390,008 + padding 3,208)` / locals 34,880 — 16 B of ITCM from the new admission call, 2,368 B above the floor, **no re-base**, `sizeof(Loop)` still **1,848** (the claim state is one byte in existing padding). **Not claimed:** no upload, flash, serial capture or SD action; task 4.20's device question is untouched — `#MEM_DENIED,op=overdub_start,reason=heap_low`, the 778 `editPins` and the reclamation storm still need their own attribution, because this removes an admission-scalability defect and not the heap decline. Decision recorded as DEC-163 (it supersedes DEC-068's "a full ring is the documented stop denial" note). [§16](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md). Work uncommitted.
+
+**2026-10-27 — 4.19 device leg: the display continuity fix holds on hardware, and a separate overdub-admission defect is on the record.** On image `387725ea…` the `DIAG,disp_turn` signature of the display defect fell from **266** `st=ret,why=hold_gap` rows (owner-rejected `7c04edd8…`) to **1**, with 521 fresh frames, `key=req` and `n≈315–319` while the window rolled; the owner confirms the display regressions are fixed, so task 4.19's acceptance target is met on the device. **A new, separate defect was found and is filed as task 4.20 — overdub start denied at the heap floor:** after a long take, presses resolve to `Live Overdub` and nothing starts (`#MEM_DENIED,op=overdub_start,reason=heap_low,need=16384B,heap_free=28KB`, policy floor 32 KB + 16 KB), with 0 `Overdubbing started` rows and ~13,900 `DIAG,reclaim` rows in ~5 s that reclaim nothing (`editPins=778`, `pressure=Critical`). Not attributable to the retention work (PSRAM-first storage; the promotion probe refuses, never consumes). Also recorded honestly: one earlier run was reset by my own `hitl_boot_census.py` reset path during the owner's test (`crash=0`, no `CrashReport` — a reset, not a firmware crash), and the image's programming receipt is the census's `pio run -t upload` of the same `firmware.hex` (sha256 `387725ea…`). [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+**2026-10-27 — 4.19 display source retention implemented; the enforced immediate-wrap display regression is GREEN (firmware + fixtures; nothing on device).**
+The measured root cause stands: a wrap appends a pass and advances `playbackRevision`, so the completed display source stopped being qualified, the provider fell through, and the next `begin()`→`reset()` destroyed the last correct generation. The settled contract ([handoff](../../docs/Plans/display_source_retention_handoff.md)) is now implemented in the **existing** `BoundedDisplaySession` owner with **zero new `Loop` state** (the 1,848 B `sizeof(Loop)` pin is untouched), no new scheduler and no ownership transfer: the candidate records its pass-set prefix identity as the Order phase enumerates it, promotion at the existing publish edge `std::move`s the finished rows into a retained envelope priced `16·capacity` (named `retained_capacity` over-cap refusal, previous envelope kept), and `resetCandidate()` is split from `reset()` so a re-key or pass-set change keeps the envelope. Retention identity is an **exact predicate read at reuse time** — request identity including `canonicalStorageGeneration`, the whole edit-row identity, then a walk of the **retained prefix only** — so a wrap's appended pass keeps serving while any state change inside the prefix refuses (undo→redo requalifies, proven by equality against an independent rebuild). The provider serves retention after `BoundedContinuation` and before `PreparedWindow` (`QualifiedDisplaySource::RetainedEnvelope`) and stands down when an appended pass exists with the sealed tier already released. Fixtures 1–7 in the contract's order, fixture **4b** for the appended-row tier rule (the envelope serves while that tier is owed and stands down once a production capture undo→redo releases it, with its own predicate still qualifying), a slot/focus change (4c: another slot is never served the envelope's rows, and focus returning to the owning slot still serves them), and geometry-change/clear are permanent controls; seven mutations red-proved byte-identically, two of which reproduce the original failure message, and a slot/focus fixture (4c) that catches an over-serve across slots. Verification: focused **45/45**, `IMMEDIATE_VISUAL_CASE=bound` **7/7**, full native **3509 / 7 skipped / 3502 passed / 0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` / `padding 3,224` / locals 34,880 — unchanged, no re-base. **Open:** load/hydrate invalidation reaches the same `resetPassTimeline` destruction the clear fixture exercises (production slot-reset is not linkable here) and the display-side slot authority stays attributed; device acceptance (4.4) needs the owner's upload approval; the 084714 continuous-service target itself is unmeasured on hardware. [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-RETAINED-DISPLAY-SOURCE.md).
+
+**2026-10-27 — 084714 display regression reproduced; complete repair NOT implemented.**
+Owner rejects7c04edd8 display behavior. Capture: held key survives wrap, fresh display returns31.720s after transportStop with snapshot publication. Found prior wakeup excluded all pendingStop turns; local paired-source correction compiles/RAM1 unchanged and removes that exclusion. Stronger actual-wrap fixture proves complete qualified prior source before wrap and original Record row still physically present afterward, yet first wrapped frame loses it. Generation/inventory qualification rejects that result, and replacement begin clears it; prior tests waited4096grains after wrap and missed the continuity defect. Final focused display26pass/1intentional regressionRED, playback9pass; overall exit1, no fullnative-green claim. One independent diagnosis review supports this, no blanket fix approval. G3 lifetime/resource contract required for current/candidate retention, coverage, destructive invalidation and peak memory before more production code. No upload/device/SD/content/commit/push; installed7c04edd8 unchanged. [Evidence/proposed contract](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-084714-DISPLAY.md).
+
+**2026-10-27 — late-window display image7c04edd8… installed on owner approval.**
+Exact tested hash rechecked; CLI2.3 Programming/Booting exit0. Independent Teensy MIDI USB16C0:0489 plus fresh crash0/loadok and initial STOPPED display verified; reader closed normally. Replaces1706bfaa… and supersedes NOTuploaded below. No recording stimulus/serial or transport command/clear/explicit SD mutation/commit/push. Hardware late-window pixels and early NoteOff attribution remain open; no final queue/drain assertion. [Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md#subsequent-owner-approved-upload).
+
+**2026-10-27 — 002014 late display interval fixed locally; early NoteOff symptom remains open.**
+Owner reports playback fixed on1706bfaa. Display capture keeps key0/16bars while viewport moves; held late notes vanish on release. Reproduced exact missing Record/closed-overdub identities in later interval: bounded provider consumer existed, but producer wakeup was gated by cache reconstruction that cannot run during publication gaps/overdub. Existing8-unit producer now gets reachable VisualCache turns after stop/Snapshot/private priority, including small pass sets. One focused review found global-producer thrash with another audible track; two-track RED→GREEN after guarding selected display gap source against optional background cache resets. Sparse/dense bars16–24 plus closed identity and two-track checks pass; dense early painted-stop/same-pitch/gradual-finalization is a passing control, NOT reproduction of early device issue. Final fullnative3499total/7skip/3492pass/0fail; bound profile7/7; capture buildPASS/RAM1 unchanged, HEX7c04edd8… NOTuploaded. No playback edits/device/SD/commit/push. Hardware and pre-RecordPublished identity attribution remain open. [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md).
+
+**2026-10-26 — 233615 playback repair image1706bfaa… installed with owner approval.**
+CLI2.3 Programming/Booting exit0; exact tested hash rechecked. Independent Teensy MIDI USB16C0:0489 and fresh BOOT/load/ok verified. Serial opened after early reset lines, so no crash0 claim. External controller activity began during observation; left untouched and reader closed, no final stopped/drain assertion. No agent content stimulus/SD mutation/commit/push. Supersedes NOTuploaded below; hardware playback acceptance remains open. [Receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-233615-PLAYBACK.md#subsequent-owner-approved-upload).
+
+**2026-10-26 — 233615 recorded-playback dropout reproduced and fixed locally (native/build verified; not uploaded).**
+After Record-pass publication but before current-root readiness, main's ordinary committed requester admitted debt that took holder priority over frozen Record preparation. The last prepared bar then ran out; snapshot publication restored the fallback, explaining correlated display/MIDI recovery without display controlling playback. `requestCommittedPlaybackWindowForSlot` now leaves that interval to its existing qualified frozen owner until a current root exists. Production requester ordering traced to `b20c0924`; old controls omitted it. New gradual finalization + Stop/reentry oracle RED at tick22284 (expected9 edges/actual8) → GREEN with exact per-tick Record edges/NoteIds over16bars. Focused9/9; fullnative3495total/7skip/3488pass/0fail; final strengthened requester/publication controls9/9. Capture build SUCCESS, RAM1 variables96,192/padding3,224/locals34,880 unchanged, HEX1706bfaa…; one focused review APPROVE. No upload/device/SD/commit/push. Task4.11 wider parked Record issues and task4.4 hardware acceptance remain open. [Execution](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-233615-PLAYBACK.md).
+
+**2026-10-26 — display content hold now composes the interval it lost (native + build verified; not on device, not committed, no capture).**
+The hold split drew nothing outside the retained frame's coverage even when the loop's committed content existed there (`COMPOSITOR-ATTEMPT-ARCHIVE`). C5.6's provider (`Loop::collectQualifiedCommittedDisplayNotes`, now `const`) is wired into `DisplayManager::resolveDisplayNotesByDrawSource`: when a content hold substituted the retained interval for the requested one, a provider qualified for the **request** serves it — one base generation, the recognised live overlay composed once, the content key claimed for the interval it was served for (`DIAG,disp_turn` now names the provider in `why=prepared|bound|cache` and carries `key=`), and an unqualified request keeps the retained frame's honest hole rather than inventing rows. `syncDetailedPaintWindow` reports the hold through a defaulted out-parameter, so its six other call sites are untouched. RED written first: `test_request_outside_retained_coverage_is_served_by_a_qualified_source` (40-bar take, 16-bar window, retained bars 8..24 = `6144,12288`, request bars 24..40 = `18432,12288`) failed at "(c) committed notes inside the request must be drawn" with the split-only tree. Green: probe controls 4/4, `IMMEDIATE_VISUAL_CASE=bound` 7/7 (`COMPOSITION … hole_rows=0 served_rows=5 served_content=5 provider=prepared`), `HOLD_SPLIT` unchanged, display suite 22/22, handoff `source`/`stop`/`empty` 10/4/3, full native **3 494 / 7 skipped / 3 487 succeeded / 0 failed**, `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,192` unchanged / `padding 3,224` (floor 840); one mutation red-proved and restored byte-identically (sha256 `b9758fa9…`). The same slice repaired the tree's pre-existing `SC_DISP_WINDOW_TURN` arity break, which had blocked every capture build. Not claimed: no upload, no device capture, no `disp_turn` hardware attribution, no partial-overlap stitching (deliberate), no commit/push. [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-COVERAGE-QUALIFIED-COMPOSITOR.md).
+
+**2026-10-26 — MIDI Start resumes a track that owes an offline deferred stop job (regression fixed, native + build verified, not yet on device).**
+User session_20261026_223337: after Record plus several overdubs a MIDI Stop left the track STOPPED (`DISP,3,STOPPED`), and every later MIDI Start (115.971/118.664/120.871/124.400) logged `Transport started` but resumed nothing — only the track-level record/stop gesture (143.906, then 151.115) returned PLAYING. Cause: `d120e0c2` replaced `isOverdubStopping()` with `hasPendingDeferredOverdubStop()` inside `TrackManager::hasActiveOrPendingCapture()`, and `ClockManager::onMidiStart()`/`toggleTransport()` skip their whole resume fan-out while that predicate is true — so the offline finalization window after the stop edge blocked every resume for as long as the job stayed pending. Repair: new narrow predicate `hasLiveCaptureBlockingTransportStart()` (recording / armed / overdubbing / inline stop winding down / queued record — a track in TRACK_STOPPED that only owes a deferred stop job is not a live capture; its role closed at its own stop edge) used at the three transport-start call sites; `hasActiveOrPendingCapture()` keeps its stronger meaning for the SESSION_CAPTURE motion guard and any future capture-safety read. RED→GREEN fixture `transportStartResumesTrackWithPendingDeferredOverdubStop` in test_midi_input_clock_integration (real Track/TrackManager/ClockManager; fails as "MIDI Start must resume a STOPPED track…" with the old gate). Full native 3,479 cases / 7 skipped / 0 failed; teensy41-capture-serial BUILD, RAM1 unchanged (variables 96,192; padding 3,224 ≥ floor 840), no HEX claim, not uploaded, not committed. The parked deferred stop that stretched the window ("companion path stalled; raw pass only" at 133.000) remains task4.11/4.4 work under immediate-record-overdub-handoff; device acceptance of this fix is open.
+
+
+**2026-10-26 — four-overdub Record playback control passes; hardware content-loss claim remains open.**
+User reports committed Record notes play/display in first bars but drop after later overdubs/commit.
+Capture221420 has 8 ODs, committed-source playback witnesses after OD4 and later rolling windows, but no
+MIDI-output/Record-NoteId inventory. New 25-bar actual Track/stop-worker/rolling-playback test queues
+Record+4OD Stops before servicing, then emits all25 original Record pairs once at original ticks/IDs.
+Focused playback suite8/8 and fullnative3493total/7skip/3486pass/0fail. PASSING CONTROL only, not device
+reproduction/content parity. Test-only change; no firmware build/upload/device/SD/commit/push; installed
+20a54326… unchanged. Task4.11 playback/Record repair and hardware4.4 acceptance remain open.
+[Capture and control](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-221420-RECORD-PLAYBACK.md).
+
+
+**2026-10-26 — four-stop Record playback control added; hardware dropout remains unconfirmed.**
+221420 user says Record notes play/display early then disappear after4+ODs/commit. Capture shows PLAYING and
+committed-source cursor reads after fourth Stop but lacks exact note output/inventory, so it neither proves
+nor disproves partial Record loss. New actual Track/worker/rolling-playback control queues Record plus4 Stops,
+then emits all25 Record NoteOn/Off identities/ticks once over25bar cycle. Registered focused suite8/8 PASS;
+fullnative3493total/7skip/3486pass/0fail. Test-only change; no firmware source/build/upload/device/SD/
+commit/push. Installed20a54326… unchanged. Playback cutout, physical parity and task4.11/task4.4 acceptance
+remain open; no hardware-failure repair claimed. [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-221420-RECORD-PLAYBACK.md).
+
+
+**2026-10-26 — display hold split: cursor follows the window, content stays retained.** Owner reported the
+piano roll no longer followed the window after P-D. Capture221420 (1,015 `disp_turn` rows) showed 156 retained
+turns, 155 of them `why=hold_gap`, and154 retained while the request had moved; a native moving-viewport case
+excluded the visual slice (`turns=801 published_turns=1 rekeys=0` — the continuation key has no viewport).
+Fix: `syncDetailedPaintWindow` publishes the viewport from the request every turn while the hold keeps the
+retained interval for content only, and `drawPianoRoll` maps the roll in the live viewport. New oracle
+`test_hold_keeps_retained_content_but_draws_the_requested_viewport` (RED->GREEN, mutation-proved) plus one
+owner-approved amendment to the existing moving-window control's viewport clause (content clauses untouched).
+Controls pass, bound6/6, display22/22, handoff20/20 with source10/10 stop4/4 empty3/3, full
+native3491/7skip/3484pass/0fail, build SUCCESS at RAM1 code389,864+padding3,352/34,880. On-glass
+confirmation and the hold's empty-bar hole remain open; no upload/SD/commit.
+
+**2026-10-26 — UndoCollection stop park repaired locally; retarget content loss still open.**
+Device204731 held the deferred overdub stop at phase8 while thirteen Stop presses were refused; a refused
+session-identity collection reported "collected" but the phase gate requiredCold, which only entry preparation
+sets. Retention is now bounded per job and exhaustion takes identities from the interval's own session-exit
+receipt. RED→GREEN park fixture plus successor-input control; retention contract preserved; fullnative3491/
+7skip/3484pass/0fail in the pre-capacity-bump tree, capture build SUCCESS at unchanged RAM1, ring+32B external.
+HEX unchanged; no upload/device/SD/commit/push. The "single note" half reproduces (transport retarget before
+PrepareTransfer commits no pass; orderedEventCount0 from a6row frozen source) and is NOT fixed: task4.16.
+A concurrent session was editing include/Track.h (FIFO4→8, custody5→9, pin33,088), so two full-run failures
+outside this scope are that in-flight change, not this repair.
+[Evidence](openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-204731-STOP-PARK.md).
+
+
+**2026-10-26 — live undo contract revised; H1 ratified, no firmware change.**
+Owner chooses preserve sounding NoteOn/reservation through its actual NoteOff; closed live rows are undo unit.
+Contract now forbids blanket predecessor refusal and requires Track-owned no-partial-mutation preflight,
+redo invalidation and committed-base qualification. Production fixture/resource proof remains before source
+mutation; no claim the capture deleted stored Record content or that undo caused FIFO stall. No tests/build/
+device/SD/reset/commit/push; installed20a54326… unchanged. No external assessor verdict: pinned model
+unavailable. [Revised contract](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-193036-UNDO-PLAN.md).
+
+
+**2026-10-26 — prior display dropout owner-confirmed solved; 193036 double-press live undo investigated.**
+Installed20a54326… unchanged. Double107.360 routes to live session undo/depth0, not global Record undo;
+frame315→53 immediately afterward. TrackUndo unconditionally clears held display base; Loop live undo
+also clears canonical capture without reconciling Track pending notes/live staging/reservations/credits
+or overlap state; redo restores only Loop rows. Concrete cross-owner inconsistency; direct Record-job
+invalidation/storage deletion and exact cause of subsequent FIFO4/headphase1 stall not established.
+No drop-in coherent Track reset/restore API found. Repair needs explicit held-note/overlap/redo and
+admission-failure contract plus production-path fixtures before firmware, not broad reset or display-only
+mask. No source/tests/build/upload/device/SD/reset/commit/push changes; task4.14 remains open/not ready.
+Manual display feedback is not full pixel/parity/timing acceptance. [Undo investigation](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-193036-UNDO.md).
+
+
+**2026-10-26 — approved predecessor-display continuity image 20a54326… installed.**
+Exact HEX `20a54326d086ca81a939b44bec893b5b114c64f5b96b52522b1cfcc7716894a0`: CLI2.3
+Programming/Booting exit0,134-baud HalfKay entry. Independent Teensy MIDI USB16C0:0489, fresh
+crash0/loadok and initial STOPPED,pending0,queue0/4 verified; serial capture closed normally.
+Replaces6aecc06e…; supersedes NOTuploaded below, not hardware pixel/parity/timing acceptance.
+No recording stimulus/clear/quarantine or explicit SD mutation/commit/push. Separate later
+session_exit_handoff_full Stop-capacity failure remains unresolved.
+[Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-185957-DISPLAY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — 185957 earlier-overdub display dropout reproduced and source-fixed, not uploaded.**
+Third/fourth Starts drop23/11frame notes at unchanged0/16bar viewport, matching prior overdub additions;
+evicted manual capture is not exact identity/deletion proof. Actual worker fixture reproduces loss:
+predecessor cleanup retained closed previews in sealed tier, skipped live-successor session close,
+then later Start cleared that tier before cache/root coverage. Cleanup now reuses retired-display
+handoff without closing/resetting successor. Original/final-mutation RED→GREEN exact NoteIds across
+third/fourth Starts; focused298/298, fullnative3490total/7skip/3483pass/0fail, capture build PASS at
+unchanged RAM1; one review APPROVE. HEX`20a54326d086ca81a939b44bec893b5b114c64f5b96b52522b1cfcc7716894a0`
+NOTuploaded; installed6aecc06e… unchanged. No device/SD/reset/commit/push. Later fifth Stop reaches
+session_exit_handoff_full: separate retained-Stop capacity blocker still open; hardware pixels/parity/
+timing unqualified. No stored-content deletion established, no queue/publication/MIDI change.
+[Display regression](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-185957-DISPLAY.md).
+
+
+**2026-10-26 — approved private-closure repair image 6aecc06e… installed.**
+Exact HEX `6aecc06ef82bf07f2d94bf2bf6f06819e1fa2db2d748cf28baa0c915c8503594`: CLI2.3
+Programming/Booting exit0,134-baud HalfKay entry; independent Teensy MIDI USB16C0:0489, fresh
+crash0/loadok and initial STOPPED,pending0,queue0/4 verified. Serial capture closed normally.
+Replaces16b53275… and supersedes NOTuploaded below. No content test/clear/quarantine or explicit
+SD mutation/commit/push. Conditional closure repair installed; captured OrderDenied trigger and
+hardware stall/MIDI acceptance remain unresolved.
+[Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-175905-ORDER.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — stopped Record OrderDenied confirmed; conditional closure-persistence defect repaired locally.**
+175103 fills FIFO4/4 after three stopped successors; fourth live overdub cannot stop. 175905 stopped query
+shows qualified Record interval1 prep13/reason2 (OrderDenied),1120rows/5chunks/append1; transport retarget
+does not retire terminal head. Exact first failed guard/held-at-stop count remain UNKNOWN. Source trace
+found closure append lacked ephemeral seal:256 held closures queue a private chunk, so order rejects it.
+257-held-note production fixture RED(Queued)→GREEN with exact514rows; balanced append-local seal fixes
+this conditional defect, NOT a proven attribution/fix of the captured hardware stall. Shared104/104,
+fullnative3489total/7skip/3482pass/0fail; capture build PASS, RAM1 unchanged3352padding/floor840.
+One focused review APPROVE. HEX`6aecc06ef82bf07f2d94bf2bf6f06819e1fa2db2d748cf28baa0c915c8503594`
+NOTuploaded; installed16b53275… unchanged. No device/SD/reset/commit/push; hardware acceptance open.
+[Diagnostic and repair evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-175905-ORDER.md).
+
+
+**2026-10-26 — approved partial routing-fix/diagnostic image 16b53275… installed.**
+Exact HEX SHA-256 `16b5327562b4e14ed71558f94e971be953fdcddb2923fc046ae5ea35f02749b9`:
+Homebrew CLI 2.3 Programming/Booting, retained exit 0. Independent Teensy MIDI USB 16C0:0489,
+fresh crash=0/load=ok and initial STOPPED,pending=0,queue=0/4 verified. Later Python reader PID 28230
+acquired serial; left untouched, no reconnect or final-state assertion. Replaces f1c84f3a; supersedes
+pre-upload statements below. Later-start routing is source-fixed; Record stall/MIDI cutouts remain
+unresolved. No content stimulus/clear/quarantine or explicit SD mutation; no commit/push.
+[Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-162915-REENTRY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 —162915 partial repair: later button Start fixed; Record stall/MIDI cutouts NOT fixed.**
+Capture A stops61.013s rounded17664, B starts62.039/stops66.523; many recognized later presses vanish
+into empty-slot route, A never publishes and stays CanonicalOrder2 for11439grains. Query's A+1-only
+interval term caused later-start misclassification; now any newer interval uses same qualified private
+Record base with unchanged admission/identity/cap checks. Actual button3successor regression RED→GREEN,
+handoff20/20. Native long chromatic/rounded-stop/live successor preparation completes: passing control,
+not hardware-stall reproduction. No normalization-policy/guard/rebind edits. Added stopped-only
+SESSION_CAPTURE request`#STOP_RECORD` through existing!STOP_STATUS for exact bound/phase/denial/output
+attribution. Pure reads/no newstate or ring events. Focused150/150, fullnative3488total/7skip/3481pass,
+capture build SUCCESS, RAM1 unchanged96,192/389,864+3,352/34,880 (floor840). One focused review APPROVE
+for routing/diagnostic only. HEX`16b5327562b4e14ed71558f94e971be953fdcddb2923fc046ae5ea35f02749b9`
+NOTuploaded; installedf1c84f3a unchanged. Live parked-role evidence is missing blocker; recorded MIDI
+cutouts remain unresolved. No device/SD/reset/commit/push; hardware acceptance open.
+[Partial result and next evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-162915-REENTRY.md).
+
+
+**2026-10-26 — display rounded-stop/tail imagef1c84f3a programmed; boot-start verified, serial contention limits postflight.**
+Exact approved HEX SHA-256`f1c84f3a5affcc566c87782fbc180161d2211256e2e8ec0ee932b77414f22a78`
+rechecked; Homebrew CLI2.3 full Programming/Booting exit0,134-baud HalfKay entry. Independent USB
+Teensy MIDI16C0:0489, fresh crash0 and display setup/performance initialization retained. Serial read
+interrupted while another Python readerPID11714 acquired port; left it alone, no second flash.
+No complete loadok/STOP_STATUS response retained, so final transport/load/drain state unverified.
+Installedf1c84f3a replaces30c99b45. No content stimulus/clear/quarantine or explicit SD mutation
+commanded; no commit/push. Physical display/pairing/parity/timing/memory gates remain open.
+[Upload evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-160416-DISPLAY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 —160416 display delay/start-frame artifacts reproduced and corrected locally; not uploaded.**
+Owner confirms MIDI continues on30c99b45; rounded Record17560→17664 leaves valid tail viewport5272,
+held after overdub wraps into firstbar. Complete Record preview now permits coherent ordinary follow;
+without one, held-window fallback remains. Live-tail paint uses producer only, never borrowed predecessor;
+stopped open overlays project locally to qualified job closure before intersection/upsert. Native REDs:
+window0vs6024, frozen Record endpoint1400→1440, stopped overdub224→288. All3GREEN; display21/21,
+related131/131 incl playback6/6; final fullnative3486total/7skip/3479pass/0fail. One focused review APPROVE.
+Capture build SUCCESS, RAM1 unchanged96,192/389,864+3,352/34,880, floor840 unchanged.
+HEX`f1c84f3a5affcc566c87782fbc180161d2211256e2e8ec0ee932b77414f22a78` NOTuploaded;
+installed30c99b45 unchanged. No playback edits/newstate/buffer/budget, device/SD/reset/commit/push.
+Native endpoint regressions support transient geometry cause, not full physical pairing/pixel acceptance.
+Original content/timing/memory/first-bar/companion gates stay open. [Evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-160416-DISPLAY.md).
+
+
+**2026-10-26 — playback Stop/publication image30c99b45 installed on owner approval; boot verified.**
+Exact SHA-256`30c99b4573d9d023987b9a93667bf3675dea3ea9e08f0ddfc190efd48e919255` rechecked;
+Homebrew CLI2.3 Programming/Booting exit0,134-baud HalfKay entry without PROGRAM press. Independent
+Teensy MIDI USB16C0:0489, fresh crash0/loadok and post-boot STOPPED,pending0,queue0/4 verified.
+Installed image replaces7a5b42bb. No content stimulus, clear/quarantine or explicit SD mutation commanded;
+no serial contention observed. Sustained recorded-playback hardware acceptance remains open; upload/
+boot is not content/timing qualification. No commit/push. [Upload evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-152128-PLAYBACK.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 —152128 recorded-MIDI regression reproduced and corrected locally; not uploaded.**
+Owner confirms display bars2–15 now present, but recorded notes stop after first overdub Stop.
+Capture output regular89–95s then absent96–100s, Stop95.630/publication95.759s. Real nonempty-B
+Stop→A-publication integration found two playback-owner defects: canonical bridge-base setup's
+unconditional shared-builder discard resets the completed frozen ready; rolling maintenance also
+retires same-token ready/build solely on committed revision advance. Protected-destination discard
+and interval-qualified original-stamp retention correct both without new state/reader/budget.
+Each original behavior independently red-proved with final normalized-geometry fixture. Default
+integration6/6 includes PLAYING and later overdub, exact recorded events every tick across5bars;
+display18/18 retained, focused393/393, fullnative3483total/7skip/3476pass/0fail. One focused review
+APPROVE. Capture build SUCCESS, RAM1 unchanged96,192/389,864+3,352/34,880, floor840 unchanged.
+HEX`30c99b4573d9d023987b9a93667bf3675dea3ea9e08f0ddfc190efd48e919255` NOTuploaded;
+installed7a5b42bb unchanged. No device/SD/content/reset/commit/push. Full overlay/hardware parity,
+physical timing/memory, first-bar supply and companion-fallback acceptance remain open.
+[Evidence and coverage](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-152128-PLAYBACK.md).
+
+
+**2026-10-26 — display-retention image7a5b42bb installed on owner approval; fresh boot verified.**
+Exact SHA-256`7a5b42bb5887f43e49ba4d97eaf5e0b54708e4ab5e49dfe5aa3888068f9358d1` rechecked;
+Homebrew CLI2.3 completed Programming/Booting with retained exit0.134-baud request reached HalfKay,
+no PROGRAM press. Independent USB16C0:0489 Teensy MIDI and fresh`boot_reset,crash=0`/`BOOT,load,ok`
+verified. Post-boot status STOPPED,pending0,queue0/4. No content stimulus, clear/quarantine or explicit
+SD mutation commanded; no serial contention observed. Installed image replaces1131e857. Physical
+display/content/timing/memory acceptance remains open; no playback/companion fix claimed, no commit/push.
+[Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-DISPLAY-NOTEOFF-UPLOAD.md).
+
+
+**2026-10-26 — long-Record stop/NoteOff display failures reproduced and corrected in source; not uploaded.**
+Owner clarified that bars2–15 vanish after Stop and incoming notes disappear at NoteOff until Record
+publication; earlier frame-count growth did not prove note retention. New production paint REDs:
+truncated-stop source window6328 instead of0, and closed overdub NoteId missing after a painted open
+hold. Record Stop now O(1)-moves its existing preview into the existing job; qualified preview-base
+gather can replace a mismatched old tail window coherently, with final-geometry clipping and frozen
+closure endpoints. No private committed-currency claim, raw MIDI gather or new buffer/state. One focused
+review found retired-preview reuse and held-endpoint1535vs1400; both red-proved, fixed and retested.
+Display18/18 includes exact first16bar identities, closed NoteOff retention,5Record cycles and before/
+after-publication held geometry. Final fullnative3481total/7skip/3474pass/0fail; capture build SUCCESS:
+RAM1 variables96,192/code389,864+padding3,352/locals34,880, floor840 unchanged,2,512B margin.
+Final HEX`7a5b42bb5887f43e49ba4d97eaf5e0b54708e4ab5e49dfe5aa3888068f9358d1` NOTuploaded;
+installed1131e857 unchanged. No device/SD/reset/commit/push. Dynamic retained-preview capacity and
+physical pixels/content/timing remain device gates. First-bar playback supply and companion fallback
+are unchanged, not claimed fixed. [Execution and review repairs](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-DISPLAY-NOTEOFF.md).
+
+
+**2026-10-26 — manual142534 capture: immediate Start/multi-bar/display improvements observed, two failures remain.**
+`session_20261026_142534.log` later take stops250.910729s, recognized overdub press251.920s starts
+immediately (`manager_done666us`, begin_capture304us), before Record undo publication260.343s.
+Outgoing channel8 NoteOns occupy bars2–6 at16/bar; composed display276→321 while visual cache0.
+Remaining: `First-record bar-1 playback binding unavailable` at250.911s and first retained output
+only at tick768/252.526535s; transport-stop finalizers still emit `companion path stalled; raw pass only`
+(279.366/281.368/283.328s), with earlier `causal_base_superseded` outcomes. No exact accepted-content
+loss claimed without inventories. Evidence suffers224+3 Tier-A evictions and30669+13637shed rows;
+absence after264.077s is not a silence/freeze oracle. No embedded boot/hash, no full hardware acceptance.
+No firmware/test/device action in this inspection; hardware gate stays open.
+[Capture findings](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-142534-CAPTURE.md).
+
+
+**2026-10-26 — owner-approved regression image1131e857 installed; fresh boot/USB verified.**
+Rechecked exact HEX SHA-256`1131e857d6f5a578640095afa3f8942d0e06a6989675cfdc4096cfce22766128`;
+Homebrew Teensy Loader CLI2.3 found HalfKay via134-baud request, completed Programming and printed
+Booting. Numeric loader exit was not retained by detached launch; completion is independently backed
+by fresh serial`boot_reset,crash=0`/`BOOT,load,ok` and USB16C0:0489 Teensy MIDI. Initial status was
+STOPPED,pending0,queue0/4. Later postflight read was interrupted while another Python process owned
+serial and controller gestures arrived; left that session alone, no claim of final stopped/drained state.
+No content stimulus, clear/quarantine or explicit SD mutation commanded. Hardware behavioral/timing/
+memory acceptance remains open; no commit/push. [Upload receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-UPLOAD.md).
+
+
+**2026-10-26 — Record→overdub production regressions corrected; native/build green, device gate open.**
+The actual button/manager route attempts ordinary admission against the qualified private Record base;
+only resource denial retains intent, with all existing staging/memory/source checks. Immediate ingress
+oracle now runs in default handoff19/19. Frozen Record reader preservation includes OVERDUBBING under
+unchanged receipt/epoch/storage/coverage checks; new default playback integration4/4 verifies exact
+Record events across four subsequent bars and stale/Stop/epoch cancellation (empty live-overlay oracle,
+not a nonempty/full-wrap/device parity claim). Display root cause reproduced: borrowed B preview masked
+live C,4expected/3observed. Populated live preview now answers its accessor; detail/overview also read
+all identity-qualified job previews through the bounded Track stop ring, without new state or command-
+edge reconstruction. One focused review found B lost at C Stop and overview density lost at first C note;
+both red-proved, corrected and retested. Final fullnative3477total/7skip/3470pass/0fail; display14/14,
+shared102/102. Final capture build SUCCESS, RAM1 variables96,192/code389,736+padding3,480/locals34,880,
+floor840 unchanged,2,640B margin. Final HEX SHA-256
+`1131e857d6f5a578640095afa3f8942d0e06a6989675cfdc4096cfce22766128` NOTuploaded.
+Both active OpenSpec changes validate strictly; whitespace clean; budget pins unchanged. No hardware,
+reset, device-content/SD, commit or push. Original dirty work preserved on
+`feature/unified-rolling-playback-path`. Existing device timing/parity/PSRAM/stack gates remain open.
+[Execution, review repairs and coverage limits](../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
+
+**2026-10-26 — Record→overdub capture investigation: immediate admission remains RED; frozen reader lifetime mismatch found (no firmware change).**
+Inspected bounded excerpts and timestamp summaries of `captures/session_20261026_125626.log` on
+`feature/unified-rolling-playback-path`. Later Record stops at2387.874s (length24576); five subsequent
+short presses precede the retained overdub Start at2394.879s, after Record undo publication at2394.751s.
+The next scheduled short press stops that new overdub at2395.182s. Current production route still calls
+`retainOverdubStartAfterRecord`; `driveAcceptedInteraction` waits for the Record job. Re-ran
+`IMMEDIATE_HANDOFF_CASE=start pio test -e native -f test_immediate_capture_handoff`: expected behavioral
+failure at `test_immediate_start_accepts_input_before_record_publication` ("B ingress waits for private
+Record publication"), runner additionally reports SIGHUP. Default handoff18/18 + visual controls4/4 PASS;
+that default selection omits the immediate-start acceptance case, so green totals do not prove the workflow.
+Focused read-only playback tracing found `serviceRollingPlaybackWindow` preserves the frozen Serving frame
+only for `isPlaying()` and cancels it for OVERDUBBING, while `resolveQualificationPlaybackSourceForTurn`
+explicitly supports that frozen reader during overdub and requires the Serving frame for current-view reuse.
+Capture is consistent: later take emits beyond bar1 before overdub (54 channel8 NoteOns in2387.874–2394.780s),
+then only3 through2412.500s, last at tick3072. Exact device causality remains unproven: no build identity in
+this log, no fresh uninterrupted hardware reproduction, and early `RING,tier_a_evicted,16971`/`RING,shed,40331`.
+Display symptom observed: visual cache0 and retained frame279 (briefly280) despite continuing input; precise
+overlay/source failure UNKNOWN. Later `causal_base_superseded`/raw-pass-only warnings are separate evidence,
+not proof of lost content. No firmware/build/upload/device/SD/commit/checkoff; existing dirty work preserved.
+
+
+**2026-10-25 — P-D applied: visual reconstruction is bounded; all four packets are green natively.**
+C5.2a's window-scoped alternative: a whole-loop, pass-local continuation capped at8 rows per step
+(measured turns=801/max_units=8 for1584 rows), never selecting the whole-pass resolver above the512-event
+cap, retaining the qualified frame and discarding on any key change. `IMMEDIATE_VISUAL_CASE=bound` flipped
+RED→GREEN (4/4) with controls4/4; handoff18/18, fullnative3469/7skip/3462pass/0fail. RAM1 restored WITHOUT
+re-basing the floor: two demonstrably cold LSV1 load-path helpers moved to flash via the TU's existing
+LSV1_IO_MEM — variables96,192 / code389,672 + padding3,544 / locals34,880, floor840 unchanged
+(`ram1_budget.json` diff empty, 2,704B headroom). Device gates NOT RUN; `IMMEDIATE_HANDOFF_CASE=start`
+remains P-A's manager-route RED. No upload/device/SD/commit; installed74392e15 unchanged.
+[Execution](../../openspec/changes/immediate-record-overdub-handoff/evidence/PD-VISUAL-EXECUTION.md).
+
+**2026-10-25 — P-B applied: the private Record predecessor is B's overlap source.** P-B (contract C3)
+adds a distinct non-committed `Loop::SourceOrigin::PrivatePredecessor` (published revision 0/null
+identity; no committed reader consumes it), a 32-unit resumable cursor stepped one grain per turn, retained
+hold intents, and supersession on any identity or playbackRevision move. `IMMEDIATE_HANDOFF_CASE=source`
+is GREEN (10/10, origin=private_predecessor, decisions=2, staged=64); stop4/4 and empty3/3 stay green;
+focused18/18; full native3469/7skip/3462pass/0fail; build SUCCESS at RAM1 96,192/392,280+936/34,880.
+`sizeof(Loop)`1848 (+64), external: +6,720B per allocated Track; linker gained two .rodata carve-outs
+(documented pattern) to avoid a +4,096 DTCM snap. One focused review found six defects including a HIGH
+seal-deadline hole that silently dropped B's overlap decision after publication; all six fixed and
+retested with four new cases. Owner amended both clauses (DEC-162 — bounded private-source progress and its two-edge deadline): one
+bounded grain per eligible turn at the reachable maintenance wakeup with no catch-up loop, and
+materialisation-or-denial before the pending set leaves the Loop (seal edge plus the stop-admission swap). Device gates NOT RUN; no upload/device/SD/commit; installed74392e15
+unchanged. [Execution](../../openspec/changes/immediate-record-overdub-handoff/evidence/PB-SOURCE-EXECUTION.md).
+
+**2026-10-25 — P-C applied: successor-safe empty cleanup and causally scoped undo.**
+DEC-160 — predecessor-local finalization is implemented. `UndoEntry` carries `uint64_t interval`
+(132→144 target); `eraseUndoEntriesForSlot` prunes only `interval <= bound`; the job-owned
+`pushRecordPassAdded` stamps and prunes with `job.interval`; the inline 3-arg route stamps0
+(unqualified, still prunable). New read-only `Track::hasLiveOrSealedSuccessorForSlot` gates
+`stepDeferredRecordEmptyResult`, so an empty Record take no longer runs the global
+`resetPassTimeline`/geometry writes while a live or sealed successor owns the slot: B keeps its rows,
+geometry768 and its pending change, and A releases only its own custody. The emptied-take policy is
+deferred, not dropped — `emptyGeometryOwed[slot]` plus `settleEmptyRecordGeometry()` apply it once the
+Track owes nothing, so a successor that also ends empty still settles to geometry0/EMPTY. Results:
+`IMMEDIATE_HANDOFF_CASE=empty` GREEN (3/3), default handoff9/9, full native3460/7skip/3453pass/0fail,
+shipping build SUCCESS at RAM1 variables96,192 / code392,248+padding968 / locals34,880 (net unchanged);
+external ring29,600 (+64 undo publication, +64 geometry debt). One focused review found the dropped
+policy plus two latent undo-field traps; all three fixed and retested. P-B private source and P-D
+visuals remain separate RED; device PSRAM/stack/allocator/timing NOT RUN. No upload/reset/device/SD/
+content/commit/push; installed74392e15 unchanged.
+[Execution receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/PC-FINALIZATION-EXECUTION.md).
+
+**2026-10-25 — P-A step 2 applied: additive staging roles make an early successor Stop admissible.**
+DEC-161 — additive frozen staging roles records the owner's explicit "yes A". `captureStagings` now
+holds six independently leased roles (five frozen + one live); `presentations[slot]` became a 16-byte
+`{interval, custodyIndex}` handle and `custodies[5]` own the extents, so B and C can seal while A is
+private while ONE serialized canonical writer/output remains. Closure writes only the stopped
+interval's rows; surplus roles return to the pool when the Track owes nothing, so the footprint does
+not scale with recorded slots. Measured target:62,004 per role, **+248,016** over the two-role
+baseline during the A/B/C overlap (the approved+124,008 covered four roles; the contracted next Stop
+needs five frozen) plus+10,448 inline metadata per allocated runtime; `CaptureStopJobs`29,472.
+`IMMEDIATE_HANDOFF_CASE=stop` is **GREEN** (input after B's Stop refused, A's64 rows unchanged,
+A/B/C drain serially with3 undo entries); P-A-2 coexistence GREEN; focused256/256, full native
+3459/7skip/3452pass/0fail, shipping build SUCCESS at unchanged RAM1 pins (96,192/392,120+1,096/34,880);
+one focused review APPROVE, its one low-severity stale-receipt finding fixed and retested. Task2.2.14
+checked;17of22. P-C empty-geometry RED, P-B source, P-D visuals and all device gates (PSRAM head-room,
+stack high-water, allocator, timing) remain open. No upload/reset/device/SD/content/commit/push;
+installed74392e15 unchanged. [Execution receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/PA-STAGING-LEASE-EXECUTION.md).
+
+**2026-10-25 — P-A step 2 blocked: the constraint is frozen staging (≈+124 KB), not the finalization lease.**
+Starting task2.2.14 falsified the assumption that converting `captureStopOwner`/canonical-output into a
+per-interval receipt would make an early Stop admissible. The blocking resource is the staging chain:
+`RuntimePlaybackViewSet::captureStagings` holds exactly **two** `CaptureAdmissionStaging` roles (one live, one
+frozen), each ≈62,004 target bytes (2,612 metadata + 2,048 rows); a sealed interval keeps its frozen role
+through canonical ordering, and the live role is what lets a successor *record*. Hence a successor can record
+after a Stop but cannot *stop* while the predecessor is unfinished — the per-track gate is correct for the
+resources the firmware has. The trace needs **four** roles (three frozen + one live) = **+2 roles ≈ +124,008 B
+external per capturing slot**, or a design where the sealed range carries the reservations the frozen role
+holds. CUSTODY.md had listed "independent frozen staging strategy" as an unknown term; C1.4 and C2.1 then
+failed to price it, which is now recorded as CONTRACTS **C1.4a** plus a corrected C2.1 row. **No admission code
+was written.** Options: A add roles (additive, keeps closure accounting, recommended) or B move reservations
+(deeper, touches exactly-once closure). Task2.2.14 is blocked on that choice; no code, upload, device or SD
+action this slice; installed74392e15 unchanged; nothing committed.
+[Staging finding](../../openspec/changes/immediate-record-overdub-handoff/evidence/PA-STEP2-STAGING.md).
+[Contracts](../../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+
+**2026-10-25 — P-A step 1 applied: C1 custody receipt and slab landed at zero RAM1 cost.**
+`Track::CaptureStopJobs` now carries the C1.1 interval-keyed apparatus: `CustodyState`, the five-bit
+`CustodyObligation` mask, `CustodyReceipt` and `custodies[5]` (`kCustodyCapacity = 5` from the cap
+derivation). `presentations[slot]` stays authoritative and **no call site reads the slab**, so behaviour is
+unchanged by construction. The ring's reviewed size pin rejected the change first, as designed; relaxed to a
+range only long enough to read the real size from the preserved ARM probe and then restored exactly:
+**29,704 → 30,304 B (+600 = 5 x 120 measured)**, receipt120, host 42,016→42,816. Post-link RAM1 is
+**identical** to baseline (variables96,192 / code392,120 + padding1,096 / locals34,880, floor840), so the
+slab is external-only exactly as C2.1 predicted; full native3,454/7skip/3,447pass/0fail. Tasks2.2.13
+complete, 16of22; the C2.4 link/RAM1 half of2.2.8 is delivered and its device-bound half (stack high-water,
+allocator execution, graph occupancy) stays open. **P-A step 2 is re-scoped**: making an early Stop
+admissible needs the single `captureStopOwner`/canonical-output lease converted to a per-interval
+admission receipt, which is its own packet run (task2.2.14), not a predicate edit. No upload, device, SD or
+content action; installed74392e15 unchanged; nothing committed.
+[P-A execution](../../openspec/changes/immediate-record-overdub-handoff/evidence/PA-CUSTODY-EXECUTION.md).
+[P-A packet](../../openspec/changes/immediate-record-overdub-handoff/packets/P-A-CUSTODY.md).
+
+**2026-10-25 — P-D step1 attempted and reverted: the prepared-index producer is not live-lane-safe.**
+Wired `DeviceGateSession` to the derived-view lane as planned (C5.2/P-D step1). It compiled and linked at
+**unchanged RAM1 pins** (96,192 / code392,120 + padding1,096 / locals34,880) with full native unchanged at
+3,454/7skip/3,447pass/0fail, but reading the continuation showed the premise was wrong: eleven
+`DeviceGateSession` steps pass `indivisible = true` to `continueSlice`, and those steps are content-sized —
+two whole-index sorts (`sortAndUniqueByNoteId`, `sortTickEventEntriesByTick`) plus whole-vector copies
+(`win`, `ecopy`, dedup, channel index, `state`). `kDeviceGateSliceBudgetUs` is never read by `runOneSlice`,
+so it is documentation rather than a bound. Promoting it would have put whole-pass sorting on the lane that
+carries MIDI input — the exact defect P-D exists to remove, and what C5.4 forbids. **Reverted before
+shipping**: both edited files are byte-identical to `HEAD` (only the pre-existing DEC-158 `Track.h` change
+remains), and the rebuild reproduced the same pins. Recorded as CONTRACTS C5.2a and re-scoped into task
+2.2.12 (bound or replace the indivisible steps, or adopt the window-scoped alternative, before enabling).
+No behaviour change, no acceptance profile moved, nothing shipped, nothing committed.
+[Producer bound](../../openspec/changes/immediate-record-overdub-handoff/evidence/PD-PRODUCER-BOUND.md).
+[P-D packet](../../openspec/changes/immediate-record-overdub-handoff/packets/P-D-VISUAL.md).
+
+**2026-10-25 — DEC-160 ratified: predecessor-local finalization; P-C written; task2.2 complete; implementation NOT started.**
+Owner ratified the undo/lifetime semantics that gated the fourth packet, recorded as DEC-160 — a
+predecessor's finalization is local to its own interval: (1) empty-result cleanup requires no custody
+receipt/live Capture with a later interval for the same slot, else it only releases its own obligation and
+never calls `resetPassTimeline` or writes geometry; (2) finalization uses the job's own `pendingChanges`;
+(3) `UndoEntry` gains `interval` (**132→144 target bytes, +12**) and the prune is scoped to
+`interval <= job.interval`; (4) publication is per receipt and exactly-once via the phase machine, not the
+dirty flag; (5) persistence stays slot-scoped and idempotent with no per-interval receipt. Rejected:
+slot-wide erase plus re-push, cleanup keyed on track-empty, deferring empty cleanup until no successor
+exists, and a per-interval persist receipt. Consequently P-C is specified (two commits, `P-C-1..P-C-5`,
+`CASE=empty` demonstrated RED) and task2.2 — production packet generation — is checked; readiness passes at
+contract level. Nothing is implemented: no acceptance profile moved, and native/build/device fields of all
+four packets remain NOT RUN. Tasks2.2.11 complete; 15of19; only2.2.8 (first-slice pre-flight) and the
+implementation slices remain. Full native3454/7skip/3447pass/0fail unchanged; no firmware, build, upload,
+device or SD action; installed74392e15 untouched; nothing committed.
+[DEC-160](../DECISION_LOG.md).
+[P-C](../../openspec/changes/immediate-record-overdub-handoff/packets/P-C-FINALIZATION.md).
+
+**2026-10-25 — immediate-record-overdub-handoff: packet oracles demonstrated RED; handoff selector segfault fixed.**
+All three ungated packets now carry a demonstrated discriminating assertion: `IMMEDIATE_HANDOFF_CASE=stop`
+exits1 at "B remains live/appends after its requested Stop while A finalizes" with the post-stop producer
+growing2->3, `=source` exits1 at "private predecessor A is absent from B's same-pitch hold source" with
+`participants=0`, and `IMMEDIATE_VISUAL_CASE=bound` exits1 at the whole-pass assertion after the exact
+first-bar content check. Both control suites stay green (4 cases each) so the full native run is
+unchanged. While collecting them a real harness defect surfaced: the handoff suite rejected an unknown
+selector with `TEST_FAIL_MESSAGE` outside `RUN_TEST`, which `longjmp`s to a frame only `RUN_TEST`
+establishes and **segfaulted (exit139)** — a typo'd profile looked like a firmware crash, and the earlier
+"unknown selector exits2" claim was untrue for that suite. Replaced with a printed rejection and exit2;
+the four named profiles still exit1 and the default still exits0. Full native after the fix
+3,454/7skipped/3,447passed/0failed,147.2s — unchanged. Tasks2.2.10 complete; 13of18; task2.2, P-C and2.2.8
+remain unchecked; readiness still gated on the C4.6 undo/lifetime ratification. Test-only change, no
+firmware behavior, installed74392e15, device or SD action; nothing committed.
+[Fixture receipt](../../openspec/changes/immediate-record-overdub-handoff/evidence/PACKET-FIXTURES.md).
+[Packets](../../openspec/changes/immediate-record-overdub-handoff/packets/README.md).
+
+**2026-10-25 — immediate-record-overdub-handoff: three of four G2 packets specified; P-C held at the C4.6 gate.**
+Packets P-A (custody/admission/early-Stop input cut), P-B (private-source preparation with the32-unit cursor
+and the one reachable grain) and P-D (bounded visual continuation via the existing prepared-index session)
+now exist in the four-section G2 form: owner/entry, mutation, fixed-ID oracle cases with per-step expected
+observations, controls, exact commands, two independently buildable commits each, and an all-NOT-RUN
+completion record. Nothing is implemented, fixtured or measured; no acceptance profile moved. P-C —
+successor-safe finalization, undo and empty cleanup — is deliberately unwritten because it changes undo
+and lifetime semantics and therefore needs the C4.6 ratification first; that same gate holds task2.2, so
+production packet generation remains unchecked while three of four packets exist. Ordering and
+independence are recorded (P-B needs P-A's receipt; P-D is independent). Tasks2.2.9 complete; 12of17;
+2.2 and2.2.8 unchecked. No firmware, test, build, upload, device, SD, commit or push action; installed
+74392e15 unchanged; five desired REDs unchanged.
+[Packets](../../openspec/changes/immediate-record-overdub-handoff/packets/README.md).
+[Contracts](../../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+
+**2026-10-25 — immediate-record-overdub-handoff: cap derived (`K = 5`, `R_rec = 5 chunks`); C4.6 is the last gate.**
+The cap question is resolved by separating two quantities that had been conflated: **structural custody
+capacity** (per-Track receipt slots, pure metadata, priced by measurement) from **dynamic body admission**
+(the global512-chunk pool, already asked at each edge). `kCaptureCustodyCapacity = 5` follows from the
+measured receipt/slab plus `K_trace`4 and one receipt still retiring — the metadata tier clears it by a wide
+margin (608 bytes/Track) and the directory tier by5 x1024 bytes, so neither binds. `R_rec` is now declared
+as5 chunks (26,040 bytes) under the existing owner-deferred single-capturing-Track policy. Body admission
+stays dynamic by design: at the dense worst case the capturing Track holds30+5 chunks and the library keeps
+477 of512, which is exactly why no compile-time cap may pre-reserve them. Consequence: `K` no longer
+depends on any measurement, and C2.4 is reclassified as a first-slice pre-flight (RAM1 stack, allocator
+execution/fragmentation, graph occupancy) whose overrun reduces prewarmed custody Tracks — never the
+A/B/C/next-Stop trace. Tasks2.2.7 complete; 11of16; task2.2 production packets and2.2.8 pre-flight remain
+unchecked; readiness is gated on the C4.6 undo/lifetime ratification alone. No firmware, build, upload,
+device, SD, commit or push action; installed74392e15 unchanged; five desired REDs unchanged.
+[Cap derivation](../../openspec/changes/immediate-record-overdub-handoff/evidence/CAP-DERIVATION.md).
+[Contracts](../../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+
+**2026-10-25 — immediate-record-overdub-handoff: C2.4 metadata price measured; receipt is size-neutral; cap value still BLOCKED.**
+Extended the preserved size probe with declaration-only mirrors of the contract types and reran the
+unchanged shipping ARM flags plus host. Control run on the unmodified probe reproduced the published
+table byte-for-byte, so no drift. Measured: `CaptureCustodyReceipt` **120 target bytes** — identical to the
+`CaptureStopPresentation` it supersedes, so the 128-byte candidate box is retired and the receipt is
+size-neutral per interval; custody slab **488** at `K_trace`4 and **608** at `K_reader`5; `UndoEntry` with the
+C4.3 interval field **144** (`+12` from132, alignment-8 rounding), correcting the pre-measurement estimate.
+Charge site is the single external `CaptureStopJobs` object per Track (`prewarmCaptureStopJobs`), so the
+slab costs +4,864 bytes for8 tracks at K5 with no `.bss`/RAM1 growth — but the allocator is
+external-first with an internal-heap fallback, which a cap may not assume away. Consequence: the metadata
+tier is **not** the cap's binding constraint; the512-chunk pool condition is. `kCaptureCustodyCapacity`
+stays absent, no capacity or timing is claimed, and the backfill keeps allocator/fragmentation, RAM1 stack
+high-water (720-byte job on the retirement lane), target allocator execution and `R_rec` open. Tasks2.2.6
+complete; 10of15; task2.2 production packets and 2.2.7 cap value unchecked. No firmware, test, build,
+upload, device, SD, commit or push action; installed74392e15 unchanged; five desired REDs unchanged.
+[Price annex](../../openspec/changes/immediate-record-overdub-handoff/evidence/CONTRACT-PRICE.md).
+[Contracts](../../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+
+**2026-10-25 — immediate-record-overdub-handoff: five production contracts specified; readiness narrowed; still BLOCKED.**
+New contracts artifact fixes owner, fields, transitions, denial tokens, work units, cancellation and
+independent oracles for independent sealed custody/early Stop (C1), total reserves and derived cap (C2),
+private-source preparation and semantic deadline (C3), successor-safe undo/empty cleanup (C4) and a
+reachable bounded visual continuation (C5). No capacity, timing or behaviour is claimed: C2's cap value
+stays BLOCKED on the target allocator/stack/RAM1 measurement and C4's undo/lifetime change still needs
+the C4.6 ratification. Tasks2.2.1–2.2.5 complete; 9of13 overall; task2.2 production packet generation
+remains unchecked. Contract evidence cites the real obstacles: presentation custody is one record per
+slot so an early Stop cannot reuse the predecessor's extent; the whole-pass resolve in the visual slice
+is the only shipping path because the prepared-index producer is SESSION_CAPTURE-only and
+selected-clean-track gated; resetPassTimeline and the slot-wide undo erasure are the two destructive
+successor hazards. No firmware, test, build, upload, device, SD, commit or push action; installed74392e15,
+device content and the five desired acceptance REDs are unchanged. DEC-159 remains direction;
+DEC-158 remains installed behavior. Nothing shipped; delivery tracking unchanged.
+[Contracts](../../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+[Readiness](../../openspec/changes/immediate-record-overdub-handoff/evidence/READINESS.md).
+
+**2026-10-25 — immediate-record-overdub-handoff P1 proof applied; firmware readiness BLOCKED.**
+Production-path Start and early-Stop counterexamples, private-source and empty-geometry REDs,
+and background visual whole-pass RED retained separately from GREEN controls. Full default
+native3454total/7skip/3447pass/0fail. Reproducible host/ARM ABI and native allocator probes pass;
+candidate custody128target bytes excludes directories/tails/bodies/staging and unknown reserves,
+not a supported cap.4of8OpenSpec tasks complete; lifetime/source/visual proofs partial.
+Exact custody/release/closure protocol, total reserve/cap, private-source deadline, successor-safe
+undo/empty continuation and bounded visual producer remain blockers. No production packets,
+firmware behavior change, shipping build/upload/reset/device/SD/commit/push in this packet;
+installed74392e15 unchanged. DEC-159 — immediate first-overdub sealed custody remains direction;
+DEC-158 — post-Record retained intent remains installed behavior. One proof review corrected
+persistence wording to dirty-marking, not exactly-once admission. Nothing shipped.
+[Readiness and evidence](../../openspec/changes/immediate-record-overdub-handoff/evidence/READINESS.md).
+
+**2026-10-25 — new OpenSpec immediate-record-overdub-handoff proposed/investigated; no code applied.**
+Owner rejects publication-delayed first overdub and approves measured per-interval sealed custody
+inside existing Track. Capture121228 shows8.848s Record-stop→overdub plus independent135–144ms
+visual reconstruction. Existing one per-slot range/shared canonical owner prevents early B Stop;
+FIFO depth is not storage capacity. New proposal,2spec deltas,design,tasks and investigation written,
+strictVALID/4of4planning artifacts complete/linksPASS. Host range metadata112bytes only; target
+cap/body/tail/retirement price and source/visual continuation contracts remain firmware blockers.
+Next executable packet is test/measurement proof of A private→B input/Stop→C input/Stop→late A,
+not guard removal. DEC-159 records approved direction; DEC-158 remains installed behavior pending
+replacement. Proposal workflow stops before Apply; installed74392e15 and existing dirty source
+unchanged, no build/upload/device/SD/Git action. [New item](../../openspec/changes/immediate-record-overdub-handoff/proposal.md).
+
+**2026-10-25 — post-Record handoff image uploaded; boot verified.** Owner-approved shipping
+HEX74392e15… programmed via explicit Homebrew CLI2.3: HalfKay/Programming/Booting/exit0;
+hash unchanged. Fresh crash0/loadok/setup complete and USB16C0:0489 Teensy MIDI verified.
+Pre/post managed two-Stop/drain receipts complete2/oktrue/persistence idle; board stopped.
+No record/overdub test, clear/quarantine or manual SD action. Installed74392e15 replaces01f70896.
+Upload/boot PASS only; one-press response/device timing and prior display/family gates remain open.
+Normalization delay unchanged. [Upload receipt](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-25-post-record-overdub/UPLOAD.md).
+
+**2026-10-25 — post-Record overdub intent repaired locally; new image NOT uploaded.** The user-approved
+three steps are complete: private Record short press no longer falls into slot mute; existing32-byte
+Track Start latch retains/coalesces intent and retries ordinary manager admission after publication,
+without another press or bypassing safety. Clear/slot exit/Stop/forced reset/replacement/empty cancel;
+track focus does not retarget. Review found Start holding final Record geometry: fixed query to wait
+on actual jobs/accepted Stop only; denial/master-length regression RED→GREEN. Shared102/102;
+fullnative3446total/7skip/3439pass/0fail. Shipping buildSUCCESS, RAM1variables96,192/code392,120+
+padding1,096/locals34,880; no rebase, latch/Track/runtime field sizes unchanged. HEX74392e15….
+Normalization measured7.905s/1,411calls within8.228s stop→publication; small bounded work plus
+service spacing, not permanent stall.1357 telemetry is slack crossings, NOT progress. Second-order
+pass optimization is a candidate, not implemented; immediate ingress/latency improvement not claimed.
+No upload/device/SD/Git action; installed01f70896… unchanged. Existing display/undo/CanonicalTail
+and family-removal gates remain open. [Packet](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-25-post-record-overdub/EXECUTION.md).
+
+**2026-10-25 — approved three-issue shipping image uploaded; boot verified.** Installed HEX01f70896…
+with explicit Homebrew Teensy Loader CLI2.3 (HalfKay, Programming, Booting, exit0); exact hash
+unchanged before/after. Managed no-content preflight and post-upload two-Stop/drain receipts both
+complete/drains2/oktrue. Fresh boot captured crash0/loadok/setup complete; USB16C0:0489 Teensy MIDI.
+Board left stopped. No content stimulus, clear, quarantine or manual SD action; normal restore/drain
+only. Upload/boot PASS is not33-bar/stop/OLED qualification; CanonicalTail phase5 prerequisite remains
+unknown and repair/family-removal gates stay open. [Upload evidence](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/UPLOAD.md).
+
+**2026-10-24 — three reported playback issues: local repairs verified; device/CanonicalTail gate open.**
+Capture `session_20261024_231958.log` disproves the proposed channel collision: tap expiry logs1-based
+Ch16, dispatch logs0-basedCh15; `handleToggleRecord` itself chooses playback on a stopped track.
+Repaired the reproduced stop bridge gap: final reserved preparation grain revalidates the live ledger
+and enters existing atomic publication without yielding; no safety predicate/capacity guard removed.
+Odd33-bar launch/request/terminal-window/wrap now use loop-local clamped coverage and unchanged paid
+deadlines. Snapshot admission charges external-only slabs to PSRAM, retaining internal32KiB floor+
+8KiB margin, pool refusal and allocation parking (DEC-157). Native **3439 total /7skip /3432pass /0fail**;
+shipping capture build SUCCESS, RAM1 unchanged96,192 /392,040+1,176 /34,880, HEX **01f70896…**.
+One focused review: no concrete defects. Full-suite initial3 fixture failures were obsolete audible
+AtomicTransfer checkpoints; moved before publication with exact persistence/identity assertions retained,
+shared95/95 then fullGREEN. **Not flashed, no hardware/SD/Git action.** CanonicalTail interval9 phase5
+missing prerequisite remains UNKNOWN; consecutive-tail control passes, no speculative reset. Device
+timing/33-bar/OLED acceptance and family removal stay open. Evidence:
+[`three-issue repair`](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/REPAIR.md).
+
+**2026-10-24 — 2.2 successor occurrence + partial display invalidation fixed natively; device gate open.**
+Owner explicitly approved DEC-156 — committed future-occurrence positioning, superseding DEC-155's one-traversal
+cap without loosening service budgets. Successor keeps a paid absolute occurrence; independent main requester now
+preserves that rolling debt on revision supersession (review RED18432→13824; fixed). Partial visual-cache slices
+advance revision immediately; fixed-viewport RED16notes vs1→GREEN. Combined302/302; full3433/7skip/3426pass;
+both builds unchanged96,192 /392,040+1,176 /34,880. Shipping1924b90c…, qualificationb11f18a5….
+Owner closes NOTE_EDIT stop→reboot crash; initial new-image run interrupted by owner's2 reboots, then owner
+reported normal operation and requested no upload. Both subsequent runs used no upload/no reset/no disconnects:
+run02 target commits→launchserves→successorReady118ms, no captured retry storm, but no later adoption receipt;
+run03 longer settle lacks target commit/gate. Ringloss3 evictions (+wipe1 run02) prevents qualification. Display
+window/snapshot legs pass; exact stationary post-Record bars2–16 remains unqualified (held-frame path distinct
+from corrected partial-cache invalidation). **3.7e — device continuation open; 2.2 — fixed/bridge unchecked.**
+Board left on qualificationb11f18a5…, stopped by managed teardown; no further upload after owner's request.
+Evidence: `openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md`.
+
+
+**2026-10-24 — shipping-rolling-activation 2.2 launch-source correction; device gate NOT closed.**
+NOTE_EDIT stop→reboot attempts on explicitly flashed shipping `14e2192e…` captured display/prepare/slice/pair;
+the reported crash/hang was not reproduced. `viewBuildWork` reset is scalar accounting, not buffer release.
+Confirmed/fixed `resolveQualificationPlaybackSourceForTurn` mixing a rolling view with the live source identity:
+transfer the view's source and clear the bridge. RED revision1 vs2; focused291/291, full native3432/7skip/3425pass;
+both builds retain96,192 /392,040+1,176 /34,880; one review no concrete findings. Qualification authorized/run twice:
+first target33 bars refused alignment; re-seeded ONLY authorized track8 slot5 to exact24 bars (384/384, persistence ok).
+Aligned run commits→serves in39ms but after4s repeats `handoff_unreachable`→`win_blocked_by_budget`; Tier-A eviction3.
+**3.7e — launch/continuation gate non-PASS; 2.2 — fixed/bridge removal unchecked.** Next: successor-demand admission
+on this aligned restored target, then intact-evidence rerun; no bridge/cold-wrapper retirement. Fixed shipping
+`4ce466e0…` restored/flashed; final stopped reboot crash0/loadok/display/pair advances. Qualification `de4d6a6f…`.
+Evidence: `openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/RESTORE-TRANSITION.md`.
+
+
 **2026-10-24 — shipping-rolling-activation 2.2 fixed/bridge: G2 packet specified (no code).** 2.1 is checked. 2.2
 will remove `resolveFixedPlaybackSourceForTurn`, the `FixedPlaybackBridgeStorage` selection (whole-take bridge
 reservation, `selectedFullLoopBridge`/`fullLoopBridgeBase`/candidate selection) and `boundLaunchView`; the proof is

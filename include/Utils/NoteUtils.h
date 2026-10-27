@@ -177,6 +177,10 @@ struct CanonicalSpanBuild {
 void appendCanonicalSpansFromMidi(const SessionMidiEventVec& midiEvents, uint32_t loopLength,
                                   uint32_t beginEvent, uint32_t endEventExclusive,
                                   CanonicalSpanBuild& build);
+/// Non-external layer form of the same bounded pairing (C5.2a continuation).
+void appendCanonicalSpansFromMidi(const MidiEventVec& midiEvents, uint32_t loopLength,
+                                  uint32_t beginEvent, uint32_t endEventExclusive,
+                                  CanonicalSpanBuild& build);
 void finishCanonicalSpansFromMidi(uint32_t loopLength, CanonicalSpanBuild& build);
 void appendProjectedDisplayNotes(const CanonicalSpanBuild& build, uint32_t loopLength,
                                  uint32_t beginSpan, uint32_t endSpanExclusive,

@@ -269,6 +269,35 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint16_t passesReclaimed, uint16_t chunksReleased,
                              uint32_t durationUs, const char* pressure, uint8_t transport,
                              uint16_t capturePins, uint16_t editPins, uint16_t slotsWithPins);
+/// Task 4.20 **allocation census** (2026-10-27): one aggregated, rate-limited row that says what the persistent
+/// content owners actually hold, by class, next to the internal-heap number they are suspected of consuming. The
+/// question it answers is the one the 128-cycle host measurement could not: the host proved persistent pass
+/// cardinality is linear, so the device's decline must be correlated here — `heap`/`hmin` falling while
+/// `ib` (internal-first classes: edit payloads + undo nested ids + the live session lists) rises proportionally
+/// **does** explain the decline; `ib` flat while `heap` falls does **not**, and only then is the retained-pin /
+/// fragmentation line the right next step. `xb` is the external-first share (pass vectors + chunk directories), so a
+/// big census with a quiet internal heap is visibly not a contradiction. Delivered by the two rules from
+/// `readinessReceiptImmediate` — direct when USB has room, ring as the fallback — because a census is worth most
+/// exactly while the transport runs.
+SC_MEM_ATTR void allocationCensusRow(uint32_t heapFreeBytes, uint32_t heapMinFreeBytes,
+                                     uint16_t chunksFree, uint16_t capturePasses, uint16_t editPasses,
+                                     uint16_t undoEntries, uint32_t internalBytes,
+                                     uint32_t editPassBytes, uint32_t undoIdBytes,
+                                     uint32_t externalBytes);
+/// Task 4.20 **allocatability probe row**: `tail` is the arena tail the admission policy currently reads
+/// (`&_heap_end - __brkval`), `want` the request, `malloc` whether the **internal heap** served it, `pool` whether only
+/// PSRAM could. Emitted **on demand** (`!HEAP_PROBE`), never per turn: it costs a real allocation by design, and its
+/// only job is to discriminate "the tail says no" from "the heap says yes" at the current low value. `malloc=1` with
+/// `tail` below the 48 KB admission sum is the false-denial evidence; `malloc=0` retires the question and puts the
+/// allocation-event census back on the table.
+SC_MEM_ATTR void heapProbeRow(uint32_t tailFreeBytes, uint32_t requestedBytes, bool internalMallocOk,
+                              bool externalPoolOk);
+/// Task 4.20 **denial-edge capacity ladder row**: `tail` is the arena tail the admission pre-filter read, `need` what the
+/// operation's floor + margin required, `largest` the biggest rung the internal heap actually served, and `mask` the
+/// rungs that fit (bit0 16K, bit1 24K, bit2 32K, bit3 48K, bit4 64K). Emitted at most once per cooldown at a denial the
+/// allocator has confirmed — so it distinguishes "the floor itself is unavailable" from "the tail was hiding headroom".
+SC_MEM_ATTR void heapLadderRow(uint32_t tailFreeBytes, uint32_t needBytes, uint32_t largestBytes,
+                               uint8_t servedMask);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 /** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period|track_rebuild|track_order|track_send|track_slot|track_resid},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. Stage 4a track_* spans are one `updateAllTracks` iteration; residual is track_update minus attributed spans. */
@@ -638,6 +667,31 @@ SC_MEM_ATTR void displayWindowTransition(uint8_t track, uint8_t slot, const char
                                         uint32_t loopLengthTicks, uint32_t windowStartTick,
                                         uint8_t windowBars);
 /**
+ * The **drawn-vs-requested** receipt (`DIAG,disp_turn`) — one row per visual turn that either changes what the
+ * display publishes or leaves the published interval diverged from the requested one, never one per painted note
+ * and never per pass.
+ *  Why it exists: `DIAG,disp_window` carries the interval the display *holds* but not the interval the playhead
+ *  *requested*, so a capture cannot tell "the window follows the playhead and the cursor is drawn wrong" from
+ *  "the window itself is pinned". A hardware capture (`session_20261026_204731`) showed the window fields
+ *  advancing while the piano-roll cursor stopped following it and carried no row that could decide between the
+ *  two — the drawn-vs-requested question was unproven by construction. This row carries both intervals, so the
+ *  question is answered by the evidence instead of inferred from it.
+ *  Wire form: `DIAG,disp_turn,t=<track>,s=<slot>,req=<startTick>,<lengthTicks>,pub=<startTick>,<lengthTicks>,`
+ *  `n=<drawnNotes>,st=<fresh|ret>,why=<reason>,key=<startTick>,<lengthTicks>`.
+ *  `req` is the interval the playhead asked for this turn (`syncDetailedPaintWindow` before any hold substitutes
+ *  the retained interval); `pub` is the interval the frame is **drawn** in (`detailedWindowViewport*_`, the
+ *  coordinates the piano roll's grid, bars and cursor are mapped in); `st` is `fresh` when this turn published a
+ *  frame for its request and `ret` when the retained frame was kept; `why` names the rule behind that
+ *  (`hold_gap`/`handoff_seed` for a retained frame, `-` when nothing was discarded, or the provider that served
+ *  the requested interval -- `prepared`, `bound`, `cache`); `key` is the retained frame's own covered interval, so
+ *  which frame carried the content is readable rather than inferred.
+ *  Bounded by the caller: a `pub`/`st` change or one row per cadence interval, whichever comes first. */
+SC_MEM_ATTR void displayWindowDrawTurn(uint8_t track, uint8_t slot, uint32_t requestedStartTick,
+                                       uint32_t requestedLengthTicks, uint32_t publishedStartTick,
+                                       uint32_t publishedLengthTicks, uint32_t drawnNotes,
+                                       const char* state, const char* reason,
+                                       uint32_t retainedStartTick, uint32_t retainedLengthTicks);
+/**
  * Visual cache coverage at a pass-lifecycle or rebuild boundary. Distinguishes committed
  * content loss from cache under-coverage: `events` is the gathered committed event count when
  * the phase performed a gather and -1 otherwise; `firstBar`/`lastBar` bound the bars actually
@@ -886,6 +940,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_DISP_WINDOW_TRANSITION(track, slot, state, noteSessionOpen, editSession, loopLen, wStart, wBars) \
   DebugSessionCapture::displayWindowTransition(track, slot, state, noteSessionOpen, editSession, loopLen, \
                                                wStart, wBars)
+#define SC_DISP_WINDOW_TURN(track, slot, reqStart, reqLen, pubStart, pubLen, drawnNotes, state, reason, \
+                            keyStart, keyLen) \
+  DebugSessionCapture::displayWindowDrawTurn(track, slot, reqStart, reqLen, pubStart, pubLen, \
+                                             drawnNotes, state, reason, keyStart, keyLen)
 #define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
                   dirtyFlag) \
   DebugSessionCapture::visualCacheState(phase, events, notes, firstBar, lastBar, totalBars, \
@@ -920,6 +978,11 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::passReclaim(chunksFreeBefore, chunksFreeAfter, passesReclaimed, \
                                  chunksReleased, durationUs, pressure, transport, capturePins, \
                                  editPins, slotsWithPins)
+// Task 4.20 allocation census: the caller has already decided it is due (rate-limited), so this only forwards.
+// Single line on purpose: a continued macro in this header previously mangled its backslashes.
+#define SC_ALLOC_CENSUS(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes) DebugSessionCapture::allocationCensusRow(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes)
+#define SC_HEAP_PROBE(tailFree, want, mallocOk, poolOk) DebugSessionCapture::heapProbeRow(tailFree, want, mallocOk, poolOk)
+#define SC_HEAP_LADDER(tailFree, need, largest, mask) DebugSessionCapture::heapLadderRow(tailFree, need, largest, mask)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -1039,6 +1102,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
   ((void)0)
 #define SC_DISP_WINDOW_TRANSITION(track, slot, state, noteSessionOpen, editSession, loopLen, wStart, wBars) \
   ((void)0)
+#define SC_DISP_WINDOW_TURN(track, slot, reqStart, reqLen, pubStart, pubLen, drawnNotes, state, reason, \
+                            keyStart, keyLen) \
+  ((void)0)
 #define SC_VCACHE(phase, events, notes, firstBar, lastBar, totalBars, dirtyBarsSize, dirtyCount, \
                   dirtyFlag) \
   ((void)0)
@@ -1062,5 +1128,8 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_PASS_RECLAIM(chunksFreeBefore, chunksFreeAfter, passesReclaimed, chunksReleased, \
                         durationUs, pressure, transport, capturePins, editPins, slotsWithPins) \
   ((void)0)
+#define SC_ALLOC_CENSUS(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes) ((void)0)
+#define SC_HEAP_PROBE(tailFree, want, mallocOk, poolOk) ((void)0)
+#define SC_HEAP_LADDER(tailFree, need, largest, mask) ((void)0)
 
 #endif  // SESSION_CAPTURE

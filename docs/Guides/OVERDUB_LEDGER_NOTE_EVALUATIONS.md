@@ -5,6 +5,15 @@
 **Companion:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) · wrap display: [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md)  
 **Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)
 
+**2026-10-24 — pending-stop bridge publication boundary:** the final reserved bridge-preparation grain
+rechecks the live affected ledger/cursor and enters existing atomic publication on that owner turn,
+without yielding a selectable candidate across another MIDI emission. No ledger matching/closure,
+generation or capacity predicate is weakened; a stale candidate still waits/refreshes. Moving-clock
+tests with initially empty/held affected ledgers preserve exact0/23/24/36 canonical rows; consecutive
+stops retain normalization and release workers. Native/full/build/review verified; compiler-time
+arbitrary ledger churn, captured CanonicalTail phase5 wait and physical timing remain unqualified.
+[Stop repair evidence](../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/STOP-REPAIR.md).
+
 **2026-10-16 — I5 — actual rolling growth HITL evidence:** full07/full08 growth leg verifies ordered USB62/64/60 pairs at98/0, exact6-row record/effective inventory and NoteIds1/2/3 matching source-qualified window endpoints; ledger closes, corrected frozen mismatch verified, critical-loss0. Full recipe NOTpassed: empty reused take stalls, held/no-retrigger and matching physical Stop remain unverified. Visual private-worker cancellation fixed; stale idle-shell fix has focused505/fullnative3281pass7skip/ASan10/build proof only, not device proof. Exact default restored/guard15/two drains/nolatch; retry approval needed. Original metadata hash caveat and upload-chain pins in [I5 — actual execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-HITL-EXECUTION.md); no full ledger/lifecycle/physical timing acceptance from this partial leg.
 
 **2026-10-15 — I5 — growing live Record coverage:** qualified Record windows now rotate across later raw intervals and wrap-only period growth, preserving the same shared ledger/MIDI owner. `applyPlaybackLedgerEvent` uses bounded `isActive(channel,pitch,NoteId)` to suppress only a still-open identity's retriggered On after growth; its original Off in the next interval closes it. Committed/overdub policy and ledger layout unchanged. Normal-maintenance source736/800 emits one On1504, no second On2272, Off2336; withheld-main crossing and matching subinterval/mismatching Stop also pass. Focused500/fullnative3275pass7skip/ASan8, retrigger-removal specificRED; no hardware/physical timing claim. [I5 — current coverage/ledger evidence](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/ROLLING-RECORD-COVERAGE.md). Supersedes initial-only functional scope in the prior note.

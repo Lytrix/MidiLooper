@@ -187,7 +187,10 @@ WRONG_MODE_ROUTE_ROWS = ("Queued playback switch", "Reaffirmed playback switch",
                          "long-press start (not playing)")
 RECORD_START_CARRIED_ROWS = ("Record start carried on the switch", "switch and record start retained")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
-HUMAN_DENIAL_RE = re.compile(r"Overdub stop refused")
+# Both vintages: the 2026-10-27 image accepts and retains the press (DEC-078) and says `retained
+# (capacity)`; every capture taken before it says `refused`. Addressing one verb only made a
+# current-firmware run report "no denial at all" while the device log carried the decision.
+HUMAN_DENIAL_RE = re.compile(r"Overdub stop (?:refused|retained \(capacity\))")
 HUMAN_WINDOW_RE = re.compile(r"Reentry window open slot=(\d+)")
 HUMAN_RETAINED_RE = re.compile(r"switch and record start retained")
 HUMAN_START_RE = re.compile(r"Recording started @ tick")

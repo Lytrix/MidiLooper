@@ -1,3 +1,179 @@
+**2026-10-27 — display repair7c04edd8 rejected on device; continuity repair open.**
+084714 plus production fixture expose pendingStop wakeup exclusion and a deeper complete-source handoff gap at wrap. Local wakeup correction alone is not a repair: enforced first wrapped frame still loses original Record identity while prior source contains it. Display26controls pass/1RED, playback9pass, capture buildPASS/RAM1 unchanged. Current/candidate lifetime/coverage/destructive cancellation and peak-memory contract needed; no blanket native/device pass. No upload/device/SD/content/commit/push; installed7c04edd8 unchanged. [Evidence/proposal](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-084714-DISPLAY.md).
+
+**2026-10-27 — display repair7c04edd8… installed with approval.**
+CLI2.3 Programming/Booting exit0; independent Teensy MIDI USB16C0:0489 and fresh crash0/loadok/initial STOPPED verified. Serial closed, no content stimulus/explicit SD mutation/commit/push. Replaces1706bfaa…, supersedes NOTuploaded below; hardware display confirmation and early NoteOff attribution remain open. [Receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md#subsequent-owner-approved-upload).
+
+**2026-10-27 — late-window display source repair locally verified, not uploaded.**
+002014 consumer held16bar content because its bounded replacement source had no reachable publication-gap wakeup. Existing producer now runs bounded turns with selected-gap contention protection. Sparse/dense24bar and two-audible-track frame identities pass; fullnative3499total/7skip/3492pass, bound7/7, capture buildPASS/RAM1 unchanged; scoped review finding fixed/retested. HEX7c04edd8… NOTuploaded, playback code and installed1706bfaa unchanged. Early pre-RecordPublished NoteOff symptom remains open/not reproduced by dense control. No device/SD/commit/push. [Evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md).
+
+**2026-10-26 — playback repair1706bfaa… installed on owner approval.**
+CLI2.3 Programming/Booting exit0; independent Teensy MIDI USB16C0:0489 and fresh loadok. No early crash receipt or final drain claim; controller activity left untouched. No agent content/SD operation/commit/push. Supersedes NOTuploaded below; hardware playback acceptance remains open. [Receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-233615-PLAYBACK.md#subsequent-owner-approved-upload).
+
+**2026-10-26 — 233615 recorded-playback dropout repaired locally; device acceptance pending.**
+Track committed requester no longer preempts a qualified frozen Record owner before current-root readiness. Real requester/gradual-finalizer/Stop/reentry oracle RED→GREEN across16bars with exact MIDI edges/NoteIds. Fullnative3495total/7skip/3488pass, finalfocused9/9, capture buildPASS/RAM1 unchanged; scoped reviewAPPROVE. HEX1706bfaa… not uploaded, no device/SD/commit/push. Wider task4.11 and hardware4.4 remain open. [Evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-233615-PLAYBACK.md).
+
+**2026-10-26 — four-Stop Record playback native control passes; device claim unresolved.**
+221420 capture lacks exact committed Record NoteId/output inventory; committed-source reads do not prove
+content membership. New 25-bar production test queues Record+4 OD Stop jobs then verifies all25 Record
+NoteOn/Off identities/ticks emitted once after commit. Registered suite8/8 and fullnative3493total/
+7skip/3486pass/0fail. This does not refute the user-observed hardware loss. No firmware source/build/upload,
+device/SD/commit/push. Task4.11 and hardware4.4 remain open.
+[Evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-221420-RECORD-PLAYBACK.md).
+
+
+**2026-10-26 — live overdub undo contract revised; H1 ratified, repair unimplemented.**
+Owner chooses that sounding notes/reservations survive live undo through their actual NoteOff; closed rows
+are undoable unit. Revised contract forbids blanket predecessor refusal, requires atomic Track inventory
+reconciliation/redo qualification and committed display-base preservation. No fixture/resource proof or
+source changes yet; pinned external assessor unavailable. Installed20a54326… remains, no device/SD/reset/
+commit/push. Separate Stop-capacity and hardware acceptance open. [Contract](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-193036-UNDO-PLAN.md).
+
+
+**2026-10-26 — owner confirms prior display dropout solved; live-undo coherence defect open.**
+193036 double107.360 takes session live undo, not global Record undo, and display315→53 follows.
+Source trace finds held-frame invalidation plus Loop-only undo/redo bypassing Track live staging/
+pending/reservation/overlap state. Exact stored/output deletion and subsequent FIFO-stall cause remain
+unknown. No repair shipped: Track-owned reset/restore contract and production fixtures still required.
+Installed20a54326… unchanged; no firmware/test/build/device/SD/reset/commit/push action. Manual display
+confirmation does not close full hardware parity/timing. [Investigation](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-193036-UNDO.md).
+
+
+**2026-10-26 — approved display-continuity image 20a54326… installed.**
+CLI2.3 Programming/Booting exit0; independent Teensy MIDI USB16C0:0489, fresh crash0/loadok,
+initial STOPPED,pending0,queue0/4 verified; serial capture closed normally. Replaces6aecc06e…,
+superseding pre-upload notes below. No recording stimulus/content clear/quarantine or explicit
+SD mutation/commit/push. Hardware display/parity/timing and separate later Stop-capacity gates open.
+[Exact image/receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-185957-DISPLAY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — completed-overdub preview continuity source-fixed; image20a54326… not installed.**
+185957 third/fourth Start frame drops23/11 correlate with earlier overdubs. Actual predecessor-worker/
+reentry test independently loses NoteId under original source; deferred cleanup now retires closed
+display rows through existing handoff without closing live successor. Exact identities/geometry across
+third/fourth Starts RED→GREEN, focused298/298, fullnative3490total/7skip/3483pass/0fail, capture build
+PASS/RAM1 unchanged, review APPROVE. Installed6aecc06e… unchanged, no device/SD/reset/commit/push.
+Separate later session_exit_handoff_full Stop wait and hardware pixel/parity/timing acceptance open.
+[Execution](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-185957-DISPLAY.md).
+
+
+**2026-10-26 — approved conditional closure-repair image 6aecc06e… installed.**
+CLI2.3 Programming/Booting exit0; independent USBTeensy MIDI16C0:0489, fresh crash0/loadok and
+initial STOPPED,pending0,queue0/4 verified; serial capture closed normally. Replaces16b53275…,
+superseding pre-upload notes below. No content stimulus/clear/quarantine or explicit SD mutation,
+commit/push. Hardware OrderDenied attribution and Record-stall/MIDI acceptance remain open.
+[Exact image/receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-175905-ORDER.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — conditional private Record closure ordering repair source-delivered, not installed.**
+175905 verifies terminal qualified OrderDenied and FIFO4/4, explaining later Stop/transport-restart
+OVERDUBBING. Missing ephemeral seal on closure append independently reproduces private chunk persistence
+admission at256closures;257-note actual closure→staging→normalization now preserves exact514rows.
+Shared104/104/fullnative3489total/7skip/3482pass/0fail, capture build PASS/RAM1 unchanged, review APPROVE.
+HEX6aecc06e… NOTuploaded; installed16b53275… unchanged. Exact device trigger/held-at-stop count UNKNOWN,
+so hardware stall/MIDI repair and acceptance remain open. No device/SD/reset/commit/push.
+[Diagnostic and bounded repair](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-175905-ORDER.md).
+
+
+**2026-10-26 — partial routing-fix/diagnostic image 16b53275… installed with approval.**
+CLI 2.3 Programming/Booting exit 0; independent Teensy MIDI USB 16C0:0489, fresh crash=0/load=ok,
+initial STOPPED,pending=0,queue=0/4 retained. Replaces f1c84f3a; supersedes pre-upload notes below.
+Later competing Python reader PID 28230 left untouched; no reconnect/final-state assertion. No content
+test/clear/quarantine or explicit SD mutation; no commit/push. Record stall/MIDI cutouts and physical
+acceptance remain open; the image supplies later-start routing repair and stopped attribution only.
+[Exact image and receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-162915-REENTRY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — later overdub routing source-fixed; Record stall/MIDI cutout repair still blocked.**
+Real button route now classifies later intervals against same qualified private Record base; native
+3successor trace RED→GREEN. Added stopped-only request#STOP_RECORD role/output attribution; native
+longstream control completes, so parked hardware preparation root is NOT fixed/qualified. Fullnative
+3488total/7skip/3481pass/0fail; capture build PASS/RAM1 unchanged; scoped review APPROVE routing/
+diagnostic only. HEX16b53275… NOTuploaded, installedf1c84f3a unchanged. No device/SD/commit/push.
+[Partial result/blocker](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-162915-REENTRY.md).
+
+
+**2026-10-26 — rounded-display imagef1c84f3a installed; full postflight blocked by serial contention.**
+Owner-approved exact HEX programmed by CLI2.3 Programming/Booting exit0; USBTeensy MIDI16C0:0489,
+fresh crash0 and display setup retained. Another Python reader acquired serial; full loadok/status not
+retained, final transport/drain state not asserted. No content stimulus/clear or explicit SD mutation
+commanded. Physical display/pairing/parity/timing/memory qualification open; no commit/push.
+[Receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-160416-DISPLAY.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — rounded-stop/borrowed-tail display correction source-delivered, not installed.**
+Complete Record preview permits coherent follow after wrap; live tails use producer and frozen holds
+retain qualified Stop endpoints. Three exact native geometry/window RED→GREEN cases, display21/21,
+playback6/6 retained; fullnative3486total/7skip/3479pass/0fail, capture build PASS at unchanged RAM1
+padding3,352/floor840. One focused review APPROVE. HEXf1c84f3a… NOTuploaded; installed30c99b45 unchanged.
+No playback edits or device/SD/commit/push; physical display/parity/timing/memory acceptance open.
+[Execution](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-160416-DISPLAY.md).
+
+
+**2026-10-26 — playback Stop/publication correction30c99b45 installed and boot-verified.**
+Owner-approved exact HEX programmed by Homebrew CLI2.3, Programming/Booting exit0. Fresh crash0/
+loadok, Teensy MIDI USB16C0:0489 and post-boot STOPPED,pending0,queue0/4 independently verified.
+No content stimulus/clear/quarantine or explicit SD mutation commanded; no commit/push. Hardware
+sustained-playback/content/timing/memory acceptance open. [Receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-152128-PLAYBACK.md#subsequent-owner-approved-upload).
+
+
+**2026-10-26 — recorded-stream Stop/publication correction delivered in source, not installed.**
+Canonical setup protects complete frozen ready/current from shared-builder discard; qualified frozen
+source stamps survive committed revision changes. Native exact recorded-event oracles cover nonempty
+overdub Stop and late Record publication through PLAYING/later overdub,5bars; both original defects
+independently RED. Integration6/6, display18/18, fullnative3483total/7skip/3476pass/0fail, capture build
+PASS at unchanged RAM1 padding3,352/floor840; HEX30c99b45… NOTuploaded. One focused review APPROVE.
+Installed7a5b42bb unchanged; physical parity/timing/memory gates open. No device/SD/commit/push.
+[Evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-152128-PLAYBACK.md).
+
+
+**2026-10-26 — display-retention image7a5b42bb installed and boot-verified.**
+Owner-approved exact HEX programmed by CLI2.3, Programming/Booting exit0. Fresh crash0/loadok,
+Teensy MIDI USB16C0:0489 and post-boot STOPPED,pending0,queue0/4 independently verified. No content
+stimulus/clear/quarantine or explicit SD mutation commanded. Hardware pixels/parity/timing/memory
+qualification remains open; upload/boot is not behavioral acceptance. [Receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-DISPLAY-NOTEOFF-UPLOAD.md).
+
+
+**2026-10-26 — truncated-Record/NoteOff display correction source-delivered, not installed.**
+Exact production paint fixtures reproduce missing first-window bars and closed-note disappearance;
+existing job-owned Record preview now supplies a coherent final-geometry base before publication.
+One focused review's stale-preview reuse/held-endpoint findings red-proved and fixed/retested.
+Display18/18; fullnative3481total/7skip/3474pass/0fail; capture build PASS at RAM1 padding3,352/floor840
+unchanged. HEX7a5b42bb… NOTuploaded; installed1131e857 unchanged. Hardware pixels/parity/timing/memory
+acceptance open. No device/SD/commit/push. [Execution](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-DISPLAY-NOTEOFF.md).
+
+
+**2026-10-26 — regression image1131e857 installed; upload/boot verified, behavioral acceptance open.**
+Owner-approved exact HEX programmed by Homebrew CLI2.3 (full Programming/Booting; numeric detached
+exit not retained). Independent fresh crash0/loadok and USB16C0:0489 Teensy MIDI verified; initial
+STOPPED,pending0,queue0/4. Later serial contention/controller activity left alone; final stopped/drain
+state not asserted. No content test/clear/quarantine or explicit SD mutation commanded; no commit/push.
+[Upload evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-UPLOAD.md).
+
+
+**2026-10-26 — immediate Record→overdub regression corrections delivered in source; not installed.**
+Actual manager ingress no longer waits for Record publication when ordinary admission succeeds;
+frozen Record reader survives OVERDUBBING maintenance; detail/overview compose outstanding job previews
+and live notes through successor Stop. Native3477total/7skip/3470pass/0fail, capture build SUCCESS,
+RAM1 padding3,480 (floor840 unchanged), HEX1131e857… NOTuploaded. One focused review's two concrete
+preview findings fixed/retested; fresh device parity, input/output timing and memory/stack acceptance
+remain open. No device/SD/content action, commit or push; installed image unchanged.
+[Regression execution evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
+
+**2026-10-25 — post-Record overdub handoff image installed; behavioral timing open.** Shipping
+HEX74392e15… programmed by CLI2.3, exit0/Booting; fresh crash0/loadok and Teensy MIDI USB verified.
+Pre/post two-drain persistence idle PASS; board stopped, no content test/clear/quarantine. Local
+native3439pass/7skip; retained one-press behavior still needs device acceptance, normalization delay
+not optimized. [Upload evidence](../openspec/changes/shipping-rolling-activation/evidence/2026-10-25-post-record-overdub/UPLOAD.md).
+
+**2026-10-25 — three-issue repair image installed; behavioral device qualification open.** Shipping
+HEX01f70896… uploaded with CLI2.3, programming/Booting exit0; independent fresh boot crash0/loadok,
+USB Teensy MIDI and pre/post two-drain persistence-idle receipts verified. Native3432pass/7skip,
+unchanged approved RAM1. No content test/clear/quarantine performed.33-bar/stop/OLED acceptance
+and captured CanonicalTail wait remain open; this is upload/boot delivery only, no family retirement.
+[Upload evidence](../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/UPLOAD.md).
+
 **2026-10-24 — shipping-rolling-activation 1.2–1.5 CLOSED (activation + parity + rollback; no removals).**
 The shipping image now runs the rolling lane (`PLAYBACK_WINDOW_ROLLING_ENABLED=1` + the shipping-activation marker),
 with every compatibility branch retained. Verification: the 2.8 red-proof accounting and the 4.2 device leg

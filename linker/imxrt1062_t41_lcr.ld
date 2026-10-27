@@ -139,6 +139,22 @@ SECTIONS
 		   (A sampler call in `update()` would also have spent 16 B of ITCM -- exactly the qualification image's padding
 		   above the floor -- so the call rides the existing capture hook instead.) */
 		*DisplayNoteWindowGather*.o(.rodata .rodata.*)
+		/* CONTRACTS.md C3 (P-B): the private-predecessor source origin's own tokens
+		   ("private_predecessor", "none", the five denial names) are ~100 B of new read-only string
+		   literals, and they cross the same `_VectorsRam`/periodictable align edge the entries above
+		   record -- `variables` 96,192 -> 100,288 with ITCM `code` byte-identical (measured by building
+		   without this line). Only literals move: this TU owns no mutable state (the cursor lives in
+		   `Loop`, which is externally allocated), so invariant 36 holds. */
+		*LoopPrivateSource.cpp.o(.rodata.str* .rodata.*.str*)
+		/* The same P-B change carries one log format literal and one short token argument in
+		   `TrackDeferredMaintenance.cpp`, whose `.rodata.str*` had no carve-out: the pair crosses the
+		   same align edge on its own (measured by removing both this line and the one above:
+		   `variables` 100,288). Read-only.
+		   NOTE: this is a whole-TU pattern, not one row's names -- every future string literal added to
+		   TrackDeferredMaintenance.cpp leaves DTCM and lands in FLASH *unmeasured* for the RAM1 budget.
+		   A future change that needs that TU's literals back in DTCM must remove this row and re-base
+		   `scripts/ram1_budget.json`, not merely edit a comment. */
+		*TrackDeferredMaintenance.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

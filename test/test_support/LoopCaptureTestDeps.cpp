@@ -17,6 +17,9 @@ bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED
 #include "../../src/Loop/LoopInternalColdHelpers.cpp"
 #include "../../src/Loop/LoopMaterialization.cpp"
 #include "../../src/Loop/LoopEditPasses.cpp"
+// CONTRACTS.md C3: the private-predecessor source cursor is its own translation unit (the owner's
+// bounded step); it defines members `LoopCapture.cpp` and `LoopPendingNoteChange.cpp` call.
+#include "../../src/Loop/LoopPrivateSource.cpp"
 #include "../../src/Loop/LoopCapture.cpp"
 #include "../../src/Loop/LoopSnapshot.cpp"
 #include "../../src/Loop/LoopPendingSnapshotRetirement.cpp"
@@ -42,5 +45,14 @@ bool Loop::hasSealedCompanionOverlay() const {
 
 bool Loop::sealedCompanionOverlayRequired() const {
   return false;
+}
+
+/// CONTRACTS.md C3.4's materialization phase belongs to the pending-change owner: it re-derives the
+/// participant set from the session view and upserts that owner's set. A native suite that links
+/// `Loop` without that owner can never open an overdub session, so no private cursor exists here and
+/// the phase fails closed instead of resolving against a source this build does not own.
+Loop::PrivateSourceStep Loop::stepPrivatePredecessorHolds(size_t quantum) {
+  (void)quantum;
+  return PrivateSourceStep::Idle;
 }
 #endif

@@ -626,7 +626,11 @@ void MidiButtonActions::handleToggleRecord() {
     // deferred role surfaces its documented denial instead of vanishing here.
 
     const uint8_t slot = trackManager.getSelectedSlotIndex(idx);
-    if (!track.hasCommittedPassesInSlot(slot)) {
+    // A stopped Record take is not an empty slot while its pass is still private.
+    // Keep this Record/Overdub intent out of the slot-button mute/record fallback.
+    const bool privateRecordBase = slot == track.getActiveLoopIndex() &&
+        track.hasPrivateRecordPredecessorForOverdub();
+    if (!privateRecordBase && !track.hasCommittedPassesInSlot(slot)) {
         handleToggleRecordForSlot(slot);
         return;
     }

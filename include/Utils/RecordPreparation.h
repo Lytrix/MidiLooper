@@ -129,6 +129,8 @@ class RecordPreparationCursor {
   bool complete() const { return phase_ == Phase::Complete; }
   bool denied() const { return phase_ == Phase::Denied; }
   DenyReason denyReason() const { return deny_; }
+  /// Read-only diagnostic code; never advances or rebinds the private cursor.
+  uint8_t phaseCode() const { return static_cast<uint8_t>(phase_); }
   size_t lastStepUnits() const { return lastStepUnits_; }
   size_t syntheticOffs() const { return syntheticOffs_; }
   size_t pairsRemoved() const { return pairsRemoved_; }

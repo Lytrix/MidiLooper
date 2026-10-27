@@ -388,7 +388,17 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          // crossed the DTCM align edge (`variables` 96,192 -> 100,288 with ITCM code unchanged), and that unit is
          // carved into FLASH (`linker/imxrt1062_t41_lcr.ld`). See `Utils/EnvelopeDistRows.cpp`.
          CaptureLineTier::tagStartsWith(line, envelopeDistTagPrefix()) ||
-         CaptureLineTier::tagStartsWith(line, envelopeRouteTagPrefix());
+         CaptureLineTier::tagStartsWith(line, envelopeRouteTagPrefix()) ||
+         // Task 4.20 allocation census: rate-limited (one row per diagnostics interval) and raised regardless of
+         // transport state — including while a transport runs, which is exactly the budget-8 regime that sheds
+         // non-Tier-A head records. Its own boundary is pinned in `test_capture_ring`.
+         CaptureLineTier::tagStartsWith(line, "DIAG,alloc_census,") ||
+         // Task 4.20 allocatability probe: host-requested, but it can only answer where the denial is felt — under
+         // transport, the budget-8 regime that sheds non-Tier-A head records. Pinned in `test_capture_ring`. The
+         // denial-edge capacity ladder rides this same prefix on purpose: one more literal in *this* unit's `.rodata`
+         // was measured to cost exactly +32 B of DTCM, which the RAM1 budget gate refuses, and the ladder is the
+         // probe family's second shape (`ladder,tail=…,need=…,largest=…,mask=…`) rather than a new family.
+         CaptureLineTier::tagStartsWith(line, "DIAG,heap_probe,");
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
@@ -1386,6 +1396,82 @@ SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captur
                 static_cast<unsigned long>(replenishPairs));
 }
 
+// Task 4.20 allocation census — one aggregated row per caller-decided interval (the caller rate-limits; nothing here
+// samples). Same two delivery rules as `envelopeInstrRow`/`readinessReceiptImmediate`: written directly when USB has
+// room, otherwise enqueued on the ring, because the census is worth most while a transport runs and a merely enqueued
+// Tier-A row arrives only after the stop. Field meanings, once, here rather than in the row:
+//   heap/hmin — internal-heap free now, and the watermark floor since boot (`min_ever`);
+//   chunks    — free pool chunks; cap/edit/undo — capture passes, edit passes, undo entries (cardinality);
+//   ib        — internal-first resident bytes (edit payloads + undo nested ids + live session lists);
+//   eb/ub     — the edit and undo shares of `ib`, so a growth can be attributed to one class;
+//   xb        — external-first resident bytes (pass vectors + chunk directories), which are PSRAM on the device.
+SC_MEM_ATTR void allocationCensusRow(uint32_t heapFreeBytes, uint32_t heapMinFreeBytes,
+                                     uint16_t chunksFree, uint16_t capturePasses, uint16_t editPasses,
+                                     uint16_t undoEntries, uint32_t internalBytes,
+                                     uint32_t editPassBytes, uint32_t undoIdBytes,
+                                     uint32_t externalBytes) {
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,alloc_census,heap=%lu,hmin=%lu,chunks=%u,cap=%u,edit=%u,"
+                         "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(heapFreeBytes),
+                  static_cast<unsigned long>(heapMinFreeBytes), static_cast<unsigned>(chunksFree),
+                  static_cast<unsigned>(capturePasses), static_cast<unsigned>(editPasses),
+                  static_cast<unsigned>(undoEntries), static_cast<unsigned long>(internalBytes),
+                  static_cast<unsigned long>(editPassBytes),
+                  static_cast<unsigned long>(undoIdBytes),
+                  static_cast<unsigned long>(externalBytes));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,alloc_census,heap=%lu,hmin=%lu,chunks=%u,cap=%u,edit=%u,"
+                       "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned long>(heapFreeBytes),
+                static_cast<unsigned long>(heapMinFreeBytes), static_cast<unsigned>(chunksFree),
+                static_cast<unsigned>(capturePasses), static_cast<unsigned>(editPasses),
+                static_cast<unsigned>(undoEntries), static_cast<unsigned long>(internalBytes),
+                static_cast<unsigned long>(editPassBytes),
+                static_cast<unsigned long>(undoIdBytes),
+                static_cast<unsigned long>(externalBytes));
+}
+
+// Task 4.20 allocatability probe — on demand only (`!HEAP_PROBE`), never per turn: each row costs a real allocation,
+// which is the point (it is the one measurement the arena-tail metric cannot make). Two delivery rules again: the
+// probe is most useful right where a denial is being felt, which can be under transport, so it writes directly when
+// USB has room and falls back to the ring otherwise.
+SC_MEM_ATTR void heapProbeRow(uint32_t tailFreeBytes, uint32_t requestedBytes, bool internalMallocOk,
+                              bool externalPoolOk) {
+  if (serialWriteRoom(120)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,heap_probe,tail=%lu,want=%lu,malloc=%u,pool=%u\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(tailFreeBytes),
+                  static_cast<unsigned long>(requestedBytes), internalMallocOk ? 1u : 0u,
+                  externalPoolOk ? 1u : 0u);
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,heap_probe,tail=%lu,want=%lu,malloc=%u,pool=%u\r\n"),
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(tailFreeBytes),
+                static_cast<unsigned long>(requestedBytes), internalMallocOk ? 1u : 0u,
+                externalPoolOk ? 1u : 0u);
+}
+
+// Task 4.20 denial-edge capacity ladder. Cold by construction (its caller has already decided the turn is being
+// denied) and cooldown-bounded there; same two delivery rules as its siblings, because a denial is felt under transport.
+SC_MEM_ATTR void heapLadderRow(uint32_t tailFreeBytes, uint32_t needBytes, uint32_t largestBytes,
+                               uint8_t servedMask) {
+  if (serialWriteRoom(120)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,heap_probe,ladder,tail=%lu,need=%lu,largest=%lu,mask=%u\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(tailFreeBytes), static_cast<unsigned long>(needBytes),
+                  static_cast<unsigned long>(largestBytes), static_cast<unsigned>(servedMask));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,heap_probe,ladder,tail=%lu,need=%lu,largest=%lu,mask=%u\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned long>(tailFreeBytes),
+                static_cast<unsigned long>(needBytes), static_cast<unsigned long>(largestBytes),
+                static_cast<unsigned>(servedMask));
+}
+
 // S7.5a distribution instrument — the line hook the header describes: the rows are formatted in
 // `Utils/EnvelopeDistRows.cpp` (DTCM-carved for its literals) and handed to this unit's ring here.
 SC_MEM_ATTR void emitEnvelopeRowLine(const char* line) {
@@ -2219,6 +2305,43 @@ SC_MEM_ATTR void displayWindowTransition(uint8_t track, uint8_t slot, const char
                 trackState == nullptr ? "?" : trackState, static_cast<unsigned>(noteSessionOpen),
                 static_cast<unsigned>(editSession), static_cast<unsigned long>(loopLengthTicks),
                 static_cast<unsigned long>(windowStartTick), static_cast<unsigned>(windowBars));
+}
+
+/// The **drawn-vs-requested** receipt (`DIAG,disp_turn`). Same `.progmem` placement and the same two delivery rules
+/// as the window transition receipt above: the row exists to answer one question a capture could not — was the
+/// interval the display *drew* the interval the playhead *requested*, and if not, which named hold discarded the
+/// request — and it is raised while a transport runs, where the ring is retained by design.
+static const char kDisplayWindowDrawTurnFormat[] PROGMEM =
+    "#CAP,%lu,DIAG,disp_turn,t=%u,s=%u,req=%lu,%lu,pub=%lu,%lu,n=%lu,st=%s,why=%s,key=%lu,%lu\r\n";
+
+SC_MEM_ATTR void displayWindowDrawTurn(uint8_t track, uint8_t slot, uint32_t requestedStartTick,
+                                       uint32_t requestedLengthTicks, uint32_t publishedStartTick,
+                                       uint32_t publishedLengthTicks, uint32_t drawnNotes,
+                                       const char* state, const char* reason,
+                                       uint32_t retainedStartTick, uint32_t retainedLengthTicks) {
+  const char* resolvedState = state == nullptr ? "?" : state;
+  const char* resolvedReason = reason == nullptr ? "?" : reason;
+  if (serialWriteRoom(190)) {
+    Serial.printf(kDisplayWindowDrawTurnFormat, static_cast<unsigned long>(micros()),
+                  static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                  static_cast<unsigned long>(requestedStartTick),
+                  static_cast<unsigned long>(requestedLengthTicks),
+                  static_cast<unsigned long>(publishedStartTick),
+                  static_cast<unsigned long>(publishedLengthTicks),
+                  static_cast<unsigned long>(drawnNotes), resolvedState, resolvedReason,
+                  static_cast<unsigned long>(retainedStartTick),
+                  static_cast<unsigned long>(retainedLengthTicks));
+    return;
+  }
+  emitCapPrintf(kDisplayWindowDrawTurnFormat, static_cast<unsigned long>(micros()),
+                static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                static_cast<unsigned long>(requestedStartTick),
+                static_cast<unsigned long>(requestedLengthTicks),
+                static_cast<unsigned long>(publishedStartTick),
+                static_cast<unsigned long>(publishedLengthTicks),
+                static_cast<unsigned long>(drawnNotes), resolvedState, resolvedReason,
+                static_cast<unsigned long>(retainedStartTick),
+                static_cast<unsigned long>(retainedLengthTicks));
 }
 
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,

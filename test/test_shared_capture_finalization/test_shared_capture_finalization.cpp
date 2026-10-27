@@ -22,7 +22,13 @@
 // selected** and **which gate refused** it. The cadence that bounds the row is production state, so a substituted
 // recorder counts exactly the rows the device would emit.
 #include <cstddef>
+// Task 4.20 measurement: the host's own footprint is the whole-heap plateau/staircase probe. Native
+// tests run on macOS, but the guard keeps a Linux host build honest (it reports 0, not a guess).
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
 #include "TrackInternal.h"
+#include "PersistenceQueue.h"
 #include "Utils/PlaybackDemandClaims.h"
 #include "Utils/OverdubOverlayLane.h"
 #include <cstdint>
@@ -167,7 +173,34 @@ inline void record(uint8_t track, uint8_t slot, const char* readiness, const cha
 #endif
 
 struct TrackCaptureStopTestAccess {
+  static auto* custody(Track& t, uint64_t interval) {
+    for (auto& receipt : t.captureStopJobs_->custodies)
+      if (receipt.interval == interval && receipt.state != Track::CaptureCustodyState::Free) return &receipt;
+    return static_cast<Track::CaptureStopPresentation*>(nullptr);
+  }
+  static size_t custodyCount(const Track& t) {
+    size_t result = 0;
+    for (const auto& receipt : t.captureStopJobs_->custodies)
+      if (receipt.state != Track::CaptureCustodyState::Free) ++result;
+    return result;
+  }
+  static auto* jobFor(Track& t, uint64_t interval) {
+    for (auto& job : t.captureStopJobs_->entries)
+      if (job.admission.pending && job.interval == interval) return &job;
+    return static_cast<Track::CaptureStopJob*>(nullptr);
+  }
+  static bool admitIntervalStop(Track& t, uint8_t slot, uint64_t interval) {
+    return t.beginDeferredOverdubStopForSlot(PendingStopDestination::Playing,
+        clockManager.getCurrentTick(), slot, interval);
+  }
+  static const auto* qualifiedCustody(const Track& t, uint8_t index, uint64_t interval) {
+    return t.captureCustodyForInterval(index, interval, t.getActiveLoop());
+  }
   static bool outputBarrier(const Track& t) { return t.transportStopOutputBarrier_; }
+  static void withholdStopDestinations(Track& t) {
+    for (auto& receipt : t.captureStopJobs_->custodies)
+      if (!receipt.ownsExtent) (void)receipt.rawRange.releaseGrain(1);
+  }
   // Task 3.15g: the lane's own admission decision, asked directly instead of inferred from a state dump.
   static bool retryCanProgress(const Track& t, uint8_t slot, PlaybackDeadlineClock clock) {
     return t.committedPlaybackRetryCanProgress(slot, clock);
@@ -177,12 +210,25 @@ struct TrackCaptureStopTestAccess {
     return t.rootReturnSuccessorIsOwedForSlot(slot, request, clock);
   }
   static auto& pendingRequest(Track& t, uint8_t slot) { return t.playbackRuntime.slotIfAllocated(slot)->pendingViewRequest_; }
+  /// Task 4.20 probe: which sub-admission of `admitOverdubStartWorkingSet` holds the slot's roles.
+  static int viewsPrewarmed(Track& t, uint8_t slot) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->viewSetIfPrewarmed() != nullptr ? 1 : 0;
+  }
+  static int captureStagingsAdmitted(Track& t, uint8_t slot) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? (rt->captureStagingsAdmitted() ? 1 : 0) : -1;
+  }
   static auto& bindRecordClosure(Track& t, uint8_t slot, uint32_t phaseTick, uint32_t length,
                                  bool presentationRetiring = true) {
     TEST_ASSERT_TRUE(t.prewarmCaptureStopJobs());
     auto* job = t.captureStopJobTail();
     TEST_ASSERT_NOT_NULL(job);
-    job->presentation = &t.captureStopJobs_->presentations[slot];
+    job->presentation = t.freeCaptureCustody();
+    TEST_ASSERT_NOT_NULL(job->presentation);
+    auto& handle = t.captureStopJobs_->presentations[slot];
+    handle.custodyIndex = job->presentation->custodyIndex;
+    handle.interval = t.captureInterval_;
     job->presentation->owner = &t.getLoop(slot);
     job->presentation->loopId = t.getLoop(slot).loopId;
     job->presentation->slot = static_cast<uint8_t>(slot);
@@ -195,6 +241,7 @@ struct TrackCaptureStopTestAccess {
     job->phaseTick = phaseTick; job->loopLengthTicks = length;
     TEST_ASSERT_TRUE(job->owner->capture.store.sealCaptureRange(job->presentation->rawRange));
     job->presentation->ownsExtent = true;
+    job->presentation->state = Track::CaptureCustodyState::Sealed;
     TEST_ASSERT_TRUE(
         job->owner->borrowSealedCaptureRange(job->presentation->rawRange, job->presentation));
     job->pendingNotes.swap(t.pendingNotes);
@@ -265,6 +312,14 @@ struct TrackCaptureStopTestAccess {
   static bool admitRecordStop(Track& t, uint32_t tick, uint64_t interval) {
     return t.beginDeferredRecordStopForSlot(PendingStopDestination::Playing, tick, 0, interval);
   }
+  /// DEC-166: the Record lane's named refusal, read from the job itself -- the same value the device row
+  /// prints, so the fixture and the wire agree by construction rather than by convention.
+  static RecordNormalizationDenial normalizationDenial(const Track& t) {
+    const Track::CaptureStopJob* job = t.captureStopJobHead();
+    return job != nullptr ? job->lastNormalizationDenial : RecordNormalizationDenial::None;
+  }
+  /// Consecutive refused grains at the current phase (saturates at the report limit).
+  static uint16_t normalizationDenialGrains(const Track& t) { return t.retargetStallGrains_; }
   static size_t trackHeldNotes(const Track& t) { return t.pendingNotes.size(); }
   static bool deferredRevtsPending(const Track& t) {
     return t.deferredRecordRevtsSlot != Config::INVALID_LOOP_SLOT;
@@ -273,7 +328,7 @@ struct TrackCaptureStopTestAccess {
   /// record retirement used to drop its job with this true, which both leaked the extent and left the
   /// descriptor un-sealable for every later interval in that slot.
   static bool descriptorNeedsSourceRelease(Track& t, size_t index) {
-    return t.captureStopJobs_->presentations[index].rawRange.needsSourceRelease();
+    return t.captureStopJobs_->custodies[index].rawRange.needsSourceRelease();
   }
   static bool serviceDescriptorReservations(Track& t) {
     return t.serviceCaptureStopDescriptorReservations();
@@ -316,8 +371,7 @@ struct TrackCaptureStopTestAccess {
   static Track::CaptureStopJob& head(Track& t) {
     if (auto* job = t.captureStopJobHead()) return *job;
     static Track::CaptureStopJob presentationShadow{};
-    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-      const auto& presentation = t.captureStopJobs_->presentations[slot];
+    for (const auto& presentation : t.captureStopJobs_->custodies) {
       if (!presentation.retirementActive) continue;
       presentationShadow.owner = presentation.owner;
       presentationShadow.loopId = presentation.loopId;
@@ -337,8 +391,8 @@ struct TrackCaptureStopTestAccess {
   static bool recordWorkPending(const Track& t) {
     if (t.captureStopJobs_ != nullptr && t.captureStopJobs_->count != 0) return true;
     if (t.captureStopJobs_ != nullptr) {
-      for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot)
-        if (t.captureStopJobs_->presentations[slot].retirementActive) return true;
+      for (const auto& receipt : t.captureStopJobs_->custodies)
+        if (receipt.retirementActive) return true;
     }
     return false;
   }
@@ -352,8 +406,8 @@ struct TrackCaptureStopTestAccess {
     return job != nullptr ? static_cast<int>(job->admission.phase) : -1;
   }
   static bool presentationActive(const Track& t, uint8_t slot) {
-    return t.captureStopJobs_ != nullptr && slot < Config::MAX_LOOPS_PER_TRACK &&
-        t.captureStopJobs_->presentations[slot].retirementActive;
+    const auto* receipt = t.captureStopPresentationForSlot(slot);
+    return receipt != nullptr && receipt->retirementActive;
   }
   static uint32_t playbackGenerationOf(const Track& t) { return t.playbackGeneration; }
   static void resetProjectionCycle(Track& t) { t.projectionCycleStartTick = 0; }
@@ -370,7 +424,9 @@ struct TrackCaptureStopTestAccess {
   static void releasePresentationOwnership(Track& t, uint8_t slot) {
     auto* runtime = t.playbackRuntime.slotIfAllocated(slot);
     if (runtime == nullptr || t.captureStopJobs_ == nullptr) return;
-    auto& presentation = t.captureStopJobs_->presentations[slot];
+    auto* receipt = t.captureStopPresentationForSlot(slot);
+    if (!receipt) return;
+    auto& presentation = *receipt;
     (void)runtime->clearPresentationOwner(&presentation, presentation.generation);
     presentation.retirementActive = false;
   }
@@ -453,11 +509,23 @@ struct TrackCaptureStopTestAccess {
   static Capture& output(Track& t) {
     return t.playbackRuntime.slotIfAllocated(t.captureStopJobHead()->slot)->canonicalCaptureOutput;
   }
+  static void recordPreparationState(const Track& t, char* out, size_t size) {
+    const auto* jobs = t.captureStopJobs_.get();
+    const auto* job = t.captureStopJobHead();
+    if (!jobs || !job) { snprintf(out, size, "no active Record job"); return; }
+    const auto* runtime = t.playbackRuntime.slotIfAllocated(job->slot);
+    snprintf(out, size, "phase=%u prep=%u bound=%u denied=%u reason=%u units=%zu rows=%zu append=%u",
+        unsigned(job->admission.phase), jobs->recordPreparation.phaseCode(), jobs->recordPreparation.bound(),
+        jobs->recordPreparation.denied(), unsigned(jobs->recordPreparation.denyReason()),
+        jobs->recordPreparation.lastStepUnits(),
+        runtime ? runtime->canonicalCaptureOutput.store.size() : 0,
+        runtime && runtime->canonicalCaptureOutput.store.reservedAppendReady());
+  }
   static PendingStopPhase phase(const Track& t) {
     if (const auto* j = t.captureStopJobHead()) return j->admission.phase;
     if (t.captureStopJobs_ != nullptr) {
-      for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot)
-        if (t.captureStopJobs_->presentations[slot].retirementActive)
+      for (const auto& receipt : t.captureStopJobs_->custodies)
+        if (receipt.retirementActive)
           return PendingStopPhase::RecordPublished;
     }
     TEST_ASSERT_NOT_NULL(t.captureStopJobHead());
@@ -512,6 +580,11 @@ struct TrackCaptureStopTestAccess {
                                                        rt->canonicalCaptureChunks);
   }
   static bool drive(Track& t) { return t.driveAcceptedInteraction(); }
+  /// DEC-165 follow-up: manufacture the escape's own cause input — the job-fact (not the runtime
+  /// fact, `kCanonicalBaseAbandonedPhase`) that the AbandonBase escape writes — without coupling a
+  /// fixture to a genuine 2048-grain stall. Same "manufactured predicate" pattern as the
+  /// normalization-denial fixtures (DEC-166).
+  static void setBaseAbandonedSentinel(Track& t) { t.retargetStallPhase_ = kCanonicalBaseAbandonedPhase; }
   static void diagnostic(const Track& t) {
     const auto* j = t.captureStopJobHead();
     printf("jobs=%zu interval=%llu phase=%u job_bytes=%zu ring_bytes=%zu\n", jobs(t),
@@ -539,6 +612,37 @@ struct TrackCaptureStopTestAccess {
         static_cast<unsigned long>(j->loopId), j->ownsRawRange(), j->ownsPendingPass,
         static_cast<unsigned long long>(budget(t)), LoopEventStore::freeChunkCount());
     }
+  }
+  // TEMP investigation: why does the destination-Playing base build not advance under a live successor?
+  static void dumpPrefixBlockers(const Track& t) {
+    const auto* j = t.captureStopJobHead();
+    if (!j || !j->owner) { printf("no-head\n"); return; }
+    const auto* rt = t.playbackRuntime.slotIfAllocated(j->slot);
+    if (!rt) { printf("no-runtime\n"); return; }
+    const Loop& loop = *j->owner;
+    printf("bridgePhase=%u prefixPhase=%u attached=%u idle=%u gen=%llu prefixGen=%llu applyAvail=%u\n",
+      (unsigned)rt->captureBridgePhase, (unsigned)rt->canonicalPrefixPhase,
+      rt->canonicalPassInputs.captureAttached() ? 1u : 0u,
+      rt->canonicalPassInputs.idle() ? 1u : 0u,
+      (unsigned long long)rt->canonicalPassInputs.generation(),
+      (unsigned long long)rt->canonicalPrefixGeneration,
+      rt->frozenCompanionApply.available() ? 1u : 0u);
+    printf("prefixPasses=%p passes=%p srcRev=%u curRev=%u srcGen=%u curGen=%u len=%u curLen=%u storOwner=%p curStor=%llu storGen=%llu\n",
+      (const void*)rt->canonicalPrefixPasses, (const void*)&loop.passes,
+      rt->canonicalPrefixSource.playbackRevision, loop.playbackRevision,
+      rt->canonicalPrefixSource.sourceGeneration, t.playbackGeneration,
+      rt->canonicalPrefixLength, loop.loopLengthTicks,
+      (const void*)rt->canonicalPrefixStorageOwner,
+      (unsigned long long)loop.canonicalStorageGeneration,
+      (unsigned long long)rt->canonicalPrefixStorageGeneration);
+  }
+  static unsigned prefixFirstDenial(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt ? static_cast<unsigned>(rt->prefixFirstDenialReason) : 0u;
+  }
+  static bool prefixDeniedReported(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt != nullptr && rt->prefixDeniedFirstReported;
   }
 };
 void TrackManager::beginSlotSelectionHold(uint8_t, uint8_t) { A34A_OFF_PATH(); }
@@ -652,10 +756,9 @@ void rotation(bool aOverdub, bool bOverdub) {
   TrackCaptureStopTestAccess::assertHead(
       t, 0, a, aOverdub ? CapturePhase::Overdub : CapturePhase::Record);
   stop(t, bOverdub, 1536);
-  // A's job still owns the ring, so B's stop is retained rather than admitted. That is the
-  // DEC-067/DEC-078 obligation, identical on the Record and overdub routes.
-  TEST_ASSERT_TRUE(t.hasAcceptedUnexecutedInteraction());
-  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  // Independent interval custody admits both stops before either worker drains.
+  TEST_ASSERT_FALSE(t.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT(2, TrackCaptureStopTestAccess::jobs(t));
   const auto freeBefore = LoopEventStore::freeChunkCount();
   unsigned turns = 0;
   uint64_t allowance = 2; // At most two accepted-interaction admission turns.
@@ -906,7 +1009,9 @@ void deferredPersistence(bool stopped, bool superseded, bool stale) {
   if (stopped) t.forceSetState(TRACK_PLAYING);
   start(t, 1, true, 768, 62);
   assertNoPersistenceRequest();
-  advanceToPhase(t, PendingStopPhase::AtomicTransfer);
+  // Audible bridge completion now preflights/publishes on the same owner turn;
+  // stop before that grain, while both the pass and persistence are still private.
+  advanceToPhase(t, stopped ? PendingStopPhase::AtomicTransfer : PendingStopPhase::CompanionBridge);
   assertNoPersistenceRequest();
   Loop& owner = t.getLoop(0);
   TEST_ASSERT_EQUAL_UINT(0, owner.passes.overdubPasses.size());
@@ -1439,6 +1544,63 @@ static void driveToPrepared(Track& t) {
                     driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
                     driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+}
+
+void test_record_closure_chunks_stay_private_through_normalization() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  constexpr unsigned count = LoopEventStoreConfig::CHUNK_CAPACITY + 1;
+  std::array<NoteId, count> identities{};
+  for (unsigned i = 0; i < count; ++i) {
+    t.noteOn(1 + i / 128, i % 128, 100, 112 + i);
+    identities[i] = t.getLoop(0).capture.store.at(i).noteId;
+  }
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 700, 768);
+  auto& output = TrackCaptureStopTestAccess::closureRuntime(t).canonicalCaptureOutput.store;
+  for (unsigned i = 0; i < count; ++i) {
+    TEST_ASSERT_EQUAL(i + 1 == count ? LoopEventStoreRewriteResult::Complete
+                                   : LoopEventStoreRewriteResult::Pending,
+                      TrackCaptureStopTestAccess::closureGrain(t));
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    for (const auto chunk : output.chunkIds()) {
+      TEST_ASSERT_EQUAL_MESSAGE(ChunkPersistenceState::NotScheduled,
+          PersistenceQueue::chunkState(chunk), "private Record closure chunk entered persistence");
+    }
+  }
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordSourceStaging, job.admission.phase);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+  TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPrepared, job.admission.phase);
+  TEST_ASSERT_EQUAL(2 * count, output.size());
+  TEST_ASSERT_EQUAL(count, TrackCaptureStopTestAccess::presentation(t, job.slot)->rawRange.size());
+  std::array<bool, count> seenOn{}, seenOff{};
+  for (size_t i = 0; i < output.size(); ++i) {
+    const auto& row = output.at(i);
+    const size_t input = (row.channel - 1) * 128 + row.data.noteData.note;
+    TEST_ASSERT_LESS_THAN(count, input);
+    TEST_ASSERT_EQUAL(identities[input], row.noteId);
+    if (row.isNoteOn()) {
+      TEST_ASSERT_FALSE(seenOn[input]);
+      seenOn[input] = true;
+      TEST_ASSERT_EQUAL(12 + input, row.tick);
+    } else {
+      TEST_ASSERT_TRUE(row.isNoteOff());
+      TEST_ASSERT_FALSE(seenOff[input]);
+      seenOff[input] = true;
+      TEST_ASSERT_EQUAL(700, row.tick);
+    }
+  }
+  for (unsigned i = 0; i < count; ++i) {
+    TEST_ASSERT_TRUE(seenOn[i]);
+    TEST_ASSERT_TRUE(seenOff[i]);
+  }
+  for (const auto chunk : output.chunkIds()) {
+    TEST_ASSERT_EQUAL(ChunkPersistenceState::NotScheduled, PersistenceQueue::chunkState(chunk));
+  }
 }
 
 void test_record_publication_preflight_denies_before_the_irreversible_commit() {
@@ -3904,6 +4066,65 @@ void test_record_stop_admits_through_the_common_drive() {
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
+/// DEC-166 fixture: the **Record** lane names the predicate that keeps refusing its normalization grain,
+/// and nothing else changes because of it. The injection is deliberately a *job* field rather than a
+/// production predicate -- this asserts the diagnostic (and its no-bypass property), not the stall.
+void test_record_normalization_names_its_refusal_and_changes_nothing_else() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admitRecordStop(t, 768, interval));
+  auto& job = TrackCaptureStopTestAccess::head(t);
+  // The ladder first: a healthy job reaches the normalization phase and refuses nothing on the way.
+  uint32_t turns = 0;
+  while (TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalOrder && turns < 8192) {
+    ++turns;
+    (void)TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, TrackCaptureStopTestAccess::phase(t));
+  TEST_ASSERT_EQUAL(RecordNormalizationDenial::None,
+                    TrackCaptureStopTestAccess::normalizationDenial(t));
+  TEST_ASSERT_EQUAL_UINT16(0, TrackCaptureStopTestAccess::normalizationDenialGrains(t));
+  // Manufactured identity fault: the guard at the top of the grain is the only deterministic denial a
+  // fixture can produce, and the point is that it can no longer be silent.
+  job.loopLengthTicks = 0;
+  for (uint16_t i = 0; i < kRecordNormalizationDenialReportLimit + 8; ++i)
+    (void)TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_EQUAL(RecordNormalizationDenial::JobIdentity,
+                    TrackCaptureStopTestAccess::normalizationDenial(t));
+  // The counter saturates at the report limit: exactly one row per job is committed to.
+  TEST_ASSERT_EQUAL_UINT16(kRecordNormalizationDenialReportLimit,
+                           TrackCaptureStopTestAccess::normalizationDenialGrains(t));
+  // Nothing was bypassed: same phase, still pending, still holding the ring. A reporter that moved the
+  // job would be a policy change, and this decision is report-only.
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, TrackCaptureStopTestAccess::phase(t));
+  TEST_ASSERT_TRUE(job.admission.pending);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::jobs(t)));
+  TEST_ASSERT_EQUAL_UINT64(interval, job.interval);
+  // The mapping the row prints is exact for every term the lane can name.
+  TEST_ASSERT_EQUAL_STRING("none", recordNormalizationDenialName(RecordNormalizationDenial::None));
+  TEST_ASSERT_EQUAL_STRING("job_identity",
+                           recordNormalizationDenialName(RecordNormalizationDenial::JobIdentity));
+  TEST_ASSERT_EQUAL_STRING("owner_lost",
+                           recordNormalizationDenialName(RecordNormalizationDenial::OwnerLost));
+  TEST_ASSERT_EQUAL_STRING("output_not_ready",
+                           recordNormalizationDenialName(RecordNormalizationDenial::OutputNotReady));
+  TEST_ASSERT_EQUAL_STRING("chunk_starvation",
+                           recordNormalizationDenialName(RecordNormalizationDenial::ChunkStarvation));
+  TEST_ASSERT_EQUAL_STRING("role_bind_refused",
+                           recordNormalizationDenialName(RecordNormalizationDenial::RoleBindRefused));
+  TEST_ASSERT_EQUAL_STRING("preparation_denied",
+                           recordNormalizationDenialName(RecordNormalizationDenial::PreparationDenied));
+}
+
 // S4f.20 parity -- the session-exit queue the inline stop owned. `Loop::commitPendingCapturePass`
 // ends by queuing the interval's session-exit snapshot publication, and that queue is the only
 // enumeration of the **committed Record pass** into the pending box. The pass does not exist at the
@@ -4416,7 +4637,8 @@ static void exerciseRecordBarTwoWindow(bool requireUnifiedRecordReader,
     (void)t.stepPlaybackViewMaintenance(3 * bar - 1, nullptr, true, {});
   TEST_ASSERT_FALSE_MESSAGE(runtime.frozenRecordWindowReady(),
       "a stale job LoopId must not publish frozen bar-two coverage");
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::extentOwned(t, job.slot) && TrackCaptureStopTestAccess::presentation(t, job.slot)->rawRange.ready());
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::presentation(t, job.slot));
+  TEST_ASSERT_TRUE(frozenPresentation->ownsExtent && frozenPresentation->rawRange.ready());
   TEST_ASSERT_EQUAL_UINT8(firstRole, set->lifecycle.current);
   TEST_ASSERT_EQUAL_UINT64(firstStorage, set->views[firstRole].storageGeneration);
   TEST_ASSERT_EQUAL_UINT32(0u, MidiSendCapture::count());
@@ -5784,7 +6006,7 @@ static void runRootlessSourceAndWindowUnderOwnerRotation(bool withFinalization) 
     TEST_ASSERT_TRUE(backgroundSnapshotGrants > 0 && continuedStopGrants > 0);
     TEST_ASSERT_TRUE(stopping->getLoop(0).publishedSnapshotIsCurrent());
     TEST_ASSERT_TRUE(stopping->getLoop(0).passes.hasRecordPass());
-    TEST_ASSERT_EQUAL_UINT64(stopInterval, TrackCaptureStopTestAccess::interval(*stopping));
+    TEST_ASSERT_EQUAL_UINT64(stopInterval + 1, TrackCaptureStopTestAccess::interval(*stopping));
     for (size_t index = 0; index < TrackCaptureStopTestAccess::descriptorCount(); ++index)
       TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::descriptorNeedsSourceRelease(*stopping, index),
           "retired Record job must release its sealed raw-range descriptor");
@@ -6017,6 +6239,7 @@ void test_retained_record_stop_admits_stopped_once_the_transport_is_not_running(
   start(t, 1, false, 768, 62);
   const uint64_t bInterval = TrackCaptureStopTestAccess::interval(t);
   clockManager.assignCurrentTickSilently(1536);
+  TrackCaptureStopTestAccess::withholdStopDestinations(t); // genuine missing raw destinations
   t.stopRecording(1536);
   TEST_ASSERT_TRUE_MESSAGE(t.hasAcceptedInteractionForSlot(1),
                            "precondition: B's stop must be retained against slot 1");
@@ -6035,6 +6258,7 @@ void test_retained_record_stop_admits_stopped_once_the_transport_is_not_running(
     }
   }
   TEST_ASSERT_FALSE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::serviceDescriptorReservations(t));
   nativeTransportRunning = false;
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::drive(t),
                            "the retained stop must admit once the ring frees");
@@ -6298,6 +6522,153 @@ void test_job_pass_staging_yields_and_preserves_successor() {
   TEST_ASSERT_EQUAL(1, t.getLoop(0).passes.overdubPasses.size());
   TEST_ASSERT_TRUE(t.isRecording());
   TEST_ASSERT_EQUAL(2, t.getLoop(1).capture.store.size());
+}
+
+/// DEC-165 named this escape; its landed implementation retired nothing: the (void)-discarded
+/// `retireSkippedCompanionPreparation` is destination-gated and the abandoned-base route is
+/// destination-Playing by construction, so `finalizationComplete()` stays false and
+/// `canCommit` refuses both transfer variants — the job wedges a phase later than the wedge
+/// DEC-165 fixed, holding the 8-deep FIFO head. RED here drives the exact shape: destination-Playing
+/// overdub stop, live successor capturing, base-abandoned sentinel manufactured via the
+/// access seam. Acceptance after the repair: the head retires with the pass rows kept, the
+/// transport-static run proves retirement needed no successor wrap (the only revision movement is
+/// the head's own commit publication), and the next stop press is admitted — not retained — and
+/// retires too.
+void test_abandoned_base_retires_the_playing_stop_without_revision_movement() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true); prepareSlot(t, 1, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  for (unsigned i = 0; i < 140; ++i) {
+    const uint8_t channel = 2 + i / 128, note = i % 128;
+    t.noteOn(channel, note, 100, 12); t.noteOff(channel, note, 0, 96);
+  }
+  stop(t, true, 768);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 1, false, 768, 72); // live successor: capturing while the head job works
+  TEST_ASSERT_TRUE(t.isRecording());
+  advanceToPhase(t, PendingStopPhase::CanonicalTail);
+  TrackCaptureStopTestAccess::setBaseAbandonedSentinel(t);
+  const uint32_t revision = t.getLoop(0).playbackRevision;
+  const uint64_t allowance = TrackCaptureStopTestAccess::budget(t) + 4096;
+  for (uint64_t grain = 0; grain < allowance && TrackCaptureStopTestAccess::jobs(t); ++grain)
+    TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+                                 "abandoned-base Playing stop must retire, not wedge the head");
+  // The transport never advances and the successor keeps capturing, so no wrap can run; the only
+  // revision movement is the head's own commit publication. Exact +1 pins "retirement needed no
+  // revision move from anybody".
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision + 1, t.getLoop(0).playbackRevision,
+                                   "exactly one publication: the head's own commit; no successor wrap");
+  // The receipt-prepared OverdubPassAdded entry is published by the same commit (no fail-open).
+  TEST_ASSERT_EQUAL(1, t.getGlobalUndoStack().undoCount());
+  TEST_ASSERT_EQUAL_UINT(1, t.getLoop(0).passes.overdubPasses.size()); // the rows are kept
+  TrackCaptureStopTestAccess::assertRetiredCursors(t);
+  // Successor service: with the head retired the next press is admitted, not retained.
+  stop(t, false, 1536);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+                                 "successor stop must be admitted now that the ring has room");
+  TEST_ASSERT_FALSE(t.hasAcceptedUnexecutedInteraction());
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::jobs(t));
+  // Head commit + successor record stop.
+  TEST_ASSERT_EQUAL(2, t.getGlobalUndoStack().undoCount());
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[0][1]);
+  for (unsigned i = 0; i < 10; ++i) TrackCaptureStopTestAccess::step(t);
+}
+
+/// DEC-168 candidate (device `session_20261027_172742.log`): a transport stop flips every queued
+/// job's destination and command epoch, but `requestDeferredOverdubStopToStopped` runs the retarget
+/// edge (cache release + `retargetStoppedRecovery`) for the FIFO head only, and the flip consumes
+/// each queued job's own epoch mismatch so the edge can never key on it later. A queued retargeted
+/// job's canonical base was therefore never built — the STOPPED route skips `CanonicalPrefix`, and
+/// `beginFrozenCanonicalTail` requires a **ready** base — so its tail can never begin; it sat out
+/// DEC-070's 512-grain `CanonicalTail` bound before the raw-pass-only escape anyway. Seven such jobs
+/// (~2.1 s each) held the reserved session-exit record `Populated` and refused every overdub start
+/// for ~26 s. Acceptance: escape that job **by cause**, immediately — identical output (the companion
+/// representation was already lost at the bound), none of the latency. RED: pre-fix a retargeted job
+/// with no base spends ≥ the 512-grain bound at `CanonicalTail` before retiring.
+void test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);                 // interval A
+  t.noteOn(1, 61, 100, 12); t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);                       // job A admitted, destination PLAYING (device press shape)
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 0, true, 768, 62);               // successor interval B on the same slot, over the job
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(),
+      "the device admitted a same-slot successor while the stop job was still pending");
+  t.noteOn(1, 64, 100, 12); t.noteOff(1, 64, 0, 96);
+  stop(t, true, 1536);                      // job B queued behind A
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, TrackCaptureStopTestAccess::jobs(t),
+      "job B must queue behind job A before the transport stop");
+
+  TrackCaptureStopTestAccess::retargetPendingStopToStopped(t);
+
+  const auto drive = [&]() {
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    else
+      TrackCaptureStopTestAccess::step(t);
+  };
+  // Job A (retargeted at the flip) retires first; B is untouched until it reaches the head.
+  uint64_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) == 2 && turns < 20000) { drive(); ++turns; }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+      "job A must retire and hand the head to job B");
+
+  // B is now head. Its canonical base was never built, so its tail can never begin; the fix escapes
+  // it by cause instead of making it sit out the 512-grain companion bound. The bound itself is the
+  // deterministic discriminator: pre-fix B spends exactly that many grains at `CanonicalTail` before
+  // the escape fires, so B's whole head-to-retirement span crosses it; post-fix it never approaches.
+  uint64_t bTurns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) == 1 && bTurns < 20000) { drive(); ++bTurns; }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+      "the queued retargeted stop must retire, not stall the head");
+  TEST_ASSERT_TRUE_MESSAGE(
+      bTurns < static_cast<uint64_t>(kRetargetedCompanionStallGrainLimit),
+      "a base-less retargeted stop must escape by cause, not wait out the 512-grain bound");
+
+  // Content and undo guard: both intervals keep their rows and each stop adds its own undo level.
+  TEST_ASSERT_EQUAL_UINT(2, t.getLoop(0).passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(2, t.getGlobalUndoStack().undoCount());
+  for (unsigned i = 0; i < 10; ++i) TrackCaptureStopTestAccess::step(t);
+}
+
+/// DEC-170 control: the same high-level state that stalls on device — a destination-Playing stop whose base build runs
+/// under a live same-slot successor — is *healthy* natively. The base builds to completion (no `CanonicalPrefixPhase::Denied`
+/// latch) and the denial reporter stays silent (`prefixFirstDenialReason == None`), proving the device stall is caused by
+/// device-only contention inside `stepCanonicalPrefix`, not by the successor state itself. This is the control that makes the
+/// device `prefix_denied_first` row meaningful: the reason it names is the contention, not "successor capturing".
+void test_destination_playing_base_builds_natively_under_live_successor() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 61, 100, 12); t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);                       // job A admitted, destination PLAYING
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 0, true, 768, 62);               // same-slot live successor B
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "successor must be live");
+  t.noteOn(1, 64, 100, 12); t.noteOff(1, 64, 0, 96);
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  // The base must complete (leave CanonicalPrefix) natively, with no denial ever recorded.
+  for (unsigned i = 0; i < 400 && TrackCaptureStopTestAccess::phase(t) == PendingStopPhase::CanonicalPrefix; ++i) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalPrefix,
+      "the canonical base must build past CanonicalPrefix natively under a live successor");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::CanonicalPrefixDenial::None),
+      TrackCaptureStopTestAccess::prefixFirstDenial(t),
+      "no denial may be recorded on the healthy native path (the reporter stays silent)");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::prefixDeniedReported(t),
+      "the denial reporter must not fire on the healthy native path");
 }
 
 void test_job_pass_staging_denial_and_receipt_binding() {
@@ -8018,8 +8389,907 @@ void test_3_15a_jam_playback_serves_only_its_region_and_the_control_serves_both_
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ledgerOpen(0), "and the ledger still closes");
 }
 
+Track& preparePrivateRecordForOverdubPress() {
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  prepareSlot(track, 0, true);
+  track.forceSetState(TRACK_PLAYING);
+  track.clear();
+  track.forceSetState(TRACK_ARMED);
+  TEST_ASSERT_TRUE(track.startRecording(0));
+  for (uint32_t bar = 0; bar < 32; ++bar) {
+    track.noteOn(1, 60, 100, bar * 768 + 12);
+    track.noteOff(1, 60, 0, bar * 768 + 96);
+  }
+  clockManager.assignCurrentTickSilently(32 * 768 + 200);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isPlaying());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.getActiveLoop().hasCommittedPasses());
+  trackManager.setSlotEnabled(0, 0, true);
+  trackManager.setSlotMuted(0, 0, false);
+  return track;
+}
+
+void test_record_button_starts_overdub_instead_of_muting_private_record() {
+  Track& track = preparePrivateRecordForOverdubPress();
+  const auto interval = TrackCaptureStopTestAccess::interval(track);
+  const auto rawRows = TrackCaptureStopTestAccess::presentation(track, 0)->rawRange.size();
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.isSlotMuted(0, 0), "Record/Overdub must not become a slot mute");
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_FALSE(track.getActiveLoop().hasCommittedPasses());
+  TEST_ASSERT_EQUAL_UINT64(interval + 1, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_EQUAL_UINT32(rawRows, TrackCaptureStopTestAccess::presentation(track, 0)->rawRange.size());
+  track.noteOn(1, 72, 100, clockManager.getCurrentTick());
+  trackManager.startOverdubbingTrack(0); // explicit Start is idempotent; a toggle would be Stop
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT32(1, track.getActiveLoop().capture.store.size());
+  TEST_ASSERT_EQUAL_UINT64(interval + 1, TrackCaptureStopTestAccess::interval(track));
+}
+
+void test_private_record_overdub_intent_survives_denial_and_starts_once() {
+  Track& track = preparePrivateRecordForOverdubPress();
+  const auto interval = TrackCaptureStopTestAccess::interval(track);
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  trackManager.startOverdubbingTrack(0);
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(), "manager denial must retain the same intent");
+  TEST_ASSERT_TRUE(track.isPlaying());
+  for (unsigned turn = 0; turn < 8; ++turn) {
+    (void)TrackCaptureStopTestAccess::drive(track);
+    TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+    TEST_ASSERT_TRUE(track.isPlaying());
+  }
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::drive(track));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "recovery must not wait for private Record publication");
+  TEST_ASSERT_FALSE(track.getActiveLoop().hasCommittedPasses());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT64(interval + 1, TrackCaptureStopTestAccess::interval(track));
+  track.noteOn(1, 72, 100, 400);
+  track.noteOff(1, 72, 0, 448);
+  TEST_ASSERT_EQUAL_UINT32(2, track.getActiveLoop().capture.store.size());
+  for (unsigned turn = 0; turn < 8; ++turn)
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_EQUAL_UINT64(interval + 1, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_EQUAL_UINT32(2, track.getActiveLoop().capture.store.size());
+}
+
+void test_post_record_overdub_start_is_cancelled_by_stop_clear_and_slot_exit() {
+  for (unsigned action = 0; action < 3; ++action) {
+    if (action != 0) setUp();
+    Track& track = preparePrivateRecordForOverdubPress();
+    MemoryMonitor::setNativeForcedReserveDenied(true);
+    midiButtonActions.handleToggleRecord();
+    MemoryMonitor::setNativeForcedReserveDenied(false);
+    TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+    if (action == 0) {
+      nativeTransportRunning = false;
+      TEST_ASSERT_TRUE(track.setState(TRACK_STOPPED));
+      // A quick resume before the next owner turn must not resurrect the old intent.
+      nativeTransportRunning = true;
+      TEST_ASSERT_TRUE(track.setState(TRACK_PLAYING));
+    } else if (action == 1) {
+      track.clear();
+    } else {
+      track.setActiveLoopIndex(1);
+      track.setActiveLoopIndex(0);
+    }
+    TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+    for (unsigned turn = 0; turn < 16; ++turn)
+      track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    TEST_ASSERT_FALSE(track.isOverdubbing());
+  }
+}
+
+void test_post_record_overdub_start_rejects_replacement_identity() {
+  Track& track = preparePrivateRecordForOverdubPress();
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  midiButtonActions.handleToggleRecord();
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  Loop& loop = track.getActiveLoop();
+  const LoopId original = loop.loopId;
+  ++loop.loopId; // Replacement at the same slot number, not a new selection.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::drive(track));
+  loop.loopId = original;
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+}
+
+void test_post_record_overdub_start_survives_track_focus_change() {
+  Track& track = preparePrivateRecordForOverdubPress();
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  midiButtonActions.handleToggleRecord();
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  trackManager.setSelectedTrack(1);
+  for (unsigned turn = 0; turn < 20000 && !track.isOverdubbing(); ++turn)
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(trackManager.getTrack(1).isOverdubbing());
+}
+
+void test_post_record_overdub_start_does_not_overdub_a_filtered_empty_take() {
+  Track& track = trackManager.getSelectedTrack();
+  prepareSlot(track, 0, false);
+  TEST_ASSERT_TRUE(track.startRecording(768));
+  noteMinLengthRemoveEnabled = true;
+  noteMinLengthTicks = 48;
+  track.noteOn(1, 60, 100, 780);
+  track.noteOff(1, 60, 0, 800);
+  clockManager.assignCurrentTickSilently(1536);
+  track.stopRecording(1536);
+  TEST_ASSERT_TRUE(track.isPlaying());
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  midiButtonActions.handleToggleRecord();
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  for (unsigned turn = 0; turn < 20000 && track.hasStopInFlight(); ++turn)
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_FALSE(track.hasStopInFlight());
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_FALSE(track.getActiveLoop().hasCommittedPasses());
+  TEST_ASSERT_EQUAL_UINT32(0, track.getActiveLoop().loopLengthTicks);
+}
+
+void test_pending_overdub_start_does_not_hold_final_record_geometry() {
+  Track& track = preparePrivateRecordForOverdubPress();
+  const auto interval = TrackCaptureStopTestAccess::interval(track);
+  TEST_ASSERT_EQUAL_UINT32(0, trackManager.getMasterLoopLength());
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  midiButtonActions.handleToggleRecord();
+  for (unsigned turn = 0; turn < 20000 && !track.getActiveLoop().hasCommittedPasses(); ++turn)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+  for (unsigned turn = 0; turn < 8; ++turn) {
+    trackManager.servicePendingRecordStopGeometry(); // Same owner dispatched by updateAllTracks.
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE(track.isPlaying());
+  uint32_t finalLength = 0;
+  TEST_ASSERT_EQUAL(Track::RecordStopGeometryState::Final,
+      track.recordStopGeometryForSlot(0, finalLength));
+  // Final publication may correct the stop-edge prediction; the committed Loop is authority.
+  TEST_ASSERT_GREATER_THAN_UINT32(0, finalLength);
+  TEST_ASSERT_EQUAL_UINT32(track.getActiveLoop().loopLengthTicks, finalLength);
+  TEST_ASSERT_EQUAL_UINT32(finalLength, trackManager.getMasterLoopLength());
+  for (unsigned turn = 0; turn < 20000 && !track.isOverdubbing(); ++turn)
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT64(interval + 1, TrackCaptureStopTestAccess::interval(track));
+}
+
+void test_long_chromatic_record_rounded_stop_preparation_progresses_with_live_successor() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  TEST_ASSERT_TRUE(t.startRecording(0));
+  noteMinLengthRemoveEnabled = true;
+  noteMinLengthTicks = 24;
+  for (uint8_t pitch : {84u, 83u}) {
+    t.noteOn(8, pitch, 100, 0); t.noteOff(8, pitch, 0, 0);
+  }
+  constexpr uint32_t stop = 22 * Config::TICKS_PER_BAR + 520;
+  for (uint32_t i = 0, tick = 0; tick < stop; ++i, tick += 48) {
+    const uint8_t pitch = 82 - i % 16;
+    t.noteOn(8, pitch, 100, tick);
+    if (tick + 48 < stop) t.noteOff(8, pitch, 0, tick + 48);
+  }
+  clockManager.assignCurrentTickSilently(stop);
+  t.stopRecording(stop);
+  TEST_ASSERT_EQUAL_UINT32(23 * Config::TICKS_PER_BAR, t.getActiveLoop().loopLengthTicks);
+  t.startOverdubbing(stop + 400);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  t.noteOn(8, 40, 100, stop + 416); t.noteOff(8, 40, 0, stop + 440);
+  for (unsigned turn = 0; turn < 20000 && !t.getActiveLoop().hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    char state[180]; TrackCaptureStopTestAccess::recordPreparationState(t, state, sizeof(state));
+    char repeated[180]; TrackCaptureStopTestAccess::recordPreparationState(t, repeated, sizeof(repeated));
+    TEST_ASSERT_EQUAL_STRING(state, repeated); // diagnostic queries do not advance the cursor
+    TEST_ASSERT_FALSE_MESSAGE(strstr(state, "denied=1") != nullptr, state);
+  }
+  char state[180]; TrackCaptureStopTestAccess::recordPreparationState(t, state, sizeof(state));
+  TEST_ASSERT_TRUE_MESSAGE(t.getActiveLoop().hasCommittedPasses(), state);
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 — cycle-qualified probe + the 64-cycle plateau gate.**
+//
+// `Loop::overdubSessionPassIds_` / `overdubSessionCompanionIds_` were the containers with the suspected bad shape
+// (internal-heap allocation appended per wrap commit). This fixture settles tiny overdubs through the suite's own
+// production cycle and samples the accessor after each one, with every cycle's preconditions asserted **with the
+// cycle index and the blocking owner named**. Two measured results hold it in place:
+//   * the session lists are **empty (size and capacity 0) after every settled cycle** — they retire, so they are
+//     not the internal-heap staircase (the receipt prints under `-v`);
+//   * a start is refused from cycle 16 on because `prewarmActiveOverdubTransferHorizon()` returns false: the
+//     prewarmed transfer pool is empty and its first sub-step `prewarmSessionExitSnapshotHandoff()` no longer
+//     succeeds at 17 committed passes. That bound is reported, not asserted away, and the plateau questions below
+//     are answered over the cycles that *did* settle.
+void test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  constexpr int kCycles = 64;
+  constexpr int kWarmup = 8;
+  constexpr size_t kTransient = 4;
+  Loop::OverdubSessionRetention samples[kCycles];
+  char ctx[256];
+  int blockedAt = -1;
+  char blockedReceipt[256] = {0};
+  uint32_t tick = 96;
+  for (int cycle = 0; cycle < kCycles; ++cycle) {
+    tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
+    const uint8_t note = static_cast<uint8_t>(60 + cycle % 12);
+    t.forceSetState(TRACK_PLAYING);
+    std::snprintf(ctx, sizeof(ctx),
+                  "cycle=%d tick=%u state=%d od=%d rec=%d pendStop=%d inflight=%d slotInflight=%d "
+                  "jobs=%zu liveFree=%d phase=%u passes=%zu admission=%d views=%d stagings=%d "
+                  "pendPass=%d poolRows=%zu",
+                  cycle, tick, static_cast<int>(t.getState()), t.isOverdubbing() ? 1 : 0,
+                  t.isRecording() ? 1 : 0, t.hasPendingDeferredOverdubStop() ? 1 : 0,
+                  t.hasStopInFlight() ? 1 : 0, t.hasStopInFlightForSlot(kSlot) ? 1 : 0,
+                  TrackCaptureStopTestAccess::jobs(t), t.noLiveOwnerForSlot(kSlot) ? 1 : 0,
+                  static_cast<unsigned>(t.getLoop(kSlot).capture.phase),
+                  t.getLoop(kSlot).passes.capturePassCount(),
+                  t.getLoop(kSlot).hasActiveOverdubTransferAdmission() ? 1 : 0,
+                  TrackCaptureStopTestAccess::viewsPrewarmed(t, kSlot),
+                  TrackCaptureStopTestAccess::captureStagingsAdmitted(t, kSlot),
+                  t.getLoop(kSlot).hasPendingCapturePass_ ? 1 : 0,
+                  t.getLoop(kSlot).prewarmedCommittedChunkIdPool_.size());
+    TEST_ASSERT_FALSE_MESSAGE(t.hasPendingDeferredOverdubStop(), ctx);
+    TEST_ASSERT_TRUE_MESSAGE(t.noLiveOwnerForSlot(kSlot), ctx);
+    t.setActiveLoopIndex(kSlot);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    if (!t.isOverdubbing()) {
+      // Task 4.20 step 9: the cycle-16 escape is gone. Start admission no longer inherits the
+      // publisher's cadence, so an unrestricted run must settle every cycle; a refusal here is the
+      // failure this fixture used to report as a bound.
+      blockedAt = cycle;
+      std::snprintf(blockedReceipt, sizeof(blockedReceipt), "%s", ctx);
+      TEST_FAIL_MESSAGE(ctx);
+    }
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    clockManager.assignCurrentTickSilently(tick + 96u);
+    t.stopOverdubbing();
+    driveStopToRetirement(t);
+    // The publication lane owns the drain of this loop's session-exit obligations. Without a turn here
+    // a bounded single reservation would replace the receipt ring as the cadence bound, and the
+    // unrestricted run could not settle — so the lane is part of this fixture's settled shape, not an
+    // escape from it.
+    for (int turn = 0;
+         turn < 4096 &&
+         (t.getLoop(kSlot).hasPendingSnapshotPublish() ||
+          t.getLoop(kSlot).hasReservedSessionExitObligation() ||
+          t.getLoop(kSlot).sessionExitReceiptCount() != 0);
+         ++turn) {
+      if (!t.getLoop(kSlot).stepPendingSnapshotPublish(64)) break;
+    }
+    samples[cycle] = t.getLoop(kSlot).overdubSessionRetention();
+  }
+  const int settled = blockedAt < 0 ? kCycles : blockedAt;
+  TEST_ASSERT_TRUE_MESSAGE(settled > kWarmup,
+                           blockedReceipt);
+  const Loop::OverdubSessionRetention& warm = samples[kWarmup - 1];
+  const Loop::OverdubSessionRetention& last = samples[settled - 1];
+  std::snprintf(ctx, sizeof(ctx),
+                "settled=%d blockedAt=%d | warm(cycle%d): pass=%zu/%zu comp=%zu/%zu nested=%zu cur=%zu "
+                "|| last(cycle%d): pass=%zu/%zu comp=%zu/%zu nested=%zu cur=%zu (size/capacity) | %s",
+                settled, blockedAt, kWarmup, warm.passCount, warm.passCapacity, warm.companionCount,
+                warm.companionCapacity, warm.companionNestedCapacity, warm.cursor, settled,
+                last.passCount, last.passCapacity, last.companionCount, last.companionCapacity,
+                last.companionNestedCapacity, last.cursor, blockedReceipt);
+  std::printf("T4.20 retention receipt: %s\n", ctx);
+  TEST_ASSERT_TRUE_MESSAGE(last.passCount <= warm.passCount + kTransient,
+                           ctx);
+  TEST_ASSERT_TRUE_MESSAGE(last.companionCount <= warm.companionCount + kTransient,
+                           ctx);
+  TEST_ASSERT_TRUE_MESSAGE(last.passCapacity <= warm.passCapacity + kTransient,
+                           ctx);
+  TEST_ASSERT_TRUE_MESSAGE(last.companionCapacity <= warm.companionCapacity + kTransient,
+                           ctx);
+  TEST_ASSERT_TRUE_MESSAGE(last.companionNestedCapacity <= warm.companionNestedCapacity + 8u * kTransient,
+                           ctx);
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 boundary control — a full publisher-side receipt ring alone does not block a start.**
+//
+// Measured (`test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses`): the refusal is
+// `prewarmSessionExitSnapshotHandoff()` → `canHandoffSessionExitSnapshot()` = fixed ring
+// `kSessionExitReceiptCapacity` (8) with no free slot. The ring is drained **only** by
+// `stepPendingSnapshotPublish(…, allowStartConstruction=true, …)`, so in a settled-overdub shape the receipts
+// accumulate and `OverdubStart` inherits the publisher's cadence as its admission condition. It is **not**
+// proportional to historical passes — it is a bounded buffer that is not drained by this shape.
+//
+// Measured result: with the ring **full (8/8)** and 9 committed passes the start still succeeds, because
+// `admitOverdubStartWorkingSet` only re-prewarms the transfer horizon when `hasActiveOverdubTransferAdmission()` has
+// actually lapsed. So the ring is the *second* condition, not the first: the refusal in the fixture above needs the
+// lapse (`admission=0`) as well. This control pins the half that must stay true — and is why the discriminating RED
+// belongs on the lapse state, not on ring occupancy alone.
+void test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_start() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  Loop& loop = t.getLoop(kSlot);
+  char ctx[256];
+  int settled = 0;
+  for (int cycle = 0; cycle < 64 && loop.sessionExitReceiptCount() < Loop::kSessionExitReceiptCapacity;
+       ++cycle) {
+    const uint32_t tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
+    t.setActiveLoopIndex(kSlot);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    if (!t.isOverdubbing()) {
+      break;
+    }
+    t.noteOn(1, static_cast<uint8_t>(60 + cycle % 12), 100, tick + 12);
+    t.noteOff(1, static_cast<uint8_t>(60 + cycle % 12), 0, tick + 60);
+    clockManager.assignCurrentTickSilently(tick + 96u);
+    t.stopOverdubbing();
+    driveStopToRetirement(t);
+    ++settled;
+  }
+  std::snprintf(ctx, sizeof(ctx),
+                "settled=%d receipts=%zu/%zu passes=%zu phase=%u pendPass=%d admission=%d",
+                settled, loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                loop.passes.capturePassCount(), static_cast<unsigned>(loop.capture.phase),
+                loop.hasPendingCapturePass_ ? 1 : 0,
+                loop.hasActiveOverdubTransferAdmission() ? 1 : 0);
+  std::printf("T4.20 boundary receipt: %s\n", ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(Loop::kSessionExitReceiptCapacity, loop.sessionExitReceiptCount(), ctx);
+  // The ring is full; the start must still be admissible (storage limits are nowhere near exhausted).
+  t.setActiveLoopIndex(kSlot);
+  clockManager.assignCurrentTickSilently(96);
+  t.startOverdubbing(96);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), ctx);
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 lapse-boundary RED — a lapsed transfer admission plus a full publisher receipt ring must not deny an
+// overdub start, and the stopped interval must still own exactly one publication obligation.**
+//
+// Measured state at the refusal (`test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses`):
+// `admission=0`, `poolRows=0`, `receipts=8/8` — `admitOverdubStartWorkingSet()` re-prewarms the transfer horizon
+// through `prewarmActiveOverdubTransferHorizon()`, whose first step `prewarmSessionExitSnapshotHandoff()` demands a
+// **free receipt slot**. So start admission inherits the snapshot publisher's cadence.
+//
+// The contract this pins (owner's ordering, 2026-10-27): breaking the cadence coupling must not merely move the
+// failure to the publisher — after the repair the start must succeed, the stop must be accepted, the interval's
+// publication obligation must remain **owned**, and it must publish **exactly once** when receipt capacity returns.
+void test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_survives() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  Loop& loop = t.getLoop(kSlot);
+  char ctx[320];
+  int blockedAt = -1;
+  int fullRingStarts = 0;
+  bool fullRingAdmissionRestored = false;
+  bool draining = false;
+  bool ownershipChecked = false;
+  for (int cycle = 0; cycle < 64; ++cycle) {
+    const uint32_t tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
+    t.setActiveLoopIndex(kSlot);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    if (!t.isOverdubbing()) {
+      blockedAt = cycle;
+      std::snprintf(ctx, sizeof(ctx),
+                    "REFUSED at cycle=%d: receipts=%zu/%zu admission=%d passes=%zu phase=%u pendPass=%d "
+                    "jobs=%zu liveFree=%d claim=%u",
+                    cycle, loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                    loop.hasActiveOverdubTransferAdmission() ? 1 : 0,
+                    loop.passes.capturePassCount(), static_cast<unsigned>(loop.capture.phase),
+                    loop.hasPendingCapturePass_ ? 1 : 0, TrackCaptureStopTestAccess::jobs(t),
+                    t.noLiveOwnerForSlot(kSlot) ? 1 : 0,
+                    static_cast<unsigned>(loop.sessionExitPublishClaimState()));
+      TEST_FAIL_MESSAGE(ctx);
+    }
+    // The discriminating observation: this start happened while every receipt slot was occupied.
+    const bool fullRingStart =
+        loop.sessionExitReceiptCount() >= Loop::kSessionExitReceiptCapacity;
+    if (fullRingStart) {
+      ++fullRingStarts;
+      fullRingAdmissionRestored = loop.hasActiveOverdubTransferAdmission();
+    }
+    t.noteOn(1, static_cast<uint8_t>(60 + cycle % 12), 100, tick + 12);
+    t.noteOff(1, static_cast<uint8_t>(60 + cycle % 12), 0, tick + 60);
+    clockManager.assignCurrentTickSilently(tick + 96u);
+    t.stopOverdubbing();
+    driveStopToRetirement(t);
+    if (fullRingStart && !ownershipChecked) {
+      ownershipChecked = true;
+      // Stop accepted with the ring still full (the loop above would have failed on a refusal), so the
+      // interval owes exactly one publication obligation. Exclusive ownership, not "at least one".
+      const Loop::OverdubSessionRetention tail = loop.overdubSessionRetention();
+      std::snprintf(ctx, sizeof(ctx),
+                    "receipts=%zu/%zu claim=%u queued=%d pendingReceipt=%d sessionPass=%zu "
+                    "sessionComp=%zu",
+                    loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                    static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                    loop.pendingSnapshotSessionExitQueued() ? 1 : 0,
+                    loop.hasPendingSessionExitReceipt() ? 1 : 0, tail.passCount,
+                    tail.companionCount);
+      // Authorship transferred: the live session no longer owns the ids...
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(tail.passCount), ctx);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(tail.companionCount), ctx);
+      // ...the admission-reserved record does — it is `Populated` (transferred, not yet ready) or
+      // already `Publishing` when the retirement filled its final pass id in this same turn...
+      TEST_ASSERT_TRUE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
+      // ...the stop could not take a receipt slot (the ring was and still is full)...
+      TEST_ASSERT_EQUAL_UINT_MESSAGE(Loop::kSessionExitReceiptCapacity,
+                                     loop.sessionExitReceiptCount(), ctx);
+      // ...and the ownership is exclusive: `pendingSnapshotSessionExitQueued()` names one obligation
+      // (this one), never a second representation of the same identities.
+      // Exactly-once: capacity returns, the obligation publishes, and further turns do not republish.
+      const uint32_t revisionBefore = loop.publishedSnapshotRevision();
+      for (int turn = 0;
+           turn < 4096 &&
+           (loop.hasPendingSnapshotPublish() || loop.hasReservedSessionExitObligation() ||
+            loop.sessionExitReceiptCount() != 0);
+           ++turn) {
+        if (!loop.stepPendingSnapshotPublish(64)) break;
+      }
+      const uint32_t revisionAfter = loop.publishedSnapshotRevision();
+      for (int turn = 0; turn < 8; ++turn) {
+        (void)loop.stepPendingSnapshotPublish(64);
+      }
+      std::snprintf(ctx, sizeof(ctx),
+                    "revBefore=%lu revAfter=%lu revAfterExtra=%lu claim=%u queued=%d receipts=%zu/%zu",
+                    static_cast<unsigned long>(revisionBefore),
+                    static_cast<unsigned long>(revisionAfter),
+                    static_cast<unsigned long>(loop.publishedSnapshotRevision()),
+                    static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                    loop.pendingSnapshotSessionExitQueued() ? 1 : 0,
+                    loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+          revisionAfter, loop.publishedSnapshotRevision(),
+          "a further publisher step must not advance this session's publication");
+      // Claim, box and receipt all clear afterwards.
+      TEST_ASSERT_FALSE_MESSAGE(loop.pendingSnapshotSessionExitQueued(), ctx);
+      TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSessionExitReceipt(), ctx);
+      TEST_ASSERT_FALSE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+          static_cast<uint32_t>(Loop::SessionExitPublishClaim::Empty),
+          static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+      // From here the lane keeps the capacity-returning turns: a bounded single reservation must not
+      // become the new cadence bound this repair exists to remove.
+      draining = true;
+    } else if (draining) {
+      for (int turn = 0;
+           turn < 4096 &&
+           (loop.hasPendingSnapshotPublish() || loop.hasReservedSessionExitObligation() ||
+            loop.sessionExitReceiptCount() != 0);
+           ++turn) {
+        if (!loop.stepPendingSnapshotPublish(64)) break;
+      }
+    }
+  }
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, blockedAt,
+                                "no cycle may be refused by publisher receipt occupancy");
+  std::snprintf(ctx, sizeof(ctx),
+                "fullRingStarts=%d admissionRestored=%d receipts=%zu/%zu passes=%zu claim=%u",
+                fullRingStarts, fullRingAdmissionRestored ? 1 : 0,
+                loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                loop.passes.capturePassCount(),
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()));
+  std::printf("T4.20 lapse-boundary receipt: %s\n", ctx);
+  TEST_ASSERT_TRUE_MESSAGE(fullRingStarts > 0, ctx);
+  TEST_ASSERT_TRUE_MESSAGE(fullRingAdmissionRestored, ctx);
+  // Nothing leaked across 64 settled cycles: no reservation outlives the interval that took it.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(Loop::SessionExitPublishClaim::Empty),
+      static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 atomicity proof — the reserved transfer has exactly one owner before and after.**
+//
+// The lapse-boundary fixture proves the *outcome* (a full ring no longer denies the start or the stop,
+// and capacity returning publishes exactly once). It cannot prove the transfer itself is atomic,
+// because the interval's own `closeOverdubSession()` clears the session vectors on a later turn and
+// would mask a copy-instead-of-swap. This drives the ownership edge directly, at the moment it
+// happens, so a "both owners" or "neither owner" regression fails here by name.
+void test_4_20_reserved_transfer_keeps_exactly_one_owner_of_the_session_ids() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  Loop& loop = t.getLoop(kSlot);
+  char ctx[256];
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(Loop::SessionExitPublishClaim::Empty),
+      static_cast<uint32_t>(loop.sessionExitPublishClaimState()),
+      "a settled loop owns no publication obligation");
+  // Admission claims the future obligation, never a receipt slot.
+  TEST_ASSERT_TRUE_MESSAGE(loop.claimSessionExitPublishOwner(), "a free obligation must be claimable");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(Loop::SessionExitPublishClaim::Reserved),
+      static_cast<uint32_t>(loop.sessionExitPublishClaimState()),
+      "the claim is Reserved at admission");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0u, static_cast<uint32_t>(loop.sessionExitPublishClaimIdentity()),
+      "the claim is anonymous until the session opens — admission runs before it exists");
+  // A second claim on the same loop is a named refusal, not a silent second slot.
+  TEST_ASSERT_FALSE_MESSAGE(loop.claimSessionExitPublishOwner(),
+                            "an owned obligation must not be claimed twice");
+
+  // The interval opens: its own owner stamps the identity the claim is held for.
+  loop.openOverdubSession(0, /*forceNew=*/true);
+  const uint64_t identity = loop.sessionExitPublishClaimIdentity();
+  TEST_ASSERT_TRUE_MESSAGE(identity != 0, "opening the session must stamp the claim identity");
+  TEST_ASSERT_TRUE_MESSAGE(loop.canCaptureSessionExitTail(),
+                           "a held reservation is a durable destination for the stop");
+  loop.pushOverdubSessionPass(1, EditPassIdList{});
+  loop.pushOverdubSessionPass(2, EditPassIdList{});
+  const Loop::OverdubSessionRetention before = loop.overdubSessionRetention();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(before.passCount),
+                                   "the live session owns its ids before the stop");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0, static_cast<uint32_t>(loop.reservedSessionExitRetention().passCount),
+      "the reserved record owns nothing before the stop");
+
+  // The transfer: one owner before, one owner after, and the source cleared in the same operation.
+  TEST_ASSERT_TRUE_MESSAGE(loop.transferSessionExitToReservedPublishOwner(identity),
+                           "the reserved record must take the tail");
+  const Loop::OverdubSessionRetention after = loop.overdubSessionRetention();
+  const Loop::ReservedSessionExitRetention owned = loop.reservedSessionExitRetention();
+  std::snprintf(ctx, sizeof(ctx),
+                "session=%zu reserved=%zu reservedReady=%d reservedPending=%d claim=%u",
+                after.passCount, owned.passCount, owned.ready ? 1 : 0, owned.pending ? 1 : 0,
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(after.passCount),
+                                   "the live session must not still own the ids (never both)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(owned.passCount),
+                                   "the reserved record must own every id (never neither)");
+  TEST_ASSERT_TRUE_MESSAGE(owned.pending && !owned.ready, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(Loop::SessionExitPublishClaim::Populated),
+      static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+  // Exactly once: a second transfer cannot re-take what already moved, and a populated obligation is
+  // never *released* (that would drop it) — only published.
+  TEST_ASSERT_FALSE_MESSAGE(loop.transferSessionExitToReservedPublishOwner(identity),
+                            "a populated record must refuse a second transfer");
+  TEST_ASSERT_FALSE_MESSAGE(loop.releaseSessionExitPublishOwner(identity),
+                            "a populated obligation is published, never released");
+  // The ready edge names the one transition out of `Populated`.
+  TEST_ASSERT_TRUE_MESSAGE(loop.markSessionExitTailReady(Loop::kReservedSessionExitReceipt, 2),
+                           "the deferred commit fills the reserved record's final pass id");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(Loop::SessionExitPublishClaim::Publishing),
+      static_cast<uint32_t>(loop.sessionExitPublishClaimState()),
+      "a ready obligation is Publishing");
+  TEST_ASSERT_TRUE_MESSAGE(loop.reservedSessionExitRetention().ready,
+                           "the record is ready, so the publisher may move it");
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 measurement — 128 settled small overdubs: is the internal-heap footprint a plateau or a
+// staircase?**
+//
+// Owner's next milestone (2026-10-27): now that the cycle-16 admission coupling is gone, re-run the
+// repeated-small-overdub experiment as a *measurement*, not another architectural investigation. This
+// fixture therefore reports rather than asserts what the heap does; its only hard expectation is the
+// control the repair introduced — the session-exit obligation must be `Empty` at every settled point.
+//
+// Every number is read from the live owners, so nothing here depends on device-only instrumentation:
+//   host footprint   — the process's own `phys_footprint` (macOS), a whole-heap plateau/staircase probe;
+//                      `PassIdList`/`EditPassIdList` payloads come from the internal heap;
+//   passes           — committed capture/edit counts (and the overdub vector's capacity, which the
+//                      transfer horizon reserves and never shrinks);
+//   chunk pool       — `LoopEventStore::freeChunkCount()`;
+//   claim            — the 4.20 obligation's state, which must return to `Empty` after each cycle.
+namespace {
+size_t hostHeapFootprintBytes() {
+#if defined(__APPLE__)
+  task_vm_info_data_t info{};
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) !=
+      KERN_SUCCESS) {
+    return 0;
+  }
+  return static_cast<size_t>(info.phys_footprint);
+#else
+  return 0;
+#endif
+}
+
+struct OverdubHeapSample {
+  size_t hostFootprint = 0;
+  size_t undoEntries = 0;
+  size_t undoEntryCapacity = 0;
+  size_t undoEditIdsSize = 0;
+  size_t undoEditIdsCapacity = 0;
+  size_t undoPassIdsSize = 0;
+  size_t undoPassIdsCapacity = 0;
+  size_t capturePasses = 0;
+  size_t overdubPassCapacity = 0;
+  size_t editPasses = 0;
+  size_t disabledPasses = 0;
+  uint16_t chunksFree = 0;
+  unsigned claim = 0;
+};
+
+OverdubHeapSample sampleOverdubHeap(Track& t, Loop& loop) {
+  OverdubHeapSample out;
+  out.hostFootprint = hostHeapFootprintBytes();
+  const GlobalUndoStack& stack = t.getGlobalUndoStack();
+  out.undoEntries = stack.entries.size();
+  out.undoEntryCapacity = stack.entries.capacity();
+  for (const UndoEntry& entry : stack.entries) {
+    out.undoEditIdsSize += entry.editPassIds.size();
+    out.undoEditIdsCapacity += entry.editPassIds.capacity();
+    out.undoPassIdsSize += entry.passIds.size();
+    out.undoPassIdsCapacity += entry.passIds.capacity();
+  }
+  out.capturePasses = loop.passes.capturePassCount();
+  out.overdubPassCapacity = loop.passes.overdubPasses.capacity();
+  out.editPasses = loop.passes.editPasses.size();
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state == CapturePassState::Disabled) ++out.disabledPasses;
+  }
+  for (const EditPass& pass : loop.passes.editPasses) {
+    if (pass.state == EditPassState::Disabled) ++out.disabledPasses;
+  }
+  out.chunksFree = LoopEventStore::freeChunkCount();
+  out.claim = static_cast<unsigned>(loop.sessionExitPublishClaimState());
+  return out;
+}
+
+void printOverdubHeapSample(const char* label, int cycle, const OverdubHeapSample& s) {
+  std::printf(
+      "T4.20 heap %s cycle=%d footprint=%zu undo=%zu/%zu editIds=%zu/%zu passIds=%zu/%zu "
+      "captures=%zu ovCap=%zu edits=%zu disabled=%zu chunksFree=%u claim=%u\n",
+      label, cycle, s.hostFootprint, s.undoEntries, s.undoEntryCapacity, s.undoEditIdsSize,
+      s.undoEditIdsCapacity, s.undoPassIdsSize, s.undoPassIdsCapacity, s.capturePasses,
+      s.overdubPassCapacity, s.editPasses, s.disabledPasses, s.chunksFree, s.claim);
+}
+}  // namespace
+
+void test_4_20_settled_overdub_heap_plateau_measurement_128_cycles() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  constexpr int kCycles = 128;
+  constexpr int kReportEvery = 8;
+  constexpr long long kStepReportBytes = 64 * 1024;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  Loop& loop = t.getLoop(kSlot);
+  char ctx[320];
+
+  OverdubHeapSample first;
+  OverdubHeapSample mid;
+  OverdubHeapSample previous;
+  OverdubHeapSample last;
+  int settled = 0;
+  for (int cycle = 0; cycle < kCycles; ++cycle) {
+    const uint32_t tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
+    const uint8_t note = static_cast<uint8_t>(48 + cycle % 24);
+    t.setActiveLoopIndex(kSlot);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    if (!t.isOverdubbing()) {
+      std::snprintf(ctx, sizeof(ctx),
+                    "cycle=%d did not start: the measurement needs every cycle admitted "
+                    "(receipts=%zu/%zu claim=%u passes=%zu)",
+                    cycle, loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                    static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                    loop.passes.capturePassCount());
+      TEST_FAIL_MESSAGE(ctx);
+    }
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    clockManager.assignCurrentTickSilently(tick + 96u);
+    t.stopOverdubbing();
+    driveStopToRetirement(t);
+    // Fully settled means the publication lane really drained this cycle's obligation.
+    for (int turn = 0;
+         turn < 4096 &&
+         (loop.hasPendingSnapshotPublish() || loop.hasReservedSessionExitObligation() ||
+          loop.sessionExitReceiptCount() != 0);
+         ++turn) {
+      if (!loop.stepPendingSnapshotPublish(64)) break;
+    }
+    const OverdubHeapSample sample = sampleOverdubHeap(t, loop);
+    // Control (the repair's own invariant), asserted every cycle: the obligation is released.
+    if (sample.claim != static_cast<unsigned>(Loop::SessionExitPublishClaim::Empty)) {
+      std::snprintf(ctx, sizeof(ctx),
+                    "cycle=%d settled with claim=%u: the reserved obligation must return to Empty",
+                    cycle, sample.claim);
+      TEST_FAIL_MESSAGE(ctx);
+    }
+    ++settled;
+    if (settled == 1) first = sample;
+    if (settled == kCycles / 2) mid = sample;
+    // A step is a whole-heap jump the steady per-pass cost does not explain: name the cycle and the
+    // owners that moved with it, because an unexplained step is the one shape that can hide an
+    // unbounded owner behind an otherwise linear content cost.
+    const long long stepBytes =
+        static_cast<long long>(sample.hostFootprint) - static_cast<long long>(previous.hostFootprint);
+    if (settled > 1 && stepBytes > kStepReportBytes) {
+      std::printf(
+          "T4.20 heap STEP cycle=%d bytes=%+lld dUndo=%+lld dUndoEditCap=%+lld dUndoPassCap=%+lld "
+          "dCaptures=%+lld dOvCap=%+lld dEdits=%+lld dChunksFree=%+lld\n",
+          cycle + 1, stepBytes,
+          static_cast<long long>(sample.undoEntries) - static_cast<long long>(previous.undoEntries),
+          static_cast<long long>(sample.undoEditIdsCapacity) -
+              static_cast<long long>(previous.undoEditIdsCapacity),
+          static_cast<long long>(sample.undoPassIdsCapacity) -
+              static_cast<long long>(previous.undoPassIdsCapacity),
+          static_cast<long long>(sample.capturePasses) -
+              static_cast<long long>(previous.capturePasses),
+          static_cast<long long>(sample.overdubPassCapacity) -
+              static_cast<long long>(previous.overdubPassCapacity),
+          static_cast<long long>(sample.editPasses) -
+              static_cast<long long>(previous.editPasses),
+          static_cast<long long>(sample.chunksFree) -
+              static_cast<long long>(previous.chunksFree));
+    }
+    previous = sample;
+    last = sample;
+    if ((cycle + 1) % kReportEvery == 0) printOverdubHeapSample("settled", cycle + 1, sample);
+  }
+
+  std::printf("T4.20 heap summary settled=%d cycles\n", settled);
+  printOverdubHeapSample("first", 1, first);
+  printOverdubHeapSample("last", settled, last);
+  const long long footprintDelta =
+      static_cast<long long>(last.hostFootprint) - static_cast<long long>(first.hostFootprint);
+  const long long undoIdDelta =
+      static_cast<long long>(last.undoEditIdsCapacity + last.undoPassIdsCapacity) -
+      static_cast<long long>(first.undoEditIdsCapacity + first.undoPassIdsCapacity);
+  const long long contentDelta =
+      static_cast<long long>(last.capturePasses) - static_cast<long long>(first.capturePasses);
+  // Per added pass, not per cycle: the fixture necessarily retains one more pass each cycle, so the
+  // question is whether the *marginal* cost grows, not whether the total does. First half against
+  // second half is the honest discriminator for "linear content cost" versus "an owner that speeds up".
+  const long long firstHalfPasses =
+      static_cast<long long>(mid.capturePasses) - static_cast<long long>(first.capturePasses);
+  const long long secondHalfPasses =
+      static_cast<long long>(last.capturePasses) - static_cast<long long>(mid.capturePasses);
+  const long long firstHalfBytesPerPass =
+      firstHalfPasses > 0
+          ? (static_cast<long long>(mid.hostFootprint) -
+             static_cast<long long>(first.hostFootprint)) / firstHalfPasses
+          : 0;
+  const long long secondHalfBytesPerPass =
+      secondHalfPasses > 0
+          ? (static_cast<long long>(last.hostFootprint) -
+             static_cast<long long>(mid.hostFootprint)) / secondHalfPasses
+          : 0;
+  const long long marginalBytesPerPass = contentDelta > 0 ? footprintDelta / contentDelta : 0;
+  std::printf(
+      "T4.20 heap verdict: footprintDelta=%+lld over %+lld added passes = %+lld B/pass "
+      "(first half %+lld, second half %+lld); undoEntries=%zu->%zu (capacity %zu->%zu); "
+      "undoIdCapacity %+lld; undo %s, marginal %s\n",
+      footprintDelta, contentDelta, marginalBytesPerPass, firstHalfBytesPerPass,
+      secondHalfBytesPerPass, first.undoEntries, last.undoEntries, first.undoEntryCapacity,
+      last.undoEntryCapacity, undoIdDelta,
+      (last.undoEntries > first.undoEntries + 8) ? "STAIRCASE" : "PLATEAU",
+      (firstHalfBytesPerPass > 0 && secondHalfBytesPerPass > firstHalfBytesPerPass * 3 / 2)
+          ? "GROWING"
+          : "FLAT");
+  TEST_ASSERT_EQUAL_INT(kCycles, settled);
+}
+
+// ---------------------------------------------------------------------------------------------
+// **Task 4.20 census correctness — the row's numbers are the owners' own, with no double counting.**
+//
+// The device row is only worth reading if its arithmetic is exact: it is the instrument that decides whether
+// storage policy changes at all, so a wrong census would be indistinguishable from a real finding. This pins the
+// three properties the interpretation relies on — cardinality follows the owners, each class's bytes are exactly
+// the sum over its owner's capacities, and `internalBytes` is exactly the sum of its three parts.
+void test_4_20_allocation_census_matches_the_owners_it_reports() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 0;
+  prepareSlot(t, kSlot, /*overdub=*/true);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(kSlot);
+  Loop& loop = t.getLoop(kSlot);
+  char ctx[256];
+  const Track::AllocationCensus before = t.allocationCensus();
+  std::snprintf(ctx, sizeof(ctx), "before: cap=%u edit=%u slots=%u ib=%lu",
+                static_cast<unsigned>(before.capturePasses),
+                static_cast<unsigned>(before.editPasses),
+                static_cast<unsigned>(before.slotsWithPasses),
+                static_cast<unsigned long>(before.internalBytes));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, before.capturePasses, ctx);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, before.slotsWithPasses, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(before.editPassBytes + before.undoIdBytes + before.sessionBytes,
+                                   before.internalBytes, "internalBytes is the sum of its parts");
+  const uint32_t tick = 96u;
+  clockManager.assignCurrentTickSilently(tick);
+  t.startOverdubbing(tick);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "the fixture needs its interval admitted");
+  t.noteOn(1, 60, 100, tick + 12);
+  t.noteOff(1, 60, 0, tick + 60);
+  clockManager.assignCurrentTickSilently(tick + 96u);
+  t.stopOverdubbing();
+  driveStopToRetirement(t);
+  for (int turn = 0; turn < 4096; ++turn) {
+    const bool owed = loop.hasPendingSnapshotPublish() ||
+                      loop.hasReservedSessionExitObligation() ||
+                      loop.sessionExitReceiptCount() != 0;
+    if (!owed) break;
+    if (!loop.stepPendingSnapshotPublish(64)) break;
+  }
+  const Track::AllocationCensus after = t.allocationCensus();
+  uint32_t wantEditBytes = 0;
+  for (const EditPass& pass : loop.passes.editPasses) {
+    wantEditBytes += static_cast<uint32_t>(pass.addedEvents.capacity() * sizeof(MidiEvent));
+  }
+  uint32_t wantUndoBytes = 0;
+  for (const UndoEntry& entry : t.getGlobalUndoStack().entries) {
+    wantUndoBytes += static_cast<uint32_t>(entry.passIds.capacity() * sizeof(PassId));
+    wantUndoBytes += static_cast<uint32_t>(entry.editPassIds.capacity() * sizeof(EditPassId));
+  }
+  uint32_t wantExternal = static_cast<uint32_t>(
+      loop.passes.overdubPasses.capacity() * sizeof(OverdubPass) +
+      loop.passes.editPasses.capacity() * sizeof(EditPass));
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    wantExternal += static_cast<uint32_t>(pass.committedChunkIds.capacity() * sizeof(uint16_t));
+  }
+  std::snprintf(ctx, sizeof(ctx), "after: cap=%u/%zu edit=%u/%zu undo=%u/%zu eb=%lu/%lu xb=%lu/%lu",
+                static_cast<unsigned>(after.capturePasses), loop.passes.capturePassCount(),
+                static_cast<unsigned>(after.editPasses), loop.passes.editPasses.size(),
+                static_cast<unsigned>(after.undoEntries), t.getGlobalUndoStack().entries.size(),
+                static_cast<unsigned long>(after.editPassBytes),
+                static_cast<unsigned long>(wantEditBytes),
+                static_cast<unsigned long>(after.externalBytes),
+                static_cast<unsigned long>(wantExternal));
+  TEST_ASSERT_TRUE_MESSAGE(after.capturePasses > before.capturePasses, ctx);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(static_cast<uint16_t>(loop.passes.capturePassCount()),
+                                   after.capturePasses, ctx);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(static_cast<uint16_t>(loop.passes.editPasses.size()),
+                                   after.editPasses, ctx);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(static_cast<uint16_t>(t.getGlobalUndoStack().entries.size()),
+                                   after.undoEntries, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(wantEditBytes, after.editPassBytes, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(wantUndoBytes, after.undoIdBytes, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(wantExternal, after.externalBytes, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(after.editPassBytes + after.undoIdBytes + after.sessionBytes,
+                                   after.internalBytes, ctx);
+}
+
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses);
+  RUN_TEST(test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_start);
+  RUN_TEST(test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_survives);
+  RUN_TEST(test_4_20_reserved_transfer_keeps_exactly_one_owner_of_the_session_ids);
+  RUN_TEST(test_4_20_settled_overdub_heap_plateau_measurement_128_cycles);
+  RUN_TEST(test_4_20_allocation_census_matches_the_owners_it_reports);
+  RUN_TEST(test_long_chromatic_record_rounded_stop_preparation_progresses_with_live_successor);
+  RUN_TEST(test_record_button_starts_overdub_instead_of_muting_private_record);
+  RUN_TEST(test_private_record_overdub_intent_survives_denial_and_starts_once);
+  RUN_TEST(test_post_record_overdub_start_is_cancelled_by_stop_clear_and_slot_exit);
+  RUN_TEST(test_post_record_overdub_start_rejects_replacement_identity);
+  RUN_TEST(test_post_record_overdub_start_survives_track_focus_change);
+  RUN_TEST(test_post_record_overdub_start_does_not_overdub_a_filtered_empty_take);
+  RUN_TEST(test_pending_overdub_start_does_not_hold_final_record_geometry);
   RUN_TEST(test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_committed_interval);
   RUN_TEST(test_3_15e_slice2b_a_stop_mid_base_fill_releases_the_one_companion_instance);
   RUN_TEST(test_3_15e_slice3_row_origin_is_visible_through_the_production_fixed_stream);
@@ -8031,6 +9301,9 @@ int main() {
   RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
 RUN_TEST(test_record_source_staging_merges_the_frozen_take_after_closure);
 RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
+RUN_TEST(test_abandoned_base_retires_the_playing_stop_without_revision_movement);
+RUN_TEST(test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound);
+RUN_TEST(test_destination_playing_base_builds_natively_under_live_successor);
   RUN_TEST(test_job_pass_staging_denial_and_receipt_binding);
   RUN_TEST(test_record_normalization_stopped_inventory);
   RUN_TEST(test_record_normalization_playing_inventory);
@@ -8039,6 +9312,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_normalization_filtered_empty_resets_geometry);
   RUN_TEST(test_record_job_closure_rejects_reused_raw_and_replaced_output);
   RUN_TEST(test_record_job_closures_exceed_overdub_hold_limit_without_staging);
+  RUN_TEST(test_record_closure_chunks_stay_private_through_normalization);
   RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
   RUN_TEST(test_record_publication_preflight_denies_before_the_irreversible_commit);
   RUN_TEST(test_record_pass_transfer_continues_after_the_store_empties);
@@ -8048,6 +9322,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
+  RUN_TEST(test_record_normalization_names_its_refusal_and_changes_nothing_else);
   RUN_TEST(test_deferred_record_publication_queues_the_record_session_exit_snapshot);
   RUN_TEST(test_stopped_overdub_stop_publishes_one_undo_entry);
   RUN_TEST(test_frozen_record_capture_adapter_keeps_job_content_and_range_identities_distinct);

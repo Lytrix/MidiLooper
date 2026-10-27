@@ -50,6 +50,7 @@ class Role {
   bool complete() const { return cursor_.complete(); }
   bool denied() const { return cursor_.denied(); }
   DenyReason denyReason() const { return cursor_.denyReason(); }
+  uint8_t phaseCode() const { return cursor_.phaseCode(); }
   size_t lastStepUnits() const { return cursor_.lastStepUnits(); }
   size_t syntheticOffs() const { return cursor_.syntheticOffs(); }
   size_t pairsRemoved() const { return cursor_.pairsRemoved(); }

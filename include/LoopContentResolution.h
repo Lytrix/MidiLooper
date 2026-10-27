@@ -458,4 +458,83 @@ struct LoopContentResolution {
                                                  bool logSpanExclusions = false);
   /// Prepared checkpoint membership (span or companion row). Diagnostic helper for wrap srcdrop.
   static bool preparedCheckpointHasNoteId(NoteId noteId);
+
+  /// ---------------------------------------------------------------------------------------------
+  /// C5.2a / P-D — the derived-view lane's bounded display continuation.
+  ///
+  /// `DeviceGateSession` is not live-lane-safe: eleven of its steps are content-sized and
+  /// `indivisible` (two whole-index sorts plus whole-vector copies). This session is the visual
+  /// continuation instead, and every step advances at most `kBoundedDisplayRowsPerSlice` source
+  /// rows — no sort and no whole-vector copy anywhere. It reproduces
+  /// `resolveDisplayNotes(passes, ...)` incrementally (pass order → per-pass edit rows → canonical
+  /// span pairing → projection → first-occurrence de-duplication → pass-order upsert), publishes
+  /// once when every active pass has been consumed, and is keyed by the exact request
+  /// (loop instance, loopId, loop length, playbackRevision, pass count) so a supersession discards
+  /// the partial candidate and the previous frame stays authoritative.
+  static constexpr uint32_t kBoundedDisplayRowsPerSlice = 8;
+  /// Declared content cap for the synchronous pass resolve. At or below it one slice may resolve
+  /// the pass set directly — the work is then bounded by this constant rather than by the loop.
+  /// Above it the slice must use this producer or defer; the whole-pass route is never selected.
+  static constexpr uint32_t kBoundedDisplaySynchronousEventCap = 512;
+  /// Request identity: the exact loop instance plus `(loopId, loop length, playbackRevision,
+  /// pass count)`, and the loop's `canonicalStorageGeneration` as the storage-currency term the
+  /// retained envelope compares. `owner` is the Loop's address — the qualification
+  /// `deviceGateMatchesLoop` gives by index, without a second reader.
+  struct BoundedDisplayRequest {
+    const void* owner = nullptr;
+    uint32_t loopId = 0;
+    uint32_t loopLengthTicks = 0;
+    uint32_t playbackRevision = 0;
+    uint64_t canonicalStorageGeneration = 0;
+  };
+  struct BoundedDisplaySliceRecord {
+    const char* step = "idle";
+    uint32_t workUnits = 0;
+    uint32_t cursor = 0;
+  };
+  /// Committed event rows for `passes`, counting no further than `limit + 1`.
+  static uint32_t boundedDisplayCountCommittedEvents(const LoopPasses& passes, uint32_t limit);
+  /// True when the pass set is above `kBoundedDisplaySynchronousEventCap`.
+  static bool boundedDisplayNeedsProducer(const LoopPasses& passes);
+  /// Admit, keep, or re-key the producer for this exact request. A different key is a qualified
+  /// reset (the partial candidate is discarded), never a second producer.
+  static bool boundedDisplayRequest(const BoundedDisplayRequest& request,
+                                    const LoopPasses& passes);
+  /// One bounded grain. False when no request matching `passes` is admitted.
+  static bool boundedDisplayStep(const LoopPasses& passes);
+  /// Complete and matching this exact request; `boundedDisplayNotes()` is then authoritative.
+  static bool boundedDisplayReady(const BoundedDisplayRequest& request, const LoopPasses& passes);
+  /// Valid only while `boundedDisplayReady(...)` is true for the live request. Read-only.
+  static const NoteUtils::DisplayNoteVec& boundedDisplayNotes();
+  static void boundedDisplayCancel();
+  static BoundedDisplaySliceRecord boundedDisplayLastSlice();
+  /// Named deferral reason for the last refused `boundedDisplayRequest`/`boundedDisplayStep`.
+  static const char* boundedDisplayDeferReason();
+
+  /// ---------------------------------------------------------------------------------------------
+  /// Retained display source envelope (task 4.19, `docs/Plans/display_source_retention_handoff.md`).
+  ///
+  /// The promoted generation is an **exact live prefix** of `passes`: the retention identity is a
+  /// bounded predicate over authoritative pass metadata read at reuse time — never a cached stamp
+  /// or a digest, and it adds no `Loop` state. Walking only the retained prefix is what lets a wrap
+  /// keep serving (its appended pass is deliberately not compared), while any state change *inside*
+  /// the prefix is a named refusal and the caller keeps its honest hole. Retention never relabels
+  /// old rows as current content.
+  ///
+  /// Reserved note slots the envelope keeps, priced `sizeof(DisplayNote) · capacity` — the capacity
+  /// the promotion's `std::move` actually keeps, not the served row count.
+  static constexpr uint32_t kRetainedDisplaySourceNoteCapacity = 4096;
+  /// `retained_capacity` (over the declared cap), `retained_admission` (reserve refused) or
+  /// `retained_stale` (the candidate's edit identity moved mid-build); nullptr when the last
+  /// promotion was accepted. Every refusal keeps the previous envelope.
+  static const char* boundedDisplayRetainedRefusal();
+  /// True when the retained envelope is an exact live prefix of `passes` at this request's identity
+  /// (`owner`, `loopId`, `loopLengthTicks`, `canonicalStorageGeneration`).
+  static bool boundedDisplayRetainedReady(const BoundedDisplayRequest& request,
+                                          const LoopPasses& passes);
+  /// The retained rows. Valid while `boundedDisplayRetainedReady(...)`; read-only.
+  static const NoteUtils::DisplayNoteVec& boundedDisplayRetainedNotes();
+  /// Reserved note slots the envelope keeps, and the pass count of its retained prefix.
+  static uint32_t boundedDisplayRetainedCapacity();
+  static uint32_t boundedDisplayRetainedPassCount();
 };

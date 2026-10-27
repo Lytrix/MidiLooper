@@ -344,6 +344,12 @@ LOOP_COLD_MEM void Loop::publishPreparedCompanionHistory() {
     pendingSnapshotPublishBox_->companionsApplied = false;
     nextPassId_ += work.companionIds.size();
     ++playbackRevision;
+    // CONTRACTS.md C3.5 (review finding 4): this is a committed revision move that deliberately does
+    // not travel through `notifyCommittedContentChanged` (this path publishes only scalar invalidation
+    // so the coverage traversal stays deferred). A private-predecessor scan must still be dropped
+    // whole: the cursor's own revision check catches it, and dropping it here keeps the supersession
+    // immediate instead of one grain late.
+    discardPrivateSourceScan();
     editStateDirty_ = true;
     // The normal notification measures visual coverage in capture builds.
     // Publish only scalar invalidation here; defer diagnostic traversal.

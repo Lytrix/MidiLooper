@@ -10,6 +10,11 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
 }
 
 void Loop::notifyCommittedContentChanged() {
+  // CONTRACTS.md C3.5: the committed revision moved, so a private-predecessor scan that is running
+  // (or finished) is stale. Drop the scan and the rows it staged; a private prefix is never
+  // completed by -- or mixed with -- committed content. Retained hold intents survive: the
+  // committed origin now answers for them.
+  discardPrivateSourceScan();
   markPassDerivedStale();
 }
 

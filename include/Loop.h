@@ -511,6 +511,21 @@ struct Loop {
     static const EditPassIdList kNoCompanions{};
     return index < overdubSessionCompanionIds_.size() ? overdubSessionCompanionIds_[index] : kNoCompanions;
   }
+  /// Task 4.20 — the temporary per-overdub-session ID lists, measured by **size *and* capacity**, including the
+  /// nested companion lists' capacities. A `clear()` empties the logical list while keeping every nested
+  /// internal-heap allocation, so `size` alone cannot answer whether a settled session released anything. The
+  /// contract these fields are judged against: they describe only the currently live/finalizing session, so once
+  /// its result has transferred into the durable committed/undo representation they must not keep growing.
+  struct OverdubSessionRetention {
+    size_t passCount = 0;
+    size_t passCapacity = 0;
+    size_t companionCount = 0;
+    size_t companionCapacity = 0;
+    /// Sum of the nested `EditPassIdList` capacities — the internal-heap bytes a `clear()` would keep.
+    size_t companionNestedCapacity = 0;
+    size_t cursor = 0;
+  };
+  OverdubSessionRetention overdubSessionRetention() const;
   /// Sidebar `O:` — current wrap (`overdubSessionUndoDepth() + 1` while the session is open).
   size_t overdubSessionDisplayDepth() const;
   size_t overdubSessionRedoDepth() const;
@@ -584,6 +599,91 @@ struct Loop {
   /// A current published snapshot requires matching published-revision **and**
   /// published-identity stamps (OpenSpec 4.6 Stage 3).
   bool overdubSourceSpanCacheReusable() const;
+  /// CONTRACTS.md C3.1 -- the qualified origins of the overdub source span cache. Exactly one
+  /// origin is **non-committed**: `PrivatePredecessor` is a sealed Record custody extent that has
+  /// not published. Its rows may satisfy the overlap/hold participant query, and they must never be
+  /// read as committed currency: no root or `pass` reader, no save, no `Snapshot`/`Prepared`
+  /// attribution. The pre-existing origins keep their literals unchanged.
+  enum class SourceOrigin : uint8_t {
+    None,
+    Snapshot,
+    Prepared,
+    Prior,
+    Visual,
+    Passes,
+    PrivatePredecessor,
+  };
+  static const char* sourceOriginName(SourceOrigin origin);
+  SourceOrigin overdubSourceOrigin() const { return overdubSourceSpanCacheOrigin_; }
+  /// C3.2: one grain admits at most this many units, where one unit is exactly one sealed-range
+  /// row read, one pass-local pair decision, or one pending-change upsert. It is the contract's
+  /// named `kDeferredStopPreparationQuantum` -- `Config::DEFERRED_STOP_PREPARATION_QUANTUM`, one
+  /// definition, so the two lanes cannot drift apart.
+  static constexpr size_t kDeferredStopPreparationQuantum = Config::DEFERRED_STOP_PREPARATION_QUANTUM;
+  static constexpr size_t kPrivateSourceQuantum = kDeferredStopPreparationQuantum;
+  /// C3.4's deadline edge: the built source is required before this interval's seal, so the seal
+  /// drives the materialization itself (bounded by the hold capacity in declared grains) and denies
+  /// by name only what is still unreachable. Never a silent seal without the decision.
+  void materializeDeferredPrivateHoldsAtDeadline();
+  /// The fixed open-pair table the scan may touch in one grain.
+  static constexpr size_t kPrivateSourceOpenPairCapacity = 16;
+  /// C3.4: retained hold intents a deferred materialization may owe at once. A hold that cannot
+  /// be retained is denied by name instead of silently dropped.
+  static constexpr size_t kPrivateSourceHoldCapacity = 4;
+  /// The Track-owned custody receipt this scan reads, supplied by the receipt's owner. The Loop
+  /// holds no Track type: the receipt's stable address is the identity and its frozen E2 content
+  /// generation is the supersession stamp.
+  struct PrivatePredecessorBinding {
+    const LoopEventStore::CaptureRange* range = nullptr;
+    const void* receipt = nullptr;
+    LoopId loopId = kInvalidLoopId;
+    uint64_t interval = 0;
+    uint64_t captureContentGeneration = 0;
+  };
+  enum class PrivateSourceStep : uint8_t { Idle, Pending, Complete, Pressure, Denied };
+  enum class PrivateSourceDeny : uint8_t {
+    None,
+    IdentityChanged,
+    SourceUnavailable,
+    PairCapacity,
+    OutputUnavailable,
+    HoldCapacity,
+  };
+  static const char* privateSourceDenyName(PrivateSourceDeny deny);
+  /// One bounded grain of private-predecessor preparation. Never blocks, never allocates more
+  /// than one declared staging increment, and never writes `passes`, a root or `playbackRevision`.
+  PrivateSourceStep stepPrivatePredecessorSource(const PrivatePredecessorBinding& binding,
+                                                 size_t quantum = kPrivateSourceQuantum);
+  /// C3.5: clear, slot switch, load, transport stop, record re-entry -- and the predecessor's own
+  /// publication -- drop the cursor and every row it staged, so a private prefix can never be
+  /// mixed with a committed suffix.
+  void discardPrivatePredecessorSource();
+  bool privatePredecessorSourcePending() const;
+  bool privatePredecessorSourceComplete() const;
+  size_t privateSourceLastUnits() const { return privateSource_.unitsLast; }
+  PrivateSourceDeny privateSourceDeny() const { return privateSource_.deny; }
+  size_t privateSourceStagedRows() const { return privateSource_.rowsRead; }
+  size_t privateSourceDeferredHolds() const { return privateHoldCount_; }
+  /// C3.4: the built private source is required before this interval's
+  /// `sealPendingNoteChangesToEditPasses`. While it is owed the seal applies committed content
+  /// only and reports the denial by name: losing a decision is a defect, applying a wrong one is
+  /// worse.
+  /// C3.4's seal deadline. A pending scan is owed, and so is a **retained hold**: a supersession
+  /// drops the scan but keeps the intents, and they are materialized against the committed origin.
+  /// Reading only the cursor phase here sealed B without A's transform while holding A's decision.
+  bool privateSourceOwedForSeal() const {
+    return privatePredecessorSourcePending() || privateHoldCount_ > 0;
+  }
+  /// Sticky: set when the seal found the source owed, or when a dependent intent could not be
+  /// retained. Only the session's own cancellation clears it.
+  bool privateSourceSealDenied() const { return privateSourceSealDenied_; }
+  /// C3.1: qualify the session's private predecessor without spending a unit of work.
+  bool bindPrivatePredecessorSourceOnly(const PrivatePredecessorBinding& binding);
+  /// The outcome of the most recent grain. It survives a `discard` on purpose: a denial names
+  /// itself to the caller that provoked it.
+  PrivateSourceStep privateSourceLastStep() const { return privateSourceLastStep_; }
+  uint64_t privateSourceInterval() const { return privateSource_.interval; }
+  size_t privateSourceStagedNotes() const { return privateSource_.notesStaged; }
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
   void pushPendingNoteChangeForTest(PendingNoteChange change);
@@ -604,6 +704,25 @@ struct Loop {
   const NoteUtils::DisplayNoteVec& overdubSourceSpanCacheNotesForTest() const {
     return overdubSourceSpanCacheNotes_;
   }
+  /// The live session's own pending set, not the admitted job's borrowed view. A fixture that runs
+  /// two intervals in one slot needs to read the newer session's decisions.
+  const PendingNoteChangeVec& livePendingNoteChangesForTest() const { return pendingNoteChanges_; }
+  /// Release the span cache's retained capacity so the next staging increment is a real
+  /// allocation: the fixture's only way to put the private scan's point-of-use reserve under test.
+  void resetOverdubSourceSpanCacheCapacityForTest() {
+    overdubSourceSpanCacheNotes_.clear();
+    overdubSourceSpanCacheNotes_.shrink_to_fit();
+  }
+  /// Same, for the session view: the fixture's way to put the view's own staging increment under
+  /// test (the store is otherwise already sized by earlier fixtures).
+  void resetOverdubSourceViewCapacityForTest() {
+    overdubSourceViewNotes_.clear();
+    overdubSourceViewNotes_.shrink_to_fit();
+  }
+  /// Fault injection for the supersession class C3.5 must catch: a committed revision bump that does
+  /// not travel through `notifyCommittedContentChanged` (the shape `publishPreparedCompanionHistory`
+  /// had). The cursor must treat ANY revision move as an identity change on its next grain.
+  void bumpPlaybackRevisionWithoutNotifyForTest() { ++playbackRevision; }
 #endif
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
@@ -984,7 +1103,12 @@ struct Loop {
     /// Session-exit C1-a compatibility gather only (OpenSpec 6.2.2).
     Fallback = 3,
     /// LCR pass resolve when snapshot/prepared miss and compat is not allowed.
+    /// LCR pass resolve when snapshot/prepared miss and compat is not allowed. Capped by
+    /// `LoopContentResolution::kBoundedDisplaySynchronousEventCap`; above the cap the slice
+    /// never selects this source.
     PassesResolve = 4,
+    /// C5.2a/P-D bounded display continuation published the notes for this window.
+    BoundedContinuation = 5,
   };
   VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource() const {
     return lastVisualCacheIdleGatherSource_;
@@ -1032,6 +1156,10 @@ struct Loop {
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   // Cold prewarm reserves the receipt ring; the stopping handoff only swaps ownership.
   bool prewarmSessionExitSnapshotHandoff();
+  /// Task 4.20: ring **existence** only (the one external allocation). Admission that needs the ring
+  /// to be there — the overdub transfer horizon — must not ask for a free slot: that would couple
+  /// `OverdubStart` to the snapshot publisher's cadence.
+  bool ensureSessionExitReceiptRing();
   bool canHandoffSessionExitSnapshot() const;
   bool handoffSessionExitSnapshot(CommitReason reason);
   /// FIFO of session-exit receipts. Sized to the stop-job ring so a successor
@@ -1039,19 +1167,70 @@ struct Loop {
   /// the oldest pending receipt; the idle publisher consumes that one per turn.
   /// The gate is a free slot; one receipt per open session is enforced by the
   /// handoff itself, which consumes the session identities.
-  static constexpr size_t kSessionExitReceiptCapacity = 4;
+  /// Capacity bump (owner request): 4 -> 8 so the raised FIFO (8) and custody slab (9) are reachable;
+  /// this ring, not the transfer horizon, was the binding owner at four concurrent successors.
+  static constexpr size_t kSessionExitReceiptCapacity = 8;
+  /// Task 4.20: the reserved publication obligation record. It lives in the same external allocation
+  /// as the ring, one slot past it, and is never reachable through `sessionExitReceiptHead_`/`Count_`
+  /// — it is an obligation the interval admitted *before* it went live, never a receipt slot.
+  static constexpr size_t kReservedSessionExitReceipt = kSessionExitReceiptCapacity;
+  static constexpr size_t kSessionExitReceiptSlots = kSessionExitReceiptCapacity + 1;
   size_t sessionExitReceiptCount() const { return sessionExitReceiptCount_; }
   /// DEC-068: no interval-level session-exit tail (ring full, no session, or not a session exit).
   static constexpr size_t kInvalidSessionExitReceipt = static_cast<size_t>(-1);
+  /// Task 4.20 ownership state machine of the single reserved obligation. `Empty -> Reserved` is the
+  /// claim at overdub admission; `Reserved -> Populated` is the atomic transfer at that interval's
+  /// stop admission; `Populated -> Publishing` is its final pass committing; `Publishing -> Empty`
+  /// is the publisher moving it through the receipt path, exactly once. Occupied at admission is a
+  /// **named bounded refusal**, never a second slot and never a silent queue.
+  enum class SessionExitPublishClaim : uint8_t {
+    Empty = 0,
+    Reserved = 1,
+    Populated = 2,
+    Publishing = 3,
+  };
+  SessionExitPublishClaim sessionExitPublishClaimState() const {
+    return sessionExitPublishClaimState_;
+  }
+  /// The session the reservation is held for; zero while reserved but not yet open.
+  uint64_t sessionExitPublishClaimIdentity() const;
+  /// Reserve the future session-exit publication obligation. Called once per interval at overdub
+  /// admission, before the interval is live. Refuses (and reports) when the single obligation is
+  /// already reserved, populated or publishing — the caller then names that refusal.
+  bool claimSessionExitPublishOwner();
+  /// Release a payload-free reservation. `sessionIdentity` 0 releases a reservation whose session
+  /// never opened (an aborted start); a populated/publishing obligation is never dropped here
+  /// because it owns committed identities the publisher still owes.
+  bool releaseSessionExitPublishOwner(uint64_t sessionIdentity);
+  /// Task 4.20: the atomic transfer at the stop admission. Precondition: the reservation is
+  /// `Reserved` **for this session**. Swaps this interval's pass/companion identities into the
+  /// reserved record (never copies, never allocates), leaves both session vectors empty, and
+  /// advances `Reserved -> Populated`. One owner before, one owner after.
+  bool transferSessionExitToReservedPublishOwner(uint64_t sessionIdentity);
+  /// Whether this interval's tail has a durable destination right now: a free receipt slot, or the
+  /// reservation held for the live session. This is what the stop admission and the successor-stop
+  /// capacity answer must ask instead of `canHandoffSessionExitSnapshot()`.
+  bool canCaptureSessionExitTail() const;
+  /// `Populated` or `Publishing`: the record owns the obligation and the publisher still owes it.
+  bool hasReservedSessionExitObligation() const;
+  /// What the reserved record itself holds: the payload and readiness of the obligation, so a fixture
+  /// can prove one owner before and after the transfer instead of inferring it from a later state.
+  struct ReservedSessionExitRetention {
+    size_t passCount = 0;
+    size_t companionCount = 0;
+    size_t companionRowCount = 0;
+    bool pending = false;
+    bool ready = false;
+  };
+  ReservedSessionExitRetention reservedSessionExitRetention() const;
   /// Capture this interval's own session-exit tail at its stop admission, before any successor
-  /// can touch the shared session state. Swaps the identities into a reserved receipt slot
-  /// (never copies: the stop boundary must not allocate) and leaves it not ready until
-  /// `markSessionExitTailReady`. Returns the receipt's ring index, or
-  /// `kInvalidSessionExitReceipt`.
+  /// can touch the shared session state. Swaps the identities into a free receipt slot, or — when
+  /// the ring is full — into this interval's reserved obligation record (never copies: the stop
+  /// boundary must not allocate) and leaves it not ready until `markSessionExitTailReady`. Returns
+  /// the receipt's ring index, `kReservedSessionExitReceipt`, or `kInvalidSessionExitReceipt`.
   size_t captureSessionExitTail(CommitReason reason);
   /// Fill the captured tail's final pass id and make it consumable by the publisher.
   bool markSessionExitTailReady(size_t ringIndex, PassId lastPassId);
-  /// The captured receipt behind a ring index. Jobs hold ring indexes: offsets shift as
   /// earlier receipts drain, ring slots do not.
   SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex);
   const SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex) const;
@@ -1193,6 +1372,38 @@ struct Loop {
                                    bool allowOverdubWrapAppend = true,
                                    bool constrainFallbackGather = false,
                                    size_t fallbackGatherEventBudget = 0);
+  /// C5.2a/P-D: one bounded grain of the display-note continuation for this loop, stepped by the
+  /// derived-view maintenance lane before the slice. Admission is the exact request (loop instance,
+  /// loopId, loop length, `playbackRevision`, pass count); a changed request is a qualified reset.
+  /// Above `LoopContentResolution::kBoundedDisplaySynchronousEventCap` this is the only content
+  /// source the slice may use. Returns true when a grain advanced.
+  bool stepVisualCacheSourceContinuation();
+  /// C5.6 — **qualified committed display content for one requested interval**, or `false` when no
+  /// source is independently qualified for it right now. This is the composition contract's provider
+  /// side: every candidate proves its own qualification, and the caller may present the result only
+  /// for the interval it asked for.
+  ///   - `BoundedContinuation`: `boundedDisplayReady` for this exact request — the publish edge, so an
+  ///     incomplete/private tail is unreadable by construction;
+  ///   - `RetainedEnvelope`: `boundedDisplayRetainedReady` — the promoted generation is still an exact
+  ///     live prefix of this pass set, so its rows *are* the deterministic output of the current passes
+  ///     even though `playbackRevision` moved (a wrap appends after the prefix);
+  ///   - `PreparedWindow`: `tryResolvePreparedWindow` for this exact window, refused unless the kept
+  ///     index is stamped with the live `playbackRevision` and loop length;
+  ///   - `VisualCache`: only when `visualCache.builtFromRevision == playbackRevision` (content-currency
+  ///     authority, DEC-108) *and* the requested window is covered by the cache's clean bars.
+  /// Returns false rather than stretching any source beyond its coverage; `out` is then empty.
+  enum class QualifiedDisplaySource : uint8_t {
+    None,
+    BoundedContinuation,
+    RetainedEnvelope,
+    PreparedWindow,
+    VisualCache
+  };
+  bool collectQualifiedCommittedDisplayNotes(uint32_t windowStart, uint32_t windowLength,
+                                             NoteUtils::DisplayNoteVec& out) const;
+  QualifiedDisplaySource lastQualifiedDisplaySource() const {
+    return lastQualifiedDisplaySource_;
+  }
   /// Resume wrap-pair append that was deferred during runtime-priority idle slices.
   /// Appends only when `deferredVisualCacheWrapAppendFromRevision_` still equals
   /// `playbackRevision`. A mismatch obtains the current-source frame instead of
@@ -1477,6 +1688,8 @@ struct Loop {
   friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
                                             PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);
 
+  /// Drop the private scan (cursor and staged rows) but keep the retained hold intents.
+  void discardPrivateSourceScan();
   /// Committed content changed — invalidate derived views.
   void notifyCommittedContentChanged();
   const char* rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
@@ -1487,6 +1700,89 @@ struct Loop {
   void mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates);
   bool committedPlaybackNoteOnIdentityValid(NoteId noteId) const;
   void retainValidOverdubSourceViewIdentities();
+  /// --- CONTRACTS.md C3.2/C3.4: the private-predecessor source cursor -------------------------
+  /// Bounded, resumable, interval- and revision-qualified. It lives in the Loop rather than in the
+  /// custody receipt because the receipt's target size is contract-pinned (C2.1: 120 bytes, and
+  /// `sizeof(CaptureStopJobs)` is pinned at 29,600 in `Track::placementPins`), while the work this
+  /// cursor does is the Loop's own derived view. Identity is (receipt, loopId, interval, frozen
+  /// content generation); `playbackRevision` is the supersession stamp.
+  enum PrivateSourcePhase : uint8_t { kPrivateUnbound = 0, kPrivateRows = 1, kPrivateHolds = 2,
+                                     kPrivateComplete = 3 };
+  struct PrivateSourceHold {
+    uint32_t holdPhaseTick = 0;
+    uint8_t channel = 0;
+    uint8_t pitch = 0;
+    uint8_t velocity = 0;
+  };
+  struct PrivateSourceCursorState {
+    const LoopEventStore::CaptureRange* range = nullptr;
+    const void* receipt = nullptr;
+    LoopId loopId = kInvalidLoopId;
+    uint64_t interval = 0;
+    uint64_t captureContentGeneration = 0;
+    uint32_t playbackRevision = 0;
+    uint32_t loopLengthTicks = 0;
+    uint32_t startLoopTick = 0;
+    size_t chunk = 0;
+    uint16_t event = 0;
+    size_t rowsRead = 0;
+    size_t notesStaged = 0;
+    size_t unitsLast = 0;
+    size_t holdIndex = 0;
+    bool holdLoaded = false;
+    /// One derived-view refresh per materialization episode, so holds are resolved against the
+    /// source that answers *now* (the private prefix, or the committed origin after supersession).
+    bool holdViewRefreshed = false;
+    uint8_t phase = kPrivateUnbound;
+    PrivateSourceDeny deny = PrivateSourceDeny::None;
+  };
+  bool bindPrivatePredecessorSource(const PrivatePredecessorBinding& binding,
+                                    PrivateSourceStep& outcome);
+  PrivateSourceStep stepPrivatePredecessorRows(size_t quantum);
+  PrivateSourceStep stepPrivatePredecessorHolds(size_t quantum);
+  /// One charged increment on either store. A refusal is a named `Pressure`; nothing is grown
+  /// uncharged, and every append that follows a proven slot cannot fail.
+  bool ensureNoteCapacity(NoteUtils::DisplayNoteVec& notes, size_t needed);
+  bool ensurePrivateStageCapacity();
+  bool ensurePrivateViewCapacity(size_t needed);
+  /// Prove both stores have room for one more pair *before* a row is consumed.
+  bool ensurePrivateSourceCapacity();
+  /// Identity/revision qualification. ANY identity or revision move is a supersession: the scan is
+  /// dropped whole (never continued, never re-stamped) and retained intents stay.
+  bool qualifyPrivatePredecessorSource(const PrivatePredecessorBinding& binding);
+  NoteUtils::DisplayNote* privateStagedNoteAt(size_t index, const MidiEvent& row);
+  NoteUtils::DisplayNote* privateFindOpenStagedNote(const MidiEvent& row);
+  bool appendPrivatePair(const MidiEvent& row);
+  bool closePrivatePair(const MidiEvent& row);
+  bool finishPrivateRowScan();
+  /// True when this interval's live pending set already carries `noteId` as its own accepted note.
+  bool privateOwnAcceptedNote(NoteId noteId) const;
+  bool retainPrivateHoldIntent(uint8_t channel, uint8_t pitch, uint8_t velocity,
+                               uint32_t holdPhaseTick);
+  void notePrivateSourceDenied(PrivateSourceDeny deny);
+  /// The last grain's outcome. It survives `discard` on purpose: a denial names itself to the
+  /// caller that provoked it.
+  PrivateSourceStep privateSourceLastStep_ = PrivateSourceStep::Idle;
+  PrivateSourceCursorState privateSource_{};
+  PrivateSourceHold privateHolds_[kPrivateSourceHoldCapacity]{};
+  size_t privateHoldCount_ = 0;
+  OverlapNoteIdSet privateHoldTargets_{};
+  size_t privateHoldTargetCursor_ = 0;
+  bool privateHoldMaterializing_ = false;
+  bool privateSourceSealDenied_ = false;
+  SourceOrigin overdubSourceSpanCacheOrigin_ = SourceOrigin::None;
+  /// Open On/Off pairing for the scan: one entry per row still awaiting its Off. Fixed storage, so
+  /// a pair capacity overflow is a named denial rather than an allocation.
+  static constexpr size_t kPrivateOpenPairCapacity = kPrivateSourceOpenPairCapacity;
+  struct PrivateOpenPair {
+    NoteId noteId = kInvalidNoteId;
+    uint8_t pitch = 0;
+    /// The staged note this On produced, so its Off closes the pair in constant time instead of
+    /// scanning the prefix (C3.2: one pair decision is one unit of fixed cost).
+    uint32_t stagedIndex = 0;
+  };
+  PrivateOpenPair privateOpenPairs_[kPrivateOpenPairCapacity]{};
+  size_t privateOpenPairCount_ = 0;
   SessionMidiEventVec overdubSourceViewEvents_;
   NoteUtils::DisplayNoteVec overdubSourceViewNotes_;
   /// Full-loop span cache for note-off consume hydration. Built at source-view
@@ -1513,6 +1809,11 @@ struct Loop {
   VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   bool lastVisualCacheIdleOverlayRejected_ = false;
   bool lastVisualCacheIdleCopiedSnapshotNotes_ = false;
+  /// Which provider `collectQualifiedCommittedDisplayNotes` last served (or None). One byte; the display
+  /// reads it only to name the source in the capture-gated `DIAG,disp_turn` row. `mutable` because the
+  /// provider itself is a **read** of the loop's committed content: the display owner holds a `const Loop&`
+  /// and this stamp is the diagnostic that read leaves behind, never content.
+  mutable QualifiedDisplaySource lastQualifiedDisplaySource_ = QualifiedDisplaySource::None;
   /// Set only while `refreshVisualCacheAfterPassStateChange` fills idle slices.
   bool visualCachePassStateRefreshActive_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at
@@ -1566,6 +1867,18 @@ struct Loop {
   /// so a second handoff for the same session would queue an empty successor.
   /// Cleared by `openOverdubSession`.
   bool sessionExitHandedOff_ = false;
+  /// Task 4.20: the reserved obligation's ownership state. Deliberately a single byte placed in the
+  /// padding that already follows `sessionExitHandedOff_` before the 8-aligned generation below, so
+  /// the measured `sizeof(Loop)` shell does not grow: the obligation's payload and session identity
+  /// live in the externally allocated record beside the ring, not in the shell.
+  SessionExitPublishClaim sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
+  /// The reserved obligation record, one slot past the FIFO ring. Null until
+  /// `ensureSessionExitReceiptRing()` has run; never reachable via head/count.
+  SessionExitSnapshotHandoff* reservedSessionExit();
+  const SessionExitSnapshotHandoff* reservedSessionExit() const;
+  /// `Publishing -> Empty`, exactly once: swap the ready reserved record into the receipt ring and
+  /// clear the record. Returns false when no free slot exists yet (nothing changes).
+  bool moveReservedSessionExitIntoReceiptRing();
   uint64_t pendingSnapshotCompanionGeneration_ = 0; // Clear/swap ABA guard; appends use size.
 #if defined(PIO_UNIT_TEST_NATIVE)
   size_t snapshotFragmentFailAfterUnitsForTest_ = static_cast<size_t>(-1);

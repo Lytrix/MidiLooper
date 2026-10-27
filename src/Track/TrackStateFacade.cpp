@@ -24,6 +24,7 @@ uint8_t Track::getActiveLoopIndex() const {
 
 void Track::setActiveLoopIndex(uint8_t index) {
   if (index < Config::MAX_LOOPS_PER_TRACK) {
+    if (index != activeLoopIndex) cancelPendingOverdubStart();
     activeLoopIndex = index;
   }
 }
@@ -75,6 +76,7 @@ TRACK_COLD_MEM bool Track::transitionState(TrackState newState) {
   }
 
   TrackState oldState = trackState;
+  if (newState != TRACK_PLAYING) cancelPendingOverdubStart();
   trackState = newState;
 #if RUNTIME_TIMING_ENABLED
   if (oldState == TRACK_OVERDUB_STOPPING) {
@@ -96,7 +98,10 @@ TRACK_COLD_MEM bool Track::transitionState(TrackState newState) {
   return true;
 }
 
-void Track::forceSetState(TrackState newState) { trackState = newState; }
+void Track::forceSetState(TrackState newState) {
+  if (newState != TRACK_PLAYING) cancelPendingOverdubStart();
+  trackState = newState;
+}
 
 void Track::toggleMuteTrack() {
   muted = !muted;
@@ -150,7 +155,7 @@ TRACK_COLD_MEM bool Track::hasRealtimeDeferredIdleWork() const {
   // Publication releases the interaction FIFO before the frozen reader retires. Keep that existing
   // deferred owner reachable for a stopped/background slot until its presentation is discharged.
   if (captureStopJobs_ != nullptr) {
-    for (const auto& presentation : captureStopJobs_->presentations)
+    for (const auto& presentation : captureStopJobs_->custodies)
       if (presentation.retirementActive) return true;
   }
   return false;
@@ -164,8 +169,7 @@ TRACK_COLD_MEM bool Track::canServiceBackgroundSnapshotOwnerTurn() const {
   // hardware (2026-10-17, rolling qualification image, 2-bar base recipe): `state=OVERDUBBING, pending=1, phase=16`,
   // the stop press admitted nothing, and the recipe's second overdub and undo/redo steps never ran.
   if (captureStopJobs_ != nullptr) {
-    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-      const CaptureStopPresentation& presentation = captureStopJobs_->presentations[slot];
+    for (const auto& presentation : captureStopJobs_->custodies) {
       if (presentation.retirementActive && presentation.owner != nullptr &&
           presentation.owner->pendingSnapshotSessionExitQueued() &&
           !presentation.owner->publishedSnapshotIsCurrent())

@@ -36,6 +36,71 @@ uint32_t getInternalHeapTotalBytes();
  */
 uint32_t getInternalHeapUsedBytes();
 
+/**
+ * @brief Task 4.20: what the arena tail is **not** — the allocatability question, asked directly.
+ *
+ * `getInternalHeapFreeBytes()` is `&_heap_end - __brkval`. The Teensy core's `_sbrk` is a pure bump allocator
+ * (`startup.c`: `__brkval = prev + incr`, never decreases), while `free()` returns blocks to **newlib's own free
+ * list below `__brkval`** and later `malloc`s reuse them without touching `__brkval`. So that number is the
+ * *untouched tail* of the arena and is a **lower bound** on the largest allocatable block: tail >= need proves a
+ * request fits, tail < need does *not* prove it does not. Every large step it takes is "the arena grew here", not
+ * "these bytes are live".
+ *
+ * `mallinfo`/`mallinfo2` are not available in this toolchain (checked: absent from the arm-none-eabi `malloc.h`),
+ * so the only honest way to ask is to try. This probe takes the exact block and gives it straight back, using the
+ * raw `malloc`/`extmem` entry points (never the aborting C++ allocators), and reports the two facts separately:
+ * whether **internal heap** can serve the request, and — only if it cannot — whether the external pool can.
+ *
+ * Consultation: `admitOperationMemory` does **not** call this. Its authority is `allocatorCanServeInternalBlock()`
+ * below, which asks only "can one block of this size be served" — never "is anything left".
+ */
+struct HeapAllocatabilityProbe {
+  uint32_t tailFreeBytes = 0;
+  uint32_t requestedBytes = 0;
+  bool internalMallocOk = false;
+  bool externalPoolOk = false;
+};
+HeapAllocatabilityProbe probeInternalHeapAllocatability(uint32_t bytes);
+
+/**
+ * @brief Task 4.20: the **one-shot denial-edge capacity ladder**, and the allocator authority that replaces trusting the
+ * arena tail as a capacity answer.
+ *
+ * Ladder rungs are 16 / 24 / 32 / 48 / 64 KB, tried **descending** and abandoned at the first success, so at most one
+ * rung is ever resident and the failures allocate nothing. It is a *diagnostic* (`!HEAP_PROBE` and one emission at a
+ * denial edge), never a per-turn policy: a success can raise `__brkval`, which is the very number it exists to
+ * disambiguate.
+ */
+struct HeapCapacityLadder {
+  uint32_t tailFreeBytes = 0;
+  uint32_t needBytes = 0;               ///< floor + margin the admission wanted
+  uint32_t largestAllocatableBytes = 0; ///< largest rung the internal heap served
+  uint8_t servedMask = 0;               ///< bit0 16K, bit1 24K, bit2 32K, bit3 48K, bit4 64K
+};
+HeapCapacityLadder probeHeapCapacityLadder(uint32_t needBytes);
+
+/**
+ * @brief Whether the **internal heap** can currently serve one contiguous block of @p bytes.
+ *
+ * The allocator answers (`malloc` then `free`, raw entry point, never the aborting C++ allocators) because this
+ * toolchain has no `mallinfo`. Admission consults it **only when the arena tail says no**, so the ordinary path stays a
+ * single comparison and a probe runs at most on a would-be denial: the tail is a cheap pre-filter, the allocator is the
+ * authority, and the operation's floor and margin are unchanged — the same `floor + requiredBytes` is what gets asked for.
+ */
+bool allocatorCanServeInternalBlock(uint32_t bytes);
+
+/**
+ * @brief Task 4.20: the internal heap's own answer to "largest block you can serve right now", read from
+ * newlib's free list **without allocating**.
+ *
+ * The arena tail (`getInternalHeapFreeBytes`) is only the *un-touched* frontier above `__brkval`; the reusable free
+ * chunks live below it, and `malloc` serves from them without moving `__brkval`. `admitOperationMemory` consults this
+ * as the authority when the tail says "low" for a user-gesture admission — read-only, so it cannot perturb the heap
+ * the way the withdrawn malloc-probe did (`2776cae3…`). Returns 0 when the walk is incomplete, which the caller reads
+ * as "fall back to the tail verdict" (never as "serve any size").
+ */
+uint32_t largestInternalFreeChunkBytes();
+
 /** @brief True when Teensy PSRAM extmem pool is configured (chip detected). */
 bool isExternalMemoryPoolAvailable();
 
@@ -147,6 +212,12 @@ enum class OperationKind : uint8_t {
   /// allocation is attempted. This is the family that reached `ExternalMemoryFirstAllocator::abort()`
   /// measured 2026-10-06 (a 24,576-note display copy, 384 KB).
   DisplayProjectionReserve = 7,
+  /// CONTRACTS.md C3.2: the private-predecessor source scan is about to grow its bounded staging
+  /// increment. Point-of-use like `DisplayProjectionReserve`: the caller hands the exact byte count
+  /// its reserve will request, taken immediately before it, so the probe is the authority. A refusal
+  /// is a retryable `Pressure`: the sealed source row stays unconsumed and the cursor keeps its exact
+  /// position.
+  SourceViewReserve = 8,
 };
 
 /**
@@ -254,6 +325,11 @@ void notifyCaptureAppendFailed(uint32_t nowMs);
 #if defined(PIO_UNIT_TEST_NATIVE)
 void setNativeTestFreeHeap(uint32_t bytes);
 void resetNativeTestFreeHeap();
+/// Task 4.20: the largest block the **modeled** allocator can serve. Defaults to the injected arena tail, so every
+/// existing fixture keeps its tail-based meaning; a fixture raises it to model free-list holes (capacity beyond the
+/// tail), which is the exact asymmetry the admission RED needs. 0 restores "capacity == injected tail".
+void setNativeTestAllocatableCapacity(uint32_t bytes);
+void resetNativeTestAllocatableCapacity();
 void setNativeTestChunksFree(uint16_t chunksFree);
 void setNativeTestPersistQueueDepth(uint16_t depth);
 void resetNativeTestPressureInputs();

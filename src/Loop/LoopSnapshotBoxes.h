@@ -204,6 +204,8 @@ struct PendingSnapshotPublishBox {
 
 // Reserved before capture admission. Owns the session identities across close;
 // no vector growth, traversal, or snapshot graph release at the stop boundary.
+// `Loop` allocates one extra record beside the receipt ring as the *reserved*
+// obligation (`kReservedSessionExitReceipt`), which no FIFO head/count touches.
 struct SessionExitSnapshotHandoff {
   bool pending = false;
   /// DEC-068: a receipt captured at its interval's stop admission is not consumable until that
@@ -213,6 +215,11 @@ struct SessionExitSnapshotHandoff {
   CommitReason reason = CommitReason::OverdubStop;
   PassId lastPassId = kInvalidPassId;
   size_t companionRowCount = 0;
+  /// Task 4.20: the session these identities belong to (`Loop::overdubSessionUndoGeneration_` as
+  /// stamped when that session opened). Zero means "claimed, session not open yet". The reserved
+  /// record refuses a transfer whose session does not match, so a stale reservation can never bind
+  /// another interval's identities.
+  uint64_t sessionIdentity = 0;
   std::vector<PassId> passIds;
   std::vector<EditPassIdList> companionIds;
 };

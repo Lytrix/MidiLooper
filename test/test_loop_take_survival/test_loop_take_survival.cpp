@@ -1009,7 +1009,24 @@ void test_overdub_wrap_does_not_publish_global_snapshot() {
 // headroom returns. Before this, the post-wrap publication of a 12-bar record ran unguarded into a
 // full pool and reset the device (`session_20260918_101615`: heap 108 -> 72 -> 36 -> 0 KB, then
 // `ExternalMemoryFirstAllocator::abort()`).
+void test_snapshot_publication_charges_the_slab_to_its_allocator_tier() {
+  constexpr uint32_t floor = 32u * 1024u;
+  constexpr uint32_t observedHeap = 68u * 1024u;
+  TEST_ASSERT_EQUAL_UINT32(8u * 1024u, snapshotPublicationInternalReserveBytes(true));
+  TEST_ASSERT_EQUAL_UINT32(40u * 1024u, snapshotPublicationInternalReserveBytes(false));
+  TEST_ASSERT_TRUE(observedHeap >= floor + snapshotPublicationInternalReserveBytes(true));
+  TEST_ASSERT_TRUE(observedHeap < floor + snapshotPublicationInternalReserveBytes(false));
+  MemoryMonitor::setNativeTestFreeHeap(observedHeap);
+  TEST_ASSERT_TRUE(MemoryMonitor::admitOperationMemory(
+      MemoryMonitor::OperationKind::SnapshotReserve, snapshotPublicationInternalReserveBytes(true)));
+  MemoryMonitor::setNativeTestFreeHeap(floor + snapshotPublicationInternalReserveBytes(true) - 1u);
+  TEST_ASSERT_FALSE(MemoryMonitor::admitOperationMemory(
+      MemoryMonitor::OperationKind::SnapshotReserve, snapshotPublicationInternalReserveBytes(true)));
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
 void test_publication_turn_waits_for_admitted_headroom() {
+  MemoryMonitor::resetNativeTestFreeHeap();
   MemoryMonitor::setNativeForcedReserveDenied(false);
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1041,8 +1058,8 @@ void test_publication_turn_waits_for_admitted_headroom() {
       static_cast<uint32_t>(loop.pendingSnapshotWrapJournalCount());
   TEST_ASSERT_TRUE(journalsBefore > 0u);
 
-  // Denied: nothing starts, nothing is written, nothing is published.
-  MemoryMonitor::setNativeForcedReserveDenied(true);
+  // Numeric denial, not an unconditional fake: the slab is internal on this native target.
+  MemoryMonitor::setNativeTestFreeHeap(39u * 1024u);
   TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
   TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
@@ -1054,7 +1071,7 @@ void test_publication_turn_waits_for_admitted_headroom() {
   TEST_ASSERT_EQUAL_UINT16(0, loop.snapshotFragmentConsecutiveFailuresForTest());
 
   // Admitted: the same publication completes with no fragment failure recorded.
-  MemoryMonitor::setNativeForcedReserveDenied(false);
+  MemoryMonitor::resetNativeTestFreeHeap();
   drainWrapJournalsUntilCurrent(loop);
   TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_EQUAL_UINT16(0, loop.snapshotFragmentConsecutiveFailuresForTest());
@@ -7231,6 +7248,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_the_record_overlay_projects_a_wrapped_take_and_closes_a_held_note_once);
   RUN_TEST(test_the_record_overlay_serves_the_same_take_on_every_gather);
   RUN_TEST(test_publication_turn_waits_for_admitted_headroom);
+  RUN_TEST(test_snapshot_publication_charges_the_slab_to_its_allocator_tier);
   RUN_TEST(test_allocation_failure_parks_publication_until_admission_recovers);
   RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
   RUN_TEST(test_note_edit_close_replaces_published_note);

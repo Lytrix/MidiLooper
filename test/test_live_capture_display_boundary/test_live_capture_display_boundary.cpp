@@ -1,5 +1,6 @@
 // S7.5b.6: real accepted Capture -> draw-source -> paint phases -> native DMA endpoint.
 // Raster/SPI are hardware boundaries; source selection, geometry and publication are real.
+#define PLAYBACK_WINDOW_ROLLING_ENABLED 1 // Match the shipping capture build's owner interleavings.
 #define HARNESS_REAL_CAPTURE_STOP
 #define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_LINKS_REAL_DISPLAY_MANAGER
@@ -58,6 +59,30 @@ struct DisplayCaptureTestAccess {
   static uint32_t rectangles() { return displayManager._display.gfx.rectangles; }
   static uint32_t pianoRows() { return displayManager._display.gfx.pianoRows; }
   static size_t committedPrefixSize() { return displayManager.liveDisplayCommittedPrefix_.size(); }
+  // The split's two facts (`DIAG,disp_turn`): what the playhead asked for this turn, and the interval the frame
+  // is **drawn** in. Under a content hold they must differ from the content key; outside one they coincide.
+  static uint32_t requestedViewStart() { return displayManager.detailedWindowRequestedStartTick_; }
+  static uint32_t requestedViewLength() { return displayManager.detailedWindowRequestedLengthTicks_; }
+  static uint32_t drawnViewStart() { return displayManager.detailedWindowViewportStartTick_; }
+  static uint32_t drawnViewLength() { return displayManager.detailedWindowViewportLengthTicks_; }
+  static uint8_t drawnViewSlot() { return displayManager.detailedWindowViewportSlot_; }
+  /// The piano-roll zoom: `detailedWindowBars_` is the requested window width in bars (0 = max).
+  static void setDetailedWindowBars(uint8_t slot, uint8_t bars) {
+    displayManager.detailedWindowBars_[slot] = bars;
+  }
+  static const char* qualifiedSourceName(const Loop& loop) {
+    switch (loop.lastQualifiedDisplaySource()) {
+      case Loop::QualifiedDisplaySource::BoundedContinuation: return "bound";
+      case Loop::QualifiedDisplaySource::RetainedEnvelope: return "retained";
+      case Loop::QualifiedDisplaySource::PreparedWindow: return "prepared";
+      case Loop::QualifiedDisplaySource::VisualCache: return "cache";
+      case Loop::QualifiedDisplaySource::None: break;
+    }
+    return "none";
+  }
+  static const VisualBarVec* overview(const Track& t, const Loop& loop, uint8_t slot) {
+    return displayManager.updateOverviewCaptureDensity(t, loop, slot, loop.loopLengthTicks);
+  }
 };
 struct FrameReceipt {
   DisplayNoteVec notes;
@@ -80,6 +105,8 @@ static void onComplete() { completedFrame = submittedFrame; completedFrame.times
 void setUp() {
   displayManager.~DisplayManager();
   trackManager.~TrackManager();
+  LoopContentResolution::boundedDisplayCancel();
+  LoopContentResolution::deviceGateReset();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
   new (&displayManager) DisplayManager();
@@ -220,6 +247,12 @@ void test_busy_transfer_keeps_complete_frame_pending_and_receipts_separate() {
 
 struct TrackCaptureStopTestAccess {
   static auto* runtime(Track& t) { return t.playbackRuntime.slotIfAllocated(t.getActiveLoopIndex()); }
+  static bool retiredPreviewsEmpty(const Track& t) {
+    if (!t.captureStopJobs_ || t.captureStopJobs_->count != 0) return false;
+    for (const auto& job : t.captureStopJobs_->entries)
+      if (!job.preview.notes.empty() || !job.preview.openNoteIndices.empty()) return false;
+    return true;
+  }
 };
 struct GapTake { Track* track; NoteId a,b,c; };
 static GapTake seedGapOverdub(bool early=false, bool withLivePair=true) {
@@ -345,12 +378,22 @@ void test_moving_window_gap_never_mixes_old_prefix_with_new_viewport_overlay() {
   TEST_ASSERT_TRUE(t.isOverdubbing());
   const NoteId c=acceptPair(t,70,length+192,length+240);
   submitFrame(length+256);
+  // Content and viewport are two facts now (disp_turn split): the content key keeps the retained interval and the
+  // retained rows are never re-gathered, while the *drawn* interval follows the playhead so the cursor cannot be
+  // left behind. The drawn rows are therefore the retained rows that fall inside the requested viewport.
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(8*bar-16,submittedFrame.source.windowStart,
-      "held content must retain its qualified interval, not paint a new viewport");
+      "the content key must stay the retained interval while the viewport follows the request");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0,DisplayCaptureTestAccess::drawnViewStart(),
+      "the drawn viewport must be the interval the playhead requested");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(16*bar,DisplayCaptureTestAccess::drawnViewLength(),
+      "the drawn viewport must carry the requested length");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(DisplayCaptureTestAccess::requestedViewStart(),
+      DisplayCaptureTestAccess::drawnViewStart(),
+      "the drawn viewport must equal the requested interval, not the retained one");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(2,submittedFrame.notes.size(),
       "outside-window live overlay cannot mix with held committed interval");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2,submittedFrame.pianoRows,
-      "rasterized held interval must include both committed notes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1,submittedFrame.pianoRows,
+      "rasterized rows must be the retained rows inside the requested viewport (b; z is outside it)");
   assertNote(submittedFrame.notes,b,62,8*bar+20,8*bar+80);
   assertNote(submittedFrame.notes,z,65,23*bar+500,23*bar+640);
   completeFrame();
@@ -394,6 +437,72 @@ void test_early_overdub_overlay_survives_later_record_pass_publication() {
   assertNote(completedFrame.notes,take.c,70,192,240);
 }
 
+// Seed committed storage without a Snapshot or stop obligation, then open an
+// empty overdub so ordinary Record-stop frame retention cannot mask fallback
+// invalidation. Track's deferred idle owner calls the same rebuild entry on hardware.
+void test_partial_visual_cache_publication_refreshes_stationary_draw_source() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  Loop& loop = t.getActiveLoop();
+  LoopEventStore record;
+  for (uint32_t i = 0; i < 32; ++i) {
+    MidiEvent on = MidiEvent::NoteOn(i * bar + 12, 1, 60, 100);
+    on.noteId = 100 + i;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(i * bar + 80, 1, 60, 0)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = 32 * bar;
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+  TEST_ASSERT_FALSE(t.hasStopInFlightForSlot(0));
+
+  loop.rebuildVisualCacheIdleSlice(1, 0);
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.visualCache.notes.size());
+  submitFrame(0);
+  TEST_ASSERT_EQUAL_UINT32(1, submittedFrame.notes.size());
+  assertNote(submittedFrame.notes, 100, 60, 12, 80);
+  const auto firstKey = submittedFrame.source;
+  TEST_ASSERT_EQUAL_UINT32(0, firstKey.windowStart);
+  TEST_ASSERT_EQUAL_UINT32(16 * bar, firstKey.windowLength);
+  completeFrame();
+
+  const uint32_t revision = loop.visualCache.revision;
+  loop.rebuildVisualCacheIdleSlice(0, 1); // no budget: no publication
+  loop.rebuildVisualCacheIdleSlice(1, 0, 0); // clean neighborhood: no publication
+  TEST_ASSERT_EQUAL_UINT32(revision, loop.visualCache.revision);
+  loop.rebuildVisualCacheIdleSlice(15, 1);
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL_UINT8(0, loop.visualCache.dirtyBars[15]);
+  TEST_ASSERT_EQUAL_UINT8(1, loop.visualCache.dirtyBars[16]);
+  TEST_ASSERT_EQUAL_UINT32(16, loop.visualCache.notes.size());
+  submitFrame(0); // identical playhead and viewport; no movement to force a gather
+  TEST_ASSERT_EQUAL_UINT32(firstKey.windowStart, submittedFrame.source.windowStart);
+  TEST_ASSERT_EQUAL_UINT32(firstKey.windowLength, submittedFrame.source.windowLength);
+  TEST_ASSERT_EQUAL_PTR(firstKey.publishedSnapshotIdentity,
+                        submittedFrame.source.publishedSnapshotIdentity);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(16, submittedFrame.notes.size(),
+      "published visible slices must refresh the stationary committed prefix before all bars clean");
+  for (uint32_t i = 0; i < 16; ++i)
+    assertNote(submittedFrame.notes, 100 + i, 60, i * bar + 12, i * bar + 80);
+  TEST_ASSERT_EQUAL_UINT32(revision + 1, loop.visualCache.revision);
+  TEST_ASSERT_EQUAL_UINT32(loop.visualCache.revision, submittedFrame.source.visualCacheRevision);
+  completeFrame();
+
+  loop.rebuildVisualCacheIdleSlice(16, 16); // final publication increments exactly once too
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL_UINT32(revision + 2, loop.visualCache.revision);
+  loop.rebuildVisualCacheIdleSlice(1, 0); // already clean: no publication
+  TEST_ASSERT_EQUAL_UINT32(revision + 2, loop.visualCache.revision);
+}
+
 static void test_boot_title_is_first_transfer_and_survives_completion_and_hold() {
   auto& api = DisplayCaptureTestAccess::api();
   displayManager.beginBootOled();
@@ -426,8 +535,1021 @@ static void test_boot_title_is_first_transfer_and_survives_completion_and_hold()
   TEST_ASSERT_TRUE(displayManager.hasPendingPaintPhase());
 }
 
+void test_sealed_and_live_overdub_notes_paint_while_record_remains_private() {
+  const GapTake take = seedGapOverdub(true);
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  submitFrame(1792); assertGapFrame(take); completeFrame();
+  t.stopOverdubbing();
+  TEST_ASSERT_TRUE(t.isPlaying());
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
+  clockManager.assignCurrentTickSilently(1824);
+  t.startOverdubbing(1824);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const NoteId d = acceptPair(t, 74, 1856, 1904);
+  for (unsigned frame = 0; frame < 3; ++frame) {
+    submitFrame(1920 + frame);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, submittedFrame.notes.size(),
+        "private Record, sealed B and live C must compose without publication");
+    assertNote(submittedFrame.notes, take.a, 60, 12, 80);
+    assertNote(submittedFrame.notes, take.b, 62, 1328, 1408);
+    assertNote(submittedFrame.notes, take.c, 70, 192, 240);
+    assertNote(submittedFrame.notes, d, 74, 320, 368);
+    completeFrame();
+  }
+  t.stopOverdubbing();
+  TEST_ASSERT_TRUE(t.isPlaying());
+  for (unsigned frame = 0; frame < 3; ++frame) {
+    submitFrame(1924 + frame);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, submittedFrame.notes.size(),
+        "stopping C must not erase unpublished B's job-owned preview");
+    assertNote(submittedFrame.notes, take.a, 60, 12, 80);
+    assertNote(submittedFrame.notes, take.b, 62, 1328, 1408);
+    assertNote(submittedFrame.notes, take.c, 70, 192, 240);
+    assertNote(submittedFrame.notes, d, 74, 320, 368);
+    completeFrame();
+  }
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
+}
+
+void test_retired_predecessor_notes_survive_third_overdub_start() {
+  const GapTake take = seedGapOverdub(true);
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  submitFrame(1792); assertGapFrame(take); completeFrame();
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(1824);
+  t.startOverdubbing(1824);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const NoteId c = acceptPair(t, 74, 1856, 1904);
+  submitFrame(1920); completeFrame();
+  for (unsigned grain = 0; grain < 20000 && t.captureStopPreviewCount() != 0; ++grain)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, t.captureStopPreviewCount(),
+      "older Record/overdub jobs must retire through production workers while C stays live");
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_UINT32(2, loop.capture.store.size());
+  submitFrame(1920);
+  TEST_MESSAGE("checking predecessor frame after cleanup with C live");
+  assertNote(submittedFrame.notes, take.c, 70, 192, 240);
+  assertNote(submittedFrame.notes, c, 74, 320, 368);
+  completeFrame();
+
+  t.stopOverdubbing();
+  TEST_ASSERT_TRUE(t.isPlaying());
+  clockManager.assignCurrentTickSilently(1952);
+  t.startOverdubbing(1952);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const NoteId d = acceptPair(t, 76, 1984, 2032);
+  for (unsigned frame = 0; frame < 3; ++frame) {
+    submitFrame(2048 + frame);
+    TEST_MESSAGE("checking predecessor identities after third overdub Start");
+    assertNote(submittedFrame.notes, take.a, 60, 12, 80);
+    assertNote(submittedFrame.notes, take.b, 62, 1328, 1408);
+    assertNote(submittedFrame.notes, take.c, 70, 192, 240);
+    assertNote(submittedFrame.notes, c, 74, 320, 368);
+    assertNote(submittedFrame.notes, d, 76, 448, 496);
+    TEST_ASSERT_EQUAL_UINT32(5, submittedFrame.notes.size());
+    completeFrame();
+    assertNote(completedFrame.notes, take.c, 70, 192, 240);
+    assertNote(completedFrame.notes, c, 74, 320, 368);
+  }
+  for (unsigned grain = 0; grain < 20000 && t.captureStopPreviewCount() != 0; ++grain)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_EQUAL_UINT32(0, t.captureStopPreviewCount());
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_UINT32(2, loop.capture.store.size());
+  t.stopOverdubbing();
+  TEST_ASSERT_TRUE(t.isPlaying());
+  clockManager.assignCurrentTickSilently(2208);
+  t.startOverdubbing(2208);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const NoteId e = acceptPair(t, 78, 2240, 2288);
+  submitFrame(2304);
+  TEST_MESSAGE("checking both retired overdubs after fourth overdub Start");
+  assertNote(submittedFrame.notes, take.a, 60, 12, 80);
+  assertNote(submittedFrame.notes, take.b, 62, 1328, 1408);
+  assertNote(submittedFrame.notes, take.c, 70, 192, 240);
+  assertNote(submittedFrame.notes, c, 74, 320, 368);
+  assertNote(submittedFrame.notes, d, 76, 448, 496);
+  assertNote(submittedFrame.notes, e, 78, 704, 752);
+  TEST_ASSERT_EQUAL_UINT32(6, submittedFrame.notes.size());
+  completeFrame();
+  assertNote(completedFrame.notes, take.c, 70, 192, 240);
+  assertNote(completedFrame.notes, c, 74, 320, 368);
+}
+
+void test_overview_preserves_finalizing_and_live_preview_bands() {
+  const GapTake take = seedGapOverdub(true);
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(1824);
+  t.startOverdubbing(1824);
+  const auto* before = DisplayCaptureTestAccess::overview(t, loop, 0);
+  TEST_ASSERT_NOT_NULL(before);
+  const uint8_t predecessorBands = (*before)[0];
+  TEST_ASSERT_NOT_EQUAL_UINT8(0, predecessorBands);
+  (void)acceptPair(t, 12, 2320, 2360); // a different bar and pitch band
+  const auto* after = DisplayCaptureTestAccess::overview(t, loop, 0);
+  TEST_ASSERT_NOT_NULL(after);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(predecessorBands, (*after)[0],
+      "live preview replacement must not erase finalizing predecessor density");
+  TEST_ASSERT_NOT_EQUAL_UINT8(0, (*after)[1]);
+}
+
+// The user can request overdub before even the first Record closure grain. The draw source must
+// preserve the complete base and compose accepted notes without relying on a borrowed source setup.
+void test_immediate_overdub_paints_before_any_record_finalization_turn() {
+  Track& t = beginRecord();
+  const NoteId a = acceptPair(t, 60, 12, 80), b = acceptPair(t, 62, 1328, 1408);
+  growRecordGeometry(t, 1536);
+  submitFrame(1536); completeFrame();
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopRecording(1536);
+  TEST_ASSERT_FALSE(t.getActiveLoop().hasCommittedPasses());
+  clockManager.assignCurrentTickSilently(1664);
+  t.startOverdubbing(1664);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const NoteId c = acceptPair(t, 70, 1728, 1776);
+  submitFrame(1792);
+  assertGapFrame({&t, a, b, c});
+  completeFrame();
+  assertNote(completedFrame.notes, c, 70, 192, 240);
+  TEST_ASSERT_FALSE(t.getActiveLoop().hasCommittedPasses());
+}
+
+static std::array<NoteId, 24> stopPartialLongRecordForDisplay() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  Track& t = beginRecord();
+  std::array<NoteId, 24> ids{};
+  for (uint32_t b = 0; b < ids.size(); ++b)
+    ids[b] = acceptPair(t, static_cast<uint8_t>(60 + b % 8), b * bar + 12, b * bar + 80);
+  (void)acceptPair(t, 95, length + 12, length + 80); // the trailing partial bar is trimmed
+  growRecordGeometry(t, length + 184);
+  submitFrame(length + 184); completeFrame();
+  clockManager.assignCurrentTickSilently(length + 200);
+  t.stopRecording(length + 200);
+  TEST_ASSERT_TRUE(t.isPlaying());
+  TEST_ASSERT_EQUAL_UINT32(length, t.getActiveLoop().loopLengthTicks);
+  TEST_ASSERT_FALSE(t.getActiveLoop().hasCommittedPasses());
+  return ids;
+}
+
+void test_truncated_record_stop_reprojects_complete_first_sixteen_bars() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const auto ids = stopPartialLongRecordForDisplay();
+  submitFrame(clockManager.getCurrentTick());
+  TEST_ASSERT_EQUAL_UINT32(0, submittedFrame.source.windowStart);
+  TEST_ASSERT_EQUAL_UINT32(16 * bar, submittedFrame.source.windowLength);
+  for (uint32_t b = 0; b < 16; ++b)
+    assertNote(submittedFrame.notes, ids[b], static_cast<uint8_t>(60 + b % 8),
+               b * bar + 12, b * bar + 80);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(16, submittedFrame.notes.size(),
+      "a rewound viewport must not retain only the tail of the old Record window");
+  completeFrame();
+  for (uint32_t b = 0; b < 16; ++b)
+    assertNote(completedFrame.notes, ids[b], static_cast<uint8_t>(60 + b % 8),
+               b * bar + 12, b * bar + 80);
+}
+
+void test_closed_overdub_note_survives_truncated_record_publication_gap() {
+  (void)stopPartialLongRecordForDisplay();
+  Track& t = trackManager.getSelectedTrack();
+  clockManager.assignCurrentTickSilently(256);
+  t.startOverdubbing(256);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  t.noteOn(1, 100, 100, 320);
+  const NoteId id = t.getActiveLoop().capture.store.at(0).noteId;
+  submitFrame(344);
+  TEST_ASSERT_TRUE_MESSAGE(std::any_of(submittedFrame.notes.begin(), submittedFrame.notes.end(),
+      [id](const auto& note) { return note.noteId == id && note.note == 100; }),
+      "fixture must first paint the incoming open hold");
+  completeFrame();
+  t.noteOff(1, 100, 0, 360);
+  for (unsigned frame = 0; frame < 3; ++frame) {
+    submitFrame(384 + frame);
+    assertNote(submittedFrame.notes, id, 100, 320, 360);
+    completeFrame();
+    assertNote(completedFrame.notes, id, 100, 320, 360);
+  }
+  TEST_ASSERT_FALSE(t.getActiveLoop().hasCommittedPasses());
+}
+
+static void exerciseLateRecordWindowBeforeRootPublication(bool dense, bool contended = false) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  Track& t = beginRecord();
+  std::array<NoteId, 24> ids{};
+  for (uint32_t b = 0; b < 24; ++b) {
+    const uint32_t count = dense ? 16 : 1;
+    for (uint32_t n = 0; n < count; ++n) {
+      const NoteId id = acceptPair(t, dense ? 84 - n : 60 + b % 8,
+          b * bar + n * 48 + 12, b * bar + n * 48 + 40);
+      if (n == 0) ids[b] = id;
+    }
+  }
+  growRecordGeometry(t, length + 200);
+  submitFrame(length + 184); completeFrame();
+  (void)acceptPair(t, 95, length + 12, length + 80); // pin 24 complete bars; trailing partial bar is trimmed.
+  clockManager.assignCurrentTickSilently(length + 200);
+  t.stopRecording(length + 200);
+  Loop& loop = t.getActiveLoop();
+  submitFrame(clockManager.getCurrentTick()); completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
+  t.startOverdubbing(256);
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NULL(t.recordStopPreviewForSlot(0));
+  const uint32_t on = 17 * bar + 32, off = on + 64;
+  clockManager.assignCurrentTickSilently(on);
+  t.noteOn(1, 100, 100, on);
+  Track& background = trackManager.getTrack(1);
+  if (contended) {
+    background.ensureLoopsAllocated();
+    Loop& other = background.getActiveLoop();
+    LoopEventStore record;
+    for (uint32_t b = 0; b < 24; ++b) {
+      for (uint32_t n = 0; n < 16; ++n) {
+        MidiEvent event = MidiEvent::NoteOn(b * bar + n * 48, 2, 40 + n, 100);
+        event.noteId = 1000 + b * 16 + n;
+        TEST_ASSERT_TRUE(record.append(event));
+        TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(event.tick + 40, 2, 40 + n, 0)));
+      }
+    }
+    other.seedRecordPassFromStore(record);
+    other.loopLengthTicks = length;
+    other.markDisplayCachesStale();
+    background.forceSetState(TRACK_PLAYING);
+    TEST_ASSERT_TRUE(background.isAudiblePlaybackActive());
+  }
+  const NoteId live = loop.capture.store.at(0).noteId;
+  submitFrame(on + 16); completeFrame();
+  clockManager.assignCurrentTickSilently(off);
+  t.noteOff(1, 100, 0, off);
+  // This is the existing production producer, not a manually prepared index.
+  for (unsigned turn = 0; turn < 2048; ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    if (contended)
+      background.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  submitFrame(off + 16);
+  for (uint32_t b = 16; b < 24; ++b)
+    assertNote(submittedFrame.notes, ids[b], dense ? 84 : 60 + b % 8,
+               b * bar + 12, b * bar + 40);
+  assertNote(submittedFrame.notes, live, 100, on, off);
+  completeFrame();
+  assertNote(completedFrame.notes, live, 100, on, off);
+}
+
+void test_late_record_window_and_closed_overdub_progress_before_root_publication() {
+  exerciseLateRecordWindowBeforeRootPublication(false);
+}
+void test_dense_late_record_window_and_closed_overdub_progress_before_root_publication() {
+  exerciseLateRecordWindowBeforeRootPublication(true);
+}
+void test_selected_gap_display_source_survives_competing_audible_track() {
+  exerciseLateRecordWindowBeforeRootPublication(true, true);
+}
+void test_display_source_progresses_with_pending_successor_stop_and_across_wrap() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  const auto ids = stopPartialLongRecordForDisplay();
+  Track& t = trackManager.getSelectedTrack();
+  Loop& loop = t.getActiveLoop();
+  submitFrame(clockManager.getCurrentTick()); completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  t.startOverdubbing(256);
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  (void)acceptPair(t, 100, 320, 400);
+  clockManager.assignCurrentTickSilently(512);
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(640);
+  t.startOverdubbing(640);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(loop.privateSourceOwedForSeal());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  const auto before = LoopContentResolution::boundedDisplayLastSlice();
+  t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  const auto after = LoopContentResolution::boundedDisplayLastSlice();
+  TEST_ASSERT_TRUE_MESSAGE(std::strcmp(before.step, after.step) != 0 ||
+      before.cursor != after.cursor || before.workUnits != after.workUnits,
+      "a pending successor Stop must not make the display-source wakeup unreachable");
+
+  const uint32_t on = 23 * bar + 32, off = on + 80;
+  const NoteId late = acceptPair(t, 101, on, off);
+  for (unsigned turn = 0; turn < 4096; ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  submitFrame(off + 16);
+  assertNote(submittedFrame.notes, ids[23], 67, 23 * bar + 12, 23 * bar + 80);
+  assertNote(submittedFrame.notes, late, 101, on, off);
+  completeFrame();
+  LoopContentResolution::BoundedDisplayRequest completedSource;
+  completedSource.owner = &loop;
+  completedSource.loopId = loop.loopId;
+  completedSource.loopLengthTicks = loop.loopLengthTicks;
+  completedSource.playbackRevision = loop.playbackRevision;
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayReady(completedSource, loop.passes),
+      "fixture must have a complete qualified source before the real wrap commit");
+  clockManager.assignCurrentTickSilently(length);
+  TEST_ASSERT_TRUE_MESSAGE(t.maybeCommitOverdubWrap(length - 8, 0), "fixture must execute the production wrap commit");
+  TEST_ASSERT_TRUE_MESSAGE(std::any_of(LoopContentResolution::boundedDisplayNotes().begin(),
+      LoopContentResolution::boundedDisplayNotes().end(), [&](const auto& n) { return n.noteId == ids[0]; }),
+      "the completed prior display source still contains the original Record identity");
+  submitFrame(length + 256);
+  TEST_ASSERT_TRUE_MESSAGE(std::any_of(submittedFrame.notes.begin(), submittedFrame.notes.end(),
+      [&](const auto& n) { return n.noteId == ids[0]; }),
+      "first wrapped frame must retain Record content while its replacement source is not ready");
+  for (uint32_t b = 0; b < 16; ++b)
+    assertNote(submittedFrame.notes, ids[b], 60 + b % 8, b * bar + 12, b * bar + 80);
+  completeFrame();
+  for (unsigned turn = 0; turn < 4096; ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  submitFrame(length + 256);
+  for (uint32_t b = 0; b < 16; ++b)
+    assertNote(submittedFrame.notes, ids[b], 60 + b % 8, b * bar + 12, b * bar + 80);
+  completeFrame();
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+}
+
+
+void test_closed_overdub_note_survives_painted_stop_and_gradual_finalization() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  Track& recording = beginRecord();
+  for (uint32_t b = 0; b < 24; ++b) {
+    for (uint32_t n = 0; n < 16; ++n)
+      (void)acceptPair(recording, 84 - n, b * bar + n * 48, b * bar + n * 48 + 40);
+    growRecordGeometry(recording, (b + 1) * bar);
+    submitFrame((b + 1) * bar - 8); completeFrame();
+  }
+  growRecordGeometry(recording, length + 200);
+  clockManager.assignCurrentTickSilently(length + 200);
+  recording.stopRecording(length + 200);
+  Track& t = trackManager.getSelectedTrack();
+  submitFrame(clockManager.getCurrentTick()); completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  t.startOverdubbing(256);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  clockManager.assignCurrentTickSilently(320);
+  t.noteOn(1, 74, 100, 320);
+  const NoteId id = t.getActiveLoop().capture.store.at(0).noteId;
+  submitFrame(344); completeFrame();
+  clockManager.assignCurrentTickSilently(600);
+  t.noteOff(1, 74, 0, 600);
+  for (unsigned turn = 0; turn < 192; ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    if (turn % 16 == 0) {
+      submitFrame(624 + turn);
+      assertNote(submittedFrame.notes, id, 74, 320, 600);
+      completeFrame();
+      assertNote(completedFrame.notes, id, 74, 320, 600);
+    }
+  }
+}
+
+void test_record_preview_is_cleared_before_stop_descriptor_reuse() {
+  Track& t = beginRecord();
+  for (unsigned take = 0; take < 5; ++take) {
+    if (take != 0) {
+      t.clear();
+      clockManager.assignCurrentTickSilently(0);
+      TEST_ASSERT_TRUE(t.startRecording(0));
+    }
+    (void)acceptPair(t, static_cast<uint8_t>(60 + take), 12, 80);
+    (void)acceptPair(t, static_cast<uint8_t>(72 + take), 800, 880);
+    clockManager.assignCurrentTickSilently(1536);
+    t.stopRecording(1536);
+    TEST_ASSERT_TRUE_MESSAGE(t.getActiveLoop().capturePreview.notes.empty(),
+        "reusing a stop descriptor must not swap retired rows into the producer");
+    for (unsigned turn = 0; turn < 20000 && !t.getActiveLoop().hasCommittedPasses(); ++turn)
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    TEST_ASSERT_TRUE(t.getActiveLoop().hasCommittedPasses());
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::retiredPreviewsEmpty(t),
+        "Record publication must retire its preview before the descriptor is reusable");
+  }
+}
+
+void test_held_record_preview_uses_frozen_stop_endpoint_before_and_after_publication() {
+  Track& t = beginRecord();
+  (void)acceptPair(t, 60, 12, 80);
+  t.noteOn(1, 100, 100, 1200);
+  const NoteId held = t.getActiveLoop().capture.store.at(2).noteId;
+  growRecordGeometry(t, 1400);
+  clockManager.assignCurrentTickSilently(1400);
+  t.stopRecording(1400);
+  TEST_ASSERT_EQUAL_UINT32(1536, t.getActiveLoop().loopLengthTicks);
+  submitFrame(1400);
+  assertNote(submittedFrame.notes, held, 100, 1200, 1400);
+  completeFrame();
+  for (unsigned turn = 0; turn < 20000 && !t.getActiveLoop().hasCommittedPasses(); ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  TEST_ASSERT_TRUE(t.getActiveLoop().hasCommittedPasses());
+  Loop& loop = t.getActiveLoop();
+  for (unsigned turn = 0; turn < 8192 && !loop.publishedSnapshotIsCurrent(); ++turn)
+    loop.stepPendingSnapshotPublish(4, true, 0);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  submitFrame(1400);
+  assertNote(submittedFrame.notes, held, 100, 1200, 1400);
+  completeFrame();
+}
+
+void test_rounded_record_stop_follows_wrapped_overdub_before_publication() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  Track& t = beginRecord();
+  std::array<NoteId, 24> ids{};
+  for (uint32_t b = 0; b < ids.size(); ++b)
+    ids[b] = acceptPair(t, static_cast<uint8_t>(60 + b % 8), b * bar + 12, b * bar + 80);
+  (void)acceptPair(t, 95, length - 168, length - 128); // pin rounded-up last-bar content
+  growRecordGeometry(t, length - 120);
+  submitFrame(length - 120); completeFrame();
+  clockManager.assignCurrentTickSilently(length - 104);
+  t.stopRecording(length - 104);
+  TEST_ASSERT_EQUAL_UINT32(length, t.getActiveLoop().loopLengthTicks);
+  submitFrame(length - 104); completeFrame();
+  clockManager.assignCurrentTickSilently(length + 152);
+  t.startOverdubbing(length + 152);
+  const NoteId live = acceptPair(t, 100, length + 200, length + 240);
+  for (unsigned frame = 0; frame < 3; ++frame) {
+    submitFrame(length + 256 + frame);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, submittedFrame.source.windowStart,
+        "a complete stopped Record preview permits coherent follow across wrap");
+    for (uint32_t b = 0; b < 16; ++b)
+      assertNote(submittedFrame.notes, ids[b], static_cast<uint8_t>(60 + b % 8),
+                 b * bar + 12, b * bar + 80);
+    assertNote(submittedFrame.notes, live, 100, 200, 240);
+    TEST_ASSERT_EQUAL_UINT32(17, submittedFrame.notes.size());
+    completeFrame();
+    assertNote(completedFrame.notes, live, 100, 200, 240);
+  }
+  TEST_ASSERT_FALSE(t.getActiveLoop().hasCommittedPasses());
+}
+
+void test_empty_overdub_start_cannot_grow_frozen_record_tails() {
+  Track& t = beginRecord();
+  const NoteId base = acceptPair(t, 60, 12, 80);
+  t.noteOn(1, 100, 100, 1200);
+  const NoteId held = t.getActiveLoop().capture.store.at(2).noteId;
+  growRecordGeometry(t, 1400);
+  clockManager.assignCurrentTickSilently(1400);
+  t.stopRecording(1400);
+  submitFrame(1400); completeFrame();
+  clockManager.assignCurrentTickSilently(1420);
+  t.startOverdubbing(1420);
+  for (uint32_t tick : {1440u, 1480u, 1580u}) {
+    submitFrame(tick);
+    assertNote(submittedFrame.notes, base, 60, 12, 80);
+    assertNote(submittedFrame.notes, held, 100, 1200, 1400);
+    TEST_ASSERT_EQUAL_UINT32(2, submittedFrame.notes.size());
+    completeFrame();
+  }
+}
+
+void test_empty_successor_start_preserves_stopped_overdub_hold_endpoint() {
+  const GapTake take = seedGapOverdub(true, false);
+  Track& t = *take.track;
+  clockManager.assignCurrentTickSilently(1728);
+  t.noteOn(1, 100, 100, 1728);
+  const NoteId held = t.getActiveLoop().capture.store.at(0).noteId;
+  submitFrame(1744); completeFrame();
+  clockManager.assignCurrentTickSilently(1760);
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(1792);
+  t.startOverdubbing(1792);
+  for (uint32_t tick : {1824u, 1856u}) {
+    submitFrame(tick);
+    assertNote(submittedFrame.notes, held, 100, 192, 224);
+    TEST_ASSERT_EQUAL_UINT32(3, submittedFrame.notes.size());
+    completeFrame();
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Task 4.19 — the retained display source envelope. Contract: `docs/Plans/display_source_retention_handoff.md`
+// (settled round 3). Fixtures are in that file's order: 1–3 state changes inside the retained prefix,
+// 4 a pass appended after it, 5–6 the capacity boundary, 7 the frame-level immediate-wrap regression.
+// Serving fixtures fail before the envelope exists; the refusal fixtures are controls that fail if
+// retention ever over-serves.
+
+static LoopContentResolution::BoundedDisplayRequest displayRequestFor(const Loop& loop) {
+  LoopContentResolution::BoundedDisplayRequest request;
+  request.owner = &loop;
+  request.loopId = loop.loopId;
+  request.loopLengthTicks = loop.loopLengthTicks;
+  request.playbackRevision = loop.playbackRevision;
+  request.canonicalStorageGeneration = loop.canonicalStorageGeneration;
+  return request;
+}
+
+/// Run the bounded producer for the current request until it publishes (or the grain budget is spent).
+static bool driveDisplaySourceToPublish(Track& t, unsigned budget = 4096) {
+  Loop& loop = t.getActiveLoop();
+  const auto request = displayRequestFor(loop);
+  if (!LoopContentResolution::boundedDisplayRequest(request, loop.passes)) {
+    return false;
+  }
+  for (unsigned turn = 0; turn < budget; ++turn) {
+    if (LoopContentResolution::boundedDisplayReady(request, loop.passes)) {
+      return true;
+    }
+    LoopContentResolution::boundedDisplayStep(loop.passes);
+  }
+  return LoopContentResolution::boundedDisplayReady(request, loop.passes);
+}
+
+/// One committed Record pass with two accepted pairs — the smallest take a retained envelope can own.
+struct CommittedRecordTake {
+  Track* track;
+  NoteId a;
+  NoteId b;
+};
+static CommittedRecordTake seedCommittedRecordTake() {
+  Track& t = beginRecord();
+  const NoteId a = acceptPair(t, 60, 12, 80);
+  const NoteId b = acceptPair(t, 62, 1328, 1408);
+  growRecordGeometry(t, 1536);
+  submitFrame(1536);
+  completeFrame();
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopRecording(1536);
+  Loop& loop = t.getActiveLoop();
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, loop.passes.capturePassCount(),
+                                   "fixture must have exactly one committed Record pass");
+  DisplayNoteVec committedPass;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks, committedPass);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, committedPass.size(),
+                                   "the committed Record pass must carry both accepted pairs");
+  return {&t, a, b};
+}
+
+/// Note-for-note equality by `NoteId` and geometry against an independently rebuilt frame.
+static void assertRetainedEqualsRebuild(const Loop& loop, const char* why) {
+  DisplayNoteVec rebuilt;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks, rebuilt);
+  const DisplayNoteVec& retained = LoopContentResolution::boundedDisplayRetainedNotes();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rebuilt.size(), retained.size(), why);
+  for (const auto& expected : rebuilt) {
+    size_t found = 0;
+    for (const auto& served : retained) {
+      if (served.noteId != expected.noteId) continue;
+      ++found;
+      TEST_ASSERT_EQUAL_UINT8(expected.note, served.note);
+      TEST_ASSERT_EQUAL_UINT32(expected.startTick, served.startTick);
+      TEST_ASSERT_EQUAL_UINT32(expected.endTick, served.endTick);
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, found, why);
+  }
+}
+
+// Fixture 1 — a capture undo (Disable) inside the prefix must refuse the retained rows. Same pass id,
+// same committed chunk ids, same count: only the state moved, so only an exact predicate can see it.
+void test_capture_undo_refuses_the_retained_display_source() {
+  const CommittedRecordTake take = seedCommittedRecordTake();
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t),
+                           "fixture must publish a retained display source before the undo");
+  auto request = displayRequestFor(loop);
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes),
+                           "a promoted generation must serve its own live prefix");
+  const size_t retainedRows = LoopContentResolution::boundedDisplayRetainedNotes().size();
+  TEST_ASSERT_TRUE(retainedRows > 0);
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(loop.passes.recordPass.id, CapturePassState::Disabled));
+  request = displayRequestFor(loop);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, loop.passes.capturePassCount(),
+                                   "the undo keeps the pass and its count; only its state flips");
+  TEST_ASSERT_FALSE_MESSAGE(LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes),
+                            "a Disabled pass inside the retained prefix must refuse the retained rows");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedRows,
+                                   LoopContentResolution::boundedDisplayRetainedNotes().size(),
+                                   "a refusal keeps the envelope; it never rewrites it");
+}
+
+// Fixture 2 — capture redo requalifies, and the served rows are the deterministic output of the current
+// passes: equality against an independent rebuild, not an assertion.
+void test_capture_redo_requalifies_the_retained_display_source() {
+  const CommittedRecordTake take = seedCommittedRecordTake();
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  TEST_ASSERT_TRUE(driveDisplaySourceToPublish(t));
+  const PassId recordPass = loop.passes.recordPass.id;
+  TEST_ASSERT_TRUE(loop.setCapturePassState(recordPass, CapturePassState::Disabled));
+  TEST_ASSERT_FALSE(LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop),
+                                                                      loop.passes));
+  TEST_ASSERT_TRUE(loop.setCapturePassState(recordPass, CapturePassState::Active));
+  const auto request = displayRequestFor(loop);
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes),
+                           "a redo that restores every exact field must requalify the retained rows");
+  assertRetainedEqualsRebuild(loop, "requalified retained rows must equal an independent rebuild");
+  const auto& retained = LoopContentResolution::boundedDisplayRetainedNotes();
+  char receipt[240];
+  std::snprintf(receipt, sizeof(receipt),
+                "retained=%zu,a=%lu,b=%lu,priced=%lu,passes=%zu,chunks=%zu,rev=%lu",
+                retained.size(), static_cast<unsigned long>(take.a),
+                static_cast<unsigned long>(take.b),
+                static_cast<unsigned long>(LoopContentResolution::boundedDisplayRetainedCapacity()),
+                loop.passes.capturePassCount(),
+                loop.passes.hasRecordPass()
+                    ? loop.passes.recordPass.committedChunkIds.size()
+                    : static_cast<size_t>(0),
+                static_cast<unsigned long>(loop.playbackRevision));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, retained.size(), receipt);
+  assertNote(retained, take.a, 60, 12, 80);
+  assertNote(retained, take.b, 62, 1328, 1408);
+}
+
+// Fixture 3 — an edit undo inside the prefix refuses the retained rows (same edit id, same count).
+void test_edit_undo_refuses_the_retained_display_source() {
+  const CommittedRecordTake take = seedCommittedRecordTake();
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  EditPass deleteRow{};
+  deleteRow.targetNoteId = take.b;
+  deleteRow.actionType = EditActionType::Delete;
+  deleteRow.startTick = 800;
+  deleteRow.endTick = 880;
+  deleteRow.pitch = 62;
+  const EditPassId editId = loop.saveNoteEditPass(0, deleteRow);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, editId);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.editPasses.size());
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t),
+                           "fixture must publish a retained display source under the active edit row");
+  TEST_ASSERT_TRUE(LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop),
+                                                                     loop.passes));
+  loop.disableEditPasses({editId});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, loop.passes.editPasses.size(),
+                                   "the edit undo keeps the row and the count; only its state flips");
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPassState::Disabled),
+                    static_cast<int>(loop.passes.editPasses[0].state));
+  TEST_ASSERT_FALSE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop), loop.passes),
+      "a Disabled edit row inside the retained identity must refuse the retained rows");
+  loop.enableEditPasses({editId});
+  TEST_ASSERT_TRUE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop), loop.passes),
+      "an edit redo that restores every exact field must requalify the retained rows");
+  assertRetainedEqualsRebuild(loop, "requalified retained rows must equal an independent rebuild");
+}
+
+// Fixture 4 — a pass appended after the retained prefix (the production wrap commit) must not refuse it.
+// The prelude is the enforced regression fixture's own, so the wrap commit executes in the state the frame
+// path reaches it in (a pending successor Stop, a committed Record source, no publication gap).
+void test_retained_display_source_survives_the_wrap_that_appends_a_pass() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  const auto ids = stopPartialLongRecordForDisplay();
+  Track& t = trackManager.getSelectedTrack();
+  Loop& loop = t.getActiveLoop();
+  submitFrame(clockManager.getCurrentTick());
+  completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  t.startOverdubbing(256);
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  (void)acceptPair(t, 100, 320, 400);
+  clockManager.assignCurrentTickSilently(512);
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(640);
+  t.startOverdubbing(640);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  const uint32_t on = 23 * bar + 32, off = on + 80;
+  (void)acceptPair(t, 101, on, off);
+  for (unsigned turn = 0; turn < 4096; ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  submitFrame(off + 16);
+  completeFrame();
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t, 8192),
+                           "fixture must publish a retained display source before the wrap");
+  const auto request = displayRequestFor(loop);
+  TEST_ASSERT_TRUE(LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes));
+  const uint32_t retainedPasses = LoopContentResolution::boundedDisplayRetainedPassCount();
+  TEST_ASSERT_TRUE_MESSAGE(retainedPasses >= 1, "the promoted generation must name its prefix");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedPasses, loop.passes.capturePassCount(),
+                                   "the promotion happened on this pass set, so the prefix is all of it");
+  const size_t retainedRows = LoopContentResolution::boundedDisplayRetainedNotes().size();
+  TEST_ASSERT_TRUE(retainedRows > 0);
+
+  clockManager.assignCurrentTickSilently(length);
+  TEST_ASSERT_TRUE_MESSAGE(t.maybeCommitOverdubWrap(length - 8, 0),
+                           "fixture must execute the production wrap commit");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedPasses + 1, loop.passes.capturePassCount(),
+                                   "the wrap must append exactly one committed pass after the prefix");
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes),
+                           "a pass appended after the retained prefix must not refuse the retained rows");
+  TEST_ASSERT_EQUAL_UINT32(retainedRows, LoopContentResolution::boundedDisplayRetainedNotes().size());
+  for (uint32_t b = 0; b < 16; ++b) {
+    assertNote(LoopContentResolution::boundedDisplayRetainedNotes(), ids[b],
+               static_cast<uint8_t>(60 + b % 8), b * bar + 12, b * bar + 80);
+  }
+}
+
+// Fixture 4b (the former F6 item) — the appended-row **tier rule**. A wrap's appended pass is not in the
+// envelope; its closed rows reach paint through the sealed-capture-preview tier. Retention may therefore serve
+// only while that tier is still owed (`!sealedCapturePreviewIsCovered()`). Once the tier is released those rows
+// live only in the cache/gather path, so the envelope must stand down even though its own exact predicate still
+// qualifies — that asymmetry is what this fixture pins. Both halves are production gestures: the wrap commit
+// appends the pass, and a capture undo→redo inside the prefix is what clears the sealed preview.
+void test_retained_display_source_stands_down_once_the_sealed_tier_is_released() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  const auto ids = stopPartialLongRecordForDisplay();
+  Track& t = trackManager.getSelectedTrack();
+  Loop& loop = t.getActiveLoop();
+  submitFrame(clockManager.getCurrentTick());
+  completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  t.startOverdubbing(256);
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  (void)acceptPair(t, 100, 320, 400);
+  clockManager.assignCurrentTickSilently(512);
+  t.stopOverdubbing();
+  clockManager.assignCurrentTickSilently(640);
+  t.startOverdubbing(640);
+  const uint32_t on = 23 * bar + 32, off = on + 80;
+  const NoteId late = acceptPair(t, 101, on, off);
+  for (unsigned turn = 0; turn < 4096; ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  submitFrame(off + 16);
+  completeFrame();
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t, 8192),
+                           "fixture must publish a retained display source before the wrap");
+  auto request = displayRequestFor(loop);
+  const uint32_t retainedPasses = LoopContentResolution::boundedDisplayRetainedPassCount();
+  TEST_ASSERT_TRUE(retainedPasses >= 1);
+  char receipt[240];
+
+  clockManager.assignCurrentTickSilently(length);
+  TEST_ASSERT_TRUE_MESSAGE(t.maybeCommitOverdubWrap(length - 8, 0),
+                           "fixture must execute the production wrap commit");
+  std::snprintf(receipt, sizeof(receipt), "covered=%d,sealed=%zu,passes=%zu,retained=%lu",
+                loop.sealedCapturePreviewIsCovered() ? 1 : 0,
+                loop.sealedCapturePreviewNotes().size(), loop.passes.capturePassCount(),
+                static_cast<unsigned long>(retainedPasses));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedPasses + 1, loop.passes.capturePassCount(), receipt);
+  TEST_ASSERT_FALSE_MESSAGE(loop.sealedCapturePreviewIsCovered(),
+                            "a fresh wrap's appended rows must still be owed by the sealed tier");
+  DisplayNoteVec servedBefore;
+  TEST_ASSERT_TRUE_MESSAGE(loop.collectQualifiedCommittedDisplayNotes(0, length, servedBefore), receipt);
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "retained", DisplayCaptureTestAccess::qualifiedSourceName(loop),
+      "while the tier is owed the envelope serves the prefix and the overlay supplies the appended rows");
+  TEST_ASSERT_TRUE_MESSAGE(std::none_of(servedBefore.begin(), servedBefore.end(),
+                                        [late](const auto& n) { return n.noteId == late; }),
+                           "the envelope must not claim the appended pass' rows as its own");
+
+  // Release the tier the production way: a capture undo→redo inside the prefix drops the sealed preview
+  // (`setCapturePassState` → `clearSealedCapturePreview`) and restores every exact field of the prefix.
+  const PassId recordPass = loop.passes.recordPass.id;
+  TEST_ASSERT_TRUE(loop.setCapturePassState(recordPass, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(loop.setCapturePassState(recordPass, CapturePassState::Active));
+  request = displayRequestFor(loop);
+  std::snprintf(receipt, sizeof(receipt), "covered=%d,sealed=%zu,passes=%zu,retained=%lu",
+                loop.sealedCapturePreviewIsCovered() ? 1 : 0,
+                loop.sealedCapturePreviewNotes().size(), loop.passes.capturePassCount(),
+                static_cast<unsigned long>(LoopContentResolution::boundedDisplayRetainedPassCount()));
+  TEST_ASSERT_TRUE_MESSAGE(loop.sealedCapturePreviewIsCovered(),
+                           "the capture undo must release the sealed tier");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedPasses + 1, loop.passes.capturePassCount(), receipt);
+  TEST_ASSERT_TRUE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(request, loop.passes),
+      "the envelope's own exact predicate must still qualify after the redo");
+  DisplayNoteVec servedAfter;
+  loop.collectQualifiedCommittedDisplayNotes(0, length, servedAfter);
+  TEST_ASSERT_TRUE_MESSAGE(
+      std::strcmp(DisplayCaptureTestAccess::qualifiedSourceName(loop), "retained") != 0,
+      "with the tier released and an appended pass present, retention must stand down");
+}
+
+// Fixture 5 — at the declared cap retention is accepted and priced by the capacity it keeps, not by the
+// row count it serves.
+void test_retained_display_source_accepts_the_declared_capacity_and_prices_it() {
+  constexpr uint32_t kNotes = 2048;  // two events per pair → exactly the declared 4096 reserved rows
+  Track& t = beginRecord();
+  for (uint32_t n = 0; n < kNotes; ++n) {
+    const uint32_t on = n * 24;
+    (void)acceptPair(t, static_cast<uint8_t>(60 + n % 8), on, on + 16);
+    if (n % 96 == 95) growRecordGeometry(t, on + 24);
+  }
+  growRecordGeometry(t, kNotes * 24 + 8);
+  submitFrame(kNotes * 24 + 8);
+  completeFrame();
+  clockManager.assignCurrentTickSilently(kNotes * 24 + 24);
+  t.stopRecording(kNotes * 24 + 24);
+  Loop& loop = t.getActiveLoop();
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t, 32768),
+                           "the capped take must still publish a retained display source");
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayRetainedRefusal() == nullptr,
+                           "the declared cap itself must be accepted");
+  const uint32_t priced = LoopContentResolution::boundedDisplayRetainedCapacity();
+  const size_t served = LoopContentResolution::boundedDisplayRetainedNotes().size();
+  char receipt[160];
+  std::snprintf(receipt, sizeof(receipt), "priced=%lu,served=%zu,cap=%lu",
+                static_cast<unsigned long>(priced), served,
+                static_cast<unsigned long>(LoopContentResolution::kRetainedDisplaySourceNoteCapacity));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(LoopContentResolution::kRetainedDisplaySourceNoteCapacity, priced,
+                                   receipt);
+  TEST_ASSERT_GREATER_THAN_MESSAGE(served, static_cast<size_t>(priced),
+                                   "pricing is the reserved capacity, not the served row count");
+  TEST_ASSERT_TRUE_MESSAGE(LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop),
+                                                                             loop.passes),
+                           receipt);
+}
+
+// Fixture 6 — one reserved row past the cap is a named refusal, and the previously qualified retained
+// content stays intact.
+void test_retained_display_source_refuses_one_row_past_the_cap_and_keeps_the_previous_envelope() {
+  const CommittedRecordTake small = seedCommittedRecordTake();
+  Track& t = *small.track;
+  Loop& loop = t.getActiveLoop();
+  TEST_ASSERT_TRUE(driveDisplaySourceToPublish(t));
+  const uint32_t pricedBefore = LoopContentResolution::boundedDisplayRetainedCapacity();
+  const size_t rowsBefore = LoopContentResolution::boundedDisplayRetainedNotes().size();
+  TEST_ASSERT_TRUE(pricedBefore > 0);
+  TEST_ASSERT_TRUE(rowsBefore > 0);
+
+  t.clear();
+  clockManager.assignCurrentTickSilently(0);
+  TEST_ASSERT_TRUE(t.startRecording(0));
+  constexpr uint32_t kNotes = 2050;  // 4100 committed events: past the 4096 declared rows
+  for (uint32_t n = 0; n < kNotes; ++n) {
+    const uint32_t on = n * 24;
+    (void)acceptPair(t, static_cast<uint8_t>(60 + n % 8), on, on + 16);
+    if (n % 96 == 95) growRecordGeometry(t, on + 24);
+  }
+  growRecordGeometry(t, kNotes * 24 + 8);
+  submitFrame(kNotes * 24 + 8);
+  completeFrame();
+  clockManager.assignCurrentTickSilently(kNotes * 24 + 24);
+  t.stopRecording(kNotes * 24 + 24);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE_MESSAGE(driveDisplaySourceToPublish(t, 32768),
+                           "an over-cap take still publishes its own candidate result");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("retained_capacity",
+                                   LoopContentResolution::boundedDisplayRetainedRefusal(),
+                                   "one row past the declared cap must be a named refusal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(pricedBefore, LoopContentResolution::boundedDisplayRetainedCapacity(),
+                                   "a refusal keeps the previous envelope");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rowsBefore, LoopContentResolution::boundedDisplayRetainedNotes().size(),
+                                   "a refusal keeps the previous envelope's rows");
+}
+
+// Destructive set (owner level) — a different loop length is a different request identity, and a clear
+// takes the pass set the retained prefix describes away. Neither may keep serving.
+void test_retained_display_source_stands_down_on_geometry_change_and_clear() {
+  const CommittedRecordTake take = seedCommittedRecordTake();
+  Track& t = *take.track;
+  Loop& loop = t.getActiveLoop();
+  TEST_ASSERT_TRUE(driveDisplaySourceToPublish(t));
+  TEST_ASSERT_TRUE(LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop),
+                                                                     loop.passes));
+  auto otherGeometry = displayRequestFor(loop);
+  otherGeometry.loopLengthTicks += Config::TICKS_PER_BAR;
+  TEST_ASSERT_FALSE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(otherGeometry, loop.passes),
+      "a geometry change must refuse the retained rows: another length is another identity");
+  t.clear();
+  TEST_ASSERT_EQUAL_UINT32(0, loop.passes.capturePassCount());
+  TEST_ASSERT_FALSE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(loop), loop.passes),
+      "a cleared loop must refuse the retained rows");
+}
+
+// Destructive set, second case — a **slot/focus change**. The envelope belongs to the loop it was promoted
+// from and to no other, so another slot may never be served its rows; and the change must not *destroy* the
+// envelope either, because returning to the slot it belongs to must serve again (the contract's
+// `clearRetained()` list does not include a focus change).
+void test_retained_display_source_never_serves_another_slot_and_survives_the_focus_change() {
+  const CommittedRecordTake take = seedCommittedRecordTake();
+  Track& t = *take.track;
+  Loop& slot0 = t.getActiveLoop();
+  TEST_ASSERT_EQUAL_UINT8(0, t.getActiveLoopIndex());
+  TEST_ASSERT_TRUE(driveDisplaySourceToPublish(t));
+  const auto slot0Request = displayRequestFor(slot0);
+  TEST_ASSERT_TRUE(LoopContentResolution::boundedDisplayRetainedReady(slot0Request, slot0.passes));
+  DisplayNoteVec servedSlot0;
+  TEST_ASSERT_TRUE_MESSAGE(slot0.collectQualifiedCommittedDisplayNotes(0, slot0.loopLengthTicks, servedSlot0),
+                           "fixture must have a retained-served interval on slot 0");
+  // Slot 0's own request may still be served by the candidate's publish edge (`bound`) while the request
+  // matches; what matters here is that the rows are its own and that any *retained* serve is only for slot 0.
+  assertNote(servedSlot0, take.a, 60, 12, 80);
+  assertNote(servedSlot0, take.b, 62, 1328, 1408);
+
+  // A different take, recorded into slot 1 through the same production gestures.
+  // Focus change at the track level (`Track::setActiveLoopIndex`) — the loop the display asks content for. The
+  // display-side slot authority that moves with a switch is `invalidateForSlotChange`, covered by the working-set
+  // suite's slot-change fixture; this fixture owns the *content identity* half.
+  t.setActiveLoopIndex(1);
+  TEST_ASSERT_NOT_EQUAL(&slot0, &t.getActiveLoop());
+  Loop& slot1 = t.getActiveLoop();
+  clockManager.assignCurrentTickSilently(0);
+  TEST_ASSERT_TRUE(t.startRecording(0));
+  const NoteId otherA = acceptPair(t, 80, 40, 120);
+  const NoteId otherB = acceptPair(t, 83, 1300, 1400);
+  growRecordGeometry(t, 1536);
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopRecording(1536);
+  for (unsigned turn = 0; turn < 4096 && !slot1.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(slot1.hasCommittedPasses(), "fixture must commit slot 1's own take");
+
+  char receipt[240];
+  std::snprintf(receipt, sizeof(receipt), "slot1 len=%lu,rev=%lu,passes=%zu,retained=%lu",
+                static_cast<unsigned long>(slot1.loopLengthTicks),
+                static_cast<unsigned long>(slot1.playbackRevision), slot1.passes.capturePassCount(),
+                static_cast<unsigned long>(LoopContentResolution::boundedDisplayRetainedPassCount()));
+  TEST_ASSERT_FALSE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(displayRequestFor(slot1), slot1.passes),
+      "the envelope names the loop it was promoted from; another slot must not match it");
+  DisplayNoteVec servedSlot1;
+  const bool served = slot1.collectQualifiedCommittedDisplayNotes(0, slot1.loopLengthTicks, servedSlot1);
+  std::snprintf(receipt, sizeof(receipt), "served=%d,rows=%zu,src=%s,slot1len=%lu",
+                served ? 1 : 0, servedSlot1.size(),
+                DisplayCaptureTestAccess::qualifiedSourceName(slot1),
+                static_cast<unsigned long>(slot1.loopLengthTicks));
+  TEST_ASSERT_TRUE_MESSAGE(std::none_of(servedSlot1.begin(), servedSlot1.end(),
+                                        [&](const auto& n) {
+                                          return n.noteId == take.a || n.noteId == take.b;
+                                        }),
+                           receipt);
+  if (served) {
+    TEST_ASSERT_TRUE_MESSAGE(std::any_of(servedSlot1.begin(), servedSlot1.end(),
+                                         [&](const auto& n) {
+                                           return n.noteId == otherA || n.noteId == otherB;
+                                         }),
+                             receipt);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(
+      std::strcmp(DisplayCaptureTestAccess::qualifiedSourceName(slot1), "retained") != 0,
+      "slot 1 may be served by its own sources, never by slot 0's retained envelope");
+
+  // Focus back: the envelope was not destroyed by the change, so it serves again for its own loop.
+  // Focus back to the slot the envelope belongs to.
+  t.setActiveLoopIndex(0);
+  TEST_ASSERT_EQUAL_PTR(&slot0, &t.getActiveLoop());
+  TEST_ASSERT_TRUE_MESSAGE(
+      LoopContentResolution::boundedDisplayRetainedReady(slot0Request, slot0.passes),
+      "a focus change must not destroy the envelope; only another slot may not be served it");
+  DisplayNoteVec servedBack;
+  TEST_ASSERT_TRUE(slot0.collectQualifiedCommittedDisplayNotes(0, slot0.loopLengthTicks, servedBack));
+  // Slot 0's own request is served again — by the retained envelope while it still qualifies, or by the
+  // candidate's publish edge when that request matches too; the rows are the property under test here.
+  assertNote(servedBack, take.a, 60, 12, 80);
+  assertNote(servedBack, take.b, 62, 1328, 1408);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_rounded_record_stop_follows_wrapped_overdub_before_publication);
+  RUN_TEST(test_empty_overdub_start_cannot_grow_frozen_record_tails);
+  RUN_TEST(test_empty_successor_start_preserves_stopped_overdub_hold_endpoint);
+  RUN_TEST(test_record_preview_is_cleared_before_stop_descriptor_reuse);
+  RUN_TEST(test_held_record_preview_uses_frozen_stop_endpoint_before_and_after_publication);
+  RUN_TEST(test_truncated_record_stop_reprojects_complete_first_sixteen_bars);
+  RUN_TEST(test_closed_overdub_note_survives_truncated_record_publication_gap);
+  RUN_TEST(test_closed_overdub_note_survives_painted_stop_and_gradual_finalization);
+  RUN_TEST(test_selected_gap_display_source_survives_competing_audible_track);
+  RUN_TEST(test_late_record_window_and_closed_overdub_progress_before_root_publication);
+  RUN_TEST(test_display_source_progresses_with_pending_successor_stop_and_across_wrap);
+  RUN_TEST(test_capture_undo_refuses_the_retained_display_source);
+  RUN_TEST(test_capture_redo_requalifies_the_retained_display_source);
+  RUN_TEST(test_edit_undo_refuses_the_retained_display_source);
+  RUN_TEST(test_retained_display_source_survives_the_wrap_that_appends_a_pass);
+  RUN_TEST(test_retained_display_source_stands_down_once_the_sealed_tier_is_released);
+  RUN_TEST(test_retained_display_source_accepts_the_declared_capacity_and_prices_it);
+  RUN_TEST(test_retained_display_source_refuses_one_row_past_the_cap_and_keeps_the_previous_envelope);
+  RUN_TEST(test_retained_display_source_stands_down_on_geometry_change_and_clear);
+  RUN_TEST(test_retained_display_source_never_serves_another_slot_and_survives_the_focus_change);
+  RUN_TEST(test_dense_late_record_window_and_closed_overdub_progress_before_root_publication);
+  RUN_TEST(test_immediate_overdub_paints_before_any_record_finalization_turn);
+  RUN_TEST(test_retired_predecessor_notes_survive_third_overdub_start);
+  RUN_TEST(test_overview_preserves_finalizing_and_live_preview_bands);
+  RUN_TEST(test_sealed_and_live_overdub_notes_paint_while_record_remains_private);
   RUN_TEST(test_boot_title_is_first_transfer_and_survives_completion_and_hold);
   RUN_TEST(test_record_note_ids_reach_distinct_submission_and_completion);
   RUN_TEST(test_input_after_resolve_waits_for_next_frame_without_mutating_in_flight);
@@ -438,6 +1560,7 @@ int main() {
   RUN_TEST(test_moving_window_gap_never_mixes_old_prefix_with_new_viewport_overlay);
   RUN_TEST(test_early_overdub_entry_keeps_record_base_before_first_note);
   RUN_TEST(test_early_overdub_overlay_survives_later_record_pass_publication);
+  RUN_TEST(test_partial_visual_cache_publication_refreshes_stationary_draw_source);
   return UNITY_END();
 }
 

@@ -15,6 +15,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/MemoryPressurePolicy.h"
+#include "Utils/StoppedHeapDiagnostics.h"
 
 #include <smalloc.h>
 
@@ -24,6 +25,9 @@ extern "C" {
   extern unsigned long _heap_start;
   extern unsigned long _heap_end;
   extern uint8_t external_psram_size;  // MB detected at startup (Teensy core)
+  // newlib dlmalloc free-list head (`mallocr.c`): the arena's top chunk and the small-bin lists. Read-only
+  // here; `StoppedHeapDiagnostics::scanInternal` pins the ABI it walks.
+  extern uint32_t __malloc_av_[258];
 }
 
 namespace MemoryMonitor {
@@ -72,6 +76,26 @@ uint32_t getInternalHeapFreeBytes() {
   return free;
 }
 
+// Task 4.20: the allocator's own largest-block answer, read-only. Bounded by `scanInternal` (≤ 4096 free chunks) and
+// allocation-free, so it can run on a user-gesture admission without perturbing the arena it is judging. `arena` is
+// computed from the break directly (== `mallinfo().arena`, which is only refreshed on demand) so this never depends on
+// a prior `mallinfo()` call.
+FLASHMEM uint32_t largestInternalFreeChunkBytes() {
+  const uintptr_t start = reinterpret_cast<uintptr_t>(&_heap_start);
+  const uintptr_t end = reinterpret_cast<uintptr_t>(__brkval);
+  const uint32_t arena = end >= start ? static_cast<uint32_t>(end - start) : 0u;
+  if (arena == 0) {
+    return getInternalHeapFreeBytes();  // nothing allocated yet: the tail is the whole arena
+  }
+  const StoppedHeapDiagnostics::Internal internal = StoppedHeapDiagnostics::scanInternal(
+      reinterpret_cast<uintptr_t>(__malloc_av_), start, end, arena,
+      [](uintptr_t address) { return *reinterpret_cast<const uint32_t*>(address); });
+  if (!internal.complete) {
+    return 0u;  // an incomplete walk must never override the tail verdict
+  }
+  return internal.largest;
+}
+
 uint32_t getInternalHeapMinEverFreeBytes() {
   if (sMinEverFreeBytes == UINT32_MAX) {
     return getInternalHeapFreeBytes();
@@ -87,6 +111,78 @@ void resetInternalHeapWatermark() {
 uint32_t getInternalHeapTotalBytes() {
   return static_cast<uint32_t>(reinterpret_cast<char*>(&_heap_end) -
                                reinterpret_cast<char*>(&_heap_start));
+}
+
+/// Task 4.20: take the exact block and give it straight back. Deliberately *not* folded into
+/// `probeBlockAvailable`: that one answers "can anyone serve this" and is used as an admission authority for the
+/// point-of-use reserves, while this one must keep **internal heap** and **external pool** separable — the whole
+/// question is whether the internal arena can serve a request the tail metric says it cannot. Raw entry points only,
+/// so a refusal is a nullptr rather than the aborting C++ allocators' process death.
+HeapAllocatabilityProbe probeInternalHeapAllocatability(uint32_t bytes) {
+  HeapAllocatabilityProbe out;
+  out.tailFreeBytes = getInternalHeapFreeBytes();
+  out.requestedBytes = bytes;
+  if (bytes == 0) {
+    return out;
+  }
+  void* block = std::malloc(bytes);
+  if (block != nullptr) {
+    std::free(block);
+    out.internalMallocOk = true;
+    return out;
+  }
+  block = extmem_malloc(bytes);
+  if (block != nullptr) {
+    extmem_free(block);
+    out.externalPoolOk = true;
+  }
+  return out;
+}
+
+/// Task 4.20: the admission authority. One `malloc`/`free` pair, internal heap only — deliberately **no** `extmem`
+/// fallback, because the question the floor+margin test is really asking is "is there room *here*", and a request the
+/// pool serves says nothing about that. Returns true for a zero request (nothing to prove).
+bool allocatorCanServeInternalBlock(uint32_t bytes) {
+  if (bytes == 0) {
+    return true;
+  }
+  void* block = std::malloc(bytes);
+  if (block == nullptr) {
+    return false;
+  }
+  std::free(block);
+  return true;
+}
+
+/// Task 4.20: the one-shot denial-edge capacity ladder. Descending, abandoned at the first success, so at most one rung
+/// is ever resident and a failed rung allocates nothing. Internal heap only, for the reason above.
+HeapCapacityLadder probeHeapCapacityLadder(uint32_t needBytes) {
+  HeapCapacityLadder out;
+  out.tailFreeBytes = getInternalHeapFreeBytes();
+  out.needBytes = needBytes;
+  // Rungs computed, not tabulated: a `constexpr` array of five would land in this script's DTCM `.rodata`
+  // (`variables` +32 B here, which the RAM1 budget gate rightly refuses). 16/24/32/48/64 KB = 16 KB + delta.
+  const auto rungBytes = [](int index) -> uint32_t {
+    const uint32_t deltaKb = index == 0 ? 0u : (index == 1 ? 8u : (index == 2 ? 16u : (index == 3 ? 32u : 48u)));
+    return (16u + deltaKb) * 1024u;
+  };
+  for (int rung = 4; rung >= 0; --rung) {
+    void* block = std::malloc(rungBytes(rung));
+    if (block == nullptr) {
+      continue;
+    }
+    std::free(block);
+    out.servedMask = static_cast<uint8_t>(
+        out.servedMask | (1u << static_cast<unsigned>(rung)));
+    out.largestAllocatableBytes = rungBytes(rung);
+    // Every smaller rung is implied by the largest one; stop so only one block is ever taken.
+    for (int smaller = 0; smaller < rung; ++smaller) {
+      out.servedMask = static_cast<uint8_t>(
+          out.servedMask | (1u << static_cast<unsigned>(smaller)));
+    }
+    break;
+  }
+  return out;
 }
 
 uint32_t getInternalHeapUsedBytes() {
@@ -225,6 +321,11 @@ FLASHMEM const char* operationName(OperationKind operation) {
   if (operation == OperationKind::DisplayProjectionReserve) {
     return PSTR("display_projection");
   }
+  if (operation == OperationKind::SourceViewReserve) {
+    // Same reason as the branch above: a literal in `PSTR` lands in `.progmem` instead of growing
+    // this function's `.rodata` jump table.
+    return PSTR("source_view_reserve");
+  }
   switch (operation) {
     case OperationKind::RecordStart:
       return PSTR("record_start");
@@ -283,14 +384,37 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   // that were verified on the overdub boundary.
   const bool pointOfUseReserve =
       (operation == OperationKind::CompanionHistoryReserve ||
-       operation == OperationKind::DisplayProjectionReserve) && requiredBytes != 0;
-  // For that kind the probe is the *authority*, not an extra veto: its caller will hand
-  // the same byte count to an allocator that falls back from malloc to extmem, so a
-  // request the pool can serve is not a heap depletion. 2026-09-17 device evidence
-  // (`stepE-staging-admission-01`): the history reserve was denied `heap_low` with
-  // `pool_refused=0/0B` and ~1.27 MB of pool free, which made an available operation fail.
-  const bool heapLow =
-      !pointOfUseReserve && heapFree < (kOperationHeapFloorBytes + requiredBytes);
+       operation == OperationKind::DisplayProjectionReserve ||
+       operation == OperationKind::SourceViewReserve) && requiredBytes != 0;
+  // Task 4.20: the floor and the margin are unchanged — what changed is the *question* asked about them, and only for
+  // **user-gesture admissions**. The arena tail (`&_heap_end - __brkval`) is a cheap pre-filter, never a verdict: it is
+  // a **lower bound** on the largest allocatable block, so "tail >= need" proves the operation fits, while "tail < need"
+  // proves nothing at all — freed blocks below `__brkval` are reusable and the number never recovers because `_sbrk` is
+  // a pure bump. Device evidence (2026-10-27, `7b4ebc25…`): at a 24,576 B tail a 16 KB internal `malloc` succeeded
+  // (`HEAP_PROBE,tail=24576,want=16384,malloc=1,pool=0`) while this predicate refused the same start with
+  // `need=16384B,heap_free=24KB`.
+  //
+  // **Scope is deliberate and load-bearing:** only `OverdubStart`/`RecordStart`/`SlotSwitch` may consult the allocator.
+  // They are raised by a human press, so at most a few probes per second, and only when the tail already said no.
+  // `SnapshotReserve` must **never** probe: it gates every publication turn on the idle lane, so a probe there is a
+  // malloc/free storm that raises `__brkval` on each turn — measured on device 2026-10-27 as a hang/reset on image
+  // `2776cae3…`. That is why this is scoped rather than applied to every operation. The point-of-use reserves keep
+  // their own predictive probe below.
+  const uint32_t admissionNeedBytes = kOperationHeapFloorBytes + requiredBytes;
+  const bool tailLooksLow = !pointOfUseReserve && heapFree < admissionNeedBytes;
+  // Task 4.20 (DEC-169): the tail is a cheap pre-filter, never a verdict. A user-gesture admission whose tail says
+  // "low" is resolved by the **read-only** free-list walk (`largestInternalFreeChunkBytes`), not by the tail: the
+  // withdrawn malloc-probe (`2776cae3…`) was withdrawn because a successful probe raises `__brkval` permanently and
+  // starves the tail-based gates, but the walk allocates nothing, so it answers the same `floor + margin` question
+  // without consuming the resource it is judging. Device `!HEAP_STATS` (2026-10-27): tail 36 KB while the largest free
+  // chunk was 79.4 KB — the tail alone is a false denial. The walk is bounded (≤ 4096 free chunks) and gated to the
+  // rare gesture press, so it never becomes the per-turn `SnapshotReserve` storm the withdrawn probe was measured to
+  // cause. `SnapshotReserve` and the point-of-use reserves keep their existing paths untouched.
+  const bool userGestureAdmission =
+      operation == OperationKind::OverdubStart || operation == OperationKind::RecordStart ||
+      operation == OperationKind::SlotSwitch;
+  const bool heapLow = tailLooksLow &&
+      !(userGestureAdmission && largestInternalFreeChunkBytes() >= admissionNeedBytes);
   const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
   const bool reserveFailed = pointOfUseReserve && !probeBlockAvailable(requiredBytes);
   const bool reportAdmitted = operation == OperationKind::BootProbe;
@@ -329,6 +453,13 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
       static_cast<unsigned long>(pool.poolRefusedCount),
       static_cast<unsigned long>(pool.poolRefusedLargestBytes),
       static_cast<unsigned long>(sinceRefusalMs));
+#if defined(SESSION_CAPTURE)
+  // Task 4.20: **no automatic ladder here.** An earlier revision ran the capacity ladder at this edge, and it was
+  // withdrawn with the allocator-authoritative policy above for the same reason: at a low tail the ladder's own rungs
+  // (up to 64 KB) are taken from the arena being judged, so the diagnostic perturbed the failure it was measuring.
+  // The ladder is now on-demand only, behind `!HEAP_PROBE`, which is stopped-only and host-requested.
+  (void)admissionNeedBytes;
+#endif
   return false;
 }
 
@@ -590,6 +721,25 @@ void resetNativeTestFreeHeap() {
   g_nativeTestHeapOverride = false;
   g_nativeTestFreeHeap = UINT32_MAX;
 }
+namespace {
+// Task 4.20: the *modeled* largest allocatable block. Defaults to 0, meaning "capacity == the injected arena tail",
+// which keeps every pre-existing fixture's tail-based meaning exactly as it was. A fixture raises it to model free-list
+// holes below `__brkval` — the asymmetry the admission RED exists to pin.
+uint32_t g_nativeTestAllocatableCapacity = 0;
+}  // namespace
+
+void setNativeTestAllocatableCapacity(uint32_t bytes) { g_nativeTestAllocatableCapacity = bytes; }
+
+void resetNativeTestAllocatableCapacity() { g_nativeTestAllocatableCapacity = 0; }
+
+uint32_t nativeAllocatableCapacityBytes() {
+  return g_nativeTestAllocatableCapacity != 0 ? g_nativeTestAllocatableCapacity
+                                              : getInternalHeapFreeBytes();
+}
+
+/// Task 4.20 native authority: the modeled largest free chunk (defaults to the injected tail, so a fixture that does
+/// not model free-list holes keeps the old tail-based meaning).
+uint32_t largestInternalFreeChunkBytes() { return nativeAllocatableCapacityBytes(); }
 
 uint32_t getInternalHeapFreeBytes() {
   return g_nativeTestHeapOverride ? g_nativeTestFreeHeap : UINT32_MAX;
@@ -598,6 +748,25 @@ uint32_t getInternalHeapTotalBytes() { return UINT32_MAX; }
 uint32_t getInternalHeapUsedBytes() { return 0; }
 bool isExternalMemoryPoolAvailable() { return false; }
 uint32_t getExternalMemoryPoolTotalBytes() { return 0; }
+
+/// Task 4.20 native branch: the tail is whatever the fixture injected, and the allocatability answer is the host
+/// allocator's — which is exactly the asymmetry under test, so a fixture can pin "tail below the admission sum while
+/// the request is servable" without a device. `std::malloc` on the host keeps that honest: it is a real allocation,
+/// not a simulated verdict.
+HeapAllocatabilityProbe probeInternalHeapAllocatability(uint32_t bytes) {
+  HeapAllocatabilityProbe out;
+  out.tailFreeBytes = getInternalHeapFreeBytes();
+  out.requestedBytes = bytes;
+  if (bytes == 0) {
+    return out;
+  }
+  void* block = std::malloc(bytes);
+  if (block != nullptr) {
+    std::free(block);
+    out.internalMallocOk = true;
+  }
+  return out;
+}
 uint32_t getExternalMemoryPoolFreeBytes() { return 0; }
 uint32_t getExternalMemoryPoolUsedBytes() { return 0; }
 bool isLowMemory(uint32_t) { return false; }
@@ -619,12 +788,59 @@ void reportDeclaredCapDenied(OperationKind, uint8_t roleClassIndex, uint8_t hold
 }
 NativeCapDenial nativeTestCapDenials() { return sNativeCapDenials; }
 void resetNativeTestCapDenials() { sNativeCapDenials = NativeCapDenial{}; }
-// Native/other-platform stub: the gate has no pool to consult and must not
-// change host-test behaviour, so it always admits.
+// Native has no external pool. Exercise the snapshot's real internal threshold
+// when heap headroom is injected; other operation stubs retain their prior behavior.
 namespace {
 bool sNativeForcedReserveDenied = false;
 }
-bool admitOperationMemory(OperationKind, uint32_t) { return !sNativeForcedReserveDenied; }
+/// Task 4.20 native authority: the modeled largest block, not the modeled tail. Keeping them separable is what lets a
+/// fixture express the device's real asymmetry — "tail small, block still servable".
+bool allocatorCanServeInternalBlock(uint32_t bytes) {
+  if (bytes == 0) return true;
+  return nativeAllocatableCapacityBytes() >= bytes;
+}
+
+/// Task 4.20 native ladder: rungs are answered from the modeled capacity, so the descending/stop-at-first-success
+/// semantics are pinned on the host without needing a real failing malloc.
+HeapCapacityLadder probeHeapCapacityLadder(uint32_t needBytes) {
+  HeapCapacityLadder out;
+  out.tailFreeBytes = getInternalHeapFreeBytes();
+  out.needBytes = needBytes;
+  // Same computed rungs as the device branch (a table would be DTCM `.rodata` in the firmware script; kept identical
+  // here so the host pins the device's semantics, not a variant).
+  const auto rungBytes = [](int index) -> uint32_t {
+    const uint32_t deltaKb = index == 0 ? 0u : (index == 1 ? 8u : (index == 2 ? 16u : (index == 3 ? 32u : 48u)));
+    return (16u + deltaKb) * 1024u;
+  };
+  const uint32_t capacity = nativeAllocatableCapacityBytes();
+  for (int rung = 4; rung >= 0; --rung) {
+    if (rungBytes(rung) > capacity) continue;
+    out.largestAllocatableBytes = rungBytes(rung);
+    for (int served = 0; served <= rung; ++served) {
+      out.servedMask = static_cast<uint8_t>(out.servedMask | (1u << static_cast<unsigned>(served)));
+    }
+    break;
+  }
+  return out;
+}
+
+bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
+  if (sNativeForcedReserveDenied) return false;
+  // Task 4.20 (DEC-169): the native mirror matches the device — floor + margin, resolved against the modeled largest
+  // free chunk (`nativeAllocatableCapacityBytes`, defaulting to the injected tail) for user-gesture admissions, and
+  // against the tail for everything else. `SnapshotReserve` keeps the tail rule (it gates every publication turn).
+  const uint32_t required =
+      marginBytes != 0 ? marginBytes
+                       : (operation == OperationKind::SnapshotReserve ? 8u * 1024u : 16u * 1024u);
+  const uint32_t need = 32u * 1024u + required;
+  const bool tailLooksLow = getInternalHeapFreeBytes() < need;
+  const bool userGestureAdmission =
+      operation == OperationKind::OverdubStart || operation == OperationKind::RecordStart ||
+      operation == OperationKind::SlotSwitch;
+  const bool heapLow =
+      tailLooksLow && !(userGestureAdmission && nativeAllocatableCapacityBytes() >= need);
+  return !heapLow;
+}
 void setNativeForcedReserveDenied(bool denied) { sNativeForcedReserveDenied = denied; }
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 

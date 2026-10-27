@@ -73,6 +73,132 @@ enum class PendingStopPhase : uint8_t {
   RecordPublished,
 };
 
+/// A deferred stop holds the FIFO head, and that ring holds eight, so **any** preparation phase that
+/// cannot advance turns the user's symptom into "cannot stop overdubbing after around 8 times" -- the
+/// presses behind it are admitted until the ring is full, then retained. Two such phases exist on the
+/// PLAYING route, and both have a content-preserving escape:
+///   * `CanonicalPrefix` builds the canonical *base* pass set. Only the companion/tail representation
+///     needs it; the captured rows travel `CanonicalOrder` -> `CanonicalRewrite` -> `PrepareTransfer`
+///     without it, so giving it up costs the note-edit representation and never the content.
+///   * `CanonicalTail` .. `CompanionBridge` build that representation. Its escape already existed
+///     (DEC-070 raw pass only) but was gated on `retargetedFromPlaying`, so a job still bound for
+///     PLAYING could stall there unbounded too; the gate is now the phase, not the destination.
+/// The distance from a *sticky* failure is what makes this necessary rather than cosmetic:
+/// `stepCanonicalPrefix` latches `CanonicalPrefixPhase::Denied` and nothing else ever clears it, and a
+/// base whose inputs never become current returns `Denied` on every grain with no report at all.
+enum class StopPreparationEscape : uint8_t {
+  None = 0,
+  /// Give up the canonical base and continue at `CanonicalOrder`.
+  AbandonBase,
+  /// Give up the companion representation, keep the staged pass, transfer now.
+  RawPassOnly,
+};
+
+/// Two *no-progress* budgets: the counter resets whenever the phase changes, so a healthy build that
+/// advances never approaches one. Both numbers are set from measurement, in both directions.
+/// * `CanonicalPrefix` (the canonical **base**): healthy builds measured **471** grains
+///   (`session_20261027_140638.log`: 68, 208, 369, 438, 471 over five stops of a 24-bar take); the
+///   stalls ran **9,370** and **9,607** without advancing (`session_20261027_160050.log`,
+///   `134320.log`). 2,048 is ~4.3x the healthy maximum -- about five seconds of service at the
+///   measured cadence -- and abandoning the base costs only the companion representation.
+/// * The companion family keeps DEC-070's **512** for a *retargeted* job and keeps its original
+///   `retargetedFromPlaying` gate. Extending that bound to jobs still bound for PLAYING was tried and
+///   **withdrawn the same day**: it broke `test_4_20_settled_overdub_heap_peak_measurement`'s
+///   128-cycle fixture (the job parked at `CompanionBridge` after the forced retire), and the healthy
+///   phase counts there reach 233 and grow. The tail is instead escaped *by cause*, not by counting:
+///   see `stopCompanionPathIsUnreachable`, which fires deterministically once a job's base was
+///   abandoned, because `beginFrozenCanonicalTail` cannot succeed without it.
+constexpr uint16_t kCanonicalBaseStallGrainLimit = 2048;
+constexpr uint16_t kRetargetedCompanionStallGrainLimit = 512;
+
+/// Is this phase one whose non-advance is bounded by a grain budget? Only the base and DEC-070's
+/// original retargeted companion range. The ordering/rewrite phases are excluded everywhere (they
+/// produce the rows); `PrepareTransfer`/`UndoCollection` are excluded for a PLAYING job (staging the
+/// pass and undo identity are not ours to drop).
+inline bool stopPreparationIsBounded(uint8_t phase, bool retargetedFromPlaying,
+                                     bool successorIntervalCapturing) {
+  // The base is bounded only while a **successor interval is capturing** on the same slot: that is the
+  // measured device state (a stop at destination PLAYING whose reentry successor took the shared
+  // canonical machinery), and a count-only bound is not safe -- the 128-cycle fixtures legitimately
+  // declare hundreds of millions of preparation grains, and a fixed 2,048-grain budget retired their
+  // jobs prematurely (measured: `test_shared_capture_finalization` 3 failures, phase 9,
+  // `capture_store=empty`). With no successor capturing, the base keeps its old, unbounded treatment.
+  if (phase == static_cast<uint8_t>(PendingStopPhase::CanonicalPrefix))
+    return successorIntervalCapturing;
+  return retargetedFromPlaying &&
+         phase >= static_cast<uint8_t>(PendingStopPhase::CanonicalTail) &&
+         phase <= static_cast<uint8_t>(PendingStopPhase::CompanionBridge);
+}
+
+inline uint16_t stopPreparationStallGrainLimit(uint8_t phase) {
+  return phase == static_cast<uint8_t>(PendingStopPhase::CanonicalPrefix)
+             ? kCanonicalBaseStallGrainLimit
+             : kRetargetedCompanionStallGrainLimit;
+}
+
+/// The decision table. Pure and phase-scoped so both boundaries can be pinned natively without
+/// manufacturing an unadvanceable staging set on the board.
+inline StopPreparationEscape stopPreparationEscape(uint8_t phase, uint16_t grains,
+                                                    bool retargetedFromPlaying,
+                                                    bool successorIntervalCapturing) {
+  if (!stopPreparationIsBounded(phase, retargetedFromPlaying, successorIntervalCapturing))
+    return StopPreparationEscape::None;
+  if (grains < stopPreparationStallGrainLimit(phase)) return StopPreparationEscape::None;
+  return phase == static_cast<uint8_t>(PendingStopPhase::CanonicalPrefix)
+             ? StopPreparationEscape::AbandonBase
+             : StopPreparationEscape::RawPassOnly;
+}
+
+/// Sentinel in the per-job stall phase: "this job's canonical base was abandoned" (DEC-165). A real
+/// phase code is 0..11, so the next job's first grain clears it by overwriting, which is exactly the
+/// lifetime wanted -- it is the *job's* fact, not the runtime's: a base built later for a successor
+/// interval must never make an abandoned job believe its tail became reachable.
+constexpr uint8_t kCanonicalBaseAbandonedPhase = 0xFF;
+
+/// Cause-based, not counted: `beginFrozenCanonicalTail` requires a **ready** canonical base, so once a
+/// job's base has been abandoned its companion tail can never begin, and waiting on it is waiting
+/// forever. This is the deterministic partner of `AbandonBase`: the stop continues on the raw-only
+/// route with its staged pass intact, and no grain budget is involved, so a healthy job is unaffected.
+inline bool stopCompanionPathIsUnreachable(uint8_t phase, bool retargetedFromPlaying,
+                                           bool canonicalBaseAbandoned) {
+  return !retargetedFromPlaying && canonicalBaseAbandoned &&
+         (phase == static_cast<uint8_t>(PendingStopPhase::CanonicalTail) ||
+          phase == static_cast<uint8_t>(PendingStopPhase::CompanionHistory) ||
+          phase == static_cast<uint8_t>(PendingStopPhase::CompanionBridge));
+}
+
+/// Why the **Record** stop's normalization grain refused. Diagnostic only -- nothing acts on it (DEC-166).
+/// The lane has six `Denied` returns and, before this, reported none of them: a Record job parked at
+/// `CanonicalOrder` therefore looked exactly like a job nobody serviced, which is what made the second device
+/// run (`captures/session_20261027_161759.log`) unattributable while it bricked the stop ring for 32 s.
+/// `PreparationDenied` is the terminal one: `RecordPreparation::Step::Denied` deliberately keeps its binding
+/// (the private output may already be partially ordered), so that job can never advance on this interval.
+enum class RecordNormalizationDenial : uint8_t {
+  None = 0,
+  /// The job identity/geometry guard at the top of the grain.
+  JobIdentity,
+  /// The slot's capture-stop owner is not this job (or its generation moved).
+  OwnerLost,
+  /// The private canonical output cannot take reserved appends.
+  OutputNotReady,
+  /// No transfer chunks available to bind the preparation role.
+  ChunkStarvation,
+  /// `RecordPreparation::begin` refused this job's binding.
+  RoleBindRefused,
+  /// `RecordPreparation::step` returned `Denied` -- sticky by design.
+  PreparationDenied,
+};
+
+/// Consecutive `Denied` grains at the same phase before the row is raised, once per job. The lane is
+/// resumable (`Pressure`/`Pending` consume a preparation grain and still count as progress), so a healthy
+/// job never accumulates denials; a parked one accumulates thousands. Chosen low because the report is
+/// free (no policy) and the cost of a false report is one line, while the cost of no report is another
+/// unattributable device run.
+constexpr uint16_t kRecordNormalizationDenialReportLimit = 64;
+
+/// Flash-resident name for the row; defined beside the lane so the literals stay in that cold unit.
+const char* recordNormalizationDenialName(RecordNormalizationDenial denial);
+
 /// Declares the per-turn quantum and fixed closure/storage obligations between
 /// a stop command and the atomic transfer. Total service turns are resumable;
 /// candidate work length is not an admission ceiling.
@@ -191,6 +317,13 @@ struct PendingStopAdmission {
   /// STOPPED or an empty sealed capture skips audible/companion preparation before
   /// those workers start. Preserve closure/order and command-epoch obligations.
   bool retireSkippedCompanionPreparation(bool emptyCapture);
+  /// DEC-165's cause-based escape retires its destination-independent cause: the companion path
+  /// can never *begin* on this job, so the companion estimates retire here regardless of
+  /// destination. A destination-Playing job that reaches the escape is exactly the case the
+  /// STOPPED-gated `retireSkippedCompanionPreparation` refused 100% of the time, which wedged
+  /// the FIFO head at `CanonicalTail`/`AtomicTransfer`. The atomic transfer then commits the
+  /// staged pass without a successor window (superseded route, taken by cause).
+  bool retireCompanionSkippedForBaseAbandonment();
   void setPhase(PendingStopPhase next) { phase = next; }
   bool permitsPlaybackEmission() const {
     return !pending || destination == PendingStopDestination::Playing;
@@ -222,6 +355,30 @@ struct FrozenCaptureOrderBinding {
 
   bool matches(const CaptureAdmissionStaging& staging, uint64_t currentStorageGeneration) const;
 };
+
+/// Why the canonical (ordered) capture build could not be admitted this turn. Two of these are
+/// permanent by construction and used to be indistinguishable from "no turn granted":
+/// `BindingBusy` (a build of either kind owns the shared index scratch) and `StagingContentMoved`
+/// (the binding names *this* interval but its rows or storage epoch moved under it, which is a
+/// genuine in-flight invalidation and must never be re-bound). A binding that names a *different*
+/// interval is not an invalidation of anything: nothing in flight describes the current rows, so
+/// the phase retires it and re-binds -- refusing there wedged `PendingStopPhase::CanonicalOrder`
+/// forever, and one wedged job blocks every later stop (`serviceAcceptedInteractionTurn` yields
+/// while a job is pending).
+enum class FrozenCaptureCanonicalOrderBegin : uint8_t {
+  Ready = 0,
+  StagingUnavailable,
+  StagingNotFrozen,
+  FrozenGenerationMoved,
+  StagingGenerationMoved,
+  BindingBusy,
+  StagingContentMoved,
+  OpenReservation,
+  BuildDenied,
+};
+
+/// Flash-resident name for the row; the caller is a cold function, so the literals cost no RAM1.
+const char* frozenCaptureCanonicalOrderBeginName(FrozenCaptureCanonicalOrderBegin result);
 
 /// Prepared audible half of a capture transfer. This is never sufficient by
 /// itself to commit canonical content: the owner must validate both halves in
@@ -950,7 +1107,17 @@ struct LoopPlaybackRuntime {
   // Diagnostics only: why the last first-record bar-1 preparation was denied.
   const char* firstRecordingBarDenial_ = "none";
   enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };
-  CanonicalPrefixPhase canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
+  /// DEC-170 diagnostic: the first false term that made the canonical base build refuse, packed as a 4-bit field beside
+  /// the 2-bit prefix phase so the per-slot runtime keeps its I5 pin (no byte is added). Report-only — no admission or
+  /// policy reads it; it is reset when the build restarts or completes, so the device `prefix_denied_first` row names
+  /// the *original* transition, not the sticky `Denied` latch it left behind.
+  enum class CanonicalPrefixDenial : uint8_t {
+    None, BridgeActive, CaptureAttached, RevisionMismatch, GenerationMismatch,
+    InputGenerationMismatch, StepDenied, InputsBusy, ApplyUnavailable,
+  };
+  CanonicalPrefixPhase canonicalPrefixPhase : 2 = CanonicalPrefixPhase::Idle;
+  CanonicalPrefixDenial prefixFirstDenialReason : 4 = CanonicalPrefixDenial::None;
+  bool prefixDeniedFirstReported : 1 = false;
   bool canonicalPrefixNeedsService(const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
                                    uint32_t loopLength, const uint64_t& storageGeneration) const;
   RuntimePlaybackOrderBuildResult stepCanonicalPrefix(const LoopPasses& passes,
@@ -1064,6 +1231,16 @@ struct LoopPlaybackRuntime {
     if (viewSet == nullptr || !viewSet->captureStagingsPrewarmed()) return false;
     viewSet->exchangeCaptureStagingRoles();
     return true;
+  }
+  /// True when every capture-staging role this slot needs is admitted. False after
+  /// `releaseSurplusCaptureStagings`, so the capture edge re-admits before ingress.
+  bool captureStagingsAdmitted() const {
+    return viewSet != nullptr && viewSet->captureStagingsPrewarmed();
+  }
+  /// Return the surplus frozen roles to the pool once this slot owes no interval
+  /// any staging. Bounded, non-allocating; refuses while a role is still owed.
+  bool releaseSurplusCaptureStagings() {
+    return viewSet != nullptr && viewSet->releaseSurplusCaptureStagings();
   }
   /// Non-allocating access for active playback/capture paths. A partially
   /// allocated bundle is not usable: callers must treat it as unavailable
@@ -1323,9 +1500,20 @@ struct LoopPlaybackRuntime {
   void discardCoverageBuild();
 
   bool beginFrozenCaptureOrder(uint32_t loopLengthTicks, uint32_t frozenGeneration);
+  /// DEC-165: the stop's companion tail can only begin from a **ready** canonical base
+  /// (`beginFrozenCanonicalTail` requires it), so a job whose base was abandoned must not wait for a
+  /// tail that can never start. Read-only, allocation-free.
+  bool canonicalBaseReady() const {
+    return canonicalPrefixPhase == CanonicalPrefixPhase::Ready;
+  }
   RuntimePlaybackOrderBuildResult stepFrozenCaptureOrder(size_t entryQuantum);
   bool frozenCaptureOrderComplete() const { return frozenCaptureOrder.complete(); }
-  bool beginFrozenCaptureCanonicalOrder(uint32_t frozenGeneration);
+  /// Why `beginFrozenCaptureCanonicalOrder` refused. The `CanonicalOrder` stop phase had no
+  /// reporter at all: five distinct predicates all returned `false`, the only stall notice above
+  /// them checks `frozenGeneration` alone, and the notice itself is once-per-Track -- so a job
+  /// that could never advance looked exactly like a job nobody serviced. Naming the predicate
+  /// costs nothing at rest (a return type, not a field) and is what the device row now carries.
+  FrozenCaptureCanonicalOrderBegin beginFrozenCaptureCanonicalOrder(uint32_t frozenGeneration);
   RuntimePlaybackOrderBuildResult stepFrozenCaptureCanonicalOrder(size_t entryQuantum);
   bool frozenCaptureCanonicalOrderComplete() const {
     return frozenCaptureCanonicalOrder.complete();

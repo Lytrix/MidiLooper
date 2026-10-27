@@ -198,6 +198,15 @@ public:
       uint32_t nowMs, bool postOverdubDrainWindowActive,
       MidiServiceDrain::DeferredIdleOwner deferredOwner,
       uint8_t snapshotConstructionUnits = MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn);
+  /// CONTRACTS.md C3.1: qualify the active overdub session's private predecessor at the session-open
+  /// edge. Binds the identity only; performs no content work, so it costs nothing on the start edge
+  /// and the deferred grain still owns every unit.
+  bool bindPrivatePredecessorSourceForOverdub(Loop& loop);
+  /// CONTRACTS.md C3.2/C3.3: ONE bounded grain of the active slot's private-predecessor source
+  /// preparation. The receipt this Track owns is the whole identity, so the Loop is handed a
+  /// binding and never a Track type; a receipt that published, retired or moved its interval
+  /// discards the cursor instead of being read.
+  Loop::PrivateSourceStep stepPrivatePredecessorSourceGrain(Loop& loop);
   /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
   /// Gate 0 diagnosis; disable once later-stage overlap validation proofs exist.
   void maybeLogStoredNoteCount();
@@ -1011,6 +1020,19 @@ public:
   bool hasLiveCaptureStopJobForSlot(uint8_t slot) const;
   /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
   bool hasAcceptedInteractionForSlot(uint8_t slot) const;
+  /// Identity-qualified private Record base; never claims committed currency.
+  bool hasPrivateRecordPredecessorForOverdub() const;
+  /// Immediate, non-owning preview reads from the bounded live stop-ring window. Never retain.
+  size_t captureStopPreviewCount() const;
+  const CapturePreview* captureStopPreviewForSlot(uint8_t slot, size_t ordinal,
+                                                  uint32_t* closureTick = nullptr) const;
+  /// Complete stopped Record preview, qualified by the live job's slot/LoopId. Display only.
+  const CapturePreview* recordStopPreviewForSlot(uint8_t slot, uint32_t* closureTick = nullptr) const;
+  /// Retain/coalesce intent only after ordinary admission against the private base is denied.
+  /// Uses the existing interaction Start kind; true means the request remains owned here.
+  bool retainOverdubStartAfterRecord();
+  bool hasPendingOverdubStart() const;
+  void cancelPendingOverdubStart();
   /// S4.4: report when an activation would exceed a **declared** envelope cap, so a class held beyond
   /// its declared cardinality is visible as a policy signal rather than silent.
   ///
@@ -1441,6 +1463,26 @@ void resetPlaybackMergedRebuildCountForTest();
   /// `playbackRevision`. Boolean backlog-present only; not a size or cost.
   bool hasSnapshotPublicationBacklogOnAnySlot() const;
   bool hasPendingSessionExitSnapshotOnAnySlot() const;
+  /// Task 4.20 device census (2026-10-27): what the persistent content owners actually hold, by class, so a
+  /// capture can correlate internal-heap loss with capture/edit pass growth instead of guessing. Cardinality is
+  /// reported as counts and resident size as **capacity × element size**, because capacity is what the heap pays
+  /// for. `internalBytes` covers the classes whose allocators are internal-heap-first; `externalBytes` covers the
+  /// ones that are external-first on the device (`CommittedChunkIdAllocator` chunk directories, the overdub pass
+  /// vector), so a class that merely *looks* big in the census cannot be blamed for internal-heap loss.
+  struct AllocationCensus {
+    uint16_t capturePasses = 0;
+    uint16_t editPasses = 0;
+    uint16_t undoEntries = 0;
+    uint16_t slotsWithPasses = 0;
+    uint32_t internalBytes = 0;
+    uint32_t editPassBytes = 0;
+    uint32_t undoIdBytes = 0;
+    uint32_t sessionBytes = 0;
+    uint32_t externalBytes = 0;
+  };
+  /// Bounded, read-only walk of the active slot (the loop that is being recorded) plus a per-slot count of
+  /// committed passes. No allocation, no mutation; safe on an idle turn and cold (FLASH) by construction.
+  AllocationCensus allocationCensus() const;
   /// Off-clock Snapshot eligibility for a background Track while another Track is realtime.
   /// Ordinary PLAYING/STOPPED_RECORDING hydration excludes pending stop jobs; a
   /// stopped RecordPublished job waiting for its queued whole-root handoff may
@@ -1512,6 +1554,14 @@ void resetPlaybackMergedRebuildCountForTest();
   /// take crossed the immutable `RecordPublished` edge and while its presentation owns the reader; a pre-publication
   /// take still sits behind the matching live finalizer and must not reach the merged playback representation.
   bool hasPublishedRecordPresentationForSlot(uint8_t slot) const;
+  /// DEC-160: a live Capture or a sealed custody receipt for this slot/LoopId whose interval
+  /// is later than `interval`. Read-only, allocation-free; it grants no priority. When true, an
+  /// empty predecessor may release only its own obligation and must not reset shared geometry.
+  bool hasLiveOrSealedSuccessorForSlot(uint8_t slot, LoopId loopId, uint64_t interval) const;
+  /// DEC-160 item 1: apply a deferred empty-take geometry policy once this Track owes no
+  /// capture and no custody. Bounded: one slot's reset per turn. Clears the obligation when a
+  /// successor published content, so it never rewrites a successor's geometry.
+  void settleEmptyRecordGeometry();
 
 private:
   friend class TrackUndo;
@@ -1626,6 +1676,7 @@ private:
   /// One record per slot is also the coalescing rule: presentation work is keyed by the
   /// authoritative generation of the extent that a slot currently owes, never stacked one
   /// heavyweight job per slice.
+  enum class CaptureCustodyState : uint8_t { Free, Sealed, Retiring };
   struct CaptureStopPresentation {
     /// The sealed extent. Reserved-empty at rest; sealed by the admission that takes the
     /// slot. Released grain by grain and re-armed by `serviceCaptureStopDescriptorReservations`.
@@ -1658,6 +1709,9 @@ private:
     bool retirementActive = false;
     bool ownsExtent = false;
     bool armed = false;
+    CaptureCustodyState state = CaptureCustodyState::Free;
+    uint8_t obligations = 0;
+    uint8_t custodyIndex = 0;
   };
   /// The **one** derivation of `CaptureStopPresentation::generation`. The stamping sites (both Record
   /// admissions) and the reader that validates it (`qualifiedFrozenRecordCaptureSourceForSlot`) call
@@ -1672,6 +1726,12 @@ private:
     LoopId loopId = kInvalidLoopId;
     uint8_t slot = 0;
     CapturePhase mode = CapturePhase::None;
+    uint8_t frozenStagingIndex = UINT8_MAX;
+    /// DEC-166: the last named refusal from this job's Record-normalization grain -- bookkeeping for the
+    /// device row and the native fixture, never a gate. It sits here because this is the 1-byte slot the
+    /// struct already had as padding before `phaseTick`: `sizeof(CaptureStopJobs)` is unchanged (33,088 B,
+    /// pinned), which is why the reporter costs nothing at rest.
+    RecordNormalizationDenial lastNormalizationDenial = RecordNormalizationDenial::None;
     uint32_t phaseTick = 0;
     uint32_t loopLengthTicks = 0;
     uint64_t interval = 0;
@@ -1740,6 +1800,11 @@ private:
     LoopId recordGeometryLoopId = kInvalidLoopId;
     bool hasRecordGeometry = false;
     PendingNoteMap pendingNotes;
+    /// UndoCollection retention bound (DEC-070's shape for an obligation whose inputs cannot be
+    /// recomputed): consecutive turns this job's session-identity collection was refused or denied.
+    /// Exhaustion falls back to the interval's own session-exit receipt instead of parking the
+    /// accepted stop forever, which is what device `session_20261026_204731` showed.
+    uint16_t undoCollectionRetentions = 0;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
   // duplicated. Additional admission stays guarded until session isolation.
@@ -1778,7 +1843,7 @@ private:
   // member of `Track` would be DTCM: the extra unique_ptr alone measured 8 B x 8 tracks = 64 B of
   // RAM1 locals and took the padding line from 872 to 856, below the documented floor.
   struct CaptureStopJobs {
-    static constexpr size_t kCapacity = 4;
+    static constexpr size_t kCapacity = 8;
     /// Out-of-line and FLASH-resident. `CaptureStopJob` owns a `PendingCapturePass`
     /// (OpenSpec 5.12 / D8), so the ring's constructor is non-trivial; the implicit aggregate
     /// form was emitted into ITCM and cost one 32 KB FlexRAM bank on this tree's RAM1 edge.
@@ -1796,7 +1861,40 @@ private:
     ///
     /// Externally allocated with the ring (this struct is EXTRAM and FLASH-constructed), so
     /// per-slot `CaptureRange` ownership here costs external pool bytes, no DTCM and no RAM1.
-    CaptureStopPresentation presentations[Config::MAX_LOOPS_PER_TRACK];
+    struct PresentationHandle {
+      uint64_t interval = 0;
+      uint8_t custodyIndex = UINT8_MAX;
+    };
+    PresentationHandle presentations[Config::MAX_LOOPS_PER_TRACK];
+    /// CONTRACTS.md C1.1 — pre-admitted per-interval custody. One record per **sealed interval**,
+    /// allocated with this ring so the address the Loop borrows never moves, and keyed by the
+    /// interval rather than the slot so a successor can seal while a predecessor is still retiring.
+    ///
+    /// Presentations are generation-qualified handles; only custodies own extents.
+    ///
+    /// Capacity is derived, not chosen: `K_trace` 4 (A, B, C and the next Stop) plus one receipt
+    /// still retiring while the next interval seals. Price and charge site:
+    /// `openspec/changes/immediate-record-overdub-handoff/evidence/CONTRACT-PRICE.md`, `CAP-DERIVATION.md`.
+    using CustodyState = CaptureCustodyState;
+    /// One bit per logical consumer; each bit has exactly one acquirer and one release edge, and the
+    /// extent may not start releasing until the mask is zero (C1.5).
+    enum CustodyObligation : uint8_t {
+      kCustodyFinalizer = 1u << 0,
+      kCustodyReader = 1u << 1,
+      kCustodyPersistence = 1u << 2,
+      kCustodyUndo = 1u << 3,
+      kCustodyDisplay = 1u << 4,
+    };
+    static constexpr size_t kCustodyCapacity = 9;
+    using CustodyReceipt = CaptureStopPresentation;
+    CustodyReceipt custodies[kCustodyCapacity];
+    /// DEC-160 item 1, second half: a Record interval that retained no row records here that
+    /// its slot still owes the empty-take geometry policy, because a live or sealed successor
+    /// existed when the result landed. 0 = nothing owed. The policy is applied by
+    /// `settleEmptyRecordGeometry` once the slot owes nobody, so an overdub successor that also
+    /// ends empty cannot leave a silent non-zero loop behind, and a successor that published
+    /// content simply clears the obligation untouched.
+    uint64_t emptyGeometryOwed[Config::MAX_LOOPS_PER_TRACK] = {};
     /// S4f.1: the track's accepted-but-not-yet-executed interaction. One instance, not a ring
     /// descriptor: it consumes none of `entries`/`count` and is never stacked.
     PendingInteractionLatch interaction;
@@ -1822,6 +1920,18 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs(uint8_t captureSlot = UINT8_MAX);
+  CaptureStopPresentation* freeCaptureCustody();
+  const CaptureStopPresentation* captureCustodyForInterval(uint8_t index, uint64_t interval,
+                                                         const Loop& loop) const;
+  bool hasPendingStopForInterval(uint64_t interval) const;
+  void releaseCustodyObligation(CaptureStopPresentation& receipt, uint8_t bit);
+  bool bindCaptureStopWorker(CaptureStopJob& job);
+  bool hasCaptureStopWorkerForSlot(uint8_t slot) const;
+  bool captureIntervalPermitsPlayback(uint64_t interval) const;
+  /// Return the surplus frozen staging roles once this Track owes no interval any
+  /// staging. Bounded per turn; keeps the two baseline roles resident so a slot that
+  /// recorded once does not carry the A/B/C overlap capacity for the session.
+  void releaseSurplusCaptureStaging();
   /// DEC-108 item 1: the window owner's two private halves -- one grain's outcome (and its named row), and
   /// the row itself. Private because the owner's surface is the three calls above; nothing else may advance a
   /// grain or report one.
@@ -1869,6 +1979,12 @@ private:
   /// S2b.2: the reserve set a slot needs at its own overdub start once boot/load stops prewarming a
   /// committed-but-inactive slot. FLASH-resident cold path.
   bool admitOverdubStartWorkingSet();
+  /// Task 4.20: reserve this interval's future session-exit publication obligation at overdub
+  /// admission (FLASH-resident cold path; the ITCM caller must not carry the refusal text). Refuses by
+  /// name when a predecessor's obligation is still owned.
+  bool claimOverdubSessionExitObligation();
+  /// The aborted-start rollback: release a reservation that never reached a live interval.
+  void releaseOverdubSessionExitObligation();
   /// S4f.1: the accepted interaction, stored in the externally allocated ring object. Null when
   /// the ring has not been admitted yet.
   PendingInteractionLatch* interactionLatch() {
@@ -1906,14 +2022,17 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    // Task 3.15g: re-based 29,064 -> 29,704 (+640 B) for the eight slot-owned presentation
-    // records. Each measures 80 B: the sealed extent's `CaptureRange` plus the record's own
-    // interval/identity scalars. **External pool only** -- `Track` DTCM stays 384 B and the
-    // post-link RAM1 check below stays the placement authority.
-    static_assert(sizeof(CaptureStopJobs) == 29704,
-                  "I5/3.15g: target external stop ring 29,704 B = 29,064 B ring + 640 B "
-                  "(8 x 80 B) slot-owned presentation records. Track DTCM remains 384 B; "
-                  "post-link RAM1 is placement authority.");
+    // P-A step 2 + P-C: measured ARM 29,600 B (29,472 before P-C). Eight 120-byte slot
+    // extents became 16-byte generation-qualified handles (-832 B) while the five
+    // 120-byte interval receipts own all extents. P-C adds the causal interval to the undo
+    // publication the job carries (`UndoEntry` 132 -> 144, `TrackUndoPublication`
+    // 596 -> 648, +64) and the per-slot empty-geometry debt (+64). Track remains 384 B;
+    // the post-link guard owns RAM1 placement.
+    // Capacity bump (owner request): FIFO 4 -> 8 jobs and custody 5 -> 9 receipts. Measured
+    // 29,632 -> 33,088 B = +4 x 744 B job + 4 x 120 B receipt. Track stays 384 B; the ring is
+    // external and the post-link guard owns RAM1 placement.
+    static_assert(sizeof(CaptureStopJobs) == 33088,
+                  "capacity bump: target external stop ring is 33,088 B; remeasure before changing");
 #endif
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
@@ -1984,7 +2103,10 @@ private:
   /// Bounded preparation composition over the merged private Record output:
   /// canonical order, identity completion, wrap repair and minimum-length
   /// policy. Record-only; advances to `RecordPrepared` (publication is S4f.20).
-  LoopEventStoreRewriteResult stepDeferredRecordNormalization(CaptureStopJob& job);
+  /// DEC-166: `denial`, when given, names the refusing predicate on a `Denied` return (and `None`
+  /// otherwise). Diagnostic only: no predicate, credit or phase changes because of it.
+  LoopEventStoreRewriteResult stepDeferredRecordNormalization(
+      CaptureStopJob& job, RecordNormalizationDenial* denial = nullptr);
   /// Bounded staging of the normalized private Record output into the job-owned
   /// transfer receipt. Record-only; advances to `RecordPassReady` (the atomic
   /// publication transaction is S4f.20 completion).

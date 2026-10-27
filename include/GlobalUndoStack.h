@@ -41,6 +41,15 @@ struct UndoEntry {
   uint8_t slotIndex = 0;
   LoopId loopId = kInvalidLoopId;
   PassId passId = kInvalidPassId;
+  /// DEC-160: the capture interval this entry was produced by, so a predecessor's
+  /// publication prunes only causally-earlier checkpoints and a successor's entry
+  /// survives. 0 means "unqualified" and is prunable by any interval bound, which
+  /// preserves the shipped prune behaviour for it. Only the Record route stamps it
+  /// today; every other live push leaves 0, and that stays safe only while a
+  /// successor's entry can be pushed just when it is the stop ring head (so no
+  /// causally-later entry for the slot exists when a predecessor publishes). Moving
+  /// that guard means stamping the producing interval on every live push.
+  uint64_t interval = 0;
   /// Extra wrap ids for one OverdubPassAdded session (DEC-038 038.2). Empty = legacy
   /// single `passId` (STK2). When non-empty, `passId` is the last wrap.
   PassIdList passIds;

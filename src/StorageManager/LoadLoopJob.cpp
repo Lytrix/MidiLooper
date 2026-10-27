@@ -81,11 +81,22 @@ STORAGE_PERSIST_MEM bool scheduleLoopSlotRestoreRetry(uint8_t trackIndex, uint8_
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
     }
+    // DEC-171: count this retry **before** the bound check. The counter was declared and compared but never
+    // incremented, so `>= kMaxLoopSlotRestoreAttempts` was always `0 >= 3` and a corrupt (present-but-unparseable)
+    // slot retried forever, holding the boot at the title screen. A missing file already short-circuits to empty in
+    // `beginLoadLoopJob`; this gives a present-but-corrupt file the same bounded outcome: 3 attempts, then a named
+    // terminal (`Refused`) and the slot is treated as empty, so the rest of the set still restores.
+    ++loopSlotRestoreAttempts_[trackIndex][slotIndex];
     if (loopSlotRestoreAttempts_[trackIndex][slotIndex] >= kMaxLoopSlotRestoreAttempts) {
         // Bounded: the request reaches a named, non-retryable outcome instead of retrying forever.
         (void)markRestoreRequestTerminal(trackIndex, slotIndex, exhaustedTerminal);
         ++g_loopSlotRestoreRefusalCount;
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        // DEC-171: name the resolution in the human serial log, not only the capture ring
+        // (`RRQ,…terminal,refused`). One line per corrupt slot, so no storm; PROGMEM keeps it out of RAM1.
+        Serial.printf_P(PSTR("[StorageManager] Slot restore refused after %u attempts: track=%u slot=%u treated as empty\n"),
+                        static_cast<unsigned>(kMaxLoopSlotRestoreAttempts),
+                        static_cast<unsigned>(trackIndex), static_cast<unsigned>(slotIndex));
         return false;
     }
     // The restore path's **own** cleanup keeps the identity and names a retry wait (A2.1/G2).

@@ -979,6 +979,15 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
 LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
     uint8_t channel, uint8_t pitch, uint8_t velocity, const OverlapNoteIdSet& overlapNoteIds,
     uint32_t holdPhaseTick, OverlapNoteIdSet* occupancyResolvedNoteIds) {
+  // CONTRACTS.md C3.4: the hold's occupancy decision is deferred, not dropped, whenever the only
+  // reason its participant set may be incomplete is that the private predecessor source is still
+  // being built. Recording the intent here -- before any early return -- is what makes the
+  // deadline semantic: the note-on does not wait, the transform materializes when the scan does.
+  // The incoming note's own identity is allocated at note-off and is not an input to the decision,
+  // so the retained record is the causal pair it needs: channel, pitch, velocity, hold tick.
+  if (!privateHoldMaterializing_ && privateSource_.phase == kPrivateRows) {
+    (void)retainPrivateHoldIntent(channel, pitch, velocity, holdPhaseTick);
+  }
   if (!overdubSourceViewEstablished_) {
     return;
   }
@@ -1301,6 +1310,114 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
   }
 }
 
+/// C3.4's materialization unit: one pending-change upsert against one retained hold's target. The
+/// hold's participant set is re-derived from the completed source, so the decision is the same one
+/// the note-on would have made had the source been built then.
+LOOP_COLD_MEM Loop::PrivateSourceStep Loop::stepPrivatePredecessorHolds(size_t quantum) {
+  // C3.4 (review finding 2): the participants come from the session view, and the view is only
+  // refreshed by `rebuildOverdubSourceView`. Refresh it once per materialization episode -- before
+  // the first participant query -- so the decision is derived from the source that answers *now*:
+  // the private prefix while the scan owns the cache, the committed origin after a supersession.
+  if (!privateSource_.holdViewRefreshed) {
+    const uint32_t playhead = lastTickInLoop != UINT32_MAX ? lastTickInLoop : 0;
+    rebuildOverdubSourceView(playhead, "private_hold");
+    privateSource_.holdViewRefreshed = true;
+  }
+  size_t units = 0;
+  while (units < quantum) {
+    if (!privateSource_.holdLoaded) {
+      if (privateSource_.holdIndex >= privateHoldCount_) {
+        // Every retained hold is materialized exactly once.
+        privateSource_.unitsLast = units;
+        privateHoldCount_ = 0;
+        privateHoldTargets_.clear();
+        privateHoldTargetCursor_ = 0;
+        privateSource_.holdIndex = 0;
+        if (privateSource_.phase == kPrivateHolds) {
+          // The scan completed, so the built source is now a complete private cache.
+          privateSource_.phase = kPrivateComplete;
+          overdubSourceSpanCacheFullLoop_ = true;
+          overdubSourceSpanCacheValid_ = true;
+          overdubSourceSpanCacheOrigin_ = SourceOrigin::PrivatePredecessor;
+          overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
+          overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+          overdubSourceSpanCachePublishedRevision_ = 0;
+          overdubSourceSpanCachePublishedIdentity_ = nullptr;
+        }
+        // Otherwise the scan was superseded and the committed origin answers: the holds were still
+        // materialized (against it), and no private stamp may be left behind.
+        return PrivateSourceStep::Complete;
+      }
+      const PrivateSourceHold& hold = privateHolds_[privateSource_.holdIndex];
+      privateHoldTargets_.clear();
+      privateHoldTargetCursor_ = 0;
+      collectOverdubSourceHoldParticipantIds(hold.holdPhaseTick, hold.pitch,
+                                             privateHoldTargets_);
+      privateSource_.holdLoaded = true;
+      ++units;
+      continue;
+    }
+    if (privateHoldTargetCursor_ < privateHoldTargets_.size()) {
+      const PrivateSourceHold& hold = privateHolds_[privateSource_.holdIndex];
+      const NoteId target = privateHoldTargets_.at(privateHoldTargetCursor_);
+      ++privateHoldTargetCursor_;
+      // The session's *own* accepted notes are `Add` rows in this interval's live set, and the
+      // overlap resolver never targets them (at note-on they are not yet in the view). A deferred
+      // decision must not either: it would shorten or hide the very note being recorded. They are
+      // examined (this is still one unit) and skipped.
+      if (target != kInvalidNoteId && !privateOwnAcceptedNote(target)) {
+        OverlapNoteIdSet single;
+        (void)single.insert(target);
+        privateHoldMaterializing_ = true;
+        resolveOccupancyAtNoteOn(hold.channel, hold.pitch, hold.velocity, single,
+                                 hold.holdPhaseTick, nullptr);
+        privateHoldMaterializing_ = false;
+      }
+      ++units;
+      continue;
+    }
+    // This hold is done; the next iteration loads the following one (or finishes).
+    privateSource_.holdLoaded = false;
+    ++privateSource_.holdIndex;
+  }
+  privateSource_.unitsLast = units;
+  return PrivateSourceStep::Pending;
+}
+
+/// C3.4's deadline edge. The deferred lane can be starved (a published predecessor's presentation
+/// retirement owns every turn until it finishes), so the seal -- which is the contract's second named
+/// deadline -- drives the materialization itself: at most one declared grain per retained intent, so
+/// the work is bounded by `kPrivateSourceHoldCapacity` grains, and only what is still unreachable is
+/// denied by name.
+LOOP_COLD_MEM void Loop::materializeDeferredPrivateHoldsAtDeadline() {
+  if (privateHoldCount_ == 0) {
+    return;
+  }
+  for (size_t grain = 0; grain < kPrivateSourceHoldCapacity && privateHoldCount_ > 0; ++grain) {
+    if (stepPrivatePredecessorHolds(kDeferredStopPreparationQuantum) !=
+        PrivateSourceStep::Pending) {
+      break;
+    }
+  }
+  if (privateHoldCount_ > 0) {
+    privateSourceSealDenied_ = true;
+    notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);
+  }
+}
+
+/// True when this interval's live pending set already carries `noteId` as its own accepted note.
+LOOP_COLD_MEM bool Loop::privateOwnAcceptedNote(NoteId noteId) const {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Add && change.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
     bool updateOverdubSourceView) {
   EditPassIdList sealedIds;
@@ -1310,6 +1427,17 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
         change.kind == PendingNoteChangeKind::Hide) {
       ++companionRowsToSeal;
     }
+  }
+  // CONTRACTS.md C3.4: this is the second deadline edge. If the private predecessor source is
+  // still owed here, the deferred decisions were never materialized -- the seal applies committed
+  // content only and reports the denial by name rather than applying a stale, empty or
+  // cache-only transform.
+  // The deadline's own materialization first, then the denial: a decision that is still reachable is
+  // taken here (against whatever source answers now) and only the unreachable one is denied.
+  materializeDeferredPrivateHoldsAtDeadline();
+  if (privateSourceOwedForSeal()) {
+    privateSourceSealDenied_ = true;
+    notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);
   }
   if (updateOverdubSourceView && !pendingNoteChanges_.empty()) {
     applyPendingNoteChangesToOverdubSourceView();

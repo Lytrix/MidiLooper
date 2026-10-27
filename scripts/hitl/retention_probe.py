@@ -101,7 +101,13 @@ DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_cap
 # its 1-based slot 5 logged `slot=4`, and "Loop 5: Stop Overdub" named the same press. The conversion
 # therefore lives here, and only here, exactly as `hitl_retention_handoff.cleared_slot_from_lines` does it for
 # the clear identity: comparing the raw values judges every correct run a mismatch.
-HUMAN_DENIAL_ID_RE = re.compile(r"Overdub stop refused:.* slot=(\d+) interval=(\d+)")
+# The denial's human row is addressed by *family*, never by its lead verb: the 2026-10-27 image accepts and
+# retains the press (DEC-078) and says `retained (capacity)`, while every capture taken before it says
+# `refused`. Addressing only the old verb made a current-firmware run report "no denial at all" while the
+# device log carried the retained decision -- the same failure mode that stranded the DEC-067 wording.
+HUMAN_DENIAL_MARKERS = ("Overdub stop refused", "Overdub stop retained (capacity)")
+HUMAN_DENIAL_ID_RE = re.compile(
+    r"Overdub stop (?:refused|retained \(capacity\)):.* slot=(\d+) interval=(\d+)")
 TEMPO_FEEDBACK_RE = re.compile(r"Sent tempo CC feedback: ([0-9.]+) BPM")
 TEMPO_APPLIED_RE = re.compile(r"TEMPO: CC=\d+ -> ([0-9.]+) BPM")
 # The firmware logs an applied tempo only when it changes; an already-correct value is reported as
@@ -195,6 +201,15 @@ def human_line(lines: list[str], marker: str) -> Optional[tuple[int, str]]:
             if us is not None:
                 return us, line.strip()
     return None
+
+def first_human_denial(lines: list[str]) -> Optional[tuple[int, str]]:
+    """The earliest denial row of either vintage (see `HUMAN_DENIAL_MARKERS`).
+
+    Also the line index the ordering rules use, so both call sites address the row the same way: by family.
+    """
+    hits = [hit for marker in HUMAN_DENIAL_MARKERS
+            if (hit := human_line(lines, marker)) is not None]
+    return min(hits, key=lambda hit: hit[0]) if hits else None
 
 
 def human_entry(lines: list[str], marker: str) -> Optional[Entry]:
@@ -556,7 +571,7 @@ def analyse(
         # promoted to the L2 pass here: L5 orders the bind against `denial.us` in DEVICE micros, while this
         # row's timestamp is host milliseconds, and silently substituting one base for the other would
         # corrupt the very ordering L5 exists to prove. The `#CAP` row is Tier-A now, so it should be present.
-        hit = human_line(lines, "Overdub stop refused")
+        hit = first_human_denial(lines)
         if hit is not None:
             human_denied = True
             human_at_us, human_text = hit
@@ -693,7 +708,8 @@ def analyse(
     # Order the retained row against the TIMELY human denial line, not the `#CAP` denial row: `#CAP` rows are
     # deferred and flush late, so their file order does not reflect their order in time, while both this row
     # and the retained row are human rows at the same latency class.
-    denial_line = next((i for i, l in enumerate(lines) if "Overdub stop refused" in l), None)
+    denial_line = next((i for i, l in enumerate(lines)
+                        if any(marker in l for marker in HUMAN_DENIAL_MARKERS)), None)
     if denial_line is None:
         denial_line = next((i for i, l in enumerate(lines) if "DIAG,reentry,deny" in l
                             and f",{slot_b}," in l), None)

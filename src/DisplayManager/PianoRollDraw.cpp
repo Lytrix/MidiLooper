@@ -458,17 +458,33 @@ const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& tr
     }
 
     const uint8_t trackIndex = resolveTrackIndex(track);
+    const size_t stoppedCount = track.captureStopPreviewCount();
+    const auto previewAt = [&](size_t ordinal) -> const CapturePreview* {
+        if (ordinal == stoppedCount)
+            return stoppedCount == 0 ? &loop.capturePreviewView() : &loop.capturePreview;
+        return track.captureStopPreviewForSlot(displaySlot, ordinal);
+    };
+    // One existing cursor covers the ordered concatenation. Only identity/replacement changes
+    // reset the mask; ordinary appends still fold new notes plus open tails, never MIDI storage.
+    uint32_t replacement = static_cast<uint32_t>(loop.loopId);
+    size_t totalNotes = 0;
+    for (size_t ordinal = 0; ordinal <= stoppedCount; ++ordinal) {
+        const CapturePreview* preview = previewAt(ordinal);
+        if (!preview || preview->notes.empty()) continue;
+        replacement ^= static_cast<uint32_t>(reinterpret_cast<uintptr_t>(preview)) +
+            preview->replacementRevision + 0x9e3779b9u + (replacement << 6) + (replacement >> 2);
+        totalNotes += preview->notes.size();
+    }
     const bool contextChanged = displaySlot != overviewCaptureSlot_ ||
                                 trackIndex != overviewCaptureTrack_ ||
-                                loop.capturePreviewView().replacementRevision !=
-                                    overviewCaptureReplacementRevision_ ||
-                                overviewCaptureProcessedNotes_ > loop.capturePreviewView().notes.size();
+                                replacement != overviewCaptureReplacementRevision_ ||
+                                overviewCaptureProcessedNotes_ > totalNotes;
     if (contextChanged) {
         overviewCaptureBandMask_.clear();
         overviewCaptureProcessedNotes_ = 0;
         overviewCaptureSlot_ = displaySlot;
         overviewCaptureTrack_ = trackIndex;
-        overviewCaptureReplacementRevision_ = loop.capturePreviewView().replacementRevision;
+        overviewCaptureReplacementRevision_ = replacement;
     }
 
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
@@ -482,21 +498,25 @@ const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& tr
         overviewCaptureBandMask_.resize(totalBars, 0);
     }
 
-    for (size_t noteIndex = overviewCaptureProcessedNotes_;
-         noteIndex < loop.capturePreviewView().notes.size(); ++noteIndex) {
-        DisplayWindowUtils::accumulateOverviewBandMask(overviewCaptureBandMask_,
-                                                       loop.capturePreviewView().notes[noteIndex],
-                                                       ticksPerBar);
-    }
-    overviewCaptureProcessedNotes_ = loop.capturePreviewView().notes.size();
-
-    // Open notes keep growing after they were first folded in; re-fold just those.
-    for (const uint32_t previewNoteIndex : loop.capturePreviewView().openNoteIndices) {
-        if (previewNoteIndex < loop.capturePreviewView().notes.size()) {
+    size_t offset = 0;
+    for (size_t ordinal = 0; ordinal <= stoppedCount; ++ordinal) {
+        const CapturePreview* preview = previewAt(ordinal);
+        if (!preview) continue;
+        const size_t first = overviewCaptureProcessedNotes_ > offset
+            ? std::min(overviewCaptureProcessedNotes_ - offset, preview->notes.size()) : 0;
+        for (size_t noteIndex = first; noteIndex < preview->notes.size(); ++noteIndex) {
             DisplayWindowUtils::accumulateOverviewBandMask(
-                overviewCaptureBandMask_, loop.capturePreviewView().notes[previewNoteIndex], ticksPerBar);
+                overviewCaptureBandMask_, preview->notes[noteIndex], ticksPerBar);
         }
+        // Open notes can grow after their initial fold; only those tails are revisited.
+        for (const uint32_t index : preview->openNoteIndices) {
+            if (index < preview->notes.size())
+                DisplayWindowUtils::accumulateOverviewBandMask(
+                    overviewCaptureBandMask_, preview->notes[index], ticksPerBar);
+        }
+        offset += preview->notes.size();
     }
+    overviewCaptureProcessedNotes_ = totalNotes;
 
     return &overviewCaptureBandMask_;
 }
@@ -575,6 +595,16 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
     const bool haveDetailedWindow =
         syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
                                 windowLength, windowBars);
+    // The split (`DIAG,disp_turn`): the coordinates this frame is **rasterised** in are the interval the playhead
+    // requested, even while a retained frame's content is being held for its own interval. Content is untouched --
+    // `notes` below is still the resolved set and the hold still refuses to advance `liveDrawSourceKey_` -- so the
+    // rows drawn are the retained qualified rows that fall inside this viewport, and nothing is gathered, mixed or
+    // re-claimed by drawing them here. Before the split the whole roll (grid, bars, bracket, cursor) was mapped in
+    // the retained interval, which is what left the cursor behind the window on hardware.
+    if (haveDetailedWindow && detailedWindowViewportSlot_ == displaySlot) {
+        windowStart = detailedWindowViewportStartTick_;
+        windowLength = detailedWindowViewportLengthTicks_;
+    }
     const bool movingWindow =
         haveDetailedWindow && !DisplayWindowUtils::windowCoversLoop(windowLength, loopLength);
     DisplayNoteVec windowFilteredNotes;

@@ -278,6 +278,19 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireSkippedCompanio
   return true;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireCompanionSkippedForBaseAbandonment() {
+  if (!pending || phase != PendingStopPhase::PrepareTransfer || remainingClosureGrains)
+    return false;
+  // Cause-based, destination-independent: the canonical base was abandoned, so the companion
+  // path can never begin on this job and the estimates it would have consumed are not work.
+  // Ordering completed before the escape fired, so un-spent order/preparation estimates retire
+  // with the companion family. Closure stays an obligation (its grain completed); the caller
+  // must be at the escape's phase, which the precondition pins.
+  remainingOrderGrains = remainingRankedPreparationGrains = remainingCanonicalPreparationGrains = 0;
+  remainingUndoCollectionGrains = 0;
+  return true;
+}
+
 bool PendingStopAdmission::canCommit(uint32_t commandEpoch,
                                      PendingStopDestination requestedDestination) const {
   return finalizationComplete() && transportCommandEpoch == commandEpoch &&
@@ -353,6 +366,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(
     }
     return false;
   }
+  if (viewSet)
+    for (const auto& staging : viewSet->captureStagings)
+      if (staging.frozen) return false; // admitted interval awaiting the single worker
   // A refused reset must not clear an executing builder or its private view.
   // Cancellation completes at that call's boundary; the reset caller retries.
   if (preparationBusy) return false;
@@ -460,9 +476,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmRollingViews() 
   if (!viewSet) return false;
   if (viewSet->prewarmed) return true;
   // Never reset accepted capture staging when upgrading an occupancy-only slot.
-  if (viewSet->liveCaptureStaging().storage.eventCount || viewSet->frozenCaptureStaging().storage.eventCount ||
-      viewSet->liveCaptureStaging().frozen || viewSet->frozenCaptureStaging().frozen ||
-      viewSet->liveCaptureStaging().openReservationCount() || viewSet->frozenCaptureStaging().openReservationCount()) return false;
+  for (const auto& staging : viewSet->captureStagings)
+    if (staging.storage.eventCount || staging.frozen || staging.openReservationCount()) return false;
   return viewSet->prewarm(false, false);
 }
 
@@ -486,8 +501,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
   if (viewSet == nullptr) {
     viewSet = allocateRuntimePlaybackViewSet();
   }
-  return viewSet != nullptr && viewSet->liveCaptureStaging().prewarm() &&
-      viewSet->frozenCaptureStaging().prewarm();
+  return viewSet != nullptr && viewSet->prewarmCaptureStagings();
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
@@ -496,13 +510,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
   const bool stagingReady = prewarmCaptureStaging();
   ExternalPoolAccounting::endTag();
   if (!stagingReady) return false;
-  if (!viewSet->prewarmed && (viewSet->frozenCaptureStaging().frozen ||
-      viewSet->frozenCaptureStaging().storage.eventCount ||
-      viewSet->frozenCaptureStaging().openReservationCount() ||
-      viewSet->liveCaptureStaging().frozen ||
-      viewSet->liveCaptureStaging().storage.eventCount ||
-      viewSet->liveCaptureStaging().openReservationCount()))
-    return false; // Upgrading must never reset accepted staging state.
+  if (!viewSet->prewarmed)
+    for (const auto& staging : viewSet->captureStagings)
+      if (staging.frozen || staging.storage.eventCount || staging.openReservationCount())
+        return false; // Upgrading must never reset any admitted interval.
   if (!viewSet->prewarm(fullTakeAdmissible)) return false;
   // Derived row reserve (DEC-066): a sparse slot does not take the full row horizon.
   // `ensureCapacity` only grows, so a later denser interval still fits.
@@ -1024,11 +1035,22 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canonicalPrefixNeedsSe
 TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRuntime::stepCanonicalPrefix(
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
     const RuntimeCanonicalPassInputs::CurrentSource& live, size_t quantum) {
-  if (!quantum || !viewSetIfPrewarmed() || captureBridgePhase != CaptureBridgePhase::Idle ||
-      canonicalPassInputs.captureAttached() || source.playbackRevision != live.playbackRevision ||
-      source.sourceGeneration != live.sourceGeneration) return RuntimePlaybackOrderBuildResult::Denied;
+  // DEC-170: name the first false term (report-only). `prefixFirstDenialReason` remembers the original transition into a
+  // stall until the build restarts or completes, so the device row names what *first* blocked the base, not the sticky
+  // `Denied` latch it left behind.
+  const auto deny = [&](CanonicalPrefixDenial reason) {
+    if (prefixFirstDenialReason == CanonicalPrefixDenial::None) prefixFirstDenialReason = reason;
+    return RuntimePlaybackOrderBuildResult::Denied;
+  };
+  if (!quantum || !viewSetIfPrewarmed())
+    return deny(CanonicalPrefixDenial::None);
+  if (captureBridgePhase != CaptureBridgePhase::Idle) return deny(CanonicalPrefixDenial::BridgeActive);
+  if (canonicalPassInputs.captureAttached()) return deny(CanonicalPrefixDenial::CaptureAttached);
+  if (source.playbackRevision != live.playbackRevision) return deny(CanonicalPrefixDenial::RevisionMismatch);
+  if (source.sourceGeneration != live.sourceGeneration) return deny(CanonicalPrefixDenial::GenerationMismatch);
   if (canonicalPrefixPhase != CanonicalPrefixPhase::Idle) {
-    if (canonicalPassInputs.generation() != canonicalPrefixGeneration) return RuntimePlaybackOrderBuildResult::Denied;
+    if (canonicalPassInputs.generation() != canonicalPrefixGeneration)
+      return deny(CanonicalPrefixDenial::InputGenerationMismatch);
     if (canonicalPrefixPasses != &passes || !(canonicalPrefixSource == source) || canonicalPrefixLength != live.loopLengthTicks ||
         canonicalPrefixStorageOwner != &live.storageGeneration ||
         live.storageGeneration != canonicalPrefixStorageGeneration) {
@@ -1036,21 +1058,39 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
           canonicalPrefixSource.snapshotIdentity != source.snapshotIdentity &&
           resumeCanonicalAfterAppend(passes, source.playbackRevision, source, live))
         return RuntimePlaybackOrderBuildResult::Pending;
+      // A superseded/stale source is a *restart*, not a denial: the `prefix_restart` stage row (below) already names it,
+      // and the restart advances the build's identity, so it is never a `Denied` latch. Clear the denial record.
       SC_ODUB_STOP_STAGE("prefix_restart", 0, 0, UINT32_MAX, UINT32_MAX,
           canonicalPassInputs.completedPassCount(), source.playbackRevision,
           live.storageGeneration != canonicalPrefixStorageGeneration ? "history_storage_changed" : "source_changed");
+      prefixFirstDenialReason = CanonicalPrefixDenial::None;
+      prefixDeniedFirstReported = false;
       discardCanonicalWindow();
       canonicalPassInputs.discard(); canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
       canonicalPrefixPasses = nullptr;
       return RuntimePlaybackOrderBuildResult::Pending; // Restart on a later owner turn.
     }
-    if (canonicalPrefixPhase == CanonicalPrefixPhase::Denied) return RuntimePlaybackOrderBuildResult::Denied;
+    if (canonicalPrefixPhase == CanonicalPrefixPhase::Denied) {
+      // Sticky latch: keep reporting the original reason (already held in `prefixFirstDenialReason`).
+      return RuntimePlaybackOrderBuildResult::Denied;
+    }
     const auto result = canonicalPassInputs.step(quantum);
-    if (result == RuntimePlaybackOrderBuildResult::Complete) canonicalPrefixPhase = CanonicalPrefixPhase::Ready;
-    else if (result == RuntimePlaybackOrderBuildResult::Denied) canonicalPrefixPhase = CanonicalPrefixPhase::Denied;
+    if (result == RuntimePlaybackOrderBuildResult::Complete) {
+      canonicalPrefixPhase = CanonicalPrefixPhase::Ready;
+      prefixFirstDenialReason = CanonicalPrefixDenial::None;
+      prefixDeniedFirstReported = false;
+    } else if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      canonicalPrefixPhase = CanonicalPrefixPhase::Denied;
+      return deny(CanonicalPrefixDenial::StepDenied);
+    } else {
+      // Progress: any earlier denial was transient, so a later denial is a fresh "first".
+      prefixFirstDenialReason = CanonicalPrefixDenial::None;
+      prefixDeniedFirstReported = false;
+    }
     return result;
   }
-  if (!canonicalPassInputs.idle() || !frozenCompanionApply.available()) return RuntimePlaybackOrderBuildResult::Denied;
+  if (!canonicalPassInputs.idle()) return deny(CanonicalPrefixDenial::InputsBusy);
+  if (!frozenCompanionApply.available()) return deny(CanonicalPrefixDenial::ApplyUnavailable);
   canonicalPrefixSource = source; canonicalPrefixPasses = &passes; canonicalPrefixLength = live.loopLengthTicks;
   canonicalPrefixStorageOwner = &live.storageGeneration;
   canonicalPrefixStorageGeneration = live.storageGeneration;
@@ -1059,7 +1099,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   const bool started = canonicalPassInputs.beginCurrent(frozenCompanionApply, work, passes, canonicalPrefixSource, live);
   canonicalPrefixGeneration = canonicalPassInputs.generation();
   canonicalPrefixPhase = started ? CanonicalPrefixPhase::Preparing : CanonicalPrefixPhase::Denied;
-  return started ? RuntimePlaybackOrderBuildResult::Pending : RuntimePlaybackOrderBuildResult::Denied;
+  prefixFirstDenialReason = CanonicalPrefixDenial::None;  // a new build starts; its first denial overwrites
+  prefixDeniedFirstReported = false;
+  return started ? RuntimePlaybackOrderBuildResult::Pending : deny(CanonicalPrefixDenial::StepDenied);
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retainCommittedCanonicalTail(
@@ -1194,7 +1236,14 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
         (!bridgeBase && (index == set->lifecycle.current || index == set->lifecycle.retained ||
          set->views[index].published || set->views[index].complete)))
       return RuntimePlaybackOrderBuildResult::Pending;
-    viewBuild.discard();
+    // A completed frozen builder may still name the ready/current playback role. Starting the
+    // canonical bridge-base owner ends only its builder borrow, not that published/owed window.
+    const RuntimePlaybackView* preserve = nullptr;
+    for (const uint8_t role : {set->lifecycle.current, set->lifecycle.ready}) {
+      if (role < set->views.size() && set->views[role].complete &&
+          viewBuild.completedDestinationIs(set->views[role])) preserve = &set->views[role];
+    }
+    viewBuild.discard(preserve);
     RuntimeCompanionApply::Work work{frozenCompanionPairLookup, frozenCompanionDeleteLookup,
       frozenCompanionSpans, frozenCompanionReconstruction, frozenCompanionOverlaps};
     if (!frozenCompanionPasses.begin(frozenCompanionApply, work, canonicalPassInputs, nullptr, 0,
@@ -2651,21 +2700,58 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureOrde
   return true;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureCanonicalOrder(
-    uint32_t frozenGeneration) {
-  CaptureAdmissionStaging* set = captureStagingIfPrewarmed();
-  if (set == nullptr || !set->frozen ||
-      set->frozenGeneration != frozenGeneration ||
-      set->captureGeneration != frozenGeneration) return false;
-  if (frozenCaptureCanonicalOrderBinding.bound) {
-    return frozenCaptureCanonicalOrderBinding.matches(*set, frozenCaptureOrderStorageGeneration) &&
-           (frozenCaptureCanonicalOrder.active() || frozenCaptureCanonicalOrder.complete());
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const char* frozenCaptureCanonicalOrderBeginName(
+    FrozenCaptureCanonicalOrderBegin result) {
+  switch (result) {
+    case FrozenCaptureCanonicalOrderBegin::Ready: return "ready";
+    case FrozenCaptureCanonicalOrderBegin::StagingUnavailable: return "staging unavailable";
+    case FrozenCaptureCanonicalOrderBegin::StagingNotFrozen: return "staging not frozen";
+    case FrozenCaptureCanonicalOrderBegin::FrozenGenerationMoved: return "frozen generation moved";
+    case FrozenCaptureCanonicalOrderBegin::StagingGenerationMoved:
+      return "staging generation moved";
+    case FrozenCaptureCanonicalOrderBegin::BindingBusy:
+      return "order scratch owned by an in-flight build";
+    case FrozenCaptureCanonicalOrderBegin::StagingContentMoved:
+      return "staging content moved under the binding";
+    case FrozenCaptureCanonicalOrderBegin::OpenReservation: return "open reservation";
+    case FrozenCaptureCanonicalOrderBegin::BuildDenied: return "canonical capture build denied";
   }
-  if (set->openReservationCount() != 0) return false;
+  return "unnamed refusal";
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM FrozenCaptureCanonicalOrderBegin
+LoopPlaybackRuntime::beginFrozenCaptureCanonicalOrder(uint32_t frozenGeneration) {
+  CaptureAdmissionStaging* set = captureStagingIfPrewarmed();
+  if (set == nullptr) return FrozenCaptureCanonicalOrderBegin::StagingUnavailable;
+  if (!set->frozen) return FrozenCaptureCanonicalOrderBegin::StagingNotFrozen;
+  if (set->frozenGeneration != frozenGeneration)
+    return FrozenCaptureCanonicalOrderBegin::FrozenGenerationMoved;
+  if (set->captureGeneration != frozenGeneration)
+    return FrozenCaptureCanonicalOrderBegin::StagingGenerationMoved;
+  if (frozenCaptureCanonicalOrderBinding.bound) {
+    if (frozenCaptureCanonicalOrderBinding.matches(*set, frozenCaptureOrderStorageGeneration) &&
+        (frozenCaptureCanonicalOrder.active() || frozenCaptureCanonicalOrder.complete()))
+      return FrozenCaptureCanonicalOrderBegin::Ready;
+    // This is the phase's only re-bind site, so a stale binding has no other way back. Two cases,
+    // deliberately separated: a binding that names *this* interval but whose rows, epoch or
+    // projection moved describes a real in-flight invalidation and must stay refused (`step` is
+    // Denied for the same reason); a binding that names *another* interval describes nothing in
+    // flight, so retiring it loses no work and refusing it wedged `CanonicalOrder` forever.
+    if (frozenCaptureCanonicalOrderBinding.generation == set->captureGeneration)
+      return FrozenCaptureCanonicalOrderBegin::StagingContentMoved;
+    if (frozenCaptureCanonicalOrder.active() || frozenCaptureOrder.active() ||
+        frozenCaptureRewriteOwner != nullptr)
+      return FrozenCaptureCanonicalOrderBegin::BindingBusy;
+    discardFrozenCaptureCanonicalOrder();
+  }
+  if (set->openReservationCount() != 0)
+    return FrozenCaptureCanonicalOrderBegin::OpenReservation;
   ++frozenCaptureOrderStorageGeneration;
-  if (!frozenCaptureCanonicalOrder.beginCanonicalCapture(set->storage)) return false;
-  frozenCaptureCanonicalOrderBinding = {frozenGeneration, 0, set->storage.eventCount, true, frozenCaptureOrderStorageGeneration};
-  return true;
+  if (!frozenCaptureCanonicalOrder.beginCanonicalCapture(set->storage))
+    return FrozenCaptureCanonicalOrderBegin::BuildDenied;
+  frozenCaptureCanonicalOrderBinding = {frozenGeneration, 0, set->storage.eventCount, true,
+                                        frozenCaptureOrderStorageGeneration};
+  return FrozenCaptureCanonicalOrderBegin::Ready;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenCaptureCandidateReady(uint32_t frozenGeneration) const {
@@ -3044,9 +3130,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // apart from the external-pool accounting.
 static_assert(sizeof(LoopPlaybackRuntime) == 7768,
               "I5: target per-slot runtime measured after presentation owner");
-static_assert(sizeof(Loop) == 1008,
-              "I5: LoopPool shell 1,008 B including Capture phase identity "
-              "(external-first, eight shells per allocated Track)");
+// CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
+// (compiler measured on `teensy41-capture-serial`). The cursor is interval-qualified state, and it
+// lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
+// (120 B) and `Track::placementPins` pins `sizeof(CaptureStopJobs)`. Shells are `extmem_malloc`ed, so
+// this is external-pool bytes (eight shells per allocated Track), not RAM1.
+static_assert(sizeof(Loop) == 1848,
+              "I5/C3: LoopPool shell 1,848 B including the private-predecessor source cursor "
+              "(external-first, eight shells per allocated Track); 1,784 -> 1,848 in the review's "
+              "bound-cost fix: the open-pair table carries each pair's staged index (+64)");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");

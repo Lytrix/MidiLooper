@@ -974,6 +974,29 @@ void loop() {
   controlSurfaceManager.processDeferredFaderMotorSync();
 
   MemoryMonitor::updateAdvisoryPressureLevel(now);
+#if defined(SESSION_CAPTURE)
+  // Task 4.20 allocation census: one aggregated Tier-A row per diagnostics interval, never per turn. This is the
+  // device-side half of the question the 128-cycle host run could not answer — the host proved persistent pass
+  // cardinality is linear but cannot reproduce a tens-of-KB internal heap, so the correlation (`heap`/`hmin` against
+  // `ib`/`eb`/`ub` and the pass counts) has to be read here. Rate-limited on `now` (ms) so nothing samples on the
+  // interval path; `min_ever` carries the true floor between samples.
+  {
+    constexpr uint32_t kAllocationCensusIntervalMs = 2000;
+    static uint32_t sLastAllocationCensusMs = 0;
+    static bool sAllocationCensusStarted = false;
+    if (!sAllocationCensusStarted ||
+        static_cast<uint32_t>(now - sLastAllocationCensusMs) >= kAllocationCensusIntervalMs) {
+      sAllocationCensusStarted = true;
+      sLastAllocationCensusMs = now;
+      const Track::AllocationCensus census = trackManager.getSelectedTrack().allocationCensus();
+      SC_ALLOC_CENSUS(MemoryMonitor::getInternalHeapFreeBytes(),
+                      MemoryMonitor::getInternalHeapMinEverFreeBytes(),
+                      LoopEventStore::freeChunkCount(), census.capturePasses, census.editPasses,
+                      census.undoEntries, census.internalBytes, census.editPassBytes,
+                      census.undoIdBytes, census.externalBytes);
+    }
+  }
+#endif
   const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
   // OVERDUB_STOPPING owns the active capture until its next deferred grain.
   // Pressure reclamation can walk derived caches and starve that owner after

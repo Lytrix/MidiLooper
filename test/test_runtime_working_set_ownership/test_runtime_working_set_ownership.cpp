@@ -430,6 +430,23 @@ struct TrackCaptureStopTestAccess {
     const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr && rt->ownsLiveFinalization();
   }
+  // Failure control: withhold unowned physical destinations, never sealed state.
+  static void withholdStopDestinations(Track& track) {
+    for (auto& receipt : track.captureStopJobs_->custodies)
+      if (!receipt.ownsExtent) (void)receipt.rawRange.releaseGrain(1);
+    auto* rt = track.playbackRuntime.slotIfAllocated(track.activeLoopIndex);
+    if (!rt) return;
+    auto* set = rt->viewSetIfPrewarmed();
+    if (!set) return;
+    for (uint8_t i = 0; i < set->captureStagings.size(); ++i)
+      if (i != set->liveStagingIndex && !set->captureStagings[i].frozen)
+        set->captureStagings[i].storage.release();
+  }
+  static void restoreStopDestinations(Track& track) {
+    (void)track.serviceCaptureStopDescriptorReservations();
+    auto* rt = track.playbackRuntime.slotIfAllocated(track.activeLoopIndex);
+    if (rt) TEST_ASSERT_TRUE(rt->prewarmCaptureStaging());
+  }
   static bool admitStopForSlot(Track& track, PendingStopDestination destination, uint32_t tick,
                                uint8_t slot, uint64_t interval) {
     return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
@@ -1624,6 +1641,7 @@ void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds()
   // (3) B's stop is requested and denied on capacity, latching against B's own slot.
   clockManager.assignCurrentTickSilently(264);
   TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   TrackCaptureStopTestAccess::toggleRecordForSlot(1);
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
                            "B's denied stop must be accepted and latched against B's own slot");
@@ -1659,6 +1677,7 @@ void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds()
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
                            "B's stop obligation must survive repeated dispatch");
 
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   // (6) Release capacity: A's finalizer completes, then B's stop is driven until it binds.
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
@@ -1762,6 +1781,7 @@ void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isRecording(track));
   inputNote(62, 780, 864);
   clockManager.assignCurrentTickSilently(1536);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   track.stopRecordingToStopped(1536);
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
                            "precondition: B's Record stop must be retained, not admitted");
@@ -1780,6 +1800,7 @@ void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
   // (4) A retires, B's retained stop binds, and the same switch now commits -- before B's own
   // finalization retires. That is the "successor is not serialized behind predecessor cleanup"
   // half: the deferred job carries its own identity and does not hold the active slot.
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
     stepDeferredStopOrSnapshot(track);
@@ -1939,6 +1960,7 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
   // (3) B's stop is requested and denied on capacity, latching against B's own slot.
   clockManager.assignCurrentTickSilently(264);
   TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   TrackCaptureStopTestAccess::toggleRecordForSlot(1);
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1));
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1));
@@ -1954,6 +1976,7 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
     clockManager.assignCurrentTickSilently(tick);
     TrackCaptureStopTestAccess::startPendingRecord(tick);
   }
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
        ++turn) {
     (void)TrackCaptureStopTestAccess::step(track);
@@ -2741,6 +2764,9 @@ void test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once
                            "A's finalizer must still be outstanding");
 
   // (3) The repeated switch, with A still finalizing.
+  inputNote(62, clockManager.getCurrentTick() + 12, clockManager.getCurrentTick() + 36);
+  // A nonempty B needs its own raw destination; an empty Record Stop owes no custody.
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   const uint16_t chunksBeforeSecondSwitch = LoopEventStore::freeChunkCount();
   clockManager.assignCurrentTickSilently(1000);
   TrackCaptureStopTestAccess::toggleRecordForSlot(2);
@@ -2767,6 +2793,7 @@ void test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once
                                    "the repeated switch must not grow the pool");
 
   // (4) A retires, the deferred lane turns -- and the retained request executes with no further gesture.
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, 0); ++turn) {
     (void)TrackCaptureStopTestAccess::step(track);
   }
@@ -2857,6 +2884,7 @@ void test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start
 
   // (3) The switch gesture to an empty target: the stop cannot be admitted, so the switch does **not**
   // commit -- and the start must be retained rather than dropped with the gesture.
+  TrackCaptureStopTestAccess::withholdStopDestinations(track);
   TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kDenied, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "an uncommitted switch must not move the active slot");
@@ -2873,6 +2901,7 @@ void test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start
 
   // (4) Let the occupant's finalization retire, then turn the lanes: the retained start executes with no
   // further gesture, so the user never presses twice (DEC-078 item 1).
+  TrackCaptureStopTestAccess::restoreStopDestinations(track);
   for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOccupant);
        ++turn) {
     (void)TrackCaptureStopTestAccess::step(track);
@@ -3224,14 +3253,15 @@ void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 
 ///     **reported once per episode** at the bound and left exactly as it was: bounded, never silent, never
 ///     dropped (DEC-078 item 1's "the user never re-issues" survives).
 void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot, bool lateRoot = false,
-                                                   bool emptyLaunch = false) {
+                                                   bool emptyLaunch = false, uint32_t targetBars = 24,
+                                                   bool requireSeed = true) {
   SlotProvisionHold::resetReportRecordForTest();
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
   track.ensureLoopsAllocated();
   constexpr uint8_t kPlaying = 0;
   constexpr uint8_t kTarget = 2;
-  constexpr uint32_t kTargetBars = 24;  // > 16 bars: the demoted policy, measured (not the below-bound case)
+  const uint32_t kTargetBars = targetBars;  // > 16 bars: demoted policy, including an odd terminal bar
   constexpr uint32_t kBar = 768;
   commitRecordPassIntoTrackSlot(track, kPlaying);
   commitBarSpacedPassIntoTrackSlot(track, kTarget, kTargetBars);
@@ -3343,7 +3373,7 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot, bool lateRoot
         if (track.getActiveLoopIndex() == kTarget) {
           auto* targetRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kTarget);
           TEST_ASSERT_NOT_NULL(targetRuntime);
-          TEST_ASSERT_EQUAL_MESSAGE(
+          if (requireSeed) TEST_ASSERT_EQUAL_MESSAGE(
               static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
               static_cast<int>(targetRuntime->rolling.phase),
               "the commit bind must seed the rolling frame and the consumer must see it Serving");
@@ -12514,6 +12544,127 @@ void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes
   TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
 }
 
+void test_odd_33_bar_launch_seeds_the_actual_switch_consumer() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true, false, false, 33);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto& current = set->views[set->lifecycle.current];
+  TEST_ASSERT_EQUAL_UINT32(25344, current.coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(1536, current.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(set->lifecycle.current, runtime->rolling.boundView);
+  TEST_ASSERT_EQUAL_UINT64(current.storageGeneration, runtime->rolling.boundStorageGeneration);
+  TEST_ASSERT_EQUAL_PTR(track.getLoop(2).publishedSnapshotIdentity(), current.source.snapshotIdentity);
+  TEST_ASSERT_FALSE(set->wholeTakeReserved);
+  TEST_ASSERT_NULL(track.pendingViewRequest(2));
+}
+
+void test_odd_33_bar_terminal_window_and_successors_keep_exact_wrap_content() {
+  // The separate launch oracle pins the seed; this demand fixture also reaches RED independently of it.
+  assert_s4b_7_a_demoted_target_through_the_turn(true, false, false, 33, false);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  auto* set = runtime->viewSetIfPrewarmed();
+  const uint64_t origin = clockManager.getCurrentTick();
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  for (uint32_t delta = 1; delta <= 26 * bar; ++delta)
+    rollingTestTick(track, origin + delta, false);
+  sInterferenceBudgetEnforced = true;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(32 * bar, runtime->rolling.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(origin + 32 * bar, runtime->rolling.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(bar, track.pendingViewRequest(2)->coverage.lengthTicks);
+  MidiSendCapture::reset();
+  uint32_t adoptions = 0;
+  uint64_t promised = runtime->rolling.deadlineTick;
+  uint8_t readyRole = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t readyStorage = 0;
+  for (uint32_t delta = 26 * bar + 1; delta <= 51 * bar + 48; ++delta) {
+    const auto count = MidiSendCapture::count();
+    const auto builds = Track::playbackOrderHotRebuildCount();
+    const auto priorPhase = runtime->rolling.phase;
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    const bool on = delta % bar == 0;
+    const bool off = delta % bar == 48;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(count + (on || off ? 1 : 0), MidiSendCapture::count(),
+        "exact ordered content through terminal adoption, wrap and later ordinary windows");
+    if (on || off) {
+      const auto event = MidiSendCapture::at(count);
+      TEST_ASSERT_EQUAL(on, event.isNoteOn());
+      TEST_ASSERT_EQUAL(off, event.isNoteOff());
+      TEST_ASSERT_EQUAL_UINT8(48, event.data.noteData.note);
+    }
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested &&
+        priorPhase == LoopPlaybackRuntime::RollingPhase::Idle) promised = runtime->rolling.deadlineTick;
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready) {
+      TEST_ASSERT_EQUAL_UINT64(promised, runtime->rolling.deadlineTick);
+      TEST_ASSERT_EQUAL_UINT64(promised, runtime->viewBuildWork.deadlineTick);
+      readyRole = set->lifecycle.ready;
+      readyStorage = set->views[readyRole].storageGeneration;
+    }
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
+      const auto& current = set->views[set->lifecycle.current];
+      TEST_ASSERT_TRUE(current.coverage.startPhase + current.coverage.lengthTicks <= 33 * bar);
+      TEST_ASSERT_EQUAL_UINT8(set->lifecycle.current, runtime->rolling.boundView);
+      TEST_ASSERT_EQUAL_UINT64(current.storageGeneration, runtime->rolling.boundStorageGeneration);
+      TEST_ASSERT_EQUAL_PTR(track.getLoop(2).publishedSnapshotIdentity(), current.source.snapshotIdentity);
+      TEST_ASSERT_EQUAL_UINT32(track.getLoop(2).playbackRevision, current.source.playbackRevision);
+      if (priorPhase != LoopPlaybackRuntime::RollingPhase::Serving) {
+        ++adoptions;
+        const uint32_t expectedBar = adoptions == 1 ? 32 : (adoptions == 2 ? 39 : 47);
+        TEST_ASSERT_EQUAL_UINT64(origin + expectedBar * bar, promised);
+        TEST_ASSERT_EQUAL_UINT32((expectedBar % 33) * bar, current.coverage.startPhase);
+        TEST_ASSERT_EQUAL_UINT64(promised, origin + delta);
+        TEST_ASSERT_EQUAL_UINT8(readyRole, set->lifecycle.current);
+        TEST_ASSERT_EQUAL_UINT64(readyStorage, current.storageGeneration);
+        TEST_ASSERT_EQUAL_UINT32(builds, Track::playbackOrderHotRebuildCount());
+        TEST_ASSERT_EQUAL_UINT32(adoptions == 1 ? bar : 2 * bar, current.coverage.lengthTicks);
+      }
+    }
+    if (delta == 33 * bar) TEST_ASSERT_EQUAL(
+        static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
+  }
+  sInterferenceBudgetEnforced = false;
+  TEST_ASSERT_EQUAL_UINT32(3, adoptions);
+  TEST_ASSERT_FALSE(set->wholeTakeReserved);
+  TEST_ASSERT_EQUAL_UINT32(51, MidiSendCapture::count());
+}
+
+void test_odd_33_bar_lookahead_aligns_to_loop_local_wrap_boundary() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true, false, false, 33);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  for (uint32_t delta = 1; delta <= 27 * bar; ++delta)
+    rollingTestTick(track, origin + delta, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->rolling.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(origin + 33 * bar, runtime->rolling.deadlineTick);
+  for (uint32_t delta = 27 * bar + 1; delta < 33 * bar; ++delta)
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto role = set->lifecycle.ready;
+  TEST_ASSERT_TRUE(role < set->views.size());
+  const auto storage = set->views[role].storageGeneration;
+  const auto builds = Track::playbackOrderHotRebuildCount();
+  MidiSendCapture::reset();
+  rollingTestTick(track, origin + 33 * bar, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+      static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT8(role, runtime->rolling.boundView);
+  TEST_ASSERT_EQUAL_UINT64(storage, runtime->rolling.boundStorageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(builds, Track::playbackOrderHotRebuildCount());
+  TEST_ASSERT_EQUAL_UINT32(1, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOn());
+  for (uint32_t delta = 1; delta <= 48; ++delta)
+    rollingTestTick(track, origin + 33 * bar + delta, false);
+  TEST_ASSERT_EQUAL_UINT32(2, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(1).isNoteOff());
+}
+
 void test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
@@ -12931,15 +13082,8 @@ void test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement() {
   TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "the admissible shape leaves no refused demand behind");
 }
 
-/// **Task 3.10 -- the rolling path's admission boundary, half 2: the shape just outside the charge is refused by name,
-/// keeps its obligation, and playback continues through the fallback.**
-///
-/// The selector probes the declared basis cost for its lookahead while the worker's admission prices the window's
-/// **derived** work at `H`, so a dense interval is *requested* (the demand is made) and then refused **by name** by the
-/// admission; the interval is served by the mutable fallback exactly as if no request had been made. The bound remains
-/// two bars and capacity 2048: what the refusal describes is the shape's **workload against the lead it was granted**,
-/// not a smaller supported window.
-void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
+/// DEC-156: a dense interval waits for its paid absolute occurrence; fallback serves earlier traversals.
+void test_rolling_dense_future_occurrence_keeps_earlier_fallback_content() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
   TrackCaptureStopTestAccess::dropLaunchBinding(track, 2);  // 2.2: demand-path fixture, not the seeded frame
@@ -12975,28 +13119,21 @@ void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
   }
   sInterferenceBudgetEnforced = wasEnforced;
 
-  // **The boundary, on the playing path (DEC-147):** the dense interval is refused by name and is **never adopted**.
-  // The refusal describes one shape's workload against the lead it was granted, not the size of a supported window --
-  // so the owner re-positions the still-current demand to the next span, which can afford its own (cheap) build. The
-  // served view therefore does move, to a span other than the dense one; that is the new contract, and it is what keeps
-  // a single dense interval from ending playback on the mutable fallback for the whole traversal.
-  TEST_ASSERT_TRUE_MESSAGE(sawFrozenDemand, "the shape was prepared for: its demand froze and was priced");
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
-                                          "the dense interval's refusal is a position refusal");
-  TEST_ASSERT_NOT_EQUAL_MESSAGE(6 * 768, runtime->rolling.startPhase,
-                                "and the served demand never targets the dense interval");
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks,
-                                          "the re-positioned demand serves a span it can afford");
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, viewChanges,
-                                          "the handoff takes the served view to that span");
-  TEST_ASSERT_TRUE_MESSAGE(runtime->viewSetIfPrewarmed()->lifecycle.current != servedBefore,
-                           "the served view is that span, not the launch's");
+  TEST_ASSERT_TRUE_MESSAGE(sawFrozenDemand, "the dense demand freezes and is priced");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
+      "the chosen later occurrence eliminates the unreachable-position retry storm");
+  TEST_ASSERT_EQUAL_UINT32(6 * 768, runtime->rolling.startPhase);
+  TEST_ASSERT_TRUE(promised - origin > track.getLoop(2).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT64(promised, runtime->rolling.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, servingTicks, "an earlier traversal cannot adopt the future view");
+  TEST_ASSERT_EQUAL_UINT32(0u, viewChanges);
+  TEST_ASSERT_EQUAL_UINT32(servedBefore, runtime->viewSetIfPrewarmed()->lifecycle.current);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
                                    "the refusal is not a crossed promise: nothing is served late");
   // Playback continues through the fallback: the dense root's 600 events (bars 6..7). The demand fixture drops the
   // launch, so its own four events are not part of this traversal (the seed path is covered by the 3.7e fixtures).
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(600u, MidiSendCapture::count(),
-                                   "playback continues through the fallback, unaffected by the refusal");
+                                   "playback continues through fallback while the successor waits");
 }
 /// **Task 3.10 -- the rolling path's admission boundary, half 3: the budget charges work, not only an admitted builder.**
 ///
@@ -14159,14 +14296,14 @@ void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_ch
   TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kEpochStamped) != 0);
   TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kAvoidFullRebuild) == 0,
                            "`av=0`: a loop the whole-take policy admits never takes the windowed demand");
-  active.loopLengthTicks = demotedLength + 768;  // demoted, but not a whole number of two-bar spans
+  active.loopLengthTicks = demotedLength + 1;  // fractional bar: odd whole bars are now supported
   nativePlaybackDeadlineClock = {origin + 256, 1};
   (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
   TEST_ASSERT_EQUAL_UINT32(3, RollingGateRows::count);
   TEST_ASSERT_EQUAL_STRING("win_window_ineligible", RollingGateRows::last()->exit);
   TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kAvoidFullRebuild) != 0);
   TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kSpanAligned) == 0,
-                           "`al=0`: the length cannot carry whole spans");
+                           "`al=0`: this length is not even bar-aligned");
   active.loopLengthTicks = demotedLength;
 
   // ---- (W3) A stamped clock on the demoted, aligned slot: the demand opens and the row names the exit that took it.
@@ -14428,6 +14565,25 @@ void test_3_7e_a_bound_launch_seeds_the_rolling_frame_instead_of_re_requesting()
   nativePlaybackDeadlineClock.tick += 64;
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving),
                     static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  // A positioned copied interval remains valid when a newer committed revision arrives.
+  // Source selection must transfer the whole reader tuple, not only its view pointer.
+  Loop& target = track.getLoop(2);
+  ++target.playbackRevision;
+  PlaybackViewSourceIdentity selectedSource{};
+  const FixedPlaybackBridgeStorage* selectedBridge = nullptr;
+  const RuntimePlaybackView* selectedView = nullptr;
+  bool rollingSelected = false;
+  bool overlaySelected = false;
+  track.resolveQualificationPlaybackSourceForTurn(2, target, true,
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), selectedSource,
+      selectedBridge, selectedView, rollingSelected, overlaySelected);
+  TEST_ASSERT_TRUE(rollingSelected);
+  TEST_ASSERT_EQUAL_PTR(&bound, selectedView);
+  TEST_ASSERT_NULL(selectedBridge);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(bound.source.playbackRevision, selectedSource.playbackRevision,
+      "the selected identity belongs to the copied launch interval, not today's root");
+  TEST_ASSERT_EQUAL_PTR(bound.source.snapshotIdentity, selectedSource.snapshotIdentity);
+  TEST_ASSERT_EQUAL_UINT32(bound.source.sourceGeneration, selectedSource.sourceGeneration);
 }
 
 /// 3.7e -- **the device's own shape.** `boundLaunchView`'s expiry/invalidation is sticky: it clears
@@ -14607,7 +14763,7 @@ void test_3_7f_a_bound_launch_survives_the_provision_owner_turn() {
 ///
 /// The contract pinned here leaves DEC-136's arithmetic and DEC-147's re-positioning untouched:
 /// 1. when the target span's own derived price fits inside one loop, the demand is positioned at that price;
-/// 2. when it does not, the declared lookahead and its bounded refusal/re-position behaviour are preserved;
+/// 2. DEC-156: when it does not, a bounded later absolute occurrence pays that same price;
 /// 3. a cheap span is positioned exactly as before (no regression to the short lookahead).
 constexpr uint32_t kRollingBar3_7h = Config::TICKS_PER_BAR;
 
@@ -14697,33 +14853,50 @@ void test_3_7h_a_dense_span_is_positioned_by_its_cost_and_reaches_serving() {
   TEST_ASSERT_TRUE_MESSAGE(track.playbackWindowServesSlot(kSlot), "and the slot is served from it");
 }
 
-/// **3.7h (2): cost does not fit inside the loop** -- the declared lookahead and its bounded refusal/re-position
-/// behaviour are preserved; nothing pretends the work is schedulable.
-void test_3_7h_a_span_whose_cost_exceeds_the_loop_keeps_the_declared_position() {
-  constexpr uint8_t kSlot = 0;   // an enabled slot: a disabled one never reaches the emitter
-  constexpr uint32_t kBars = 18;  // still past the demotion bound, and a whole number of two-bar spans
-  auto* runtime = setupDenseRollingDemand3_7h(kSlot, kBars, 15);
+/// DEC-156: a dense committed successor pays its unchanged work price at a later absolute occurrence.
+void test_rolling_dense_successor_waits_for_its_absolute_occurrence() {
+  constexpr uint8_t kSlot = 0;
+  constexpr uint32_t kBars = 18;
+  auto* runtime = setupDenseRollingDemand3_7h(kSlot, kBars, 15); // valid dense root; price exceeds one traversal
   Track& track = trackManager.getTrack(0);
   const uint32_t length = track.getLoop(kSlot).loopLengthTicks;
   RollingGateRows::reset();
   nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
-  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  const uint64_t deadline = runtime->rolling.deadlineTick;
+  TEST_ASSERT_TRUE_MESSAGE(deadline - nativePlaybackDeadlineClock.tick > length,
+      "the absolute position pays for work that cannot fit the first occurrence");
+  // Production order: main's committed requester runs before rolling identity refresh/worker selection.
+  Loop& changed = track.getLoop(kSlot);
+  ++changed.playbackRevision;
+  publishNotesInBarsRootForSlot(changed, 0, kBars, kBars * 15);
+  const uint32_t playheadPhase = IntervalProjection::tickPhaseInProjectionCycle(
       static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
-                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
-                            "the demand is still made");
-  const uint64_t lead = handoffLeadTicks(phase, runtime->rolling.startPhase, length);
-  TEST_ASSERT_TRUE_MESSAGE(lead < declaredRollingLead3_7h() + 2 * kRollingBar3_7h,
-                           "an unaffordable span keeps the declared lookahead");
-  for (uint32_t turn = 0; turn < 4096 && RollingGateRows::countOf("win_repositioned") == 0; ++turn) {
-    (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(clockManager.getCurrentTick()), nullptr, false,
-                                            nativePlaybackDeadlineClock);
-  }
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, RollingGateRows::countOf("win_repositioned"),
-                                          "and the lead refusal is still the named position refusal");
-  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
-                                static_cast<int>(runtime->rolling.phase),
-                                "a window this loop cannot hold is never admitted");
+  (void)track.requestCommittedPlaybackWindowForSlot(kSlot, playheadPhase, nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(kSlot));
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(deadline, track.pendingViewRequest(kSlot)->deadlineTick,
+      "the independent requester cannot replace a rolling occurrence with its playhead window");
+  TEST_ASSERT_EQUAL_UINT32(runtime->rolling.startPhase, track.pendingViewRequest(kSlot)->coverage.startPhase);
+  (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(changed.playbackRevision, track.pendingViewRequest(kSlot)->source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT64(deadline, track.pendingViewRequest(kSlot)->deadlineTick);
+  TEST_ASSERT_TRUE_MESSAGE(drainRollingOwner3_7h(track, runtime, 8192),
+      "the dense successor qualifies and becomes ready without unreachable retries");
+  TEST_ASSERT_EQUAL_UINT32(0u, RollingGateRows::countOf("win_repositioned"));
+  TEST_ASSERT_EQUAL_UINT64(deadline, runtime->rolling.deadlineTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+      static_cast<int>(runtime->rolling.phase));
+  const uint64_t earlierOccurrence = deadline - length;
+  for (uint64_t tick = nativePlaybackDeadlineClock.tick; tick <= earlierOccurrence; ++tick)
+    rollingTestTick(track, tick, false);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+      static_cast<int>(runtime->rolling.phase), "same phase one loop early cannot adopt");
+  for (uint64_t tick = earlierOccurrence + 1; tick <= deadline; ++tick)
+    rollingTestTick(track, tick, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+      static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_TRUE(track.playbackWindowServesSlot(kSlot));
 }
 
 /// **3.7h (3): a cheap span keeps the short lookahead** -- no regression for the shapes the lane already served.
@@ -17720,6 +17893,9 @@ int main() {
   RUN_TEST(test_the_lane_boundary_is_the_production_caller_that_recovers_a_latched_fault);
   RUN_TEST(test_rolling_queued_zero_start_keeps_the_original_debt);
   RUN_TEST(test_rolling_stop_or_slot_exit_releases_the_episode_off_clock);
+  RUN_TEST(test_odd_33_bar_launch_seeds_the_actual_switch_consumer);
+  RUN_TEST(test_odd_33_bar_lookahead_aligns_to_loop_local_wrap_boundary);
+  RUN_TEST(test_odd_33_bar_terminal_window_and_successors_keep_exact_wrap_content);
   RUN_TEST(test_rolling_handoff_across_natural_wrap_uses_absolute_frame);
   RUN_TEST(test_rolling_empty_interval_preserves_sustain_and_fallback_closure);
   RUN_TEST(test_long_committed_window_owner_to_edge_selects_the_reader);
@@ -17728,7 +17904,7 @@ int main() {
   RUN_TEST(test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick);
   RUN_TEST(test_rolling_cancellation_retires_only_its_owned_request);
   RUN_TEST(test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement);
-  RUN_TEST(test_rolling_path_refused_shape_is_named_retained_and_falls_back);
+  RUN_TEST(test_rolling_dense_future_occurrence_keeps_earlier_fallback_content);
   RUN_TEST(test_rolling_path_budget_charges_qualification_and_retirement_work);
   RUN_TEST(test_rolling_path_reuses_the_view_slot_after_a_refused_completion);
   RUN_TEST(test_rolling_path_cancellation_between_every_preparation_grain_recovers);
@@ -17856,9 +18032,9 @@ int main() {
   RUN_TEST(test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
-  // fits inside one loop; the declared lookahead, unchanged, when it does not).
+  // fits inside one loop; DEC-156's bounded later occurrence otherwise).
   RUN_TEST(test_3_7h_a_dense_span_is_positioned_by_its_cost_and_reaches_serving);
-  RUN_TEST(test_3_7h_a_span_whose_cost_exceeds_the_loop_keeps_the_declared_position);
+  RUN_TEST(test_rolling_dense_successor_waits_for_its_absolute_occurrence);
   RUN_TEST(test_3_7h_a_cheap_span_keeps_the_short_lookahead_and_is_served);
   RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
   // windowed-playback-generation slice 3.7a (I3): the capture admission counts **committed** windows only, so a served

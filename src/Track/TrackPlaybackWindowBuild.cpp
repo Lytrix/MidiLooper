@@ -1487,6 +1487,9 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     const RuntimePlaybackView* rollingView =
         resolveRollingPlaybackWindow(slotIndex, currentTick, clockManager.getPlaybackDeadlineClock()).view;
     if (rollingView != nullptr) {
+      // Transfer the whole reader tuple: a positioned interval can retain an older revision.
+      sourceOut = rollingView->source;
+      bridgeOut = nullptr;
       viewOut = rollingView;
       rollingViewSelectedOut = true;
     }
@@ -4456,6 +4459,30 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
   const uint32_t phase = playheadPhase % loop.loopLengthTicks;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime != nullptr) {
+    // Pass publication precedes root readiness. A committed request here would
+    // take the holder ahead of frozen Record preparation, then wait on the very
+    // root that the audible reader must survive without. Leave that interval
+    // with its qualified frozen owner until a current root can replace it.
+    if (!loop.publishedSnapshotIsCurrent() && runtime->hasBoundRecordReturnWindowForPendingJob()) {
+      const auto* presentation = captureStopPresentationForSlot(slot);
+      RuntimePlaybackViewSource frozen{};
+      PlaybackViewSourceIdentity receipt{};
+      if (presentation && qualifiedFrozenRecordCaptureSourceForSlot(
+              slot, presentation->interval, frozen, receipt))
+        return PlaybackViewRequestResult::NotServable;
+    }
+    // Main requests the playhead window before the rolling owner's identity refresh. A newer root
+    // must not replace that owner's positioned debt with a different interval/earlier deadline.
+    const auto& frame = runtime->rolling;
+    const auto& rollingRequest = runtime->pendingViewRequest_;
+    if (rollingRequest.active && rollingRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        frame.phase == LoopPlaybackRuntime::RollingPhase::Requested &&
+        frame.generation == playbackGeneration && rollingRequest.operationGeneration == frame.generation &&
+        frame.epoch == clock.epoch && frame.loopLength == loop.loopLengthTicks &&
+        rollingRequest.deadlineTick == frame.deadlineTick && rollingRequest.clockEpoch == frame.epoch &&
+        rollingRequest.coverage.startPhase == frame.startPhase &&
+        rollingRequest.coverage.loopLengthTicks == frame.loopLength)
+      return PlaybackViewRequestResult::DeferredSourceQualification;
     const auto holds = [&](const PlaybackViewPendingRequest& req) {
       if (!req.active || req.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) {
         return false;
@@ -4727,7 +4754,7 @@ TRACK_COLD_MEM Track::LaunchSeedRefusal Track::seedRollingFrameFromBoundLaunch(u
       view.source.origin != PlaybackWindowOrigin::Committed ||
       view.source.sourceGeneration != generation || view.source.playbackRevision != loop.playbackRevision ||
       (loop.publishedSnapshotIsCurrent() && view.source.snapshotIdentity != loop.publishedSnapshotIdentity()) ||
-      view.coverage.loopLengthTicks != loop.loopLengthTicks || loop.loopLengthTicks % span != 0 ||
+      view.coverage.loopLengthTicks != loop.loopLengthTicks || loop.loopLengthTicks % Config::TICKS_PER_BAR != 0 ||
       view.coverage.startPhase != 0 || view.coverage.lengthTicks != span)
     return LaunchSeedRefusal::Identity;
   // The bind named one traversal of the loop -- the window's own interval, starting at `launchBoundTick`. Past its end
@@ -4888,7 +4915,9 @@ TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
       ready.complete && !ready.published && !ready.rawCoveragePrepared &&
       ready.source.origin == PlaybackWindowOrigin::Committed && ready.source.sourceGeneration == frame.generation &&
       ready.source.playbackRevision == loop.playbackRevision && ready.coverage.startPhase == frame.startPhase &&
-      ready.coverage.lengthTicks == 2 * Config::TICKS_PER_BAR && ready.coverage.loopLengthTicks == frame.loopLength;
+      frame.startPhase < frame.loopLength && ready.coverage.lengthTicks ==
+          std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) &&
+      ready.coverage.loopLengthTicks == frame.loopLength;
 }
 }
 #endif
@@ -4989,10 +5018,13 @@ TRACK_COLD_MEM bool boundRollingWindowWork(const LoopSnapshot& snapshot, uint32_
     return false;
   }
   RollingWindowWorkBound bound;
-  for (uint32_t first = 0; first + windowBars <= bars; ++first) {
+  for (uint32_t first = 0; first < bars; ++first) {
+    // The terminal odd bar is a non-wrapping interval too. Price its actual pinned bars,
+    // including bar-exit and retirement units, without inventing a read across phase zero.
+    const uint32_t pinnedBars = std::min(windowBars, bars - first);
     size_t windowEvents = 0;
     size_t windowPages = 0;
-    for (uint32_t bar = 0; bar < windowBars; ++bar) {
+    for (uint32_t bar = 0; bar < pinnedBars; ++bar) {
       auto page = snapshot.eventMembership(first + bar);
       while (page) {
         windowEvents += page->count;
@@ -5006,8 +5038,8 @@ TRACK_COLD_MEM bool boundRollingWindowWork(const LoopSnapshot& snapshot, uint32_
     }
     // The cursor's read units are one per reference, one per page link and one per bar exit; retirement charges
     // every fixed slot of every pinned page, as `EventWindowCursor::qualifiedReleaseUnitBound` does after a read.
-    const size_t readUnits = windowEvents + windowPages + windowBars;
-    const size_t releaseUnits = windowPages * (kSnapshotMembershipPageCapacity + 1u) + windowBars;
+    const size_t readUnits = windowEvents + windowPages + pinnedBars;
+    const size_t releaseUnits = windowPages * (kSnapshotMembershipPageCapacity + 1u) + pinnedBars;
     if (windowEvents > bound.events) bound.events = windowEvents;
     if (readUnits > bound.readUnits) bound.readUnits = readUnits;
     if (releaseUnits > bound.releaseUnits) bound.releaseUnits = releaseUnits;
@@ -5092,10 +5124,10 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return frame.phase == LoopPlaybackRuntime::RollingPhase::Ready
         ? RollingOutcome::Ready : RollingOutcome::Waiting;
   // A frozen Record reader already bound to this slot survives the ordinary
-  // committed-only requester exclusion. Its job receipt, copied current and
-  // physical view must still agree; a different job/epoch cannot inherit it.
+  // committed-only requester exclusion, including while a successor overdub owns
+  // ingress. Its receipt, copied current and physical view must still agree.
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
-      isPlaying() && !editManager.isNoteEditActive() && !runtime->previewSourceActive &&
+      (isPlaying() || isOverdubbing()) && !editManager.isNoteEditActive() && !runtime->previewSourceActive &&
       !hasQueuedPlaybackStart() && !isJamPlaybackActive() && !isJamming() &&
       runtime->hasBoundRecordReturnWindowForPendingJob()) {
     const CaptureStopPresentation* presentation = captureStopPresentationForSlot(activeLoopIndex);
@@ -5152,10 +5184,9 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   }
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
   if (!clock.epoch || !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) ||
-      loop.loopLengthTicks % span != 0) {
-    // The demand's **entry** decision, and the term the device question rests on: an unstamped deadline clock, a loop
-    // below the demotion bound and an unaligned length all leave here, and the row tells them apart by `ep`/`av`/`al`
-    // rather than by a token that would hide which one refused.
+      loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
+    // The demand requires a stamped clock, demoted content and bar-aligned geometry.
+    // Odd bar counts use a clamped terminal interval, never a wrapping cursor read.
     reportPlaybackRollingGateRow("win_window_ineligible", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
@@ -5259,15 +5290,15 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   const auto contract = playbackViewCoverageContract();
   uint64_t lookahead = uint64_t(contract.requiredGrains()) *
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
+  CoverageServiceContract positionCost = contract;
   // **Task 3.7h -- the position pays for the work it asks for.** The declared basis (`3/3/1`) prices the *lane's*
   // promise, but the admission prices the **window's own** derived work (`fills + two sorts + rank pass + the pinned
   // release`), and the two differ by an order of magnitude on a dense span: the device's take measured ~40 grains
   // against a declared 7, so a lead of `7 x 8 x 64 + 768` could never hold it and every attempt left as
   // `handoff_unreachable` -- twelve re-positions, then the traversal budget. The position is therefore taken from the
   // same price the admission will charge, bounded over **every** span of this loop (so whichever span the boundary
-  // lands on cannot cost more than the position paid for). Where that price cannot fit inside one loop, the declared
-  // lookahead and DEC-147's bounded refusal/re-position behaviour stand unchanged: this bounds a wait, it never
-  // pretends work is schedulable.
+  // lands on cannot cost more than the position paid for). DEC-156 keeps this price when the first
+  // traversal cannot hold it: the existing bounded occurrence search chooses a later absolute handoff.
   {
     RollingWindowWorkBound bound{};
     const auto snapshot = loop.publishedSnapshot();
@@ -5275,13 +5306,20 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       CoverageServiceContract priced = contract;
       priced.deriveWindowGrainsFrom(bound.readUnits, bound.events, bound.releaseUnits,
                                     kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+      positionCost = priced;
+      positionCost.leadTicks += kRollingPositionSlackTicks;
       const uint64_t pricedLead = uint64_t(priced.requiredGrains()) *
               (uint64_t(priced.maximumConsecutiveDeniedTurns) + 1) * priced.maximumPhaseAdvancePerTurn +
           priced.leadTicks + kRollingPositionSlackTicks;
       if (pricedLead > lookahead && pricedLead + span <= loop.loopLengthTicks) lookahead = pricedLead;
     }
   }
-  uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
+  // Align within the loop, not on an infinite two-bar grid: after an odd terminal
+  // bar the next legal boundary is phase zero, then the same loop-local grid again.
+  const uint64_t target = uint64_t(phase) + lookahead;
+  const uint64_t localBoundary = std::min(uint64_t(loop.loopLengthTicks),
+      ((target % loop.loopLengthTicks + span - 1) / span) * span);
+  uint64_t boundary = (target / loop.loopLengthTicks) * loop.loopLengthTicks + localBoundary;
   if (frame.refusedHandoffValid) {
     // DEC-147: start at the refused span's handoff, so the retry can never land on the position that was just measured
     // as unreachable. The distance is measured **forward** from the playhead: a numeric comparison is wrong across the
@@ -5294,14 +5332,17 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     if (boundary - phase < handoffAhead)
       boundary = uint64_t(phase) + handoffAhead;
   }
-  const bool boundaryOutOfRange = !lookahead || boundary <= phase ||
-      boundary - phase >= loop.loopLengthTicks || clock.tick > UINT64_MAX - (boundary - phase);
+  uint64_t positionLead = 0;
+  const bool positionAvailable = boundary > phase && boundary - phase <= UINT32_MAX &&
+      earliestEligibleHandoffLead(positionCost, static_cast<uint32_t>(boundary - phase),
+          loop.loopLengthTicks, 0, positionLead);
+  const bool boundaryOutOfRange = !lookahead || !positionAvailable || clock.tick > UINT64_MAX - positionLead;
   // DEC-147: a whole traversal of refused spans is the terminal answer. The budget is counted in **spans**, because
   // that is the quantity the contract is written in: a tick-based bound is re-derived from the moving playhead and, at
   // the device's measured ~68 ms refusal cadence, would allow ~900 attempts per traversal before it expired (measured
   // on device 2026-10-19: 231 re-positions in 15.7 s, none of them reaching a readiness row). The counter saturates at
   // its byte width so a very long loop cannot wrap the budget back to zero.
-  const uint32_t spanBudget = loop.loopLengthTicks / span;
+  const uint32_t spanBudget = (loop.loopLengthTicks - 1) / span + 1;
   if (frame.refusedHandoffValid) {
     // The guard's **input**, not its decision: the ordinal the retry carries into the next creation, reported once per
     // distinct value (the dedupe is keyed on it). Bounded by the traversal budget, and it is what makes "one attempt
@@ -5324,7 +5365,9 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     reportPlaybackRollingGateRow("win_boundary_rejected", clock.epoch != 0);
     return RollingOutcome::Rejected;
   }
-  const PlaybackCoverageInterval coverage{static_cast<uint32_t>(boundary % loop.loopLengthTicks), span, loop.loopLengthTicks};
+  const uint32_t startPhase = static_cast<uint32_t>((phase + positionLead) % loop.loopLengthTicks);
+  const PlaybackCoverageInterval coverage{startPhase, std::min(span, loop.loopLengthTicks - startPhase),
+                                           loop.loopLengthTicks};
   const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock);
   if (requested != PlaybackViewRequestResult::DeferredSourceQualification) {
     reportPlaybackRollingGateRow("win_request_refused", clock.epoch != 0, /*reprojectedTick=*/false,
@@ -5337,6 +5380,14 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
                                  static_cast<uint8_t>(requested));
     return RollingOutcome::Rejected;
   }
+  // This requester owns a fresh record (the busy gate excluded prior promises). Transfer its chosen
+  // absolute occurrence once; qualification and coalescing must never re-grant a later deadline.
+  auto& positioned = runtime->pendingViewRequest_;
+  positioned.deadlineTick = clock.tick + positionLead;
+  positioned.clockEpoch = clock.epoch;
+  positioned.work.deadlineTick = positioned.deadlineTick;
+  positioned.work.clockEpoch = clock.epoch;
+  positioned.work.positionedLater = positionLead > handoffLeadTicks(phase, coverage.startPhase, loop.loopLengthTicks);
   frame.boundView = RuntimePlaybackViewLifecycle::kNoView;
   frame.boundStorageGeneration = 0;
   frame.epoch = pending->clockEpoch;
@@ -5415,7 +5466,9 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   // a stale epoch. The previous route may contain this traversal; the owner
   // continues off-clock and only a complete successor can join at phase zero.
   if (coldWaiting) return {RollingOutcome::Waiting, nullptr};
-  const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength : 2 * Config::TICKS_PER_BAR;
+  const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength :
+      (frame.startPhase < frame.loopLength
+          ? std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) : 0u);
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
     if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView) return rejectRollingFrame(*runtime, loop);
     const auto& current = set->views[set->lifecycle.current];
@@ -6778,7 +6831,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
 #endif
     RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
     if (set == nullptr) return PlaybackViewTurnResult::GrainDenied;
-#if !PLAYBACK_WINDOW_ROLLING_ENABLED
     // Pass publication changes canonical currency, not this job's sealed range.
     // Keep private work/ready under its original source stamp until adoption.
     RuntimePlaybackViewSource frozen{};
@@ -6789,7 +6841,12 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         const auto& view = set->views[index];
         return !view.firstRecordReturnWindow && !view.rawCoveragePrepared &&
             view.source.snapshotIdentity == nullptr &&
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+            view.source.origin == PlaybackWindowOrigin::Capture &&
+            view.source.captureContentGeneration == receipt.captureContentGeneration &&
+#else
             view.source.origin == PlaybackWindowOrigin::Committed &&
+#endif
             view.source.sourceGeneration == playbackGeneration &&
             view.coverage.loopLengthTicks == recordLoop.loopLengthTicks;
       };
@@ -6798,7 +6855,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       else if (runtime->frozenWindowBuildActive() && fromFrozenJob(set->lifecycle.build))
         source = set->views[set->lifecycle.build].source;
     }
-#endif
     const uint8_t buildIndex = set->lifecycle.build;
     if (runtime->frozenWindowBuildActive() && buildIndex < set->views.size() &&
         !(set->views[buildIndex].source == source)) {

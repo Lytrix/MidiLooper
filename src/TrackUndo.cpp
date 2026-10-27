@@ -224,7 +224,8 @@ TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& en
 }
 
 TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,
-                                              bool preserveClearSlot) {
+                                              bool preserveClearSlot,
+                                              uint64_t maxInterval = UINT64_MAX) {
     const size_t oldSize = stack.entries.size();
     if (oldSize == 0) {
         return 0;
@@ -236,7 +237,11 @@ TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t sl
     size_t removedTotal = 0;
 
     for (size_t i = 0; i < oldSize; ++i) {
+        // DEC-160: pruning is causally scoped. An entry produced by a *later* interval
+        // (a successor's checkpoint) is not this predecessor's to erase; an unqualified
+        // entry (interval 0, restored or derived history) stays prunable as before.
         const bool remove = stack.entries[i].slotIndex == slotIndex &&
+                            stack.entries[i].interval <= maxInterval &&
                             (!preserveClearSlot ||
                              stack.entries[i].kind != UndoEntryKind::ClearSlot);
         if (remove) {
@@ -676,19 +681,24 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
         : captureGeometry(loop);
     track.hasRecordCaptureBaselineGeometry_ = false;
     track.recordCaptureBaselineGeometry_ = {};
-    pushRecordPassAdded(track, slotIndex, passId, loop.loopId, before, captureGeometry(loop));
+    // The inline route carries no capture interval, so its entry is unqualified (0) rather than
+    // "later than every interval": 0 is prunable by any bound, which is the shipped behaviour.
+    pushRecordPassAdded(track, slotIndex, passId, loop.loopId, before, captureGeometry(loop), 0);
 }
 
 TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId,
                                                    LoopId loopId,
                                                    const UndoLoopGeometry& beforeGeometry,
-                                                   const UndoLoopGeometry& afterGeometry) {
+                                                   const UndoLoopGeometry& afterGeometry,
+                                                   uint64_t interval) {
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
-    // Fresh record on a cleared slot supersedes prior pass and clear-slot undo checkpoints.
+    // Fresh record on a cleared slot supersedes the prior pass and clear-slot undo
+    // checkpoints, but only those at or before this interval (DEC-160): a sealed
+    // successor's entry is a later causal unit and survives its predecessor's publish.
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    const size_t pruned = eraseUndoEntriesForSlot(stack, slotIndex, false);
+    const size_t pruned = eraseUndoEntriesForSlot(stack, slotIndex, false, interval);
     if (pruned > 0) {
         logger.log(CAT_TRACK, LOG_INFO,
                    "Record pass undo reset for slot %u: removed=%u",
@@ -700,6 +710,7 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     entry.slotIndex = slotIndex;
     entry.loopId = loopId;
     entry.passId = passId;
+    entry.interval = interval;
     // Record start clears the published root (`startRecording` → resetPassTimeline).
     // before remains empty; after is the current published tip when already current.
     entry.beforePublishedSnapshot = {};

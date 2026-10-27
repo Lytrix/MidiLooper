@@ -46,6 +46,15 @@ DISP_COLD_MEM bool displaySourcePublicationPending(const Track& track, const Loo
     return loop.isPlaybackSessionExitPublicationGap() ||
         (!track.isRecording() && !loop.publishedSnapshot() && track.hasStopInFlightForSlot(slot));
 }
+/// The `DIAG,disp_turn` name of the source that served a composed interval (C5.6). An if/else chain on
+/// purpose: a `switch` over this enum emits a jump table into `.data`, which is what the RAM1 rule forbids.
+DISP_COLD_MEM const char* qualifiedDisplaySourceToken(Loop::QualifiedDisplaySource source) {
+    if (source == Loop::QualifiedDisplaySource::PreparedWindow) return "prepared";
+    if (source == Loop::QualifiedDisplaySource::BoundedContinuation) return "bound";
+    if (source == Loop::QualifiedDisplaySource::RetainedEnvelope) return "retained";
+    if (source == Loop::QualifiedDisplaySource::VisualCache) return "cache";
+    return "-";
+}
 }  // namespace
 
 DISP_COLD_MEM void DisplayManagerInternal::filterNotesToFollowWindow(
@@ -66,7 +75,8 @@ DISP_COLD_MEM void DisplayManagerInternal::filterNotesToFollowWindow(
 DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t displaySlot,
                                              uint32_t currentTick, uint32_t loopLength,
                                              uint32_t& outWindowStart, uint32_t& outWindowLength,
-                                             uint8_t& outWindowBars) {
+                                             uint8_t& outWindowBars, bool* outHeldRetainedContent) {
+    if (outHeldRetainedContent != nullptr) *outHeldRetainedContent = false;
     if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         outWindowStart = 0;
         outWindowLength = loopLength;
@@ -79,18 +89,9 @@ DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, u
         liveDrawSourceKey_.track == resolveTrackIndex(track) &&
         livePlaybackDisplaySlot_ == displaySlot &&
         livePlaybackDisplayTrack_ == liveDrawSourceKey_.track && !liveDisplayNotes.empty();
-    if (sameHeldScope && displaySourcePublicationPending(track, loop, displaySlot) &&
-        liveDrawSourceKey_.windowStart < loopLength && liveDrawSourceKey_.windowLength > 0 &&
-        liveDrawSourceKey_.windowLength <= loopLength - liveDrawSourceKey_.windowStart) {
-        // Content and viewport are one held frame. A new playhead interval may
-        // replace them together only when its complete committed source exists.
-        outWindowStart = liveDrawSourceKey_.windowStart;
-        outWindowLength = liveDrawSourceKey_.windowLength;
-        outWindowBars = static_cast<uint8_t>((outWindowLength + Config::TICKS_PER_BAR - 1) /
-                                             Config::TICKS_PER_BAR);
-        detailedWindowStartTick_[displaySlot] = outWindowStart;
-        return true;
-    }
+    // The interval the playhead asks for this turn, resolved before any retained-frame hold substitutes the held
+    // one: `DIAG,disp_turn` pairs it with the interval the published frame carries, which is what makes the
+    // drawn-vs-requested question decidable in a capture instead of inferred from it.
     const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
                                                     DisplayWindowUtils::kMaxDetailedWindowBars);
     const uint32_t horizonLength =
@@ -99,14 +100,47 @@ DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, u
                             shouldAutoFollowDetailedWindow(track, loopLength);
     const uint32_t playhead = autoFollow ? resolvePlayheadInLoop(track, displaySlot, currentTick)
                                          : 0;
-    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
-            loopLength, requestedBars, detailedWindowStartTick_[displaySlot], playhead, autoFollow,
-            outWindowStart, outWindowLength, outWindowBars)) {
+    uint32_t requestedStart = 0;
+    uint32_t requestedLength = 0;
+    uint8_t requestedWindowBars = 0;
+    const bool haveRequest = DisplayWindowUtils::resolveDetailedPaintWindow(
+        loopLength, requestedBars, detailedWindowStartTick_[displaySlot], playhead, autoFollow,
+        requestedStart, requestedLength, requestedWindowBars);
+    detailedWindowRequestedStartTick_ = haveRequest ? requestedStart : 0;
+    detailedWindowRequestedLengthTicks_ = haveRequest ? requestedLength : loopLength;
+    detailedWindowRequestedSlot_ = displaySlot;
+    // The split (`DIAG,disp_turn`): the interval the frame is **drawn** in follows this request on every turn,
+    // even while the hold below substitutes the retained interval for the **content**. A cursor mapped in the
+    // retained coordinates is what left it behind the moving window on hardware (capture
+    // `session_20261026_221420`: 154 retained frames whose request had already diverged from the published
+    // interval). Both facts stay separately visible: `req` is this pair, `pub` is the viewport pair, and
+    // `st=ret`/`why=hold_gap` name the content hold that keeps `liveDrawSourceKey_` where it is.
+    detailedWindowViewportStartTick_ = detailedWindowRequestedStartTick_;
+    detailedWindowViewportLengthTicks_ = detailedWindowRequestedLengthTicks_;
+    detailedWindowViewportSlot_ = detailedWindowRequestedSlot_;
+    if (sameHeldScope && displaySourcePublicationPending(track, loop, displaySlot) &&
+        track.recordStopPreviewForSlot(displaySlot) == nullptr &&
+        liveDrawSourceKey_.windowStart < loopLength && liveDrawSourceKey_.windowLength > 0 &&
+        liveDrawSourceKey_.windowLength <= loopLength - liveDrawSourceKey_.windowStart) {
+        // The **content** stays the retained frame's qualified interval: it is not re-gathered, not advanced and
+        // never presented as the requested interval's content. Only the viewport above follows the request.
+        if (outHeldRetainedContent != nullptr) *outHeldRetainedContent = true;
+        outWindowStart = liveDrawSourceKey_.windowStart;
+        outWindowLength = liveDrawSourceKey_.windowLength;
+        outWindowBars = static_cast<uint8_t>((outWindowLength + Config::TICKS_PER_BAR - 1) /
+                                             Config::TICKS_PER_BAR);
+        detailedWindowStartTick_[displaySlot] = outWindowStart;
+        return true;
+    }
+    if (!haveRequest) {
         outWindowStart = 0;
         outWindowLength = loopLength;
         outWindowBars = requestedBars;
         return false;
     }
+    outWindowStart = requestedStart;
+    outWindowLength = requestedLength;
+    outWindowBars = requestedWindowBars;
     detailedWindowStartTick_[displaySlot] = outWindowStart;
     return true;
 }
@@ -168,6 +202,36 @@ inline bool detailedWindowReceiptArmed() {
     return lastDetailedWindowReceipt.armedMagic == kReceiptArmedMagic;
 }
 
+
+/// What the **drawn-vs-requested** receipt compares (`DIAG,disp_turn`): the interval the published frame carries,
+/// whether the frame was fresh or retained, and the slot it belongs to. The *requested* interval is deliberately
+/// not part of the comparison -- it moves every turn, so keying on it would emit one row per frame and turn the
+/// receipt into the stream it is meant not to be. A diverged request is reported on the cadence instead.
+struct DisplayTurnReceiptKey {
+    uint8_t track = 0xFF;
+    uint8_t slot = 0xFF;
+    uint8_t retained = 0xFF;
+    uint32_t publishedStart = 0xFFFFFFFFu;
+    uint32_t publishedLength = 0xFFFFFFFFu;
+    /// Same poisoned-init rule as `DetailedWindowReceiptKey`: `.bss.dma` is ALLOC-only, so arming is a value the
+    /// emitter writes, never an initialiser.
+    uint32_t armedMagic = 0;
+};
+
+DISP_RECEIPT_MEM DisplayTurnReceiptKey lastDisplayTurnReceipt;
+DISP_RECEIPT_MEM uint32_t lastDisplayTurnReceiptMs;
+
+/// The value that arms the receipt; written by `emitDisplayTurnReceipt`, never initialised (see above).
+constexpr uint32_t kDisplayTurnArmedMagic = 0x44545731u;  // 'DTW1'
+
+/// One row per visual turn, bounded twice: a change of the published interval or of retained/fresh always emits,
+/// and a request that keeps diverging from the published interval emits at most once per this interval. A frame
+/// that tracks its request emits nothing, so the normal case costs no rows at all.
+constexpr uint32_t kDisplayTurnReceiptSampleMs = 100;
+
+inline bool displayTurnReceiptArmed() {
+    return lastDisplayTurnReceipt.armedMagic == kDisplayTurnArmedMagic;
+}
 }  // namespace
 #endif
 
@@ -218,6 +282,65 @@ DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
     SC_DISP_WINDOW_TRANSITION(key.track, key.slot, TrackStateMachine::toString(track.getState()),
                               key.noteSessionOpen, key.editSession, key.loopLength, key.windowStart,
                               key.windowBars);
+#endif
+}
+
+/// Bounded `DIAG,disp_turn` emitter: one row per visual turn that changes what the display publishes, and at most
+/// one row per `kDisplayTurnReceiptSampleMs` while the requested interval stays diverged from the published one.
+/// `requested`/`published` are tick intervals; `retained` says which of the two the drawn frame carries,
+/// `reason` names the rule that discarded the request (`-` when nothing was discarded) or the provider that
+/// served it (`prepared`/`bound`/`cache`), and `key*` is the covered interval of the frame that carries the
+/// content (`DIAG,disp_turn`'s `key=` pair) — the retained interval while a hold keeps the frame, the served
+/// interval once a provider published for the request.
+DISP_COLD_MEM void emitDisplayTurnReceipt(const Track& track, uint8_t displaySlot,
+                                          uint32_t requestedStart, uint32_t requestedLength,
+                                          uint32_t publishedStart, uint32_t publishedLength,
+                                          uint32_t drawnNotes, bool retained,
+                                          const char* discardReason, uint32_t keyStartTick,
+                                          uint32_t keyLengthTicks) {
+#if defined(SESSION_CAPTURE)
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    const uint8_t retainedFlag = retained ? 1u : 0u;
+    const bool diverged = requestedStart != publishedStart || requestedLength != publishedLength;
+    const bool transition = !displayTurnReceiptArmed() ||
+        lastDisplayTurnReceipt.track != trackIndex || lastDisplayTurnReceipt.slot != displaySlot ||
+        lastDisplayTurnReceipt.retained != retainedFlag ||
+        lastDisplayTurnReceipt.publishedStart != publishedStart ||
+        lastDisplayTurnReceipt.publishedLength != publishedLength;
+    if (!transition) {
+        if (!diverged) {
+            return;
+        }
+        if (static_cast<uint32_t>(millis() - lastDisplayTurnReceiptMs) <
+            kDisplayTurnReceiptSampleMs) {
+            return;
+        }
+    }
+    lastDisplayTurnReceiptMs = millis();
+    lastDisplayTurnReceipt.track = trackIndex;
+    lastDisplayTurnReceipt.slot = displaySlot;
+    lastDisplayTurnReceipt.retained = retainedFlag;
+    lastDisplayTurnReceipt.publishedStart = publishedStart;
+    lastDisplayTurnReceipt.publishedLength = publishedLength;
+    lastDisplayTurnReceipt.armedMagic = kDisplayTurnArmedMagic;
+    // `key` is the covered interval of the frame that carries the content: the retained interval while the hold
+    // keeps the frame, and the requested interval when a qualified provider served it (`why=<provider>`).
+    SC_DISP_WINDOW_TURN(trackIndex, displaySlot, requestedStart, requestedLength, publishedStart,
+                        publishedLength, drawnNotes, retained ? "ret" : "fresh",
+                        discardReason != nullptr ? discardReason : "-", keyStartTick,
+                        keyLengthTicks);
+#else
+    (void)track;
+    (void)displaySlot;
+    (void)requestedStart;
+    (void)requestedLength;
+    (void)publishedStart;
+    (void)publishedLength;
+    (void)drawnNotes;
+    (void)retained;
+    (void)discardReason;
+    (void)keyStartTick;
+    (void)keyLengthTicks;
 #endif
 }
 
@@ -402,8 +525,24 @@ DISP_CAPTURE_MEM void retainDrawSourceHandoffCommittedPrefix(
 }
 
 
-DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t firstBar,
-                                                    uint32_t lastBar, uint8_t pitchLow,
+// Record previews use growing linear coordinates. Clip the existing representation to final
+// geometry; never fold a trimmed partial-bar row into bar one.
+void appendRecordStopPreviewForBar(const CapturePreview& preview, uint32_t bar,
+                                    uint32_t loopLength, uint32_t closureTick,
+                                    NoteUtils::DisplayNoteVec& out) {
+    for (const auto& source : preview.notes) {
+        if (source.startTick >= loopLength) continue;
+        NoteUtils::DisplayNote note = source;
+        if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick))
+            note.endTick = closureTick;
+        else if (note.endTick >= loopLength)
+            note.endTick = loopLength - 1;
+        if (previewNoteIntersectsBar(note, bar, loopLength)) appendDisplayNoteUniqueById(out, note);
+    }
+}
+
+DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t slot, const Loop& loop,
+                                                    uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
                                                     uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
                                                     size_t& committedEnd) {
     const uint32_t loopLength = loop.loopLengthTicks;
@@ -417,9 +556,13 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t f
         !loop.visualCache.notes.empty(), loop.visualCacheDirty,
         loop.publishedSnapshotIsCurrent());
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+    uint32_t closureTick = loopLength - 1;
+    const CapturePreview* recordPreview = track.recordStopPreviewForSlot(slot, &closureTick);
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (usePublishedSnapshot) {
             appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
+        } else if (recordPreview) {
+            appendRecordStopPreviewForBar(*recordPreview, bar, loopLength, closureTick, out);
         } else {
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
         }
@@ -430,7 +573,8 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t f
     committedEnd = out.size();
 }
 
-DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, const Loop& loop,
+                                              uint32_t firstBar, uint32_t lastBar,
                                               NoteUtils::DisplayNoteVec& out, size_t committedEnd) {
     const uint32_t loopLength = loop.loopLengthTicks;
     if (loopLength == 0 || firstBar > lastBar) {
@@ -466,28 +610,43 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
     // Between overdub passes, capture has been closed while the session still
     // owns its preview rows. Keep composing that tier until session close;
     // otherwise a current snapshot alone can erase the just-recorded row.
-    if (!captureActive && !loop.hasOverdubSession()) {
+    if (!captureActive && !loop.hasOverdubSession() && track.captureStopPreviewCount() == 0) {
       return;
     }
-    for (const NoteUtils::DisplayNote& previewNote : loop.capturePreviewView().notes) {
-        bool intersectsWindow = false;
-        for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-            if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
-                intersectsWindow = true;
-                break;
+    const auto appendPreview = [&](const CapturePreview& preview, bool frozen, uint32_t closureTick) {
+        for (size_t index = 0; index < preview.notes.size(); ++index) {
+            NoteUtils::DisplayNote previewNote = preview.notes[index];
+            if (frozen && index < preview.noteStates.size() && preview.noteStates[index].open)
+                previewNote.endTick = closureTick;
+            bool intersectsWindow = false;
+            for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+                if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
+                    intersectsWindow = true;
+                    break;
+                }
+            }
+            if (!intersectsWindow) continue;
+            if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
+                                                                 previewNote.endTick)) {
+                appendDisplayNoteUniqueById(out, previewNote);
+            } else {
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote,
+                                                                     true);
             }
         }
-        if (!intersectsWindow) {
-            continue;
-        }
-        if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
-                                                             previewNote.endTick)) {
-            appendDisplayNoteUniqueById(out, previewNote);
-        } else {
-            DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote,
-                                                                 true);
+    };
+    // All admitted intervals retain their own previews. The single Loop borrow cannot represent
+    // both sealed B and sealed C while A still owns canonical finalization.
+    const size_t count = track.captureStopPreviewCount();
+    for (size_t ordinal = 0; ordinal < count; ++ordinal) {
+        uint32_t closureTick = 0;
+        if (const CapturePreview* preview = track.captureStopPreviewForSlot(slot, ordinal, &closureTick)) {
+            if (preview != track.recordStopPreviewForSlot(slot)) appendPreview(*preview, true, closureTick);
         }
     }
+    appendPreview(loop.capturePreview, false, 0);
+    if (count == 0 && &loop.capturePreviewView() != &loop.capturePreview)
+        appendPreview(loop.capturePreviewView(), false, 0);
 }
 
 uint32_t fingerprintPendingNoteChanges(const PendingNoteChangeVec& changes) {
@@ -796,8 +955,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     uint32_t windowStart = 0;
     uint32_t windowLength = loopLength;
     uint8_t windowBars = 0;
+    // The hold may substitute the retained interval for the requested one; C5.6 needs that fact explicitly.
+    bool heldRetainedContent = false;
     syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart, windowLength,
-                            windowBars);
+                            windowBars, &heldRetainedContent);
     if (windowLength == 0) {
         windowStart = 0;
         windowLength = loopLength;
@@ -806,10 +967,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const uint32_t playheadTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
     const uint32_t playheadBar =
         Config::TICKS_PER_BAR > 0 ? playheadTick / Config::TICKS_PER_BAR : 0;
-    const uint32_t firstBar =
+    uint32_t firstBar =
         Config::TICKS_PER_BAR > 0 ? windowStart / Config::TICKS_PER_BAR : 0;
     const uint32_t lastTick = windowStart + windowLength > 0 ? windowStart + windowLength - 1 : 0;
-    const uint32_t lastBar = Config::TICKS_PER_BAR > 0 ? lastTick / Config::TICKS_PER_BAR : 0;
+    uint32_t lastBar = Config::TICKS_PER_BAR > 0 ? lastTick / Config::TICKS_PER_BAR : 0;
     const uint8_t resolvedPitchLow = pitchLow;
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     const uint8_t trackIndex = resolveTrackIndex(track);
@@ -829,17 +990,74 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const bool preservedHandoffAuthority =
         !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
         trackIndex == livePlaybackDisplayTrack_;
+    const CapturePreview* recordPreview = track.recordStopPreviewForSlot(displaySlot);
+    const bool sameHandoffWindow = liveDrawSourceKey_.valid != 0 &&
+        liveDrawSourceKey_.track == trackIndex && liveDrawSourceKey_.slot == displaySlot &&
+        liveDrawSourceKey_.windowStart == windowStart && liveDrawSourceKey_.windowLength == windowLength;
     const bool holdSessionExitGapHandoff =
         DisplayWindowUtils::shouldHoldSessionExitPublicationGapHandoff(
             preservedHandoffAuthority, loop.publishedSnapshotIsCurrent(),
-            displaySourcePublicationPending(track, loop, displaySlot));
+            displaySourcePublicationPending(track, loop, displaySlot)) &&
+        (sameHandoffWindow || recordPreview == nullptr);
 
-    size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
+    // C5.6 composition contract. A retained frame is authoritative **only** over its recorded coverage and
+    // its own generation, so when the requested interval leaves that coverage the retained rows may not be
+    // presented for it -- and no source may be stretched to cover the difference. The requested interval is
+    // instead served by a provider that proves its own qualification for *this* interval at *this* generation
+    // (`Loop::collectQualifiedCommittedDisplayNotes`), composed with the recognised live overlay once. The
+    // retained frame remains the whole-frame fallback only where no such provider exists (the honest hole);
+    // the two are never stitched into one frame, so no cross-generation frame can be built.
+    const uint32_t requestedStartTick = detailedWindowRequestedSlot_ == displaySlot
+                                            ? detailedWindowRequestedStartTick_
+                                            : windowStart;
+    const uint32_t requestedLengthTicks = detailedWindowRequestedSlot_ == displaySlot
+                                              ? detailedWindowRequestedLengthTicks_
+                                              : windowLength;
     DisplayWindowUtils::DrawSourceComposeScratch<DisplayNoteVec> composeScratch(
         liveDisplayPendingPaintNotes_);
     DisplayNoteVec& candidate = composeScratch.notes;
+    // The hold substituted an interval the request has left: only a provider qualified for the *requested*
+    // interval may serve it, and only for the interval it was served for. Anything else keeps the retained
+    // frame's honest hole rather than inventing rows for an interval no source covers.
+    bool composedForRequest = false;
+    const char* qualifiedSourceToken = "-";
+    if (heldRetainedContent && detailedWindowRequestedSlot_ == displaySlot &&
+        requestedLengthTicks > 0 &&
+        (requestedStartTick != windowStart || requestedLengthTicks != windowLength) &&
+        loop.collectQualifiedCommittedDisplayNotes(requestedStartTick, requestedLengthTicks, candidate)) {
+        // One generation, one base. The retained rows contribute nothing here: the frame is the provider's
+        // committed rows for the requested interval, and its content key is that interval.
+        windowStart = requestedStartTick;
+        windowLength = requestedLengthTicks;
+        if (Config::TICKS_PER_BAR > 0) {
+            firstBar = windowStart / Config::TICKS_PER_BAR;
+            lastBar = (windowStart + windowLength - 1) / Config::TICKS_PER_BAR;
+        }
+        currentKey.windowStart = windowStart;
+        currentKey.windowLength = windowLength;
+        // The stored manual window start follows the published interval, as the no-hold path's does.
+        detailedWindowStartTick_[displaySlot] = windowStart;
+        qualifiedSourceToken = qualifiedDisplaySourceToken(loop.lastQualifiedDisplaySource());
+        composedForRequest = true;
+    } else {
+        candidate.clear();
+    }
+    // What this turn publishes, for the `DIAG,disp_turn` receipt only: `holdRetainedFrame` keeps the frame the
+    // interval was qualified for; the seed retention marks the same state without a publication gap. Everything
+    // else publishes a frame for the requested interval.
+    bool holdRetainedFrame = holdSessionExitGapHandoff && !composedForRequest;
+    bool retainedFrame = holdRetainedFrame;
+    size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
     const uint32_t gatherStartUs = micros();
-    if (holdSessionExitGapHandoff && (loop.captureActive() || loop.hasOverdubSession()) &&
+    if (composedForRequest) {
+        // The recognised live overlay is composed once, on top of the provider's committed base.
+        DIAG_COUNTER_INC(DisplayFullRebuild);
+        committedDisplayEnd = candidate.size();
+        storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
+        applyDrawSourceOverlays(track, displaySlot, loop, firstBar, lastBar, candidate,
+                                committedDisplayEnd);
+        liveDisplayNotes.swap(candidate);
+    } else if (holdSessionExitGapHandoff && (loop.captureActive() || loop.hasOverdubSession()) &&
         liveDrawSourceKey_.valid != 0 && liveDrawSourceKey_.track == trackIndex &&
         liveDrawSourceKey_.slot == displaySlot && liveDrawSourceKey_.windowStart == windowStart &&
         liveDrawSourceKey_.windowLength == windowLength) {
@@ -850,7 +1068,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                        liveDisplayCommittedPrefix_);
         reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
         committedDisplayEnd = candidate.size();
-        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyDrawSourceOverlays(track, displaySlot, loop, firstBar, lastBar, candidate, committedDisplayEnd);
         liveDisplayNotes.swap(candidate);
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
     } else if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
@@ -861,7 +1079,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
         reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
         committedDisplayEnd = candidate.size();
-        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyDrawSourceOverlays(track, displaySlot, loop, firstBar, lastBar, candidate, committedDisplayEnd);
         liveDisplayNotes.swap(candidate);
     } else if (canSlideCommittedPrefix) {
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
@@ -870,12 +1088,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             candidate, windowStart, windowLength, loopLength);
         const uint32_t enteringBar =
             windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
-        gatherCommittedDrawSourceBars(loop, enteringBar, enteringBar, resolvedPitchLow,
-                                      resolvedPitchHigh, candidate, committedDisplayEnd);
+        gatherCommittedDrawSourceBars(track, displaySlot, loop, enteringBar, enteringBar,
+                                      resolvedPitchLow, resolvedPitchHigh, candidate, committedDisplayEnd);
         const size_t gatheredCommittedEnd = committedDisplayEnd;
         storeCommittedDrawSourcePrefix(candidate, gatheredCommittedEnd, liveDisplayCommittedPrefix_);
-        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-        if (holdSessionExitGapHandoff) {
+        applyDrawSourceOverlays(track, displaySlot, loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        if (holdRetainedFrame) {
             retainDrawSourceHandoffCommittedPrefix(
                 liveDisplayNotes, gatheredCommittedEnd, liveDisplayCacheCommittedNoteCount_,
                 liveDisplayCommittedPrefix_, committedDisplayEnd);
@@ -884,8 +1102,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         }
     } else {
         DIAG_COUNTER_INC(DisplayFullRebuild);
-        gatherCommittedDrawSourceBars(loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh,
-                                      candidate, committedDisplayEnd);
+        gatherCommittedDrawSourceBars(track, displaySlot, loop, firstBar, lastBar, resolvedPitchLow,
+                                      resolvedPitchHigh, candidate, committedDisplayEnd);
         const bool captureOrOverdubActive =
             loop.captureActive() || loop.hasOverdubSession();
         if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
@@ -905,17 +1123,18 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         const bool visualCleanNonempty =
             !loop.visualCacheDirty && !loop.visualCache.notes.empty();
         const bool retainHandoffSeed =
-            !loop.captureActive() && !loop.hasOverdubSession() &&
+            recordPreview == nullptr && !loop.captureActive() && !loop.hasOverdubSession() &&
             DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(snapshotSelected,
                                                                  visualCleanNonempty) &&
             !liveDisplayNotes.empty();
         const bool willRetainHandoffFrame =
-            holdSessionExitGapHandoff || retainHandoffSeed;
+            holdRetainedFrame || retainHandoffSeed;
+        retainedFrame = willRetainHandoffFrame;
         if (!willRetainHandoffFrame || !captureOrOverdubActive || gatheredCommittedEnd > 0) {
             storeCommittedDrawSourcePrefix(candidate, gatheredCommittedEnd,
                                            liveDisplayCommittedPrefix_);
         }
-        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyDrawSourceOverlays(track, displaySlot, loop, firstBar, lastBar, candidate, committedDisplayEnd);
         if (willRetainHandoffFrame) {
             if (captureOrOverdubActive) {
                 retainDrawSourceHandoffCommittedPrefix(
@@ -935,7 +1154,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     // advancing the key would falsely mark the old frame as the new window.
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
-    if (!holdSessionExitGapHandoff &&
+    if (!holdRetainedFrame &&
         (recoverMissingPendingShortenSources(loop, liveDisplayNotes, committedDisplayEnd) ||
          recoverMissingSealedShortenSources(loop, liveDisplayNotes, committedDisplayEnd))) {
         storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
@@ -960,7 +1179,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
 
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), false, false,
-        !loop.capturePreviewView().openNoteIndices.empty());
+        !loop.capturePreview.openNoteIndices.empty());
     const bool havePendingPaint = DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
         track.isOverdubbing(), loop.hasPendingNoteChanges(), loop.hasSealedCompanionOverlay());
     composeScratch.restorePaintStorage();
@@ -983,7 +1202,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
                     track.isRecording(), track.isAudiblePlaybackActive(),
                     track.isOverdubbing());
-            applyCapturePlayheadTails(loop.capturePreviewView(), loopLength, playheadCloseTick,
+            applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
         }
@@ -1000,10 +1219,27 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = trackIndex;
-    if (!holdSessionExitGapHandoff) {
+    if (!holdRetainedFrame) {
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         liveDrawSourceKey_ = currentKey;
     }
+    // `DIAG,disp_turn` (capture-gated): the interval this turn requested against the interval the frame is
+    // **drawn** in. `pub` is the viewport fact (`detailedWindowViewport*_`, the coordinates the piano roll maps
+    // its grid, bars and cursor in), not the content key: under a content hold the two are deliberately
+    // different, and the row exists to prove the viewport still tracked the request (`req == pub`, `st=ret`,
+    // `why=hold_gap`). The content interval itself is not re-published here -- that is the hold's whole point.
+    emitDisplayTurnReceipt(
+        track, displaySlot,
+        detailedWindowRequestedSlot_ == displaySlot ? detailedWindowRequestedStartTick_
+                                                    : currentKey.windowStart,
+        detailedWindowRequestedSlot_ == displaySlot ? detailedWindowRequestedLengthTicks_
+                                                    : currentKey.windowLength,
+        detailedWindowViewportSlot_ == displaySlot ? detailedWindowViewportStartTick_ : 0,
+        detailedWindowViewportSlot_ == displaySlot ? detailedWindowViewportLengthTicks_ : 0,
+        static_cast<uint32_t>(paintedNotes->size()), retainedFrame,
+        retainedFrame ? (holdRetainedFrame ? "hold_gap" : "handoff_seed") : qualifiedSourceToken,
+        // `key=`: the covered interval of the frame that carries the content this turn.
+        currentKey.windowStart, currentKey.windowLength);
     return *paintedNotes;
 }

@@ -80,6 +80,11 @@ namespace Config {
   constexpr uint32_t DEFAULT_NOTE_MIN_LENGTH_TICKS = 8;
   /// Default: remove short pairs on capture hot stop. User may disable via noteMinLengthRemoveEnabled.
   constexpr bool DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED = true;
+  /// CONTRACTS.md C3.2 / the stop lane's declared grain: one unit is one sealed-range row read, one
+  /// pass-local pair decision or one pending-change upsert. Defined once here; the stop lane's
+  /// `kDeferredStopPreparationQuantum` and the private-predecessor source cursor's
+  /// `kPrivateSourceQuantum` are both this number, so they cannot drift apart.
+  constexpr uint16_t DEFERRED_STOP_PREPARATION_QUANTUM = 32;
   /// Target undo depth per track when memory is not under pressure.
   constexpr uint16_t PREFERRED_UNDO_DEPTH = 99;
   /// Try to keep at least this many undo entries when trimming under pressure.

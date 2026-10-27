@@ -307,6 +307,7 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
     return;
   }
   Track& track = tracks[trackIndex];
+  const bool privateRecordBase = track.hasPrivateRecordPredecessorForOverdub();
   // Successor reentry (OpenSpec successor-capture-reentry-unguarding 3.1): a pending
   // deferred stop no longer refuses a new interval. START requires the live admission role
   // to be free, which `Track::startOverdubbing` proves along with every storage/ownership
@@ -336,6 +337,9 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   const uint32_t startUs = micros();
 #endif
   track.startOverdubbing(clockManager.getCurrentTick());
+  // Sealed custody/private-source preparation already make this base admissible. Retain intent
+  // only on a real resource denial, never merely because normalization/publication is pending.
+  if (privateRecordBase && !track.isOverdubbing()) (void)track.retainOverdubStartAfterRecord();
   // Overdub start is timing-critical. Do not resetAll other tracks' playback runtimes here:
   // session_20260820_153347 truncated immediately after "Overdubbing started", which is the
   // next call in this function. Record start still releases background merged events;

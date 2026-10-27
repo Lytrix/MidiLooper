@@ -475,7 +475,14 @@ bool noteTickSane(const Lsv1GatheredNote& note, uint32_t loopLengthTicks) {
   return note.endTick < loopLengthTicks;
 }
 
-ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
+/// LSV1 load-path body helpers. Both are reached only from the row-15 deferred slot-load parse
+/// (`stepLoopSnapshotBodyFormatV1LoadParse`, itself already `LSV1_IO_MEM`) and from the
+/// `readLoopSnapshotBodyFormatV1` load/recovery entry — never the MIDI input interval, playback
+/// emission or capture append. They were the only survivors left in ITCM from a TU whose every
+/// other function already carries `LSV1_IO_MEM` / `LSV1_SAVE_STEP_MEM`
+/// (.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc: apply the TU's existing FLASHMEM macro to the
+/// cold function).
+LSV1_IO_MEM ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
     const Lsv1GatheredLoopSnapshotPayload& payload) {
   const ImmutableLoopSnapshotRef parent = LoopSnapshot::createEmpty(
       payload.loopId, payload.loopLengthTicks, payload.loopStartTick, payload.nextNoteId,
@@ -520,7 +527,8 @@ ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
   return construction.freeze();
 }
 
-bool readLoopSnapshotPayload(BufferReader& reader, Lsv1GatheredLoopSnapshotPayload& payload) {
+LSV1_IO_MEM bool readLoopSnapshotPayload(BufferReader& reader,
+                                         Lsv1GatheredLoopSnapshotPayload& payload) {
   payload = {};
   if (!reader.read(&payload.loopId, sizeof(payload.loopId))) return false;
   if (!reader.read(&payload.loopLengthTicks, sizeof(payload.loopLengthTicks))) return false;

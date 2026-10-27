@@ -212,3 +212,59 @@ remove two families in one slice.
 - The reader change's closure and transfer table: `../archive/2026-10-24-windowed-playback-generation/CLOSURE.md`.
 - The qualification campaign: `../archive/2026-10-24-windowed-playback-generation/evidence/2026-10-24-s315f-device-04/EVIDENCE.md`.
 - The deferred 3.7b wording: `../archive/2026-10-24-windowed-playback-generation/tasks.md` (3.7b note).
+
+## 4. Owner-approved three-issue playback repair (2026-10-24)
+
+- [ ] 4.1 **Pending-stop progress:** reproduce and repair the finalizer wait behind repeated `stop_job_pending`,
+  preserving capacity refusal and stopped-track button semantics. No channel-collision claim without routing proof.
+- [ ] 4.2 **Odd-bar rolling coverage:** 33-bar launch and continuation/wrap use bounded valid windows with the
+  existing paid deadline/source/role contract; retain the even-bar regressions.
+- [ ] 4.3 **Tier-correct snapshot admission:** do not charge an external-only slab against internal heap;
+  retain internal floor/working margin, pool refusal and allocation park/recovery, and verify content publication.
+
+Each repair requires native/build evidence and affected device acceptance before final checkoff. Evidence:
+[`REPAIR.md`](evidence/2026-10-24-three-playback-issues/REPAIR.md). Existing family-removal gates remain open.
+
+Local verification (2026-10-24): odd-bar246/246; snapshot/memory161/161; continuous-stop98/98;
+shared95/95; full3439total/7skip/3432pass/0fail. Shipping build SUCCESS, unchanged RAM1 pins,
+HEX01f70896…. One focused review: no concrete defects. No upload/device/SD/Git action.
+4.1's reproduced bridge publication gap is repaired; the captured interval9 CanonicalTail phase5
+wait has no identified failed prerequisite, so remains open rather than patched speculatively.
+All three boxes remain unchecked on device acceptance; 2.2 family retirement is not claimed.
+
+2026-10-25 upload follow-up: approved shipping HEX01f70896… programmed with explicit CLI2.3,
+exit0/Booting; fresh crash0/loadok/USB Teensy MIDI and pre/post managed two-drain persistence idle
+verified. Board stopped; no content test/clear/quarantine. Boxes stay open on behavioral acceptance.
+[`UPLOAD.md`](evidence/2026-10-24-three-playback-issues/UPLOAD.md).
+
+## 5. Post-Record overdub handoff (owner-approved2026-10-25)
+
+- [x] 5.1 **Private Record routing:** Record/Overdub short press during active Record publication does not mute,
+  re-record or disappear into slot-button semantics; existing ordinary slot gestures remain unchanged.
+- [x] 5.2 **Overdub start and recovery:** ordinary admission now runs immediately against the qualified private
+  Record base under `immediate-record-overdub-handoff`; only resource denial retains the existing qualified
+  intent. Recovery/cancellation preserves identity and admission checks. Historical queued-only results follow.
+- [x] 5.3 **Normalization latency investigation:** measure captured service/work and real production cursor units;
+  name the latency cause/limits without silently changing quanta, safety checks or scheduler policy.
+
+Packet: [`EXECUTION.md`](evidence/2026-10-25-post-record-overdub/EXECUTION.md).
+Local fixture/native/build/review gates are required; device timing remains separately qualified.
+
+2026-10-25 local completion:7new production-path cases; shared102/102, fullnative3446total/7skip/
+3439pass/0fail; shipping buildSUCCESS with approved RAM1 floor preserved, HEX74392e15… NOTuploaded.
+One focused review: final geometry must not wait on accepted Start; regressionRED→GREEN, fixed/retested.
+Normalization report complete:1,411calls/7.905s;1357 is slack crossings, not progress. No normalization
+optimization or immediate-ingress claim. No upload/device/SD/Git action. These three boxes close the
+local implementation/investigation scope only; device response timing remains unqualified and prior
+repair/family-removal boxes are unchanged.
+
+2026-10-25 approved upload: shipping74392e15… programmed via CLI2.3, exit0/Booting; independent
+fresh crash0/loadok/USB Teensy MIDI and pre/post complete2drain persistence idle PASS. Board stopped;
+no content test/clear/quarantine. Upload/boot does not qualify response timing or optimize normalization.
+[`UPLOAD.md`](evidence/2026-10-25-post-record-overdub/UPLOAD.md).
+
+2026-10-26 source correction: immediate manager ingress, frozen Record reader survival during OVERDUBBING,
+and simultaneous finalizing/live display preview composition are implemented and native/build verified.
+The newly registered frozen-reader suite runs in the default native sweep. No compatibility family removal,
+fresh device qualification, upload or SD action. [Regression evidence](../immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+Hardware timing/content/memory acceptance remains open under that change's task4.4.

@@ -16,6 +16,7 @@
 #include "Globals.h"
 #include "TrackManager.h"
 #include "HitlDisplayBridge.h"
+#include "Utils/MemoryMonitor.h"
 #include "PersistenceLayout.h"
 #include "SetRevisionCatalog.h"
 #include "StorageManagerInternal.h"
@@ -827,6 +828,36 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                        !clockManager.isTransportRunning()) {
                 trackManager.getTrack(trackManager.getSelectedTrackIndex())
                     .printStoppedServiceStatusForHitl();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!HEAP_PROBE") == 0) {
+                // Task 4.20 allocatability discriminator: the admission policy reads `&_heap_end - __brkval`, the
+                // arena's *untouched tail*, while `free()` returns blocks to newlib's list below it — so a low tail
+                // does not prove a request cannot be served. This asks the question directly at the current value by
+                // taking the exact block `OverdubStart` requires (16 KB, the same margin `BootProbe` mirrors) and
+                // giving it straight back. Deliberately **stopped-only** and host-requested: it is a diagnostic, not
+                // a policy (a per-admission malloc is explicitly not the intended end state), and it must not run
+                // while a deferred stop owns the turn.
+                if (clockManager.isTransportRunning()) {
+                    Serial.println("HEAP_PROBE,denied,transport_running");
+                } else {
+                    const MemoryMonitor::HeapAllocatabilityProbe probe =
+                        MemoryMonitor::probeInternalHeapAllocatability(16u * 1024u);
+                    SC_HEAP_PROBE(probe.tailFreeBytes, probe.requestedBytes,
+                                  probe.internalMallocOk, probe.externalPoolOk);
+                    // The ladder rides the same on-demand request (never automatic: its rungs allocate from the arena
+                    // being judged, and an automatic version at the denial edge was withdrawn on 2026-10-27 because it
+                    // perturbed the failure it measured). `need` here is the `OverdubStart` floor + margin.
+                    const MemoryMonitor::HeapCapacityLadder ladder =
+                        MemoryMonitor::probeHeapCapacityLadder(32u * 1024u + 16u * 1024u);
+                    SC_HEAP_LADDER(ladder.tailFreeBytes, ladder.needBytes,
+                                   ladder.largestAllocatableBytes, ladder.servedMask);
+                    // Plain text as well as the row: the probe is a human decision aid, and its three numbers have to
+                    // be readable even when the capture ring is being displaced.
+                    Serial.printf_P(
+                        PSTR("HEAP_PROBE,tail=%luB,want=%luB,malloc=%u,pool=%u\r\n"),
+                        static_cast<unsigned long>(probe.tailFreeBytes),
+                        static_cast<unsigned long>(probe.requestedBytes),
+                        probe.internalMallocOk ? 1u : 0u, probe.externalPoolOk ? 1u : 0u);
+                }
             } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE") == 0) {
                 // `restored-library-stability` 1.3: request the bounded on-demand library observation.
                 // Deliberately not transport-gated: the states it must explain include a restore waiting

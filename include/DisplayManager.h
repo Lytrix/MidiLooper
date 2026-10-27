@@ -235,9 +235,12 @@ private:
                                           uint32_t currentTick, const DisplayNoteVec& drawnNotes);
 #endif
     /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).
+    /// `outHeldRetainedContent` (optional) reports that a content hold substituted the retained interval for
+    /// the requested one — the fact that decides whether another source may serve the request (C5.6).
     bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                  uint32_t loopLength, uint32_t& outWindowStart,
-                                 uint32_t& outWindowLength, uint8_t& outWindowBars);
+                                 uint32_t& outWindowLength, uint8_t& outWindowBars,
+                                 bool* outHeldRetainedContent = nullptr);
     /// Windowed committed-pass reconstruction with gather-margin reuse across frames.
     const DisplayNoteVec& resolveWindowedDisplayNotes(const Track& track, Loop& mutLoop,
                                                      const Loop& loop, uint8_t displaySlot,
@@ -330,6 +333,21 @@ private:
     static constexpr uint8_t kDisplaySlotCount = Config::MAX_LOOPS_PER_TRACK;
     uint32_t detailedWindowStartTick_[kDisplaySlotCount] = {};
     uint8_t detailedWindowBars_[kDisplaySlotCount] = {16, 16, 16, 16, 16, 16, 16, 16};
+    /// The **requested** detailed paint interval, recorded by `syncDetailedPaintWindow` before any retained-frame
+    /// hold substitutes the held interval. Read only by the capture-gated `DIAG,disp_turn` receipt: it is the one
+    /// value that makes "the drawn interval" and "the requested interval" separable in a capture.
+    uint32_t detailedWindowRequestedStartTick_ = 0;
+    uint32_t detailedWindowRequestedLengthTicks_ = 0;
+    uint8_t detailedWindowRequestedSlot_ = 0xFF;
+    /// The **drawn** detailed paint interval: the coordinates the piano roll's grid, note bars, bracket and
+    /// cursor are mapped in. It is the requested interval even while a retained frame is being held for its own
+    /// (unpublished) interval, so a pending publication can no longer leave the cursor behind the playhead. The
+    /// **content** fact stays `liveDrawSourceKey_` and is deliberately *not* advanced by the hold: retained
+    /// content is never presented as the requested interval's content, and the drawn rows are the retained
+    /// qualified rows that fall inside this viewport — nothing is gathered, mixed or re-claimed here.
+    uint32_t detailedWindowViewportStartTick_ = 0;
+    uint32_t detailedWindowViewportLengthTicks_ = 0;
+    uint8_t detailedWindowViewportSlot_ = 0xFF;
     uint32_t autoSaveBeforeLoadToastExpiresAtMs_ = 0;
     char autoSaveBeforeLoadToastText_[24] = {};
     static constexpr size_t kLoadSaveListCapacity = 16;

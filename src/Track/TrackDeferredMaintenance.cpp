@@ -897,9 +897,66 @@ TRACK_COLD_MEM bool Track::processDeferredCanonicalPrefix() {
   return true; // Setup, cleanup, denied, or Q input work consumed this turn.
 }
 
+/// CONTRACTS.md C3.1: the session-open qualification. Same receipt resolution as the grain, but it
+/// binds only -- the cursor's units are still spent one grain at a time from the maintenance lane.
+TRACK_COLD_MEM bool Track::bindPrivatePredecessorSourceForOverdub(Loop& loop) {
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(activeLoopIndex);
+  if (presentation == nullptr || !presentation->ownsExtent || presentation->retirementActive ||
+      presentation->slot != activeLoopIndex) {
+    return false;
+  }
+  Loop::PrivatePredecessorBinding binding{};
+  binding.range = &presentation->rawRange;
+  binding.receipt = presentation;
+  binding.loopId = presentation->loopId;
+  binding.interval = presentation->interval;
+  binding.captureContentGeneration = presentation->frozenCaptureContentGeneration;
+  return loop.bindPrivatePredecessorSourceOnly(binding);
+}
+/// CONTRACTS.md C3.2/C3.4: one bounded private-predecessor source grain for the active slot.
+///
+/// The predecessor is the *slot's currently owed custody receipt* -- the interval this Track
+/// sealed and has not published. Publication clears the obligation (`retirementActive`), which is
+/// exactly the supersession edge C3.5 names: the cursor is dropped and the committed origin
+/// answers instead.
+TRACK_COLD_MEM Loop::PrivateSourceStep Track::stepPrivatePredecessorSourceGrain(Loop& loop) {
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(activeLoopIndex);
+  Loop::PrivatePredecessorBinding binding{};
+  if (presentation != nullptr && presentation->ownsExtent && !presentation->retirementActive &&
+      presentation->slot == activeLoopIndex) {
+    binding.range = &presentation->rawRange;
+    binding.receipt = presentation;
+    binding.loopId = presentation->loopId;
+    binding.interval = presentation->interval;
+    binding.captureContentGeneration = presentation->frozenCaptureContentGeneration;
+  }
+  // An empty binding means no private predecessor is owed any more (published, retired, or another
+  // interval). The Loop supersedes the scan itself and still materializes whatever intents it
+  // retained, so publishing A can delay B's overlap decision but can never erase it -- including the
+  // case where the seal deadline (C3.4) has already reported the denial by name.
+  const Loop::PrivateSourceStep step = loop.stepPrivatePredecessorSource(binding);
+  if (step == Loop::PrivateSourceStep::Denied) {
+    // Named, not silent: the token says which half refused, and the intent stays retained so the
+    // dependent transform is denied rather than applied from stale or empty content.
+    logger.log(CAT_TRACK, LOG_INFO, "Private source deny=%s slot=%u interval=%llu",
+               Loop::privateSourceDenyName(loop.privateSourceDeny()),
+               static_cast<unsigned>(activeLoopIndex),
+               static_cast<unsigned long long>(binding.interval));
+  }
+  return step;
+}
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
+  // The producer is single/global. Preserve the selected display's gap source
+  // before either maintenance branch can ask for unrelated cache backfill.
+  const Track& displayTrack = trackManager.getSelectedTrack();
+  const bool displayGapSourceOwed = displayTrack.loopsAllocated() &&
+      displayTrack.isAudiblePlaybackActive() &&
+      displayTrack.getActiveLoopIndex() == trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex()) &&
+      displayTrack.getActiveLoop().isPlaybackSessionExitPublicationGap() &&
+      !displayTrack.getActiveLoop().privateSourceOwedForSeal();
+  const bool deferBackgroundVisualSource = displayGapSourceOwed && &displayTrack != this;
   // STOPPING owns the active capture and consumes exactly one declared
   if (hasPendingDeferredOverdubStop()) {
     CaptureStopJob* pendingStop = captureStopJobHead();
@@ -934,6 +991,18 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         generation, epoch, static_cast<uint8_t>(destination), startUs, endUs, slackUs,
         !captureStopJob().admission.pending || captureStopJob().admission.phase != phase, &boundary);
 #endif
+    // The pending-stop branch also owns a VisualCache source opportunity. It
+    // must not exclude the committed display source for the entire Stop FIFO.
+    // Use one source grain: private work first, otherwise the gap display source.
+    if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&
+        isAudiblePlaybackActive()) {
+      Loop& loop = getActiveLoop();
+      if (!deferBackgroundVisualSource && loop.isPlaybackSessionExitPublicationGap() &&
+          !loop.privateSourceOwedForSeal())
+        (void)loop.stepVisualCacheSourceContinuation();
+      else if (isOverdubbing())
+        (void)stepPrivatePredecessorSourceGrain(loop);
+    }
     return;
   }
   // A presentation-held Record interval still depends on the normal Snapshot owner for
@@ -944,10 +1013,29 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     processSnapshotOwnerTurn(loopWithPendingSnapshotPublish(), snapshotConstructionUnits);
     return;
   }
+  // A retained display frame covers only its own interval. During root publication
+  // the cache slice is intentionally disabled, but its bounded source must still
+  // progress so a moving viewport can obtain independently qualified content.
+  // Keep stop/Snapshot/private-source priority and spend only this producer grain.
+  if (!deferBackgroundVisualSource &&
+      deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&
+      isAudiblePlaybackActive()) {
+    Loop& loop = getActiveLoop();
+    if (loop.isPlaybackSessionExitPublicationGap() && !loop.privateSourceOwedForSeal() &&
+        loop.stepVisualCacheSourceContinuation()) return;
+  }
   // Record finalization is complete once the interaction job is promoted. Its frozen reader
   // obligation is a presentation-owned descriptor and must be serviced independently of the
   // FIFO interaction ring, so a successor stop can take the next ring head.
   if (serviceCaptureStopPresentations()) return;
+  // Active-role lease return: after the last custody of this Track retires, the surplus
+  // frozen roles go back to the pool. Bounded and refused while any interval still owes
+  // rows, so this never shortens an admitted overlap.
+  releaseSurplusCaptureStaging();
+  // DEC-160 item 1: an empty Record take whose geometry policy a successor blocked applies it
+  // here once this Track owes no capture and no custody. Same admission gate as the role return
+  // above, so it can never rewrite a live or sealed successor's geometry.
+  settleEmptyRecordGeometry();
   // sits immediately after the admitted stop's grain -- which owns the turn whenever a job
   // exists -- and before the owner-specific branches, so the latch is reachable on every
   // deferred owner lane (the VisualCache branch below is focus-track-only).
@@ -1117,10 +1205,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
           }
         }
       }
+      // CONTRACTS.md C3.3: the one contracted wakeup. One grain per turn, before the rebuild, so
+      // the view this turn filters already carries whatever the grain completed.
+      (void)stepPrivatePredecessorSourceGrain(loop);
       const uint32_t refreshTick =
           loop.lastTickInLoop != UINT32_MAX ? loop.lastTickInLoop : loop.playheadPhaseTick;
       loop.rebuildOverdubSourceView(refreshTick, "idle");
-    } else if (allowVisualMaintenanceSlice &&
+    } else if (allowVisualMaintenanceSlice && !deferBackgroundVisualSource &&
                !(postOverdubDrainWindow && loop.pendingSnapshotSessionExitQueued() &&
                  !loop.publishedSnapshotIsCurrent()) &&
                MidiServiceDrain::allowVisualCacheReconstructSlice(isOverdubbing()) &&
@@ -1182,6 +1273,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       const size_t fallbackGatherEventBudget =
           postOverdubDrainWindow ? kPostOverdubDrainFallbackGatherEventBudget
                                  : kRealtimeFallbackGatherEventBudget;
+      // C5.2a/P-D: the bounded content source runs before the slice so the slice can observe a
+      // published frame. One grain per turn, on this lane, for this loop's exact request.
+      (void)loop.stepVisualCacheSourceContinuation();
       loop.rebuildVisualCacheIdleSlice(barsPerSlice, priorityBar,
                                        maxBarDistanceFromPriority, allowOverdubWrapAppend,
                                        constrainFallbackGather, fallbackGatherEventBudget);
@@ -1203,7 +1297,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
                                   idleVisualDirtyBefore, idleVisualDirtyAfter);
 
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
-      !isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()) {
+      !deferBackgroundVisualSource && !isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasCommittedPasses()) {
       // Phase 3: queued background restores must not block idle visual work.
@@ -1222,6 +1316,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         // idle_append 682–906 ms in one STOPPED turn. PLAYING already budgets
         // gather and defers wrap-append; STOPPED uses the same pair. Prewarm
         // stays on a later clean-cache turn (160519 / Stage B).
+        // C5.2a/P-D: bounded content source before the slice on the STOPPED lane too.
+        (void)loop.stepVisualCacheSourceContinuation();
         constexpr size_t kStoppedFallbackGatherEventBudget = 192;
         loop.rebuildVisualCacheIdleSlice(barsPerSlice, 0, UINT32_MAX, false, false,
                                          kStoppedFallbackGatherEventBudget);

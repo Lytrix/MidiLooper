@@ -1090,12 +1090,22 @@ void Loop::pushPendingNoteChangeForTest(PendingNoteChange change) {
 #endif
 
 LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) {
+  // CONTRACTS.md C3.5: this is the session (re)open edge, so a predecessor that published or was
+  // replaced before it cancels the cursor and its staged rows here -- a new interval never inherits
+  // the previous interval's private prefix.
+  discardPrivatePredecessorSource();
   overlapHoldTotals_ = {};
   rebuildOverdubSourceView(playheadPhaseTick, "open");
   clearPendingNoteChanges();
 }
 
 LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
+  // CONTRACTS.md C3.2: a private-predecessor scan in progress is not a source. `fullLoop` is not
+  // raised for it until its deferred holds are materialized, so no reader can take a partial
+  // private prefix as a complete span.
+  if (privatePredecessorSourcePending()) {
+    return false;
+  }
   if (!overdubSourceSpanCacheValid_) {
     return false;
   }
@@ -1123,10 +1133,25 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReusable() const {
 LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart,
                                                               uint32_t requestedWindowLength) {
   NoteUtils::DisplayNoteVec priorSpanCacheNotes;
+  // CONTRACTS.md C3.1/C3.5: a private-predecessor scan owns this cache from its first grain until
+  // its deferred holds are materialized (both the row phase and the hold phase). Its staged prefix is
+  // carried through the rebuild unchanged -- re-deriving it from a committed origin would mix a
+  // private prefix with a committed suffix, which is forbidden even when both agree.
+  // The scan owns the cache from the moment it is bound -- including before it has staged its first
+  // row. Re-deriving a committed origin into it while a private prefix is being built is exactly the
+  // mixing C3.5 forbids, in either direction.
+  const bool privateCacheOwned =
+      (privateSource_.phase == kPrivateRows || privateSource_.phase == kPrivateHolds) &&
+      overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks;
+  // A private-origin cache is NEVER carried as `Prior`: that path exists for committed caches, and
+  // re-seeding it would relabel private rows as a committed origin while dropping the committed notes
+  // the rebuild had just derived. After a supersession the committed chain re-derives from its root.
   const bool keepPriorSpanCache =
-      hasOverdubSession() && overdubSourceSpanCacheValid_ &&
-      overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
-      overdubSourceSpanCacheFullLoop_ && !overdubSourceSpanCacheNotes_.empty();
+      privateCacheOwned ||
+      (overdubSourceSpanCacheOrigin_ != SourceOrigin::PrivatePredecessor && hasOverdubSession() &&
+       overdubSourceSpanCacheValid_ &&
+       overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
+       overdubSourceSpanCacheFullLoop_ && !overdubSourceSpanCacheNotes_.empty());
   if (keepPriorSpanCache) {
     priorSpanCacheNotes.swap(overdubSourceSpanCacheNotes_);
   }
@@ -1138,16 +1163,23 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   overdubSourceSpanCacheValid_ = true;
   overdubSourceSpanCacheFullLoop_ = false;
   if (loopLengthTicks == 0) {
+    overdubSourceSpanCacheOrigin_ = SourceOrigin::None;
     return "empty";
   }
   if (requestedWindowLength == 0) {
     requestedWindowStart = 0;
     requestedWindowLength = loopLengthTicks;
   }
-  const char* sourceOrigin = "passes";
+  SourceOrigin sourceOrigin = SourceOrigin::Passes;
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
-  const bool usePublishedSnapshot = snapshot && publishedSnapshotIsCurrent();
-  if (usePublishedSnapshot) {
+  const bool usePublishedSnapshot = !privateCacheOwned && snapshot &&
+                                    publishedSnapshotIsCurrent();
+  if (privateCacheOwned) {
+    // The private prefix is this cache's only content: no committed reader may attribute it, so
+    // both published stamps stay unset and `fullLoop` stays false until the scan completes.
+    overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
+    sourceOrigin = SourceOrigin::PrivatePredecessor;
+  } else if (usePublishedSnapshot) {
     const uint32_t firstBar = requestedWindowStart / Config::TICKS_PER_BAR;
     const uint32_t lastWindowTick = requestedWindowStart + requestedWindowLength - 1u;
     const uint32_t lastBar = lastWindowTick / Config::TICKS_PER_BAR;
@@ -1161,7 +1193,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
                                      overdubSourceSpanCacheNotes_);
     }
     overdubSourceSpanCacheFullLoop_ = requestedWindowLength >= loopLengthTicks;
-    sourceOrigin = "snapshot";
+    sourceOrigin = SourceOrigin::Snapshot;
   } else {
     const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
       playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks,
@@ -1173,13 +1205,13 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   );
   if (copiedPreparedSpans) {
     overdubSourceSpanCacheFullLoop_ = true;
-    sourceOrigin = "prepared";
+    sourceOrigin = SourceOrigin::Prepared;
   } else if (hasOverdubSession() && !priorSpanCacheNotes.empty()) {
     // A prior cache is reusable only when it was proven to cover the full loop. A
     // nonempty partial seed is not a valid answer for a later source window.
     overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
     overdubSourceSpanCacheFullLoop_ = true;
-    sourceOrigin = "prior";
+    sourceOrigin = SourceOrigin::Prior;
   } else if (hasOverdubSession() &&
              !visualCache.notes.empty() &&
              visualCacheCoversWindow(visualCacheDirty, visualCache.dirtyBars,
@@ -1189,7 +1221,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     // display list only when it covers the requested source interval.
     overdubSourceSpanCacheNotes_ = visualCache.notes;
     overdubSourceSpanCacheFullLoop_ = !visualCacheDirty;
-    sourceOrigin = "visual";
+    sourceOrigin = SourceOrigin::Visual;
   } else {
     // An uncovered visual cache is not a valid overlap source. Reconstruct from
     // committed passes so overlap resolution never receives a partial span.
@@ -1197,7 +1229,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
                                                overdubSourceSpanCacheNotes_);
     appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
     overdubSourceSpanCacheFullLoop_ = true;
-    sourceOrigin = "passes";
+    sourceOrigin = SourceOrigin::Passes;
   }
   }
   if (loopLengthTicks > 0) {
@@ -1206,12 +1238,12 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     // healed from materialize — membership RC-A owns published NoteRefs
     // (consumer Stage 2 unwind). Bounded snapshot windows still skip merge
     // (`test_snapshot_source_uses_bounded_overdub_window`).
-    if (std::strcmp(sourceOrigin, "snapshot") != 0) {
+    if (sourceOrigin != SourceOrigin::Snapshot && sourceOrigin != SourceOrigin::PrivatePredecessor) {
       SessionMidiEventVec committedEvents;
       if (gatherConstructionCommittedEvents(*this, committedEvents)) {
         // Upsert missing NoteIds from pass resolve (honors sealed Delete/Length),
         // not raw reconstruct — reconstruct re-admits Hidden shorts (`202713`).
-        if (std::strcmp(sourceOrigin, "passes") != 0) {
+        if (sourceOrigin != SourceOrigin::Passes) {
           NoteUtils::DisplayNoteVec committedNotes;
           LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, committedNotes);
           appendOverdubPassWrapPairedNotes(committedNotes);
@@ -1273,10 +1305,13 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   // whenever companion ids are still pending on the loop.
   applyPendingSnapshotCompanionsToDisplayNotes(overdubSourceSpanCacheNotes_);
   overdubSourceSpanCachePublishedRevision_ =
-      std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotRevision() : 0;
+      sourceOrigin == SourceOrigin::Snapshot ? publishedSnapshotRevision() : 0;
   overdubSourceSpanCachePublishedIdentity_ =
-      std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotIdentity() : nullptr;
-  return sourceOrigin;
+      sourceOrigin == SourceOrigin::Snapshot ? publishedSnapshotIdentity() : nullptr;
+  // The origin is recorded, not inferred from the notes: a private predecessor's rows are visibly
+  // non-committed even though they sit in the same full-loop cache.
+  overdubSourceSpanCacheOrigin_ = sourceOrigin;
+  return sourceOriginName(sourceOrigin);
 }
 
 LOOP_COLD_MEM void Loop::applyPendingSnapshotCompanionsToDisplayNotes(
@@ -1566,6 +1601,10 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 }
 
 LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
+  // CONTRACTS.md C3.5: this is the one cancellation edge for the session source -- session close,
+  // Record re-entry, clear, load and slot switch all arrive here -- so the private-predecessor
+  // cursor and every row it staged go with it.
+  discardPrivatePredecessorSource();
   overdubSourceViewEvents_.clear();
   overdubSourceViewNotes_.clear();
   overdubSourceViewLoopLengthTicks_ = 0;
@@ -1819,8 +1858,11 @@ LOOP_COLD_MEM bool Loop::releasePendingNoteChangesBorrow(const void* owner) {
 }
 
 LOOP_COLD_MEM const CapturePreview& Loop::capturePreviewView() const {
-  return borrowedPreview_ != nullptr ? *borrowedPreview_ : capturePreview;
+  // A predecessor borrow must not mask input accepted by a new producer. Until that producer
+  // has a preview, the borrowed interval remains the continuity source as before.
+  return !capturePreview.notes.empty() || borrowedPreview_ == nullptr ? capturePreview : *borrowedPreview_;
 }
+
 
 LOOP_COLD_MEM bool Loop::borrowCapturePreview(const CapturePreview& preview, const void* owner) {
   if (owner == nullptr) return false;
@@ -2432,7 +2474,11 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePass(uint32_t sealedAtTick,
 }
 
 LOOP_COLD_MEM bool Loop::prewarmActiveOverdubTransferHorizon(uint16_t horizon) {
-  if (horizon == 0 || !prewarmSessionExitSnapshotHandoff()) {
+  // Task 4.20: the horizon admission needs the receipt ring to *exist* — the reserved obligation is
+  // allocated with it — never a free receipt slot. Requiring a free slot here coupled `OverdubStart` to
+  // the snapshot publisher's cadence, so a settled shape whose receipts had not drained refused a start
+  // although nothing structural was exhausted (measured: cycle 16, `receipts=8/8 admission=0`).
+  if (horizon == 0 || !ensureSessionExitReceiptRing()) {
     return false;
   }
 

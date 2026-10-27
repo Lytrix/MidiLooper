@@ -8790,6 +8790,10 @@ builds SUCCESS, device runs `captures/i5-s37h-device-32bar-01` (host clock, know
 transport-scoped: five of six lane checks green, 12 consecutive boundary adoptions on the take, and the cost-does-not-fit
 refusal confined to the 24-bar switch target where it belongs).
 
+**2026-10-24 amendment:** the one-traversal cap and its preserved cost-does-not-fit refusal policy are superseded
+by DEC-156 — committed future-occurrence positioning, explicitly approved by the owner. Historical evidence below
+remains the record of the prior policy.
+
 ### Decision
 The position a successor demand asks for SHALL be derived from the **same cost function the admission will charge that
 window** — fills, the two bounded sorts and the rank pass over the window's event count, and the retirement of the
@@ -8825,3 +8829,760 @@ refusal/re-position stand unchanged. No envelope constant and no DEC-136 admissi
 [`evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-20-s37h-cost-position/EXECUTION-DEVICE.md)
 — the RED position assertion, the A/B receipt counts (13/13/1 → 0/0/0), the six boundary adoptions, and the read
 qualification (receipt-grade; the take's gate rows were evicted).
+
+## DEC-156 — Committed successors use bounded absolute future-occurrence positioning
+
+**Date:** 2026-10-24
+**Owner:** Track rolling requester and existing pending/frozen/build/ready lifecycle.
+**Status:** Owner-approved and implemented; RED→GREEN, combined302/302, full3433/7skip/3426pass,
+both builds at unchanged pins; review finding fixed/retested. Device reaches privateReady118ms; later adoption
+and clean-ring gate remain unqualified. See the linked evidence for no-upload reruns and exact limitations.
+**Supersedes:** DEC-155 — cost-priced rolling position, only its one-traversal position cap and preserved
+cost-does-not-fit retry policy. Work pricing, service envelope and other decisions stand.
+
+### Problem
+The aligned restored24-bar target's96-event window serves its initial launch, then repeatedly chooses a handoff
+whose lead cannot pay the unchanged window work price; bounded retries end in `win_blocked_by_budget`.
+This is DEC-155's intentional limit, not evidence of whole-loop qualification or display-buffer lifetime failure.
+
+### Decision
+Reuse NOTE_EDIT's existing bounded64-occurrence absolute-handoff search for committed rolling successors.
+Price the same worst-window fill/order/rank/retirement work and qualification slack; choose a future occurrence
+that pays it, retain its absolute deadline once, and transfer it unchanged through pending→frozen→admitted→ready.
+An earlier same-phase occurrence cannot adopt the ready. Overflow/search exhaustion refuses by name.
+Do not loosen quanta, H/denial allowance, permitted advance, publication reserve, sibling deadline checks,
+source currency, immutable-view guards or lag/fault policy. No new state owner, queue, lease or buffer.
+Existing fallback serves valid gaps; this change does not claim continuous rolling coverage or physical latency.
+
+### Rationale / alternatives
+- Retain the one-loop refusal: technically coherent, but owner explicitly requests later-occurrence support.
+- Loosen service constants: rejected because that declares unproved work schedulable.
+- New scheduler/source copy: rejected; existing absolute request/build/ready fields and preview search suffice.
+
+### Affected modules / verification / migration
+`Track::serviceRollingPlaybackWindow`, existing absolute request fields and rolling deadline reader; no persistence
+format migration or ownership transfer. Native before-occurrence/adoption/cancellation/supersession controls,
+full native/builds at approved pins, focused review and device launch/continuation gate required before closure.
+Independent partial visual-cache revision correction is ordinary owner invalidation, not this position policy.
+Contract/evidence: [successor/display packet](../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-2.2-fixed-bridge/SUCCESSOR-DISPLAY.md).
+
+## DEC-157 — Snapshot publication charges slab headroom to its allocation tier
+
+**Date:** 2026-10-24
+**Status:** Accepted existing-owner repair; native verified, firmware/device gates pending.
+**Scope:** Amends only DEC-075's slab component of the internal admission margin. Publication ownership,
+32 KiB internal safety floor, 8 KiB working margin, pool-refusal check, fallible slab reservation and
+transient allocation park/recovery are unchanged.
+
+**Evidence:** `session_20261024_231958.log` parks at 68 KiB internal heap tail with `snapshot_reserve`
+need40960 and no pool refusals. `snapshotSlabMalloc` uses `extmem_malloc` only when `EXTMEM_AVAILABLE`;
+there is no internal fallback. Charging that external slab to the internal margin creates a false
+72 KiB threshold. Snapshot change-set vectors already use external-first allocation following the
+24-bar crash repair; this decision adds no allocator, scan or probe.
+
+**Decision:** `snapshotPublicationInternalReserveBytes` charges 8 KiB working margin plus the 32 KiB
+slab only on internal-slab targets. EXTMEM publication therefore needs 40 KiB internal headroom including
+the unchanged floor; internal-slab targets retain 72 KiB. Actual external slab exhaustion remains a
+non-fatal allocation failure and the existing admission/park protocol still applies. No lifetime,
+publication, persistence, undo, role or service-budget change. Owner approved the three-issue repair
+scope with crash protection retained.
+
+**Validation:** Native numeric denial through real publication RED (`hasInFlightSnapshotConstruction`
+unexpectedly true under39 KiB) → GREEN, tier-margin checks at68 KiB and just below40 KiB, existing
+allocation park/recovery and memory policy:161/161. Native uses internal slabs, so its full publication
+recovery is not an external-pool/device claim. Firmware/device checks recorded separately in
+`shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/REPAIR.md`.
+
+**Integrated verification:** full native3439total/7skip/3432pass/0fail; shipping capture buildSUCCESS
+at unchanged RAM1 pins(code392,040+padding1,176), HEX01f70896…. One focused review no concrete defects.
+No upload/device gate or shipped-firmware claim; physical memory/display acceptance remains open.
+
+## DEC-158 — Post-Record overdub intent survives private pass publication
+
+**Date:** 2026-10-25
+**Owner:** Track accepted interaction; TrackManager ordinary overdub admission.
+**Status:** Historical queued-only implementation; publication-wait policy superseded in source on2026-10-26 by the ratified DEC-159/DEC-160 immediate-handoff contract. Installed-image evidence below remains historical.
+
+**Problem:** `session_20261025_112515.log` stops Record at723.150s, but the first Record pass publishes
+at731.378s. During the gap `hasCommittedPasses` is false while `hasData` is true, so Record/Overdub
+short press reaches slot-button mute semantics instead of overdub. Record-return windows already adopt.
+
+**Decision:** Before that fallback, the active slot's matching private Record job accepts/coalesces one
+overdub Start in the existing32-byte PendingInteractionLatch. The ordinary manager start route uses
+the same acceptance. Deferred interaction service waits for publication, then retries the unchanged
+manager admission once per opportunity until success or supersession. No session opens against the
+private first-Record base. Successful actual start consumes the request via the state transition.
+Identity is slot/LoopId/capture interval; UI track focus alone does not retarget it. Clear, active-slot
+exit, ordinary or forced non-Playing transitions supersede the pending Start; Stop→resume cannot
+resurrect it. Empty/replaced results do not overdub. Stop latch behavior, source ownership and all
+admission checks remain. No new queue, field, finalizer, buffer, persistence format or scheduler.
+
+**Final geometry:** A retained Start remains a live resource owner but is not an unpublished Stop.
+Record-stop geometry waits on actual jobs/accepted Stop only, so master length and auto-alignment
+consume final committed geometry even while overdub admission is denied (focused review finding).
+
+**Alternatives/exclusions:** Do not route through a Record-start carrier (wrong operation), treat
+predicted geometry as committed, open a premature base session, or speed finalization to hide lost
+intent. Immediate ingress during private publication is not claimed. Normalization investigation
+finds many bounded calls/service spacing and redundant ordering work; optimization/budget changes
+are separate work, not silently included. No display/undo redesign or emitter retirement here.
+
+**Validation/migration:** No SD migration. Real button/manager/worker, denial/recovery/exact-once,
+clear/Stop/resume/slot/identity/focus/empty and final geometry fixtures; full native, shipping build,
+one focused review. Physical response timing and fresh-device acceptance remain separate.
+[`Execution and results`](../openspec/changes/shipping-rolling-activation/evidence/2026-10-25-post-record-overdub/EXECUTION.md).
+**Local result:** shared102/102; fullnative3446total/7skip/3439pass/0fail; shipping buildSUCCESS,
+RAM1code392,120+padding1,096 with floor840 unchanged. HEX74392e15… NOTuploaded. Review's final
+geometry finding fixed/retested; no new review loop or physical-timing qualification.
+
+**2026-10-26 application of the ratified replacement:** actual button/manager Start now attempts ordinary
+admission while Record remains private; only a real resource denial retains the existing qualified
+intent. No guard, resource owner, state field or service quantum is added. The native Start acceptance
+case is in the default suite, not hidden behind a profile. Frozen playback main/clock reader lifetime
+and live/finalizing display preview selection were corrected as integration defects, preserving
+source/epoch/storage checks and existing preview ownership. No new architectural decision is made.
+Native/build evidence and remaining device gates: [regression execution](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
+## DEC-159 — Immediate first-overdub uses pre-admitted per-interval sealed custody
+
+**Date:** 2026-10-25
+**Owner:** existing Track sealed-interval/interaction ownership; TrackManager admission; Loop/runtime source preparation.
+**Status:** Accepted design direction by owner; concrete firmware contract/readiness NOT yet approved or implemented.
+
+**Problem/evidence:** `session_20261025_121228.log` shows Record stop246.972→first overdub255.820s,
+and independent135–144ms visual reconstruction during Record. Retaining Start through publication
+(DEC-158) is not the required immediate interaction. Existing overdub Stop rejects a predecessor
+job/canonical owner and seals into the same per-slot raw range, so lifting Start alone also strands
+early Stop. Host CaptureRange112bytes excludes directory/tail/body/retirement costs and target ABI.
+
+**Owner decision:** explicitly permits pre-admitted per-interval sealed-range custody inside Track
+with a measured cap, no new Manager or SD schema. Preserve one serialized canonical worker and
+the interaction/presentation lifetime split (DEC-142). Required trace: immutable Record A remains
+private, B accepts/stops, C accepts/stops, then late A completion preserves exact content, causal
+overlap, geometry, undo and save. Source preparation must not block ingress; whole-pass visual
+fallback must be bounded separately through a reachable existing owner.
+
+**Constraints:** no guard deletion, alias of the same sealed range, synchronous whole-take work
+on command/input edges, second reader, arbitrary budget increase or claim of unlimited overlap.
+Concrete cap/target byte price, stable custody/release contract, source deadline and visual producer
+must pass the new item's verification packet before production tasks are generated. Lifetime/undo
+changes still follow the authority's reassessment/decision protocol. No firmware implementation,
+upload or content authorization follows from the proposal artifact or this direction alone.
+
+**Migration:** the implemented queued-only DEC-158 and shipping delta remain truthful current
+behavior until replacement is applied; their publication-wait policy is to be superseded explicitly,
+not relabeled immediate. No SD migration. [Proposal/design/investigation/tasks](../openspec/changes/immediate-record-overdub-handoff/).
+**Verification:** strict OpenSpec and artifact links PASS; four planning artifacts complete.
+Only a header-only native size probe was run; no new runtime tests, firmware build or device run.
+
+## DEC-160 — A predecessor's finalization is local to its own interval
+
+**Date:** 2026-10-25
+**Owner:** Track sealed-interval custody (DEC-159); `TrackUndo`; `Loop` pass/session owners; `StorageManager` persistence.
+**Status:** Accepted by owner (2026-10-25). **Not implemented**: no firmware, fixture or measurement in this record.
+
+**Problem/evidence:** two existing continuations are predecessor-global, and both are reachable exactly when
+a sealed successor exists — the case DEC-159 exists to support.
+
+1. `Track::stepDeferredRecordEmptyResult` computes `resetGeometry = loop.activeCapturePassCount() == 0` and
+   then calls `Loop::resetPassTimeline()` plus five geometry writes
+   (`src/Track/TrackOverdubLifecycle.cpp:2082-2088`). `resetPassTimeline` (`src/Loop/Loop.cpp:32-67`) bumps
+   `canonicalStorageGeneration`, clears every pass and edit pass, `clearPublishedSnapshot()`,
+   `playbackRevision = 0`, the visual cache, the overdub source view, the committed NoteOn identities,
+   `clearPendingNoteChanges()` and `closeOverdubSession()`. Observed: an accepted successor's rows survive
+   while loop geometry goes **768 → 0** (`IMMEDIATE_HANDOFF_CASE=empty`).
+2. `TrackUndo::pushRecordPassAdded` calls `eraseUndoEntriesForSlot(stack, slotIndex, false)`
+   (`src/TrackUndo.cpp:691`), whose predicate matches **every** entry for the slot. A predecessor
+   publication therefore erases a successor's undo entries, breaking causal operation order.
+
+**Owner decision:** finalization is partitioned by interval, not by Track or slot.
+
+1. **Predecessor-local cleanup predicate.** Empty-result cleanup may run only when
+   `loop.activeCapturePassCount() == 0` **and** no custody receipt (DEC-159) or live Capture exists for the
+   same slot/LoopId with `interval > job.interval`. When the successor term is false, the empty result
+   performs only the release of its own receipt obligation: it must not call `resetPassTimeline`, must not
+   write `loopLengthTicks`, `loopStartTick`, `startLoopTick`, `nextEventIndex` or `lastTickInLoop`, and must
+   not reset transport. An empty predecessor can never reset a successor's geometry.
+2. **Interval-owned pending changes.** Finalization operates on the job's own `pendingChanges` (already
+   swapped at admission, `loop.swapPendingNoteChanges(job.pendingChanges)`), never on the shared session, so
+   `clearPendingNoteChanges()`/`closeOverdubSession()` cannot reach a successor. No new pending-change
+   owner is introduced.
+3. **Causally scoped undo erasure.** `UndoEntry` gains `uint64_t interval`; the predecessor prunes only
+   entries with `interval <= job.interval` for that slot/LoopId. Successor entries survive and stack order
+   remains causal order. Measured cost: **132 → 144 target bytes (+12)**, because the appended `uint64_t`
+   makes the struct alignment 8 (append-at-end worst case, no existing padding absorbed).
+4. **Per-receipt, idempotent publication.** Each sealed interval advances `RecordPassReady →
+   RecordPublished` on its own receipt; exactly-once is the phase machine plus `job.ownsPendingPass = false`,
+   never the persistence dirty flag.
+5. **Persistence stays slot-scoped and idempotent.** `requestLoopSlotPersistAndSaveState` marks the slot
+   dirty and `PersistenceWorkQueue::admitWork` dedupes per `(type, key)` while queued. No per-interval admit
+   count or receipt is added, and no private intermediate state is persisted or advertised as complete.
+
+**Constraints:** no new undo kind, no changed routing, no early private root authority, no second reader, no
+whole-take copy. The successor predicate is a read-only query; it allocates nothing and grants no priority.
+
+**Alternatives/exclusions:** rejected — keeping the slot-wide erase and re-pushing successor entries (order
+is not recoverable), keying cleanup on `TRACK_EMPTY`/`hasAnySlotData()` instead of the interval (another
+interval in the same slot still matches), deferring the predecessor's empty cleanup until no successor
+exists at all (a stopped interval would then never clean up), and adding a per-interval persistence receipt
+(duplicates the queue's dedupe without proving anything about content).
+
+**Migration:** DEC-158 — post-Record retained intent, and DEC-159's direction remain the truthful installed
+description; DEC-159's *immediate* replacement is now contracted and ratified but still unapplied. When the
+implementing packet lands, amend DEC-158 and the active shipping delta's
+*Record/Overdub intent survives private first-Record publication* scenario to reference the new behaviour.
+The old image `74392e15…` stays the hashed rollback artifact until the replacement is qualified. No SD
+migration.
+
+**Verification:** the deciding fixtures already exist and discriminate: `IMMEDIATE_HANDOFF_CASE=empty` fails
+at `Expected 768 Was 0. empty A cleanup reset geometry still needed by accepted B`
+([fixture receipt](../openspec/changes/immediate-record-overdub-handoff/evidence/PACKET-FIXTURES.md)).
+Acceptance requires that case to go GREEN with B's rows **and** geometry surviving, a successor undo entry
+surviving a predecessor publication, and both publication orders (A-then-B, B-then-A) yielding identical
+final content and undo chronology. Contract/planning state only at this record: no firmware edit, no build,
+no device run. [Contracts](../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md).
+[Packet P-C](../openspec/changes/immediate-record-overdub-handoff/packets/P-C-FINALIZATION.md).
+
+## DEC-161 — Additive frozen staging roles preserve closure accounting
+
+**Date:** 2026-10-25
+**Owner:** `LoopPlaybackRuntime` / `RuntimePlaybackViewSet` active Capture staging; Track interval custody and canonical-worker binding.
+**Status:** Accepted by owner in this session ("yes A"); implementation/verification recorded separately.
+
+### Problem
+
+The P-A step 2 attempt established that a per-interval finalization receipt alone cannot admit early Stop:
+the two existing staging roles provide only one frozen predecessor plus one live producer. A stopped
+interval retains its role's note reservations and closure credits through canonical ordering. Reusing
+that role for B or C would violate exactly-once closure. See [staging finding](../openspec/changes/immediate-record-overdub-handoff/evidence/PA-STEP2-STAGING.md).
+
+### Decision
+
+Choose **A — add independent staging roles**, not reservation transfer into sealed ranges. Keep one live
+role and enough independently identity-qualified frozen roles for the admitted unfinished intervals.
+Record A plus sealed B/C and one live successor requires at least four roles. At the measured target
+price of62,004 bytes per fully prewarmed role, that minimum adds124,008 requested external bytes over
+the existing two. This is a lower bound for the A/B/C trace, not proof that four roles cover every
+`kCustodyCapacity = 5` occupancy: writer/reader retirement and the next-Stop reservation must be priced
+and checked explicitly. Capacity is provisioned at Capture admission under the existing active-role
+owner, not permanently prewarmed for every recorded slot or allocated on the Stop edge.
+
+The frozen staging role belongs to its interval until the finalizer releases it; no successor start,
+Stop, stale cleanup or canonical-worker rebinding may reset it. Interval admission is independent of
+the **single** canonical writer/output lease; canonical processing remains serialized. Keep existing
+closure reservation accounting intact. Stop cuts input at its recognized boundary; no serialized-Stop
+fallback qualifies as immediate supported operation. Do not reduce the contracted A/B/C/next-Stop trace
+or the structural custody cap to hide a resource conflict.
+
+### Rationale and alternatives
+
+| Alternative | Disposition |
+|---|---|
+| Add roles (A) | Accepted: additive storage, preserves proven reservation/closure accounting and existing owners. |
+| Move reservations into sealed ranges (B) | Not selected for this slice: changes the exactly-once closure invariant and broadens admission work into reservation ownership redesign. |
+| Serialize successor Stops (C) | Rejected: permits input after the requested endpoint and falsifies DEC-159 — immediate first-overdub sealed custody. |
+
+### Constraints and migration
+
+No new Manager, SD format, second canonical writer/reader, whole-take derived buffer, arbitrary work
+budget increase or implicit upload/content permission. Per-role event capacity is unchanged. Existing
+queued-only installed image74392e15 remains the rollback/current device behavior until replacement is
+qualified. P-B source readiness, P-C successor-safe finalization/undo, P-D bounded visuals and target
+timing/stack/allocator qualification remain separate gates. No SD migration.
+
+### Related OpenSpec and verification
+
+[Contracts C1.4a/C2.1](../openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md),
+[P-A packet](../openspec/changes/immediate-record-overdub-handoff/packets/P-A-CUSTODY.md),
+task2.2.14 — staging roles and finalization lease. Required native oracle: B Stop cuts input while A
+is private, then A/B/C seal independently and serialize through the worker; stale/cap/retirement and
+existing regression controls remain intact. Shipping build/resource measurements and one focused
+independent lifecycle review precede completion; device timing is not inferred from native success.
+
+## DEC-162 — Private-predecessor preparation has one bounded grain per turn and a two-edge materialisation deadline
+
+**Date:** 2026-10-25
+**Owner:** `Loop` private-source cursor; `Track` deferred maintenance lane; `LoopPendingNoteChange` seal/admission edges.
+**Status:** Accepted by owner (2026-10-25); implemented and verified natively.
+
+### Problem
+C3.3 named one wakeup for private-predecessor preparation. That branch is unreachable in exactly the state
+the clause exists for: `Track::processDeferredIdleMaintenance` returns from the stop lane while
+`hasPendingDeferredOverdubStop()` holds — the whole time the predecessor is private. C3.4 named only the seal
+helper as the materialisation deadline, but the deferred overdub-stop route never calls it; it feeds the
+interval's pending set into the canonical tail instead, so a retained overlap intent could die unseen.
+
+### Decision
+1. **Bounded progress.** Preparation receives at most one bounded grain per eligible owner turn at the
+   reachable maintenance wakeup while preparation is owed. No catch-up loop and no synchronous completion.
+   Both grain sites are mutually exclusive within a turn, so one grain per turn holds on one lane.
+2. **Materialisation deadline.** Retained predecessor-dependent overlap intents must be materialised, or
+   denied by name, before the pending-change set leaves the Loop's current ownership domain: the seal edge
+   for the synchronous route, and the stop-admission pending-set swap for the deferred route.
+
+### Rationale and alternatives
+| Alternative | Rejected because |
+|---|---|
+| Keep C3.3's single named branch | Unreachable while the predecessor is private: the feature would never run in its own case. |
+| Let the idle lane catch up in one turn | Contradicts the declared quantum and puts content-sized work on the interval path. |
+| Seal-helper deadline only | The deferred route never calls it; retained intents would be dropped silently. |
+| Deny whenever the source is incomplete | Loses accepted overlap decisions the contract requires to survive. |
+
+### Constraints created
+Preparation stays one grain per turn with no scheduler/priority change; materialisation at a deadline is
+bounded by the declared hold capacity and is not a synchronous scan; no stale/empty/cache-only content may be
+applied; committed currency still refuses the private origin.
+
+### Related OpenSpec / verification
+`openspec/changes/immediate-record-overdub-handoff/CONTRACTS.md` C3.3/C3.4 (amended),
+[P-B packet](../openspec/changes/immediate-record-overdub-handoff/packets/P-B-SOURCE.md),
+[execution](../openspec/changes/immediate-record-overdub-handoff/evidence/PB-SOURCE-EXECUTION.md).
+Native: `IMMEDIATE_HANDOFF_CASE=source` 10/10, focused 18/18, full native 3,462 passed / 0 failed, build at
+unchanged RAM1 pins. Device timing remains a separate open gate.
+
+## DEC-163 — Overdub admission reserves the session-exit publication obligation, never a receipt slot
+
+**Date:** 2026-10-27
+**Owner:** `Loop` session-exit publication (`claimSessionExitPublishOwner` / `transferSessionExitToReservedPublishOwner` / `sessionExitPublishClaimState_`); `Track::startOverdubbing` admission; `Track::beginDeferredOverdubStop` stop admission.
+**Status:** Accepted by owner (2026-10-27, the ownership rule of the approved one-unit slice); implemented and verified natively.
+
+### Problem
+DEC-068 made a session-exit tail durable by capturing it into the receipt ring at its interval's stop
+admission, and made a full ring the documented stop denial. Two consequences were measured
+(`test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses`): the overdub transfer
+horizon's cold prewarm called `prewarmSessionExitSnapshotHandoff()`, which requires a *free receipt
+slot*, so `OverdubStart` inherited the snapshot publisher's cadence and refused with the transfer pool
+empty at cycle 16 (`receipts=8/8 admission=0`); and with the coupling removed alone the denial merely
+moves to the stop, whose tail then has no durable destination.
+
+### Decision
+1. **Reserve the obligation, not a slot.** At overdub admission `Loop` claims its single reserved
+   publication record (`Empty → Reserved`). The ring's *existence* is required; its free capacity is not.
+   The interval's own `openOverdubSession` stamps the identity the claim is held for, because admission
+   runs before that session exists.
+2. **Atomic transfer at the stop.** `captureSessionExitTail` takes a receipt when one is free — as
+   before — and otherwise swaps this interval's identities into the already-reserved record
+   (`Reserved → Populated`), source cleared in the same operation. Never a copy, never an allocation.
+3. **Exactly one owner at every stable point.** The record becomes `Publishing` when the interval's
+   final pass commits (`markSessionExitTailReady` on the reserved index), and the publisher moves it
+   through the receipt FIFO exactly once (`Publishing → Empty`); the existing per-turn consumer then
+   publishes it. Nothing republishes a settled obligation.
+4. **An occupied obligation is a named bounded refusal.** A second interval on a loop whose obligation
+   is still reserved, populated or publishing does not start; it reports by name. Never a second slot,
+   never a silent queue.
+5. **No capacity added.** The allocation grows by exactly one record beside the ring
+   (`kSessionExitReceiptSlots = kSessionExitReceiptCapacity + 1`); the FIFO head/count semantics and the
+   ring's capacity are unchanged, and the claim state is one byte placed in existing shell padding
+   (`sizeof(Loop)` stays 1,848, measured).
+
+This supersedes DEC-068's implementation note "a full ring is the documented stop denial
+(`canHandoffSessionExitSnapshot()`)". The stop admission now asks `canCaptureSessionExitTail()` — a free
+receipt slot **or** this interval's reserved record — and `handoffSessionExitSnapshot` keeps its one-shot
+semantics for the legacy synchronous stop.
+
+### Rationale and alternatives
+| Alternative | Rejected because |
+|---|---|
+| Keep the free-slot prewarm (status quo) | `OverdubStart` inherits the publisher's cadence; refusal at cycle 16 with nothing structural exhausted. |
+| Only decouple the prewarm | Moves the denial to the stop, whose tail is then orphaned — the content-loss shape the rule exists to prevent. |
+| Reserve an actual receipt ring slot | The ring is drained by the publisher; a successor would be serialized behind it, which is what the ring's capacity was sized to avoid. |
+| Queue multiple reserved obligations | Unbounded, and the owner's rule names an occupied box as a bounded refusal instead. |
+| Allocate the destination lazily at the stop | The stop boundary must not allocate, and the device's own failure shape is a heap already at its floor. |
+
+### Constraints created
+`canHandoffSessionExitSnapshot()` is no longer an admission condition anywhere: the transfer-horizon
+prewarm and both stop-admission gates read `canCaptureSessionExitTail()`. `pendingSnapshotSessionExitQueued`
+and `hasPendingSnapshotPublish` include the reserved record while it owns the obligation, so the idle lane,
+the display's publication gap and the session-close guard agree. A destructive reset
+(`clearPublishedSnapshot`) releases the record and its claim. A `Populated`/`Publishing` record is never
+released, only published; a payload-free `Reserved` one is released by the start's rollback and by
+`closeOverdubSession` for its own session only.
+
+### Related OpenSpec / verification
+Task 4.20 in `openspec/changes/immediate-record-overdub-handoff/tasks.md`. Packet applied here, with its
+two mutation proofs and the fixture adaptations:
+[§15](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+Native: `test_shared_capture_finalization` 108/108 (the lapse-boundary RED is GREEN, a direct one-owner
+transfer fixture was added, the 64-cycle run is unrestricted), full native 3,513 cases / 7 skipped /
+3,506 succeeded / 0 failed, `teensy41-capture-serial` SUCCESS at RAM1 variables 96,192 / padding 3,208
+(floor 840) — 16 B of ITCM from the new admission call, no re-base. Device acceptance of the 4.20 heap
+question itself remains a separate open gate.
+
+## DEC-164 — The frozen canonical-order binding re-binds only what names another interval, and the stop phase names its refusal
+
+**Date:** 2026-10-27
+**Owner:** `LoopPlaybackRuntime::beginFrozenCaptureCanonicalOrder` (the `PendingStopPhase::CanonicalOrder` gate);
+`Track::processDeferredOverdubStopGrain`'s canonical-order branch; the human stop-admission row.
+**Status:** Accepted by owner (2026-10-27, "go with 1–3 + native stale-binding RED + stale-job negative control");
+implemented, native-verified, **not** flashed.
+
+### Problem
+The `CanonicalOrder` phase was the only phase of the deferred overdub stop that could neither advance nor report.
+`beginFrozenCaptureCanonicalOrder` returned a bare `false` from five distinct predicates, the single stall
+reporter above the branch checked `frozenGeneration` alone, and that reporter latches once per admission — so a
+job that could never advance was indistinguishable from one nobody serviced. Two of the five predicates are
+permanent by construction, and the worst of them is not an invalidation at all: once a binding exists, the
+function returned `matches(...) && (active() || complete())`, and because it is the phase's **only** re-bind site,
+a binding that names another interval could never grow a matching one. A job wedged there is catastrophic rather
+than merely slow: `Track::serviceAcceptedInteractionTurn()` yields while `hasPendingDeferredOverdubStop()`, so
+every later stop is latched (DEC-078) and never driven.
+
+### Decision
+1. **Name the outcome.** `FrozenCaptureCanonicalOrderBegin` is a named nine-value result; the caller reports the
+   refusal once through `noteStallOnce(frozenCaptureCanonicalOrderBeginName(...))`, and the step's `Denied` gets
+   its own reason. The phase can no longer fail silently.
+2. **Re-bind only what names another interval.** A binding whose `generation` differs from the staging's
+   `captureGeneration` describes nothing in flight: it is retired and re-bound, losing no work. A binding that
+   names *this* interval but whose rows, storage epoch or projection moved is a genuine in-flight invalidation and
+   stays `StagingContentMoved`; anything active — a canonical build, an audible build, or a live rewrite cursor —
+   stays `BindingBusy` and is never discarded. The pre-existing byte-exact guards are preserved, not relaxed.
+3. **Say what actually happened.** The stop-admission row is `Overdub stop retained (capacity): <reason> …`; the
+   press is accepted and retained (DEC-078) and calling it a refusal propagated a false reading into every later
+   investigation. Host matchers address the row by family, so both vintages parse.
+
+### Consequences
+The self-heal is deliberately narrow: it cannot mask a real invalidation, cannot discard work in flight, and
+cannot resurrect a retired interval (pinned: the rebound projection contains the current rows only). What it
+removes is the one refusal that had no way back. **The device predicate is still unnamed** — this decision makes
+the next run answer it (`Deferred stop stalled: <reason>`) rather than making the answer unnecessary.
+
+### Verification
+`test_playback_prewarm` 251/251 with three new cases; the RED
+`test_a_stale_canonical_binding_for_another_interval_rebinds_instead_of_wedging` red-proved by mutation
+(`if (true)` → `Expected 0 Was 6`), and the in-flight control red-proved under the same mutation
+(`Expected 5 Was 6`), which is what makes the controls pin the named reasons rather than refusal alone. Host
+`test_retention_probe` 44/44, `test_capture_transitions` 63/63, `test_accepted_sequence` 194/194,
+`test_retention_handoff_plan` 33/33, `test_hitl_boot_handoff` 33/33, `test_check_marker_contract` 14/14. Full
+native **3,521 cases / 7 skipped / 3,514 succeeded / 0 failed**. `teensy41-capture-serial` **SUCCESS** at RAM1
+`variables 96,192` / `code 390,472 + padding 2,744` (floor 840): no re-base, and no DTCM cost — a return type,
+not a field, with the reason literals beside the flash-resident function.
+[§26](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+## DEC-165 — A deferred stop's preparation phases are bounded, and the escapes keep the rows
+
+**Date:** 2026-10-27
+**Owner:** `Track::processDeferredOverdubStopGrain`'s phase-1..9 preparation lanes; the decision table
+`stopPreparationIsBounded` / `stopPreparationStallGrainLimit` / `stopPreparationEscape`
+(`include/TrackPlaybackRuntime.h`); the DEC-070 companion fallback it generalises.
+**Status:** Accepted by owner (2026-10-27, "can't you fix it now?") after the wedge was named on device;
+implemented and native-verified, **not** flashed.
+
+### Problem
+`PendingStopPhase::CanonicalPrefix` held **9,370** and **9,607** grains over 25 s without advancing in two
+independent captures (`session_20261027_160050.log`, `134320.log`), while the same job advanced on its first
+grain once the destination retargeted to `Stopped` -- that branch bypasses `stepCanonicalBase`, which is exactly
+the call that was blocked. Healthy stops build the same base in 68..471 grains, so this is a stall, not slow
+progress. It is fatal rather than slow because the job holds the FIFO head and **that ring holds eight**: each
+further press is admitted behind it until `custody_cap_denied` + `successor_stop_denied_capacity` (queue depth 8)
+retain the press, and the track stays overdubbing -- the reported "cannot stop overdubbing after around 8 times".
+The preparation lanes had no bound at all; the one bound that existed (DEC-070's 512-grain companion fallback)
+was gated on `retargetedFromPlaying`, so a job still bound for PLAYING could stall there too.
+
+### Decision (as shipped after the second device run; §28)
+1. **Bound the canonical base, gated on its cause.** `CanonicalPrefix` gets a 2,048-grain no-progress budget that
+   applies **only while a successor interval is capturing on the same slot** (`isOverdubbing() || isRecording()`)
+   — the measured device state, and the state in which the shared canonical machinery cannot be advanced. On
+   expiry → `AbandonBase`: continue at `CanonicalOrder`. The base feeds only the companion/tail representation,
+   while ordering, the canonical copy and the transfer staging all read the frozen staging rows.
+   **Withdrawn the same day:** the same budget applied unconditionally. The 128-cycle fixtures legitimately
+   declare 5e8 preparation grains, so a fixed count retired healthy jobs (`test_shared_capture_finalization` 3
+   failures, phase 9, `capture_store=empty`).
+2. **Remember the abandonment on the job, and make the tail's exit causal, not counted.** A sentinel in the
+   existing per-job stall phase (`kCanonicalBaseAbandonedPhase`) means a base that a successor builds later cannot
+   tempt the job back into a tail its own interval never earned; `stopCompanionPathIsUnreachable` then takes the
+   raw-only route deterministically, because `beginFrozenCanonicalTail` cannot begin without a ready base.
+3. **DEC-070's companion escape is unchanged** (512, `retargetedFromPlaying` only). Extending it to PLAYING jobs
+   was tried and withdrawn: it parked those same fixtures at `CompanionBridge`, and healthy companion phases
+   measure 56..233 grains and grow with the pass count.
+3. **Report, once per job.** Each escape calls `noteStallOnce` with its own reason, so the next device run names
+   the phase that refused rather than leaving a silent 25 s stall.
+
+### Consequences
+The overdub stop now completes when its base cannot be built while a successor captures, at the cost of that
+stop's note-edit representation (the trade the retargeted path has always made). **This does not close the
+symptom on its own:** the second device run (§28) wedged in a *different* lane — a **Record** job at
+`CanonicalOrder`, whose branch returns before any of this — so the ring can still be bricked by a head that
+parks in a lane with no bound and no reporter. Lane-by-lane budgets are the wrong shape; the named next step is a
+Record-lane report, then either a raw-publication route for a take whose normalization cannot complete or a gate
+on admitting successors behind a stalled head.
+
+### Verification
+`test_stop_preparation_bounds_fire_only_where_an_escape_keeps_the_content` pins all twelve phases for both
+destinations plus the cause gate (the base is unbounded without a capturing successor, and the measured healthy
+471-grain build never fires), red-proved in both directions. `test_playback_prewarm` 252/252,
+`test_shared_capture_finalization` 110/110 (the three fixture failures the unconditional bound caused are green
+again), full native **3,522 / 7 skipped / 3,515 succeeded / 0 failed**, `teensy41-capture-serial` SUCCESS at RAM1
+`variables 96,192` / `code 390,472 + padding 2,744` (no re-base; ITCM unchanged, the helpers are flash-resident
+and add no state).
+[§27](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+## DEC-166 — A Record stop names the predicate refusing its normalization, and nothing else changes
+
+**Date:** 2026-10-27
+**Owner:** `Track::stepDeferredRecordNormalization`; the `CanonicalOrder` arm of the Record lane in
+`Track::processDeferredOverdubStopGrain`; `CaptureStopJob::lastNormalizationDenial`.
+**Status:** Accepted by owner (2026-10-27, "implement the per-job Record-normalization reporter only … let the
+named phase-2 refusal choose the repair"); implemented and native-verified, **not** flashed.
+
+### Problem
+The Record lane has six `Denied` returns and reported none of them, so a Record job parked at `CanonicalOrder`
+produced no evidence at all while it held the FIFO head — and that ring holds eight, so it silently bricked every
+later stop for 32 s on device (`session_20261027_161759.log`, §28). `CanonicalPrefix` and the companion family
+had just been given named refusals (§26/§27); the lane the second run actually hit had none, which is why two
+flashes produced no attribution.
+
+### Decision
+1. **Name the term.** `RecordNormalizationDenial` covers all six returns (`JobIdentity`, `OwnerLost`,
+   `OutputNotReady`, `ChunkStarvation`, `RoleBindRefused`, `PreparationDenied`); the lane writes it to the job and
+   to an optional out-parameter. Names are flash-resident literals in the lane's own cold unit.
+2. **Report once per job, on sustained refusal.** Consecutive `Denied` grains at the same phase are counted in the
+   existing per-job stall fields; at 64 the existing `noteStallOnce` raises
+   `Deferred stop stalled: <term>` plus one detail line carrying the phase and the four remaining credits.
+   `PreparationDenied` is the terminal one and is expected to be the interesting answer: it deliberately keeps
+   its binding, so that job can never advance on this interval.
+3. **Change nothing else.** No predicate, order, credit or phase moves; a denial still consumes no credit. No
+   successor gating and no normalization bypass — this decision buys attribution, not a repair.
+
+### Consequences
+The reporter costs nothing at rest: the new field occupies padding the struct already had, so
+`sizeof(CaptureStopJobs)` stays 33,088 B (the deliberate pin passes unmodified) and `sizeof(Track)` stays 384.
+It also cannot flood: a healthy job is resumable and never accumulates denials, and the row is once per job.
+
+### Verification
+`test_record_normalization_names_its_refusal_and_changes_nothing_else`: a production Record stop is driven up the
+ladder to `CanonicalOrder` naming nothing, then a manufactured identity fault is injected; it asserts the term is
+named, the counter saturates at the report limit, the job is still pending in the same phase holding the ring, and
+all seven names are exact. Red-proved by mutation (storing `None` fails it with `Expected 1 Was 0`).
+`test_shared_capture_finalization` 111/111, `test_playback_prewarm` 252/252, full native **3,523 / 7 skipped /
+3,516 succeeded / 0 failed**, `teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192` / `code 390,472 +
+padding 2,744`.
+[§29](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-DEVICE-DISPLAY-OK-OVERDUB-HEAP-DENIED.md).
+
+## DEC-167 — An abandoned-base Playing stop retires the companion family and commits without a successor window
+
+**Date:** 2026-10-27
+**Owner:** `PendingStopAdmission::retireCompanionSkippedForBaseAbandonment`
+(`include/TrackPlaybackRuntime.h`, `src/Track/TrackPlaybackRuntime.cpp`); the DEC-165 `CanonicalTail`
+escape and the `AtomicTransfer` superseded branch in `Track::processDeferredOverdubStopGrain`
+(`src/Track/TrackOverdubLifecycle.cpp`).
+**Status:** Accepted by owner (2026-10-27, ordered slices ending "prove head retirement and successor service
+without revision movement"); fixture-first, implemented and native-verified, **not** flashed.
+
+### Problem
+DEC-165's cause-based escape moved the wedge one phase later instead of closing it. The escape discarded
+`(void)stop.retireSkippedCompanionPreparation(false)`, but that function is destination-gated and the route is
+destination-Playing by construction (STOPPED-admitted jobs skip the tail earlier; retargeted jobs are excluded by
+`stopCompanionPathIsUnreachable`'s own guard), so the call returned `false` 100% of the time. The surviving
+estimates kept `finalizationComplete()` false, `canCommit` refused both plain transfer variants, and
+`requiresBridgeRefresh` ping-ponged the job back to `CompanionBridge` whose base could never exist — the wedged
+head held `CaptureStopJobs::kCapacity` while every later press was retained. Found by review of DEC-165's landed
+shape, not by another device run.
+
+### Decision
+1. **Named estimate retirement at the escape.** `retireCompanionSkippedForBaseAbandonment()` zeroes
+   order/ranked/canonical/undo collections with no destination gate — the cause ("the companion path can never
+   *begin* on this job") is destination-independent — and keeps the `pending && phase == PrepareTransfer &&
+   remainingClosureGrains == 0` guards. The escape calls it as a named refusal. The other three
+   `retireSkippedCompanionPreparation` call sites stay byte-identical (their STOPPED/empty semantics are correct).
+2. **The commit is taken by cause, not by a revision move.** At `AtomicTransfer` the superseded branch also fires
+   when `!stop.retargetedFromPlaying && retargetStallPhase_ == kCanonicalBaseAbandonedPhase`:
+   `commitPreparedStop` needs `canSelectReservedFrozenCaptureBridge`, which an abandoned base denies forever, so
+   the plain Playing commit is unreachable for this job and `commitSupersededCausalBase` is its only terminal.
+   The staged pass commits with exact content; a receipt-prepared undo entry publishes in the same turn (observed
+   in the fixture) and the unnamed-receipt fail-open rule is unchanged. No successor wrap is waited for.
+3. **Per-job refusal naming** (DEC-166 standard, report only): `CompanionBridge` begin/step refusals, both
+   `retireSupersededPreparation` refusals and an atomic-commit refusal name themselves once per job via
+   `noteStallOnce` with distinct reasons.
+4. **Duplicate guard removed.** The DEC-165 insertion left `if (stop.phase == CanonicalTail)` twice at the
+   escape's head; behavior-neutral dedup.
+
+### Consequences
+The escape-level retirement is belt-and-braces, and that is verified, not assumed: the handler's own
+`retireSupersededPreparation` zeroes the same fields one turn later, so mutating the retirement away alone is
+behavior-neutral at this shape; the load-bearing change is the route-by-cause (red-proved). The trade stays
+DEC-165's: the interval keeps its captured rows but publishes no successor window, so its overdubbed notes are
+audible-committed while the note-edit representation is skipped.
+
+### Verification
+RED first:
+`test_abandoned_base_retires_the_playing_stop_without_revision_movement`
+(`test_shared_capture_finalization`) failed pre-fix with jobs held at 1; GREEN after: head retires, the loop
+revision moves by exactly +1 (only the head's own commit publication — the transport never advances), 140 note
+pairs commit, the undo entry publishes, the successor's stop is then admitted (not retained) and retires, and both
+slots request persistence. Red-proved by mutation of the route condition (`Expected 0 Was 1`), restored
+byte-identically (sha256 match). `test_shared_capture_finalization` 112/112, `test_playback_prewarm` 252/252,
+full native **3,524 / 7 skipped / 3,517 succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1
+`variables 96,192` (pin unchanged, no new Track members) / `code 390,472 + padding 2,744` (floor 840, 1,904 B
+headroom, no re-base).
+[§30](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-STOP-RETIREMENT-REVIEW.md).
+
+## DEC-168 — A retargeted stop with no canonical base escapes raw-only by cause, not by the 512-grain bound
+
+**Date:** 2026-10-27
+**Owner:** `Track::processDeferredOverdubStopGrain`, `CanonicalTail` branch
+(`src/Track/TrackOverdubLifecycle.cpp`); predicate `LoopPlaybackRuntime::canonicalBaseReady()`.
+**Status:** Accepted by owner (2026-10-27, "implement the fix"); fixture-first, mutation-red-proved, native +
+build green, **not** flashed.
+
+### Problem
+DEC-167's device run (`session_20261027_172742.log`) fixed the stop ring (9/9 jobs drained) but exposed the next
+wedge in the same path: after the 8th overdub the stop exits, yet a new overdub start is refused —
+`the session-exit publication obligation is still owned (slot=3 state=populated)` — for ~26 s while seven queued
+jobs each paid DEC-070's 512-grain `CanonicalTail` bound (~2.1 s each). A transport stop flips every queued job's
+destination and command epoch, but the retarget edge (cache release + `retargetStoppedRecovery`) runs for the FIFO
+head only, and the flip already consumes each queued job's own epoch mismatch, so the edge can never key on it
+later. The queued job's canonical base was therefore never built — the STOPPED route skips `CanonicalPrefix`, and
+`beginFrozenCanonicalTail` requires a **ready** base — so its tail can never begin; `retargetStoppedRecovery` only
+rebinds a base that already exists. The job sat out the bound and escaped raw-only anyway, so the companion
+representation was already lost before this change. Verified on-device and in-fixture (`prefixPhase=Idle,
+prefixReady=0, attached=0, ready=0`).
+
+### Decision
+1. **Escape by cause at `CanonicalTail`**: a retargeted job (`retargetedFromPlaying`) whose `canonicalBaseReady()`
+   is false takes the raw-pass-only route immediately — `retireSkippedCompanionPreparation(false)`, discard the
+   prepared companion history, `setPhase(AtomicTransfer)` — with a distinct once-per-job
+   `noteStallOnce("retargeted stop has no canonical base; raw pass only")` and a matching log row. Identical output
+   to the bound's existing escape (which this replaces for that cause), none of the latency.
+2. **A retargeted job whose base IS ready is untouched** (the DEC-070 head flow), and the DEC-165 non-retargeted
+   escape above it is unchanged — the new branch is a cause-based partner, not a re-tuning of the 512 budget, so
+   `test_playback_prewarm`'s DEC-165/DEC-070 decision-table asserts stay as they are.
+3. **Scope note (recorded, not done)**: this does not restore the note-edit (companion) representation for
+   stopped-retargeted queued jobs — that representation was already dropped at the bound on device, and building it
+   would require building a base the STOPPED route deliberately skips. Left as a separate decision if display parity
+   for these jobs is ever wanted.
+
+### Consequences
+The start refusal is a slow-drain, not a permanent wedge: the reserved session-exit record stays `Populated` only
+until the last queued job commits, so making each queued job drain in milliseconds instead of ~2 s collapses the
+~26 s refusal window to the normal stop-commit latency. Captured rows and the receipt-prepared undo entry are
+unchanged (the escape already committed the staged pass and published the entry before this change). The
+arrival-edge "give each queued job its retarget edge" repair that was tried first proved **not load-bearing** — the
+fixture showed the edge ran (`retargetEdgeDone=1`) yet the tail still could not begin because the base was absent —
+and was reverted; only the cause escape remains.
+
+### Verification
+Fixture-first RED: `test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound`
+(`test_shared_capture_finalization`) drives a two-job queue (interval A stopped, same-slot successor B stopped, then
+a transport stop retargets both) and asserts B retires in fewer than `kRetargetedCompanionStallGrainLimit` (512)
+grains of head-arrival. Red-proved by mutation of the escape predicate (neutralized → `[FAILED]` at exactly that
+assert, `bTurns` crossing the bound), restored. `test_shared_capture_finalization` 113/113, `test_playback_prewarm`
+252/252 (decision-table untouched), full native **3,525 / 7 skipped / 3,518 succeeded / 0 failed**,
+`teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` (no new members) / `code 390,472 + padding 2,744`
+(floor 840, no re-base). No commit, no flash.
+[§31](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-QUEUED-RETARGET-EDGE-ATTRIBUTION.md).
+
+## DEC-169 — Overdub/record admission resolves a low arena tail against the read-only free-list walk, not the tail
+
+**Date:** 2026-10-27
+**Owner:** `MemoryMonitor::admitOperationMemory` + new `largestInternalFreeChunkBytes()`
+(`include/Utils/MemoryMonitor.h`, `src/Utils/MemoryMonitor.cpp`); reuses `StoppedHeapDiagnostics::scanInternal`.
+**Status:** Accepted by owner (2026-10-27, "take `!HEAP_STATS`, then Fix 1"); fixture-first, mutation-red-proved, native +
+build green, **not** flashed.
+
+### Problem
+Task 4.20's false denial. `getInternalHeapFreeBytes()` is `&_heap_end - __brkval`, the arena's *un-touched* frontier:
+`_sbrk` is a pure bump and `free()` returns blocks to newlib's free list **below** `__brkval`, so the tail never recovers
+and reads far below the genuinely-free memory. Device `!HEAP_STATS` (2026-10-27, at the failure state) measured the
+asymmetry directly: `heap_tail=36864` (36 KB) while `largest_chunk=81320` (79.4 KB) and `free_chunk_bytes=94744`
+(92.5 KB free, `free_blocks=13`) — so the gate denied an overdub start whose 48 KB `floor + margin` the allocator could
+serve. The obvious fix (ask `malloc`) was already implemented and **withdrawn** on `2776cae3…`: a successful probe raises
+`__brkval` permanently and starved the tail-based `SnapshotReserve` gate the deferred stop needs.
+
+### Decision
+1. **The tail is a pre-filter, the free list is the verdict — read-only.** New `largestInternalFreeChunkBytes()` walks
+   newlib's `__malloc_av_` free list via the already-pinned `StoppedHeapDiagnostics::scanInternal` (bounded ≤ 4096 chunks,
+   `FLASHMEM`, no allocation) and returns the largest free chunk. `admitOperationMemory` consults it **only** for
+   user-gesture admissions (`OverdubStart`/`RecordStart`/`SlotSwitch`) and **only** when the tail says "low": if the
+   largest free chunk ≥ `floor + margin`, admit; otherwise keep the tail verdict. An incomplete walk returns 0, which
+   falls back to the tail denial.
+2. **`SnapshotReserve` and the point-of-use reserves are untouched.** `SnapshotReserve` gates every publication turn, so a
+   walk there would be a per-turn storm; it keeps the tail rule. The point-of-use reserves keep their own predictive
+   probe.
+3. **Floor and margin unchanged.** The question is the same `floor + requiredBytes` the withdrawn probe asked; only the
+   *measure* changed (read the free list instead of allocating from it).
+
+### Consequences
+The device's 36 KB tail now admits the overdub start (largest chunk 79.4 KB ≥ 48 KB). The walk is microseconds at the
+observed fragmentation (13 free blocks) and bounded at 4096 chunks worst-case, and runs at most on a user press, so it
+cannot become the per-turn storm the withdrawn probe was. The arena is not perturbed (no allocation, no `__brkval`
+movement).
+
+### Verification
+Fixture-first RED: `test_tail_low_but_free_list_servable_admits_the_start` (`test_memory_pressure_policy`) pins the fix —
+tail 36 KB + modeled largest chunk 79 KB → admitted; 40 KB → still refused; tail ≥ floor+margin → admitted without the
+walk; `SnapshotReserve` keeps the tail rule. Mutation-red-proved (neutralize the free-list consultation →
+`[FAILED]` at the "must be admitted" assert), restored. `test_memory_pressure_policy` 12/12, full native
+**3,525 / 7 skipped / 3,518 succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192`
+(unchanged) / ITCM `code 390,472 + padding 2,744` (unchanged; the walk is FLASH, +352 B flash) — no re-base. No commit,
+no flash.
+[§32](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-HEAP-ADMISSION-FREE-LIST.md).
+
+## DEC-170 — The canonical-base denial is named on device, and the retained-cache hypothesis is falsified (report-only)
+
+**Date:** 2026-10-27
+**Owner:** `LoopPlaybackRuntime::stepCanonicalPrefix` (`include/TrackPlaybackRuntime.h`,
+`src/Track/TrackPlaybackRuntime.cpp`); the emit in `Track::processDeferredOverdubStopGrain`
+(`src/Track/TrackOverdubLifecycle.cpp`).
+**Status:** Accepted by owner (2026-10-27, "add device blocker reporter"); report-only, native + build green,
+**not** flashed. No behavior change.
+
+### Problem
+The destination-Playing base build stalls ~12 s/job under a live successor (the 2,048-grain DEC-165 bound), holding the
+session-exit obligation and refusing starts. Before choosing cause-based abandon, the owner required falsifying the
+retained-cache hypothesis and naming the device-only contention. The native reproduction showed the retained cache is
+**not** present (`captureAttached=0`, all identities match, base builds to completion), so "successor capturing" alone
+does not make the base impossible; the device stall is a sticky `CanonicalPrefixPhase::Denied` latch whose original
+cause no row names.
+
+### Decision
+1. **Name the first false term (report-only).** `CanonicalPrefixDenial` enumerates the `stepCanonicalPrefix` gates, and
+   `prefixFirstDenialReason` remembers the *original* transition (reset on restart/complete/progress) so the device row
+   `#CAP,…,DIAG,prefix_denied_first,reason=<name>,…` names what first blocked the base, not the sticky `Denied`. An
+   identity supersession keeps its existing `prefix_restart` stage (a restart, not a denial).
+2. **Pack the report fields into a bitfield** (owner's "replace the bools with bit values"): `canonicalPrefixPhase : 2`
+   + `prefixFirstDenialReason : 4` + `prefixDeniedFirstReported : 1` in one byte — neither `sizeof(Track)` (384) nor
+   `sizeof(LoopPlaybackRuntime)` (7,768) grows. The first attempt grew `trackManager` +32 B (caught by the post-link RAM1
+   guard; the `sizeof(Track)` assert is gated in an uncalled `placementPins()` and did not fire).
+
+### Consequences
+Report-only; no admission, escape or bound changed. One device capture now decides the repair: `bridge_active`/
+`capture_attached`/`apply_unavailable`/`inputs_busy` → shared-machinery ownership fix; `step_denied` with valid
+identities → immediate cause-based abandon (and delete the 2,048-grain wait); a `revision_`/`generation_mismatch` or a
+`prefix_restart` flood → supersession/rebind fix.
+
+### Verification
+Control fixture `test_destination_playing_base_builds_natively_under_live_successor` (base builds past `CanonicalPrefix`
+natively, reporter stays silent); `test_shared_capture_finalization` 114/114, full native **3,526 / 7 skipped / 3,519
+succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` / ITCM `code 390,472 + padding
+2,744` (unchanged; +600 B flash). No commit, no flash.
+[§33](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-BASE-BLOCKER-REPORTER.md).
+
+## DEC-171 — The boot loop-slot restore retry bound is actually counted (one-line bug fix)
+
+**Date:** 2026-10-27
+**Owner:** `StorageManager::scheduleLoopSlotRestoreRetry` (`src/StorageManager/LoadLoopJob.cpp`).
+**Status:** Accepted by owner (2026-10-27, "add a similar repair solution"); native + build green, flashed.
+
+### Problem
+After DEC-170 the device hung at the title screen on `LoadLoopJob parse failed` (73 retries) for track 7 / slot 3
+(`/MidiLooper/current/slots/loop_07_03.bin`). Not a boot crash and not the DEC-170 change (which never touched the
+storage/parse path; `sizeof(Loop)`/`sizeof(LoopPlaybackRuntime)` unchanged). The real cause is a **pre-existing bug** in the
+repair the owner remembered: `scheduleLoopSlotRestoreRetry` bounds retries with `loopSlotRestoreAttempts_[track][slot] >=
+kMaxLoopSlotRestoreAttempts` (= 3), but that counter is declared and compared and **never incremented**, so `0 >= 3` never
+fires and a present-but-unparseable slot retried forever instead of reaching its named terminal.
+
+### Decision
+1. **Count the retry** (`++loopSlotRestoreAttempts_[track][slot]`) before the bound check. A corrupt slot now reaches the
+   `Refused` terminal after 3 attempts, is treated as empty, and the boot proceeds to restore the rest of the set. A
+   *missing* file already short-circuits to empty in `beginLoadLoopJob`, so this only changes the present-but-corrupt case.
+2. **No partial-content salvage.** The corrupt file has a valid trailing SAVE token but a structurally invalid body, so there
+   is no intact prefix to recover; the slot is dropped and the other 7 loops survive. (A torn-write-only file would have
+   failed token verification, not the body parse — that path is already retryable.)
+3. **Test updated, not re-encoded.** `test_c6_transient_failure_is_retried_not_latched` drove 8 turns, which with the bound
+   now fires (3 attempts in ~3 turns) — the old 8-turn drive re-encoded the unbounded-retry defect as the oracle. It now
+   drives 2 turns (2 attempts < bound), still asserting the transient failure is owed, not latched.
+
+### Verification
+`test_storage_manager_load` 35/35, full native **3,526 / 7 skipped / 3,519 succeeded / 0 failed**,
+`teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` (unchanged). No commit.
+[§34](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-BOOT-RESTORE-RETRY-BOUND.md).

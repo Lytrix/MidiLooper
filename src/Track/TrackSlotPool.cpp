@@ -125,6 +125,54 @@ TRACK_COLD_MEM bool Track::hasPendingSessionExitSnapshotOnAnySlot() const {
   return false;
 }
 
+/// Task 4.20 device census. Every class is walked at its **resident capacity**, not its live size: capacity is what
+/// the allocator took. The two totals are separated on purpose, because the decline is measured in the *internal*
+/// heap and only some of these owners take it from there:
+///   internal-first — `EditPass::addedEvents` (`InternalHeapFirstAllocator`), the undo entries' nested
+///                    `passIds`/`editPassIds`, and the live overdub session's identity lists;
+///   external-first — each pass's `committedChunkIds` (`CommittedChunkIdAllocator` tries `extmem_malloc` first) and
+///                    the pass vectors themselves, so a large census with a quiet internal heap is not a
+///                    contradiction.
+/// Read-only, allocation-free, bounded by `MAX_LOOPS_PER_TRACK` slots and the pass caps; FLASH-resident
+/// (`TRACK_COLD_MEM`) because its only caller is the rate-limited diagnostics turn, never the interval path.
+TRACK_COLD_MEM Track::AllocationCensus Track::allocationCensus() const {
+  AllocationCensus out;
+  if (!loopsAllocated()) {
+    return out;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (getLoop(s).passes.capturePassCount() != 0) ++out.slotsWithPasses;
+  }
+  const Loop& loop = getActiveLoop();
+  out.capturePasses = static_cast<uint16_t>(loop.passes.capturePassCount());
+  out.editPasses = static_cast<uint16_t>(loop.passes.editPasses.size());
+  // External-first on the device: the pass vectors and every pass's chunk directory.
+  out.externalBytes =
+      static_cast<uint32_t>(loop.passes.overdubPasses.capacity() * sizeof(OverdubPass) +
+                            loop.passes.editPasses.capacity() * sizeof(EditPass));
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    out.externalBytes +=
+        static_cast<uint32_t>(pass.committedChunkIds.capacity() * sizeof(uint16_t));
+  }
+  // Internal-first: each edit pass's own note payload.
+  for (const EditPass& pass : loop.passes.editPasses) {
+    out.editPassBytes += static_cast<uint32_t>(pass.addedEvents.capacity() * sizeof(MidiEvent));
+  }
+  // Internal-first: the undo entries' nested id lists (the entry vector itself is external-first).
+  const GlobalUndoStack& stack = getGlobalUndoStack();
+  out.undoEntries = static_cast<uint16_t>(stack.entries.size());
+  for (const UndoEntry& entry : stack.entries) {
+    out.undoIdBytes += static_cast<uint32_t>(entry.passIds.capacity() * sizeof(PassId) +
+                                            entry.editPassIds.capacity() * sizeof(EditPassId));
+  }
+  // Internal-first: the live overdub session's identity lists, which a settled close empties.
+  const Loop::OverdubSessionRetention session = loop.overdubSessionRetention();
+  out.sessionBytes = static_cast<uint32_t>(session.passCapacity * sizeof(PassId) +
+                                           session.companionNestedCapacity * sizeof(EditPassId));
+  out.internalBytes = out.editPassBytes + out.undoIdBytes + out.sessionBytes;
+  return out;
+}
+
 /// Which loop the `Snapshot` deferred owner serves this turn. The active loop wins **ties**, but not absolutely: a
 /// pending publication the owner's own gate can refuse (queued pass ids with no session exit, no wrap journal and
 /// nothing in flight, e.g. while PLAYING) must not hold the turn against a demoted slot whose accepted republish request

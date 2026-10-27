@@ -596,8 +596,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
-  if (transportStopOutputBarrier_ ||
-      (hasPendingDeferredOverdubStop() && !captureStopJob().admission.permitsPlaybackEmission())) return;
+  if (transportStopOutputBarrier_ || !captureIntervalPermitsPlayback(captureInterval_)) return;
   if (isStoppedRecording()) {
     return;
   }
@@ -609,8 +608,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput) {
-  if (transportStopOutputBarrier_ ||
-      (hasPendingDeferredOverdubStop() && !captureStopJob().admission.permitsPlaybackEmission())) return;
+  if (transportStopOutputBarrier_ || !captureIntervalPermitsPlayback(captureInterval_)) return;
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }

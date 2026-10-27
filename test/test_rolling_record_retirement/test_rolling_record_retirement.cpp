@@ -81,6 +81,7 @@ void test_unadopted_frozen_capture_successor_does_not_park_the_record_job() {
 
   auto& job = TrackCaptureStopTestAccess::head(t);
   TEST_ASSERT_TRUE(job.admission.pending && job.ownsRawRange());
+  const auto* retainedReceipt = job.presentation;
   TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
   TEST_ASSERT_NOT_EQUAL_UINT64(0, job.frozenCaptureContentGeneration);
 
@@ -150,7 +151,8 @@ void test_unadopted_frozen_capture_successor_does_not_park_the_record_job() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, steps, "must exercise presentation retirement, not the popped FIFO");
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::presentationActive(t, 0), detail);
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::extentOwned(t, 0));
-  const auto* presentation = TrackCaptureStopTestAccess::presentation(t, 0);
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::presentation(t, 0)); // stale interval handle is refused
+  const auto* presentation = retainedReceipt;
   TEST_ASSERT_FALSE(presentation->rawRange.needsSourceRelease());
   TEST_ASSERT_TRUE(presentation->rawRange.reservedEmpty());
   TEST_ASSERT_FALSE(loop.hasSealedCaptureBorrow());

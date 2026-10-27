@@ -16,11 +16,13 @@ public:
     friend class Track;
     static void pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId);
     /// S4f.20: job-owned geometry variant. The deferred Record route supplies its own
-    /// before/after geometry and LoopId, so this never reads the Track's inline
-    /// record-capture baseline (which a successor's record start may have replaced).
+    /// before/after geometry, LoopId and capture interval, so this never reads the Track's
+    /// inline record-capture baseline (which a successor's record start may have replaced)
+    /// and prunes only undo checkpoints causally at or before `interval` (DEC-160).
     static void pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId,
                                     LoopId loopId, const UndoLoopGeometry& beforeGeometry,
-                                    const UndoLoopGeometry& afterGeometry);
+                                    const UndoLoopGeometry& afterGeometry,
+                                    uint64_t interval = UINT64_MAX);
     static void pushOverdubPassAdded(Track& track, uint8_t slotIndex, PassIdList passIds,
                                      EditPassIdList companionEditPassIds = {});
     /// Stop: one OverdubPassAdded for sealed session wraps plus the last wrap when committed.

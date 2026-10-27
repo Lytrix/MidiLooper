@@ -223,6 +223,30 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         self.assertEqual(3_900_000, result["admitted_stop_ts"])
         self.assertTrue(result["retirement_ok"])
 
+    def test_the_retained_capacity_wording_counts_as_the_denial(self) -> None:
+        # 2026-10-27: the press is accepted and retained (DEC-078), so the firmware no longer calls this
+        # a refusal. Same reason list, same identity fields, same contract.
+        lines = [
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "[2.100] [INFO] [TRACK] Reentry window open slot=0",
+            "#CAP,2300000,ST,Track,PLAYING,OVERDUBBING",
+            "[2.300] [DEBUG] [TRACK] Overdubbing started @ tick 100",
+            "[2.600] [INFO] [TRACK] Overdub stop retained (capacity): stop_job_pending phase=9 dest=0 "
+            "closure=0 recycle_owner=0 recycle_started=0 undo_ready=1",
+            "[3.400] [INFO] [TRACK] Reentry released",
+            "[3.900] [INFO] [TRACK] Reentry window open slot=0",
+            "[3.920] [INFO] [TRACK] Reentry released",
+        ]
+        result = _verify_successor_reentry(
+            lines, requested_delay_ms=500, requested_stop_delay_ms=300
+        )
+        self.assertTrue(result["overlap_ok"])
+        self.assertEqual(2_600_000, result["denied_stop_ts"])
+        self.assertTrue(result["denied_stop_ok"])
+        self.assertEqual(3_900_000, result["admitted_stop_ts"])
+        self.assertTrue(result["retirement_ok"])
+
     def test_sequential_successor_is_not_overlapping(self) -> None:
         lines = [
             "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",

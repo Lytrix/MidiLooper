@@ -8,6 +8,16 @@ This document does **not** authorize interval reservation, extra `handleMidiInpu
 
 ---
 
+## Completed overdub bridge publication boundary
+
+`Track::processDeferredOverdubStopGrain` may finish its single reserved bridge preparation quantum,
+revalidate the existing fixed-capacity ledger/cursor/source preflight and enter existing atomic
+publication on that same owner turn. It executes no second preparation or cleanup grain. This
+removes post-completion yields, not a safety check or work-credit bound. The composed physical
+cost remains a device measurement gate, not a timing guarantee; no owner bound class is promoted.
+See [stop repair packet](../../../openspec/changes/shipping-rolling-activation/evidence/2026-10-24-three-playback-issues/STOP-REPAIR.md).
+
+
 ## Bounded Record tail-repair prerequisite
 
 `LoopStopFinalize::TailRepairCursor` is structurally bounded per call: reset and
@@ -194,7 +204,43 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 33 | `MidiHandler::processDroidUsbHostOutbound` (drain half; timing-path review, items 2 and 3) | `main.cpp::loop()` at the top of the frame, and once more inside the deferred display frame | At most `MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP` (**4**) USB-host packets plus 4 LED packets per call, and the fader-state coalescing scan is one forward pass of the **published** region (≤ the ring's 256-entry capacity) per sent state entry. The **producer** (`queueDeferredDroidHostEvent`, ISR-reachable) is O(1): one struct store, one masked index publish, no scan, no logging, no telemetry. | **Structurally bounded** (per-call packet cap; the scan is bounded by the ring capacity and runs only for a state entry being sent) |
 | 34 | `Track::serviceOverdubOverlayWindow` (task 3.15e) | `main.cpp` per-track `PlaybackViewMaintenance` visit, the same shape as the NOTE_EDIT preview service | One turn performs fixed boundary/retirement/borrow-release checks and then at most one borrowed-base fill, order, or append-stable extension grain through the slot's existing builder. It never advances canonical preparation (the committed owner does), never takes a `ready` role/`current`, and returns the named deferral when another owner holds the builder. The live-source edge selection is read-only; the `ActiveCaptureOverdub` echo runs only where the lane does not serve. | **Structurally bounded per turn** (one grain + fixed checks); the underlying window-build service remains row 27's unadmitted class |
 
+### Publication-gap display-source continuation
+
+`Loop::stepVisualCacheSourceContinuation` retains its existing bounded producer quantum
+(`LoopContentResolution::kBoundedDisplayRowsPerSlice`,8 units), point-of-use reserve admission,
+private candidate, exact owner/LoopId/revision/length/pass-inventory key and complete-only publication.
+`Track::processDeferredIdleMaintenance` now makes that same producer reachable on audible VisualCache
+turns during a committed session-exit publication gap even when cache reconstruction cannot run.
+Stop and Snapshot service remain earlier; owed private predecessor work excludes this wakeup.
+The selected active-slot display gap prevents other tracks' optional cache-source turns from
+resetting the single global producer, including its ready result before paint consumes it. No new
+scheduler, persistent ownership flag, budget or MIDI-clock work. Background stop/private/Snapshot
+work is unchanged; background cache production resumes with focus/gap change. This is the existing
+producer's structural work-unit bound, not a measured physical latency guarantee for row19's aggregate.
+[Native source/contended-owner evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-002014-DISPLAY.md).
+
+084714 exposes that the initial wakeup is excluded while any Stop job remains pending. The local,
+unshipped correction selects at most one source child in that branch's existing VisualCache slot,
+after its stop grain: the existing private producer while owed, otherwise the existing8-unit committed
+display continuation. It adds no quantum or source child stacking. Compilation/RAM1 passes, but the
+first wrapped frame still fails exact Record identity; source current/candidate lifetime/coverage
+and peak-memory acceptance remain blocked. This row is no continuity/timing acceptance claim.
+[Current failing evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-084714-DISPLAY.md).
+
 Thirteen rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+
+### Accepted post-Record Start retry
+
+DEC-159/DEC-160 replace DEC-158's publication wait with immediate ordinary manager admission against
+the identity-qualified private Record base. The existing latch is retained only when resources deny
+admission; recovery retries ordinary admission through the existing deferred owner. Identity queries
+are fixed work, but allocation-bearing Start admission remains unqualified. The Stop-only structural
+bound in row31 is not transferred to Start; no quantum, fairness or reservation is promoted.
+Display composes existing live and finalizing preview representations through its existing overlay
+owner; no MIDI-storage traversal or whole-take reconstruction is added to a command edge. Composed
+paint/preview traversal and physical timing remain separately unqualified.
+[Regression execution evidence](../../../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-26-REGRESSION-EXECUTION.md).
+
 
 DEC-130 — builder-call cancellation and live-source exclusion adds fixed saved-mask
 call metadata and live descriptor/currency/one-row-or-chunk-transition sections inside

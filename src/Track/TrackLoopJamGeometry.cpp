@@ -30,6 +30,7 @@ TRACK_COLD_MEM void resetActiveLoopPlaybackCursorForJam(Track& track) {
 }  // namespace
 
 TRACK_COLD_MEM void Track::clear() {
+    cancelPendingOverdubStart();
     if (loopsAllocated()) editManager.cancelCurrentRootNoteEditEntryForLoop(getActiveLoop());
     if (trackState == TRACK_EMPTY) {
         // Name the target: identification was previously impossible from the log, so a preparation that
@@ -49,6 +50,16 @@ TRACK_COLD_MEM void Track::clear() {
     if (CaptureStopJob* job = captureStopJobHead()) {
       if (job->slot == activeLoopIndex) (void)supersedeDeferredStopJob(*job);
     }
+    // Every queued interval for this slot is cancelled, not only the worker head.
+    // Identity invalidation leaves its own bounded cleanup to the FIFO owner.
+    if (captureStopJobs_)
+      for (auto& queued : captureStopJobs_->entries)
+        if (queued.admission.pending && queued.slot == activeLoopIndex)
+          queued.loopId = kInvalidLoopId;
+    if (captureStopJobs_)
+      for (auto& receipt : captureStopJobs_->custodies)
+        if (receipt.retirementActive && receipt.slot == activeLoopIndex)
+          receipt.loopId = kInvalidLoopId; // reader cancelled by this explicit clear
     Loop& loop = getActiveLoop();
     loop.resetPassTimeline();
     loop.discardCapture();

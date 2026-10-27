@@ -21,11 +21,24 @@ LOOP_COLD_MEM Loop::~Loop() {}
 /// both the destructor and the box definition.
 void Loop::SessionExitReceiptsDeleter::operator()(SessionExitSnapshotHandoff* receipts) const {
   if (!receipts) return;
-  for (size_t i = 0; i < kSessionExitReceiptCapacity; ++i) {
+  // The allocation carries the FIFO ring plus the one reserved obligation record
+  // (`kReservedSessionExitReceipt`) that sits beside it and is never head/count indexed.
+  for (size_t i = 0; i < kSessionExitReceiptSlots; ++i) {
     receipts[i].~SessionExitSnapshotHandoff();
   }
   ExternalMemoryFirstAllocator<SessionExitSnapshotHandoff>{}.deallocate(
-      receipts, kSessionExitReceiptCapacity);
+      receipts, kSessionExitReceiptSlots);
+}
+/// Task 4.20: the reserved obligation record, one slot past the FIFO ring. Defined in this TU because
+/// it is the ring's lifetime owner and because `Loop::clearPublishedSnapshot` — which releases the
+/// reservation — must resolve without the publisher TU (Loop-pool-only native builds link just this).
+LOOP_COLD_MEM SessionExitSnapshotHandoff* Loop::reservedSessionExit() {
+  if (!sessionExitReceipts_) return nullptr;
+  return &sessionExitReceipts_[kReservedSessionExitReceipt];
+}
+
+LOOP_COLD_MEM const SessionExitSnapshotHandoff* Loop::reservedSessionExit() const {
+  return const_cast<Loop*>(this)->reservedSessionExit();
 }
 
 LOOP_COLD_MEM void Loop::setSessionExitPublishedUndoAttachFn(
@@ -96,6 +109,13 @@ LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
     if (sessionExitReceipts_) sessionExitReceipts_[slot] = {};
   }
   sessionExitReceiptHead_ = 0;
+  // Task 4.20: a destructive reset (clear/load/replacement) owns no publication obligation it can
+  // still publish from this state, so the reserved record and its claim are released here rather
+  // than left to refuse the next interval's claim.
+  if (reservedSessionExit() != nullptr) {
+    *reservedSessionExit() = SessionExitSnapshotHandoff{};
+  }
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
   sessionExitReceiptCount_ = 0;
   clearPendingSnapshotPublish();
 }

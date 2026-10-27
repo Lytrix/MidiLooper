@@ -8,6 +8,10 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
     "test_midi_button_timing",
     "test_shared_capture_finalization",
+    # Immediate Record/overdub handoff: native-only proof/measurement suites reuse production owners.
+    "test_immediate_capture_handoff",
+    "test_immediate_visual_cache_probe",
+    "test_frozen_record_reader_survival",
     # windowed-playback-generation 3.15e slice 3: the live-overlay edge oracle compiles the
     # rolling lane and links the real hot path; the finalization suite (rolling 0 by default)
     # cannot host these fixtures.
@@ -57,7 +61,7 @@ if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
     env.Append(LINKFLAGS=["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"])
-    if env.get("PIOTEST_RUNNING_NAME") == "test_live_capture_display_boundary":
+    if env.get("PIOTEST_RUNNING_NAME") in {"test_live_capture_display_boundary", "test_immediate_visual_cache_probe"}:
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_live_capture_display_boundary/firmware"])
     if env.get("PIOTEST_RUNNING_NAME") == "test_midi_input_clock_integration":
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_midi_input_clock_integration/firmware"])

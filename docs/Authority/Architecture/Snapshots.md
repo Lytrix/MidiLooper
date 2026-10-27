@@ -105,6 +105,11 @@ and session-exit pass lists are queued at their commit/stop owners; idle then
 admits a bounded number of units
 (`MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn` = 2).
 
+Publication admission charges the slab to its allocator tier: an external-only slab is not internal
+heap headroom. The internal requirement is the 32 KiB safety floor plus 8 KiB working margin, plus
+the 32 KiB slab only for internal-slab targets. Pool-refusal and transient allocation park/recovery
+remain unchanged; no live heap scan or allocation probe is added ([DEC-157](../../DECISION_LOG.md)).
+
 Publication is **atomic** and conditional:
 
 - The candidate is frozen (`LoopSnapshotConstruction::freeze`) and stored with

@@ -23,13 +23,10 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   }
   loop.armOverdubWrapAfterLeavingStart(currentPhase);
   if (loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
-    // DEC-069: a pass commit advances the loop's playback revision, which is the resource a
-    // pending deferred stop job's canonical frozen source is pinned to. While that job owns it the
-    // wrap performs no seal at all: the straddling rows stay in the live capture store (wrapped
-    // ticks are already legal there) and the whole commit is owed to the first turn after the job
-    // retires. Sealing here instead invalidated the predecessor permanently, so it never retired
-    // and this interval's own stop was refused for the rest of the session.
-    if (hasPendingDeferredOverdubStop()) {
+    // Interval admission no longer blocks another slot's wrap. The slot's actual
+    // canonical worker still excludes a committed-revision mutation underneath its
+    // prefix: independent frozen staging does not duplicate canonical scratch.
+    if (hasPendingStopForInterval(captureInterval_) || hasCaptureStopWorkerForSlot(activeLoopIndex)) {
       // No new human-log literal here on purpose: on this platform `.rodata` is RAM1-resident, and
       // one added string in this translation unit snaps 4,096 bytes of DTCM away with no symbol
       // size change (`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`). The deferral is observable
@@ -43,7 +40,8 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   // The owed commit is retried on the normal playback turn, never from the stop edge: the caller
   // applies the committed pass to playback and to the interval's source view exactly as it does
   // for an immediate wrap.
-  if (overdubWrapCommitPending_ && !hasPendingDeferredOverdubStop()) {
+  if (overdubWrapCommitPending_ && !hasPendingStopForInterval(captureInterval_) &&
+      !hasCaptureStopWorkerForSlot(activeLoopIndex)) {
     return commitOverdubWrap();
   }
   return false;
@@ -118,7 +116,7 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   // the end of the session and OD3's 598.245 s stop was refused as occupied). A skipped resume is
   // a supported outcome -- the source invalidation path owns the bounded restart -- and the
   // committed wrap pass still reaches playback through the caller's appended source view.
-  const bool predecessorOwnsSlotCanonicalWork = hasPendingDeferredOverdubStop();
+  const bool predecessorOwnsSlotCanonicalWork = hasCaptureStopWorkerForSlot(activeLoopIndex);
   if (wrapped && runtime && !predecessorOwnsSlotCanonicalWork) {
     const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
                                             loop.publishedSnapshotIdentity()};

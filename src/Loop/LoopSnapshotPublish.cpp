@@ -1224,17 +1224,14 @@ bool remainingWrapPublishWork(const PendingSnapshotPublishBox& box) {
 /// selected instead of consuming an idle turn forever.
 constexpr uint16_t kSnapshotFragmentMaxConsecutiveFailures = 2;
 
-/// DEC-073 RC-PUB-1: internal-heap headroom one content-sized publication turn must leave beyond
-/// the admission floor -- one slab plus the fragment working set. The slab itself comes from the
-/// external pool, whose exhaustion the gate catches through the pool-refusal record; this margin
-/// is what stops a low heap from being drained by a publication turn, which is the 2026-09-18
-/// reset (`session_20260918_101615`): after the wrap commit the heap fell 108 -> 72 -> 36 -> 0 KB
-/// in three turns while the pool still served slabs, and the exhausted allocator called `abort()`.
-constexpr uint32_t kSnapshotPublicationReserveBytes = kSnapshotSlabBytes + (8u * 1024u);
+/// Charge the slab to the tier snapshotSlabMalloc actually uses. On EXTMEM targets
+/// it is external-only and fails non-fatally; it cannot consume the internal reserve.
+/// Keep the 8 KiB working margin, the gate's 32 KiB floor and pool-refusal check.
+constexpr uint32_t kSnapshotPublicationReserveBytes =
+    snapshotPublicationInternalReserveBytes(EXTMEM_AVAILABLE != 0);
 
-/// Admit one content-sized publication turn -- a construction start, step, or freeze. These are
-/// the only publication operations that allocate new snapshot nodes (32 KB pool slabs plus an
-/// internal-heap working set), so they are admitted exactly like the record/overdub boundaries.
+/// Admit one content-sized publication turn -- a construction start, step, or freeze.
+/// Allocation failure still follows the existing transient park/recovery protocol.
 ///
 /// A denial is not a failure: nothing is written, the previous root stays selected, and the
 /// publication stays pending. That is the state the persistence gate already understands
@@ -1492,7 +1489,8 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
 }
 
 LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
-  if (hasPendingSessionExitReceipt() ||
+  // Task 4.20: an owed reservation obligation must not be discarded by a session close either.
+  if (hasPendingSessionExitReceipt() || hasReservedSessionExitObligation() ||
       !pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->sessionExitQueued) {
     return;
   }
@@ -1507,6 +1505,10 @@ LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
 
 LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
   if (hasPendingSessionExitReceipt()) return true;
+  // Task 4.20: only the ready-but-not-yet-queued reservation is *publishable* work. A `Populated`
+  // record whose final pass has not committed is owed, not work: reporting it here would make the
+  // publisher allocate an empty box every turn for an obligation it must not start yet.
+  if (sessionExitPublishClaimState_ == SessionExitPublishClaim::Publishing) return true;
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
     if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued ||
@@ -1653,7 +1655,11 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
 }
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
-  return hasPendingSessionExitReceipt() ||
+  // Task 4.20: a reserved obligation that already owns the interval's identities is a pending
+  // session-exit publication even before it reaches the receipt FIFO (the ring may be full), so every
+  // consumer of this predicate — the idle lane's admission, the display's publication gap, and the
+  // session-close guard — sees the same answer as for a receipt.
+  return hasPendingSessionExitReceipt() || hasReservedSessionExitObligation() ||
          (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued);
 }
 
@@ -1972,18 +1978,29 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesOnPublicationLane(bool rebuildFro
   return true;
 }
 
-LOOP_COLD_MEM bool Loop::prewarmSessionExitSnapshotHandoff() {
+LOOP_COLD_MEM bool Loop::ensureSessionExitReceiptRing() {
   if (!sessionExitReceipts_) {
+    // One slot past the FIFO ring carries the reserved publication obligation (Task 4.20). It is
+    // allocated with the ring because admission that reserves the obligation must not later have to
+    // allocate at its stop boundary, and it is never head/count indexed.
     auto* storage = ExternalMemoryFirstAllocator<SessionExitSnapshotHandoff>{}.allocate(
-        kSessionExitReceiptCapacity);
+        kSessionExitReceiptSlots);
     if (!storage) return false;
-    for (size_t i = 0; i < kSessionExitReceiptCapacity; ++i) {
+    for (size_t i = 0; i < kSessionExitReceiptSlots; ++i) {
       new (&storage[i]) SessionExitSnapshotHandoff{};
     }
     sessionExitReceipts_.reset(storage);
     sessionExitReceiptHead_ = 0;
     sessionExitReceiptCount_ = 0;
+    sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
   }
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::prewarmSessionExitSnapshotHandoff() {
+  // Ring existence *and* a free slot: this is the cold prewarm for callers that genuinely write a
+  // receipt. Admission that only needs the ring to exist uses `ensureSessionExitReceiptRing()`.
+  if (!ensureSessionExitReceiptRing()) return false;
   return canHandoffSessionExitSnapshot();
 }
 
@@ -2012,12 +2029,91 @@ LOOP_COLD_MEM const SessionExitSnapshotHandoff* Loop::sessionExitReceiptByRingIn
   return const_cast<Loop*>(this)->sessionExitReceiptByRingIndex(ringIndex);
 }
 
+LOOP_COLD_MEM uint64_t Loop::sessionExitPublishClaimIdentity() const {
+  const SessionExitSnapshotHandoff* record = reservedSessionExit();
+  return record != nullptr ? record->sessionIdentity : 0;
+}
+
+LOOP_COLD_MEM bool Loop::hasReservedSessionExitObligation() const {
+  return sessionExitPublishClaimState_ == SessionExitPublishClaim::Populated ||
+         sessionExitPublishClaimState_ == SessionExitPublishClaim::Publishing;
+}
+
+LOOP_COLD_MEM Loop::ReservedSessionExitRetention Loop::reservedSessionExitRetention() const {
+  ReservedSessionExitRetention out;
+  const SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr) return out;
+  out.passCount = record->passIds.size();
+  out.companionCount = record->companionIds.size();
+  out.companionRowCount = record->companionRowCount;
+  out.pending = record->pending;
+  out.ready = record->ready;
+  return out;
+}
+
+LOOP_COLD_MEM bool Loop::claimSessionExitPublishOwner() {
+  // The identity is stamped by `openOverdubSession`, the owner that creates it: admission runs
+  // before that session exists, so predicting a generation here would be a second authority.
+  if (!ensureSessionExitReceiptRing()) return false;
+  if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Empty) return false;
+  SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr) return false;
+  // One owner per session. A record still holding identities belongs to a predecessor's obligation.
+  if (record->pending || !record->passIds.empty() || !record->companionIds.empty()) return false;
+  *record = SessionExitSnapshotHandoff{};
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Reserved;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::releaseSessionExitPublishOwner(uint64_t sessionIdentity) {
+  if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Reserved) {
+    // A populated/publishing record owns committed identities the publisher still owes; releasing
+    // it here would drop the obligation rather than move it.
+    return false;
+  }
+  SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr) return false;
+  if (record->sessionIdentity != sessionIdentity) return false;
+  *record = SessionExitSnapshotHandoff{};
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::transferSessionExitToReservedPublishOwner(uint64_t sessionIdentity) {
+  if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Reserved) return false;
+  SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr || record->sessionIdentity != sessionIdentity) return false;
+  record->companionRowCount =
+      std::min(overdubSessionCursor_, overdubSessionCompanionIds_.size());
+  // Swap, never copy: this admission boundary must not allocate, and the identities must leave the
+  // shared slot in the same operation so no stable point has two owners or none.
+  record->passIds.swap(overdubSessionPassIds_);
+  record->companionIds.swap(overdubSessionCompanionIds_);
+  overdubSessionCursor_ = 0;
+  record->pending = true;
+  record->ready = false;
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Populated;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::canCaptureSessionExitTail() const {
+  if (canHandoffSessionExitSnapshot()) return true;
+  return sessionExitPublishClaimState_ == SessionExitPublishClaim::Reserved &&
+         sessionExitPublishClaimIdentity() == overdubSessionUndoGeneration_;
+}
+
 LOOP_COLD_MEM size_t Loop::captureSessionExitTail(CommitReason reason) {
   if (!isSessionExit(reason) || !hasOverdubSession() || loopLengthTicks == 0) {
     return kInvalidSessionExitReceipt;
   }
   if (sessionExitReceiptCount_ >= kSessionExitReceiptCapacity) {
-    return kInvalidSessionExitReceipt;
+    // Task 4.20: no free receipt slot. This interval's admission reserved a durable destination for
+    // exactly this obligation, so take it there instead of leaving the identities in the shared
+    // session — where a successor's open would overwrite them — and instead of denying the stop.
+    if (!transferSessionExitToReservedPublishOwner(overdubSessionUndoGeneration_)) {
+      return kInvalidSessionExitReceipt;
+    }
+    return kReservedSessionExitReceipt;
   }
   const size_t ringIndex =
       (sessionExitReceiptHead_ + sessionExitReceiptCount_) % kSessionExitReceiptCapacity;
@@ -2033,6 +2129,9 @@ LOOP_COLD_MEM size_t Loop::captureSessionExitTail(CommitReason reason) {
   receipt.pending = true;
   receipt.ready = false;
   ++sessionExitReceiptCount_;
+  // The receipt owns the identities now, so the reservation this interval took at admission has no
+  // payload to protect and must not survive to refuse the next interval's claim.
+  (void)releaseSessionExitPublishOwner(overdubSessionUndoGeneration_);
   return ringIndex;
 }
 
@@ -2057,6 +2156,24 @@ LOOP_COLD_MEM bool Loop::handoffSessionExitSnapshot(CommitReason reason) {
   // Existing wrap construction must survive close until the idle owner merges
   // these identities into its queues. The receipt also supplies playback's
   // stale-root overlay before the first publisher turn.
+  return true;
+}
+LOOP_COLD_MEM bool Loop::moveReservedSessionExitIntoReceiptRing() {
+  if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Publishing) return false;
+  SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr || !record->pending || !record->ready) return false;
+  if (!canHandoffSessionExitSnapshot()) return false;
+  const size_t ringIndex =
+      (sessionExitReceiptHead_ + sessionExitReceiptCount_) % kSessionExitReceiptCapacity;
+  SessionExitSnapshotHandoff& receipt = sessionExitReceipts_[ringIndex];
+  // Move, never copy: the publisher owns the payload on both sides of this edge, so no allocation
+  // and no loss window. Only after the receipt holds every field is the reservation cleared.
+  receipt = std::move(*record);
+  *record = SessionExitSnapshotHandoff{};
+  ++sessionExitReceiptCount_;
+  // Exactly once: the FIFO now owns the obligation, and a later turn cannot advance this claim again
+  // because it is no longer `Publishing`.
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
   return true;
 }
 
@@ -2183,6 +2300,13 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
+  }
+  if (sessionExitPublishClaimState_ == SessionExitPublishClaim::Publishing) {
+    // Task 4.20: the reserved obligation crosses into the receipt FIFO exactly once, and only when a
+    // free slot exists. It stays `Publishing` otherwise — owned, not lost, and not a second queue —
+    // and the turn falls through so a full ring still drains one ready receipt, which is what makes
+    // the slot available on a later turn instead of wedging both.
+    (void)moveReservedSessionExitIntoReceiptRing();
   }
   if (hasPendingSessionExitReceipt()) {
     if (!allowStartConstruction) return true;

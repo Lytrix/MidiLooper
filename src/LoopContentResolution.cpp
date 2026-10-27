@@ -9,6 +9,7 @@
 #include "CommittedEventRange.h"
 #include "EditApply.h"
 #include "Globals.h"
+#include "Utils/MemoryMonitor.h"
 #include "LoopEventStore.h"
 #include "OverlapNoteIdObservation.h"
 #include "Utils/DisplayWindowUtils.h"
@@ -2604,6 +2605,691 @@ struct DeviceGateSession {
   LoopContentResolution::DeviceGateSample sample_;
 };
 
+/// C5.2a / P-D — the derived-view lane's bounded continuation.
+///
+/// `DeviceGateSession` above is not live-lane-safe: eleven of its steps declare themselves
+/// `indivisible` and are content-sized (two whole-index sorts plus whole-vector copies). A step of
+/// this session advances at most `kBoundedDisplayRowsPerSlice` (8) source rows, never sorts, and
+/// never copies a whole vector. It reproduces `resolveDisplayNotes(passes, ...)` — the pass-local
+/// note set the idle slice needs — by advancing one cursor per call:
+///
+///   Order   one capture pass into the resolve order (record first, then mergeSequence)
+///   Begin   per-pass workspace only (reserve / clear; no content walk)
+///   Layer   up to 8 committed events into this pass's layer
+///   Edits   one active note-edit row applied to the layer
+///   Spans   up to 8 layer events into canonical note spans
+///   Project up to 8 spans into display notes
+///   Emit    up to 8 projected notes: first-occurrence de-duplication, then pass-order upsert
+///
+/// The result is published once, when every eligible pass has been consumed, and is stamped with
+/// the exact request. A changed request discards the partial candidate: nothing obsolete is ever
+/// published and the caller keeps its previous frame.
+struct BoundedDisplaySession {
+  enum class Phase : uint8_t {
+    Idle,
+    Order,
+    BeginPass,
+    Layer,
+    Edits,
+    Spans,
+    Project,
+    Emit,
+    Ready,
+    Denied,
+  };
+  enum class StepResult : uint8_t { Continue, Complete, Refused };
+
+  static constexpr uint32_t kRows = LoopContentResolution::kBoundedDisplayRowsPerSlice;
+
+  struct OrderEntry {
+    uint32_t mergeSequence = 0;
+    PassId id = kInvalidPassId;
+  };
+  struct DedupeSlot {
+    uint32_t generation = 0;
+    uint32_t index = 0;
+  };
+  using DedupeSlotVec = std::vector<DedupeSlot, ExternalMemoryFirstAllocator<DedupeSlot>>;
+  using UpsertIndex =
+      std::unordered_map<uint64_t, uint32_t, std::hash<uint64_t>, std::equal_to<uint64_t>,
+                         ExternalMemoryFirstAllocator<std::pair<const uint64_t, uint32_t>>>;
+
+  /// Retained-envelope identity for one pass of the promoted prefix, in resolve order (Record first,
+  /// then the overdub list) — the order `candidateAt` enumerates, so an index stays meaningful
+  /// across a wrap. `chunkCount` + `retainedChunks[firstChunk …]` are the exact committed-chunk
+  /// identity, deliberately not a row count.
+  struct RetainedPass {
+    PassId id = kInvalidPassId;
+    CapturePassState state = CapturePassState::Active;
+    uint32_t firstChunk = 0;
+    uint32_t chunkCount = 0;
+  };
+  struct RetainedEdit {
+    EditPassId id = kInvalidEditPassId;
+    EditPassType type = EditPassType::Note;
+    EditPassState state = EditPassState::Active;
+  };
+  using RetainedPassVec = std::vector<RetainedPass, ExternalMemoryFirstAllocator<RetainedPass>>;
+  using RetainedEditVec = std::vector<RetainedEdit, ExternalMemoryFirstAllocator<RetainedEdit>>;
+  using RetainedChunkIds = std::vector<uint16_t, ExternalMemoryFirstAllocator<uint16_t>>;
+
+  /// Candidate role only: a re-key (`begin`) and a pass-set mismatch reset the partial candidate and
+  /// **keep** the retained envelope, which is what lets the previous generation keep serving while
+  /// its replacement is built. The envelope is cleared only by `reset()`.
+  void resetCandidate() {
+    owner = nullptr;
+    loopId = kInvalidLoopId;
+    passCount = 0;
+    keyEventRows = 0;
+    loopLengthTicks = 0;
+    requestGeneration = 0;
+    orderCursor = 0;
+    passEventRows = 0;
+    totalEventRows = 0;
+    maxPassEventRows = 0;
+    chunkCursor = 0;
+    chunkEventCursor = 0;
+    editCursor = 0;
+    spanCursor = 0;
+    projectCursor = 0;
+    emitCursor = 0;
+    dedupeGeneration = 0;
+    orderEntries.clear();
+    candidatePasses.clear();
+    candidateChunks.clear();
+    candidateEdits.clear();
+    candidateResultInEnvelope = false;
+    layer = MidiEventVec{};
+    build.clear();
+    projected = NoteUtils::DisplayNoteVec{};
+    notes = NoteUtils::DisplayNoteVec{};
+    dedupeSlots = DedupeSlotVec{};
+    upsertIndex.clear();
+    lastStep = "idle";
+    lastUnits = 0;
+    lastCursor = 0;
+    deferReason = nullptr;
+  }
+  /// Candidate **and** retained roles go: explicit `boundedDisplayCancel()` and an invalid request.
+  void reset() {
+    resetCandidate();
+    retainedValid = false;
+    retainedOwner = nullptr;
+    retainedLoopId = kInvalidLoopId;
+    retainedLoopLengthTicks = 0;
+    retainedGeneration = 0;
+    retainedPricedCapacity = 0;
+    retainedRefusal = nullptr;
+    retainedPasses.clear();
+    retainedChunks.clear();
+    retainedEdits.clear();
+    retainedNotes = NoteUtils::DisplayNoteVec{};
+  }
+  void clearRetained() {
+    retainedValid = false;
+    retainedOwner = nullptr;
+    retainedLoopId = kInvalidLoopId;
+    retainedLoopLengthTicks = 0;
+    retainedGeneration = 0;
+    retainedPricedCapacity = 0;
+    retainedPasses.clear();
+    retainedChunks.clear();
+    retainedEdits.clear();
+    retainedNotes = NoteUtils::DisplayNoteVec{};
+  }
+  bool passesMatch(const LoopPasses& passes) const {
+    return phase != Phase::Idle && passCount == passes.capturePassCount();
+  }
+
+  bool sameRequest(const LoopContentResolution::BoundedDisplayRequest& request,
+                   const LoopPasses& passes) const {
+    return phase != Phase::Idle && owner == request.owner && loopId == request.loopId &&
+           loopLengthTicks == request.loopLengthTicks &&
+           playbackRevision == request.playbackRevision && passesMatch(passes) &&
+           keyEventRows ==
+               LoopContentResolution::boundedDisplayCountCommittedEvents(passes, 0xFFFFFFFFu);
+  }
+
+  void begin(const LoopContentResolution::BoundedDisplayRequest& request,
+             const LoopPasses& passes) {
+    resetCandidate();
+    owner = request.owner;
+    loopId = request.loopId;
+    loopLengthTicks = request.loopLengthTicks;
+    playbackRevision = request.playbackRevision;
+    requestGeneration = request.canonicalStorageGeneration;
+    passCount = passes.capturePassCount();
+    keyEventRows =
+        LoopContentResolution::boundedDisplayCountCommittedEvents(passes, 0xFFFFFFFFu);
+    // The edit identity the candidate is built with, captured where the request is admitted: a
+    // promotion whose live edit list no longer matches this is refused by name rather than stamped
+    // with an identity its rows were not built from.
+    candidateEdits.reserve(passes.editPasses.size());
+    for (const EditPass& row : passes.editPasses) {
+      candidateEdits.push_back({row.id, row.passType, row.state});
+    }
+    phase = Phase::Order;
+    record("order", 0, 0);
+  }
+
+  void record(const char* step, uint32_t units, uint32_t cursor) {
+    lastStep = step;
+    lastUnits = units;
+    lastCursor = cursor;
+  }
+
+  /// The pass at `index` in resolve order (Record first, then the overdub list) — the same order
+  /// `candidateAt` enumerates, so an index the envelope recorded keeps its meaning.
+  static bool livePassAt(const LoopPasses& passes, uint32_t index, PassId& id,
+                         CapturePassState& state, const CommittedChunkIdList*& chunks) {
+    uint32_t seen = 0;
+    if (passes.hasRecordPass()) {
+      if (index == seen) {
+        id = passes.recordPass.id;
+        state = passes.recordPass.state;
+        chunks = &passes.recordPass.committedChunkIds;
+        return true;
+      }
+      ++seen;
+    }
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (index == seen) {
+        id = pass.id;
+        state = pass.state;
+        chunks = &pass.committedChunkIds;
+        return true;
+      }
+      ++seen;
+    }
+    return false;
+  }
+
+  static uint32_t livePassCount(const LoopPasses& passes) {
+    return static_cast<uint32_t>((passes.hasRecordPass() ? 1u : 0u) + passes.overdubPasses.size());
+  }
+
+  /// The retention identity, read at reuse time: request identity, the whole edit-row identity, and
+  /// an exact walk of the **retained prefix** only (index, `PassId`, `CapturePassState`, exact
+  /// committed-chunk ids). Passes appended after the prefix are deliberately not compared — that is
+  /// what lets a wrap keep serving — while any change inside it refuses and names nothing new.
+  TRACK_COLD_MEM bool retainedMatches(const LoopContentResolution::BoundedDisplayRequest& request,
+                                      const LoopPasses& passes) const {
+    if (!retainedValid || retainedPasses.empty() || retainedOwner != request.owner ||
+        retainedLoopId != request.loopId || retainedLoopLengthTicks != request.loopLengthTicks ||
+        retainedGeneration != request.canonicalStorageGeneration) {
+      return false;
+    }
+    if (retainedEdits.size() != passes.editPasses.size()) {
+      return false;
+    }
+    for (size_t row = 0; row < retainedEdits.size(); ++row) {
+      const EditPass& live = passes.editPasses[row];
+      if (live.id != retainedEdits[row].id || live.passType != retainedEdits[row].type ||
+          live.state != retainedEdits[row].state) {
+        return false;
+      }
+    }
+    if (static_cast<uint32_t>(retainedPasses.size()) > livePassCount(passes)) {
+      return false;
+    }
+    for (uint32_t index = 0; index < retainedPasses.size(); ++index) {
+      const RetainedPass& retainedRow = retainedPasses[index];
+      PassId id = kInvalidPassId;
+      CapturePassState state = CapturePassState::Active;
+      const CommittedChunkIdList* chunks = nullptr;
+      if (!livePassAt(passes, index, id, state, chunks) || chunks == nullptr) {
+        return false;
+      }
+      if (id != retainedRow.id || state != retainedRow.state) {
+        return false;
+      }
+      if (chunks->size() != retainedRow.chunkCount) {
+        return false;
+      }
+      for (uint32_t chunk = 0; chunk < retainedRow.chunkCount; ++chunk) {
+        if ((*chunks)[chunk] != retainedChunks[retainedRow.firstChunk + chunk]) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /// Promotion at the publish edge. The candidate's own buffers move into the envelope (no
+  /// allocation on the publish turn, no `shrink_to_fit`), and the previous envelope's identity
+  /// scratch moves back for the next candidate to reuse. Every refusal keeps the previous envelope
+  /// and leaves the finished candidate authoritative for its own request.
+  TRACK_COLD_MEM void promoteRetained(const LoopPasses& passes) {
+    retainedRefusal = nullptr;
+    if (candidatePasses.empty() || candidateEdits.size() != passes.editPasses.size()) {
+      retainedRefusal = "retained_stale";
+      return;
+    }
+    for (size_t row = 0; row < candidateEdits.size(); ++row) {
+      const EditPass& live = passes.editPasses[row];
+      if (live.id != candidateEdits[row].id || live.passType != candidateEdits[row].type ||
+          live.state != candidateEdits[row].state) {
+        retainedRefusal = "retained_stale";
+        return;
+      }
+    }
+    const uint32_t capacity = static_cast<uint32_t>(notes.capacity());
+    if (capacity > LoopContentResolution::kRetainedDisplaySourceNoteCapacity) {
+      retainedRefusal = "retained_capacity";
+      return;
+    }
+    if (!MemoryMonitor::admitDisplayProjectionReserve(sizeof(NoteUtils::DisplayNote) * capacity)) {
+      retainedRefusal = "retained_admission";
+      return;
+    }
+    retainedValid = true;
+    retainedOwner = owner;
+    retainedLoopId = loopId;
+    retainedLoopLengthTicks = loopLengthTicks;
+    retainedGeneration = requestGeneration;
+    retainedPricedCapacity = capacity;
+    retainedPasses.swap(candidatePasses);
+    retainedChunks.swap(candidateChunks);
+    retainedEdits.swap(candidateEdits);
+    // The rows themselves change hands: the candidate's result *is* the envelope from here on, so a
+    // second owner (and a second copy) never exists.
+    retainedNotes = std::move(notes);
+    notes = NoteUtils::DisplayNoteVec{};
+    candidateResultInEnvelope = true;
+  }
+
+  /// The finished candidate's rows, which live in the envelope once they were promoted.
+  const NoteUtils::DisplayNoteVec& candidateNotes() const {
+    return candidateResultInEnvelope ? retainedNotes : notes;
+  }
+
+  /// Capture pass at `cursor` in `resolveDisplayNotes` order (record first, then the overdub list).
+  static bool candidateAt(const LoopPasses& passes, uint32_t cursor, OrderEntry& out,
+                          bool& eligible) {
+    uint32_t seen = 0;
+    if (passes.hasRecordPass()) {
+      if (cursor == seen) {
+        out.id = passes.recordPass.id;
+        out.mergeSequence = 0;  // RecordPass is always the first layer (resolveDisplayNotes order).
+        eligible = passes.recordPass.state == CapturePassState::Active &&
+                   !passes.recordPass.committedChunkIds.empty();
+        return true;
+      }
+      seen += 1;
+    }
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (cursor == seen) {
+        out.id = pass.id;
+        out.mergeSequence = pass.mergeSequence;
+        eligible = pass.state == CapturePassState::Active && !pass.committedChunkIds.empty();
+        return true;
+      }
+      seen += 1;
+    }
+    return false;
+  }
+
+  static const CommittedChunkIdList* chunksFor(const LoopPasses& passes, PassId id) {
+    if (passes.hasRecordPass() && passes.recordPass.id == id) {
+      return &passes.recordPass.committedChunkIds;
+    }
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.id == id) {
+        return &pass.committedChunkIds;
+      }
+    }
+    return nullptr;
+  }
+
+  /// `upsertResolvedDisplayNote` identity: stable NoteId, else pitch+start for invalid IDs.
+  static uint64_t upsertKey(const NoteUtils::DisplayNote& note) {
+    if (note.noteId != kInvalidNoteId) {
+      return (1ull << 63) | static_cast<uint64_t>(note.noteId);
+    }
+    return (static_cast<uint64_t>(note.note) << 32) | static_cast<uint64_t>(note.startTick);
+  }
+
+  /// First occurrence of (pitch, startTick, endTick) inside the current pass — the same keep-first
+  /// rule `NoteUtils::dedupeProjectedDisplayNotes` applies, without sorting.
+  TRACK_COLD_MEM bool dedupeFirst(const NoteUtils::DisplayNote& note, uint32_t projectedIndex) {
+    if (dedupeSlots.empty()) {
+      return true;
+    }
+    const uint32_t mask = static_cast<uint32_t>(dedupeSlots.size() - 1);
+    uint64_t hash = static_cast<uint64_t>(note.note) * 0x9E3779B97F4A7C15ull;
+    hash ^= static_cast<uint64_t>(note.startTick) * 0xC2B2AE3D27D4EB4Full;
+    hash ^= static_cast<uint64_t>(note.endTick) * 0x165667B19E3779F9ull;
+    hash ^= hash >> 31;
+    uint32_t slot = static_cast<uint32_t>(hash) & mask;
+    for (uint32_t probe = 0; probe <= mask; ++probe) {
+      DedupeSlot& row = dedupeSlots[slot];
+      if (row.generation != dedupeGeneration || row.index >= projected.size()) {
+        row.generation = dedupeGeneration;
+        row.index = projectedIndex;
+        return true;
+      }
+      const NoteUtils::DisplayNote& seen = projected[row.index];
+      if (seen.note == note.note && seen.startTick == note.startTick &&
+          seen.endTick == note.endTick) {
+        return false;
+      }
+      slot = (slot + 1) & mask;
+    }
+    return false;
+  }
+
+  TRACK_COLD_MEM void upsertIntoNotes(const NoteUtils::DisplayNote& note) {
+    const uint64_t key = upsertKey(note);
+    const auto found = upsertIndex.find(key);
+    if (found != upsertIndex.end()) {
+      if (note.noteId != kInvalidNoteId && found->second < notes.size()) {
+        notes[found->second] = note;
+      }
+      return;
+    }
+    upsertIndex.emplace(key, static_cast<uint32_t>(notes.size()));
+    notes.push_back(note);
+  }
+
+  /// One reservation for the whole candidate plus the per-pass layer/projection workspace.
+  /// The declination is the committed event count (an upper bound on display notes) and the
+  /// largest pass's rows; a refusal denies the producer and the caller keeps its frame.
+  TRACK_COLD_MEM bool admitWorkspace() {
+    const size_t noteRows = static_cast<size_t>(totalEventRows);
+    const size_t passRows = static_cast<size_t>(maxPassEventRows);
+    const size_t bytes = sizeof(NoteUtils::DisplayNote) * noteRows +
+                         sizeof(NoteUtils::DisplayNote) * passRows +
+                         sizeof(MidiEvent) * passRows;
+    if (!MemoryMonitor::admitDisplayProjectionReserve(bytes)) {
+      return false;
+    }
+    notes.clear();
+    notes.reserve(noteRows);
+    projected.clear();
+    projected.reserve(passRows);
+    layer.clear();
+    layer.reserve(passRows);
+    return true;
+  }
+
+  /// Per-pass workspace and the identity table are not part of the published result: release them
+  /// the turn the candidate becomes authoritative, so a retained frame costs only its notes.
+  void releaseWorkspace() {
+    layer = MidiEventVec{};
+    projected = NoteUtils::DisplayNoteVec{};
+    dedupeSlots = DedupeSlotVec{};
+    upsertIndex = UpsertIndex{};
+    build.clear();
+    orderEntries.clear();
+  }
+
+  TRACK_COLD_MEM StepResult step(const LoopPasses& passes) {
+    switch (phase) {
+      case Phase::Idle:
+      case Phase::Ready:
+      case Phase::Denied:
+        return StepResult::Refused;
+      case Phase::Order: {
+        OrderEntry entry;
+        bool eligible = false;
+        if (orderCursor < passCount && candidateAt(passes, orderCursor, entry, eligible)) {
+          // The prefix identity this candidate is built from, captured as the pass is enumerated (in
+          // resolve order). Promotion moves it into the envelope; the retention predicate reads it
+          // back against the live pass set, so nothing about it is cached outside this owner.
+          PassId identityId = kInvalidPassId;
+          CapturePassState identityState = CapturePassState::Active;
+          const CommittedChunkIdList* identityChunks = nullptr;
+          if (livePassAt(passes, orderCursor, identityId, identityState, identityChunks)) {
+            RetainedPass identityRow;
+            identityRow.id = identityId;
+            identityRow.state = identityState;
+            identityRow.firstChunk = static_cast<uint32_t>(candidateChunks.size());
+            if (identityChunks != nullptr) {
+              identityRow.chunkCount = static_cast<uint32_t>(identityChunks->size());
+              candidateChunks.insert(candidateChunks.end(), identityChunks->begin(),
+                                     identityChunks->end());
+            }
+            candidatePasses.push_back(identityRow);
+          }
+          ++orderCursor;
+          if (!eligible) {
+            record("order", 0, static_cast<uint32_t>(orderEntries.size()));
+            return StepResult::Continue;
+          }
+          const CommittedChunkIdList* chunks = chunksFor(passes, entry.id);
+          const uint32_t rows =
+              chunks != nullptr
+                  ? static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(*chunks))
+                  : 0u;
+          totalEventRows += rows;
+          if (rows > maxPassEventRows) {
+            maxPassEventRows = rows;
+          }
+          // Bounded by the eligible pass list, not by loop content.
+          size_t at = orderEntries.size();
+          while (at > 0 && orderEntries[at - 1].mergeSequence > entry.mergeSequence) {
+            --at;
+          }
+          orderEntries.insert(orderEntries.begin() + static_cast<std::ptrdiff_t>(at), entry);
+          record("order", 1, static_cast<uint32_t>(orderEntries.size()));
+          return StepResult::Continue;
+        }
+        if (!admitWorkspace()) {
+          phase = Phase::Denied;
+          deferReason = "continuation_memory";
+          record("denied", 0, 0);
+          return StepResult::Refused;
+        }
+        passIndex = 0;
+        if (orderEntries.empty()) {
+          promoteRetained(passes);
+          phase = Phase::Ready;
+          record("ready", 0, 0);
+          return StepResult::Complete;
+        }
+        phase = Phase::BeginPass;
+        record("begin", 0, 0);
+        return StepResult::Continue;
+      }
+      case Phase::BeginPass: {
+        if (passIndex >= orderEntries.size()) {
+          const uint32_t readyRows = static_cast<uint32_t>(notes.size());
+          phase = Phase::Ready;
+          promoteRetained(passes);
+          releaseWorkspace();
+          record("ready", 0, readyRows);
+          return StepResult::Complete;
+        }
+        const CommittedChunkIdList* chunks = chunksFor(passes, orderEntries[passIndex].id);
+        if (chunks == nullptr) {
+          ++passIndex;
+          record("begin", 0, passIndex);
+          return StepResult::Continue;
+        }
+        passEventRows = static_cast<uint32_t>(LoopEventStore::countEventsInChunkIds(*chunks));
+        layer.clear();
+        projected.clear();
+        build.clear();
+        chunkCursor = 0;
+        chunkEventCursor = 0;
+        editCursor = 0;
+        spanCursor = 0;
+        projectCursor = 0;
+        emitCursor = 0;
+        ++dedupeGeneration;
+        if (dedupeGeneration == 0) {
+          for (DedupeSlot& slot : dedupeSlots) {
+            slot.generation = 0;
+          }
+          dedupeGeneration = 1;
+        }
+        size_t want = 8;
+        while (want < static_cast<size_t>(passEventRows) * 2u) {
+          want <<= 1;
+        }
+        if (dedupeSlots.size() < want) {
+          dedupeSlots.assign(want, DedupeSlot{});
+          ++dedupeGeneration;
+        }
+        phase = Phase::Layer;
+        record("begin", 0, passIndex);
+        return StepResult::Continue;
+      }
+      case Phase::Layer: {
+        const CommittedChunkIdList* chunks = chunksFor(passes, orderEntries[passIndex].id);
+        if (chunks == nullptr) {
+          phase = Phase::Edits;
+          record("blayer", 0, 0);
+          return StepResult::Continue;
+        }
+        uint32_t produced = 0;
+        while (produced < kRows) {
+          if (chunkCursor >= chunks->size()) {
+            break;
+          }
+          const uint16_t chunkId = (*chunks)[chunkCursor];
+          const uint32_t used = LoopEventStore::chunkUsedCount(chunkId);
+          if (chunkEventCursor >= used) {
+            ++chunkCursor;
+            chunkEventCursor = 0;
+            continue;
+          }
+          const uint32_t take = std::min(kRows - produced, used - chunkEventCursor);
+          LoopEventStore::appendChunkRefEventRange(chunkId, chunkEventCursor,
+                                                   chunkEventCursor + take, layer);
+          chunkEventCursor += take;
+          produced += take;
+        }
+        if (produced == 0) {
+          phase = Phase::Edits;
+          record("blayer", 0, chunkEventCursor);
+          return StepResult::Continue;
+        }
+        record("blayer", produced, chunkEventCursor);
+        return StepResult::Continue;
+      }
+      case Phase::Edits: {
+        if (editCursor >= passes.editPasses.size()) {
+          phase = Phase::Spans;
+          record("bapply", 0, editCursor);
+          return StepResult::Continue;
+        }
+        const EditPass& row = passes.editPasses[editCursor];
+        ++editCursor;
+        if (row.state == EditPassState::Active && row.passType == EditPassType::Note) {
+          applyNoteEditPass(layer, row, loopLengthTicks);
+          record("bapply", 1, editCursor);
+        } else {
+          record("bapply", 0, editCursor);
+        }
+        return StepResult::Continue;
+      }
+      case Phase::Spans: {
+        const uint32_t rows = static_cast<uint32_t>(layer.size());
+        if (spanCursor < rows) {
+          const uint32_t end = std::min(spanCursor + kRows, rows);
+          NoteUtils::appendCanonicalSpansFromMidi(layer, loopLengthTicks, spanCursor, end, build);
+          const uint32_t produced = end - spanCursor;
+          spanCursor = end;
+          record("bspans", produced, spanCursor);
+          return StepResult::Continue;
+        }
+        phase = Phase::Project;
+        record("bspans", 0, spanCursor);
+        return StepResult::Continue;
+      }
+      case Phase::Project: {
+        const uint32_t spanTotal = build.spanCount();
+        if (projectCursor < spanTotal) {
+          const uint32_t end = std::min(projectCursor + kRows, spanTotal);
+          NoteUtils::appendProjectedDisplayNotes(build, loopLengthTicks, projectCursor, end,
+                                                 projected);
+          const uint32_t produced = end - projectCursor;
+          projectCursor = end;
+          record("bproj", produced, projectCursor);
+          return StepResult::Continue;
+        }
+        phase = Phase::Emit;
+        record("bproj", 0, projectCursor);
+        return StepResult::Continue;
+      }
+      case Phase::Emit: {
+        const uint32_t total = static_cast<uint32_t>(projected.size());
+        if (emitCursor < total) {
+          const uint32_t end = std::min(emitCursor + kRows, total);
+          for (uint32_t i = emitCursor; i < end; ++i) {
+            const NoteUtils::DisplayNote& note = projected[i];
+            if (!dedupeFirst(note, i)) {
+              continue;
+            }
+            upsertIntoNotes(note);
+          }
+          const uint32_t produced = end - emitCursor;
+          emitCursor = end;
+          record("bemit", produced, emitCursor);
+          return StepResult::Continue;
+        }
+        ++passIndex;
+        phase = Phase::BeginPass;
+        record("bemit", 0, passIndex);
+        return StepResult::Continue;
+      }
+    }
+    return StepResult::Refused;
+  }
+
+  Phase phase = Phase::Idle;
+  const void* owner = nullptr;
+  uint32_t loopId = kInvalidLoopId;
+  uint32_t loopLengthTicks = 0;
+  uint32_t playbackRevision = 0;
+  uint64_t requestGeneration = 0;
+  uint32_t passCount = 0;
+  uint32_t keyEventRows = 0;
+  uint32_t orderCursor = 0;
+  uint32_t passIndex = 0;
+  uint32_t passEventRows = 0;
+  uint32_t totalEventRows = 0;
+  uint32_t maxPassEventRows = 0;
+  uint32_t chunkCursor = 0;
+  uint32_t chunkEventCursor = 0;
+  uint32_t editCursor = 0;
+  uint32_t spanCursor = 0;
+  uint32_t projectCursor = 0;
+  uint32_t emitCursor = 0;
+  uint32_t dedupeGeneration = 0;
+  std::vector<OrderEntry> orderEntries;
+  MidiEventVec layer;
+  NoteUtils::CanonicalSpanBuild build;
+  NoteUtils::DisplayNoteVec projected;
+  NoteUtils::DisplayNoteVec notes;
+  DedupeSlotVec dedupeSlots;
+  UpsertIndex upsertIndex;
+  const char* lastStep = "idle";
+  uint32_t lastUnits = 0;
+  uint32_t lastCursor = 0;
+  const char* deferReason = nullptr;
+  // Candidate-side prefix identity, filled as the Order phase enumerates the pass set and moved into
+  // the envelope when the candidate publishes. `candidateEdits` is the edit identity the candidate
+  // was built with; a live list that no longer matches refuses the promotion by name.
+  RetainedPassVec candidatePasses;
+  RetainedChunkIds candidateChunks;
+  RetainedEditVec candidateEdits;
+  bool candidateResultInEnvelope = false;
+  // Retained envelope: the promoted generation's exact prefix identity plus the rows it owns.
+  bool retainedValid = false;
+  const void* retainedOwner = nullptr;
+  uint32_t retainedLoopId = kInvalidLoopId;
+  uint32_t retainedLoopLengthTicks = 0;
+  uint64_t retainedGeneration = 0;
+  uint32_t retainedPricedCapacity = 0;
+  const char* retainedRefusal = nullptr;
+  RetainedPassVec retainedPasses;
+  RetainedChunkIds retainedChunks;
+  RetainedEditVec retainedEdits;
+  NoteUtils::DisplayNoteVec retainedNotes;
+};
+
 TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes) {
   size_t count = 0;
   if (passes.hasRecordPass() && !passes.recordPass.committedChunkIds.empty()) {
@@ -2614,6 +3300,11 @@ TRACK_COLD_MEM size_t countIndexCommitPasses(const LoopPasses& passes) {
 }
 
 bool sDeviceGateFinished = false;
+#if defined(__IMXRT1062__)
+DMAMEM BoundedDisplaySession sBoundedDisplaySession;
+#else
+BoundedDisplaySession sBoundedDisplaySession;
+#endif
 #if defined(__IMXRT1062__)
 DMAMEM DeviceGateSession sDeviceGateSession;
 #else
@@ -2685,6 +3376,113 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
          sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// C5.2a / P-D — bounded display continuation. One grain per call; no sort, no whole-vector copy.
+
+TRACK_COLD_MEM uint32_t LoopContentResolution::boundedDisplayCountCommittedEvents(
+    const LoopPasses& passes, uint32_t limit) {
+  uint32_t total = 0;
+  auto addRows = [&total, limit](const CommittedChunkIdList& chunks) {
+    for (uint16_t chunkId : chunks) {
+      total += LoopEventStore::chunkUsedCount(chunkId);
+      if (total > limit) {
+        return;
+      }
+    }
+  };
+  if (passes.hasRecordPass()) {
+    addRows(passes.recordPass.committedChunkIds);
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (total > limit) {
+      return total;
+    }
+    addRows(pass.committedChunkIds);
+  }
+  return total;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::boundedDisplayNeedsProducer(const LoopPasses& passes) {
+  return boundedDisplayCountCommittedEvents(passes, kBoundedDisplaySynchronousEventCap) >
+         kBoundedDisplaySynchronousEventCap;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::boundedDisplayRequest(
+    const BoundedDisplayRequest& request, const LoopPasses& passes) {
+  BoundedDisplaySession& session = sBoundedDisplaySession;
+  if (request.owner == nullptr || request.loopLengthTicks == 0 ||
+      passes.capturePassCount() == 0) {
+    session.reset();
+    return false;
+  }
+  const bool same = session.sameRequest(request, passes);
+  // A refusal is retried on the next request: the reservation is the only thing that can change.
+  if (same && session.phase != BoundedDisplaySession::Phase::Denied) {
+    return true;
+  }
+  session.begin(request, passes);
+  return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::boundedDisplayStep(const LoopPasses& passes) {
+  BoundedDisplaySession& session = sBoundedDisplaySession;
+  if (!session.passesMatch(passes)) {
+    // A re-key or a pass-set change discards the partial candidate only. The retained envelope is
+    // the previous generation's published result and survives, which is what keeps a wrap painting.
+    session.resetCandidate();
+    return false;
+  }
+  return session.step(passes) == BoundedDisplaySession::StepResult::Continue;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::boundedDisplayReady(
+    const BoundedDisplayRequest& request, const LoopPasses& passes) {
+  BoundedDisplaySession& session = sBoundedDisplaySession;
+  return session.phase == BoundedDisplaySession::Phase::Ready &&
+         session.sameRequest(request, passes);
+}
+
+TRACK_COLD_MEM const NoteUtils::DisplayNoteVec& LoopContentResolution::boundedDisplayNotes() {
+  return sBoundedDisplaySession.candidateNotes();
+}
+
+TRACK_COLD_MEM void LoopContentResolution::boundedDisplayCancel() {
+  sBoundedDisplaySession.reset();
+}
+
+LoopContentResolution::BoundedDisplaySliceRecord LoopContentResolution::boundedDisplayLastSlice() {
+  BoundedDisplaySliceRecord record;
+  record.step = sBoundedDisplaySession.lastStep != nullptr ? sBoundedDisplaySession.lastStep
+                                                           : "idle";
+  record.workUnits = sBoundedDisplaySession.lastUnits;
+  record.cursor = sBoundedDisplaySession.lastCursor;
+  return record;
+}
+
+TRACK_COLD_MEM const char* LoopContentResolution::boundedDisplayRetainedRefusal() {
+  return sBoundedDisplaySession.retainedRefusal;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::boundedDisplayRetainedReady(
+    const BoundedDisplayRequest& request, const LoopPasses& passes) {
+  return sBoundedDisplaySession.retainedMatches(request, passes);
+}
+
+TRACK_COLD_MEM const NoteUtils::DisplayNoteVec& LoopContentResolution::boundedDisplayRetainedNotes() {
+  return sBoundedDisplaySession.retainedNotes;
+}
+
+TRACK_COLD_MEM uint32_t LoopContentResolution::boundedDisplayRetainedCapacity() {
+  return sBoundedDisplaySession.retainedPricedCapacity;
+}
+
+TRACK_COLD_MEM uint32_t LoopContentResolution::boundedDisplayRetainedPassCount() {
+  return static_cast<uint32_t>(sBoundedDisplaySession.retainedPasses.size());
+}
+const char* LoopContentResolution::boundedDisplayDeferReason() {
+  return sBoundedDisplaySession.deferReason;
+}
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
 TRACK_COLD_MEM void logPreparedSourceSkip(const char* at, const char* reason, uint32_t passId,
                                           uint32_t liveRev, uint32_t liveLen) {

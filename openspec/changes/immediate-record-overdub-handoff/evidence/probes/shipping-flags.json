@@ -1,0 +1,17 @@
+{
+  "CCFLAGS": ["-Wall", "-ffunction-sections", "-fdata-sections", "-mthumb", "-mcpu=cortex-m7", "-nostdlib", "-mfloat-abi=hard", "-mfpu=fpv5-d16", "-O2"],
+  "CXXFLAGS": ["-fno-exceptions", "-felide-constructors", "-fno-rtti", "-std=gnu++17", "-Wno-error=narrowing", "-fpermissive", "-fno-threadsafe-statics"],
+  "CPPPATH": [
+    "{repo}/lib/SSD1322_OLED/src", "{repo}/lib/SSD1322_OLED/lib/Fonts",
+    "{repo}/lib/SSD1322_OLED/example/lib/Fonts", "{repo}/lib/SSD1322_OLED/example/lib/Inc",
+    "{repo}/lib/SSD1322_OLED/lib/TsyDMASPI", "{repo}/include/EditStates", "{repo}/include",
+    "{repo}/src/EditStates", "{framework}/cores/teensy4"
+  ],
+  "CPPDEFINES": [
+    ["PLATFORMIO", 60200], "__IMXRT1062__", "ARDUINO_TEENSY41", "USB_MIDI_SERIAL",
+    ["SESSION_CAPTURE", 1], ["PERF_TELEMETRY", 1], ["PLAYBACK_WINDOW_ROLLING_ENABLED", 1],
+    ["PLAYBACK_WINDOW_ROLLING_SHIPPING_ACTIVATED", 1], ["EXTERNAL_POOL_WRAP", 1],
+    ["SESSION_CAPTURE_DROID_QUEUE", 0], ["ARDUINO", 10805], ["TEENSYDUINO", 159],
+    "CORE_TEENSY", ["F_CPU", 600000000], "LAYOUT_US_ENGLISH"
+  ]
+}

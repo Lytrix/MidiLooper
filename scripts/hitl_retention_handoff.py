@@ -887,7 +887,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                                          timeout_s=args.window_timeout_s)
             events.append({"event": "finalizer_window_open", "confirmed": window_opened})
             denied = _wait_for_any(capture_log, after=0,
-                                  markers=("Overdub stop refused", f"DIAG,reentry,deny,",
+                                  markers=("Overdub stop refused", "Overdub stop retained (capacity)",
+                                           f"DIAG,reentry,deny,",
                                            "successor_stop_denied_capacity"),
                                   timeout_s=args.window_timeout_s)
             events.append({"event": "successor_stop_denied", "confirmed": denied})

@@ -180,6 +180,26 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
         self.assertNotEqual(0, result.exit_code)
 
+    def test_the_retained_capacity_wording_parses_exactly_like_the_old_refused_wording(self):
+        """2026-10-27 wording: the press is accepted and retained (DEC-078), not refused.
+
+        The row's identity fields did not move, and both vintages must answer the same way -- a capture
+        taken before that image still carries `refused`, so accepting only the new word would strand
+        every older run just as accepting only the old word stranded the newer ones.
+        """
+        old = self._human_only_denial_log(
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=0 interval=7")
+        new = self._human_only_denial_log(
+            "[1885.0] [DEBUG] [TRACK] Overdub stop retained (capacity): stop_job_pending "
+            "slot=0 interval=7 phase=2 dest=0 closure=0 recycle_owner=0 recycle_started=0 undo_ready=1")
+        old_check = by_name(run(old, accept_slot_scoped_bind=True,
+                               accept_event_count_only=True))["L2_denial_identified_for_b"]
+        new_check = by_name(run(new, accept_slot_scoped_bind=True,
+                               accept_event_count_only=True))["L2_denial_identified_for_b"]
+        self.assertEqual(old_check.status, new_check.status)
+        self.assertEqual("unknown", new_check.status, new_check.detail)
+        self.assertIn("interval 7", new_check.detail)
+
     def test_a_human_denial_naming_another_slot_fails_rather_than_staying_unknown(self):
         """The logging fix makes a wrong-slot denial detectable, which previously looked like a gap.
 

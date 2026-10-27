@@ -29,6 +29,9 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
   if (hasOverdubSession() && !forceNew) {
     return;
   }
+  // CONTRACTS.md C3.5: a new overdub interval cancels the previous interval's private-predecessor
+  // cursor with its session. Nothing staged for the last interval may be read as this one's source.
+  discardPrivatePredecessorSource();
   // Record-stop may still hold sealed rows when visual has not consumed that
   // revision. Those rows describe the previous session; wrapping them into this
   // one leaves a 336→336 hold beside the occupy suffix (`001647`).
@@ -43,6 +46,14 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
   overdubWrapArmed_ = false;
   overdubWrapSuppressNext_ = false;
   ++overdubSessionUndoGeneration_;
+  // Task 4.20: the session-opening owner stamps the identity the reservation was taken for. Admission
+  // runs before the session exists, so the claim is deliberately anonymous until this edge; the stop
+  // admission then refuses any transfer whose identity does not match.
+  if (sessionExitPublishClaimState_ == SessionExitPublishClaim::Reserved) {
+    if (SessionExitSnapshotHandoff* record = reservedSessionExit(); record != nullptr) {
+      record->sessionIdentity = overdubSessionUndoGeneration_;
+    }
+  }
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
@@ -53,16 +64,30 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
 }
 
 LOOP_COLD_MEM bool Loop::markSessionExitTailReady(size_t ringIndex, PassId lastPassId) {
-  SessionExitSnapshotHandoff* receipt = sessionExitReceiptByRingIndex(ringIndex);
+  SessionExitSnapshotHandoff* receipt =
+      ringIndex == kReservedSessionExitReceipt ? reservedSessionExit()
+                                               : sessionExitReceiptByRingIndex(ringIndex);
   if (receipt == nullptr || !receipt->pending || receipt->ready) {
     return false;
   }
   receipt->lastPassId = lastPassId;
   receipt->ready = true;
+  // Task 4.20: the reserved record's obligation is complete, so the publisher may move it through
+  // the receipt path. `Populated -> Publishing` is the only transition out of a populated record.
+  if (ringIndex == kReservedSessionExitReceipt) {
+    if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Populated) return false;
+    sessionExitPublishClaimState_ = SessionExitPublishClaim::Publishing;
+  }
   return true;
 }
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {
+  // Task 4.20: an interval that ends without taking a tail of its own (the legacy synchronous stop,
+  // a cancelled interval) must not leave its reservation behind — the next start would be refused by
+  // a claim nobody owns. Only a payload-free reservation of *this* session is released here; a
+  // populated or publishing record owns identities the publisher still owes, and a reservation held
+  // for a live successor is not this close's to release.
+  (void)releaseSessionExitPublishOwner(overdubSessionUndoGeneration_);
   retireSealedCapturePreviewForDisplay();
   ++overdubSessionUndoGeneration_;
   playheadPhaseTick = UINT32_MAX;
@@ -256,6 +281,19 @@ LOOP_COLD_MEM void Loop::pushOverdubSessionPass(PassId passId, EditPassIdList co
   overdubSessionPassIds_.push_back(passId);
   overdubSessionCompanionIds_.push_back(std::move(companionIds));
   overdubSessionCursor_ = overdubSessionPassIds_.size();
+}
+
+LOOP_COLD_MEM Loop::OverdubSessionRetention Loop::overdubSessionRetention() const {
+  OverdubSessionRetention out;
+  out.passCount = overdubSessionPassIds_.size();
+  out.passCapacity = overdubSessionPassIds_.capacity();
+  out.companionCount = overdubSessionCompanionIds_.size();
+  out.companionCapacity = overdubSessionCompanionIds_.capacity();
+  for (const EditPassIdList& ids : overdubSessionCompanionIds_) {
+    out.companionNestedCapacity += ids.capacity();
+  }
+  out.cursor = overdubSessionCursor_;
+  return out;
 }
 
 LOOP_COLD_MEM bool Loop::collectLastOverdubSessionPass(PassId& passId,

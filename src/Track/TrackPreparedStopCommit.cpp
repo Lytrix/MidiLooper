@@ -214,6 +214,12 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   // session stays open and independent while this job retires.
   if (ownsLiveSession) {
     loop.closeOverdubSession();
+  } else {
+    // This completed interval no longer owns the live session, but its closed
+    // display rows still need the session-exit handoff. Leaving them in the
+    // shared sealed tier lets a later Start clear them before cache coverage.
+    // Retire the display tier only; never close/reset the successor session.
+    loop.retireSealedCapturePreviewForDisplay();
   }
   // S4.2: identity-qualified, so a late cleanup cannot clear a successor's marker on a reused
   // runtime object.

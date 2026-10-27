@@ -82,6 +82,12 @@ static_assert(kSnapshotMembershipMaxPages <= UINT16_MAX,
               "bar membership page count must fit the uint16_t page counters");
 constexpr uint32_t kSnapshotSlabBytes = 32 * 1024;
 
+/// Internal headroom beyond MemoryMonitor's safety floor. External-only slabs cannot
+/// consume internal heap; internal slab targets must pay for both slab and working set.
+constexpr uint32_t snapshotPublicationInternalReserveBytes(bool externalOnlySlabs) {
+  return 8u * 1024u + (externalOnlySlabs ? 0u : kSnapshotSlabBytes);
+}
+
 void resetSnapshotAllocCounters();
 uint32_t snapshotAllocNodeCount();
 uint32_t snapshotAllocByteCount();

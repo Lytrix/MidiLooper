@@ -512,7 +512,11 @@ void test_c6_transient_failure_is_retried_not_latched() {
   const std::vector<uint8_t> goodPayload = RestoreHarness::snapshotSlotPayloadBytes(0, 2);
   TEST_ASSERT_FALSE(goodPayload.empty());
   RestoreHarness::truncateSlotPayload(0, 2, 3);
-  RestoreHarness::observeRestoreOutcome(0, 2, 8);
+  // DEC-171: drive only two service turns so the transient failure reaches the *retry* (attempts < the
+  // bound) without exhausting `kMaxLoopSlotRestoreAttempts`. A truncated save token fails once per
+  // attempt, so two turns == two attempts == still owed; the prior 8-turn drive exhausted the bound and
+  // re-encoded the unbounded-retry defect as the oracle.
+  RestoreHarness::observeRestoreOutcome(0, 2, 2);
   // Phase 1 asserts the failure was actually reached **and** that it is not a terminal latch: the
   // request is still owed (queued or in a named wait), which is the behavior A2.4 requires. Asserting
   // the latch here would re-encode the defect as the oracle.
