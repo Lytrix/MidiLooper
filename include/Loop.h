@@ -850,9 +850,18 @@ struct Loop {
   /// job-owned pass, and nullptr means "resolve it from this preparation / the live producer slot".
   bool canCommitPreparedCaptureAndCompanions(uint64_t owner = 0,
                                              const PendingCapturePass* pass = nullptr) const;
+  bool canCommitPreparedCaptureAndCompanionsSupersession(uint64_t owner = 0,
+                                                         const PendingCapturePass* pass = nullptr) const;
   bool commitPreparedCaptureAndCompanionsAtomic(PreparedCapturePassTransfer& transferred,
                                                uint64_t owner = 0,
                                                PendingCapturePass* pass = nullptr);
+  /// DEC-172 correction 3: the same atomic commit under the owner-supersession proof (the horizon's
+  /// gate is `preparedCompanionHistorySupersessionPublishProof`, which tolerates a moved revision).
+  bool commitPreparedCaptureAndCompanionsSupersession(PreparedCapturePassTransfer& transferred,
+                                                      uint64_t owner = 0,
+                                                      PendingCapturePass* pass = nullptr);
+  void commitPreparedCaptureAndCompanionsBody(PreparedCapturePassTransfer& transferred,
+                                              PendingCapturePass& staged, bool& transferFailed);
   const EditPassIdList* preparedCompanionHistoryIds(uint64_t owner = 0) const;
   /// Caller has consumed the ID receipt. Recycling ends that receipt's lifetime.
   /// No active allocation/free; returns to Prewarmed within the remaining horizon.
@@ -861,6 +870,20 @@ struct Loop {
   bool preparedCompanionHistoryRecycleComplete(uint64_t owner = 0) const;
   uint64_t preparedCompanionHistoryGeneration() const { return preparedCompanionHistory_.preparationGeneration; }
   bool preparedCompanionHistoryPrewarmed(size_t requiredCompanions = 0) const;
+  /// DEC-172 correction 3: the superseded-commit publish proof. The prepared horizon copied the
+  /// edit-pass store at `begin` and publishes by *exchanging* its buffered rows back, so the
+  /// exchange loses nothing only while the store is contractually identical to what was copied
+  /// (same size, same storage generation). Revision identity is deliberately NOT required --
+  /// the whole point is to publish a completed interval derivation across a revision a
+  /// record-return pass commit moved -- but a store that grew or was re-allocated since the copy
+  /// fails this proof and keeps the superseded discard route.
+  bool preparedCompanionHistoryStoreUnchanged(uint64_t owner = 0) const;
+  const EditPassIdList* preparedCompanionHistorySupersessionIds(uint64_t owner = 0) const;
+  /// DEC-172 correction 3: the full owner-supersession publish proof. Same address bindings as
+  /// `preparedCompanionHistorySourceCurrent` **minus the revision/`firstId` identity** (a
+  /// record-return pass commit may have moved those -- that is precisely the case it serves), plus
+  /// the lossless-exchange state (store size and storage generation unchanged since the copy).
+  bool preparedCompanionHistorySupersessionPublishProof(uint64_t owner = 0) const;
   static uint64_t requiredPreparedCompanionRecycleGrains(size_t rowCapacity,
       size_t retiredPayloadEvents, size_t companionIds, size_t snapshotIds, size_t quantum);
   /// True while this interval holds a preparation that is neither Cold nor back

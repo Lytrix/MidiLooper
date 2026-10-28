@@ -2071,6 +2071,13 @@ private:
   /// resurrect or mutate a successor's content. Returns false while a long extent is still
   /// returning its grains; the prologue re-enters until it is complete.
   bool serviceCaptureStopPresentations();
+  /// Deferred canonical convergence: the slot-level owner turn that services at most one slot's
+  /// `Owed`/`Building`/`Ready` obligation per call. Routed from `processDeferredIdleMaintenance`
+  /// on the Snapshot lane, before its publication gates, and never from
+  /// `processDeferredOverdubStopGrain`, so convergence can never hold the capture-stop FIFO head.
+  /// Returns true when this turn took the obligation slot (bound, stepped, discarded or discharged);
+  /// "still owed, no authority" is also reported as taken because it ends the scan for this turn.
+  bool serviceDeferredCanonicalConvergence();
   bool publishRecordPresentation(CaptureStopJob& job);
   CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot);
   const CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot) const;

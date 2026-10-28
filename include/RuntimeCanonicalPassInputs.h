@@ -86,6 +86,8 @@ class RuntimeCanonicalPassInputs {
       const PlaybackViewSourceIdentity& source, const CurrentSource& live,
       const RuntimeCompanionPasses& resolved);
   bool idle() const { return phase_ == Phase::Idle; }
+  /// DEC-172 correction 3: structural completeness without value revalidation.
+  bool stateAllowsBinding() const { return phase_ == Phase::Complete && source_; }
   bool captureAttached() const { return includeCapture_; }
   bool borrowsCaptureOrder() const { return preparedCaptureOrder_.has_value(); }
   bool beginFrozen(RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
@@ -104,6 +106,29 @@ class RuntimeCanonicalPassInputs {
   bool appendFrozenOverdub(const FrozenSource& live, const PreparedCaptureOrder* preparedOrder = nullptr);
   RuntimePlaybackOrderBuildResult step(size_t quantum);
   bool ready() const;
+  /// DEC-170 progress probe: a compact snapshot of the builder's advance state, so a fixture/reporter can tell a
+  /// *productive* grain (any counter moved) from a nonproductive `Pending` (no counter moved). Report-only — no
+  /// admission, escape or policy reads it. `phase` is the internal `Phase` value; `completedPasses`/`totalPasses`
+  /// are `pass_`/`passCount_`, `eventCount` is `count_`, `cursor` is `copy_` (copy/read phases) or `selectionCursor_`
+  /// (select/filter phases), `readCursor` is the sealed-chunk read cursor size, `captureOrderedCount` is the frozen
+  /// capture order cardinality.
+  struct ProgressState {
+    uint8_t phase = 0;
+    size_t completedPasses = 0;
+    size_t totalPasses = 0;
+    size_t eventCount = 0;
+    size_t cursor = 0;
+    size_t readCursor = 0;
+    size_t captureOrderedCount = 0;
+    RuntimeCompanionApply::ProgressState apply;
+    bool operator==(const ProgressState& o) const {
+      return phase == o.phase && completedPasses == o.completedPasses && totalPasses == o.totalPasses &&
+             eventCount == o.eventCount && cursor == o.cursor && readCursor == o.readCursor &&
+             captureOrderedCount == o.captureOrderedCount && apply == o.apply;
+    }
+    bool operator!=(const ProgressState& o) const { return !(*this == o); }
+  };
+  ProgressState progressState() const;
   const CaptureAdmissionStaging* frozenCapture() const;
   /// Test/diagnostic probe: is a frozen (job-owned) capture source still bound?
   bool hasFrozenBinding() const { return live_.has_value(); }
@@ -122,7 +147,35 @@ class RuntimeCanonicalPassInputs {
   /// change its payload generation; the old PLAYING bridge epoch stays invalid.
   bool retargetFrozenCommandEpoch(const uint32_t& epoch, const CaptureAdmissionStaging& capture);
   bool matchesFrozenCommand(uint32_t epoch) const { return ready() && live_ && commandEpoch_ == epoch; }
+  /// DEC-172 correction 3: the ownership-supersession form of `ready()`. Everything still must be
+  /// the same complete frozen canonical base (source root, capture storage and epoch owner), with
+  /// ONE deliberate exception: the published `playbackRevision` may have moved since preparation --
+  /// that movement is exactly the record-return supersession the lossless-exchange publish proof
+  /// serves, and the interval's own companion derivation stays valid against the recorded base.
+  bool supersessionReady(bool checkCommandEpoch = false) const {
+    return phase_ == Phase::Complete && includeCapture_ && source_ &&
+        source_->sourceGeneration == expected_.sourceGeneration &&
+        source_->snapshotIdentity == expected_.snapshotIdentity &&
+        (!preparedCaptureOrder_ || preparedCaptureOrder_->storageGeneration == preparedCaptureOrderGeneration_) &&
+        (!current_ || (current_->sourceGeneration == expected_.sourceGeneration &&
+                       current_->loopLengthTicks == loopLength_ &&
+                       current_->storageGeneration == storageGeneration_)) &&
+        (!live_ || (live_->sourceGeneration == expected_.sourceGeneration &&
+                    (!checkCommandEpoch || live_->transportCommandEpoch == commandEpoch_) &&
+                    live_->loopLengthTicks == loopLength_ &&
+                    live_->capture.frozen &&
+                    live_->capture.captureGeneration == captureGeneration_ &&
+                    live_->capture.frozenGeneration == captureGeneration_ &&
+                    live_->capture.storage.eventCount == captureCount_)) &&
+        (!borrowed_ || (apply_ && apply_->generation() == applyGeneration_));
+  }
   bool includesFrozenOverdub() const { return ready() && includeCapture_; }
+  /// DEC-172 correction 3: the same two checks without the `ready()` gate, so the ownership-
+  /// supersession proof can validate the frozen capture binding while the recorded revision moved.
+  bool includesFrozenOverdubBinding() const { return stateAllowsBinding() && includeCapture_; }
+  const CaptureAdmissionStaging* frozenCaptureBinding() const {
+    return stateAllowsBinding() && live_ ? &live_->capture : nullptr;
+  }
   RuntimeCompanionApply::HistoryPrefix historyPrefix() const;
   const RuntimeCompanionPasses::Pass* data() const;
   size_t passCount() const;

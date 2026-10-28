@@ -333,6 +333,25 @@ struct PendingStopAdmission {
   /// that note-edit representation, so the STOPPED publication path must prepare and publish it
   /// (`commitStopped`) instead of skipping it. A job *admitted* for STOPPED never sets this.
   bool retargetedFromPlaying = false;
+  /// This job's canonical base was abandoned (superseded or terminally denied), so its companion
+  /// path can never begin. **Per job**, not per track: a previous stop's abandonment must never
+  /// change how the next stop prepares its own base (the DEC-165 sentinel this replaces was written
+  /// to `Track::retargetStallPhase_`, so one supersession made every later stop take the
+  /// "canonical base unavailable" shortcut -- measured on device 2026-10-27, session_20261027_231625).
+  bool canonicalBaseAbandoned = false;
+  /// The canonical **window** (the successor bridge's base) latched denied, but the **prefix** is
+  /// ready. The window is only the bridge's input: the tail extends the prefix and the companion
+  /// representation the display reads is still derivable, so this is *not* a base abandonment. The
+  /// stop keeps the companion path and retires only the bridge estimate (DEC-172 correction, device
+  /// `session_20261027_231625.log`: the measured base denials were `where=window,reason=fill_order_denied`,
+  /// i.e. exactly this shape, and treating them as base failures is what lost the companion).
+  bool canonicalBridgeUnavailable = false;
+  /// The commit proof for that no-bridge route: an owner-**superseded** base (a record-return pass
+  /// committed while this interval's companion derivation was completing) replaces the canonical
+  /// owner revalidation with the lossless-exchange proof
+  /// `Loop::preparedCompanionHistoryStoreUnchanged` (DEC-172 correction 3). A window-denied base
+  /// (the prefix stayed current) keeps the normal owner proof.
+  bool supersededCompanionExchange = false;
   bool finalizationComplete() const {
     return pending && remainingClosureGrains == 0 && remainingOrderGrains == 0 &&
            remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0 &&
@@ -1136,7 +1155,17 @@ struct LoopPlaybackRuntime {
   // Uses the same pass merge and view fill/order workers as ordinary playback.
   // Completion publishes an immutable ready base, never changes audible current.
   enum class CanonicalWindowPhase : uint8_t { Idle, Merge, Fill, Order, Publish, Ready, Denied };
-  CanonicalWindowPhase canonicalWindowPhase = CanonicalWindowPhase::Idle;
+  /// DEC-171 diagnostic: the first terminal term that denied the canonical *window* build. The prefix
+  /// reporter (`prefixFirstDenialReason`) only names the prefix; on device the base is healthy through the
+  /// prefix and only the window is denied, so without this the denial is silent. Report-only — no policy.
+  enum class CanonicalWindowDenial : uint8_t {
+    None, MergeDenied, FillBeginDenied, FillOrderDenied,
+  };
+  // Packed 3+3+1 into the single byte `canonicalWindowPhase` previously occupied, so the per-slot runtime
+  // keeps its I5 pin (no byte is added).
+  CanonicalWindowPhase canonicalWindowPhase : 3 = CanonicalWindowPhase::Idle;
+  CanonicalWindowDenial windowFirstDenialReason : 3 = CanonicalWindowDenial::None;
+  bool windowDeniedFirstReported : 1 = false;
   uint8_t canonicalWindowIndex = RuntimePlaybackViewLifecycle::kNoView;
   bool canonicalWindowIsBridgeBase = false;
   uint64_t canonicalWindowPassGeneration = 0;
@@ -1146,6 +1175,47 @@ struct LoopPlaybackRuntime {
       bool bridgeBase = false);
   const RuntimePlaybackView* preparedCanonicalWindow(const PlaybackViewSourceIdentity& source) const;
   void discardCanonicalWindow();
+
+  // --- Deferred canonical convergence: one obligation per slot ------------------------------
+  // A capture stop that retires raw because its canonical derivation was unavailable or became
+  // superseded leaves the slot owing the derived canonical/companion representation through the
+  // committed generation that stop produced. The obligation is a slot-level state machine
+  // (`Idle -> Owed -> Building -> Ready -> Idle`) serviced by a Track owner turn outside the
+  // capture-stop FIFO (`Track::serviceDeferredCanonicalConvergence`), and it is never stacked:
+  // any newer committed generation coalesces the single obligation forward. It drives the same
+  // canonical builders the inline stop uses, so exactly one owner may hold them at a time.
+  enum class DeferredConvergencePhase : uint8_t { Idle, Owed, Building, Ready };
+  /// Report-only: why the most recent deferred candidate was dropped. No policy reads it.
+  enum class DeferredConvergenceDenial : uint8_t { None, BuildDenied, SourceChanged };
+  // Packed into one byte so the obligation itself costs only its identity fields.
+  DeferredConvergencePhase deferredConvergencePhase : 2 = DeferredConvergencePhase::Idle;
+  DeferredConvergenceDenial deferredConvergenceDenial : 2 = DeferredConvergenceDenial::None;
+  /// The committed generation (`Loop::committedPassRevision()`) the derived representation is owed
+  /// through. Advanced by coalescing, never by a second obligation.
+  uint32_t deferredConvergenceTarget = 0;
+  /// Loop coverage (ticks) the obligation was recorded for.
+  uint32_t deferredConvergenceLength = 0;
+  /// The authoritative source identity bound at build admission (`Owed -> Building`). A change to it
+  /// (or to the committed generation) while `Building` discards the candidate and re-resolves.
+  PlaybackViewSourceIdentity deferredConvergenceSource{};
+  bool deferredConvergenceActive() const {
+    return deferredConvergencePhase != DeferredConvergencePhase::Idle;
+  }
+  /// Record (or coalesce into) the single obligation. `targetRevision` is the committed generation the
+  /// raw retire produced. Never stacks: a newer target advances the existing obligation.
+  void markDeferredConvergenceOwed(uint32_t targetRevision, uint32_t loopLengthTicks);
+  /// Universal coalescing: any newer committed generation re-targets the obligation and drops an
+  /// in-flight (unpublished) candidate. Returns true when the obligation changed state.
+  bool coalesceDeferredConvergence(uint32_t newestCommittedRevision);
+  /// An adopted inline canonical result whose committed revision covers the target satisfies the
+  /// obligation through that generation (no duplicate later publication). Returns true when cleared.
+  bool satisfyDeferredConvergence(uint32_t committedRevision);
+  /// Drop the obligation and its candidate entirely (slot clear/load/replacement/reset).
+  void cancelDeferredConvergence();
+  /// Drop the shared canonical-base builder candidate (prefix inputs + window) and any bound
+  /// deferred source identity. Only the current owner of the builders may call this: the inline stop
+  /// when it abandons a superseded/denied base, or deferred convergence when it coalesces.
+  void discardCanonicalBuildCandidate();
   enum class CanonicalTailPhase : uint8_t { Idle, Normalize, Rows, StartCompanions, Companions, Complete, Denied };
   CanonicalTailPhase canonicalTailPhase = CanonicalTailPhase::Idle;
   PlaybackViewSourceIdentity canonicalTailTarget;

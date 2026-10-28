@@ -173,6 +173,9 @@ class LoopEventStoreReadCursor {
  public:
   bool ready() const { return complete_ && generation_ && *generation_ == expected_; }
   size_t size() const { return ready() ? count_ : 0; }
+  /// DEC-170 progress probe: the raw incremental event count, exposed so a fixture/reporter can tell a *productive*
+  /// read grain (count_ advanced) from a nonproductive one. `size()` is unsuitable — it reports 0 until `complete_`.
+  size_t count() const { return count_; }
   const MidiEvent* data() const { return ready() ? output_ : nullptr; }
   void discard() { *this = LoopEventStoreReadCursor{}; }
  private:

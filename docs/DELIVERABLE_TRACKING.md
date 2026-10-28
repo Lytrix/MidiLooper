@@ -1,3 +1,45 @@
+**2026-10-28 — early-overdub display loss fixed and accepted on device (DEC-172 corrections 3-4).**
+Two routes closed the gap: a Ready companion derivation is published losslessly across a moved
+`playbackRevision` (correction 3), and a stop that kept its companion path on a **window** denial may take that
+same route instead of the superseded discard (correction 4). Fixtures 1.13/1.14 + mutations M10/M11; full native
+3,545/7 skip/3,538 pass; build SUCCESS at RAM1 unchanged. Flashed `sha256 551cac47…` (boot `crash=0`).
+Device: `edit` 0 -> 7, display notes 246 -> 433, **owner confirms the notes are visible**. Open: the
+`retargeted`/no-base raw-retire rebuild (tasks 6.1b/6.2), the truncated-take Record-normalization wedge, and a
+session-exit obligation that refused three overdub starts. No commit.
+
+**2026-10-28 — owner-supersession publish route flashed and boot-verified (DEC-172 correction 3).**
+The correction-2 capture (`session_20261027_235228.log`) showed every atomic transfer still committing
+`causal_base_superseded` raw-only: a record-return commit moves `playbackRevision` between companion-ready and
+commit, killing all Ready-gated verifiers. Landed: `supersessionReady()` tolerance + store-unchanged proof +
+lossless `commitPreparedCaptureAndCompanionsSupersession` (`PendingStopAdmission::supersededCompanionExchange`);
+discard route stays fallback and the only obligation marker. Fixture 1.13 + mutation M10 (restored
+`d98d102c…`); full native 3,543/7 skip/3,536 pass; build SUCCESS at RAM1 `96,192 / padding 2,648`.
+**Flashed 10:45** on owner instruction (loader 2.3, exit 0, HEX `sha256 7f55b52b…`), boot proved separately (`crash=0`, `BOOT,load,ok`). Owner re-capture pending. No commit.
+
+**2026-10-27 — early-overdub content gap fixed at its root and flashed (DEC-172 correction 2).**
+The measured denial is a **window** failure with a ready prefix; the companion representation extends the prefix,
+so the escape now keeps the companion path and commits pass + companions without a bridge. Plus per-job
+abandonment, no supersession gate, post-commit obligation and correct reset semantics. Fixture 1.12 + M9; full
+native 3,542/7 skip/3,535 pass; build SUCCESS at RAM1 unchanged. **Flashed 23:47** (HEX `sha256 9e72497a…`, boot
+`crash=0`/`BOOT,load,ok`); owner re-capture pending. Prefix-denied companion rebuild (6.1b/6.2) remains open. No
+SD action, no commit.
+
+**2026-10-27 — deferred convergence did not change the device symptom; three defects fixed, the companion rebuild is open (DEC-172 correction, not re-flashed).**
+`captures/session_20261027_231625.log` on the first image: one supersession poisoned every later stop (Track-level
+abandonment) and the deferred rebuild produces a bridge-base window the display does not read. Fixed natively:
+per-job abandonment, no supersession gate, post-commit obligation, correct reset semantics; full native
+3,540/7 skip/3,533 pass, build SUCCESS. **Open:** rebuild the companion/note-edit representation with a re-scoped
+target (tasks 6.1–6.3). The board runs the first image; no reflash/commit.
+
+**2026-10-27 — deferred canonical convergence implemented natively (DEC-172), not device-qualified.**
+A destination-Playing overdub stop that retires raw because its canonical derivation was unavailable or superseded
+now leaves one slot-level obligation (`Owed→Building→Ready`) that rebuilds the derived canonical/companion
+representation through the committed generation it produced, serviced on the Snapshot deferred lane outside the
+capture-stop FIFO. Twelve fixtures (+ 8 mutation red-proofs), full native 3,540/7 skip/3,533 pass, build SUCCESS at
+RAM1 unchanged. **Flashed 2026-10-27** on owner instruction (loader 2.3, `Booting`, HEX `sha256 a22375e7…`, boot
+proved `crash=0`/`BOOT,load,ok`); owner device capture pending. No SD/content action, no commit.
+[DEC-172](../DECISION_LOG.md#dec-172--a-raw-retiring-stop-owes-one-slot-level-deferred-canonical-convergence-obligation-serviced-outside-the-capture-stop-fifo).
+
 **2026-10-27 — display repair7c04edd8 rejected on device; continuity repair open.**
 084714 plus production fixture expose pendingStop wakeup exclusion and a deeper complete-source handoff gap at wrap. Local wakeup correction alone is not a repair: enforced first wrapped frame still loses original Record identity while prior source contains it. Display26controls pass/1RED, playback9pass, capture buildPASS/RAM1 unchanged. Current/candidate lifetime/coverage/destructive cancellation and peak-memory contract needed; no blanket native/device pass. No upload/device/SD/content/commit/push; installed7c04edd8 unchanged. [Evidence/proposal](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-084714-DISPLAY.md).
 

@@ -584,7 +584,12 @@ struct TrackCaptureStopTestAccess {
   /// fact, `kCanonicalBaseAbandonedPhase`) that the AbandonBase escape writes — without coupling a
   /// fixture to a genuine 2048-grain stall. Same "manufactured predicate" pattern as the
   /// normalization-denial fixtures (DEC-166).
-  static void setBaseAbandonedSentinel(Track& t) { t.retargetStallPhase_ = kCanonicalBaseAbandonedPhase; }
+  /// DEC-165/172: abandonment is **per job** now (`PendingStopAdmission::canonicalBaseAbandoned`); the
+  /// Track-level sentinel remains only as the bounded-phase bookkeeping the escape reads.
+  static void setBaseAbandonedSentinel(Track& t) {
+    t.retargetStallPhase_ = kCanonicalBaseAbandonedPhase;
+    if (auto* job = t.captureStopJobHead()) job->admission.canonicalBaseAbandoned = true;
+  }
   static void diagnostic(const Track& t) {
     const auto* j = t.captureStopJobHead();
     printf("jobs=%zu interval=%llu phase=%u job_bytes=%zu ring_bytes=%zu\n", jobs(t),
@@ -643,6 +648,69 @@ struct TrackCaptureStopTestAccess {
   static bool prefixDeniedReported(const Track& t) {
     const auto* rt = t.playbackRuntime.slotIfAllocated(0);
     return rt != nullptr && rt->prefixDeniedFirstReported;
+  }
+  static void forceCanonicalPrefixDenied(Track& t) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    if (rt) rt->canonicalPrefixPhase = LoopPlaybackRuntime::CanonicalPrefixPhase::Denied;
+  }
+  /// The device's measured terminal denial: the prefix is healthy, the canonical **window** latches
+  /// denied (`fill_order_denied`), which is what makes the base unusable for the companion path.
+  static void forceCanonicalWindowDenied(Track& t) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    if (rt) rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Denied;
+  }
+  static RuntimeCanonicalPassInputs::ProgressState canonicalProgress(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt ? rt->canonicalPassInputs.progressState() : RuntimeCanonicalPassInputs::ProgressState{};
+  }
+  static unsigned canonicalWindowPhase(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt ? static_cast<unsigned>(rt->canonicalWindowPhase) : 255u;
+  }
+  // --- deferred canonical convergence (one obligation per slot) ----------------------------
+  static unsigned deferredPhase(const Track& t, uint8_t slot = 0) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt ? static_cast<unsigned>(rt->deferredConvergencePhase) : 255u;
+  }
+  static bool deferredOwed(const Track& t, uint8_t slot = 0) {
+    return deferredPhase(t, slot) ==
+        static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergencePhase::Owed);
+  }
+  static bool deferredBuilding(const Track& t, uint8_t slot = 0) {
+    return deferredPhase(t, slot) ==
+        static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergencePhase::Building);
+  }
+  static bool deferredReady(const Track& t, uint8_t slot = 0) {
+    return deferredPhase(t, slot) ==
+        static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergencePhase::Ready);
+  }
+  static bool deferredIdle(const Track& t, uint8_t slot = 0) {
+    return deferredPhase(t, slot) ==
+        static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergencePhase::Idle);
+  }
+  static uint32_t deferredTarget(const Track& t, uint8_t slot = 0) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt ? rt->deferredConvergenceTarget : 0u;
+  }
+  static uint32_t deferredSourceRevision(const Track& t, uint8_t slot = 0) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt ? rt->deferredConvergenceSource.playbackRevision : 0u;
+  }
+  static unsigned deferredDenial(const Track& t, uint8_t slot = 0) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt ? static_cast<unsigned>(rt->deferredConvergenceDenial) : 0u;
+  }
+  /// The slot-level owner turn in its production lane (the Snapshot turn also publishes a queued root
+  /// first, so one call is "a later owner turn" exactly as `main.cpp` delivers it).
+  static void ownerTurn(Track& t) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  }
+  static const RuntimePlaybackView* preparedWindow(const Track& t, uint8_t slot = 0) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr) return nullptr;
+    const Loop& loop = t.getLoop(slot);
+    return rt->preparedCanonicalWindow(PlaybackViewSourceIdentity{
+        loop.playbackRevision, t.playbackGeneration, loop.publishedSnapshotIdentity()});
   }
 };
 void TrackManager::beginSlotSelectionHold(uint8_t, uint8_t) { A34A_OFF_PATH(); }
@@ -748,7 +816,7 @@ void rotation(bool aOverdub, bool bOverdub) {
   stop(t, aOverdub, 768);
   // S4f.17: both stop entry points admit a deferred job, so the deferred shape is the
   // production shape on every mode rotation -- it is no longer a contract-gated expectation.
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
     "A must own a deferred job before any worker grain");
   start(t, 1, bOverdub, 768, 62);
   const uint64_t b = TrackCaptureStopTestAccess::interval(t);
@@ -836,7 +904,7 @@ void test_switching_tracks_while_recording_keeps_the_take_live_and_complete() {
   TEST_ASSERT_EQUAL_UINT8(5, trackManager.getSelectedTrackIndex());
   TEST_ASSERT_FALSE_MESSAGE(trackManager.getTrack(5).isRecording(), "the new track must not inherit the take");
   TEST_ASSERT_TRUE_MESSAGE(t.isRecording(), "switching tracks must not end the recording");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, t.getLoop(0).capture.store.size(),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, t.getLoop(0).capture.store.size(),
                                  "the switch must not clear or seal the live take");
 
   // The same take still accepts rows after the switch.
@@ -859,8 +927,8 @@ void test_switching_tracks_while_recording_keeps_the_take_live_and_complete() {
     if (row.data.noteData.note == 60) ++firstOn;
     if (row.data.noteData.note == 62) ++secondOn;
   }
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, firstOn, "the pre-switch row stays in the take");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, secondOn, "the post-switch row is captured into the same take");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, firstOn, "the pre-switch row stays in the take");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, secondOn, "the post-switch row is captured into the same take");
 }
 
 void test_record_to_record() { rotation(false, false); }
@@ -4330,10 +4398,10 @@ void test_stopped_overdub_stop_publishes_one_undo_entry() {
   TEST_ASSERT_TRUE_MESSAGE(loop.passes.hasRecordPass(),
                            "precondition: the record pass survives the overdub stop");
   TEST_ASSERT_EQUAL_UINT(1, loop.passes.overdubPasses.size());
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       undoBefore + 1, TrackUndo::getUndoCount(t),
       "a stopped overdub must add exactly one global undo entry");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       depthBefore + 1, TrackUndo::undoDepthForLoop(t, loop),
       "the sidebar U: level for this slot must gain the stopped overdub");
   const auto& entries = t.getGlobalUndoStack().entries;
@@ -4358,10 +4426,10 @@ void test_stopped_overdub_stop_publishes_one_undo_entry() {
   t.stopOverdubbingToStopped();
   driveStopToRetirement(t);
   TEST_ASSERT_EQUAL_UINT(2, loop.passes.overdubPasses.size());
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       undoBefore + 2, TrackUndo::getUndoCount(t),
       "the second stopped overdub must add one more level, not replace the first");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       depthBefore + 2, TrackUndo::undoDepthForLoop(t, loop),
       "the sidebar U: level must count both stopped overdubs");
   TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id,
@@ -4380,10 +4448,10 @@ void test_stopped_overdub_stop_publishes_one_undo_entry() {
   driveStopToRetirement(t);
   TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(),
                             "a superseded job must retire, not park on its undone entry");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       undoBefore + 3, TrackUndo::getUndoCount(t),
       "a superseded stopped overdub must still publish its level");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       depthBefore + 3, TrackUndo::undoDepthForLoop(t, loop),
       "the sidebar U: level must count the superseded stop as well");
   TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id,
@@ -4407,14 +4475,14 @@ void test_stopped_overdub_stop_publishes_one_undo_entry() {
   t.stopOverdubbingToStopped();
   driveStopToRetirement(t);
   // The stop committed nothing new (its take was already committed by that wrap) ...
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(passesBefore, loop.passes.overdubPasses.size(),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(passesBefore, loop.passes.overdubPasses.size(),
                                  "a clean stop stages no pass of its own");
   // ... yet its interval still owns a level, named by the receipt's identity.
   // ... yet its interval still owns a level, named by the receipt's identity.
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       undoBefore + 4, TrackUndo::getUndoCount(t),
       "a clean stop whose wraps committed the take must publish the entry for those identities");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       depthBefore + 4, TrackUndo::undoDepthForLoop(t, loop),
       "the sidebar U: level must gain the clean stop as well");
   TEST_ASSERT_EQUAL(wrappedPassId, t.getGlobalUndoStack().entries.back().passId);
@@ -6353,7 +6421,7 @@ void assertRecordRows(const Loop& loop, const SessionMidiEventVec& expected) {
       if (actual.type == want.type && actual.tick == want.tick &&
           actual.channel == want.channel && actual.noteId == want.noteId && payload) ++matches;
     }
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, matches, "record normalization inventory mismatch");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, matches, "record normalization inventory mismatch");
   }
 }
 
@@ -6554,7 +6622,7 @@ void test_abandoned_base_retires_the_playing_stop_without_revision_movement() {
   const uint64_t allowance = TrackCaptureStopTestAccess::budget(t) + 4096;
   for (uint64_t grain = 0; grain < allowance && TrackCaptureStopTestAccess::jobs(t); ++grain)
     TrackCaptureStopTestAccess::step(t);
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
                                  "abandoned-base Playing stop must retire, not wedge the head");
   // The transport never advances and the successor keeps capturing, so no wrap can run; the only
   // revision movement is the head's own commit publication. Exact +1 pins "retirement needed no
@@ -6567,7 +6635,7 @@ void test_abandoned_base_retires_the_playing_stop_without_revision_movement() {
   TrackCaptureStopTestAccess::assertRetiredCursors(t);
   // Successor service: with the head retired the next press is admitted, not retained.
   stop(t, false, 1536);
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
                                  "successor stop must be admitted now that the ring has room");
   TEST_ASSERT_FALSE(t.hasAcceptedUnexecutedInteraction());
   driveStopToRetirement(t);
@@ -6604,7 +6672,7 @@ void test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound() {
       "the device admitted a same-slot successor while the stop job was still pending");
   t.noteOn(1, 64, 100, 12); t.noteOff(1, 64, 0, 96);
   stop(t, true, 1536);                      // job B queued behind A
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, TrackCaptureStopTestAccess::jobs(t),
       "job B must queue behind job A before the transport stop");
 
   TrackCaptureStopTestAccess::retargetPendingStopToStopped(t);
@@ -6618,7 +6686,7 @@ void test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound() {
   // Job A (retargeted at the flip) retires first; B is untouched until it reaches the head.
   uint64_t turns = 0;
   while (TrackCaptureStopTestAccess::jobs(t) == 2 && turns < 20000) { drive(); ++turns; }
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
       "job A must retire and hand the head to job B");
 
   // B is now head. Its canonical base was never built, so its tail can never begin; the fix escapes
@@ -6627,7 +6695,7 @@ void test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound() {
   // the escape fires, so B's whole head-to-retirement span crosses it; post-fix it never approaches.
   uint64_t bTurns = 0;
   while (TrackCaptureStopTestAccess::jobs(t) == 1 && bTurns < 20000) { drive(); ++bTurns; }
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
       "the queued retargeted stop must retire, not stall the head");
   TEST_ASSERT_TRUE_MESSAGE(
       bTurns < static_cast<uint64_t>(kRetargetedCompanionStallGrainLimit),
@@ -6663,12 +6731,837 @@ void test_destination_playing_base_builds_natively_under_live_successor() {
   }
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalPrefix,
       "the canonical base must build past CanonicalPrefix natively under a live successor");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       static_cast<unsigned>(LoopPlaybackRuntime::CanonicalPrefixDenial::None),
       TrackCaptureStopTestAccess::prefixFirstDenial(t),
       "no denial may be recorded on the healthy native path (the reporter stays silent)");
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::prefixDeniedReported(t),
       "the denial reporter must not fire on the healthy native path");
+}
+
+namespace {
+/// Install a minimal **current** root for the slot. The deferred-convergence admission predicate is
+/// `publishedSnapshotIsCurrent()` (the freshness authority), and the canonical builder reads `passes`,
+/// not the root, so only the identity has to exist and be current here.
+void installCurrentRootForDeferredConvergence(Loop& loop) {
+  auto root = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  loop.storePublishedSnapshotForTest(root, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture must install a current root: convergence only builds "
+                           "against an authoritative source");
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshotIdentity());
+}
+
+/// Retire a **pending overdub stop** on the VisualCache lane only. The deferred-convergence owner turn
+/// rides the Snapshot lane, so this keeps the obligation untouched until the fixture drives it
+/// explicitly (otherwise the drive's own Snapshot turns can converge mid-fixture).
+void driveOverdubStopToRetirement(Track& t) {
+  for (unsigned turn = 0; turn < 40000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+                                 "the overdub stop must retire without the Snapshot lane");
+}
+
+/// The admission shape: a Playing overdub stop whose base is terminally denied, then settle. Returns
+/// the committed revision the raw retire produced.
+uint32_t driveAbandonedBaseStop(Track& t, Loop& loop, uint32_t tick = 0, uint8_t note = 60) {
+  start(t, 0, true, tick, note);
+  t.noteOn(1, static_cast<uint8_t>(note + 1), 100, tick + 12);
+  t.noteOff(1, static_cast<uint8_t>(note + 1), 0, tick + 96);
+  stop(t, true, tick + 768);               // job A, destination PLAYING
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  // No live successor here: the subject is the *terminal base denial* and the obligation it creates.
+  // The live-successor contention shape is the DEC-170 control's, and chaining one into a fixture that
+  // stops several times would leave a capture interval owning the slot.
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  // The genuine "derivation unavailable" shape the device produces (`base_build_done,outcome=denied,
+  // where=window,reason=fill_order_denied`): the prefix stays ready, the canonical *window* latches
+  // denied. Supersession alone does not do this -- the builder resolves the live source, so a moved
+  // root only forbids the successor window. Forcing it before the first grain covers both a cold
+  // builder and a builder already completed by a previous obligation.
+  // Force it **after** the inline stop has taken the builders: the preemption discard resets the
+  // window phase, so a denial forced before the preemption would be lost.
+  bool denialForced = false;
+  for (unsigned grain = 0; grain < 8192 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    if (!denialForced && rt.canonicalPrefixPhase != LoopPlaybackRuntime::CanonicalPrefixPhase::Idle) {
+      TrackCaptureStopTestAccess::forceCanonicalPrefixDenied(t);
+      denialForced = true;
+    }
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(denialForced, "precondition: the inline build must have started");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalPrefix,
+                           "precondition: the denied base must abandon at once");
+  driveOverdubStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(), "the denied stop must retire, not stall the head");
+  return loop.committedPassRevision();
+}
+}  // namespace
+
+/// 1.1 — record-return race (mid-build): a stop whose canonical derivation is superseded before it
+/// completes must retire raw **and record the deferred obligation** for the committed generation it
+/// produced. RED against the pre-change firmware: the raw escape leaves no obligation (content-
+/// fidelity gap), so the slot can never converge.
+void test_deferred_convergence_record_return_race_marks_the_slot_owed() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  const uint32_t committed = driveAbandonedBaseStop(t, loop);
+  // The immutable raw representation is committed and playable (the pre-existing guarantee).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, loop.passes.overdubPasses.size(),
+                                 "the raced stop must still commit its raw overdub pass");
+  TEST_ASSERT_EQUAL_UINT32(committed, loop.committedPassRevision());
+  // The new guarantee: the slot owes the derived representation through that generation.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "a raw retire must create the slot-level convergence obligation");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredOwed(t) ||
+                               TrackCaptureStopTestAccess::deferredBuilding(t),
+                           "the obligation must be owed (or already admitted)");
+  // One owner turn coalesces the single obligation to the generation the commit produced.
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::deferredIdle(t));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(committed, TrackCaptureStopTestAccess::deferredTarget(t),
+                                   "the single obligation targets the newest committed generation");
+}
+
+/// 1.2 — deferred convergence completes: once the record-return authority settles (a current root for
+/// the committed generation), a later owner turn resolves a fresh source, builds through the target,
+/// publishes the derived canonical window and discharges the obligation. RED before the change: the
+/// raced stop is raw-only and no rebuild is ever performed.
+void test_deferred_convergence_completes_from_a_settled_authority() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  const uint32_t committed = driveAbandonedBaseStop(t, loop);
+  TEST_ASSERT_EQUAL_UINT(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::deferredIdle(t));
+  // Settle the authority: the committed generation now has a current root.
+  installCurrentRootForDeferredConvergence(loop);
+  const uint32_t target = loop.committedPassRevision();
+  TEST_ASSERT_EQUAL_UINT32(committed, target);
+  for (unsigned turn = 0; turn < 20000 && !TrackCaptureStopTestAccess::deferredIdle(t); ++turn) {
+    TrackCaptureStopTestAccess::ownerTurn(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "the slot must converge and discharge its obligation");
+  TEST_ASSERT_NOT_NULL_MESSAGE(TrackCaptureStopTestAccess::preparedWindow(t),
+                               "the derived canonical window must be built and published for the "
+                               "target generation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(target, loop.committedPassRevision(),
+                                   "adoption must not advance the obligation's own target");
+  TEST_ASSERT_EQUAL_UINT32(target, loop.publishedSnapshotCoveredRevision());
+}
+
+namespace {
+/// Settle the authority and drive production owner turns until convergence admits its build.
+bool driveDeferredConvergenceToBuilding(Track& t, Loop& loop) {
+  installCurrentRootForDeferredConvergence(loop);
+  for (unsigned turn = 0; turn < 16; ++turn) {
+    TrackCaptureStopTestAccess::ownerTurn(t);
+    if (TrackCaptureStopTestAccess::deferredBuilding(t)) return true;
+    if (TrackCaptureStopTestAccess::deferredIdle(t)) return false;
+  }
+  return TrackCaptureStopTestAccess::deferredBuilding(t);
+}
+unsigned driveDeferredConvergenceToIdle(Track& t, unsigned limit = 20000) {
+  unsigned turns = 0;
+  while (turns < limit && !TrackCaptureStopTestAccess::deferredIdle(t)) {
+    TrackCaptureStopTestAccess::ownerTurn(t);
+      ++turns;
+  }
+  return turns;
+}
+}  // namespace
+
+/// 1.2b — a **second** obligation is served after a completed build. The canonical builder keeps its
+/// completed prefix/window after a discharge (the inline path reuses it), so admission must not
+/// require an idle builder: the new generation restarts it by identity. Without this the first
+/// converged overdub would permanently block every later one.
+void test_deferred_convergence_serves_a_second_obligation_after_a_completed_build() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  installCurrentRootForDeferredConvergence(loop);
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  TEST_ASSERT_NOT_NULL(TrackCaptureStopTestAccess::preparedWindow(t));
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::runtimeFor(t, 0).canonicalPrefixPhase ==
+          LoopPlaybackRuntime::CanonicalPrefixPhase::Ready,
+      "precondition: a discharged build leaves a completed builder for the inline path to reuse");
+  // A second raced overdub: the obligation must be admitted and served again.
+  const uint32_t second = driveAbandonedBaseStop(t, loop, 1536, 66);
+  installCurrentRootForDeferredConvergence(loop);
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "the second obligation must converge, not deadlock on the completed builder");
+  const auto* window = TrackCaptureStopTestAccess::preparedWindow(t);
+  TEST_ASSERT_NOT_NULL(window);
+  TEST_ASSERT_EQUAL_UINT32(second, window->source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT(2, loop.passes.overdubPasses.size());
+}
+
+/// 1.3 — coalescing: while the slot is building for generation G, a second superseded overdub commits
+/// G+1. There is still exactly one obligation, its target becomes G+1, the stale candidate cannot
+/// publish, and the final result represents G+1.
+void test_deferred_convergence_coalesces_a_newer_raw_commit() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::deferredIdle(t));
+  // Mid-build candidate for the first generation.
+  TEST_ASSERT_TRUE_MESSAGE(driveDeferredConvergenceToBuilding(t, loop),
+                           "precondition: deferred convergence must be building");
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredReady(t),
+                            "the first candidate must still be in flight");
+  // A second superseded overdub commits a newer generation while the candidate builds.
+  const uint32_t committedG1 = driveAbandonedBaseStop(t, loop, 1536, 66);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, loop.passes.overdubPasses.size(),
+                                 "the second stop must commit its raw pass too");
+  // One obligation, never two, and the **stale** candidate must not publish. A fresh build for the
+  // newest generation is legitimate (the stop drive runs Snapshot owner turns after retirement), so
+  // the invariant is the target identity, not "never Ready": if the obligation published, it published
+  // through G+1.
+  if (TrackCaptureStopTestAccess::deferredReady(t)) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(committedG1, TrackCaptureStopTestAccess::deferredTarget(t),
+                                     "a published candidate must be the newest generation's");
+  } else {
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(
+        static_cast<unsigned>(LoopPlaybackRuntime::CanonicalWindowPhase::Ready),
+        TrackCaptureStopTestAccess::canonicalWindowPhase(t),
+        "the stale candidate must be discarded, not completed");
+    TrackCaptureStopTestAccess::ownerTurn(t);
+    TEST_ASSERT_TRUE_MESSAGE(
+        TrackCaptureStopTestAccess::deferredIdle(t) ||
+            TrackCaptureStopTestAccess::deferredTarget(t) == committedG1,
+        "the single obligation coalesces to the newest generation");
+  }
+  // Settle. The requirement this fixture owns is the **single coalesced obligation** and that the
+  // stale candidate never published; whether the derived representation for G+1 is produced by the
+  // deferred rebuild (fixture 1.2/1.2b) or by a later inline build (the measured healthy path) is not
+  // this fixture's subject.
+  installCurrentRootForDeferredConvergence(loop);
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  TEST_ASSERT_EQUAL_UINT32(committedG1, loop.committedPassRevision());
+}
+
+/// 1.11 — abandonment is **per job**, not per track. A first stop whose base was totally denied must
+/// not make the next stop skip its own base and companion: the device capture
+/// (`captures/session_20261027_231625.log`) showed the DEC-165 sentinel left on the Track after one
+/// supersession, so every later stop logged "canonical base unavailable; companion path skipped" and
+/// committed raw-only for the rest of the session. RED under a Track-level flag; the second stop's
+/// overlapping note must resolve into a companion edit pass.
+void test_deferred_convergence_abandonment_is_per_job() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);   // a committed record pass with note 48 at 0..48
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  // A: a stop whose base is terminally denied (the device's raw-only shape).
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::deferredIdle(t));
+  const size_t editsBefore = loop.passes.editPasses.size();
+  // B: the *next* stop is healthy. It must build its own base and companion, even though A abandoned
+  // its base. The note overlaps the record pass (same pitch, phase 12) so the companion derivation has
+  // an overlap to resolve.
+  start(t, 0, true, 1536, 48);
+  t.noteOn(1, 48, 100, 1548);
+  t.noteOff(1, 48, 0, 1632);
+  stop(t, true, 2304);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  driveOverdubStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, loop.passes.overdubPasses.size(),
+                                 "both stops must commit their raw pass");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(editsBefore, loop.passes.editPasses.size(),
+      "the healthy stop after an abandoned base must still derive its companion representation; a "
+      "track-level abandonment flag makes every later stop skip the companion path");
+}
+
+/// 1.12 — a **window-only** denial is not a base abandonment. The canonical window is the successor
+/// bridge's base; the prefix it extends is healthy, so the tail and the companion/note-edit
+/// representation (what the display reads) are still derivable. The stop must keep the companion path
+/// and retire only the bridge estimate. RED under the pre-correction behaviour: the device's measured
+/// early-stop denials were `base_build_done,where=window,reason=fill_order_denied`, and abandoning the
+/// base there is what lost the companion (`captures/session_20261027_231625.log`).
+void test_window_denied_base_keeps_the_companion_path() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 61, 100, 12);
+  t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  // The prefix builds normally; only the window (the bridge base) is denied.
+  TrackCaptureStopTestAccess::forceCanonicalWindowDenied(t);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalPrefix,
+                           "a window denial must leave CanonicalPrefix at once");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::head(t).admission.canonicalBridgeUnavailable,
+                           "the window denial must be recorded as a bridge unavailability");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::head(t).admission.canonicalBaseAbandoned,
+                            "a window-only denial must NOT abandon the base");
+  driveOverdubStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, loop.passes.overdubPasses.size(),
+                                 "the stop must still commit its capture pass");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "the companion path ran, so the slot owes no deferred derivation");
+  TEST_ASSERT_TRUE_MESSAGE(loop.preparedCompanionHistoryPrewarmed(),
+                           "the companion horizon must be back on its prewarmed state after the commit");
+}
+
+/// 1.14 — a **window-denied** stop must publish its prepared companions too. On device
+/// (`session_20261028_110951.log`) the early overdubs after a record return kept the companion path
+/// (DEC-172 correction 2) and then hit the owner-superseded branch at AtomicTransfer, where the
+/// discard route threw the finished derivation away while the store-unchanged proof still held --
+/// the very stops whose notes the owner could not see. Bridge unavailability only forbids the
+/// successor window; it must not forbid publishing the companions.
+void test_window_denied_stop_publishes_its_prepared_companions() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 1536, 48);
+  stop(t, true, 2304);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  TrackCaptureStopTestAccess::forceCanonicalWindowDenied(t);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::head(t).admission.canonicalBridgeUnavailable);
+  // Let the companion derivation complete, then move the owner exactly as a record-return pass commit does.
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) !=
+           PendingStopPhase::CompanionBridge; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(PendingStopPhase::CompanionBridge,
+                                 TrackCaptureStopTestAccess::phase(t),
+                                 "the companion derivation must complete before the owner moves");
+  ++loop.playbackRevision;
+  for (unsigned grain = 0; grain < 200 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CompanionBridge; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::head(t).admission.supersededCompanionExchange,
+                           "a window-denied stop must take the lossless companion publish route");
+  driveOverdubStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, loop.passes.overdubPasses.size(),
+                                 "the stop must still commit its capture pass");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "with the companions published, the slot owes no deferred derivation");
+  TEST_ASSERT_TRUE_MESSAGE(loop.preparedCompanionHistoryPrewarmed(),
+                           "the companion horizon must be back on its prewarmed state after the commit");
+}
+
+/// 1.13 — an owner-superseded base must still publish the interval's **prepared companion**
+/// representation. On device (`session_20261027_235228.log`) a record-return pass commit moves
+/// `playbackRevision` while the stop's companion derivation is completing, so `causalBaseCurrent`
+/// is stale at AtomicTransfer and the superseded *discard* route threw the finished derivation
+/// away -- the overdubbed notes stayed audible but vanished from the display (DEC-070). When the
+/// derivation is bound to this interval's own receipt and the store it copied from is unchanged,
+/// the exchange is lossless and must publish (mutation M10 reds the route).
+void test_superseded_base_publishes_prepared_companions() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  // Same shape as 1.11's healthy stop: the note overlaps the record pass (pitch 48, phase 12), so
+  // the companion derivation has an overlap to resolve and can produce rows.
+  start(t, 0, true, 1536, 48);
+  t.noteOn(1, 48, 100, 1548);
+  t.noteOff(1, 48, 0, 1632);
+  stop(t, true, 2304);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  // Drive to the CompanionBridge phase, where the companion derivation has completed (Ready) but the
+  // commit has not run yet.
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) !=
+           PendingStopPhase::CompanionBridge; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(PendingStopPhase::CompanionBridge,
+                                 TrackCaptureStopTestAccess::phase(t),
+                                 "the companion derivation must complete before the provocation");
+  ++loop.playbackRevision;
+  bool routeSeen = false;
+  for (unsigned turn = 0; turn < 40000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    if (TrackCaptureStopTestAccess::head(t).admission.supersededCompanionExchange)
+      routeSeen = true;
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+                                 "the stop must retire without the Snapshot lane");
+  TEST_ASSERT_TRUE_MESSAGE(routeSeen,
+                           "the stale commit must take the lossless-exchange publish route");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, loop.passes.overdubPasses.size(),
+                                 "the stop must still commit its capture pass");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "with the companion representation published, the slot owes nothing");
+  TEST_ASSERT_TRUE_MESSAGE(loop.preparedCompanionHistoryPrewarmed(),
+                           "the companion horizon must be back on its prewarmed state after the commit");
+}
+
+/// 1.4 — FIFO liveness: while the record-return authority stays unstable, ten short stop interactions
+/// each retire raw and drain, so the eight-deep ring never fills, and the slot still owns exactly one
+/// coalesced obligation.
+void test_deferred_convergence_keeps_the_stop_fifo_draining() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  uint32_t committed = 0;
+  for (unsigned i = 0; i < 10; ++i) {
+    const uint32_t tick = i * 1536;
+    start(t, 0, true, tick, static_cast<uint8_t>(60 + i));
+    t.noteOn(1, static_cast<uint8_t>(60 + i), 100, tick + 12);
+    t.noteOff(1, static_cast<uint8_t>(60 + i), 0, tick + 96);
+    stop(t, true, tick + 768);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+                                   "each interaction admits exactly one stop");
+    advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+    TrackCaptureStopTestAccess::step(t);   // the inline build starts ...
+    loop.bumpPlaybackRevisionWithoutNotifyForTest();  // ... and authority moves underneath it
+    driveStopToRetirement(t);
+    committed = loop.committedPassRevision();
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(
+        0, TrackCaptureStopTestAccess::jobs(t),
+        "every stop must retire; the obligation may never hold the capture-stop FIFO");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(
+        0, TrackCaptureStopTestAccess::stopQueueDepth(t),
+        "the eight-deep ring must never fill behind convergence");
+    // The obligation is single (one field, by construction) and always coalesced forward: if it is
+    // still outstanding it targets the newest generation; it may also have converged already, because
+    // draining the publication lane between interactions is a legitimate owner turn.
+    TrackCaptureStopTestAccess::ownerTurn(t);
+    TEST_ASSERT_TRUE_MESSAGE(
+        TrackCaptureStopTestAccess::deferredIdle(t) ||
+            TrackCaptureStopTestAccess::deferredTarget(t) == loop.committedPassRevision(),
+        "an outstanding obligation must target the newest committed generation");
+    // The production publisher runs continuously; drain it between interactions so the next
+    // session-exit admission is free (the recorded behaviour is not the subject here).
+    for (unsigned turn = 0; turn < 512 && !loop.canCaptureSessionExitTail(); ++turn) {
+      TrackCaptureStopTestAccess::ownerTurn(t);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(loop.canCaptureSessionExitTail(),
+                             "the session-exit publication must drain between interactions");
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(10, loop.passes.overdubPasses.size(),
+                                 "every stop must commit its raw pass");
+  TEST_ASSERT_EQUAL_UINT32(committed, loop.committedPassRevision());
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::deferredIdle(t) ||
+          TrackCaptureStopTestAccess::deferredTarget(t) == committed,
+      "ten interactions leave at most one obligation, aimed at the newest generation");
+}
+
+/// 1.5 — a committed-state change by a non-stop path (the undo/redo inventory change) while the
+/// deferred candidate is building discards the candidate and re-resolves; no mixed-source publication.
+void test_deferred_convergence_discards_a_candidate_on_a_committed_state_mutation() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);  // a build grain: the prefix is preparing
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  TEST_ASSERT_TRUE(loop.passes.overdubPasses.size() == 1);
+  // The same committed-state inventory change the undo/redo path performs (pass state).
+  const PassId overdubId = loop.passes.overdubPasses.back().id;
+  TEST_ASSERT_TRUE(loop.setCapturePassState(overdubId, CapturePassState::Disabled));
+  const uint32_t mutated = loop.committedPassRevision();
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredOwed(t),
+                           "a committed-state change mid-build must discard the candidate");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergenceDenial::SourceChanged),
+      TrackCaptureStopTestAccess::deferredDenial(t),
+      "the discard must be attributed to the source change");
+  TEST_ASSERT_EQUAL_UINT32(mutated, TrackCaptureStopTestAccess::deferredTarget(t));
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::CanonicalWindowPhase::Ready),
+      TrackCaptureStopTestAccess::canonicalWindowPhase(t),
+      "no mixed-source candidate may be published");
+  // Re-resolve from the new authority and converge.
+  installCurrentRootForDeferredConvergence(loop);
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  const auto* window = TrackCaptureStopTestAccess::preparedWindow(t);
+  TEST_ASSERT_NOT_NULL(window);
+  TEST_ASSERT_EQUAL_UINT32(mutated, window->source.playbackRevision);
+}
+
+/// 1.5b — the published-source identity changes at the *same* committed generation (the
+/// Record-return root is republished). The in-flight candidate was pinned to the old identity, so it
+/// must be discarded and re-resolved; a candidate never publishes a superseded-source result.
+void test_deferred_convergence_discards_a_candidate_on_a_source_identity_change() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);  // a build grain: the prefix is preparing
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  const uint32_t target = loop.committedPassRevision();
+  const void* const identityBefore = loop.publishedSnapshotIdentity();
+  // Republish the root for the same committed generation: the identity moves, the generation does not.
+  installCurrentRootForDeferredConvergence(loop);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(identityBefore, loop.publishedSnapshotIdentity(),
+                                "precondition: the source identity must move");
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredOwed(t),
+                           "a source-identity change mid-build must discard the candidate");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergenceDenial::SourceChanged),
+      TrackCaptureStopTestAccess::deferredDenial(t),
+      "the discard must be attributed to the source change");
+  TEST_ASSERT_EQUAL_UINT32(target, TrackCaptureStopTestAccess::deferredTarget(t));
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  const auto* window = TrackCaptureStopTestAccess::preparedWindow(t);
+  TEST_ASSERT_NOT_NULL(window);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), window->source.snapshotIdentity,
+                                "the re-resolved candidate must bind the new authority identity");
+}
+
+/// 1.6 — convergence failure is non-blocking: a terminal denial returns the obligation to `Owed` (never
+/// stuck in `Building`), the committed raw content stays authoritative, and the FIFO keeps draining.
+void test_deferred_convergence_failure_does_not_block_or_wedge() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);  // the prefix is preparing
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  // Force the terminal denial the builder can latch (the DEC-171 device shape).
+  TrackCaptureStopTestAccess::forceCanonicalPrefixDenied(t);
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredOwed(t),
+                           "a terminal denial must return the obligation to owed, not stick in building");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::DeferredConvergenceDenial::BuildDenied),
+      TrackCaptureStopTestAccess::deferredDenial(t),
+      "the denial must be attributed to the terminal build denial");
+  // The committed raw content is still authoritative and playable.
+  TEST_ASSERT_EQUAL_UINT(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(CapturePassState::Active, loop.passes.overdubPasses.back().state);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  // And the FIFO still drains a later stop.
+  const uint32_t committed = driveAbandonedBaseStop(t, loop, 1536, 66);
+  TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
+  TEST_ASSERT_EQUAL_UINT(2, loop.passes.overdubPasses.size());
+  (void)committed;
+}
+
+/// 1.7 — standing demand: the obligation is owed while no authority exists; the root then becomes
+/// current (no transition the owner caught). A later owner turn observes that already-ready authority
+/// and begins convergence with no further user interaction.
+void test_deferred_convergence_observes_an_already_ready_authority() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredOwed(t));
+  // No owner turn ran between the commit and this root: nothing was caught by an edge.
+  installCurrentRootForDeferredConvergence(loop);
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredBuilding(t),
+                           "a later owner turn must observe the ready authority and begin convergence");
+  (void)driveDeferredConvergenceToIdle(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  TEST_ASSERT_NOT_NULL(TrackCaptureStopTestAccess::preparedWindow(t));
+}
+
+/// 1.8 — exclusive canonical-builder ownership: an inline capture stop admitted while deferred
+/// convergence is building preempts it without waiting; the deferred candidate is discarded, the
+/// obligation returns to owed, and the inline result completes.
+void test_deferred_convergence_yields_the_builder_to_an_inline_stop() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPrefixPhase != LoopPlaybackRuntime::CanonicalPrefixPhase::Idle,
+                           "precondition: the deferred candidate owns the builder");
+  // A healthy inline stop is admitted (its causal base stays current).
+  start(t, 0, true, 1536, 66);
+  t.noteOn(1, 67, 100, 1548);
+  t.noteOff(1, 67, 0, 1632);
+  stop(t, true, 2304);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  TrackCaptureStopTestAccess::step(t);  // the inline stop takes the builders
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredOwed(t),
+                           "the inline stop must take ownership and yield the deferred candidate");
+  TEST_ASSERT_TRUE_MESSAGE(
+      rt.canonicalPrefixPhase != LoopPlaybackRuntime::CanonicalPrefixPhase::Idle,
+      "the inline build must own the canonical builder after the preemption");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, rt.canonicalPrefixSource.playbackRevision,
+                                   "the inline build must bind the inline source, not the stale one");
+  // The inline stop completes and retires; it never waited for convergence.
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+                                 "the inline stop must retire without waiting for convergence");
+  TEST_ASSERT_EQUAL_UINT(2, loop.passes.overdubPasses.size());
+}
+
+/// 1.9 — inline satisfaction: the healthy inline build adopts an authoritative result covering the
+/// outstanding target, so the obligation clears and no duplicate publication follows.
+void test_deferred_convergence_is_satisfied_by_the_inline_build() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  const uint32_t target = loop.committedPassRevision();
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  // The healthy inline stop (the measured OD3 shape) builds and adopts a base covering the target.
+  start(t, 0, true, 1536, 66);
+  t.noteOn(1, 67, 100, 1548);
+  t.noteOff(1, 67, 0, 1632);
+  stop(t, true, 2304);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  for (unsigned turn = 0; turn < 20000 &&
+       TrackCaptureStopTestAccess::phase(t) == PendingStopPhase::CanonicalPrefix; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "the adopted inline result covers the target and discharges the obligation");
+  const unsigned revisionAfterAdoption = loop.passes.overdubPasses.size();
+  (void)revisionAfterAdoption;
+  // No duplicate later publication: extra owner turns must not re-open an obligation.
+  for (unsigned turn = 0; turn < 64; ++turn) TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "no duplicate deferred publication may follow inline satisfaction");
+  TEST_ASSERT_EQUAL_UINT32(target + 1, loop.committedPassRevision());
+}
+
+/// 1.10 — slot cancellation: an owed/building obligation for a slot is cancelled by the runtime reset
+/// that clear/load/replacement performs, and the discarded candidate cannot publish into new content.
+void test_deferred_convergence_is_cancelled_by_slot_reset() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  (void)driveAbandonedBaseStop(t, loop, 0, 60);
+  TEST_ASSERT_TRUE(driveDeferredConvergenceToBuilding(t, loop));
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredBuilding(t));
+  auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  // A *playback-state* reset is not a slot replacement: it must keep the obligation (the stop path
+  // calls this reset, and cancelling there erased the obligation the stop had just recorded).
+  TEST_ASSERT_TRUE_MESSAGE(rt.reset(true),
+                           "the slot runtime must reset once no interval owns it");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "a playback-state reset must not cancel the obligation");
+  // Clear/load restarts the loop's committed timeline; that is the incarnation change.
+  loop.resetPassTimeline();
+  TEST_ASSERT_TRUE(rt.reset(false));
+  TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                           "clear/load/replacement cancels the obligation");
+  TEST_ASSERT_EQUAL_MESSAGE(
+      static_cast<unsigned>(LoopPlaybackRuntime::CanonicalWindowPhase::Idle),
+      TrackCaptureStopTestAccess::canonicalWindowPhase(t),
+      "the candidate must be invalidated with the slot incarnation");
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::preparedWindow(t));
+  // The cancelled candidate cannot publish into the replacement content.
+  installCurrentRootForDeferredConvergence(loop);
+  for (unsigned turn = 0; turn < 64; ++turn) TrackCaptureStopTestAccess::ownerTurn(t);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredIdle(t));
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::preparedWindow(t));
+}
+
+/// DEC-171: a base that *latches* a terminal denial (the prefix stepped into `Denied`, or the window build was
+/// denied) must be abandoned immediately, not spun `unchanged` for ~3,700 grains until the 2048-grain bound. The
+/// device capture showed the window denied (`canonicalWindowPhase == Denied`) while `stepCanonicalBase` returned
+/// `Denied` every grain; this fixture forces the same terminal state and asserts the one-grain escape.
+void test_denied_base_escapes_immediately_without_the_stall_bound() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);                 // interval A
+  t.noteOn(1, 61, 100, 12); t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);                       // job A admitted, destination PLAYING
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 0, true, 768, 62);               // successor interval B (the device's bounded shape)
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "successor must be live");
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+
+  // One grain starts the prefix build (sets `canonicalPrefixPasses`/`canonicalPrefixSource`), so the forced
+  // `Denied` latch below is not mistaken for a source-change restart.
+  TrackCaptureStopTestAccess::step(t);
+
+  // Force the base into the terminal latched denial the device reaches (prefix `Denied`; the window path uses the
+  // same `stepCanonicalBase == Denied` escape).
+  TrackCaptureStopTestAccess::forceCanonicalPrefixDenied(t);
+
+  // One grain must escape — the base is abandoned and the phase leaves CanonicalPrefix at once.
+  TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::phase(t) != PendingStopPhase::CanonicalPrefix,
+      "a latched-denied base must be abandoned immediately, not spun until the stall bound");
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::phase(t) == PendingStopPhase::CanonicalOrder,
+      "the denied base must hand off to CanonicalOrder, not skip past it");
+  // The job retires via the abandoned-base path (no canonical base, raw pass only), not the stall bound.
+  uint64_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) > 0 && turns < 20000) {
+    TrackCaptureStopTestAccess::step(t);
+    ++turns;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t),
+      "the denied stop must retire, not stall the head");
+  TEST_ASSERT_TRUE_MESSAGE(turns < static_cast<uint64_t>(kCanonicalBaseStallGrainLimit),
+      "the denied base must escape in well under the stall bound");
+  // The fast escape also records the deferred obligation, **after** the raw commit (the committed
+  // generation is the target), so the slot owes the derived representation it skipped.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "a terminal base denial must record the deferred-convergence obligation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(t.getLoop(0).committedPassRevision(),
+                                   TrackCaptureStopTestAccess::deferredTarget(t),
+                                   "the obligation targets the generation the raw commit produced");
+}
+
+/// DEC-170 progress probe (native): drive the canonical base build one grain at a time under a live successor,
+/// sampling the builder's advance state, and classify each `Pending` grain as *productive* (a counter moved) vs
+/// *spin* (nothing moved). This answers "does a grain correspond to measurable forward progress" — the fact the
+/// device's base build took 3,908–7,157 grains while this native control finishes in <400 must be either "more
+/// content → more productive steps" or "the device grains are mostly no-op `Pending` turns". The printout names
+/// the first productive transitions so the meaningful counters are identified before any device reporter is built.
+void test_probe_base_build_grain_productivity() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);            // record pass (1 note)
+  t.forceSetState(TRACK_PLAYING);
+  // Commit one 140-note overdub so the head job's base selects 2 passes with 141 notes (the content
+  // scaling the device's 9-pass slot exhibits), then stop a second overdub as the head job.
+  start(t, 0, true, 0, 60);
+  for (unsigned i = 0; i < 140; ++i) {
+    const uint8_t channel = 2 + i / 128, note = i % 128;
+    t.noteOn(channel, note, 100, 12); t.noteOff(channel, note, 0, 96);
+  }
+  stop(t, true, 768);
+  driveStopToRetirement(t);           // commits overdub A (140 notes)
+
+  start(t, 0, true, 768, 62);         // overdub B (head job's interval)
+  t.noteOn(1, 64, 100, 12); t.noteOff(1, 64, 0, 96);
+  stop(t, true, 1536);                // head job; base = record + overdub A (141 notes)
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 0, true, 1536, 66);        // live successor (the device's shape)
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "successor must be live");
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+
+  auto snap = [&]() {
+    return std::make_pair(TrackCaptureStopTestAccess::canonicalProgress(t),
+                          TrackCaptureStopTestAccess::canonicalWindowPhase(t));
+  };
+  auto prev = snap();
+  size_t total = 0, productive = 0, spin = 0;
+  printf("=== base-build grain productivity (2 passes / 141 notes, phase=CanonicalPrefix) ===\n");
+  while (TrackCaptureStopTestAccess::phase(t) == PendingStopPhase::CanonicalPrefix && total < 200000) {
+    TrackCaptureStopTestAccess::step(t);
+    ++total;
+    const auto cur = snap();
+    if (cur != prev) {
+      ++productive;
+      if (productive <= 30) {
+        const auto& p = cur.first;
+        printf("grain %3zu: PROD  prefixPhase=%u pass=%zu/%zu events=%zu cursor=%zu read=%zu capOrder=%zu "
+               "applyPhase=%u applyCur=%zu applyRow=%zu applySize=%zu winPhase=%u\n",
+               total, p.phase, p.completedPasses, p.totalPasses, p.eventCount, p.cursor, p.readCursor,
+               p.captureOrderedCount, p.apply.phase, p.apply.cursor, p.apply.rowCursor, p.apply.size, cur.second);
+      }
+    } else {
+      ++spin;
+      if (spin <= 6) {
+        const auto& p = cur.first;
+        printf("grain %3zu: SPIN  prefixPhase=%u pass=%zu/%zu events=%zu cursor=%zu read=%zu capOrder=%zu "
+               "applyPhase=%u applyCur=%zu applyRow=%zu applySize=%zu winPhase=%u\n",
+               total, p.phase, p.completedPasses, p.totalPasses, p.eventCount, p.cursor, p.readCursor,
+               p.captureOrderedCount, p.apply.phase, p.apply.cursor, p.apply.rowCursor, p.apply.size, cur.second);
+      }
+    }
+    prev = cur;
+  }
+  printf("PROBE base build: total=%zu productive=%zu spin=%zu finalPhase(job)=%u\n",
+         total, productive, spin, static_cast<unsigned>(TrackCaptureStopTestAccess::phase(t)));
+  TEST_ASSERT_TRUE_MESSAGE(productive > 0, "the base build must make at least one productive grain");
 }
 
 void test_job_pass_staging_denial_and_receipt_binding() {
@@ -8748,7 +9641,7 @@ void test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_star
                 loop.hasPendingCapturePass_ ? 1 : 0,
                 loop.hasActiveOverdubTransferAdmission() ? 1 : 0);
   std::printf("T4.20 boundary receipt: %s\n", ctx);
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(Loop::kSessionExitReceiptCapacity, loop.sessionExitReceiptCount(), ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(Loop::kSessionExitReceiptCapacity, loop.sessionExitReceiptCount(), ctx);
   // The ring is full; the start must still be admissible (storage limits are nowhere near exhausted).
   t.setActiveLoopIndex(kSlot);
   clockManager.assignCurrentTickSilently(96);
@@ -8832,7 +9725,7 @@ void test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_s
       // already `Publishing` when the retirement filled its final pass id in this same turn...
       TEST_ASSERT_TRUE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
       // ...the stop could not take a receipt slot (the ring was and still is full)...
-      TEST_ASSERT_EQUAL_UINT_MESSAGE(Loop::kSessionExitReceiptCapacity,
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(Loop::kSessionExitReceiptCapacity,
                                      loop.sessionExitReceiptCount(), ctx);
       // ...and the ownership is exclusive: `pendingSnapshotSessionExitQueued()` names one obligation
       // (this one), never a second representation of the same identities.
@@ -9274,6 +10167,29 @@ void test_4_20_allocation_census_matches_the_owners_it_reports() {
 }
 
 
+
+// A long FIRST record (the device shape in `session_20261028_104547.log`: a 16128-tick take stopped
+// with the playhead at phase 80) must normalize to `RecordPrepared`, not stall. This is the healthy
+// control for the deferred Record normalization lane on that geometry.
+void test_long_first_record_stop_with_early_playhead_normalizes() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  for (uint32_t tick = 112; tick + 48 < 16000; tick += 96) {
+    const auto pitch = static_cast<uint8_t>(48 + (tick / 96) % 12);
+    t.noteOn(1, pitch, 100, tick);
+    t.noteOff(1, pitch, 0, tick + 48);
+  }
+  const auto captured = t.getLoop(0).capture.store.size();
+  TEST_ASSERT_GREATER_THAN(0, captured);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 80, 16128);
+  driveToPrepared(t);
+  TEST_ASSERT_EQUAL_MESSAGE(PendingStopPhase::RecordPrepared, job.admission.phase,
+                            "a long first record must reach RecordPrepared");
+  TEST_ASSERT_EQUAL_STRING("none", recordNormalizationDenialName(job.lastNormalizationDenial));
+  TEST_ASSERT_GREATER_THAN(0, TrackCaptureStopTestAccess::closureRuntime(t).canonicalCaptureOutput.store.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses);
@@ -9304,6 +10220,24 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
 RUN_TEST(test_abandoned_base_retires_the_playing_stop_without_revision_movement);
 RUN_TEST(test_a_retargeted_stop_without_a_base_escapes_without_the_stall_bound);
 RUN_TEST(test_destination_playing_base_builds_natively_under_live_successor);
+RUN_TEST(test_denied_base_escapes_immediately_without_the_stall_bound);
+RUN_TEST(test_probe_base_build_grain_productivity);
+RUN_TEST(test_deferred_convergence_record_return_race_marks_the_slot_owed);
+RUN_TEST(test_deferred_convergence_completes_from_a_settled_authority);
+RUN_TEST(test_deferred_convergence_serves_a_second_obligation_after_a_completed_build);
+RUN_TEST(test_deferred_convergence_coalesces_a_newer_raw_commit);
+RUN_TEST(test_window_denied_base_keeps_the_companion_path);
+RUN_TEST(test_window_denied_stop_publishes_its_prepared_companions);
+RUN_TEST(test_superseded_base_publishes_prepared_companions);
+RUN_TEST(test_deferred_convergence_abandonment_is_per_job);
+RUN_TEST(test_deferred_convergence_keeps_the_stop_fifo_draining);
+RUN_TEST(test_deferred_convergence_discards_a_candidate_on_a_committed_state_mutation);
+RUN_TEST(test_deferred_convergence_discards_a_candidate_on_a_source_identity_change);
+RUN_TEST(test_deferred_convergence_failure_does_not_block_or_wedge);
+RUN_TEST(test_deferred_convergence_observes_an_already_ready_authority);
+RUN_TEST(test_deferred_convergence_yields_the_builder_to_an_inline_stop);
+RUN_TEST(test_deferred_convergence_is_satisfied_by_the_inline_build);
+RUN_TEST(test_deferred_convergence_is_cancelled_by_slot_reset);
   RUN_TEST(test_job_pass_staging_denial_and_receipt_binding);
   RUN_TEST(test_record_normalization_stopped_inventory);
   RUN_TEST(test_record_normalization_playing_inventory);
@@ -9316,6 +10250,7 @@ RUN_TEST(test_destination_playing_base_builds_natively_under_live_successor);
   RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
   RUN_TEST(test_record_publication_preflight_denies_before_the_irreversible_commit);
   RUN_TEST(test_record_pass_transfer_continues_after_the_store_empties);
+  RUN_TEST(test_long_first_record_stop_with_early_playhead_normalizes);
   RUN_TEST(test_record_pass_transfer_capacity_refusal_fails_closed);
   RUN_TEST(test_empty_record_take_all_dropped_retires_without_content);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);

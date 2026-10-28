@@ -242,26 +242,48 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::retargetStoppedRecovery(
       runtime.canonicalPassInputs.retargetFrozenCommandEpoch(stop.transportCommandEpoch, views->frozenCaptureStaging());
 }
 
-static TRACK_COLD_MEM bool commitPreparedStopped(
+/// Shared by the Stopped commit and DEC-172's Playing bridge-unavailable commit: publish the prepared
+/// pass and its companion history, no successor window. `expectedDestination` is the admission's own
+/// destination, so a retargeted job cannot be committed under the wrong one.
+static TRACK_COLD_MEM bool commitPreparedWithoutBridge(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
-    GlobalUndoStack* stack, TrackUndoPublication* undo, PendingCapturePass* pendingPass) {
+    GlobalUndoStack* stack, TrackUndoPublication* undo, PendingCapturePass* pendingPass,
+    PendingStopDestination expectedDestination, bool supersededStoreProof = false) {
   const auto* views = runtime.viewSetIfPrewarmed();
+  const bool supersession = supersededStoreProof;
+  const bool ownerProof = supersession
+      // Owner-superseded (a record-return pass commit moved the revision): the interval's own
+      // completed derivation still exchanges losslessly while its bindings and store state hold
+      // (DEC-172 correction 3).
+      ? loop.preparedCompanionHistorySupersessionPublishProof(stop.intervalToken())
+      : runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
+          {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration});
   if (!views || stop.phase != PendingStopPhase::AtomicTransfer ||
-      !stop.canCommit(stop.transportCommandEpoch, PendingStopDestination::Stopped) ||
+      !stop.canCommit(stop.transportCommandEpoch, expectedDestination) ||
       !stop.canonicalPreparationQuantum || !stop.historyRecycleQuantum || !stop.remainingHistoryRecycleGrains ||
-      views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
-      !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
-      !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
-          {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ||
-      !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken(), pendingPass) ||
-      !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ||
-      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(), stop.intervalToken()) ||
+      (!supersession &&
+       (views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
+        !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
+        !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ||
+        !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions,
+                                              views->frozenCaptureStaging(), stop.intervalToken()))) ||
+      !ownerProof ||
+      !(supersession
+            ? loop.canCommitPreparedCaptureAndCompanionsSupersession(stop.intervalToken(), pendingPass)
+            : loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken(), pendingPass)) ||
       (undo && (!stack || !undo->canPublish(*stack, loop.loopId, finalPassId(pendingPass, loop)))))
     return false;
-  const uint32_t revisionDelta = loop.preparedCompanionHistoryIds(stop.intervalToken())->empty() ? 1 : 2;
+  const auto* ids = loop.preparedCompanionHistoryIds(stop.intervalToken());
+  if (supersession && ids == nullptr)
+    ids = loop.preparedCompanionHistorySupersessionIds(stop.intervalToken());
+  const uint32_t revisionDelta = (ids == nullptr || ids->empty()) ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
-      !loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(), pendingPass))
+      !(supersession
+            ? loop.commitPreparedCaptureAndCompanionsSupersession(transferred, stop.intervalToken(),
+                                                                  pendingPass)
+            : loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(),
+                                                            pendingPass)))
     return false;
   markDeferredCommitDisplayRanges(loop, stop, pendingPass);
   if (undo) undo->publishAtCommit();
@@ -278,16 +300,55 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStopped(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
     PendingCapturePass* pendingPass) {
-  return commitPreparedStopped(loop, runtime, stop, generation, transferred, nullptr, nullptr,
-                               pendingPass);
+  return commitPreparedWithoutBridge(loop, runtime, stop, generation, transferred, nullptr, nullptr,
+                                     pendingPass, PendingStopDestination::Stopped);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
     GlobalUndoStack& stack, TrackUndoPublication& undo, PendingCapturePass* pendingPass) {
-  return commitPreparedStopped(loop, runtime, stop, generation, transferred, &stack, &undo,
-                               pendingPass);
+  return commitPreparedWithoutBridge(loop, runtime, stop, generation, transferred, &stack, &undo,
+                                     pendingPass, PendingStopDestination::Stopped);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithoutBridge(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    PendingCapturePass* pendingPass, bool supersededStoreProof) {
+  if (stop.phase != PendingStopPhase::AtomicTransfer ||
+      stop.destination != PendingStopDestination::Playing) return false;
+  return commitPreparedWithoutBridge(loop, runtime, stop, generation, transferred, nullptr, nullptr,
+                                     pendingPass, PendingStopDestination::Playing,
+                                     supersededStoreProof);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithoutBridgeWithUndo(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    GlobalUndoStack& stack, TrackUndoPublication& undo, PendingCapturePass* pendingPass,
+    bool supersededStoreProof) {
+  if (stop.phase != PendingStopPhase::AtomicTransfer ||
+      stop.destination != PendingStopDestination::Playing) return false;
+  return commitPreparedWithoutBridge(loop, runtime, stop, generation, transferred, &stack, &undo,
+                                     pendingPass, PendingStopDestination::Playing,
+                                     supersededStoreProof);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferSupersededWithCompanions(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    PendingCapturePass* pendingPass) {
+  return advanceAtomicTransferWithoutBridge(loop, runtime, stop, generation, transferred,
+                                            pendingPass, true);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferSupersededWithCompanionsWithUndo(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    GlobalUndoStack& stack, TrackUndoPublication& undo, PendingCapturePass* pendingPass) {
+  return advanceAtomicTransferWithoutBridgeWithUndo(loop, runtime, stop, generation, transferred,
+                                                    stack, undo, pendingPass, true);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitWithUndo(

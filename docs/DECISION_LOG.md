@@ -9586,3 +9586,190 @@ fires and a present-but-unparseable slot retried forever instead of reaching its
 `test_storage_manager_load` 35/35, full native **3,526 / 7 skipped / 3,519 succeeded / 0 failed**,
 `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192` (unchanged). No commit.
 [§34](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-27-BOOT-RESTORE-RETRY-BOUND.md).
+
+## DEC-172 — A raw retiring stop owes one slot-level deferred-canonical-convergence obligation, serviced outside the capture-stop FIFO
+
+**Date:** 2026-10-27
+**Owner:** `LoopPlaybackRuntime` (the obligation state), `Track::processDeferredOverdubStopGrain` (marking and the
+inline gate), `Track::serviceDeferredCanonicalConvergence` (the slot-level owner turn), called from
+`Track::processDeferredIdleMaintenance` on the Snapshot lane.
+**Status:** Accepted for implementation by the approved OpenSpec change
+`openspec/changes/deferred-canonical-convergence` (user-requested apply, 2026-10-27). Native + target build green;
+no upload, no device run, no commit.
+**Context:** open `openspec/changes/deferred-canonical-convergence/` (proposal, design, spec, tasks, REVIEW).
+
+### Problem
+A destination-Playing overdub stop admitted before its predecessor Record-return publication has landed pinned
+its causal base against a stale `{playbackRevision, snapshotIdentity}`. When the source superseded mid-build, the
+terminal-denial escape retired the stop **raw only**, so early overdubs lost their canonical/companion
+representation while later (healthy) stops kept it — a handoff race, not a content difference. The escape had
+already removed the multi-second head-of-line stall; the content-fidelity gap remained, and the stop job had
+nowhere to park the derivation it skipped.
+
+### Decision
+1. **Ownership boundary moved.** The capture-stop job owns only its immutable raw representation: it may retire
+   the moment that representation transfers. Eventual canonical/companion convergence is owned by **one slot-level
+   obligation** on `LoopPlaybackRuntime`, never by the stop job or the capture-stop ring.
+2. **State machine, one per slot, never stacked:** `Idle → Owed(targetCommittedGeneration, coverage) →
+   Building(boundSourceIdentity, target) → Ready → Idle`. Any newer committed generation **coalesces** the single
+   obligation forward (target = newest) and drops an unpublished candidate; a source-identity or generation change
+   mid-build discards and re-resolves. A terminal build denial returns to `Owed`; an ordinary `Pending` keeps
+   `Building`.
+3. **The gate is `causalBaseCurrent`, phase-wide.** Every Playing base-dependent phase (`CanonicalPrefix`,
+   `CanonicalOrder`, `CanonicalRewrite`, `AudibleOrder`, `CanonicalTail`, `PrepareTransfer`) checks it: a stale base
+   never binds and never stays in use, so the stop discards the inline candidate (or a completed but stale base),
+   commits raw and marks `Owed`. The late companion phases (`CompanionHistory`, `UndoCollection`, `CompanionBridge`)
+   already own a proven superseded retirement, so there the gate records the obligation only.
+   It is phase-wide because the measured race can land after the base completed: a `CanonicalPrefix`-only gate let
+   a reused completed base reach `CanonicalTail` and spin there forever (DEC-070's bound is retargeted-only). The
+   terminal-denial escape (`base_build_done,outcome=denied`, the tree's `DEC-171` comment) and the base stall-bound
+   abandonment also mark `Owed` for a Playing destination. The healthy `causalBaseCurrent == true` path is unchanged.
+4. **Serviced by a slot-level owner turn, not the stop grain.** `Track::serviceDeferredCanonicalConvergence` rides
+   the Snapshot deferred lane, before the publication gates (so a blocked publication cannot starve the obligation),
+   one canonical grain per turn. `Owed` itself is the eligibility (standing demand), so correctness never depends on
+   catching a publication transition. Admission does **not** require an idle builder: the canonical builder keeps a
+   completed build for the inline path to reuse, so the builder's own identity-qualified admission reuses a matching
+   source and restarts for a newer one (requiring `idle()` would deadlock every obligation after the first).
+5. **Exclusive canonical-builder ownership.** An inline capture stop preempts a deferred `Building` candidate
+   (discard + `Owed`), and a deferred turn does nothing while the stop grain owns the slot
+   (`runtime.captureStopOwner != nullptr`). A successful inline canonical adoption whose committed revision covers
+   the target **satisfies** the obligation (no duplicate publication).
+6. **Target identity is `Loop::committedPassRevision()`**, justified by the self-invalidation audit in
+   `REVIEW.md`: 15 `++playbackRevision` sites, all committed-state inventory changes, none reachable by the
+   deferred build, whose adoption only moves view roles and sets `view.published`.
+7. **Cancellation is the runtime's own lifecycle:** `LoopPlaybackRuntime::reset()` cancels the obligation, so slot
+   clear/load/replacement/reset also invalidates its candidate. No second generation field was added.
+8. **Cost is measured, not asserted:** the obligation grows the per-slot `LoopPlaybackRuntime` (7,768 → 7,808
+   target; 9,896 → 9,944 host, compiler-measured). The runtime is extmem-allocated, so RAM1 is unchanged and no
+   `Track` field grows; the I5 pins are re-based in the same commit.
+
+### Consequences
+- The FIFO-liveness guarantee is structural: convergence failure or delay affects presentation/readiness only.
+- Coalescing loses an intermediate generation's separate artifact by design; the intermediate raw content is
+  already committed and playable.
+- The obligation can remain `Owed` indefinitely (no authority, or a permanently denying build); committed raw
+  content stays authoritative, which is `loop-commit-semantics`' "derived is disposable".
+- A no-progress watchdog for `Building` is deliberately **not** introduced by this change.
+
+### Verification
+Twelve new native fixtures in `test/test_shared_capture_finalization` (race, convergence, second obligation after a
+completed build, coalescing, ten-interaction FIFO liveness, committed-state mutation, source-identity change,
+non-blocking failure, standing demand, builder ownership, inline satisfaction, slot cancellation) plus the
+obligation assertion added to the terminal-denial escape control; 8 mutations red-proved with byte-identical
+restores. `test_shared_capture_finalization` **128/128**, full native **3,540 / 7 skipped / 3,533 succeeded /
+0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192 / padding 2,744` (floor 840).
+Device/HITL acceptance remains open.
+[REVIEW](../openspec/changes/deferred-canonical-convergence/REVIEW.md).
+
+### Correction — 2026-10-27 device capture (`captures/session_20261027_231625.log`)
+
+The first implementation did **not** change the symptom, and the capture named three defects plus one design gap
+(recorded in full in the change's `REVIEW.md`):
+
+1. **Abandonment was Track-level, not per job.** `retargetStallPhase_` is a `Track` field; the first supersession
+   set the DEC-165 sentinel and every later stop — which starts at `CanonicalOrder` and never passes a bounded
+   phase that would clear it — took the `CanonicalTail` cause escape, skipping base and companion for the rest of
+   the session. Moved to `PendingStopAdmission::canonicalBaseAbandoned` (fixture 1.11 pins the cross-job
+   guarantee).
+2. **The supersession gate's premise was wrong.** The builder resolves the *live* source; the recorded
+   `causalBase` only decides whether a successor **window** may be published. Abandoning the base on
+   `!causalBaseCurrent` threw away valid work, so the gate is removed and the established `CompanionBridge`
+   retirement (skip only the bridge) stands.
+3. **`reset()` is not a slot-incarnation boundary.** It is also the playback-state invalidation, so cancelling
+   there erased the obligation the stop had just recorded. Cancellation now lives in the owner turn and keys on a
+   restarted committed timeline; a playback reset keeps the obligation (both sides pinned by fixture 1.10).
+4. **The deferred artifact is the wrong one (open).** Convergence rebuilds the canonical bridge-base *window*, but
+   the display resolves overdubbed notes from the **companion / note-edit representation**, which the raw retire
+   lost. Because the companion commit advances `committedPassRevision()`, the target must be re-scoped per task
+   2.0's own fallback (raw-pass commit revision) and the obligation must own that derivation. The change is
+   therefore **not complete** and must not be archived (tasks 6.1–6.3).
+
+The obligation is now recorded **after** the raw commit in the superseded transfer branch, so its target is never a
+speculative pre-commit value. Verification after the corrections: `test_shared_capture_finalization` **129/129**,
+full native **3,540 / 7 skipped / 3,533 succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** at RAM1
+`variables 96,192 / padding 2,744`; 8 mutations red-proved with byte-identical restores (post-commit mark, owner
+turn, inline preemption, inline satisfaction, incarnation cancel, coalescing, identity re-resolution, per-job
+abandonment).
+
+### Correction 2 — 2026-10-27: a **window** denial is a bridge failure, not a base failure
+
+The measured device denial is `base_build_done,where=window,reason=fill_order_denied`: the canonical **prefix**
+is ready and the **window** (the successor bridge's base) is denied. The tail extends the *prefix*, and the
+companion/note-edit representation the display reads is derived there, so abandoning the base on a window denial
+threw away exactly the representation the owner was missing. The terminal-denial escape is now split:
+prefix `Denied` → abandon the base (raw + deferred obligation, as before); window `Denied` with a ready prefix →
+`canonicalBridgeUnavailable`, drop only the window, keep the companion path, retire the bridge estimate at
+`CompanionBridge`, and commit the pass **and its prepared companions** through the new no-bridge transfer
+(`advanceAtomicTransferWithoutBridge[WithUndo]`, sharing the Stopped commit's body parameterized by expected
+destination). Fixture 1.12, mutation M9. The deferred obligation's remaining scope is the *prefix-denied* case
+(tasks 6.1b/6.2). Verification: `test_shared_capture_finalization` **130/130**, full native **3,542 / 7 skipped
+/ 3,535 succeeded / 0 failed**, build **SUCCESS** at RAM1 `variables 96,192 / padding 2,744`; 9 mutations
+red-proved with byte-identical restores.
+
+### Correction 3 — 2026-10-27: owner-supersession discarded the completed companion derivation
+
+The owner capture on the correction-2 image (`session_20261027_235228.log`, `sha256 9e72497a…`) shows base builds
+now complete, but every atomic transfer still committed `causal_base_superseded` **raw-only** — nine times, each
+route discarding whatever the stop had already derived. The dominant cause is not the bridge at all: a
+record-return pass commit moves `playbackRevision` **between** the companion derivation reaching `Ready` and the
+commit running, so every commit-time verifier gated on
+`RuntimeCanonicalPassInputs::valid()` — which value-pins `current_->playbackRevision == expected_.playbackRevision`
+— went dead, the stop saw `matchesCanonicalOwner == false`, and took the discard branch. The representation the
+display needs was built and provably identical to the store's, and was thrown away anyway.
+
+**Landed:** the horizon that is `Phase::Ready` and bound to this interval's receipt publishes **pass +
+companions losslessly** through the new supersession route instead of discarding:
+
+1. `RuntimeCanonicalPassInputs::supersessionReady()` plus the `stateAllowsBinding()` /
+   `includesFrozenOverdubBinding()` / `frozenCaptureBinding()` accessors: skip **only** the playbackRevision
+   equality; generation and snapshotIdentity equality are retained, so the check still cannot bind across a
+   new capture generation.
+2. `Loop::preparedCompanionHistorySupersessionPublishProof(intervalToken)`: the prepared companion history is
+   published only when the store provably has not changed since derivation —
+   `work.historyCount == passes.editPasses.size()` && `work.storageGeneration == canonicalStorageGeneration`
+   (the store-identity proof documented at the `Loop.h` accessor). This replaces `matchesCanonicalOwner` on
+   that route.
+3. `commitPreparedCaptureAndCompanionsSupersession` (shared body `commitPreparedCaptureAndCompanionsBody`)
+   publishes both, sets `PendingStopAdmission::supersededCompanionExchange`, and splices into the lifecycle at
+   `CompanionBridge` (retire the bridge estimate, then `AtomicTransfer`) and `AtomicTransfer` (skip the discard
+   branch; commit passes the proof mode). The discard route remains the fallback and is the only route that
+   marks the deferred obligation.
+
+Verification: fixture 1.13 (`test_superseded_base_publishes_prepared_companions`) drives CompanionBridge-ready,
+bumps `playbackRevision`, and asserts the lossless route (`routeSeen == supersededCompanionExchange`,
+`overdubPasses == 1`, `deferredIdle`, companion horizon re-prewarmed). Mutation **M10** (route gate disabled)
+reds exactly it; restore byte-identical (`d98d102c…`). Full native **3,543 cases / 7 skipped / 3,536 succeeded /
+0 failed**; `teensy41-capture-serial` **SUCCESS** at RAM1 `variables 96,192 / code 390,568 + padding 2,648`
+(floor 840). HEX `sha256 7f55b52b…`, **flashed 2026-10-28 10:45** on owner instruction (loader 2.3, exit 0; boot proved separately: `DIAG,boot_reset,crash=0`, `BOOT,load,ok`). Device acceptance open: the owner's re-capture must
+show the `atomic_transfer` reasons leave `causal_base_superseded` for the companion publish route and the
+companions appear on the display after early overdubs.
+
+### Correction 4 — 2026-10-28: a window denial must not forbid the companion publish
+
+The correction-3 image fixed the *later* stops but not the first ones. Device capture
+`session_20261028_110951.log` on `sha256 7f55b52b…`: five stops logged
+`superseded base; interval companions publish losslessly`, yet the **first two stops after the record**
+still committed raw-only (`ODUB,stop,atomic_transfer … causal_base_superseded`) — and those were the stops whose
+overdubbed notes the owner could not see. The lossless gate in `CompanionBridge` carried
+`!stop.canonicalBridgeUnavailable`, so a job that had just kept its companion path on a **window** denial
+(correction 2) could never take the exchange route and fell into the superseded discard branch at
+`AtomicTransfer`, discarding a completed derivation while the store-unchanged proof still held. Bridge
+unavailability forbids the **successor window**, never the companion publish; it already routes the commit
+through the no-bridge variants with `supersededStoreProof`, so the gate was the only thing in the way.
+
+Verification: fixture 1.14 (`test_window_denied_stop_publishes_its_prepared_companions`) drives window denial →
+companion Ready → owner moved, and asserts the exchange route, the committed pass, `deferredIdle` and the
+prewarmed horizon; mutation **M11** (the removed clause restored) reds exactly it. Full native **3,545 / 7 skipped
+/ 3,538 succeeded / 0 failed**; build **SUCCESS** at RAM1 `variables 96,192 / code 390,568 + padding 2,648`.
+Flashed 2026-10-28 on owner instruction (`sha256 551cac47…`, boot `crash=0` / `BOOT,load,ok`).
+
+**Device confirmation (same day, `captures/session_20261028_112311.log`):** the two early stops now log
+`canonical bridge window denied; companion path kept` **followed by** `superseded base; interval companions
+publish losslessly`, and the slot's edit-pass count goes **0 → 7** at 115.3 s where the previous image stayed at
+`edit=0` for the whole session; the display's resolved note count grows 246 → 433. **The owner confirmed on the
+device that the display now shows the overdubbed notes** ("yes display show the notes"), which is the
+capability's acceptance criterion. The remaining raw-only commits
+in that session are the ones this change does not cover: one stop with `no canonical base` (135.0 s) and a burst of
+`retargeted` stops at the transport stop (147.1–147.3 s), i.e. tasks 6.1b/6.2. Also observed there and **not**
+addressed: three `Overdub start refused: the session-exit publication obligation is still owned (slot=3
+state=populated)` rows (142–145 s), so that obligation can go a long time without draining.

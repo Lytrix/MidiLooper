@@ -73,6 +73,30 @@ bool commitStoppedWithUndo(Loop& loop, LoopPlaybackRuntime& runtime, PendingStop
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
     GlobalUndoStack& stack, TrackUndoPublication& undo,
     PendingCapturePass* pendingPass = nullptr);
+/// DEC-172 correction: a **Playing** stop whose successor *bridge* is unavailable (the canonical
+/// window was denied while its prefix stayed ready) still commits its pass **and its prepared
+/// companion representation** -- no bridge, exactly the companion the display reads. Distinct from
+/// `commitSupersededCausalBase`, which discards the companion.
+bool advanceAtomicTransferWithoutBridge(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop, const uint32_t& generation,
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass = nullptr,
+    bool supersededStoreProof = false);
+bool advanceAtomicTransferWithoutBridgeWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop, const uint32_t& generation,
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo,
+    PendingCapturePass* pendingPass = nullptr, bool supersededStoreProof = false);
+/// DEC-172 correction 3: the owner-superseded form of the no-bridge commit. Everything else is the
+/// window-unavailable variant; only the canonical owner revalidation is replaced by the lossless
+/// exchange proof (`preparedCompanionHistoryStoreUnchanged`), so a completed interval derivation
+/// publishes instead of being discarded by a record-return revision move. Requires the caller to
+/// have proven the bindings (`ready`/`captureVerified`/`historyMatches`) before entering.
+bool advanceAtomicTransferSupersededWithCompanions(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop, const uint32_t& generation,
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass = nullptr);
+bool advanceAtomicTransferSupersededWithCompanionsWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop, const uint32_t& generation,
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo,
+    PendingCapturePass* pendingPass = nullptr);
 bool commitWithUndo(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
     PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo,

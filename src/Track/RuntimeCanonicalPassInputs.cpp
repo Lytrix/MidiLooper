@@ -403,6 +403,18 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCanonicalPassInputs::step(s
 NOTE_EDIT_MEM size_t RuntimeCanonicalPassInputs::frozenCaptureEventCount() const {
   return ready() && includeCapture_ ? captureOrderedCount_ : 0;
 }
+NOTE_EDIT_MEM RuntimeCanonicalPassInputs::ProgressState RuntimeCanonicalPassInputs::progressState() const {
+  ProgressState p;
+  p.phase = static_cast<uint8_t>(phase_);
+  p.completedPasses = pass_;
+  p.totalPasses = passCount_;
+  p.eventCount = count_;
+  p.cursor = (phase_ == Phase::SelectOverdub || phase_ == Phase::FilterHistory) ? selectionCursor_ : copy_;
+  p.readCursor = read_.count();
+  p.captureOrderedCount = captureOrderedCount_;
+  p.apply = apply_ ? apply_->progressState() : RuntimeCompanionApply::ProgressState{};
+  return p;
+}
 NOTE_EDIT_MEM const MidiEvent* RuntimeCanonicalPassInputs::frozenCaptureEvent(size_t index) const {
   return ready() && includeCapture_ && live_ && index < captureOrderedCount_
       ? &live_->capture.storage.events[captureOrder_[index]] : nullptr;

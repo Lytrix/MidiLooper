@@ -143,6 +143,9 @@ void PendingStopAdmission::reset() {
   phase = PendingStopPhase::ReservedClosure;
   destination = PendingStopDestination::Playing;
   retargetedFromPlaying = false;
+  canonicalBaseAbandoned = false;
+  canonicalBridgeUnavailable = false;
+  supersededCompanionExchange = false;
   pending = false;
   sessionExitReceiptRing = static_cast<size_t>(-1);
 }
@@ -177,6 +180,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::begin(uint32_t genera
   phase = remainingClosureGrains == 0 ? PendingStopPhase::CanonicalOrder
                                       : PendingStopPhase::ReservedClosure;
   destination = PendingStopDestination::Playing;
+  canonicalBaseAbandoned = false;
+  canonicalBridgeUnavailable = false;
+  supersededCompanionExchange = false;
   pending = true;
   return true;
 }
@@ -391,6 +397,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(
   canonicalPrefixPhase = CanonicalPrefixPhase::Idle; canonicalPrefixPasses = nullptr;
   canonicalPrefixGeneration = 0; canonicalPrefixLength = 0;
   canonicalPrefixStorageOwner = nullptr; canonicalPrefixStorageGeneration = 0;
+  // The deferred-convergence obligation is deliberately **not** cancelled here. `reset()` is also the
+  // ordinary playback-state invalidation (`resetPlaybackStateForSlot` -> `invalidatePlaybackMergedMidiEvents`
+  // -> `releaseEligiblePlaybackRuntimeSlots`), and cancelling there erased the obligation a stop had
+  // just recorded (measured by fixture 1.3: an overdub stop reset the runtime and the obligation was
+  // gone before the owner turn ever saw it). Slot clear/load/replacement is detected by the owner turn
+  // from the loop incarnation itself: a reset timeline restarts `committedPassRevision()` below the
+  // obligation's target, which no legitimate generation advance can do.
   frozenCompanionBridgeMap.discard();
   frozenCompanionApply.discard();
   frozenCompanionReconstruction.discard();
@@ -1206,6 +1219,73 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCanonicalWindow
   canonicalWindowPassGeneration = 0;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::markDeferredConvergenceOwed(
+    uint32_t targetRevision, uint32_t loopLengthTicks) {
+  // A new obligation never inherits a candidate: the generation it was building for is not the one
+  // this retire produced. `Ready` re-opens because the newest generation is not represented yet.
+  if (deferredConvergencePhase == DeferredConvergencePhase::Building) {
+    discardCanonicalBuildCandidate();
+    deferredConvergenceDenial = DeferredConvergenceDenial::SourceChanged;
+  }
+  deferredConvergencePhase = DeferredConvergencePhase::Owed;
+  // Coalescing, not stacking: the obligation always targets the newest committed generation.
+  if (targetRevision > deferredConvergenceTarget) deferredConvergenceTarget = targetRevision;
+  if (loopLengthTicks != 0) deferredConvergenceLength = loopLengthTicks;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coalesceDeferredConvergence(
+    uint32_t newestCommittedRevision) {
+  if (deferredConvergencePhase == DeferredConvergencePhase::Idle) return false;
+  if (newestCommittedRevision <= deferredConvergenceTarget) return false;
+  if (deferredConvergencePhase == DeferredConvergencePhase::Building) {
+    discardCanonicalBuildCandidate();
+    deferredConvergenceDenial = DeferredConvergenceDenial::SourceChanged;
+  }
+  deferredConvergenceTarget = newestCommittedRevision;
+  // `Ready` on an older target is still a valid *derived* artifact (its own source identity names the
+  // generation it represents); it is kept, and the newer build starts once the ready role frees.
+  if (deferredConvergencePhase != DeferredConvergencePhase::Ready)
+    deferredConvergencePhase = DeferredConvergencePhase::Owed;
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::satisfyDeferredConvergence(
+    uint32_t committedRevision) {
+  if (deferredConvergencePhase == DeferredConvergencePhase::Idle) return false;
+  if (committedRevision < deferredConvergenceTarget) return false;
+  // The inline build owns the canonical machinery and produced the artifact that covers the target;
+  // there is no separate candidate to drop here.
+  cancelDeferredConvergence();
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::cancelDeferredConvergence() {
+  deferredConvergencePhase = DeferredConvergencePhase::Idle;
+  deferredConvergenceDenial = DeferredConvergenceDenial::None;
+  deferredConvergenceTarget = 0;
+  deferredConvergenceLength = 0;
+  deferredConvergenceSource = PlaybackViewSourceIdentity{};
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCanonicalBuildCandidate() {
+  discardCanonicalWindow();
+  canonicalPassInputs.discard();
+  // The prefix's apply binding is the shared companion worker: discarding only the inputs leaves the
+  // worker mid-history, and a later build then reports `Preparing` forever (measured by the
+  // second-obligation/preemption fixtures). The caller owns these builders by contract.
+  frozenCompanionApply.discard();
+  frozenCompanionPasses.discard();
+  canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
+  canonicalPrefixPasses = nullptr;
+  canonicalPrefixGeneration = 0;
+  canonicalPrefixLength = 0;
+  canonicalPrefixStorageOwner = nullptr;
+  canonicalPrefixStorageGeneration = 0;
+  prefixFirstDenialReason = CanonicalPrefixDenial::None;
+  prefixDeniedFirstReported = false;
+  deferredConvergenceSource = PlaybackViewSourceIdentity{};
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRuntime::stepCanonicalWindow(
     const PlaybackCoverageInterval& coverage, const EmissionCursor& anchor, size_t quantum, bool bridgeBase) {
   auto* set = viewSetIfPrewarmed();
@@ -1253,6 +1333,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
     canonicalWindowIsBridgeBase = bridgeBase;
     canonicalWindowPassGeneration = frozenCompanionPasses.generation();
     canonicalWindowCoverage = coverage;
+    windowFirstDenialReason = CanonicalWindowDenial::None;  // a fresh window build starts clear
+    windowDeniedFirstReported = false;
     canonicalWindowPhase = CanonicalWindowPhase::Merge;
     return RuntimePlaybackOrderBuildResult::Pending; // Setup is a separate turn.
   }
@@ -1270,12 +1352,16 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   if (canonicalWindowPhase == CanonicalWindowPhase::Merge) {
     const auto result = frozenCompanionPasses.step(quantum);
     if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      if (windowFirstDenialReason == CanonicalWindowDenial::None)
+        windowFirstDenialReason = CanonicalWindowDenial::MergeDenied;
       canonicalWindowPhase = CanonicalWindowPhase::Denied;
       return result;
     }
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       LedgerBoundarySummary boundary; boundary.capture(ledger);
       if (!viewBuild.begin(view, frozenCompanionPasses, canonicalPrefixSource, coverage, anchor, boundary)) {
+        if (windowFirstDenialReason == CanonicalWindowDenial::None)
+          windowFirstDenialReason = CanonicalWindowDenial::FillBeginDenied;
         canonicalWindowPhase = CanonicalWindowPhase::Denied;
         return RuntimePlaybackOrderBuildResult::Denied;
       }
@@ -1298,6 +1384,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   const auto result = canonicalWindowPhase == CanonicalWindowPhase::Fill
       ? viewBuild.stepFill(quantum) : viewBuild.stepOrder(quantum);
   if (result == RuntimePlaybackViewBuildGrain::Denied) {
+    if (windowFirstDenialReason == CanonicalWindowDenial::None)
+      windowFirstDenialReason = CanonicalWindowDenial::FillOrderDenied;
     canonicalWindowPhase = CanonicalWindowPhase::Denied;
     return RuntimePlaybackOrderBuildResult::Denied;
   }
@@ -3128,8 +3216,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // 2.1: removing the prepared pair descriptor + counters shrinks the same runtime (7,920 -> 7,768 target,
 // 10,120 -> 9,896 host), compiler measured; the pair's fixed event storage was external, so RAM1 is unchanged
 // apart from the external-pool accounting.
-static_assert(sizeof(LoopPlaybackRuntime) == 7768,
-              "I5: target per-slot runtime measured after presentation owner");
+// deferred-canonical-convergence 2.1: the per-slot deferred-convergence obligation adds 40 B on this
+// ABI (7,768 -> 7,808; compiler measured with the probe): a packed 2+2 state byte, the target committed
+// generation, the loop coverage, and the bound authoritative source identity (24 B on the target ABI's
+// 4-byte pointers). The runtime is extmem-allocated per slot and no `Track` field grows, so RAM1 is
+// unchanged -- the cost is external-pool bytes, re-based here explicitly as the architectural price.
+static_assert(sizeof(LoopPlaybackRuntime) == 7808,
+              "I5: target per-slot runtime measured after deferred-convergence obligation");
 // CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
 // (compiler measured on `teensy41-capture-serial`). The cursor is interval-qualified state, and it
 // lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
@@ -3173,7 +3266,11 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // extmem-allocated per slot.
 // 2.1: removing the prepared pair descriptor + its counters shrinks the host runtime 10,120 -> 9,896 B
 // (compiler measured); the pair's fixed event storage was external, so RAM1 pins are re-baselined below.
-static_assert(sizeof(LoopPlaybackRuntime) == 9896,
-              "I5: host per-slot runtime measured after presentation owner");
+// deferred-canonical-convergence 2.1: the per-slot deferred-convergence obligation (packed 2+2 state
+// byte, target generation, loop coverage, bound source identity) adds 48 B on this ABI
+// (9,896 -> 9,944 host; compiler measured). The runtime is extmem-allocated per slot, so RAM1 is
+// unchanged and no `Track` field grows.
+static_assert(sizeof(LoopPlaybackRuntime) == 9944,
+              "I5: host per-slot runtime measured after deferred-convergence obligation");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

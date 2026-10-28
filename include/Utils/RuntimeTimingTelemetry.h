@@ -94,6 +94,21 @@ StopPhaseTiming peekStopPhase(uint8_t track);
 StopBoundaryTiming peekStopBoundary();
 StopBoundaryTiming captureStopGrainBoundary(uint32_t& startUs);
 
+/// DEC-171 (report-only): canonical base-build grain split for the current episode. Lives in the EXTMEM
+/// `State`, not the per-slot runtime or the capture-stop ring, so no `sizeof` pin changes and no RAM1/DTCM
+/// cost. The CanonicalPrefix branch classifies each base-build grain as *productive* (a builder counter
+/// moved) vs *unchanged* (no coarse counter moved — the builder is waiting), accumulates both, and emits a
+/// sparse receipt every `kCanonicalProgressReceiptStride` grains plus one final row at complete/abandon.
+/// Nothing in admission, escape or transfer policy reads it.
+struct CanonicalPrefixProgress {
+  uint32_t productive = 0;
+  uint32_t unchanged = 0;
+  uint16_t nextReceiptAt = 0;  // 0 = not armed; the episode's first grain arms the next sparse receipt
+};
+constexpr uint16_t kCanonicalProgressReceiptStride = 128;
+/** Mutable per-track accessor for the canonical base-build progress accumulator. */
+CanonicalPrefixProgress& canonicalPrefixProgress(uint8_t track);
+
 struct Snapshot {
   uint32_t midiGapMaxUs = 0;
   uint32_t midiGapOverCount = 0;

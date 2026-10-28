@@ -2161,6 +2161,23 @@ TRACK_COLD_MEM const char* recordNormalizationDenialName(RecordNormalizationDeni
   return "unnamed";
 }
 
+/// The inner predicate of `PreparationDenied`: the Record preparation cursor's own denial. Naming it
+/// costs one row field and is the difference between diagnosing a device stall and guessing at it.
+TRACK_COLD_MEM const char* recordPreparationDenyName(RecordPreparation::DenyReason reason) {
+  switch (reason) {
+    case RecordPreparation::DenyReason::None: return "none";
+    case RecordPreparation::DenyReason::OutputUnavailable: return "output_unavailable";
+    case RecordPreparation::DenyReason::OrderDenied: return "order_denied";
+    case RecordPreparation::DenyReason::IdentityIncomplete: return "identity_incomplete";
+    case RecordPreparation::DenyReason::TailInputRejected: return "tail_input_rejected";
+    case RecordPreparation::DenyReason::ReservationMissing: return "reservation_missing";
+    case RecordPreparation::DenyReason::TailOutputRejected: return "tail_output_rejected";
+    case RecordPreparation::DenyReason::FilterDenied: return "filter_denied";
+    case RecordPreparation::DenyReason::ZeroQuantum: return "zero_quantum";
+  }
+  return "unnamed";
+}
+
 TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalization(
     CaptureStopJob& job, RecordNormalizationDenial* denial) {
   // DEC-166: name the refusing predicate. Diagnostic only -- every branch below is unchanged, and the
@@ -2776,10 +2793,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         if (retargetStallGrains_ < kRecordNormalizationDenialReportLimit) ++retargetStallGrains_;
         if (retargetStallGrains_ >= kRecordNormalizationDenialReportLimit) {
           noteStallOnce(recordNormalizationDenialName(job.lastNormalizationDenial));
+          const auto& preparation = captureStopJobs_->recordPreparation;
           logger.log(CAT_TRACK, LOG_WARNING,
-                     "Deferred Record stop stalled: normalization %s phase=%u closure=%u order=%u "
-                     "canonical=%llu ranked=%llu notes=%u track=%u",
+                     "Deferred Record stop stalled: normalization %s deny=%s cursor=%u phase=%u "
+                     "closure=%u order=%u canonical=%llu ranked=%llu notes=%u track=%u",
                      recordNormalizationDenialName(job.lastNormalizationDenial),
+                     recordPreparationDenyName(preparation.denyReason()),
+                     static_cast<unsigned>(preparation.phaseCode()),
                      static_cast<unsigned>(code),
                      static_cast<unsigned>(stop.remainingClosureGrains),
                      static_cast<unsigned>(stop.remainingOrderGrains),
@@ -2848,10 +2868,40 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       // the frozen staging rows. The tail cannot succeed without a ready base, so its own bound takes
       // over once the copy has run, instead of failing silently here forever.
       noteStallOnce("canonical base stalled; stop continues without it");
+      // A Playing stop that abandons its base retires raw for the same reason the supersession gate
+      // does: its canonical derivation became unavailable. It owes one deferred obligation too. A job
+      // retargeted to STOPPED never contracted a Playing successor representation, so it owes none.
+      if (stop.destination == PendingStopDestination::Playing) {
+        // The stalled base's candidate is dead; drop it so the shared builders are free for the
+        // obligation this retire creates (and for the success's own later health check).
+        stop.canonicalBaseAbandoned = true;
+        runtime->discardCanonicalBuildCandidate();
+      }
       // Remember it on the job (sentinel in the per-job stall phase), so the tail below cannot be
       // tempted by a base that a successor interval builds later.
       retargetStallPhase_ = kCanonicalBaseAbandonedPhase;
       retargetStallGrains_ = 0;
+#if defined(SESSION_CAPTURE)
+      // DEC-171 final summary at abandon: the base build's productive/unchanged split over the grains it
+      // ran before the bound fired. This is the row that distinguishes "starvation" (unchanged dominates)
+      // from "genuine work" (productive dominates) on the device.
+      {
+        auto& report =
+            RuntimeTimingTelemetry::canonicalPrefixProgress(resolveTrackIndexForPersistence(*this));
+        char line[128];
+        snprintf_P(line, sizeof(line),
+                   PSTR("#CAP,%lu,DIAG,base_build_done,interval=%lu,gen=%lu,outcome=abandon,"
+                        "total=%lu,prod=%lu,unch=%lu"),
+                   static_cast<unsigned long>(micros()),
+                   static_cast<unsigned long>(job.interval),
+                   static_cast<unsigned long>(stop.frozenGeneration),
+                   static_cast<unsigned long>(report.productive + report.unchanged),
+                   static_cast<unsigned long>(report.productive),
+                   static_cast<unsigned long>(report.unchanged));
+        DebugSessionCapture::appendCaptureTextLine(line);
+        report = RuntimeTimingTelemetry::CanonicalPrefixProgress{};
+      }
+#endif
       stop.setPhase(PendingStopPhase::CanonicalOrder);
     } else if (escape == StopPreparationEscape::RawPassOnly) {
       noteStallOnce("companion path stalled; raw pass only");
@@ -2929,15 +2979,163 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       loop.playbackRevision, playbackGeneration,
       stop.transportCommandEpoch, loop.loopLengthTicks, staging};
 
+  // Supersession no longer rebinds or abandons the base here. The base builder resolves the **live**
+  // source (`baseSource` below), so a recorded predecessor whose published root moved on does not make
+  // the build stale; it only forbids publishing a *successor window*, and the established
+  // `CompanionBridge` route already retires that estimate. Abandoning the base at this point was
+  // measured on device (session_20261027_231625) to poison the whole session: it wrote the track-level
+  // DEC-165 sentinel, so later stops skipped their own base and companion ("canonical base unavailable").
+  // The deferred obligation is recorded **after the raw commit** (see the superseded transfer branch),
+  // where the committed generation is final, and abandonment is per job
+  // (`PendingStopAdmission::canonicalBaseAbandoned`).
+
   if (stop.phase == PendingStopPhase::CanonicalPrefix) {
     if (stop.destination == PendingStopDestination::Stopped) {
       stop.setPhase(PendingStopPhase::CanonicalOrder);
       return false;
     }
+    // Exclusive canonical-builder ownership: the inline stop wins. A deferred-convergence candidate
+    // that holds these builders is discarded and the obligation returns to `Owed` (coalescing to the
+    // latest generation on its next owner turn). The inline stop never waits for convergence.
+    if (runtime->deferredConvergencePhase == LoopPlaybackRuntime::DeferredConvergencePhase::Building) {
+      runtime->discardCanonicalBuildCandidate();
+      runtime->deferredConvergenceDenial =
+          LoopPlaybackRuntime::DeferredConvergenceDenial::SourceChanged;
+      runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Owed;
+    }
     const auto anchor = runtime->currentCycleCursor(phaseTick, baseSource.sourceGeneration);
+#if defined(SESSION_CAPTURE)
+    const RuntimeCanonicalPassInputs::ProgressState progressBefore =
+        runtime->canonicalPassInputs.progressState();
+    const uint8_t windowBefore = static_cast<uint8_t>(runtime->canonicalWindowPhase);
+#endif
     const RuntimePlaybackOrderBuildResult prefixResult = runtime->stepCanonicalBase(
         loop.passes, baseSource, currentSource, anchor, kDeferredStopPreparationQuantum);
+#if defined(SESSION_CAPTURE)
+    // DEC-171 progress reporter: classify this base-build grain as *productive* (a builder counter moved)
+    // vs *unchanged* (no coarse counter moved — the builder is waiting for its owner), and emit a sparse
+    // receipt every `kCanonicalProgressReceiptStride` grains. Report-only — no admission, escape or
+    // transfer policy reads it. This is the device confirmation of the native probe: the base build is
+    // productive, so the 2048-grain stall bound is counting work, not stalls.
+    const RuntimeCanonicalPassInputs::ProgressState progressAfter =
+        runtime->canonicalPassInputs.progressState();
+    const uint8_t windowAfter = static_cast<uint8_t>(runtime->canonicalWindowPhase);
+    const bool advanced = (progressAfter != progressBefore) || (windowBefore != windowAfter);
+    auto& report = RuntimeTimingTelemetry::canonicalPrefixProgress(resolveTrackIndexForPersistence(*this));
+    if (report.nextReceiptAt == 0) {
+      report = RuntimeTimingTelemetry::CanonicalPrefixProgress{};
+      report.nextReceiptAt = RuntimeTimingTelemetry::kCanonicalProgressReceiptStride;
+    }
+    if (advanced) ++report.productive; else ++report.unchanged;
+    const uint32_t total = report.productive + report.unchanged;
+    if (total >= report.nextReceiptAt) {
+      char line[192];
+      snprintf_P(line, sizeof(line),
+                 PSTR("#CAP,%lu,DIAG,base_build_progress,interval=%lu,gen=%lu,total=%lu,prod=%lu,unch=%lu,"
+                      "pass=%u/%u,events=%u,cursor=%u,read=%u,winPhase=%u,applyPhase=%u"),
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned long>(job.interval),
+                 static_cast<unsigned long>(stop.frozenGeneration),
+                 static_cast<unsigned long>(total),
+                 static_cast<unsigned long>(report.productive),
+                 static_cast<unsigned long>(report.unchanged),
+                 static_cast<unsigned>(progressAfter.completedPasses),
+                 static_cast<unsigned>(progressAfter.totalPasses),
+                 static_cast<unsigned>(progressAfter.eventCount),
+                 static_cast<unsigned>(progressAfter.cursor),
+                 static_cast<unsigned>(progressAfter.readCursor),
+                 static_cast<unsigned>(windowAfter),
+                 static_cast<unsigned>(progressAfter.apply.phase));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      report.nextReceiptAt = static_cast<uint16_t>(
+          total + RuntimeTimingTelemetry::kCanonicalProgressReceiptStride);
+    }
+#endif
     if (prefixResult == RuntimePlaybackOrderBuildResult::Complete) {
+#if defined(SESSION_CAPTURE)
+      // Final summary at complete, before the accumulator is released for a later episode.
+      char line[128];
+      snprintf_P(line, sizeof(line),
+                 PSTR("#CAP,%lu,DIAG,base_build_done,interval=%lu,gen=%lu,outcome=complete,"
+                      "total=%lu,prod=%lu,unch=%lu,pass=%u/%u"),
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned long>(job.interval),
+                 static_cast<unsigned long>(stop.frozenGeneration),
+                 static_cast<unsigned long>(report.productive + report.unchanged),
+                 static_cast<unsigned long>(report.productive),
+                 static_cast<unsigned long>(report.unchanged),
+                 static_cast<unsigned>(progressAfter.completedPasses),
+                 static_cast<unsigned>(progressAfter.totalPasses));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      report = RuntimeTimingTelemetry::CanonicalPrefixProgress{};
+#endif
+      // Inline satisfaction: a successfully adopted canonical result from an authoritative source
+      // whose committed revision covers the outstanding target discharges the obligation through
+      // that generation -- the measured device sequence (raw, raw, healthy inline) must not rebuild
+      // state the healthy inline stop already produced.
+      (void)runtime->satisfyDeferredConvergence(loop.committedPassRevision());
+      stop.setPhase(PendingStopPhase::CanonicalOrder);
+      return false;
+    }
+    const bool windowDeniedNow =
+        runtime->canonicalWindowPhase == LoopPlaybackRuntime::CanonicalWindowPhase::Denied;
+    if (prefixResult == RuntimePlaybackOrderBuildResult::Denied && windowDeniedNow &&
+        runtime->canonicalPrefixPhase == LoopPlaybackRuntime::CanonicalPrefixPhase::Ready) {
+      // The **window** is the successor bridge's base, and the prefix it extends is healthy. The tail
+      // extends the prefix, and the companion/note-edit representation the display reads is derived
+      // there -- so a window-only denial is *not* a base abandonment. Keep the companion path and
+      // retire only the bridge estimate; the commit then publishes the pass + its companions and no
+      // bridge. On device the measured early-stop denials were exactly this shape
+      // (`base_build_done,where=window,reason=fill_order_denied`), and treating them as base failures
+      // is what lost the companion (session_20261027_231625.log).
+      noteStallOnce("canonical bridge window denied; companion path kept");
+      stop.canonicalBridgeUnavailable = true;
+      runtime->discardCanonicalWindow();   // drop the denied window; the prefix stays ready
+      stop.setPhase(PendingStopPhase::CanonicalOrder);
+      return false;
+    }
+    if (prefixResult == RuntimePlaybackOrderBuildResult::Denied &&
+        (runtime->canonicalPrefixPhase == LoopPlaybackRuntime::CanonicalPrefixPhase::Denied ||
+         windowDeniedNow)) {
+      // DEC-171: the base *latched* a terminal denial — the prefix stepped into `Denied`, or a window
+      // denial whose prefix is *not* ready (so there is no base for the tail either). Abandon it now,
+      // not after the 2048-grain bound. Soft denials (bridge/capture/inputs busy) stay on the bound:
+      // they can clear and the base can still advance.
+      noteStallOnce("canonical base denied; stop continues without it");
+      retargetStallPhase_ = kCanonicalBaseAbandonedPhase;
+      retargetStallGrains_ = 0;
+#if defined(SESSION_CAPTURE)
+      // Name the first terminal term (prefix or window) and emit the final summary, before the accumulator is
+      // released for a later episode. The prefix latches `Denied` only via `StepDenied`; the window names its own.
+      const char* reason = PSTR("step_denied");
+      if (windowDeniedNow) {
+        switch (runtime->windowFirstDenialReason) {
+          case LoopPlaybackRuntime::CanonicalWindowDenial::MergeDenied: reason = PSTR("merge_denied"); break;
+          case LoopPlaybackRuntime::CanonicalWindowDenial::FillBeginDenied: reason = PSTR("fill_begin_denied"); break;
+          case LoopPlaybackRuntime::CanonicalWindowDenial::FillOrderDenied: reason = PSTR("fill_order_denied"); break;
+          case LoopPlaybackRuntime::CanonicalWindowDenial::None: reason = PSTR("none"); break;
+        }
+      }
+      char line[160];
+      snprintf_P(line, sizeof(line),
+                 PSTR("#CAP,%lu,DIAG,base_build_done,interval=%lu,gen=%lu,outcome=denied,where=%s,reason=%s,"
+                      "total=%lu,prod=%lu,unch=%lu"),
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned long>(job.interval),
+                 static_cast<unsigned long>(stop.frozenGeneration),
+                 windowDeniedNow ? PSTR("window") : PSTR("prefix"), reason,
+                 static_cast<unsigned long>(report.productive + report.unchanged),
+                 static_cast<unsigned long>(report.productive),
+                 static_cast<unsigned long>(report.unchanged));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      report = RuntimeTimingTelemetry::CanonicalPrefixProgress{};
+#endif
+      // The base latched a terminal denial, so this stop retires raw and the slot owes the derived
+      // representation through the generation it produces. The denied candidate is dead: drop it. Marking here is what turns the fast escape
+      // into a deferral instead of a permanent content-fidelity gap; the obligation is coalesced to
+      // the post-commit generation by its own owner turn.
+      stop.canonicalBaseAbandoned = true;
+      runtime->discardCanonicalBuildCandidate();
       stop.setPhase(PendingStopPhase::CanonicalOrder);
       return false;
     }
@@ -3081,7 +3279,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // phase later.
     if (stopCompanionPathIsUnreachable(static_cast<uint8_t>(stop.phase),
                                        stop.retargetedFromPlaying,
-                                       retargetStallPhase_ == kCanonicalBaseAbandonedPhase)) {
+                                       stop.canonicalBaseAbandoned)) {
       noteStallOnce("canonical base unavailable; companion path skipped");
       stop.setPhase(PendingStopPhase::PrepareTransfer);
       // Named refusal: this route is destination-Playing by construction, so the destination-gated
@@ -3089,7 +3287,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       // estimates kept the stop from ever committing -- the wedge DEC-165's cause route had merely
       // moved one phase later (evidence 2026-10-27-STOP-RETIREMENT-REVIEW Finding 1).
       if (!stop.retireCompanionSkippedForBaseAbandonment()) return false;
-      loop.discardPreparedCompanionHistory(stop.intervalToken());
+      // A *superseded* base keeps its prepared companion horizon: the atomic transfer's superseded
+      // branch restores it (`restoreSupersededPreparedCompanionHistory`), which is the contract the
+      // next interval depends on. Only a genuinely dead/stalled base discards it.
+      if (causalBaseCurrent) loop.discardPreparedCompanionHistory(stop.intervalToken());
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Overdub stop: companion path skipped (no canonical base); raw pass only");
       stop.setPhase(PendingStopPhase::AtomicTransfer);
@@ -3220,9 +3421,37 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       stop.setPhase(PendingStopPhase::AtomicTransfer);
       return false;
     }
-    if (!causalBaseCurrent) {
-      // Retire the ranked (bridge) estimate: no bridge will be built. The atomic
-      // transfer then commits the accepted capture without a successor window.
+      // A **window-denied** job belongs on this route too (device `session_20261028_110951.log`): it kept its
+      // companion path by design (DEC-172 correction 2), so at AtomicTransfer the superseded *discard* branch
+      // threw that completed representation away while the store-unchanged proof still held -- the early
+      // overdubs after a record return vanished exactly there. Bridge unavailability never forbids publishing
+      // the companions; it only forbids building the successor window.
+      if ((!causalBaseCurrent || stop.canonicalBridgeUnavailable) &&
+        stop.destination == PendingStopDestination::Playing &&
+        !stop.retargetedFromPlaying &&
+        loop.preparedCompanionHistorySupersessionPublishProof(job.admission.intervalToken())) {
+      // DEC-172 correction 3 (device `session_20261027_235228.log`): the dominant staleness cause is a
+      // **record-return pass commit** moving the revision while this interval's companion derivation
+      // completed. That derivation is bound to this interval's own staged receipt and the store it
+      // copied from is contractually unchanged, so publishing the buffered rows is lossless -- the
+      // superseded *discard* route threw exactly these companions away, and the overdubbed notes
+      // vanished from the display while staying audible (DEC-070). Route the stale commit through the
+      // owner-superseded no-bridge variant instead.
+      noteStallOnce("superseded base; interval companions publish losslessly");
+      stop.supersededCompanionExchange = true;
+      stop.canonicalBridgeUnavailable = true;
+      if (!stop.retireSupersededPreparation()) {
+        noteStallOnce("superseded causal base could not retire its estimate");
+        return false;
+      }
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+      return false;
+    }
+    if (!causalBaseCurrent || stop.canonicalBridgeUnavailable) {
+      // Retire the ranked (bridge) estimate: no bridge will be built (the causal predecessor moved on,
+      // or the window that would be its base was denied). The atomic transfer then commits the accepted
+      // capture -- and, for the window case, its prepared companion representation -- without a
+      // successor window.
       if (!stop.retireSupersededPreparation()) {
         noteStallOnce("superseded causal base could not retire its estimate");
         return false;
@@ -3289,9 +3518,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // `canSelectReservedFrozenCaptureBridge`, so the plain Playing commit is unreachable for it
     // forever; its successor window is void and the staged pass commits without one -- exactly the
     // stale-base terminal, taken by cause instead of by waiting for a revision move.
-    if (!causalBaseCurrent ||
-        (!stop.retargetedFromPlaying &&
-         retargetStallPhase_ == kCanonicalBaseAbandonedPhase)) {
+    if ((!causalBaseCurrent ||
+        (!stop.retargetedFromPlaying && stop.canonicalBaseAbandoned)) &&
+        !stop.supersededCompanionExchange) {
       if (!stop.retireSupersededPreparation()) {
         noteStallOnce("superseded causal base could not retire its estimate");
         return false;
@@ -3316,9 +3545,21 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         return false;
       requestLoopSlotPersistAndSaveState(*this, job.slot,
                                          MemoryMonitor::getInternalHeapFreeBytes());
+      // The stop retired raw: its derived canonical/companion representation was skipped or dropped,
+      // so the slot owes it through the generation this commit just produced. Marked **after** the
+      // commit, when `committedPassRevision()` is final, so the obligation's target is never a
+      // speculative pre-commit value (a target above the live revision would be indistinguishable
+      // from a slot timeline that restarted).
+      if (stop.destination == PendingStopDestination::Playing) {
+        runtime->markDeferredConvergenceOwed(loop.committedPassRevision(), loop.loopLengthTicks);
+      }
       // The unpublished companion preparation returns to its prewarmed horizon
-      // here, so the next interval never needs a STOPPED-only re-prewarm.
-      if (!loop.restoreSupersededPreparedCompanionHistory(job.admission.intervalToken())) {
+      // here, so the next interval never needs a STOPPED-only re-prewarm. A horizon that was never
+      // begun is *already* on the prewarmed horizon (`restore` reports "nothing to restore" for it),
+      // so it must not be discarded -- the superseded-base escape can retire before any companion
+      // preparation begins, and discarding then would break that same next-interval contract.
+      if (!loop.restoreSupersededPreparedCompanionHistory(job.admission.intervalToken()) &&
+          !loop.preparedCompanionHistoryPrewarmed()) {
         loop.discardPreparedCompanionHistory(job.admission.intervalToken());
       }
       return false;
@@ -3326,7 +3567,11 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     const auto anchor = runtime->currentCycleCursor(
         loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
     PendingCapturePass* jobPass = job.ownsPendingPass ? &job.pendingPass : nullptr;
-    if (TrackPreparedStopCommit::requiresBridgeRefresh(
+    // A bridge-unavailable job can never satisfy the bridge predicate, so asking it would bounce this
+    // job between `AtomicTransfer` and `CompanionBridge` forever. It commits through the no-bridge
+    // variant below.
+    if (!stop.canonicalBridgeUnavailable &&
+        TrackPreparedStopCommit::requiresBridgeRefresh(
             loop, *runtime, stop, anchor, jobPass)) {
       stop.setPhase(PendingStopPhase::CompanionBridge);
       return false;
@@ -3341,7 +3586,15 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     const bool publishable = job.undoPublicationReady && undo != nullptr &&
         undo->canPublish(getGlobalUndoStack(), loop.loopId, jobFinalPassId);
     bool committed = false;
-    if (publishable) {
+    if (stop.canonicalBridgeUnavailable) {
+      committed = publishable
+          ? TrackPreparedStopCommit::advanceAtomicTransferWithoutBridgeWithUndo(
+                loop, *runtime, stop, playbackGeneration, transferred,
+                getGlobalUndoStack(), *undo, jobPass, stop.supersededCompanionExchange)
+          : TrackPreparedStopCommit::advanceAtomicTransferWithoutBridge(
+                loop, *runtime, stop, playbackGeneration, transferred, jobPass,
+                stop.supersededCompanionExchange);
+    } else if (publishable) {
       committed = TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
           loop, *runtime, stop, playbackGeneration, anchor, transferred,
           getGlobalUndoStack(), *undo, jobPass);

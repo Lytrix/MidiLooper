@@ -63,6 +63,26 @@ class RuntimeCompanionApply {
                         size_t rowCount, uint32_t loopLength);
   RuntimePlaybackOrderBuildResult step(size_t inputQuantum);
   bool ready(const PlaybackViewSourceIdentity& source) const;
+  /// DEC-170 progress probe: coarse advance state (report-only). `phase` is the internal phase; `cursor`/`rowCursor`
+  /// are the two advancing cursors, `size` the completed output size. A grain that moves any of these is productive.
+  struct ProgressState {
+    uint8_t phase = 0;
+    size_t cursor = 0;
+    size_t rowCursor = 0;
+    size_t size = 0;
+    bool operator==(const ProgressState& o) const {
+      return phase == o.phase && cursor == o.cursor && rowCursor == o.rowCursor && size == o.size;
+    }
+    bool operator!=(const ProgressState& o) const { return !(*this == o); }
+  };
+  ProgressState progressState() const {
+    ProgressState p;
+    p.phase = static_cast<uint8_t>(phase_);
+    p.cursor = cursor_;
+    p.rowCursor = rowCursor_;
+    p.size = size();
+    return p;
+  }
   const MidiEvent* data() const;
   const uint32_t* provenance() const; // UINT32_MAX = created event or synthesized Off.
   size_t size() const;

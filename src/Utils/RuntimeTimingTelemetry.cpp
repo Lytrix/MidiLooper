@@ -154,6 +154,7 @@ RT_FLASHMEM_FN Accumulator& trackUpdateAt(uint8_t trackIndex) {
 
 struct State {
   StopPhaseTiming stopPhases[Config::NUM_TRACKS];
+  CanonicalPrefixProgress canonicalPrefixProgress[Config::NUM_TRACKS];
   Accumulator midiGap;
   Accumulator midiInput;
   Accumulator clk;
@@ -1293,6 +1294,13 @@ RT_FLASHMEM_FN void recordStopStateTransition(uint8_t track, uint8_t slot, uint8
 
 RT_FLASHMEM_FN StopPhaseTiming peekStopPhase(uint8_t track) {
   return track < Config::NUM_TRACKS ? state().stopPhases[track] : StopPhaseTiming{};
+}
+
+RT_FLASHMEM_FN CanonicalPrefixProgress& canonicalPrefixProgress(uint8_t track) {
+  // The caller always passes a live track index (0..NUM_TRACKS-1). Out-of-range is clamped to track 0
+  // rather than answered from a static cell: a fallback static would cost a fresh 32-byte DTCM section
+  // and break the pinned RAM1 budget. The clamp is unreachable in practice.
+  return state().canonicalPrefixProgress[track < Config::NUM_TRACKS ? track : 0];
 }
 
 RT_FLASHMEM_FN StopBoundaryTiming peekStopBoundary() {

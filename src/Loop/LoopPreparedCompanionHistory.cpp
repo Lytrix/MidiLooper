@@ -365,6 +365,38 @@ LOOP_COLD_MEM void Loop::publishPreparedCompanionHistory() {
   work.phase = PreparedCompanionHistory::Phase::Committed;
 }
 
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryStoreUnchanged(uint64_t owner) const {
+  const auto& work = preparedCompanionHistory_;
+  return work.phase == PreparedCompanionHistory::Phase::Ready &&
+      preparedCompanionHistoryOwnedBy(owner) &&
+      work.historyCount == passes.editPasses.size() &&
+      work.storageGeneration == canonicalStorageGeneration;
+}
+
+LOOP_COLD_MEM bool Loop::preparedCompanionHistorySupersessionPublishProof(uint64_t owner) const {
+  const auto& work = preparedCompanionHistory_;
+  const PendingCapturePass* bound = work.capturePass;
+  const bool result =
+      work.phase == PreparedCompanionHistory::Phase::Ready &&
+      preparedCompanionHistoryOwnedBy(owner) &&
+      pendingSnapshotPublishBox_ && work.source && work.capture &&
+      work.snapshotGeneration == pendingSnapshotCompanionGeneration_ &&
+      work.snapshotCount == pendingSnapshotPublishBox_->companionIds.size() &&
+      work.source->preparationGeneration() == work.rowGeneration &&
+      work.source->ready(*work.capture) &&
+      (!work.captureInputs ||
+       (bound != nullptr && !bound->preparationPending && bound->id == work.capturePassId &&
+        bound->committedChunkIds.data() == work.captureChunks &&
+        bound->committedChunkIds.size() == work.captureChunkCount &&
+        work.captureInputs->generation() == work.captureInputsGeneration &&
+        work.captureInputs->supersessionReady() &&
+        work.captureInputs->includesFrozenOverdubBinding() &&
+        work.captureInputs->frozenCaptureBinding() == work.capture)) &&
+      work.historyCount == passes.editPasses.size() &&
+      work.storageGeneration == canonicalStorageGeneration;
+  return result;
+}
+
 LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions(uint64_t owner,
                                                              const PendingCapturePass* pass) const {
   // OpenSpec 5.12 / D8: resolve the staged receipt through the interval that owns it. A deferred
@@ -383,19 +415,60 @@ LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions(uint64_t owner,
        (capture.phase == CapturePhase::Overdub && capture.store.empty()));
 }
 
+LOOP_COLD_MEM const EditPassIdList* Loop::preparedCompanionHistorySupersessionIds(uint64_t owner) const {
+  return preparedCompanionHistorySupersessionPublishProof(owner)
+             ? &preparedCompanionHistory_.companionIds
+             : nullptr;
+}
+
+LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanionsSupersession(uint64_t owner,
+                                                                          const PendingCapturePass* pass) const {
+  const PendingCapturePass* staged = pass;
+  if (staged == nullptr) staged = preparedCompanionHistory_.capturePass;
+  if (staged == nullptr && hasPendingCapturePass_) staged = &pendingCapturePass_;
+  return preparedCompanionHistorySupersessionPublishProof(owner) && staged != nullptr &&
+      canTransferCapturePassWithoutAllocation(*staged) &&
+      preparedCompanionHistory_.capturePassId != kInvalidPassId &&
+      preparedCompanionHistory_.capturePassId == staged->id &&
+      staged->phase == CapturePassPhase::Overdub &&
+      !staged->committedChunkIds.empty() &&
+      (!staged->retiresLiveCapture ||
+       (capture.phase == CapturePhase::Overdub && capture.store.empty()));
+}
+
 LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
     PreparedCapturePassTransfer& transferred, uint64_t owner, PendingCapturePass* pass) {
   PendingCapturePass* staged = pass;
   if (staged == nullptr) staged = preparedCompanionHistory_.capturePass;
   if (staged == nullptr && hasPendingCapturePass_) staged = &pendingCapturePass_;
   if (staged == nullptr || !canCommitPreparedCaptureAndCompanions(owner, staged)) return false;
+  bool transferFailed = false;
+  commitPreparedCaptureAndCompanionsBody(transferred, *staged, transferFailed);
+  return !transferFailed;
+}
+
+LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsSupersession(
+    PreparedCapturePassTransfer& transferred, uint64_t owner, PendingCapturePass* pass) {
+  PendingCapturePass* staged = pass;
+  if (staged == nullptr) staged = preparedCompanionHistory_.capturePass;
+  if (staged == nullptr && hasPendingCapturePass_) staged = &pendingCapturePass_;
+  if (staged == nullptr ||
+      !canCommitPreparedCaptureAndCompanionsSupersession(owner, staged)) return false;
+  bool transferFailed = false;
+  commitPreparedCaptureAndCompanionsBody(transferred, *staged, transferFailed);
+  return !transferFailed;
+}
+
+void Loop::commitPreparedCaptureAndCompanionsBody(PreparedCapturePassTransfer& transferred,
+                                                  PendingCapturePass& staged, bool& transferFailed) {
   // The transfer's only failure is its capacity preflight, before any mutation. It advances
   // revision, so history must publish using the proof above rather than rechecking the
   // now-obsolete source identity midway through the commit.
-  const bool consumedLoopSlot = staged == &pendingCapturePass_;
+  const bool consumedLoopSlot = &staged == &pendingCapturePass_;
   if (consumedLoopSlot ? !transferPreparedCapturePass(transferred)
-                       : !transferCapturePass(*staged, transferred)) {
-    return false;
+                       : !transferCapturePass(staged, transferred)) {
+    // The transfer preflight failed before any mutation; the caller's refused result stands.
+    transferFailed = true;
   }
   publishPreparedCompanionHistory();
   // Staging already detached the capture store. Retire scalar ownership only;
@@ -409,7 +482,6 @@ LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
   }
   visualCacheDirty = true;
   invalidatePlaybackCaches();
-  return true;
 }
 
 LOOP_COLD_MEM bool Loop::preparedCompanionHistoryMatches(

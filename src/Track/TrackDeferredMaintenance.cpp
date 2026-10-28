@@ -945,6 +945,103 @@ TRACK_COLD_MEM Loop::PrivateSourceStep Track::stepPrivatePredecessorSourceGrain(
   }
   return step;
 }
+TRACK_COLD_MEM bool Track::serviceDeferredCanonicalConvergence() {
+  if (!loopsAllocated()) return false;
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime == nullptr || !runtime->deferredConvergenceActive()) continue;
+    // Exclusive canonical-builder ownership: the inline capture stop wins. The stop grain is this
+    // machinery's only inline owner and it holds the slot's capture-stop owner for its whole life, so
+    // a non-null owner is an exact "an inline build owns the builders" test -- the deferred turn does
+    // nothing and the obligation stays `Owed` (spec: active inline build defers service).
+    if (runtime->captureStopOwner != nullptr) return false;
+    Loop& loop = getLoop(slot);
+    // Slot incarnation check: clear/load/replacement restarts the committed timeline at zero, so a
+    // target above the live revision can only mean the content this obligation owed is gone.
+    if (loop.committedPassRevision() < runtime->deferredConvergenceTarget) {
+      runtime->cancelDeferredConvergence();
+      continue;
+    }
+    // Standing demand, universal coalescing: one obligation, targeting the newest committed
+    // generation. Any newer generation drops an unpublished candidate and re-arms `Owed`.
+    (void)runtime->coalesceDeferredConvergence(loop.committedPassRevision());
+    switch (runtime->deferredConvergencePhase) {
+      case LoopPlaybackRuntime::DeferredConvergencePhase::Idle:
+        continue;
+      case LoopPlaybackRuntime::DeferredConvergencePhase::Owed: {
+        // Build only against a fresh authoritative source covering the target generation. No
+        // authority -> stay owed; the committed raw content remains authoritative and playable.
+        if (!loop.publishedSnapshotIsCurrent()) return true;
+        if (loop.committedPassRevision() < runtime->deferredConvergenceTarget) return true;
+        // Never steal a prewarmed view set this slot does not have. The builder's own admission
+        // decides the rest: a completed previous build is *reused* when it already represents this
+        // source and restarted (identity-mismatched) when it does not, so requiring an idle builder
+        // here would deadlock every obligation after the first completed one.
+        if (runtime->viewSetIfPrewarmed() == nullptr) return true;
+        runtime->deferredConvergenceSource = PlaybackViewSourceIdentity{
+            loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
+        runtime->deferredConvergenceLength = loop.loopLengthTicks;
+        runtime->deferredConvergenceDenial = LoopPlaybackRuntime::DeferredConvergenceDenial::None;
+        runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Building;
+        return true;  // binding is its own owner turn
+      }
+      case LoopPlaybackRuntime::DeferredConvergencePhase::Building: {
+        const auto& bound = runtime->deferredConvergenceSource;
+        if (loop.playbackRevision != bound.playbackRevision ||
+            loop.publishedSnapshotIdentity() != bound.snapshotIdentity ||
+            loop.loopLengthTicks != runtime->deferredConvergenceLength) {
+          // The authoritative source changed under the build: discard, never publish a mix of the
+          // superseded prefix with a newer suffix, and re-resolve from the new authority.
+          runtime->discardCanonicalBuildCandidate();
+          runtime->deferredConvergenceDenial =
+              LoopPlaybackRuntime::DeferredConvergenceDenial::SourceChanged;
+          runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Owed;
+          return true;
+        }
+        const RuntimeCanonicalPassInputs::CurrentSource live{
+            loop.playbackRevision, playbackGeneration, loop.loopLengthTicks,
+            loop.canonicalStorageGeneration};
+        const uint32_t playhead =
+            loop.lastTickInLoop == UINT32_MAX || loop.loopLengthTicks == 0
+                ? 0u : loop.lastTickInLoop % loop.loopLengthTicks;
+        const auto anchor = runtime->currentCycleCursor(playhead, bound.sourceGeneration);
+        const auto result = runtime->stepCanonicalBase(
+            loop.passes, bound, live, anchor, Loop::kDeferredStopPreparationQuantum);
+        if (result == RuntimePlaybackOrderBuildResult::Complete) {
+          // The derived canonical window is built and published (`view.published`); adoption is
+          // identity-qualified on the next turn. `Building -> Ready` never bumps the committed
+          // revision, so this adoption cannot invalidate its own target (task 2.0 audit).
+          runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Ready;
+        } else if (result == RuntimePlaybackOrderBuildResult::Denied) {
+          // A terminal denial discards the candidate and returns to `Owed`; it never blocks
+          // interaction and never leaves the obligation stuck in `Building`.
+          runtime->deferredConvergenceDenial =
+              LoopPlaybackRuntime::DeferredConvergenceDenial::BuildDenied;
+          runtime->discardCanonicalBuildCandidate();
+          runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Owed;
+        }
+        return true;
+      }
+      case LoopPlaybackRuntime::DeferredConvergencePhase::Ready: {
+        const auto& bound = runtime->deferredConvergenceSource;
+        if (loop.committedPassRevision() != runtime->deferredConvergenceTarget ||
+            loop.playbackRevision != bound.playbackRevision ||
+            loop.publishedSnapshotIdentity() != bound.snapshotIdentity) {
+          runtime->discardCanonicalBuildCandidate();
+          runtime->deferredConvergenceDenial =
+              LoopPlaybackRuntime::DeferredConvergenceDenial::SourceChanged;
+          runtime->deferredConvergencePhase = LoopPlaybackRuntime::DeferredConvergencePhase::Owed;
+          return true;
+        }
+        // Adopted through the target generation: one obligation, now discharged.
+        runtime->cancelDeferredConvergence();
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
@@ -1004,6 +1101,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         (void)stepPrivatePredecessorSourceGrain(loop);
     }
     return;
+  }
+  // Deferred canonical convergence rides the Snapshot lane, never the VisualCache slice: it drives
+  // the same canonical builders the inline capture stop owns, and it must never starve the display's
+  // bounded source work. It is placed **before** the publication gates for one structural reason:
+  // convergence correctness must not depend on the publication lane being able to advance (a
+  // publication held by a live overdub would otherwise starve the obligation forever). One grain per
+  // Snapshot turn, and the rest of this turn still runs, so the lane keeps its own work.
+  // `Owed` itself is the eligibility -- a later turn observes an already-ready authority without any
+  // caught publication transition.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
+    (void)serviceDeferredCanonicalConvergence();
   }
   // A presentation-held Record interval still depends on the normal Snapshot owner for
   // its queued root. Preserve that owner priority; presentation retirement may run only
