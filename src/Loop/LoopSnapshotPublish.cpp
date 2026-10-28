@@ -1573,6 +1573,16 @@ bool Loop::queueLastCommittedPassForPublishForTest() {
   return true;
 }
 
+std::vector<PassId> Loop::pendingSnapshotQueuedPassIdsForTest() const {
+  if (!pendingSnapshotPublishBox_) return {};
+  return std::vector<PassId>(pendingSnapshotPublishBox_->queuedPassIds.begin(),
+                             pendingSnapshotPublishBox_->queuedPassIds.end());
+}
+
+uint32_t Loop::pendingSnapshotCoveredPassRevisionForTest() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->coveredPassRevision : 0;
+}
+
 const LoopSnapshotChangeSet* Loop::pendingWrapJournalChangesForTest() const {
   if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->queuedWrapJournals.empty()) {
     return nullptr;
@@ -2175,6 +2185,44 @@ LOOP_COLD_MEM bool Loop::moveReservedSessionExitIntoReceiptRing() {
   // because it is no longer `Publishing`.
   sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
   return true;
+}
+
+/// Task 6.4: the receipt FIFO is drained only by the publisher, which gets no turn while the track owes a
+/// stop job and starts no construction while an overdub is live, so a continuous overdub chain left one
+/// ready receipt per interval in the ring and the 9th tail took the reserved obligation. Coalescing ready
+/// receipts here keeps exactly what the publisher would enumerate (`queueSessionExitSnapshot`: every pass
+/// id, each receipt's final pass, the counted companion rows; the newest reason) in FIFO order.
+LOOP_COLD_MEM void Loop::settleReadySessionExitReceipts() {
+  if (!sessionExitReceipts_) return;
+  // Two rounds: coalesce, then (if that freed a slot for it) move a ready reserved obligation in and
+  // coalesce it too. Written without a lambda or new container instantiations, which would not inherit
+  // this function's FLASH placement.
+  for (int round = 0; round < 2; ++round) {
+    while (sessionExitReceiptCount_ >= 2) {
+      SessionExitSnapshotHandoff& older =
+          sessionExitReceipts_[sessionExitReceiptHead_ % kSessionExitReceiptCapacity];
+      SessionExitSnapshotHandoff& newer =
+          sessionExitReceipts_[(sessionExitReceiptHead_ + 1) % kSessionExitReceiptCapacity];
+      if (!older.pending || !older.ready || !newer.pending || !newer.ready) break;
+      if (older.lastPassId != kInvalidPassId) older.passIds.push_back(older.lastPassId);
+      for (const PassId id : newer.passIds) older.passIds.push_back(id);
+      // Rows past a receipt's cursor are an undone (redo) tail that is never published; drop them so the
+      // newer receipt's rows stay counted from their own first row.
+      const size_t counted = std::min(older.companionRowCount, older.companionIds.size());
+      older.companionIds.resize(counted);
+      for (EditPassIdList& row : newer.companionIds) older.companionIds.push_back(std::move(row));
+      older.companionRowCount = counted + newer.companionRowCount;
+      older.lastPassId = newer.lastPassId;
+      older.reason = newer.reason;
+      // The newer slot keeps its ring index; only the head slot is freed.
+      newer = std::move(older);
+      older = SessionExitSnapshotHandoff{};
+      ++sessionExitReceiptHead_;
+      if (sessionExitReceiptHead_ >= kSessionExitReceiptCapacity) sessionExitReceiptHead_ = 0;
+      --sessionExitReceiptCount_;
+    }
+    if (round == 0 && !moveReservedSessionExitIntoReceiptRing()) break;
+  }
 }
 
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,

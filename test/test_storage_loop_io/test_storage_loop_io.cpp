@@ -2274,6 +2274,88 @@ void test_4_2_control_persisted_passes_alone_reconstruct_the_writer_root() {
 /// **4.2 step 2 (transactional half): a failed parity check leaves the complete previous slot generation intact.**
 /// A coherent body is loaded first; then a second, independently parsed body whose staged root is pitch-mutated is
 /// refused. The existing slot keeps its root object, its pass and its parity, and never sees the mutated pitch.
+/// **4.2 step 2 (empty-slot half) — a parity mismatch must not throw a normal save away.** The production writer
+/// produces a coherent body; only the staged root is then mutated so parity fails. The target slot is **empty**
+/// (the boot-restore shape), where the previous contract's "apply neither source" left `loopLengthTicks == 0`,
+/// no passes and 0 painted notes while the restore request still reported `committed` — a valid loop that never
+/// came back after an upload. The body's passes are the storage content: they are applied, no unverified root is
+/// installed (parity stays `NoCheckpoint`), and the display caches are marked stale so paint can use them.
+void test_4_2_a_parity_mismatch_into_an_empty_slot_restores_the_saved_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(source);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  auto step = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (step == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    step = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle, parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(step));
+  TEST_ASSERT_NOT_NULL(parseState.loopSnapshot.get());
+
+  // Mutate only the staged root, so the passes stay the writer's real content.
+  LoopSnapshotEventRef onRef;
+  LoopSnapshotEventRef offRef;
+  forEachSnapshotMembershipReference(parseState.loopSnapshot->eventMembership(0).get(),
+                                     [&](const LoopSnapshotEventRef& ref) {
+    if (ref->value.data.noteData.note != 62) return;
+    if (ref->value.isNoteOn()) onRef = ref;
+    if (ref->value.isNoteOff()) offRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL(onRef.get());
+  TEST_ASSERT_NOT_NULL(offRef.get());
+  LoopSnapshotChangeSet changes;
+  for (const LoopSnapshotEventRef& ref : {onRef, offRef}) {
+    SnapshotEventChange eventChange{};
+    eventChange.kind = SnapshotChangeKind::Replace;
+    eventChange.previous = ref;
+    eventChange.next = *ref;
+    eventChange.next.value.data.noteData.note = 63;
+    changes.events.push_back(eventChange);
+  }
+  LoopSnapshotConstruction construction(parseState.loopSnapshot, changes);
+  while (!construction.complete()) TEST_ASSERT_TRUE(construction.step(128));
+  ImmutableLoopSnapshotRef divergent = construction.freeze();
+  TEST_ASSERT_NOT_NULL(divergent.get());
+
+  Loop restored;  // empty: the boot-restore target
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(divergent));
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(source.loopLengthTicks, restored.loopLengthTicks,
+                                   "the saved length must reach an empty slot");
+  TEST_ASSERT_TRUE_MESSAGE(restored.hasCommittedPasses(),
+                           "the saved passes must reach an empty slot");
+  TEST_ASSERT_TRUE_MESSAGE(restored.visualCacheDirty,
+                           "restored content must mark the display caches stale so paint can use it");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(CheckpointParity::NoCheckpoint),
+                                static_cast<int>(restored.checkpointParity()),
+                                "an unverified root is never installed as current");
+  TEST_ASSERT_NULL_MESSAGE(restored.publishedSnapshotIdentity(),
+                           "a divergent root is never published");
+  NoteUtils::DisplayNoteVec restoredNotes;
+  LoopContentResolution::resolveDisplayNotes(restored.passes, restored.loopLengthTicks, restoredNotes);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(restoredNotes.size()));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(62, restoredNotes[0].note,
+                                  "the passes' pitch is authoritative; the mutated root is not");
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 void test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2488,16 +2570,19 @@ void test_4_2_a_velocity_divergence_is_not_published_as_current() {
   TEST_ASSERT_TRUE_MESSAGE(passesHaveNoteOnVelocity(oracle.passes, oracle.loopLengthTicks, 62, 100),
                            "the passes-derived NoteOn velocity is still 100");
 
-  // Load the divergent staged root. The target is a fresh slot: the required outcome is no current checkpoint and no
-  // candidate passes installed.
+  // Load the divergent staged root into an **empty** slot (the boot-restore shape). Contract since
+  // 2026-10-28: an unverified root is still never published, but the body's *passes* are the saved storage
+  // content and are installed, because applying nothing left a valid loop empty while the restore request
+  // reported `committed` (device: every slot restored empty after an upload). A populated slot still keeps its
+  // previous generation untouched (`test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact`).
   Loop restored;
   alignas(16) static unsigned char trackStorage[16] = {};
   Track& track = *reinterpret_cast<Track*>(trackStorage);
   applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(divergent));
   TEST_ASSERT_NULL_MESSAGE(restored.publishedSnapshot().get(),
                            "a velocity-divergent root is never published as current");
-  TEST_ASSERT_FALSE_MESSAGE(restored.passes.hasRecordPass(),
-                            "the candidate passes are not installed when parity fails");
+  TEST_ASSERT_TRUE_MESSAGE(restored.passes.hasRecordPass(),
+                           "the saved passes are installed so an empty slot is not left empty");
   TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::NoCheckpoint),
                         static_cast<int>(restored.checkpointParity()));
   releasePersistedLoopSnapshotChunks(oracle);
@@ -2609,8 +2694,11 @@ void test_4_2_a_serialized_root_divergence_is_refused() {
                                 std::move(divergedState.loopSnapshot));
   TEST_ASSERT_NULL_MESSAGE(refused.publishedSnapshot().get(),
                            "the diverged serialized body is never installed as current");
-  TEST_ASSERT_FALSE_MESSAGE(refused.passes.hasRecordPass(),
-                            "the candidate passes are not installed when parity fails");
+  TEST_ASSERT_TRUE_MESSAGE(refused.passes.hasRecordPass(),
+                           "the saved passes are installed so an empty slot is not left empty");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(CheckpointParity::NoCheckpoint),
+                                static_cast<int>(refused.checkpointParity()),
+                                "an unverified root is never presented as current");
   releasePersistedLoopSnapshotChunks(divergedOracle);
 
   releasePersistedLoopSnapshotChunks(oracle);
@@ -2703,16 +2791,17 @@ void test_4_2_a_divergent_root_is_not_published_as_current() {
   TEST_ASSERT_TRUE_MESSAGE(hasPitch(passNotes, 62), "the passes-derived projection still carries 62");
   TEST_ASSERT_FALSE_MESSAGE(hasPitch(passNotes, 63), "the passes-derived projection never sees 63");
 
-  // Load the divergent staged root. The target is a fresh slot: the required outcome is no current checkpoint and no
-  // candidate passes installed.
+  // Load the divergent staged root into an **empty** slot. Since 2026-10-28 an unverified root is still never
+  // published, but the saved passes are installed (an empty slot left empty was the device restore failure);
+  // a populated slot still keeps its previous generation (the sibling test above).
   Loop restored;
   alignas(16) static unsigned char trackStorage[16] = {};
   Track& track = *reinterpret_cast<Track*>(trackStorage);
   applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(divergent));
   TEST_ASSERT_NULL_MESSAGE(restored.publishedSnapshot().get(),
                            "a divergent root is never published as current");
-  TEST_ASSERT_FALSE_MESSAGE(restored.passes.hasRecordPass(),
-                            "the candidate passes are not installed when parity fails");
+  TEST_ASSERT_TRUE_MESSAGE(restored.passes.hasRecordPass(),
+                           "the saved passes are installed so an empty slot is not left empty");
   TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::NoCheckpoint),
                         static_cast<int>(restored.checkpointParity()));
   releasePersistedLoopSnapshotChunks(oracle);
@@ -3096,6 +3185,127 @@ void test_i4_dense_membership_pages_and_id_array_slices_match_bytes() {
   TEST_ASSERT_EQUAL_UINT32(before, actual.size());
 }
 
+/// DEC-179 invariant: **a body emitted with an embedded root must pass the loader's parity gate without any
+/// post-load repair.** One comparator, two call sites (writer and loader); this fixture is the contract that
+/// keeps their notions of equivalence from drifting. Shapes a device set actually contains: record only,
+/// record + overdub, an edit pass, and a wrapped (straddling) note pair.
+void test_4_2_a_written_body_with_a_root_always_passes_the_loader_parity() {
+  struct Shape { const char* name; unsigned overdubs; bool editPass; bool wrapPair; };
+  const Shape shapes[] = {{"record", 0, false, false},
+                         {"record+overdub", 2, false, false},
+                         {"record+edit", 0, true, false},
+                         {"record+wrap", 0, false, true}};
+  for (const Shape& shape : shapes) {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    resetSnapshotAllocCounters();
+    Loop source;
+    source.loopId = 7;
+    source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+    source.beginCapture(CapturePhase::Record);
+    const uint32_t on = shape.wrapPair ? source.loopLengthTicks - 8u : 100u;
+    const uint32_t off = shape.wrapPair ? 400u : 200u;
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(on, 1, 62, 100)));
+    TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(off, 1, 62, 0)));
+    TEST_ASSERT_EQUAL(CommitResult::Committed,
+                      source.commitCapturePass(CommitReason::RecordStop, off + 8u));
+    for (unsigned i = 0; i < shape.overdubs; ++i) {
+      source.beginCapture(CapturePhase::Overdub);
+      TEST_ASSERT_TRUE(source.appendCaptureEvent(
+          MidiEvent::NoteOn(300 + i * 24, 1, static_cast<uint8_t>(70 + i), 100)));
+      TEST_ASSERT_TRUE(source.appendCaptureEvent(
+          MidiEvent::NoteOff(340 + i * 24, 1, static_cast<uint8_t>(70 + i), 0)));
+      TEST_ASSERT_EQUAL(CommitResult::Committed,
+                        source.commitCapturePass(CommitReason::OverdubStop, 400 + i * 24));
+    }
+    if (shape.editPass) {
+      // An edit pass is an overlay of moved notes; keep it empty-but-present so the body still carries the
+      // edit tail without inventing geometry the writer has to normalize.
+      EditPass edit{};
+      edit.id = 900;
+      source.passes.editPasses.push_back(edit);
+    }
+    drainPendingSnapshotPublish(source);
+    const bool settled = source.hasSettledPublishedSnapshotForSave();
+    std::printf("dec179 shape=%s settled=%u\n", shape.name, static_cast<unsigned>(settled));
+
+    std::vector<uint8_t> buffer;
+    MemoryStorageIo mem(&buffer);
+    TEST_ASSERT_TRUE_MESSAGE(writeLoopPersisted(mem.io(), source), shape.name);
+    const auto probe = probeLoopSnapshotBodyFormat(buffer.data(), buffer.size());
+    if (!settled) {
+      TEST_ASSERT_TRUE_MESSAGE(probe != LoopSnapshotBodyFormatProbeResult::SupportedV1, shape.name);
+      continue;
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(LoopSnapshotBodyFormatProbeResult::SupportedV1),
+                                  static_cast<int>(probe),
+                                  "a settled root is embedded only when it is proven equivalent");
+    LoopSnapshotBodyFormatV1LoadParseState parseState{};
+    PersistedLoopSnapshot oracle{};
+    auto step = LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    while (step == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+      step = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle, parseState, 0, 1);
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                                  static_cast<int>(step), shape.name);
+    TEST_ASSERT_NOT_NULL(parseState.loopSnapshot.get());
+    Loop target;
+    alignas(16) static unsigned char trackStorage[16] = {};
+    Track& track = *reinterpret_cast<Track*>(trackStorage);
+    const LoopSlotBodyApply outcome = applyLoadedLoopSlotBodyCommit(
+        target, track, 0, true, oracle, std::move(parseState.loopSnapshot));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(LoopSlotBodyApply::Applied),
+                                  static_cast<int>(outcome),
+                                  "an emitted root passes the loader's parity gate without repair");
+    TEST_ASSERT_NOT_NULL(target.publishedSnapshotIdentity());
+    releasePersistedLoopSnapshotChunks(oracle);
+  }
+}
+
+/// DEC-179: a settled-but-divergent root is a **format-selection result** -- the slot is written
+/// passes-authoritative, so no boot can read a body whose root the loader must refuse.
+void test_4_2_a_divergent_settled_root_is_saved_without_a_root() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 208));
+  drainPendingSnapshotPublish(source);
+
+  const ImmutableLoopSnapshotRef settled = source.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(settled.get());
+  TEST_ASSERT_TRUE(source.publishedSnapshotIsCurrent());
+  LoopSnapshotEventRef onRef;
+  forEachSnapshotMembershipReference(settled->eventMembership(0).get(), [&](const LoopSnapshotEventRef& ref) {
+    if (ref->value.isNoteOn() && ref->value.data.noteData.note == 62) onRef = ref;
+  });
+  TEST_ASSERT_NOT_NULL(onRef.get());
+  LoopSnapshotChangeSet changes;
+  SnapshotEventChange eventChange{};
+  eventChange.kind = SnapshotChangeKind::Replace;
+  eventChange.previous = onRef;
+  eventChange.next = *onRef;
+  eventChange.next.value.data.noteData.note = 63;
+  changes.events.push_back(eventChange);
+  LoopSnapshotConstruction construction(settled, changes);
+  while (!construction.complete()) TEST_ASSERT_TRUE(construction.step(128));
+  source.storePublishedSnapshotForTest(construction.freeze(), source.playbackRevision);
+  TEST_ASSERT_TRUE(source.hasSettledPublishedSnapshotForSave());
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+  const auto probe = probeLoopSnapshotBodyFormat(buffer.data(), buffer.size());
+  TEST_ASSERT_TRUE_MESSAGE(probe != LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                           "a divergent settled root is never embedded");
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
     return decodeSlotBodyFile(argv[2]);
@@ -3165,5 +3375,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_4_2_a_same_tick_checkpoint_round_trips_and_a_divergence_is_refused);
   RUN_TEST(test_4_2_a_dense_checkpoint_streams_within_capacity);
   RUN_TEST(test_4_2_a_failed_parity_leaves_the_existing_slot_generation_intact);
+  RUN_TEST(test_4_2_a_written_body_with_a_root_always_passes_the_loader_parity);
+  RUN_TEST(test_4_2_a_divergent_settled_root_is_saved_without_a_root);
+  RUN_TEST(test_4_2_a_parity_mismatch_into_an_empty_slot_restores_the_saved_passes);
   return UNITY_END();
 }

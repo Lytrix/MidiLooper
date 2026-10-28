@@ -511,8 +511,45 @@ TRACK_COLD_MEM bool Track::admitOverdubStartWorkingSet() {
 /// is a cold, allocation-bearing turn (`ensureSessionExitReceiptRing`). The claim is deliberately
 /// sparse — a state byte in the shell, the payload in the externally allocated record — so a start
 /// that is refused here costs nothing to unwind.
+namespace {
+// RAM2: a plain static here is DTCM (`variables`), and the RAM1 budget books it (+32 B measured, refused).
+DMAMEM uint32_t sOverdubRetryReportMs;
+}  // namespace
+
+TRACK_COLD_MEM bool Track::hasLiveOwnerOfReservedSessionExitObligation(const Loop& loop) const {
+  if (!captureStopJobs_) return false;
+  for (size_t i = 0; i < captureStopJobs_->count; ++i) {
+    const CaptureStopJob& job =
+        captureStopJobs_->entries[(captureStopJobs_->head + i) % CaptureStopJobs::kCapacity];
+    if (job.owner == &loop && job.admission.pending &&
+        job.admission.sessionExitReceiptRing == Loop::kReservedSessionExitReceipt) {
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM bool Track::claimOverdubSessionExitObligation() {
   Loop& loop = getActiveLoop();
+  // Task 6.4: a ready (`Publishing`) obligation needs only a free ring slot, not a publisher turn.
+  loop.settleReadySessionExitReceipts();
+  // Task 6.4 (device `session_20261028_143115.log`): an obligation whose interval has already retired can never be
+  // marked ready again -- only that job's `completeDeferredCleanup` moves `Populated -> Publishing` -- so if no pending
+  // job references the reserved record it has **zero live owners** and would refuse every later start forever (the
+  // capture: one `retained` at 146.1 s, then 18 presses over 37 s with no start, while the stop FIFO drained). It owns
+  // committed identities, so it is published, never dropped: mark it ready (no extra final pass -- the record already
+  // lists its own), then settle it through the ring on the same turn.
+  if (loop.hasReservedSessionExitObligation() && !hasLiveOwnerOfReservedSessionExitObligation(loop)) {
+    if (loop.markSessionExitTailReady(Loop::kReservedSessionExitReceipt, kInvalidPassId)) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub start: releasing an orphaned session-exit obligation (slot=%u state=populated jobs=%u "
+                 "receipts=%u)",
+                 static_cast<unsigned>(activeLoopIndex),
+                 static_cast<unsigned>(captureStopQueueDepth()),
+                 static_cast<unsigned>(loop.sessionExitReceiptCount()));
+      loop.settleReadySessionExitReceipts();
+    }
+  }
   if (loop.claimSessionExitPublishOwner()) return true;
   // An occupied obligation is a *named bounded refusal*, not a silent second slot: the predecessor's
   // session-exit publication has not reached the publisher yet, so this interval has nowhere durable
@@ -523,10 +560,44 @@ TRACK_COLD_MEM bool Track::claimOverdubSessionExitObligation() {
     case Loop::SessionExitPublishClaim::Publishing: state = "publishing"; break;
     default: break;
   }
+  // Task 6.4: after the ring settles, the obligation is occupied only while the stop FIFO is full of
+  // outstanding jobs, and it frees when its own job retires. The press is therefore retained on the
+  // existing start carrier, which `driveAcceptedInteraction` re-runs once no stop job is pending, instead
+  // of being dropped. A carrier already holding another interaction is never overwritten.
+  PendingInteractionLatch* latch = interactionLatch();
+  bool retained = false;
+  if (latch != nullptr) {
+    if (latch->matches(PendingInteractionLatch::Kind::Start, activeLoopIndex, 0, captureInterval_) &&
+        latch->loopId == loop.loopId) {
+      // Already retained: a re-drive or a repeat press adds nothing, but the retry must still be able to say why it
+      // is not starting -- silence here is what made the device run unreadable. One row per 8 s at most.
+      const uint32_t nowMs = millis();
+      if (sOverdubRetryReportMs == 0 || static_cast<uint32_t>(nowMs - sOverdubRetryReportMs) >= 8000u) {
+        sOverdubRetryReportMs = nowMs;
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Overdub start still retained: obligation owned (slot=%u state=%s jobs=%u receipts=%u "
+                   "reserved_owner=%u)",
+                   static_cast<unsigned>(activeLoopIndex), state,
+                   static_cast<unsigned>(captureStopQueueDepth()),
+                   static_cast<unsigned>(loop.sessionExitReceiptCount()),
+                   hasLiveOwnerOfReservedSessionExitObligation(loop) ? 1u : 0u);
+      }
+      return false;
+    } else if (!latch->isSet()) {
+      latch->kind = PendingInteractionLatch::Kind::Start;
+      latch->slot = activeLoopIndex;
+      latch->loopId = loop.loopId;
+      latch->interval = captureInterval_;
+      latch->mode = CapturePhase::Overdub;
+      retained = true;
+    }
+  }
   logger.log(CAT_TRACK, LOG_WARNING,
-             "Overdub start refused: the session-exit publication obligation is still owned "
-             "(slot=%u state=%s)",
-             static_cast<unsigned>(activeLoopIndex), state);
+             "Overdub start %s: the session-exit publication obligation is still owned "
+             "(slot=%u state=%s jobs=%u receipts=%u)",
+             retained ? "retained (capacity)" : "refused", static_cast<unsigned>(activeLoopIndex), state,
+             static_cast<unsigned>(captureStopQueueDepth()),
+             static_cast<unsigned>(loop.sessionExitReceiptCount()));
   return false;
 }
 
@@ -534,6 +605,43 @@ TRACK_COLD_MEM bool Track::claimOverdubSessionExitObligation() {
 /// reservation left behind would refuse the next start by name.
 TRACK_COLD_MEM void Track::releaseOverdubSessionExitObligation() {
   (void)getActiveLoop().releaseSessionExitPublishOwner(0);
+}
+
+TRACK_COLD_MEM bool Track::overdubTransferAdmitsAnotherStop(const Loop& loop) const {
+  if (!loop.hasActiveOverdubTransferAdmission()) return false;
+  size_t rowsOwed = 0;
+  size_t passSlotsOwed = 0;
+  if (captureStopJobs_) {
+    for (size_t i = 0; i < captureStopJobs_->count; ++i) {
+      const CaptureStopJob& job =
+          captureStopJobs_->entries[(captureStopJobs_->head + i) % CaptureStopJobs::kCapacity];
+      if (job.owner != &loop || job.mode != CapturePhase::Overdub || !job.admission.pending ||
+          job.admission.phase >= PendingStopPhase::DeferredCleanup) {
+        continue;
+      }
+      // Conservative for a job that will never stage (an empty take): it is charged until it retires.
+      if (job.pendingPass.id == kInvalidPassId) ++rowsOwed;
+      ++passSlotsOwed;
+    }
+  }
+  return loop.activeOverdubTransferRowCount() > rowsOwed &&
+         loop.activeOverdubPassHeadroom() > passSlotsOwed;
+}
+
+TRACK_COLD_MEM bool Track::replenishLiveOverdubTransferHorizon() {
+  // Only a live interval needs a row for its own future stop, and only with no stop job pending:
+  // `prewarmActiveOverdubTransferHorizon` may relocate `passes.overdubPasses`, which an admitted job
+  // depends on (the start-time prewarm carries the same precondition). A continuous chain never offers
+  // the start-time edge -- each start precedes its predecessor's commit -- so without this turn the
+  // horizon lapsed mid-chain and the next stop waited forever for a start that its own interval blocks.
+  if (!isOverdubbing() || hasPendingDeferredOverdubStop() || !loopsAllocated()) return false;
+  Loop& loop = getActiveLoop();
+  if (!loop.activeOverdubTransferHorizonLow()) return false;
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
+  const bool replenished = loop.prewarmActiveOverdubTransferHorizon();
+  ExternalPoolAccounting::endTag();
+  // A failed top-up must not own the turn: the accepted-interaction re-drive and the other lanes still run.
+  return replenished;
 }
 
 TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs(uint8_t captureSlot) {
@@ -1324,7 +1432,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "finalizer_busy", resolveTrackIndexForPersistence(*this));
     return false;
   }
-  if (!loop.hasActiveOverdubTransferAdmission()) {
+  if (!overdubTransferAdmitsAnotherStop(loop)) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "transfer_denied", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;

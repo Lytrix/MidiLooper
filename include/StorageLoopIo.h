@@ -284,11 +284,23 @@ LoopSnapshotBodyFormatV1LoadStepResult stepLoopSnapshotBodyFormatV1LoadParse(
     uint32_t maxGrains = 0);
 
 class Track;
+/// Outcome of a loaded slot body's publication, so the restore owner can report the truth instead of calling
+/// every parse a commit.
+enum class LoopSlotBodyApply : uint8_t {
+  /// Passes and the body's root were both applied (parity held).
+  Applied = 0,
+  /// The body's root disagreed with its passes and the slot was empty: the saved passes were applied, no
+  /// unverified root was installed (parity stays `NoCheckpoint`).
+  AppliedPassesOnly = 1,
+  /// The body's root disagreed with its passes and the slot already had a committed generation: that
+  /// generation is kept untouched and nothing is published.
+  KeptExisting = 2,
+};
 /// LoadLoopJob publish: both formats derive undo from passes; LSV1 retains its published snapshot.
-void applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
-                                   bool usesLoopSnapshotBodyFormatV1,
-                                   PersistedLoopSnapshot& persistedOracle,
-                                   ImmutableLoopSnapshotRef loadedLoopSnapshot);
+LoopSlotBodyApply applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
+                                               bool usesLoopSnapshotBodyFormatV1,
+                                               PersistedLoopSnapshot& persistedOracle,
+                                               ImmutableLoopSnapshotRef loadedLoopSnapshot);
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 void testResetLsv1SaveWorkCounters();

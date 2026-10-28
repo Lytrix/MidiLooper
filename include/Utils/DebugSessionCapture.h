@@ -482,6 +482,13 @@ SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t
  *  capture interval identity and `depth` the stop-descriptor queue depth at the decision. */
 SC_MEM_ATTR void reentryDecision(const char* decision, uint32_t actionTick, uint64_t interval,
                                  uint8_t slot, size_t queueDepth);
+/** Boot first-paint gate report (DEC-183): DIAG,paint_gate,<owner>,<allStopped>,<titleDrain>,<clockRunning>,
+ *  <restorePending>,<commitPending>,<queue>,<focusNotes>,<ownNotes>. Report-only, once per second, only while the
+ *  selected slot owes its first paint; names which admission holds the cache lane instead of guessing. */
+SC_MEM_ATTR void paintGate(uint8_t owner, uint8_t allStopped, uint8_t titleDrain, uint8_t clockRunning,
+                           uint8_t restorePending, uint8_t commitPending, uint16_t queue,
+                           uint16_t focusNotes, uint8_t ownNotes);
+
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);
@@ -953,6 +960,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, transferUs) \
   DebugSessionCapture::displayFrame(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, \
                                     transferUs)
+#define SC_PAINT_GATE(owner, allStopped, titleDrain, clockRunning, restorePending, commitPending, queue, \
+                      focusNotes, ownNotes) \
+  DebugSessionCapture::paintGate(owner, allStopped, titleDrain, clockRunning, restorePending, \
+                                 commitPending, queue, focusNotes, ownNotes)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
                           loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
                           rev, gen) \
@@ -1110,6 +1121,8 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
 #define SC_DFRAME(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, transferUs) ((void)0)
+#define SC_PAINT_GATE(owner, allStopped, titleDrain, clockRunning, restorePending, commitPending, queue, \
+                      focusNotes, ownNotes) ((void)0)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
                           loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
                           rev, gen) \

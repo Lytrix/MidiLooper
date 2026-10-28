@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/MemoryMonitor.h"
+#include "Utils/HeapPeakTrace.h"
 #if defined(__IMXRT1062__)
 #include "Globals.h"
 #include "Utils/InternalHeapFirstAllocator.h"
@@ -296,21 +297,40 @@ void extmem_free(void* pointer);
 /// Take the exact block and give it straight back. Called immediately before the real
 /// reserve, so its verdict is predictive; uses the raw entry points, never the aborting
 /// C++ allocators, so a failed probe is a nullptr rather than process death.
-FLASHMEM bool probeBlockAvailable(size_t bytes) {
+///
+/// The tier asked first is the tier the real reserve's allocator tries first (`reserveProbeAsksExternalPoolFirst`):
+/// a PSRAM-first reserve is proven against the pool and never touches the internal arena unless the pool refuses
+/// (which is exactly when the real allocation would fall back to it). `context` tags any arena movement the probe
+/// causes in the capture's per-`_sbrk` rows.
+FLASHMEM bool probeBlockAvailable(size_t bytes, bool externalPoolFirst, uint8_t context) {
   if (bytes == 0) {
     return true;
   }
-  void* block = std::malloc(bytes);
-  if (block != nullptr) {
-    std::free(block);
-    return true;
+  HeapPeakTrace::setContext(context);
+  bool available = false;
+  if (externalPoolFirst) {
+    void* block = extmem_malloc(bytes);
+    if (block != nullptr) {
+      extmem_free(block);
+      available = true;
+    }
   }
-  block = extmem_malloc(bytes);
-  if (block != nullptr) {
-    extmem_free(block);
-    return true;
+  if (!available) {
+    void* block = std::malloc(bytes);
+    if (block != nullptr) {
+      std::free(block);
+      available = true;
+    }
   }
-  return false;
+  if (!available && !externalPoolFirst) {
+    void* block = extmem_malloc(bytes);
+    if (block != nullptr) {
+      extmem_free(block);
+      available = true;
+    }
+  }
+  HeapPeakTrace::setContext(0);
+  return available;
 }
 }  // namespace
 
@@ -413,10 +433,15 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   const bool userGestureAdmission =
       operation == OperationKind::OverdubStart || operation == OperationKind::RecordStart ||
       operation == OperationKind::SlotSwitch;
-  const bool heapLow = tailLooksLow &&
-      !(userGestureAdmission && largestInternalFreeChunkBytes() >= admissionNeedBytes);
+  // Report-only: the walk's answer, kept so the denial row can name the largest free chunk the verdict was made on
+  // (0 = the walk did not run, or was incomplete). Same call, same condition, same order as before.
+  uint32_t largestFreeBytes = 0;
+  if (tailLooksLow && userGestureAdmission) largestFreeBytes = largestInternalFreeChunkBytes();
+  const bool heapLow = tailLooksLow && !(userGestureAdmission && largestFreeBytes >= admissionNeedBytes);
   const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
-  const bool reserveFailed = pointOfUseReserve && !probeBlockAvailable(requiredBytes);
+  const bool reserveFailed =
+      pointOfUseReserve && !probeBlockAvailable(requiredBytes, reserveProbeAsksExternalPoolFirst(operation),
+                                                static_cast<uint8_t>(operation));
   const bool reportAdmitted = operation == OperationKind::BootProbe;
   if (!heapLow && !poolRefusing && !reserveFailed) {
     if (reportAdmitted) {
@@ -445,14 +470,15 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   lastReportReason = reasonCode;
   Serial.printf_P(
       PSTR("#MEM_DENIED,%lu,op=%s,reason=%s,need=%luB,heap_free=%luKB,"
-           "pool_refused=%lu/%luB,since_refusal=%lums\n"),
+           "pool_refused=%lu/%luB,since_refusal=%lums,largest_free=%luKB\n"),
       static_cast<unsigned long>(micros()), operationName(operation),
       reserveFailed ? PSTR("reserve_failed")
                     : (heapLow ? PSTR("heap_low") : PSTR("pool_refusing")),
       static_cast<unsigned long>(requiredBytes), static_cast<unsigned long>(heapFree / 1024),
       static_cast<unsigned long>(pool.poolRefusedCount),
       static_cast<unsigned long>(pool.poolRefusedLargestBytes),
-      static_cast<unsigned long>(sinceRefusalMs));
+      static_cast<unsigned long>(sinceRefusalMs),
+      static_cast<unsigned long>(largestFreeBytes / 1024));
 #if defined(SESSION_CAPTURE)
   // Task 4.20: **no automatic ladder here.** An earlier revision ran the capacity ladder at this edge, and it was
   // withdrawn with the allocator-authoritative policy above for the same reason: at a low tail the ladder's own rungs

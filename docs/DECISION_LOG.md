@@ -9773,3 +9773,616 @@ in that session are the ones this change does not cover: one stop with `no canon
 `retargeted` stops at the transport stop (147.1–147.3 s), i.e. tasks 6.1b/6.2. Also observed there and **not**
 addressed: three `Overdub start refused: the session-exit publication obligation is still owned (slot=3
 state=populated)` rows (142–145 s), so that obligation can go a long time without draining.
+
+## DEC-173 — Overdub finalization resources are charged per stop job and released at that job's retirement, not at a publisher turn or a start
+
+**Date:** 2026-10-28
+**Owner:** `Loop::settleReadySessionExitReceipts` (receipt FIFO); `Track::overdubTransferAdmitsAnotherStop` (stop admission);
+`Track::replenishLiveOverdubTransferHorizon` (deferred maintenance); `Track::claimOverdubSessionExitObligation` (start carrier).
+**Status:** Implemented for task 6.4 (`openspec/changes/deferred-canonical-convergence`); native + build green; **flashed 2026-10-28** (loader 2.3, `Found HalfKay` -> `Programming` -> `Booting`; HEX `sha256 ce6cdb22…`; boot `crash=0` / `BOOT,load,ok` / `16C0:0489`), device acceptance run open.
+
+### Scope correction (2026-10-28, device `session_20261028_135050.log`)
+This decision fixes **one of two** mechanisms behind "cannot start/stop overdubs after a few". The second is task 4.20's internal-heap admission (tail 28 KB, `snapshot_reserve` and `overdub_start` denials, no publishes), which this decision does not touch; device acceptance of 6.4 is therefore not met. The claim below that this is *the* root cause is withdrawn.
+
+### Problem
+A continuous overdub chain while playing (each start shortly after the previous stop) refused the 10th start with
+`the session-exit publication obligation is still owned (state=populated)`, **independent of stop-queue depth**
+(fixture: refusal at start 10 for 1..4 outstanding stops). The receipt FIFO (8) is drained only by
+`Loop::stepPendingSnapshotPublish`, which gets no turn while the track owes any stop job
+(`processDeferredIdleMaintenance` returns after the stop grain) and consumes nothing while `allowStartConstruction` is
+false (overdubbing / overdub stop pending with a published root, DEC-045). One *ready* receipt accumulates per overdub;
+the 9th tail takes DEC-163's reserved record, which leaves `Publishing` only on a publisher turn. Lending the publisher
+turns is unsafe: the pending box's `companionIds` is bound by the in-flight prepared companion history
+(`preparedCompanionHistorySourceCurrent`), so it would deny corrections 3-4's companion publish.
+Removing the refusal exposed two deadlocks in the same chain: stop admission used the instantaneous
+`hasActiveOverdubTransferAdmission()`, so queued jobs shared the last transfer row and the extras wedged at
+`PrepareTransfer` forever; and the 16-row horizon was re-prewarmed only by a start whose horizon had lapsed, which a
+chain never offers, so the 17th stop was retained forever (its own live interval blocks that start).
+
+### Decision
+1. **Coalesce ready receipts** at the FIFO head into one (order, every pass id, each final pass, counted companion rows,
+   newest reason — what `queueSessionExitSnapshot` enumerates), and move a `Publishing` reserved obligation into the freed
+   slot. Runs at the job's own retirement (`completeDeferredCleanup`) and before the start claim. Touches neither the box
+   nor a not-ready receipt. Ring occupancy is then bounded by outstanding stop jobs.
+2. **Charge each outstanding overdub job its own transfer row and pass slot** at stop admission.
+3. **Top up a live chain's horizon** on a deferred turn with no stop job pending (the start-time prewarm's precondition),
+   below a low-water of half the horizon; a failed top-up does not own the turn.
+4. **A start refused at a full stop FIFO is retained** on the existing `PendingInteractionLatch::Kind::Start` carrier and
+   served by `driveAcceptedInteraction`; the row reads `Overdub start retained (capacity)` with `jobs=`/`receipts=`.
+
+### Consequences
+DEC-163's reserved record stays, but is reachable only with 7-8 outstanding stop jobs. DEC-168's escape and corrections
+3-4 are untouched (no publisher or box change). Known, not changed: the stale-root overlay
+(`LoopSnapshotPlayback.cpp`) and `beginCollectOverdubStopUndoPasses` do not read the reserved record.
+
+### Verification
+`test_shared_capture_finalization` 137/137: `test_6_4_continuous_overdub_chain_admits_every_start_and_stop` (24 overdubs,
+1..8 outstanding; RED before at start 10), `test_6_4_outstanding_stops_never_share_the_last_transfer_row`,
+`test_6_4_coalesced_receipts_enumerate_exactly_what_sequential_consumption_does`, control
+`test_6_4_control_a_paused_chain_drains_the_receipt_ring`; 4.20 boundary/lapse fixtures re-shaped to build the full ring
+from outstanding stops. Mutations M1 (no settle), M2 (instantaneous transfer predicate), M3 (no top-up), M4 (no start
+retention), M5 (no redo-row truncation) each red their fixture; restores hash-identical. Full native 3,549 / 7 skipped /
+3,542 succeeded / 0 failed; `teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192 / code 390,568 + padding 2,648`
+(unchanged). One independent review: no blockers; four tightenings applied.
+
+## DEC-174 — A point-of-use reserve probe asks the tier the real allocator tries first, and never takes memory from the arena the gates measure
+
+**Date:** 2026-10-28
+**Owner:** `MemoryMonitor::admitOperationMemory` / `probeBlockAvailable`; `reserveProbeAsksExternalPoolFirst` (`include/Utils/MemoryMonitor.h`).
+**Status:** Implemented for task 6.4 / 4.20; native + build green; **not flashed** at the time of writing.
+
+### Problem
+Per-`_sbrk` accounting (`session_20261028_141607.log`) named the peak-setter that DEC-163/169 and `evidence/2026-10-27-...HEAP-DENIED.md` §23/§25 left open: every
+>= 32 KB arena event was a `malloc`+`free` **inside `admitOperationMemory`** -- the probe of the point-of-use reserves (`DisplayProjectionReserve`, `SourceViewReserve`,
+`CompanionHistoryReserve`). Three of them (45,056 / 40,960 / 40,960 B) were served from the arena tail and raised `__brkval` permanently (tail 155 KB -> 28 KB, `pressure
+Critical`); the rest were served from the hole they left. The reserves behind the display / source-view probes are PSRAM-first (`ExternalMemoryFirstAllocator`), so no
+real internal allocation followed. A 28 KB tail then starves the tail-only `SnapshotReserve` gate (no publication for the whole session) and, with the holes consumed,
+leaves no >= 48 KB free chunk for the start gate (`largest_free=39KB`). This is the §25 rule -- an admission test may not allocate from the arena it protects -- broken by
+a probe the withdrawn allocator-authoritative policy left behind for point-of-use reserves.
+
+### Decision
+1. The probe asks the tier the real reserve's allocator tries first. Display-projection and source-view reserves are **pool-first**: proven against PSRAM, the internal arena is
+   touched only if the pool refuses (when the real allocation would fall back to it). The companion-history reserve stays **internal-first**: `InternalHeapFirstAllocator`, and its
+   real allocation follows the probe, so the probe adds no net arena movement.
+2. Capture builds tag every per-`_sbrk` event with the operation (`ctx=`), so the attribution is verified rather than assumed.
+3. Floor, margins, start gate, `SnapshotReserve` and DEC-169 are unchanged.
+
+### Verification
+`test_point_of_use_probe_asks_the_tier_the_real_allocator_tries_first` (mutation-red-proved); full native 3,554 / 7 skipped / 3,547 / 0 failed; RAM1 unchanged
+(`variables 96,192`, padding 2,632). Device confirmation is the next capture: the `k=s` rows with `caller=admitOperationMemory` must disappear and the tail must stay high.
+
+## DEC-175 — An obligation whose interval has retired is published, not left to refuse every later start
+
+**Date:** 2026-10-28
+**Owner:** `Track::claimOverdubSessionExitObligation` + `hasLiveOwnerOfReservedSessionExitObligation`; the retained-start retry row.
+**Status:** Implemented for task 6.4; native + build green; **not flashed**.
+
+### Problem
+`session_20261028_143115.log` (after DEC-174 removed the heap blocker): 14 overdubs, then one
+`Overdub start retained (capacity) ... state=populated jobs=7 receipts=8` at 146.1 s, and 18 presses over the next
+37 s started nothing while the stop FIFO drained normally. DEC-163's state machine has one writer for
+`Populated -> Publishing`: `markSessionExitTailReady`, called only from the frame that owns the reserved record -- its
+stop job's `completeDeferredCleanup`. Once that interval retires, the record has **zero live owners** and
+`releaseSessionExitPublishOwner` refuses a populated record by design, so nothing can ever move it: every later start is
+refused for the rest of the session. The retained-start carrier was also silent on retry, which is why the capture
+showed one row and then nothing.
+
+### Decision
+1. A start admission that finds the claim owned by a record **no pending job references** treats it as orphaned and
+   publishes it: `markSessionExitTailReady(kReservedSessionExitReceipt, kInvalidPassId)` then
+   `settleReadySessionExitReceipts()` on that turn. Never dropped -- the record owns committed identities.
+2. The retained-start retry reports by name, bounded to one row per 8 s (`Overdub start still retained: ... jobs=
+   receipts= reserved_owner=`). No silent retry.
+3. Nothing else moves: DEC-163's ownership rule, DEC-174's probe order, DEC-169's gate and DEC-173's coalescing stand.
+
+### Verification
+`test_6_4_orphaned_reserved_obligation_is_published_and_does_not_refuse_the_next_start` (a `Populated` record whose
+session is closed and which no job owns -> the next start is admitted, the record lands in the receipt ring, and the
+claim returns to `Empty`); mutation (orphan block neutralized) reds it at the start assertion. Full native
+3,555 / 7 skipped / 3,548 / 0 failed; RAM1 unchanged (`variables 96,192`, padding 2,632).
+
+## DEC-176 — The remaining start/stop block is stop latency: one queued stop costs a full canonical-base rebuild
+
+**Date:** 2026-10-28
+**Status:** Measured on device (`captures/session_20261028_144701.log`); **no implementation decision yet** (two options below).
+
+### Measurement
+Two blockers are closed and confirmed on this capture: DEC-174 (probe no longer raises the arena; tail 77,824 B, 0 heap
+denials) and DEC-175 (no orphan release needed -- `reserved_owner=1` on every retry, so the retained start was correct).
+
+What remains is throughput. One deferred stop retires every ~8.5 s (`DeferredCleanup` first seen at 234.7, 242.0, 249.9,
+258.2 s), and each spends it in `CanonicalPrefix`, re-reading 574-771 capture events and producing ~700-900 prefix units
+before the window phase opens. The canonical base is rebuilt **per stop**, because DEC-070's retained tail cannot survive
+a live successor -- which a chain always has. DEC-168 escaped the bound only for retargeted stops; a destination-Playing
+stop in a chain pays the full rebuild.
+
+With a 1-2 s press cadence the 8-deep stop FIFO fills in ~30 s, the 9th tail takes the reserved record, and the next
+start is `retained (capacity) ... state=populated`. That refusal is honest and bounded, but it lasts as long as the
+queue, and a transport stop cancels the retained start, so the press is lost at the end of the take.
+
+### Options (not decided)
+- **(a) Cheap base across a queue.** Revisit DEC-070's retention so a queued stop reuses an already-committed canonical
+  base (or a shared prefix) instead of rebuilding it per interval. Directly removes the 8.5 s per job; touches the
+  successor-window rule that DEC-070 defended, so it needs its own contract and fixtures.
+- **(b) Start admission independent of tail availability.** Keep DEC-078's retained-stop contract as the guarantee and
+  let a start be admitted without a free tail destination. Removes the user-visible refusal, but stops would queue
+  deeper than 8 and their latency would still be 8.5 s/job.
+
+Neither is a tuning change; both need a plan and an owner decision.
+
+## DEC-177 — The prepared prefix keeps a committed-history identity separate from its window identity (first slice; retention open)
+
+**Date:** 2026-10-28
+**Owner:** `LoopPlaybackRuntime::canonicalPrefixCertified*`, `canonicalPrefixHistoryIsCertifiedAppend`, the resume branch of `stepCanonicalPrefix`; fixture `test_6_4c_*`.
+**Status:** First slice implemented; its RED fixture is **kept failing on purpose**. Native otherwise green, build green, **not flashed**.
+
+### Decision (the seam)
+A live successor may legitimately move the **window identity** (`playbackRevision`, `snapshotIdentity`); that must not
+license a replay of the **committed history**. The prepared prefix therefore records the history shape it represents
+(pass count + last pass id + certified flag), and a resume is licensed only by a *certified append*: the inventory grew
+by exactly one pass and the previously certified last pass is still at its old position. A revision bump alone, an undo,
+a replacement or a same-count change never resumes. The resume keeps the retained normalized output
+(`resumeCurrentAfterAppend` already does that); only the descriptors and the new pass are re-selected.
+
+### Cost
+Struct pin re-based deliberately: `sizeof(LoopPlaybackRuntime)` 7,808 -> 7,824 target / 9,944 -> 9,960 host (+16 B,
+compiler measured). Extmem per slot; RAM1 `variables 96,192` unchanged.
+
+### What is not done (and why the fixture fails)
+The prefix's normalized output is discarded at the retiring job's cleanup (`discardFrozenCanonicalTail`, DEC-070's
+"retain only while this job is still the live interval"), so the next queued stop starts cold and the resume branch is
+never taken (`resumes=0 completedPasses=9` measured). Keeping the inputs behind a bool on that call was tried and
+rejected: with a capture-attached (Record) prefix it wedged the Record lane, and without one it produced 0 resumes --
+the prefix needs an explicit resumable-state contract (capture-free, tail/companion descriptors discarded, phase Ready,
+certification intact) before retention is enabled.
+
+### Verification
+`test_shared_capture_finalization` 139/140 (only the new RED fails, by design); build SUCCESS, RAM1 unchanged.
+
+## DEC-177 addendum — the retained-prefix contract, and why retention needs a begin-or-resume edge
+
+**Date:** 2026-10-28
+**Status:** Contract accepted; mechanism rejected on evidence; RED kept failing by design.
+
+### Contract (accepted)
+A completed stop may retain **only** the capture-free normalized committed-history prefix:
+
+| must hold | must not be retained |
+|---|---|
+| capture-free build (no frozen overdub / capture attachment) | the completed job's live-interval state |
+| inputs `Complete`, normalized output resident | successor window / bridge state |
+| phase from which a resume can be *adopted* | companion ownership (`frozenCompanionApply`/`Passes`) |
+| certification `{passes, lastPass, certified}` intact | anything whose validity depends on the old source identity |
+| reuse only through `canonicalPrefixHistoryIsCertifiedAppend` | -- |
+
+Record / capture-attached builds are an **explicit disqualifier**, not an incidental condition (the earlier rejected
+experiment wedged the Record lane, which is the negative proof).
+
+Any non-append history change invalidates immediately. The licence was strengthened accordingly: the inventory must be
+exactly certified+1, the last certified id must still sit in place, and every certified row plus the appended row must be
+`Active` — so an undo/redo or a disabled append never resumes.
+
+### Rejected mechanism (measured)
+Retaining the prefix at `completeDeferredCleanup` for a capture-free build (keeping the inputs and leaving the phase
+`Ready`) stops the next job from ever taking over the inputs: in the host suite the stop FIFO stops retiring
+(`completedPasses` stuck at 3, `jobs` never draining, chain refused at 10). It was reverted byte-identically.
+
+### Consequence
+The next slice is an **inputs-level begin-or-resume**: the next job's `begin` must adopt a retained, certified,
+capture-free prefix (or start cold when the licence refuses), instead of the runtime leaving a completed build in place
+and blocking the begin. That is the edge this decision leaves open.
+
+## DEC-177 addendum 2 — the licence is revision-free; the retained state is captured at the tail edge, not at cleanup
+
+**Date:** 2026-10-28
+**Status:** Licence and contract API landed; retention still unwired; the 6.4c RED is the gate.
+
+1. **The window revision is not an identity.** A certified append resumes across any newer `playbackRevision`: the window
+   identity moves by more than one in a chain because companion publication bumps the revision as well. Only the history
+   checks (storage owner/generation, loop length, source generation, capture-free, every certified row active, exactly
+   one appended row) decide.
+2. **The contract has one predicate.** `LoopPlaybackRuntime::canRetainCanonicalHistoryPrefix()` — capture-free, inputs
+   `stateAllowsBinding()`, history certified. `discardFrozenCanonicalTail()` refuses to discard the inputs while the
+   retained flag holds, so the contract is the enforcement point rather than a call-site bool.
+3. **Where it must be captured is now measured.** Calling retention from `completeDeferredCleanup` finds the contract
+   false (`canonicalPrefixCertified == 0` there), so nothing is retained and `resumes == 0` still. The retained state has
+   to be taken at the **tail-complete edge**, where the prefix is demonstrably `Ready` and certified for that job.
+4. **Negative proof again:** retaining a capture-attached (Record) prefix wedges the Record lane
+   (`deferred Record stop did not retire`). Capture attachment is a disqualifier, not a condition.
+
+## DEC-177 (completed) — The committed history prefix is adopted before the bridge teardown and reused by the next queued stop
+
+**Date:** 2026-10-28
+**Status:** Implemented and green on the host (native + build); device acceptance pending.
+
+The retained-history-prefix contract is now wired at the only edge where it can hold:
+
+1. **Adoption ordering.** `completeDeferredCleanup` adopts the committed normalization immediately after
+   `completePreparedCapturePassDeferredCleanup` and **before** `discardFrozenCaptureBridge()` / `discardCanonicalWindow()`.
+   The bridge teardown discards `canonicalPassInputs` -- the only copy of the prepared prefix -- so the previous
+   after-teardown adoption always found nothing and every queued stop replayed the whole history.
+2. **The retained state** is exactly the contract: capture-free normalized committed history, inputs bound, history
+   certified, no live-interval/window/bridge/companion ownership (all discarded either way). Reuse is licensed only by
+   `canonicalPrefixHistoryIsCertifiedAppend` (certified history as-is, or that history plus one active appended pass).
+3. **The window revision is not an identity.** A revision-only move resumes; generation and loop-length moves are
+   history/geometry identity and still restart. Results stay hidden until the resumed build completes.
+4. **Evidence.** `test_6_4c_a_queued_stop_resumes_the_certified_history_instead_of_replaying_it`: 8-overdub chain with a
+   live successor, 15 history reuses for 8 stops, retained completed-pass count 9, no refusals; the negative fixture
+   proves the licence rejects every non-append change (mutation-red). Full native 3,557 / 7 skipped / 0 failed; RAM1
+   unchanged; runtime pin re-based to 7,832 target / 9,968 host.
+
+Device acceptance metric (unchanged): job N cost approximately independent of N -- `base_build_progress read=` collapses
+to the newly appended pass, reuse climbs per queued stop, and service time stops growing with accumulated passes.
+
+## DEC-177 verification (device) — historical replay eliminated; per-stop cost now PrepareTransfer + DeferredCleanup
+
+**Date:** 2026-10-28
+**Image:** `sha256 290e9caa…` (`teensy41-capture-serial`), boot `crash=0` / `BOOT,load,ok`.
+**Capture:** `session_20261028_155453.log` — 16 overdubs, 26 stop presses, 0 heap denials, 17 reentry windows.
+
+| measurement | before (154649, pre-DEC-177) | after (155453) |
+|---|---|---|
+| `base_build_progress read=` per job | **773** (whole history) | **0** |
+| `CanonicalPrefix` (phase 1) time | ~4 s (+ ~4 s parked at `pass=n/n`) | **0.02 s** |
+| whole job time | ~8.5 s | **~1.4 s** |
+| growth with accumulated passes | linear in history | none observed (intervals 3..23 identical) |
+
+The scaling goal is met: job N cost is independent of the accumulated pass history. Ten `prefix_reuse … committed_normalization`
+rows confirm the adoption path; the licence and contract behaved (no orphan releases, no wedges, no refused starts).
+
+Remaining cost, now purely local per job (7-job window): `PrepareTransfer` (phase 6) 9.81 s (~1.4 s/job),
+`DeferredCleanup` (phase 11) 6.89 s (~1 s/job), `CanonicalOrder` (phase 2) 3.01 s total, idle gaps between jobs 7.37 s.
+At a 1 s press cadence the queue therefore still grows and stops are `retained (capacity)` — remembered and served, never
+lost, but late.
+
+**Next:** rate work on `PrepareTransfer`/`DeferredCleanup` (grains per turn, batching), not another replay fix.
+
+## DEC-178 — A backlogged deferred stop turn spends a bounded burst, because the lane's cost is cadence and not CPU
+
+**Date:** 2026-10-28
+**Owner:** `Track::processDeferredIdleMaintenance` pending-stop branch (`kStopGrainBurstMaxGrains`,
+`kStopGrainBurstBudgetUs`); evidence `stopGrainBurstLastTurnGrains()`.
+**Status:** Implemented, native + build green; **not flashed**.
+
+### Measurement (device, `session_20261028_155453.log`, image `290e9caa…`)
+20 jobs, 610 deferred stop grains, **101.7 ms of CPU total (~5 ms/job)** while wall clock was ~1.4 s/job:
+`PrepareTransfer` 22 grains at 76 us, `DeferredCleanup` 20 grains at 379 us, `CanonicalPrefix` 189 grains at 185 us.
+The lane delivered ~21 grains/s, i.e. one grain per owner turn at a ~45 ms turn spacing. **The cost is scheduling
+cadence, not work.**
+
+### Decision
+1. When the head is an **overdub** stop and the queue depth is **> 1**, one owner turn runs up to 8 grains or 1500 us,
+   whichever ends first. The burst ends when the queue drains or the head becomes a Record job.
+2. No backlog, one job, or a Record head keeps the previous **one grain per turn** cadence exactly.
+3. Nothing about ownership, ordering or admission changes: this only decides how much of the same grain loop a single
+   scheduling opportunity may spend.
+
+### Scope finding
+Bursting the **Record** lane is not safe: `test_record_note_stream_survives_four_stops_before_predecessor_publication`
+lost 2 of 50 events (50 -> 48) when a burst stepped the Record handoff. Record keeps one grain per turn; the burst is
+overdub-only.
+
+### Verification
+`test_6_5_backlogged_stops_burst_within_a_bounded_turn` (1 job = 1 grain; backlog = 8, capped) and
+`test_6_5_rapid_overdub_queue_does_not_grow` (22 overdubs, 20 owner turns per press, successor live: queue <= 2, no
+refused start, no lost stop, 22 passes). Both mutation-red with the backlog condition disabled (burst 1, queue 8, a
+start retained at 12). Full native 3,559 / 7 skipped / 0 failed; RAM1 unchanged.
+
+### Residual
+One stop in the 22-overdub run was retained and then served: the deferred transfer horizon depletes in a back-to-back
+chain because DEC-173's top-up needs a turn with no pending job, and the burst now keeps the queue moving into the next
+press. Candidate next step: top up from a burst turn whose head does not depend on the vector, or reserve a row per
+admitted stop.
+
+## DEC-178 verification (device) — the lane now keeps up; the per-turn budget overshoots by one grain
+
+**Capture:** `session_20261028_162431.log`, image `sha256 fbab9dcc…`, boot `crash=0` / `BOOT,load,ok`.
+
+| measurement | `290e9caa…` (before) | `fbab9dcc…` (after) |
+|---|---|---|
+| grains/s (peak) | ~21 | **98** |
+| stopped presses retained | 9-26 per run | **0** |
+| start refused/retained | 1 (at 234 s) | **0** |
+| reuse rows (`prefix_reuse`) | 10 | 22 |
+| `base_build_progress read=` | 773 per job (pre-177) | **0** on 30 rows, 771 on 7 cold builds |
+
+23 overdubs, 23 stops, `cap=22`, `edit=19`, heap 81,920 B, DMA `timeouts=0`, one MIDI clock-loss event. Demand was
+~0.4-0.8 jobs/s (start->stop mean 1.25 s, stop->next start 0.95-2.94 s) and was fully served.
+
+**Open measurement:** a 1 Hz run is still required to demonstrate the 1.5-2 jobs/s headroom target.
+
+**Bound, measured rather than assumed:** `kStopGrainBurstBudgetUs` is checked between grains, so a turn can overshoot by
+one grain -- top grains 3.77 ms (phase 14, once), 2.64/2.19/1.53 ms (phase 11). Worst turn ~5.3 ms. If that is too
+coarse for the real-time gate, check the budget before each grain and keep `DeferredCleanup` recycle grains out of the
+burst.
+
+## DEC-179 — A parity-divergent saved body restores its passes into an empty slot, and a restore never reports `committed` without content
+
+**Date:** 2026-10-28
+**Owner:** `applyLoadedLoopSlotBodyCommit` (`src/StorageLoopIo.cpp`); `commitLoadLoopJobPublish`
+(`src/StorageManager/LoadLoopJob.cpp`)
+**Status:** Implemented; native + build green; **not flashed**.
+
+### Problem
+A boot restore reports `RRQ … terminal,none,committed` for every slot while the focused slot reads
+`loopLengthTicks == 0`, `cap=0`, and the panel paints 0 notes for ~198 s
+(`captures/session_20261028_162431.log`, second boot). The loader had silently done nothing: the LSV1
+parity gate (`checkpointEventsEquivalent`) returns false on any root/pass disagreement, and the old contract
+was "apply neither source" — right for a populated slot, fatal for an empty one, because there is nothing to
+keep. The request then still reported `committed`, so no row, terminal or observation said the slot was empty.
+
+### Decision
+1. Parity divergence keeps its safety half: a divergent root is **never** installed, parity stays
+   `NoCheckpoint`, and a populated slot keeps its complete previous generation untouched.
+2. For an **empty** slot the body's passes are the saved storage content and are applied; the unverified root
+   is not. Display caches are marked stale so the restored generation can be painted.
+3. The publish outcome is named (`LoopSlotBodyApply`: `Applied` / `AppliedPassesOnly` / `KeptExisting`) and the
+   restore terminal follows it — `KeptExisting` records `Superseded`, never `committed`, and each case writes
+   one human row.
+4. Selected-slot priority is restored in the deferred idle lanes: the focus slot's first paint no longer
+   requires materialised capture passes (a restored slot may carry only a root), and the realtime lane visits
+   the selected track before the background walk.
+5. Every committed capture pass marks its display cache ranges (`Loop::commitCapturePass`), not only
+   `OverdubWrap`, so a clean cache cannot keep serving pre-commit content while passes grow.
+
+### Rationale
+An empty slot has nothing to protect; refusing to apply a structurally valid pass set while reporting success
+is the worst of both outcomes (silent content loss plus a false success row). The root is the only unverified
+artifact, so it alone stays out.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Keep "apply neither" and only fix the terminal | Leaves a valid saved loop empty forever; the terminal would be honest about a preventable loss |
+| Install the divergent root as current | Presents unverified content as authoritative; violates the parity contract the tests pin |
+| Retry the load on mismatch | The bytes are unchanged, so retries reproduce the mismatch; it would re-create the DEC-171 retry stall |
+
+### Affected modules
+`StorageLoopIo`, `StorageManager` (load job terminal), `Loop` (capture commit range marking), `main` (idle lane
+priority), `DisplayManager` consumers (unchanged).
+
+### Constraints created
+Parity divergence into an empty slot is a reported, named state — not a silent no-op. Any future restore path
+must report the *applied* outcome, not the parse outcome. Populated slots keep transactional behaviour.
+
+### Related OpenSpec
+`display-freeze-under-overdub-chain` (packet B named the predicate), `loop-content-history` (4.2 parity),
+`lazy-slot-hydration` (restore request terminals).
+
+### Migration notes
+None: no SD format change; existing bodies restore under the new rule.
+
+## DEC-180 — A save may embed a root only when it is proven equivalent to the passes being serialized; a rootless slot paints from PassesResolve
+
+**Date:** 2026-10-28
+**Owner:** `writeLoopPersisted` (`src/StorageLoopIo.cpp`); `Loop::rebuildVisualCacheIdleSlice`
+(`src/Loop/LoopVisualCache.cpp`)
+**Status:** Implemented; native + build green; **not flashed**.
+
+### Problem
+Two halves of one device symptom. (a) Bodies on the card carried a root the loader's parity gate refused, so
+every boot ended rootless ("restore applied saved passes; root not current"). (b) A rootless slot then spent
+~11 s in `idle_src,BoundedContinuation` (thousands of rows, `lcr,srcskip … not_finished`) before falling back,
+because the bounded continuation was offered without the root it continues from.
+
+### Decision
+1. **Writer truth.** `writeLoopPersisted` compares the settled root against the pass-derived oracle it is about
+   to serialize, using the loader's own canonical comparator and the same staging shape. Match → LSV1 body with
+   the root. Mismatch or unavailable → **passes-authoritative body**. A failed comparison is a
+   *format-selection* result, not a save error. Invariant: a body emitted with an embedded root always passes
+   the loader's gate without post-load repair.
+2. **Display eligibility.** `BoundedContinuation` is eligible only while `publishedSnapshotIsCurrent()`. A
+   legitimately passes-authoritative slot resolves through the capped synchronous `PassesResolve` immediately;
+   it never waits for a publication as a prerequisite to painting.
+
+### Rationale
+Both decisions make an existing invariant enforceable instead of assumed: one comparator for writer and reader,
+and a continuation only where something exists to continue. Rootless saves are valid and common (restore,
+legacy bodies); they must be fast, not merely correct.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Keep "always embed when settled" and let the loader refuse | Guarantees a rootless boot for every divergent body; the writer knows the answer and should not emit a lie |
+| Retry the root until it matches | Unbounded save; the passes are authoritative anyway |
+| Rebuild a root at boot before painting (packet 2) | No longer required for correctness or startup once 1+3 hold; measure first |
+
+### Affected modules
+`StorageLoopIo` (write path), `LoopVisualCache` (idle source eligibility), `LoopContentResolution` (unchanged
+comparator reused).
+
+### Constraints created
+A persisted body is either root-bearing *and* provably equivalent, or explicitly passes-authoritative. Any new
+save format must satisfy the writer-side gate. Display source selection may not require a root it cannot have.
+
+### Related OpenSpec
+`display-freeze-under-overdub-chain` (packets B/A), DEC-179 (restore applies passes, honest terminal).
+
+### Migration notes
+None: existing bodies keep loading; a divergent body now loads as passes-authoritative instead of being refused.
+
+## DEC-181 — First paint for a rootless slot is window-bounded, not pass-bounded
+
+**Date:** 2026-10-28
+**Owner:** `Loop::rebuildVisualCacheIdleSlice` (`src/Loop/LoopVisualCache.cpp`);
+`LoopContentResolution::resolveDisplayNotesInWindow`
+**Status:** Implemented; native + build green; **not flashed**.
+
+### Problem
+After DEC-180 a rootless restored slot no longer waits for a nonexistent root, but its first paint resolved the
+**whole committed pass** before producing a note: device rows `DIAG,lcr,phase,chunk,pass,0,ev,632…672,notes,0`
+with `prepare,slice,units=8` climbed at ~100 events/s, so first content landed at 12–27 s depending on loop
+size and idle-lane contention. Work was proportional to total loop length instead of to what the viewport shows.
+
+### Decision
+A rootless selected slot resolves **only the slice's visible window** (plus the caller's one-bar closure pad) and
+never the whole pass before first paint: `resolveDisplayNotesInWindow(passes, length, windowStart, windowLength)`
+reuses the per-pass local pairing/NoteIds and fills each pass layer through the chunk-range window
+(`CommittedEventRange::inWindow`), so chunks outside the window are never read. The whole-pass path remains
+available for later work; it simply no longer runs ahead of the first frame.
+
+### Rationale
+The display only ever paints an interval, so its first frame's cost should be the interval. Scoring the work in
+`ResolutionCostCounters` makes the property observable rather than asserted.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Raise the slice unit budget | Symptom-only: still O(pass), just fewer seconds; the scaling fixture would still show growth |
+| Filter after a whole-pass walk | The hidden work stays O(pass); the contract is about work, not frame size |
+| Publish a root at boot (deferred packet) | Still an optimization; unnecessary once first paint is window-bounded |
+
+### Verification
+Fixtures (mutation-facing): `test_dec181_windowed_first_paint_does_not_scale_with_loop_length` — a 4-bar and a
+40-bar loop with identical visible content report the **same** windowed work (`ops 33 == 33`) and the same 32
+notes, while the whole-pass resolve of the 40-bar loop reports strictly more; `test_dec181_windowed_first_paint_4_bars`
+control; `test_dec181_a_note_straddling_the_visible_edge_still_resolves` for boundary/closure. Full native
+**3572 / 3565 passed / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,192`
+unchanged (ITCM `390,968 + 2,248`). HEX `sha256 1bc0c6e8…`.
+
+### Constraints created
+First-paint work for a rootless slot is a function of the requested interval, not the loop. A new display source
+must not reintroduce a whole-loop precondition for the first frame.
+
+### Related OpenSpec
+`display-freeze-under-overdub-chain` (packet A2), DEC-180, DEC-179.
+
+## DEC-182 — The boot restore sweep waits for the selected slot's first painted cache
+
+**Date:** 2026-10-28
+**Owner:** `main.cpp::runDeferredLoadAndDisplayFrame` (`bootSweepMayRun`, RAM2 flags)
+**Status:** Implemented; native + build green; **on the board** (HEX `cb30b042…`, same image the owner captured).
+
+### Problem
+After DEC-181 the first-paint *work* is 0.12 s, but the paint still waited for the remaining-slot restore sweep:
+`session_20261028_211050.log` shows restore committed at 10.99 s, 119 `RRQ` + 129 `VCACHE stale` rows during
+11.0–15.05 s, first build 15.05 s, first content 15.17 s. The panel was waiting for 63 other slots.
+
+### Decision
+`enqueueRemainingLoopSlotRestoresFromSd()` (both the boot call and the per-turn re-admission) runs only once the
+selected slot's visual cache has notes, or after a 3 s bound so an empty/odd selected slot cannot hold the set
+back. Gate state lives in RAM2 (two DTCM words would have tripped the approved RAM1 budget).
+
+### Evidence (device, `session_20261028_211734.log`, this image)
+| boot | restore committed | first build | first content | last sweep request |
+|---|---|---|---|---|
+| boot1 | 7.87 s | 11.88 s | **11.99 s** (104 notes) → 12.49 s (359) | 13.07 s |
+| boot2 | — | 10.83 s | ~14.6 s (`DFRAME>0`) | 10.75 s |
+
+Paint precedes the sweep on the measured boot; first content fell from 15.2 s (no gate) and 22–24 s (before
+DEC-181) to ~12 s. An earlier 23.3 s reading of mine was a sampling artifact (DFRAME is every 30th frame; the
+reader also died at 8.8 s on USB re-enumeration) and is not counted as evidence.
+
+### Open
+The gap between restore commit (7.87 s) and first build (11.88 s) is still ~4 s and unexplained; the sweep gate
+does not address it. Next candidate: what holds the VisualCache lane in that window (owner rotation vs the boot
+drain's final slots). No claim is made about it here.
+
+### Related
+DEC-181 (window-bounded first paint), DEC-180 (rootless display legal), DEC-179 (restore applies passes).
+
+## DEC-183 — Report-only first-paint gate row (instrumentation, ready)
+
+**Date:** 2026-10-28
+**Owner:** `main.cpp` (emit) + `DebugSessionCapture::paintGate`
+**Status:** Built and tier-registered; **not yet device-confirmed** (no `paint_gate` rows in the captures taken so far).
+
+### Problem
+DEC-182 moved the sweep behind the selected slot's paint (verified: content 11.99 s, sweep request 13.07 s), but a
+**~4 s** gap remains between the restore commit and the first cache build — reproduced at 13.41→17.44 s and
+11.05→15.14 s across two captures. It is not explained by the sweep gate, the root wait, or display work.
+
+### Decision
+Emit `#CAP,<us>,DIAG,paint_gate,<owner>,<allStopped>,<titleDrain>,<clockRunning>,<restorePending>,
+<commitPending>,<queue>,<focusNotes>,<dirty>` at most once per second **only while the selected slot has content and
+an empty dirty cache** (i.e. first paint owed). Report-only; no admission or ordering changes. Timestamp in RAM2.
+The tag is registered in the capture tier classifier (`DIAG,paint_gate,`), the trap that silently dropped the row
+in the first attempt.
+
+### Next
+One boot with this image, read the rows in the gap: they name whether the lane is refused by the clock gate, the
+title drain, an active restore job, or a commit. No production change until that row is read.
+
+### Result (2026-10-28, device-confirmed)
+
+Three captures produced **zero** rows before the row finally appeared. Two separate causes, both in the probe, not in
+the lane:
+
+- **`gPaintGateLastMs` was never initialised.** It is `DMAMEM` (RAM2, chosen to keep the RAM1 budget), whose
+  zero-init is not guaranteed; a garbage stamp makes `now - stamp` negative for the whole boot, so the
+  once-per-second gate never opens. The plain-`Serial` variant sat behind the same guard and was dropped for the
+  same reason — which is why the earlier "the idle lane is not dispatched" reading was wrong.
+- The first placement (top of `runDeferredIdleMaintenance`) and the "selected slot owes paint" predicate were both
+  the wrong shape: the row is emitted from the **owner selection in `loop()`**, once per second while the boot title
+  drain is active *or* a slot owes paint, so it can report the window it exists to explain.
+
+Fix: explicit `gPaintGateLastMs = 0;` in `setup()` (RAM1 unchanged). Rows then appear
+(`captures/session_20261028_214829_paintgate5.log`):
+
+```
+#CAP,5574215,DIAG,paint_gate,0,1,1,0,1,0,24,0,0
+#CAP,6548014,DIAG,paint_gate,2,1,1,0,1,0,23,0,0
+...
+#CAP,10887900,DIAG,paint_gate,5,1,0,0,0,0,0,0,1
+```
+
+`drain=1, restore=1`, restore queue `24 -> 0` — the answer DEC-184 acts on. The row stays as report-only
+instrumentation; it no longer prints on a healthy boot because the drain clears at the focus commit.
+
+## DEC-184 — Boot title releases at the focus slot's commit
+
+**Date:** 2026-10-28
+**Owner:** `src/main.cpp` (`runDeferredLoadAndDisplayFrame` handoff) + `include/BootGate.h`
+**Status:** Implemented, native-green, device-verified (`captures/session_20261028_215453_dec184.log`).
+
+### Problem
+DEC-183 named the last ~4 s of boot-to-first-paint. The boot title/USB hold ends only when
+`StorageManager::bootInteractiveReady()` is true, and that predicate requires
+`pendingLoopSlotRestoreCount() == 0 && !SlotLoadSession::isActive() && !anyLoadLoopJobActive()` — the **whole** boot
+restore queue. The boot asks each track for its selected slot plus its two neighbours: 8 x 3 = 24 restores
+(`session_20261028_214829_paintgate5.log`). On device the slot the panel actually shows committed at **6.85 s**, and
+the title was not released until **10.88 s** (`boot_commit` 366 ms), first content at 11.01 s. The panel waited ~4 s
+for 23 restores it does not display.
+
+This is the documented contract (`src/StorageManager.cpp`, "title + USB wait until the boot playback restore queue
+is empty"), so shortening it is a decision, not a repair.
+
+### Decision
+Release the hold when **either** the whole queue is ready (original contract) **or** the selected slot is *settled*:
+
+- `BootGate::focusSlotSettled` = the focus loop has committed passes **and** no focus-restore work is owed **and** no
+  `SlotLoadSession` is live **and** no `LoadLoopJob` is in flight. Conservative on purpose: the release can never land
+  inside the commit it releases on, and an **empty** selected slot never settles — such a boot keeps the original
+  whole-queue contract.
+- The remaining restores keep draining behind the existing paint-first background path; the post-boot sweep is
+  idempotent (`queueDeferredLoopSlotRestoreWithPayloadSource` skips pending entries and slots that no longer need a
+  load), so an early release cannot double-queue the remainder.
+
+### Verified (device, three boots)
+
+`captures/session_20261028_215511.log` contains **three** boot runs (the plain-serial banner repeats at lines 1, 608,
+9706). Per boot, measured separately:
+
+| boot | 7/3 restore commit | `boot_commit` | first paint | first content | full content (359) | slots served twice |
+|---|---|---|---|---|---|---|
+| 1 (partial capture) | 6.66 s | 7.04 s | 7.04 s | not in capture | not in capture | none |
+| 2 | 8.90 s | 9.28 s | 9.28 s | **9.37 s** | 9.84 s | none |
+| 3 (last) | 8.93 s | 9.31 s | 9.31 s | **9.39 s** | 9.86 s | none |
+
+The number that moved is the one this decision is about — **focus commit to first content**:
+
+- before DEC-184 (`session_20261028_214829`): 6.85 s -> 11.01 s = **4.16 s** behind the title hold;
+- boots 2 and 3: 8.90/8.93 s -> 9.37/9.39 s = **0.46-0.47 s**, and `boot_commit` itself is 366 ms of that.
+
+Boots 2 and 3 finish later in absolute terms (9.4 s vs 7.0 s) because their restore queue starts 2.3 s later in the
+boot (focus slot `queued` 6.12 s vs 3.86 s), not because of this change.
+
+Guards: all 26 restores still complete (last 15.46 s / 17.03 s) and the panel paints while they run; cache build
+bounded (12 slice rows, no continuation spin); no capture overflow drop; RAM1 unchanged (`variables 96,192`, padding
+2,104); native suite green including the new `test_boot_focus_handoff`.
+
+### Correction (first reading was wrong)
+An earlier reading of this capture claimed the focus slot was re-restored once (7.64 s) and that content therefore
+slipped to 9.37 s. That was an **artifact of pooling three boots into one timeline**: the file repeats the boot
+banner, so slots and `boot_commit` rows from different boots interleaved. Measured per boot, no slot is ever served
+twice in any of the three runs, and the focus restore appears once per boot. No accepted-cost entry is warranted.

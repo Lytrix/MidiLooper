@@ -228,6 +228,20 @@ void test_denial_edge_capacity_ladder_reports_the_largest_servable_rung() {
   MemoryMonitor::resetNativeTestAllocatableCapacity();
 }
 
+// Task 4.20 (device `session_20261028_141607.log`): a point-of-use probe must ask the tier the real reserve's allocator
+// tries first. The display / source-view reserves are PSRAM-first containers; probing the internal arena first made each
+// one a 40-45 KB malloc/free that raised `__brkval` permanently (tail 155 KB -> 28 KB) with no real internal allocation
+// ever following. The companion-history reserve is internal-first and keeps that order.
+void test_point_of_use_probe_asks_the_tier_the_real_allocator_tries_first() {
+  using MemoryMonitor::OperationKind;
+  TEST_ASSERT_TRUE(MemoryMonitor::reserveProbeAsksExternalPoolFirst(OperationKind::DisplayProjectionReserve));
+  TEST_ASSERT_TRUE(MemoryMonitor::reserveProbeAsksExternalPoolFirst(OperationKind::SourceViewReserve));
+  TEST_ASSERT_FALSE_MESSAGE(MemoryMonitor::reserveProbeAsksExternalPoolFirst(OperationKind::CompanionHistoryReserve),
+                            "InternalHeapFirstAllocator: its real allocation follows the probe, internal first");
+  TEST_ASSERT_FALSE(MemoryMonitor::reserveProbeAsksExternalPoolFirst(OperationKind::OverdubStart));
+  TEST_ASSERT_FALSE(MemoryMonitor::reserveProbeAsksExternalPoolFirst(OperationKind::SnapshotReserve));
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -244,5 +258,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_heap_allocatability_probe_separates_tail_from_a_servable_request);
   RUN_TEST(test_tail_low_but_free_list_servable_admits_the_start);
   RUN_TEST(test_denial_edge_capacity_ladder_reports_the_largest_servable_rung);
+  RUN_TEST(test_point_of_use_probe_asks_the_tier_the_real_allocator_tries_first);
   return UNITY_END();
 }

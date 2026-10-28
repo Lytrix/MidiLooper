@@ -2311,9 +2311,12 @@ LOOP_COLD_MEM CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t
   emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
             DebugSessionCapture::kUnsampledHeapBytes, "ok");
 
-  if (reason == CommitReason::OverdubWrap) {
-    markAffectedDisplayCacheRanges(lastCommittedPassId_, EditPassIdList{});
-  }
+  // Every committed capture pass changes painted content, not only a wrap: the display's cache/build range
+  // marking is what makes a clean cache rebuild. `OverdubWrap` was the only reason this ran here, so a normal
+  // stop commit left `visualCacheDirty` set with empty `dirtyBars` and the idle slice cleared it without
+  // rebuilding -- a painted-note count that stayed flat while passes grew. The call is idempotent and the
+  // track-level stop owners already mark their own ranges.
+  markAffectedDisplayCacheRanges(lastCommittedPassId_, EditPassIdList{});
   return CommitResult::Committed;
 }
 
@@ -2511,6 +2514,26 @@ LOOP_COLD_MEM bool Loop::hasActiveOverdubTransferAdmission() const {
   return passes.overdubPasses.capacity() > passes.overdubPasses.size() &&
          nextRow.empty() &&
          nextRow.capacity() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;
+}
+
+LOOP_COLD_MEM size_t Loop::activeOverdubTransferRowCount() const {
+  if (hasPendingCapturePass_) return 0;
+  size_t rows = 0;
+  for (const CommittedChunkIdList& row : prewarmedCommittedChunkIdPool_) {
+    if (row.empty() && row.capacity() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) ++rows;
+  }
+  return rows;
+}
+
+LOOP_COLD_MEM size_t Loop::activeOverdubPassHeadroom() const {
+  if (hasPendingCapturePass_) return 0;
+  return passes.overdubPasses.capacity() - passes.overdubPasses.size();
+}
+
+LOOP_COLD_MEM bool Loop::activeOverdubTransferHorizonLow() const {
+  if (hasPendingCapturePass_) return false;
+  constexpr size_t kLowWater = PassConfig::ACTIVE_OVERDUB_TRANSFER_HORIZON / 2;
+  return activeOverdubTransferRowCount() < kLowWater || activeOverdubPassHeadroom() < kLowWater;
 }
 
 LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassFromActiveAdmission(

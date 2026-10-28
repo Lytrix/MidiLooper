@@ -69,7 +69,7 @@ class RuntimeCanonicalPassInputs {
   // first incomplete/new pass. A frozen tail may be retained after its transfer.
   bool resumeCurrentAfterAppend(const LoopPasses& passes, uint32_t priorRevision,
       const PlaybackViewSourceIdentity& source, const CurrentSource& live,
-      bool committedFrozenTail);
+      bool committedFrozenTail, bool certifiedHistoryAppend = false);
   size_t completedPassCount() const { return pass_; }
   const CurrentSource* currentSourceOwner() const { return current_ ? &*current_ : nullptr; }
   // Scratch has no semantic input while ready. The existing per-pass merge

@@ -612,9 +612,10 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
 #if defined(PERF_TELEMETRY)
     const uint32_t applyStartUs = micros();
 #endif
-    applyLoadedLoopSlotBodyCommit(loop, trackManager.getTrack(loadLoopJob_.track),
-                                  loadLoopJob_.slot, loadLoopJob_.usesLoopSnapshotBodyFormatV1,
-                                  loadLoopJob_.snapshot, std::move(loadLoopJob_.loadedLoopSnapshot));
+    const LoopSlotBodyApply applyOutcome =
+        applyLoadedLoopSlotBodyCommit(loop, trackManager.getTrack(loadLoopJob_.track),
+                                      loadLoopJob_.slot, loadLoopJob_.usesLoopSnapshotBodyFormatV1,
+                                      loadLoopJob_.snapshot, std::move(loadLoopJob_.loadedLoopSnapshot));
 #if defined(PERF_TELEMETRY)
     const uint32_t applyUs = micros() - applyStartUs;
     if (applyUs > LoadLoopBudget::FocusRestoreUs && loadLoopJobIsFocusSlot()) {
@@ -630,10 +631,27 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     loadLoopJob_.loadedLoopSnapshot = nullptr;
 
     markLoopCommittedChunksPersistedFromSdLoad(loop);
-    // A2.1: the payload is published, so this request has reached its `committed` terminal -- recorded
-    // once per identity (a second attempt is refused by the record itself).
-    (void)markRestoreRequestTerminal(loadLoopJob_.track, loadLoopJob_.slot,
-                                     RestoreRequestTerminal::Committed);
+    // The parity gate inside `applyLoadedLoopSlotBodyCommit` can decline to publish, and that used to be
+    // indistinguishable from a successful apply: the request still reported `committed` while the slot stayed
+    // empty. Name the outcome, so `RRQ`/`!LIB_OBSERVE` tell the truth.
+    if (applyOutcome == LoopSlotBodyApply::KeptExisting) {
+        Serial.printf_P(PSTR("[StorageManager] Slot restore kept the existing generation (parity): track=%u slot=%u\r\n"),
+                        static_cast<unsigned>(loadLoopJob_.track),
+                        static_cast<unsigned>(loadLoopJob_.slot));
+        (void)markRestoreRequestTerminal(loadLoopJob_.track, loadLoopJob_.slot,
+                                         RestoreRequestTerminal::Superseded);
+    } else if (applyOutcome == LoopSlotBodyApply::AppliedPassesOnly) {
+        Serial.printf_P(PSTR("[StorageManager] Slot restore applied saved passes; root not current: track=%u slot=%u\r\n"),
+                        static_cast<unsigned>(loadLoopJob_.track),
+                        static_cast<unsigned>(loadLoopJob_.slot));
+        (void)markRestoreRequestTerminal(loadLoopJob_.track, loadLoopJob_.slot,
+                                         RestoreRequestTerminal::Committed);
+    } else {
+        // A2.1: the payload is published, so this request has reached its `committed` terminal -- recorded
+        // once per identity (a second attempt is refused by the record itself).
+        (void)markRestoreRequestTerminal(loadLoopJob_.track, loadLoopJob_.slot,
+                                         RestoreRequestTerminal::Committed);
+    }
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
 
 #if defined(PERF_TELEMETRY)

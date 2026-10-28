@@ -1110,6 +1110,18 @@ struct LoopPlaybackRuntime {
   uint32_t canonicalPrefixLength = 0;
   const uint64_t* canonicalPrefixStorageOwner = nullptr;
   uint64_t canonicalPrefixStorageGeneration = 0;
+  // Task 6.4c (DEC-177): the prepared prefix's **committed-history identity**, separated from its window identity
+  // (`canonicalPrefixSource`, which carries `playbackRevision`/`snapshotIdentity`). A live successor may legitimately
+  // move the window identity; that must not license a replay of the committed history. Recorded when a prefix build
+  // completes or is resumed, and re-checked before any resume: the inventory must have grown by exactly one pass and
+  // the pass at that position must still be the certified one. A revision bump alone is never a license.
+  uint32_t canonicalPrefixCertifiedPasses = 0;
+  uint32_t canonicalPrefixCertifiedLastPass = 0;
+  bool canonicalPrefixCertified = false;
+  /// Report-only: how many prefix builds resumed from the retained committed history instead of replaying it.
+  uint32_t canonicalPrefixAppendResumes = 0;
+  /// True while the prepared prefix is the explicit retained-history-prefix state (contract above).
+  bool canonicalPrefixRetainedHistory = false;
   uint64_t recordingWindowGeneration = 0;
   bool recordingWindowGenerationValid = false;
   // DEC-067 acceptance edge: armed when a deferred stop retires, emitted once the
@@ -1137,6 +1149,25 @@ struct LoopPlaybackRuntime {
   CanonicalPrefixPhase canonicalPrefixPhase : 2 = CanonicalPrefixPhase::Idle;
   CanonicalPrefixDenial prefixFirstDenialReason : 4 = CanonicalPrefixDenial::None;
   bool prefixDeniedFirstReported : 1 = false;
+  /// Task 6.4c (DEC-177) — the retained-history-prefix contract, in one predicate (the single authority both the
+  /// retention and the discard read):
+  ///   * the build is capture-free (no frozen overdub / capture attachment -- the Record lane disqualifies);
+  ///   * its normalized output completed (`stateAllowsBinding()`), so the resident arrays are the history itself;
+  ///   * the history it represents is certified.
+  /// A completed stop may retain **only** this. Nothing that depends on the job's live interval, successor window,
+  /// bridge or companion ownership survives -- the caller discards those either way.
+  bool canRetainCanonicalHistoryPrefix() const;
+  /// Park that state across a retirement: inputs stay resident and certified, the phase returns to `Idle` so the next
+  /// stop services its prefix, and adoption happens in that stop's own begin (never by leaving a completed build in
+  /// place -- measured wedge, DEC-177 addendum). Returns false when the contract does not hold.
+  bool retainCanonicalHistoryPrefix();
+  /// Any non-append history change (undo, replacement, a disabled pass) invalidates the retained prefix here.
+  void discardRetainedCanonicalHistoryPrefix();
+  bool canonicalPrefixHistoryIsRetained() const { return canonicalPrefixRetainedHistory; }
+  /// Task 6.4c: certify the committed history the prepared prefix now represents, and test whether the current
+  /// inventory is exactly that history plus one appended pass.
+  void certifyCanonicalPrefixHistory(const LoopPasses& passes);
+  bool canonicalPrefixHistoryIsCertifiedAppend(const LoopPasses& passes) const;
   bool canonicalPrefixNeedsService(const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
                                    uint32_t loopLength, const uint64_t& storageGeneration) const;
   RuntimePlaybackOrderBuildResult stepCanonicalPrefix(const LoopPasses& passes,
@@ -1145,7 +1176,7 @@ struct LoopPlaybackRuntime {
   bool retainCommittedCanonicalTail(Loop& loop, const PlaybackViewSourceIdentity& source);
   bool resumeCanonicalAfterAppend(const LoopPasses& passes, uint32_t priorRevision,
       const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
-      bool committedFrozenTail = false);
+      bool committedFrozenTail = false, bool certifiedHistoryAppend = false);
   // One existing child per call; shared by live overdub prework and stop.
   RuntimePlaybackOrderBuildResult stepCanonicalBase(const LoopPasses& passes,
       const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,

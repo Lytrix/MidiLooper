@@ -293,6 +293,15 @@ struct LoopContentResolution {
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
 
+  /// DEC-181: display-note resolve bounded by a **window**, not by the pass. Same per-pass local
+  /// pairing/NoteIds as `resolveDisplayNotes(passes, ...)`, but each pass layer is filled through the
+  /// chunk-range window (`CommittedEventRange::inWindow`) so events outside the window are never read.
+  /// First paint for a rootless slot walks only what the viewport asks for.
+  static void resolveDisplayNotesInWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                          uint32_t windowStart, uint32_t windowLength,
+                                          NoteUtils::DisplayNoteVec& out,
+                                          ResolutionCostCounters* counters = nullptr);
+
   /// Stateless effective-event query over one complete immutable snapshot.
   static void resolveWindow(const LoopSnapshot& snapshot, uint32_t windowStart,
                             uint32_t windowLength, SessionMidiEventVec& out,

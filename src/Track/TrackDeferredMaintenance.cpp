@@ -1042,6 +1042,14 @@ TRACK_COLD_MEM bool Track::serviceDeferredCanonicalConvergence() {
   return false;
 }
 
+#if defined(__IMXRT1062__)
+DMAMEM uint8_t gStopGrainBurstLastTurnGrains;
+#else
+uint8_t gStopGrainBurstLastTurnGrains;  // host harnesses include this TU without Arduino's DMAMEM
+#endif
+
+uint8_t stopGrainBurstLastTurnGrains() { return gStopGrainBurstLastTurnGrains; }
+
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
@@ -1067,27 +1075,81 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       processSnapshotOwnerTurn(loopWithPendingSnapshotPublish(), snapshotConstructionUnits);
       return;
     }
-#if defined(SESSION_CAPTURE)
-    const auto phase = captureStopJob().admission.phase;
-    const auto generation = captureStopJob().admission.frozenGeneration;
-    const auto epoch = captureStopJob().admission.transportCommandEpoch;
-    const auto destination = captureStopJob().admission.destination;
-    const uint8_t slot = captureStopJob().slot;
-    const uint8_t track = resolveTrackIndexForPersistence(*this);
-    uint32_t startUs = 0;
-    const auto boundary = RuntimeTimingTelemetry::captureStopGrainBoundary(startUs);
-    const uint32_t slackUs = boundary.periodUs == 0 ? 0xFFFFFFFFu
-        : (static_cast<int32_t>(boundary.deadlineUs - startUs) > 0
-            ? boundary.deadlineUs - startUs : 0u);
-
+    // DEC-178 (rate): burst servicing. Measured on `session_20261028_155453.log`, a deferred stop grain costs
+    // 60-380 us of CPU (22 PrepareTransfer grains in 20 jobs, 76 us each; 20 DeferredCleanup grains, 379 us), while
+    // a job took ~1.4 s of wall clock -- 99% of that is *scheduler cadence*, one grain per owner turn. With a backlog
+    // (more than one job queued) and a live interval already recording, spend a bounded burst instead: at most
+    // `kStopGrainBurstMaxGrains` grains and at most `kStopGrainBurstBudgetUs` of this turn. Both bounds are enforced
+    // per grain, so a turn never becomes unbounded, and the normal single-job cadence is untouched.
+#if defined(STOP_GRAIN_BURST_DISABLED)
+    constexpr uint8_t kStopGrainBurstMaxGrains = 1;   // bisect/rollback image: exact pre-DEC-178 cadence
+    constexpr uint32_t kStopGrainBurstBudgetUs = 0;
+#else
+    // Device `session_20261028_162431.log` had the lane keeping up at 4 grains/600 us; the first cut (8 grains /
+    // 1500 us) let a turn carry a `DeferredCleanup` recycle grain (2.6 ms) and overshoot the playback service
+    // deadline -- the reported MIDI-timing deterioration and display stalls. The burst is now capped by the
+    // scheduler's own remaining time as well as by these two bounds.
+    constexpr uint8_t kStopGrainBurstMaxGrains = 4;
+    constexpr uint32_t kStopGrainBurstBudgetUs = 600;
 #endif
-    (void)processDeferredOverdubStopGrain();
+    constexpr uint32_t kStopGrainBurstMinRemainingUs = 2500;  // stop before the next playback service is near
+    // Burst only the **overdub** lane: it is the one measured as cadence-bound (60-380 us grains), and the Record
+    // lane's publish/reader handoff keeps its one-grain-per-turn separation (`test_record_note_stream_survives_four_stops_
+    // before_predecessor_publication` loses events when a burst steps it -- measured, hence this scope).
+    const CaptureStopJob* burstHead = captureStopJobHead();
+    const bool backlog = captureStopQueueDepth() > 1 && burstHead != nullptr &&
+                         burstHead->mode == CapturePhase::Overdub;
+    const uint8_t grainBudget = backlog ? kStopGrainBurstMaxGrains : 1u;
 #if defined(SESSION_CAPTURE)
-    const uint32_t endUs = micros();
-    RuntimeTimingTelemetry::recordStopGrain(track, slot, static_cast<uint8_t>(phase),
-        generation, epoch, static_cast<uint8_t>(destination), startUs, endUs, slackUs,
-        !captureStopJob().admission.pending || captureStopJob().admission.phase != phase, &boundary);
+    uint32_t burstStartUs = 0;
+    if (backlog) burstStartUs = micros();
 #endif
+    uint8_t grainsThisTurn = 0;
+    for (uint8_t grainIndex = 0; grainIndex < grainBudget; ++grainIndex) {
+      // Deadline gate: a burst grain may only run while the next playback service still has room. This is the same
+      // measure the Snapshot idle lane uses; without it a backlog turn could cross the audio deadline.
+      if (grainIndex != 0 && backlog) {
+        const uint32_t remainingUs =
+            RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(micros());
+        if (remainingUs < kStopGrainBurstMinRemainingUs) break;
+      }
+      const CaptureStopJob* headBefore = captureStopJobHead();
+      const uint64_t intervalBefore = headBefore != nullptr ? headBefore->interval : 0;
+      const auto phaseBefore = headBefore != nullptr ? headBefore->admission.phase
+                                                     : PendingStopPhase::DeferredCleanup;
+#if defined(SESSION_CAPTURE)
+      const auto phase = captureStopJob().admission.phase;
+      const auto generation = captureStopJob().admission.frozenGeneration;
+      const auto epoch = captureStopJob().admission.transportCommandEpoch;
+      const auto destination = captureStopJob().admission.destination;
+      const uint8_t slot = captureStopJob().slot;
+      const uint8_t track = resolveTrackIndexForPersistence(*this);
+      uint32_t startUs = 0;
+      const auto boundary = RuntimeTimingTelemetry::captureStopGrainBoundary(startUs);
+      const uint32_t slackUs = boundary.periodUs == 0 ? 0xFFFFFFFFu
+          : (static_cast<int32_t>(boundary.deadlineUs - startUs) > 0
+              ? boundary.deadlineUs - startUs : 0u);
+#endif
+      (void)processDeferredOverdubStopGrain();
+#if defined(SESSION_CAPTURE)
+      const uint32_t endUs = micros();
+      RuntimeTimingTelemetry::recordStopGrain(track, slot, static_cast<uint8_t>(phase),
+          generation, epoch, static_cast<uint8_t>(destination), startUs, endUs, slackUs,
+          !captureStopJob().admission.pending || captureStopJob().admission.phase != phase, &boundary);
+#endif
+      ++grainsThisTurn;
+      if (!hasPendingDeferredOverdubStop()) break;
+      const CaptureStopJob* nextHead = captureStopJobHead();
+      if (nextHead == nullptr || nextHead->mode != CapturePhase::Overdub) break;  // Record keeps the old cadence
+      // A phase legitimately needs several grains (CanonicalPrefix measured ~9 per job across 189 grains for 20
+      // jobs), so an unchanged phase is not "no progress" -- the per-turn grain cap and the time budget are what keep
+      // this turn bounded. A refusing grain is cheap (~100 us), and the cap bounds even a fully refused burst.
+      (void)intervalBefore; (void)phaseBefore;
+#if defined(SESSION_CAPTURE)
+      if (backlog && micros() - burstStartUs >= kStopGrainBurstBudgetUs) break;
+#endif
+    }
+    gStopGrainBurstLastTurnGrains = grainsThisTurn;
     // The pending-stop branch also owns a VisualCache source opportunity. It
     // must not exclude the committed display source for the entire Stop FIFO.
     // Use one source grain: private work first, otherwise the gap display source.
@@ -1144,6 +1206,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // here once this Track owes no capture and no custody. Same admission gate as the role return
   // above, so it can never rewrite a live or sealed successor's geometry.
   settleEmptyRecordGeometry();
+  // Task 6.4: before the accepted-interaction re-drive, because a stop retained on a lapsed transfer
+  // horizon can only be served once this turn has restored the row it waits for.
+  if (replenishLiveOverdubTransferHorizon()) return;
   // sits immediately after the admitted stop's grain -- which owns the turn whenever a job
   // exists -- and before the owner-specific branches, so the latch is reachable on every
   // deferred owner lane (the VisualCache branch below is focus-track-only).

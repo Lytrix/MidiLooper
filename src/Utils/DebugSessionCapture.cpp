@@ -375,6 +375,7 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
          CaptureLineTier::tagStartsWith(line, kRollingRecordTierPrefix) ||
 #endif
+         CaptureLineTier::tagStartsWith(line, "DIAG,paint_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,") ||
@@ -1833,6 +1834,17 @@ SC_MEM_ATTR void reentryDecision(const char* decision, uint32_t actionTick, uint
                 decision != nullptr ? decision : "?", (unsigned long)actionTick,
                 (unsigned long)interval, static_cast<unsigned>(slot),
                 (unsigned long)queueDepth);
+}
+
+SC_MEM_ATTR void paintGate(uint8_t owner, uint8_t allStopped, uint8_t titleDrain, uint8_t clockRunning,
+                           uint8_t restorePending, uint8_t commitPending, uint16_t queue,
+                           uint16_t focusNotes, uint8_t ownNotes) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,paint_gate,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n"),
+                (unsigned long)micros(), static_cast<unsigned>(owner),
+                static_cast<unsigned>(allStopped), static_cast<unsigned>(titleDrain),
+                static_cast<unsigned>(clockRunning), static_cast<unsigned>(restorePending),
+                static_cast<unsigned>(commitPending), static_cast<unsigned>(queue),
+                static_cast<unsigned>(focusNotes), static_cast<unsigned>(ownNotes));
 }
 
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,

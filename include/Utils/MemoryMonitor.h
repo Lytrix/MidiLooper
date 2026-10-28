@@ -220,6 +220,18 @@ enum class OperationKind : uint8_t {
   SourceViewReserve = 8,
 };
 
+/// Task 4.20 (device `session_20261028_141607.log`, per-`_sbrk` accounting): which tier a point-of-use reserve's
+/// probe must ask **first**. The probe is exact only if it asks the tier the real allocator tries first, and the
+/// display / source-view reserves are `ExternalMemoryFirstAllocator` containers, i.e. PSRAM-first. Asking the
+/// internal arena first made every such probe a 40-45 KB `malloc`/`free` against the arena the start and publication
+/// gates measure: when it was served from the tail it raised `__brkval` permanently (45,056 -> 40,960 -> 40,960 B
+/// steps, tail 155 KB -> 28 KB), and no real internal allocation of that size ever followed. The companion-history
+/// reserve is `InternalHeapFirstAllocator` and its real allocation follows the probe, so it keeps internal-first.
+inline bool reserveProbeAsksExternalPoolFirst(OperationKind operation) {
+  return operation == OperationKind::DisplayProjectionReserve ||
+         operation == OperationKind::SourceViewReserve;
+}
+
 /**
  * @brief Admission gate for an operation that needs memory headroom.
  *

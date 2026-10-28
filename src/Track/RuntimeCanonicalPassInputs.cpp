@@ -1,3 +1,4 @@
+#include <cstdio>
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCanonicalPassInputs.h"
@@ -138,12 +139,14 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::beginCurrent(
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::resumeCurrentAfterAppend(
     const LoopPasses& passes, uint32_t priorRevision,
-    const PlaybackViewSourceIdentity& source, const CurrentSource& live, bool committedFrozenTail) {
+    const PlaybackViewSourceIdentity& source, const CurrentSource& live, bool committedFrozenTail,
+    bool certifiedHistoryAppend) {
   // A source revision alone never licenses reuse: the caller certifies the
   // append, and unchanged history storage/owners protect normalized output.
   if (phase_ == Phase::Idle || phase_ == Phase::Denied || !current_ ||
       loopPasses_ != &passes || expected_.playbackRevision != priorRevision ||
-      !((priorRevision != UINT32_MAX && source.playbackRevision == priorRevision + 1) ||
+      !((certifiedHistoryAppend && source.playbackRevision > priorRevision) ||
+        (priorRevision != UINT32_MAX && source.playbackRevision == priorRevision + 1) ||
         (!committedFrozenTail && source.playbackRevision == priorRevision &&
          source.snapshotIdentity != expected_.snapshotIdentity)) ||
       source.sourceGeneration != expected_.sourceGeneration ||

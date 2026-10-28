@@ -1,3 +1,4 @@
+#include <cstdio>
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
@@ -1037,12 +1038,100 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canonicalPrefixNeedsSe
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source, uint32_t loopLength,
     const uint64_t& storageGeneration) const {
   if (!viewSetIfPrewarmed() || captureBridgePhase != CaptureBridgePhase::Idle || canonicalPassInputs.captureAttached()) return false;
-  if (canonicalPrefixPhase == CanonicalPrefixPhase::Idle) return canonicalPassInputs.idle() && frozenCompanionApply.available();
+  if (canonicalPrefixPhase == CanonicalPrefixPhase::Idle)
+    return (canonicalPassInputs.idle() || canonicalPrefixRetainedHistory) && frozenCompanionApply.available();
   if (canonicalPassInputs.generation() != canonicalPrefixGeneration) return false;
   return canonicalPrefixPasses != &passes || !(canonicalPrefixSource == source) ||
       canonicalPrefixLength != loopLength || canonicalPrefixStorageOwner != &storageGeneration ||
       storageGeneration != canonicalPrefixStorageGeneration ||
       canonicalPrefixPhase == CanonicalPrefixPhase::Preparing;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::certifyCanonicalPrefixHistory(
+    const LoopPasses& passes) {
+  canonicalPrefixCertifiedPasses = static_cast<uint32_t>(passes.capturePassCount());
+  canonicalPrefixCertifiedLastPass =
+      passes.overdubPasses.empty()
+          ? static_cast<uint32_t>(passes.recordPass.id)
+          : static_cast<uint32_t>(passes.overdubPasses.back().id);
+  canonicalPrefixCertified = canonicalPrefixCertifiedPasses != 0;
+}
+
+/// The certified shape plus exactly one appended pass: the inventory gained one row and every earlier row is still the
+/// one that was certified (its id sits at its old position). Undo/redo/replacement move the id at that position, and a
+/// same-count change never passes either -- so this is an *append*, not "the revision moved".
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canonicalPrefixHistoryIsCertifiedAppend(
+    const LoopPasses& passes) const {
+  if (!canonicalPrefixCertified || canonicalPrefixCertifiedPasses == 0) return false;
+  const size_t count = passes.capturePassCount();
+  if (count != canonicalPrefixCertifiedPasses && count != canonicalPrefixCertifiedPasses + 1u) return false;
+  const size_t lastCertifiedIndex = canonicalPrefixCertifiedPasses - 1u;
+  const PassId idAtLastCertified =
+      passes.hasRecordPass()
+          ? (lastCertifiedIndex == 0 ? passes.recordPass.id
+                                     : (lastCertifiedIndex - 1 < passes.overdubPasses.size()
+                                            ? passes.overdubPasses[lastCertifiedIndex - 1].id
+                                            : kInvalidPassId))
+          : (lastCertifiedIndex < passes.overdubPasses.size()
+                 ? passes.overdubPasses[lastCertifiedIndex].id
+                 : kInvalidPassId);
+  if (static_cast<uint32_t>(idAtLastCertified) != canonicalPrefixCertifiedLastPass) return false;
+  // Every certified row must still be active, and the appended row too: an undo/redo (or a disabled append) is a
+  // non-append history change and must never license a resume. Pass rows are append-only -- a slot replacement resets
+  // the runtime -- so the row state plus the last-id check covers every reachable mutation.
+  size_t index = 0;
+  if (passes.hasRecordPass()) {
+    if (passes.recordPass.state != CapturePassState::Active) return false;
+    ++index;
+  }
+  for (const auto& row : passes.overdubPasses) {
+    if (row.state != CapturePassState::Active) return false;
+    ++index;
+  }
+  return index == count;
+}
+
+namespace {
+// Report-only, RAM2: counted here as well as per runtime, because a slot's runtime object can be released and
+// re-admitted under idle; the fixture and a capture need a value that survives that. A plain static here is DTCM
+// (`variables`), which the RAM1 budget refuses.
+#if defined(__IMXRT1062__)
+DMAMEM uint32_t sCanonicalPrefixAppendResumes;
+#else
+uint32_t sCanonicalPrefixAppendResumes;  // host: the harness includes this TU without Arduino's DMAMEM
+#endif
+}  // namespace
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM uint32_t canonicalPrefixAppendResumeTotal() {
+  return sCanonicalPrefixAppendResumes;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canRetainCanonicalHistoryPrefix() const {
+  return canonicalPrefixCertified && canonicalPrefixPasses != nullptr &&
+         !canonicalPassInputs.captureAttached() && canonicalPassInputs.stateAllowsBinding();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retainCanonicalHistoryPrefix() {
+  if (!canRetainCanonicalHistoryPrefix()) return false;
+  // Inputs, their normalized output and the certification stay resident. The phase returns to `Idle` on purpose: the
+  // next stop must request the prefix service and adopt this history from its own begin. Leaving a completed build in
+  // `Ready` instead blocks that begin (measured: the stop FIFO stops retiring).
+  canonicalPrefixRetainedHistory = true;
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardRetainedCanonicalHistoryPrefix() {
+  canonicalPrefixRetainedHistory = false;
+  canonicalPrefixCertified = false;
+  canonicalPrefixCertifiedPasses = 0;
+  canonicalPrefixCertifiedLastPass = 0;
+  canonicalPassInputs.discard();
+  canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
+  canonicalPrefixPasses = nullptr;
+  canonicalPrefixGeneration = 0;
+  canonicalPrefixLength = 0;
+  canonicalPrefixStorageOwner = nullptr;
+  canonicalPrefixStorageGeneration = 0;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRuntime::stepCanonicalPrefix(
@@ -1067,10 +1156,22 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
     if (canonicalPrefixPasses != &passes || !(canonicalPrefixSource == source) || canonicalPrefixLength != live.loopLengthTicks ||
         canonicalPrefixStorageOwner != &live.storageGeneration ||
         live.storageGeneration != canonicalPrefixStorageGeneration) {
-      if (canonicalPrefixSource.playbackRevision == source.playbackRevision &&
-          canonicalPrefixSource.snapshotIdentity != source.snapshotIdentity &&
-          resumeCanonicalAfterAppend(passes, source.playbackRevision, source, live))
+      // Task 6.4c: a live successor moving the *window* identity must not replay the committed history. Resume is
+      // licensed only by a certified append (one new pass on an unchanged inventory) or the same-revision snapshot
+      // refresh; `resumeCurrentAfterAppend` re-proves the storage/owner identity, and the retained normalized output
+      // (`count_`/`outputs_`) is kept, so the rest of the build costs one pass instead of the whole history.
+      const bool sameRevisionRefresh =
+          canonicalPrefixSource.playbackRevision == source.playbackRevision &&
+          canonicalPrefixSource.snapshotIdentity != source.snapshotIdentity;
+      // The window revision is not an identity (DEC-177): any newer revision qualifies once the history itself is a
+      // certified append. Companion publication also bumps the revision, so `+1` could never match in a chain.
+      const bool certifiedAppend = canonicalPrefixHistoryIsCertifiedAppend(passes);
+      if ((sameRevisionRefresh || certifiedAppend) &&
+          resumeCanonicalAfterAppend(passes, canonicalPrefixSource.playbackRevision, source, live,
+                                     /*committedFrozenTail=*/false, certifiedAppend)) {
+        ++canonicalPrefixAppendResumes; ++sCanonicalPrefixAppendResumes;
         return RuntimePlaybackOrderBuildResult::Pending;
+      }
       // A superseded/stale source is a *restart*, not a denial: the `prefix_restart` stage row (below) already names it,
       // and the restart advances the build's identity, so it is never a `Denied` latch. Clear the denial record.
       SC_ODUB_STOP_STAGE("prefix_restart", 0, 0, UINT32_MAX, UINT32_MAX,
@@ -1087,9 +1188,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
       // Sticky latch: keep reporting the original reason (already held in `prefixFirstDenialReason`).
       return RuntimePlaybackOrderBuildResult::Denied;
     }
+    if (canonicalPrefixRetainedHistory) {
+      // This build took the retained state over instead of replaying the history: the other half of the reuse.
+      canonicalPrefixRetainedHistory = false;
+      ++sCanonicalPrefixAppendResumes;
+    }
     const auto result = canonicalPassInputs.step(quantum);
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       canonicalPrefixPhase = CanonicalPrefixPhase::Ready;
+      certifyCanonicalPrefixHistory(passes);
       prefixFirstDenialReason = CanonicalPrefixDenial::None;
       prefixDeniedFirstReported = false;
     } else if (result == RuntimePlaybackOrderBuildResult::Denied) {
@@ -1102,6 +1209,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
     }
     return result;
   }
+  if (canonicalPrefixRetainedHistory) {
+    if (canonicalPrefixHistoryIsCertifiedAppend(passes) &&
+        resumeCanonicalAfterAppend(passes, canonicalPrefixSource.playbackRevision, source, live,
+                                   /*committedFrozenTail=*/false, /*certifiedHistoryAppend=*/true)) {
+      ++canonicalPrefixAppendResumes;
+      canonicalPrefixRetainedHistory = false;
+      return RuntimePlaybackOrderBuildResult::Pending;
+    }
+    // Not a certified append: the retained prefix has no authority here and is gone before anything is built.
+    discardRetainedCanonicalHistoryPrefix();
+  }
   if (!canonicalPassInputs.idle()) return deny(CanonicalPrefixDenial::InputsBusy);
   if (!frozenCompanionApply.available()) return deny(CanonicalPrefixDenial::ApplyUnavailable);
   canonicalPrefixSource = source; canonicalPrefixPasses = &passes; canonicalPrefixLength = live.loopLengthTicks;
@@ -1112,6 +1230,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   const bool started = canonicalPassInputs.beginCurrent(frozenCompanionApply, work, passes, canonicalPrefixSource, live);
   canonicalPrefixGeneration = canonicalPassInputs.generation();
   canonicalPrefixPhase = started ? CanonicalPrefixPhase::Preparing : CanonicalPrefixPhase::Denied;
+  if (started) certifyCanonicalPrefixHistory(passes);  // a cold build certifies what it is about to replay
   prefixFirstDenialReason = CanonicalPrefixDenial::None;  // a new build starts; its first denial overwrites
   prefixDeniedFirstReported = false;
   return started ? RuntimePlaybackOrderBuildResult::Pending : deny(CanonicalPrefixDenial::StepDenied);
@@ -1133,6 +1252,14 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retainCommittedCanonic
   canonicalPrefixGeneration = canonicalPassInputs.generation();
   canonicalPrefixStorageGeneration = live.storageGeneration;
   canonicalPrefixPhase = CanonicalPrefixPhase::Preparing;
+  certifyCanonicalPrefixHistory(loop.passes);
+  canonicalPrefixSource = source;
+  canonicalPrefixPasses = &loop.passes;
+  // DEC-177: this prefix now represents committed history, capture-free, with no window or companion ownership. It is
+  // exactly the retained-history-prefix state; the job's cleanup keeps it for the next queued stop. Counted as one
+  // history reuse: the next stop's build no longer replays the committed passes.
+  canonicalPrefixRetainedHistory = true;
+  ++sCanonicalPrefixAppendResumes;
   SC_ODUB_STOP_STAGE("prefix_reuse", 0, 0, UINT32_MAX, UINT32_MAX,
       canonicalPassInputs.completedPassCount(), source.playbackRevision, "committed_normalization");
   return true;
@@ -1141,13 +1268,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retainCommittedCanonic
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::resumeCanonicalAfterAppend(
     const LoopPasses& passes, uint32_t priorRevision,
     const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
-    bool committedFrozenTail) {
+    bool committedFrozenTail, bool certifiedHistoryAppend) {
   // The token address remains stable for the borrowed worker. Failed reuse
   // leaves normal source invalidation responsible for a bounded restart.
   const auto previous = canonicalPrefixSource;
   canonicalPrefixSource = source;
   if (!canonicalPassInputs.resumeCurrentAfterAppend(passes, priorRevision,
-          canonicalPrefixSource, live, committedFrozenTail)) {
+          canonicalPrefixSource, live, committedFrozenTail, certifiedHistoryAppend)) {
     canonicalPrefixSource = previous;
     return false;
   }
@@ -1157,6 +1284,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::resumeCanonicalAfterAp
   canonicalPrefixPasses = &passes; canonicalPrefixLength = live.loopLengthTicks;
   canonicalPrefixStorageOwner = &live.storageGeneration;
   canonicalPrefixStorageGeneration = live.storageGeneration;
+  certifyCanonicalPrefixHistory(passes);
   SC_ODUB_STOP_STAGE("prefix_reuse", 0, 0, UINT32_MAX, UINT32_MAX,
       canonicalPassInputs.completedPassCount(), source.playbackRevision,
       committedFrozenTail ? "committed_tail" : "source_append_or_snapshot");
@@ -1512,7 +1640,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenCanonicalTailRea
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardFrozenCanonicalTail() {
   if (canonicalTailPhase == CanonicalTailPhase::Idle) return;
   if (frozenCompanionPasses.generation() == canonicalTailPassGeneration) frozenCompanionPasses.discard();
-  if (canonicalPassInputs.generation() == canonicalTailInputGeneration) {
+  if (!canonicalPrefixRetainedHistory && canonicalPassInputs.generation() == canonicalTailInputGeneration) {
     canonicalPassInputs.discard();
     canonicalPrefixPhase = CanonicalPrefixPhase::Idle; canonicalPrefixPasses = nullptr;
     canonicalPrefixGeneration = 0; canonicalPrefixLength = 0;
@@ -3221,8 +3349,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // generation, the loop coverage, and the bound authoritative source identity (24 B on the target ABI's
 // 4-byte pointers). The runtime is extmem-allocated per slot and no `Track` field grows, so RAM1 is
 // unchanged -- the cost is external-pool bytes, re-based here explicitly as the architectural price.
-static_assert(sizeof(LoopPlaybackRuntime) == 7808,
-              "I5: target per-slot runtime measured after deferred-convergence obligation");
+// task 6.4c (DEC-177): the committed-history certification splits the prepared prefix's identity from its window
+// identity, and adds 16 B on this ABI (7,808 -> 7,824; compiler measured): two counts + the certified flag + a
+// report-only resume counter. The runtime is extmem-allocated per slot, so no `Track` field and no RAM1 byte grows;
+// the cost is external-pool bytes, re-based here explicitly as the architectural price.
+static_assert(sizeof(LoopPlaybackRuntime) == 7832,
+              "I5: target per-slot runtime measured after the committed-history certification");
 // CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
 // (compiler measured on `teensy41-capture-serial`). The cursor is interval-qualified state, and it
 // lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
@@ -3270,7 +3402,8 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // byte, target generation, loop coverage, bound source identity) adds 48 B on this ABI
 // (9,896 -> 9,944 host; compiler measured). The runtime is extmem-allocated per slot, so RAM1 is
 // unchanged and no `Track` field grows.
-static_assert(sizeof(LoopPlaybackRuntime) == 9944,
-              "I5: host per-slot runtime measured after deferred-convergence obligation");
+// task 6.4c (DEC-177): 9,944 -> 9,960 host (+16 B), compiler measured; extmem per slot, RAM1 unchanged.
+static_assert(sizeof(LoopPlaybackRuntime) == 9968,
+              "I5: host per-slot runtime measured after the committed-history certification");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

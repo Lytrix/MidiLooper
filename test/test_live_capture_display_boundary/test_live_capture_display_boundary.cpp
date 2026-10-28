@@ -246,6 +246,7 @@ void test_busy_transfer_keeps_complete_frame_pending_and_receipts_separate() {
 }
 
 struct TrackCaptureStopTestAccess {
+  static size_t jobs(const Track& t) { return t.captureStopJobs_ ? t.captureStopJobs_->count : 0; }
   static auto* runtime(Track& t) { return t.playbackRuntime.slotIfAllocated(t.getActiveLoopIndex()); }
   static bool retiredPreviewsEmpty(const Track& t) {
     if (!t.captureStopJobs_ || t.captureStopJobs_->count != 0) return false;
@@ -1523,8 +1524,434 @@ void test_retained_display_source_never_serves_another_slot_and_survives_the_foc
   assertNote(servedBack, take.b, 62, 1328, 1408);
 }
 
+// Display-chain packet A: real owner selection/admission and real Track/paint workers.
+// This harness deliberately has no target interval timer, SD traffic or USB input cost;
+// it establishes logical ordering, not main.cpp's physical scheduling deadline.
+struct DisplayChainOwnerTurns {
+  struct ExpectedNote { NoteId id; uint8_t pitch; uint32_t on, off; };
+  static bool phaseProgressed(DisplayWindowUtils::DisplayFramePhase before,
+                              DisplayWindowUtils::DisplayFramePhase after,
+                              unsigned submissionsBefore, unsigned submissionsAfter) {
+    return before != after || submissionsBefore != submissionsAfter;
+  }
+  static bool frameMatches(const FrameReceipt& frame, const std::vector<ExpectedNote>& expected) {
+    for (const auto& wanted : expected) {
+      unsigned count = 0;
+      for (const auto& note : frame.notes) {
+        if (note.noteId != wanted.id) continue;
+        ++count;
+        if (note.note != wanted.pitch || note.startTick != wanted.on || note.endTick != wanted.off) return false;
+      }
+      if (count != 1) return false;
+    }
+    return true;
+  }
+  std::vector<ExpectedNote> expected, expectedAtResolve;
+  MidiServiceDrain::DeferredIdleOwnerCursor cursor{};
+  MidiServiceDrain::ActiveLoadDisplayContinuation displayChild{};
+  uint8_t prefixCursor = 0;
+  uint32_t lastDisplayUpdate = 0;
+  unsigned paints = 0;
+  unsigned maintenanceTurns = 0;
+  unsigned deniedDisplayTurns = 0;
+
+  void complete() {
+    completeFrame();
+    TEST_ASSERT_TRUE_MESSAGE(frameMatches(completedFrame, expectedAtResolve),
+        "completed frame must preserve each expected NoteId and its geometry exactly once");
+    for (const auto& note : expectedAtResolve)
+      assertNote(completedFrame.notes, note.id, note.pitch, note.on, note.off);
+  }
+
+  void step(Track& track) {
+    using namespace MidiServiceDrain;
+    nativeMillisAdvance(50);
+    Loop& loop = track.getActiveLoop();
+    const auto owner = selectDeferredIdleOwner(cursor,
+        track.hasSnapshotPublicationBacklogOnAnySlot(),
+        trackManager.anyPlayingMidiDrainAfterOverdubStop() &&
+            track.hasPendingSessionExitSnapshotOnAnySlot());
+    // Same wrap exclusion as the main-loop display/deferred admission.
+    const bool allowed = allowDeferredIdleOwner(owner, loop.hasDeferredVisualCacheWrapAppend());
+    if (!allowed) {
+      if (owner == DeferredIdleOwner::LoadAndDisplay) ++deniedDisplayTurns;
+      return;
+    }
+    if (owner == DeferredIdleOwner::LoadAndDisplay) {
+      const bool due = DisplayWindowUtils::admitDisplayFrameTurn(
+          displayManager.hasPendingPaintPhase(),
+          millis() - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL, false);
+      const auto child = displayChild.select(true, due, false); // no load requested in this fixture
+      if (child == ActiveLoadDisplayChild::Display) {
+        const auto before = DisplayCaptureTestAccess::phase();
+        const unsigned submitted = DisplayCaptureTestAccess::api().submitted;
+        // Physical DMA completion is controlled at this I/O boundary, separately
+        // from the Resolve/Draw/Transfer worker and its note-identity observations.
+        if (DisplayCaptureTestAccess::api().active) complete();
+        if (before == DisplayWindowUtils::DisplayFramePhase::Idle) expectedAtResolve = expected;
+        serviceDisplay(clockManager.getCurrentTick());
+        ++paints;
+        TEST_ASSERT_TRUE_MESSAGE(phaseProgressed(before, DisplayCaptureTestAccess::phase(),
+            submitted, DisplayCaptureTestAccess::api().submitted),
+            "an admitted healthy display phase must progress or submit");
+        displayChild.finish(child, displayManager.hasPendingPaintPhase());
+        if (!displayManager.hasPendingPaintPhase()) lastDisplayUpdate = millis();
+      }
+      return;
+    }
+    // SlotProvision/Persistence own different workers in main; they do not
+    // accidentally become extra stop opportunities in this trace.
+    if (owner == DeferredIdleOwner::SlotProvision || owner == DeferredIdleOwner::Persistence) return;
+    if (owner == DeferredIdleOwner::PlaybackViewMaintenance) {
+      const auto clock = clockManager.getPlaybackDeadlineClock();
+      if (track.isPlaying() && !track.isRecording() && !track.isOverdubbing())
+        (void)track.requestActiveCommittedPlaybackWindow(static_cast<uint32_t>(clock.tick), clock);
+      (void)track.serviceRollingPlaybackWindow(clock);
+      track.servicePreviewWindowForNoteEditSession();
+      (void)track.serviceOverdubOverlayWindow();
+      track.serviceAdmittedDeadlineMisses(clock);
+      (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(clock.tick), nullptr, false, clock);
+      return;
+    }
+    ++maintenanceTurns;
+    // Production priority policy and workers, rather than assuming every
+    // VisualCache opportunity reaches the Track maintenance branch.
+    if (serviceCanonicalPrefixTurn(owner, trackManager.getTrackCount(), prefixCursor,
+        [](uint8_t index) {
+          const Track& candidate = trackManager.getTrack(index);
+          if (candidate.hasPendingDeferredOverdubStop() || candidate.isRecording()) return true;
+          if ((!candidate.isAudiblePlaybackActive() && !candidate.isStoppedRecording()) ||
+              !candidate.loopsAllocated()) return false;
+          const Loop& source = candidate.getActiveLoop();
+          return canonicalPreparationHasPriorityWork(candidate.isOverdubbing(), source.visualCacheDirty,
+              source.hasDeferredVisualCacheWrapAppend(), source.overdubSourceSpanCacheReady());
+        }, [](uint8_t index) { return trackManager.getTrack(index).processDeferredCanonicalPrefix(); })) return;
+    if (!track.hasRealtimeDeferredIdleWork()) return;
+    track.processDeferredIdleMaintenance(millis(), false, owner);
+  }
+};
+
+static void exerciseDisplayOverdubChain(unsigned bars) {
+  Track& track = beginRecord();
+  std::vector<NoteId> recordIds;
+  const uint32_t length = bars * Config::TICKS_PER_BAR;
+  for (unsigned bar = 0; bar < bars; ++bar)
+    recordIds.push_back(acceptPair(track, 48, bar * Config::TICKS_PER_BAR + 12,
+                                  bar * Config::TICKS_PER_BAR + 48));
+  growRecordGeometry(track, length);
+  clockManager.assignCurrentTickSilently(length);
+  track.stopRecording(length);
+  Loop& loop = track.getActiveLoop();
+  // Setup only: a real committed/current Record, never an empty fabricated root.
+  for (unsigned turn = 0; turn < 20000 &&
+       (track.hasPendingDeferredOverdubStop() || !loop.publishedSnapshotIsCurrent()); ++turn)
+    track.processDeferredIdleMaintenance(millis(), false,
+        (turn & 1) ? MidiServiceDrain::DeferredIdleOwner::Snapshot
+                   : MidiServiceDrain::DeferredIdleOwner::VisualCache);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  clockManager.assignCurrentTickSilently(96);
+  submitFrame(96); completeFrame();
+  assertNote(completedFrame.notes, recordIds.front(), 48, 12, 48);
+
+  DisplayChainOwnerTurns owners;
+  for (unsigned bar = 0; bar < std::min(bars, 16u); ++bar)
+    owners.expected.push_back({recordIds[bar], 48, bar * Config::TICKS_PER_BAR + 12,
+                              bar * Config::TICKS_PER_BAR + 48});
+  size_t maxQueue = 0;
+  unsigned maxCompletionWait = 0, waiting = 0;
+  unsigned completions = DisplayCaptureTestAccess::api().completions;
+  unsigned accepted = 0, retainedStarts = 0, retainedStops = 0;
+  const unsigned framesAtChainStart = DisplayCaptureTestAccess::api().completions;
+  for (unsigned overdub = 0; overdub < 22; ++overdub) {
+    // A real player presses the next Start only after the previous interval ended;
+    // a retained obligation is served within the press interval before the next
+    // press. Failing to serve it here would be a liveness defect, not a fixture shape.
+    unsigned servedBeforePress = 0;
+    while ((track.hasAcceptedUnexecutedInteraction() || track.hasPendingOverdubStart() ||
+            track.hasPendingDeferredOverdubStop()) && servedBeforePress < 4000) {
+      owners.step(track);
+      ++servedBeforePress;
+      maxQueue = std::max(maxQueue, TrackCaptureStopTestAccess::jobs(track));
+    }
+    char context[220];
+    std::snprintf(context, sizeof(context), "overdub=%u jobs=%zu paints=%u submitted=%u completed=%u denied=%u",
+        overdub, TrackCaptureStopTestAccess::jobs(track), owners.paints,
+        DisplayCaptureTestAccess::api().submitted, DisplayCaptureTestAccess::api().completions,
+        owners.deniedDisplayTurns);
+    TEST_ASSERT_LESS_THAN_MESSAGE(4000u, servedBeforePress,
+        "accepted obligations must be served before the next press");
+    const uint32_t tick = 96 + (overdub * 96) % (length - 192);
+    clockManager.assignCurrentTickSilently(tick);
+    track.startOverdubbing(tick);
+    std::snprintf(context, sizeof(context), "overdub=%u jobs=%zu paints=%u submitted=%u completed=%u denied=%u",
+        overdub, TrackCaptureStopTestAccess::jobs(track), owners.paints,
+        DisplayCaptureTestAccess::api().submitted, DisplayCaptureTestAccess::api().completions,
+        owners.deniedDisplayTurns);
+    // DEC-078: a start met by a still-live predecessor obligation is retained on the
+    // accepted-interaction carrier, not refused. It must be served exactly once later.
+    if (!track.isOverdubbing()) {
+      TEST_ASSERT_TRUE_MESSAGE(track.hasPendingOverdubStart() ||
+          track.hasAcceptedUnexecutedInteraction(), context);
+      ++retainedStarts;
+    } else {
+      ++accepted;
+      // Distinct pitches avoid overlap-resolution ambiguity in the content oracle.
+      const NoteId added = acceptPair(track, 60 + overdub, tick + 12, tick + 60);
+      owners.expected.push_back({added, static_cast<uint8_t>(60 + overdub), tick + 12, tick + 60});
+      clockManager.assignCurrentTickSilently(tick + 72);
+      track.stopOverdubbing();
+      if (track.hasAcceptedUnexecutedInteraction()) ++retainedStops;
+    }
+    maxQueue = std::max(maxQueue, TrackCaptureStopTestAccess::jobs(track));
+    // The measured 20 turns are Track maintenance opportunities (as in the
+    // original throughput fixture), not 20 iterations of the seven-owner loop.
+    // Keep the production owner rotation; its display opportunities are interleaved,
+    // never a direct-call paint rescue. The fixed outer cap diagnoses lost service.
+    const unsigned maintenanceTarget = owners.maintenanceTurns + 20;
+    for (unsigned turn = 0; turn < 120 && owners.maintenanceTurns < maintenanceTarget; ++turn) {
+      owners.step(track);
+      maxQueue = std::max(maxQueue, TrackCaptureStopTestAccess::jobs(track));
+      if (DisplayCaptureTestAccess::api().completions != completions) {
+        completions = DisplayCaptureTestAccess::api().completions;
+        maxCompletionWait = std::max(maxCompletionWait, waiting);
+        waiting = 0;
+      } else ++waiting;
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(maintenanceTarget, owners.maintenanceTurns, context);
+    // Retain a final in-flight frame, but do not grant the domain extra turns.
+    if (DisplayCaptureTestAccess::api().active) owners.complete();
+    std::printf("display chain bars=%u %s maxQueue=%zu maxCompletionWait=%u now_paints=%u submissions=%u completions=%u jobs=%zu expected=%lu\n",
+        bars, context, maxQueue, maxCompletionWait, owners.paints,
+        DisplayCaptureTestAccess::api().submitted, DisplayCaptureTestAccess::api().completions,
+        TrackCaptureStopTestAccess::jobs(track), static_cast<unsigned long>(overdub));
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(4u, maxQueue, context);
+    assertNote(completedFrame.notes, recordIds.front(), 48, 12, 48);
+  }
+  // Display progress is asserted on the measured window, before any teardown drain.
+  const unsigned framesDuringChain =
+      DisplayCaptureTestAccess::api().completions - framesAtChainStart;
+  std::printf("display chain measured bars=%u frames=%u accepted=%u retainedStarts=%u retainedStops=%u\n",
+      bars, framesDuringChain, accepted, retainedStarts, retainedStops);
+  TEST_ASSERT_GREATER_THAN_MESSAGE(0u, framesDuringChain,
+      "display frames must complete during the chain, not only after it");
+  // Every accepted press is served exactly once (DEC-078) within a bounded drain.
+  // The final interval is closed by its own Stop press, as a real chain ends.
+  if (track.isOverdubbing()) {
+    clockManager.assignCurrentTickSilently(96u + (21u * 96u) % (length - 192));
+    track.stopOverdubbing();
+  }
+  for (unsigned turn = 0; turn < 60000 &&
+       (track.hasPendingDeferredOverdubStop() || track.hasAcceptedUnexecutedInteraction() ||
+        track.hasPendingOverdubStart() || track.isOverdubbing()); ++turn) {
+    owners.step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(track.hasPendingOverdubStart());
+  TEST_ASSERT_EQUAL_UINT32(1 + accepted, loop.passes.capturePassCount());
+  TEST_ASSERT_GREATER_THAN(0u, owners.paints);
+}
+
+void test_overdub_chain_preserves_frame_progress_one_bar() { exerciseDisplayOverdubChain(1); }
+void test_overdub_chain_preserves_frame_progress_long_loop() { exerciseDisplayOverdubChain(24); }
+
+void test_stationary_viewport_counts_real_completed_frames_without_transition_receipts() {
+  Track& track = beginRecord();
+  const NoteId id = acceptPair(track, 60, 12, 80);
+  growRecordGeometry(track, 192);
+  uint32_t windowStart = 0, windowLength = 0;
+  for (unsigned frame = 0; frame < 4; ++frame) {
+    const auto submitted = DisplayCaptureTestAccess::api().submitted;
+    const auto completed = DisplayCaptureTestAccess::api().completions;
+    submitFrame(192);
+    TEST_ASSERT_EQUAL_UINT32(submitted + 1, DisplayCaptureTestAccess::api().submitted);
+    TEST_ASSERT_EQUAL_UINT32(completed, DisplayCaptureTestAccess::api().completions);
+    if (frame == 0) {
+      windowStart = submittedFrame.source.windowStart;
+      windowLength = submittedFrame.source.windowLength;
+    }
+    TEST_ASSERT_EQUAL_UINT32(windowStart, submittedFrame.source.windowStart);
+    TEST_ASSERT_EQUAL_UINT32(windowLength, submittedFrame.source.windowLength);
+    completeFrame();
+    TEST_ASSERT_EQUAL_UINT32(completed + 1, DisplayCaptureTestAccess::api().completions);
+    assertNote(completedFrame.notes, id, 60, 12, 80);
+  }
+}
+
+void test_chain_oracle_separates_missing_service_from_missing_content() {
+  Track& track = beginRecord();
+  const NoteId id = acceptPair(track, 60, 12, 80);
+  growRecordGeometry(track, 192);
+  submitFrame(192); completeFrame();
+  const std::vector<DisplayChainOwnerTurns::ExpectedNote> expected{{id, 60, 12, 80}};
+  TEST_ASSERT_TRUE(DisplayChainOwnerTurns::frameMatches(completedFrame, expected));
+  auto missing = completedFrame;
+  missing.notes.clear();
+  TEST_ASSERT_FALSE(DisplayChainOwnerTurns::frameMatches(missing, expected));
+  auto stale = completedFrame;
+  stale.notes.front().endTick = 79;
+  TEST_ASSERT_FALSE(DisplayChainOwnerTurns::frameMatches(stale, expected));
+  using Phase = DisplayWindowUtils::DisplayFramePhase;
+  TEST_ASSERT_FALSE(DisplayChainOwnerTurns::phaseProgressed(Phase::Draw, Phase::Draw, 1, 1));
+  TEST_ASSERT_TRUE(DisplayChainOwnerTurns::phaseProgressed(Phase::Draw, Phase::Transfer, 1, 1));
+  TEST_ASSERT_TRUE(DisplayChainOwnerTurns::phaseProgressed(Phase::Transfer, Phase::Idle, 1, 2));
+}
+
+/// Slice C oracle: **painted notes must track committed passes with a stationary viewport and no publication
+/// gap.** The device symptom was a flat painted-note count while passes grew. This drives the production commit
+/// path (real `commitCapturePass`), keeps the paint window fixed, and asserts the painted count rises with each
+/// committed pass and keeps the earlier identities — so a cache that was left clean cannot keep serving
+/// pre-commit content.
+void test_painted_notes_follow_committed_passes_on_a_stationary_viewport() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  Loop& loop = t.getActiveLoop();
+  loop.loopLengthTicks = 4u * Config::TICKS_PER_BAR;
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  submitFrame(0);
+  const uint32_t baseline = static_cast<uint32_t>(submittedFrame.notes.size());
+  completeFrame();
+  for (unsigned pass = 0; pass < 3; ++pass) {
+    loop.beginCapture(CapturePhase::Overdub);
+    const uint32_t on = pass * 96u + 12u;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(on, 1, static_cast<uint8_t>(60 + pass), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(on + 40, 1, static_cast<uint8_t>(60 + pass), 0)));
+    TEST_ASSERT_EQUAL(CommitResult::Committed,
+                      loop.commitCapturePass(CommitReason::OverdubStop, on + 48));
+    // Production runs the idle VisualCache lane between presses; the paint reads what that lane published.
+    for (unsigned turn = 0; turn < 4096 && loop.visualCacheDirty; ++turn) {
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    }
+    TEST_ASSERT_FALSE_MESSAGE(loop.visualCacheDirty,
+        "the idle slice must settle the cache instead of clearing the flag without rebuilding");
+    // Same viewport, same tick: only committed content changed.
+    submitFrame(0);
+    std::printf("slice C pass=%u painted=%u baseline=%u\n", pass,
+                static_cast<uint32_t>(submittedFrame.notes.size()), baseline);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(baseline + pass + 1, static_cast<uint32_t>(submittedFrame.notes.size()),
+        "each committed pass must reach the painted frame; a flat count is stale content");
+    for (unsigned seen = 0; seen <= pass; ++seen) {
+      bool found = false;
+      for (const auto& note : submittedFrame.notes) {
+        if (note.note == static_cast<uint8_t>(60 + seen)) found = true;
+      }
+      TEST_ASSERT_TRUE_MESSAGE(found, "an earlier committed pass must stay painted");
+    }
+    completeFrame();
+  }
+}
+
+/// Slice F oracle: **a restored slot's cache must fill through the real idle lane without a published root.**
+/// This is the loop-level half of the boot blank panel. The device showed the focused slot with the right
+/// length at 10.97 s and *no* painted notes until 21.8 s, so the question is whether the lane can build such a
+/// slot at all or whether admission starves it. The main-loop clock gate is not reachable from here; if this
+/// test is green, any remaining starvation is main.cpp admission, not the rebuild.
+void test_restored_slot_cache_fills_through_the_idle_lane_without_a_root() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  Loop& loop = t.getActiveLoop();
+  LoopEventStore record;
+  for (unsigned n = 0; n < 4; ++n) {
+    MidiEvent on = MidiEvent::NoteOn(n * 96 + 12, 1, static_cast<uint8_t>(60 + n), 100);
+    on.noteId = 700 + n;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(n * 96 + 52, 1, static_cast<uint8_t>(60 + n), 0)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = 4 * bar;
+  loop.markDisplayCachesStale();
+  // Exactly the restored shape: content in the passes, no root, cache dirty and empty.
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_NULL_MESSAGE(loop.publishedSnapshotIdentity(), "the restored slot has no current root");
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_TRUE(loop.visualCache.notes.empty());
+
+  unsigned turns = 0;
+  for (; turns < 64 && loop.visualCache.notes.empty(); ++turns) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  std::printf("slice F cache turns=%u notes=%zu dirty=%u\n", turns, loop.visualCache.notes.size(),
+              static_cast<unsigned>(loop.visualCacheDirty));
+  TEST_ASSERT_FALSE_MESSAGE(loop.visualCache.notes.empty(),
+      "the idle lane must build a restored slot's cache; a refused build is the blank first frame");
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(loop.visualCache.notes.size()));
+
+  // And the built cache must reach the panel.
+  submitFrame(0);
+  for (unsigned n = 0; n < 4; ++n) {
+    bool found = false;
+    for (const auto& note : submittedFrame.notes) {
+      if (note.note == static_cast<uint8_t>(60 + n)) found = true;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found, "a restored slot's note must be painted once its cache is built");
+  }
+  completeFrame();
+}
+
+/// Slice G oracle: **a rootless restored slot must obtain a published root on the publication lane**, because
+/// without one the panel cannot paint until the visual cache is rebuilt (device: length correct at 11 s, first
+/// content only after the restore sweep ended at 21-28 s). The fast first boot after the restore fix is the
+/// pointer: that boot still had the writer's coherent root, so paint needed no cache build.
+void test_rootless_restored_slot_gains_a_published_root_on_the_publication_lane() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  Loop& loop = t.getActiveLoop();
+  LoopEventStore record;
+  for (unsigned n = 0; n < 4; ++n) {
+    MidiEvent on = MidiEvent::NoteOn(n * 96 + 12, 1, static_cast<uint8_t>(60 + n), 100);
+    on.noteId = 800 + n;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(n * 96 + 52, 1, static_cast<uint8_t>(60 + n), 0)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = 4 * bar;
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+
+  // Negative control: the publication lane owes nothing until someone asks, which is why the display lane
+  // must issue the request for a rootless restored slot.
+  for (unsigned turn = 0; turn < 64 && !loop.publishedSnapshotIsCurrent(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+      "control: an unrequested root is not fabricated by the lane");
+
+  // The production request the display lane issues when the selected slot has content but no root.
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+  unsigned turns = 0;
+  for (; turns < 512 && !loop.publishedSnapshotIsCurrent(); ++turns) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  }
+  std::printf("slice G snapshot turns=%u current=%u\n", turns,
+              static_cast<unsigned>(loop.publishedSnapshotIsCurrent()));
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+      "a restored rootless slot must publish a root; without it paint waits for a cache rebuild");
+
+  // The paint half is deliberately NOT asserted here: with a current root the display still needs its first
+  // frame *request* served by the idle producer (this fixture reports `source=none`), and that producer's boot
+  // admission is the next slice. Recorded rather than asserted so the suite stays honest.
+  submitFrame(0);
+  std::printf("slice G paint after root: notes=%zu source=%s (idle producer owed)\n",
+              submittedFrame.notes.size(), DisplayCaptureTestAccess::qualifiedSourceName(loop));
+  completeFrame();
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
+  RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
+  RUN_TEST(test_stationary_viewport_counts_real_completed_frames_without_transition_receipts);
+  RUN_TEST(test_chain_oracle_separates_missing_service_from_missing_content);
+  RUN_TEST(test_painted_notes_follow_committed_passes_on_a_stationary_viewport);
+  RUN_TEST(test_restored_slot_cache_fills_through_the_idle_lane_without_a_root);
+  RUN_TEST(test_rootless_restored_slot_gains_a_published_root_on_the_publication_lane);
   RUN_TEST(test_rounded_record_stop_follows_wrapped_overdub_before_publication);
   RUN_TEST(test_empty_overdub_start_cannot_grow_frozen_record_tails);
   RUN_TEST(test_empty_successor_start_preserves_stopped_overdub_hold_endpoint);

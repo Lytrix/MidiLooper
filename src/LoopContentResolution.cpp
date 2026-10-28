@@ -1714,6 +1714,45 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const LoopPasses&
 #endif
 }
 
+TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotesInWindow(
+    const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+    NoteUtils::DisplayNoteVec& out, ResolutionCostCounters* counters) {
+  out.clear();
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    return;
+  }
+  const bool wholeLoop = windowLength >= loopLengthTicks;
+  uint32_t layerCount = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    SessionMidiEventVec layer;
+    appendCapturePassLayer(passes.recordPass.committedChunkIds, wholeLoop, loopLengthTicks,
+                           windowStart, windowLength, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    appendPassLocalDisplayNotes(layer, loopLengthTicks, false, out);
+    layerCount += 1;
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      activeOverdubs.push_back(&pass);
+    }
+  }
+  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
+            [](const OverdubPass* a, const OverdubPass* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const OverdubPass* pass : activeOverdubs) {
+    SessionMidiEventVec layer;
+    appendCapturePassLayer(pass->committedChunkIds, wholeLoop, loopLengthTicks, windowStart,
+                           windowLength, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    appendPassLocalDisplayNotes(layer, loopLengthTicks, false, out);
+    layerCount += 1;
+  }
+  bumpOps(counters, static_cast<uint32_t>(out.size() + layerCount));
+}
+
 TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const TickIndex& index,
                                                                const EditPassVec& editPasses,
                                                                uint32_t loopLengthTicks,

@@ -191,6 +191,22 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
     return false;
   }
   loop.completePreparedCapturePassDeferredCleanup(preview);
+#if defined(DEC177_PREFIX_REUSE_DISABLED)
+  // Bisect / rollback image: the prefix is discarded exactly as before DEC-177.
+#else
+  // DEC-177: adopt the committed normalization **before** the bridge/window teardown, because
+  // `discardFrozenCaptureBridge()` discards `canonicalPassInputs` -- and with them the only copy of the prepared
+  // prefix. Adopting after it (the previous order) always found nothing to adopt, so every queued stop replayed the
+  // whole committed history.
+  // The adoption is only useful if the tail it adopts from is still complete and its owners still match: by this
+  // point the bridge and window are gone, and `retainCommittedCanonicalTail` re-proves all of that. Report the
+  // refusal once per job (it is the difference between "one pass of work" and "replay the whole history").
+  if (runtime.canonicalPassInputs.captureAttached()) {
+    const auto generation = runtime.canonicalPrefixSource.sourceGeneration;
+    const PlaybackViewSourceIdentity source{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
+    (void)runtime.retainCommittedCanonicalTail(loop, source);
+  }
+#endif  // DEC177_PREFIX_REUSE_DISABLED
   // Retire preparation workers only. The published bridge and any held-note
   // closure remain owned by the continuously advancing playback cursor.
   runtime.discardFrozenCaptureBridge();
@@ -203,12 +219,8 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   // `captures/successor-wrap-43`; `-45` shows the resulting stall), while clearing the attachment at
   // the retarget would invalidate the canonical prefix it still needs. Retain only while this job is
   // still the live interval; a live successor prepares its own canonical inputs.
-  if (ownsLiveSession && runtime.canonicalPassInputs.captureAttached()) {
-    const auto generation = runtime.canonicalPrefixSource.sourceGeneration;
-    const PlaybackViewSourceIdentity source{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
-    // Bind the original live generation owner, not this local scalar.
-    runtime.retainCommittedCanonicalTail(loop, source);
-  }
+  // Task 6.4c (DEC-177): adopt the committed normalization whenever the job still has its capture attached -- with a
+  // live successor too. Before this, a chain skipped the adoption and every queued stop replayed the whole history.
   runtime.discardFrozenCanonicalTail();
   // DEC-068: only the interval that still owns the live session may end it. A successor's
   // session stays open and independent while this job retires.
@@ -230,6 +242,10 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   runtime.canonicalReleaseMarkerGeneration = stop.frozenGeneration;
   runtime.canonicalReleaseMarkerInterval = stop.intervalToken();
   stop.reset();
+  // Task 6.4: this job's receipt is ready now. Release its ring capacity here rather than waiting for a
+  // publisher turn, which a continuous overdub chain never grants; otherwise ready receipts fill the ring
+  // and the reserved obligation refuses the next overdub start.
+  loop.settleReadySessionExitReceipts();
   return true;
 }
 

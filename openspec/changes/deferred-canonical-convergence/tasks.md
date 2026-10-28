@@ -76,3 +76,11 @@
       refusal. Verify: a fixture with M outstanding stops shows the refusal; find who moves
       `Populated -> Publishing -> Empty` and bound it. Accept: 20+ consecutive overdubs start and stop, no
       silent press loss, DEC-168 latency gain preserved. Details and falsification plan: `HANDOFF.md` §0.
+      **Native-done 2026-10-28 (DEC-173), device acceptance open.** Hypothesis falsified as stated: the refusal is
+      independent of queue depth (start 10 refused with 1..4 outstanding stops) — ready receipts are never consumed during
+      a chain because the publisher is excluded while a stop job is pending or an overdub is live. Fixed by coalescing
+      ready receipts at job retirement; the same chain then exposed two deadlocks (transfer row shared by queued jobs →
+      wedge at `PrepareTransfer`; horizon never re-prewarmed mid-chain → 17th stop retained forever), fixed by per-job
+      row accounting and a deferred top-up. A start refused at a full stop FIFO is now retained and served.
+      Fixtures `test_6_4_*` (RED→GREEN, M1–M5 red-proved); full native 3,549/7 skip/0 fail; build RAM1 unchanged; **flashed 2026-10-28** (HEX `sha256 ce6cdb22…`, boot `crash=0`/`BOOT,load,ok`); owner 20+ overdub run is the remaining gate.
+      **Device 2026-10-28 `session_20261028_135050.log`: NOT accepted** -- DEC-173's paths were clean, but starts were refused by task-4.20 heap admission (28 KB tail, 0 publishes); 6.4 stays open on that second mechanism.

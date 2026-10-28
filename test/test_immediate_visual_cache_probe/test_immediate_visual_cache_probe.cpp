@@ -129,10 +129,19 @@ static bool productionTurn(Loop& loop, uint32_t b, bool append = true, size_t bu
   }
   ++producerTurns;
   loop.rebuildVisualCacheIdleSlice(1, b, 0, append, true, budget);
-  TEST_ASSERT_NOT_EQUAL_MESSAGE(Loop::VisualCacheIdleGatherSource::PassesResolve,
-                                loop.lastVisualCacheIdleGatherSource(),
-                                "above the declared cap the slice must never whole-pass resolve");
-  TEST_ASSERT_FALSE(loop.lastVisualCacheIdleCopiedSnapshotNotes());
+  // DEC-180: the bounded continuation is a continuation of an **authoritative root**. This fixture seeds passes
+  // without publishing one, so the slice must resolve from the passes instead of waiting for a root that does
+  // not exist; with a current root the old rule (never whole-pass above the cap) still applies.
+  if (loop.publishedSnapshotIsCurrent()) {
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(Loop::VisualCacheIdleGatherSource::PassesResolve,
+                                  loop.lastVisualCacheIdleGatherSource(),
+                                  "above the declared cap a rooted slice must not whole-pass resolve");
+    TEST_ASSERT_FALSE(loop.lastVisualCacheIdleCopiedSnapshotNotes());
+  } else {
+    TEST_ASSERT_EQUAL_MESSAGE(Loop::VisualCacheIdleGatherSource::PassesResolve,
+                              loop.lastVisualCacheIdleGatherSource(),
+                              "a rootless slot resolves from its passes instead of waiting for a root");
+  }
   const bool published = loop.visualCache.revision != revisionBefore;
   if (published && producerFirstPublishTurn == 0) {
     producerFirstPublishTurn = producerTurns;
@@ -731,6 +740,105 @@ static void test_hold_keeps_retained_content_but_draws_the_requested_viewport() 
               static_cast<unsigned>(submittedFrame.notes.size()));
 }
 } // namespace ImmediateVisualProbe
+// DEC-181: **first-paint work is bounded by the visible window, not by total loop length.**
+// Two loops with identical visible-window content (bars 0..3): A is 4 bars, B is 40 bars with extra events
+// far outside the window. The windowed resolve must return the same notes and consider the same work for
+// both -- it never walks B's extra content. Boundary handling is covered by the caller's padded window
+// (the slice pads one bar each side), asserted separately below.
+static void seedWindowScalingLoop(Loop& loop, uint32_t totalBars) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore record;
+  for (uint32_t b = 0; b < 4; ++b) {
+    for (uint32_t n = 0; n < 8; ++n) {
+      MidiEvent on = MidiEvent::NoteOn(b * bar + n * 48 + 12, 1, static_cast<uint8_t>(60 + n), 100);
+      on.noteId = 2000 + b * 8 + n;
+      TEST_ASSERT_TRUE(record.append(on));
+      TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(b * bar + n * 48 + 40, 1,
+                                                        static_cast<uint8_t>(60 + n), 0)));
+    }
+  }
+  for (uint32_t b = 4; b < totalBars; ++b) {
+    MidiEvent on = MidiEvent::NoteOn(b * bar + 16, 1, 40, 100);
+    on.noteId = 100000 + b;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(b * bar + 48, 1, 40, 0)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = totalBars * bar;
+}
+
+static uint32_t windowScalingOps(uint32_t totalBars, NoteUtils::DisplayNoteVec& notes) {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  Loop loop;
+  seedWindowScalingLoop(loop, totalBars);
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());  // rootless: the DEC-181 case
+  ResolutionCostCounters counters;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0, 4 * bar,
+                                                    notes, &counters);
+  TEST_ASSERT_EQUAL_UINT32(32, static_cast<uint32_t>(notes.size()));
+  for (const auto& note : notes) {
+    TEST_ASSERT_TRUE_MESSAGE(note.startTick < 4 * bar, "only in-window notes may be returned");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(40, note.note, "content outside the window must not appear");
+  }
+  ResolutionCostCounters whole;
+  NoteUtils::DisplayNoteVec all;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks, all, &whole);
+  if (totalBars > 4) {
+    TEST_ASSERT_TRUE_MESSAGE(all.size() > notes.size(), "the fixture carries content outside the window");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(static_cast<uint32_t>(counters.resolutionOperations),
+                                     static_cast<uint32_t>(whole.resolutionOperations),
+                                     "windowed first paint must do less work than the whole pass");
+  }
+  return counters.resolutionOperations;
+}
+
+void test_dec181_windowed_first_paint_4_bars() {
+  NoteUtils::DisplayNoteVec notes;
+  (void)windowScalingOps(4, notes);
+}
+
+void test_dec181_windowed_first_paint_does_not_scale_with_loop_length() {
+  NoteUtils::DisplayNoteVec small, large;
+  const uint32_t smallOps = windowScalingOps(4, small);
+  const uint32_t largeOps = windowScalingOps(40, large);
+  std::printf("dec181 ops small=%u large=%u notes=%zu/%zu\n", smallOps, largeOps, small.size(),
+              large.size());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(smallOps, largeOps,
+      "windowed work must not grow with content outside the visible window");
+}
+
+// Boundary handling: a note that starts inside the padded window and ends past the visible edge still
+// resolves, because the slice pads one bar each side before asking.
+void test_dec181_a_note_straddling_the_visible_edge_still_resolves() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  LoopEventStore record;
+  MidiEvent on = MidiEvent::NoteOn(4 * bar - 20, 1, 90, 100);
+  on.noteId = 3000;
+  TEST_ASSERT_TRUE(record.append(on));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(4 * bar + 60, 1, 90, 0)));
+  MidiEvent far = MidiEvent::NoteOn(30 * bar + 16, 1, 40, 100);
+  far.noteId = 4000;
+  TEST_ASSERT_TRUE(record.append(far));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(30 * bar + 48, 1, 40, 0)));
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = 40 * bar;
+  NoteUtils::DisplayNoteVec notes;
+  // Visible window bars 0..3 plus the caller's one-bar closure pad on the right.
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0, 5 * bar,
+                                                    notes);
+  bool sawEdge = false;
+  for (const auto& note : notes) {
+    if (note.note == 90) sawEdge = true;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(40, note.note, "the far note stays out of the window");
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawEdge, "a note crossing the visible edge still resolves");
+}
+
 int main() {
   using namespace ImmediateVisualProbe;
   UNITY_BEGIN();
@@ -739,6 +847,9 @@ int main() {
     std::puts("CURRENT CHARACTERIZATION ONLY: green does not establish the new visual bound");
     RUN_TEST(test_current_characterization_background_miss_exact_content);
     RUN_TEST(test_current_characterization_revision_supersession_between_slices);
+  RUN_TEST(test_dec181_windowed_first_paint_4_bars);
+  RUN_TEST(test_dec181_windowed_first_paint_does_not_scale_with_loop_length);
+  RUN_TEST(test_dec181_a_note_straddling_the_visible_edge_still_resolves);
     // Existing coherent held-presentation oracles, not new source-miss continuation proof.
     RUN_TEST(test_busy_transfer_keeps_complete_frame_pending_and_receipts_separate);
     RUN_TEST(test_moving_window_gap_never_mixes_old_prefix_with_new_viewport_overlay);

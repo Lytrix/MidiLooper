@@ -72,6 +72,10 @@ struct PairHash {
  * vector to allow undoing overdubs or clears. Track also supports muting, clearing,
  * and sending all-notes-off commands.
  */
+/// DEC-178 evidence: how many deferred stop grains the last pending-stop owner turn delivered (1 = the old cadence,
+/// >1 = a backlog burst). Read-only; no production path consults it.
+uint8_t stopGrainBurstLastTurnGrains();
+
 class Track {
 public:
   Track();
@@ -1985,6 +1989,16 @@ private:
   bool claimOverdubSessionExitObligation();
   /// The aborted-start rollback: release a reservation that never reached a live interval.
   void releaseOverdubSessionExitObligation();
+  /// Task 6.4: whether a pending stop job still owns the reserved session-exit record. No owner means the
+  /// obligation's interval already retired, so it can never be marked ready again and must be published.
+  bool hasLiveOwnerOfReservedSessionExitObligation(const Loop& loop) const;
+  /// Task 6.4: the transfer horizon must hold one row and one pass slot for every outstanding overdub
+  /// job on `loop` plus this stop; the instantaneous `hasActiveOverdubTransferAdmission()` let several
+  /// jobs share the last row, and the extra ones wedged at `PrepareTransfer`. FLASH-resident.
+  bool overdubTransferAdmitsAnotherStop(const Loop& loop) const;
+  /// Task 6.4: top up a live overdub chain's transfer horizon on a turn with no stop job pending, the
+  /// same precondition the start-time prewarm relies on. Returns true when it spent the turn.
+  bool replenishLiveOverdubTransferHorizon();
   /// S4f.1: the accepted interaction, stored in the externally allocated ring object. Null when
   /// the ring has not been admitted yet.
   PendingInteractionLatch* interactionLatch() {

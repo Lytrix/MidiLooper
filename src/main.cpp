@@ -16,6 +16,7 @@
 #include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
+#include "StorageManagerInternal.h"
 #include "DeferredJobScheduler.h"
 #include "SlotLoadSession.h"
 #include "LoadLoopBudget.h"
@@ -25,6 +26,7 @@
 #include "ControlSurfaceManager.h"
 #include "Utils/PerformanceMonitor.h"  // Performance monitoring
 #include "Utils/MemoryMonitor.h"
+#include "Utils/HeapPeakTrace.h"
 #include "Utils/MemoryPressureLevel.h"
 #include "Utils/MemoryPool.h"
 #include "LoopEventStore.h"
@@ -32,6 +34,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
 #include "Utils/MidiServiceDrain.h"
+#include "BootGate.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
@@ -253,6 +256,34 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
   displayManager.invalidateLiveDisplayCache();
 }
 
+// First-paint gate for the boot restore sweep (DEC-182). RAM2: two DTCM words tripped the approved RAM1 budget.
+#if defined(__IMXRT1062__)
+DMAMEM uint32_t gBootSweepDueMs;
+DMAMEM uint8_t gBootSweepEnqueued;
+DMAMEM uint32_t gPaintGateLastMs;
+#else
+uint32_t gBootSweepDueMs;
+uint8_t gBootSweepEnqueued;
+uint32_t gPaintGateLastMs;
+#endif
+
+// The remaining-slot sweep restores every other slot and re-dirties a cache per slot. It must not run before the
+// selected slot's first cache build, or the panel waits for the whole set. Device (`session_20261028_211734.log`,
+// boot1): restore committed 7.87 s, first build 11.88 s, **first content 11.99 s**, and the sweep's first request
+// only at 13.07 s -- paint before sweep. Without the gate the same build started at 15.05 s.
+FLASHMEM __attribute__((noinline)) static bool bootSweepMayRun(uint32_t now) {
+  if (gBootSweepEnqueued) return false;
+  const uint8_t focusTrackIndex = trackManager.getSelectedTrackIndex();
+  if (focusTrackIndex < trackManager.getTrackCount()) {
+    Track& focusTrack = trackManager.getTrack(focusTrackIndex);
+    if (focusTrack.loopsAllocated()) {
+      const Loop& focusLoop = focusTrack.getActiveLoop();
+      if (!focusLoop.visualCache.notes.empty()) return true;
+    }
+  }
+  return static_cast<int32_t>(now - gBootSweepDueMs) >= 0;
+}
+
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
@@ -412,14 +443,29 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady() &&
+  // DEC-184 -- boot title release. The hold used to end only when the whole boot restore queue was empty
+  // (`bootInteractiveReady()`), and the boot queue is each track's selected slot plus its two neighbours: 8 x 3 =
+  // 24 restores on device, ~4 s after the slot the panel actually shows has already committed
+  // (`session_20261028_214829_paintgate5.log`: selected slot committed 6.85 s, title released 10.89 s).
+  // Release as soon as the **selected** slot is settled; the rest of the queue keeps restoring behind the
+  // paint-first background path. An empty selected slot never settles, so that boot keeps the old contract --
+  // and the enqueue is idempotent (`queueDeferredLoopSlotRestoreWithPayloadSource` skips pending entries and
+  // slots that no longer need a load), so the post-boot sweep cannot double-queue the remainder.
+  const bool focusSettledForBootRelease = BootGate::focusSlotSettled(
+      trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses(),
+      StorageManager::isFocusedLoopSlotRestoreWork(), SlotLoadSession::isActive(),
+      StorageManagerInternal::anyLoadLoopJobActive());
+  if (bootSlotLoadRefreshPending &&
+      BootGate::bootTitleMayRelease(StorageManager::bootInteractiveReady(),
+                                    focusSettledForBootRelease) &&
       !timingCriticalTrackActive) {
 #if defined(SESSION_CAPTURE)
     const uint32_t bootCommitStartUs = micros();
 #endif
     bootSlotLoadRefreshPending = false;
     StorageManager::setBootTitleLoadDrain(false);
-    StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
+    gBootSweepDueMs = now + 3000;
+    gBootSweepEnqueued = 0;
     displayManager.finishBootSetup();
     if (!midiHandler.isUsbHostReady()) {
       midiHandler.beginUsbHost();
@@ -441,8 +487,10 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #endif
   }
 
-  // Continue incremental background-fill queue admission across loop turns after title clear.
-  if (!bootSlotLoadRefreshPending) {
+  // Continue incremental background-fill queue admission across loop turns after title clear, but only after the
+  // selected slot has painted (or the bound lapses, so an empty selected slot cannot hold the set back).
+  if (!bootSlotLoadRefreshPending && bootSweepMayRun(now)) {
+    gBootSweepEnqueued = 1;
     StorageManager::enqueueRemainingLoopSlotRestoresFromSd();
   }
 }
@@ -601,8 +649,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
         focusTrackRef.loopsAllocated()) {
       const Loop& focusLoop = focusTrackRef.getActiveLoop();
-      focusVisualCacheNeedsFirstPaint = focusLoop.hasCommittedPasses() &&
-                                        focusLoop.visualCacheDirty &&
+      // A restored slot may carry only a published root (no materialised capture passes), so requiring
+      // `hasCommittedPasses()` here silently dropped the selected slot out of the focus lane: on boot the
+      // round-robin then walked 63 other slots first and the panel painted an empty focused loop for tens of
+      // seconds. The selected slot owns the first paint whenever it has any committed content at all.
+      const bool focusHasContent = focusLoop.hasCommittedPasses() ||
+                                   focusLoop.publishedSnapshotIdentity() != nullptr;
+      focusVisualCacheNeedsFirstPaint = focusHasContent && focusLoop.visualCacheDirty &&
                                         focusLoop.visualCache.notes.empty();
     }
     if (StorageManager::isBootTitleLoadDrain() || focusVisualCacheNeedsFirstPaint) {
@@ -678,7 +731,18 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           [](uint8_t index) { return trackManager.getTrack(index).processDeferredCanonicalPrefix(); })) {
     return; // No other track, visual cleanup, or idle child stacks with this grain.
   }
+  // The selected track is the interaction and paint target, so it gets the realtime idle opportunity before
+  // the background walk (the same priority the stopped lane gives the focus slot). Without this the panel's
+  // own slot waited behind every other loaded track's maintenance.
+  const uint8_t selectedRealtimeTrack = trackManager.getSelectedTrackIndex();
+  if (selectedRealtimeTrack < realtimeTrackCount) {
+    Track& selectedTrack = trackManager.getTrack(selectedRealtimeTrack);
+    if (hasRealtimeIdleWork(selectedTrack)) {
+      selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+    }
+  }
   for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
+    if (i == selectedRealtimeTrack) continue;
     Track& track = trackManager.getTrack(i);
     // Stopped-slot reconstruction is background work. Running every loaded
     // track here stacked 120–281 ms turns into the first recording bars.
@@ -702,6 +766,9 @@ FLASHMEM void setup() {
 #if defined(SESSION_CAPTURE)
   Track::resetPlaybackLaneMeasurement();
 #endif
+  // DEC-183: DMAMEM is not guaranteed zero-initialised here, and a garbage rate-limit stamp makes
+  // `now - stamp` negative for the whole boot, silently suppressing every `paint_gate` row.
+  gPaintGateLastMs = 0;
   HOT_PATH_TELEMETRY_RESET();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
@@ -914,7 +981,31 @@ void loop() {
   const bool deferredIdleOwnerAllowed =
       MidiServiceDrain::allowDeferredIdleOwner(deferredIdleOwner, visualCacheWrapAppendPending);
 #if defined(SESSION_CAPTURE)
-  maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
+  // DEC-183: report-only. Emitted **unconditionally once per second while the boot title drain is active** (plus
+  // whenever a selected slot owes its first paint), because the question is which owner the rotation takes during the
+  // window *before* the first paint -- and a predicate keyed on "owed" proved false there (the selected slot is not
+  // the display slot yet during the drain).
+  {
+    const bool drainActive = StorageManager::isBootTitleLoadDrain();
+    const uint8_t gateTrack = trackManager.getSelectedTrackIndex();
+    bool owed = false;
+    uint16_t focusNotes = 0;
+    if (gateTrack < trackManager.getTrackCount() && trackManager.getTrack(gateTrack).loopsAllocated()) {
+      const Loop& gateLoop = trackManager.getTrack(gateTrack).getActiveLoop();
+      focusNotes = static_cast<uint16_t>(gateLoop.visualCache.notes.size());
+      owed = gateLoop.hasCommittedPasses() && gateLoop.visualCacheDirty &&
+             gateLoop.visualCache.notes.empty();
+    }
+    if ((drainActive || owed) && static_cast<int32_t>(now - gPaintGateLastMs) >= 1000) {
+      gPaintGateLastMs = now;
+      SC_PAINT_GATE(static_cast<uint8_t>(deferredIdleOwner), deferredIdleOwnerAllowed ? 1u : 0u,
+                    drainActive ? 1u : 0u, clockManager.isClockRunning() ? 1u : 0u,
+                    StorageManager::hasPendingLoopSlotRestore() ? 1u : 0u,
+                    StorageManager::hasLoadLoopJobCommitPending() ? 1u : 0u,
+                    StorageManagerInternal::pendingLoopSlotRestoreCount(),
+                    focusNotes, owed ? 1u : 0u);
+    }
+  }
 #endif
 
   // Drain transport commands before a STOPPING grain validates its destination,
@@ -994,6 +1085,7 @@ void loop() {
                       LoopEventStore::freeChunkCount(), census.capturePasses, census.editPasses,
                       census.undoEntries, census.internalBytes, census.editPassBytes,
                       census.undoIdBytes, census.externalBytes);
+      HeapPeakTrace::emitPending(6);
     }
   }
 #endif

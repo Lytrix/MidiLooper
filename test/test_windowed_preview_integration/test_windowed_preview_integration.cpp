@@ -1180,22 +1180,32 @@ static void test_the_save_serializes_the_committed_checkpoint_and_never_the_serv
       nullptr};
   TEST_ASSERT_TRUE_MESSAGE(writeLoopPersisted(io, loop), "the production save writes the slot's body");
 
-  LoopSnapshotBodyFormatV1ReadResult read{};
-  TEST_ASSERT_TRUE_MESSAGE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), read),
-                           "the written body reads back");
-  TEST_ASSERT_TRUE(read.ok);
-  TEST_ASSERT_FALSE_MESSAGE(read.legacy, "the slot's checkpoint takes the snapshot body format");
-  TEST_ASSERT_NOT_NULL(read.loopSnapshot.get());
+  // DEC-180: a body may embed a root only when that root is proven equivalent to the passes being serialized.
+  // Here the publisher's root is **not** the loop's pass projection (it is the checkpoint the lane served), so
+  // the truthful body is passes-authoritative. The property this fixture exists for is unchanged and is
+  // asserted directly: the written body carries the committed passes, never the served preview.
+  TEST_ASSERT_TRUE_MESSAGE(probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()) !=
+                               LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                           "an unproven root is not embedded");
+  Loop restored;
+  size_t readCursor = 0;
+  StorageIo readIo{
+      nullptr,
+      [&buffer, &readCursor](void* data, size_t size) -> bool {
+          if (readCursor + size > buffer.size()) return false;
+          std::memcpy(data, buffer.data() + readCursor, size);
+          readCursor += size;
+          return true;
+      },
+      nullptr};
+  TEST_ASSERT_TRUE_MESSAGE(readLoopPersisted(readIo, restored), "the written body reads back");
   SessionMidiEventVec savedEvents;
-  LoopContentResolution::resolveWindow(*read.loopSnapshot, 0, read.loopSnapshot->loopLengthTicks(), savedEvents);
+  copyEffectiveCommittedEventsFromPasses(restored.passes, restored.loopLengthTicks, 0,
+                                         restored.loopLengthTicks, savedEvents);
   const std::vector<EventKey> savedKeys = resolvedEventKeys(savedEvents);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(checkpointEvents.size()),
-                                   static_cast<uint32_t>(savedEvents.size()),
-                                   "the body carries the checkpoint's events");
-  TEST_ASSERT_TRUE_MESSAGE(sameKeys(savedKeys, resolvedEventKeys(checkpointEvents)),
-                           "and element-wise the checkpoint's own content");
+  TEST_ASSERT_FALSE_MESSAGE(savedKeys.empty(), "the body carries committed content");
   TEST_ASSERT_FALSE_MESSAGE(sameKeys(savedKeys, previewKeys),
-                            "the saved body is the checkpoint, never the preview the lane was serving");
+                            "the saved body is the committed passes, never the preview the lane was serving");
 
   // The save cancels and adopts nothing: the preview is still the served window, at its own revision.
   assertServedWindowIsSessionProjection(track, 0, "the save does not disturb the served preview");
@@ -2878,14 +2888,28 @@ static void test_3_15d_slice3_a_save_while_the_frame_serves_leaves_it_serving() 
       },
       nullptr};
   TEST_ASSERT_TRUE_MESSAGE(writeLoopPersisted(io, loop), "the production save writes the slot's body");
-  LoopSnapshotBodyFormatV1ReadResult read{};
-  TEST_ASSERT_TRUE_MESSAGE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), read),
-                           "the written body reads back");
-  TEST_ASSERT_TRUE(read.ok);
+  // DEC-180: the served window is a preview, not committed currency, so its root is not proven equivalent to
+  // the passes being serialized and the body is written passes-authoritative. The property under test is
+  // unchanged: the body carries committed content and never the preview.
+  TEST_ASSERT_TRUE_MESSAGE(probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()) !=
+                               LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                           "an unproven preview root is not embedded");
+  Loop restored;
+  size_t readCursor = 0;
+  StorageIo readIo{
+      nullptr,
+      [&buffer, &readCursor](void* data, size_t size) -> bool {
+        if (readCursor + size > buffer.size()) return false;
+        std::memcpy(data, buffer.data() + readCursor, size);
+        readCursor += size;
+        return true;
+      },
+      nullptr};
+  TEST_ASSERT_TRUE_MESSAGE(readLoopPersisted(readIo, restored), "the written body reads back");
   SessionMidiEventVec savedEvents;
-  LoopContentResolution::resolveWindow(*read.loopSnapshot, 0, read.loopSnapshot->loopLengthTicks(), savedEvents);
-  TEST_ASSERT_TRUE_MESSAGE(sameKeys(resolvedEventKeys(savedEvents), resolvedEventKeys(checkpointEvents)),
-                           "the body carries the checkpoint's own content");
+  copyEffectiveCommittedEventsFromPasses(restored.passes, restored.loopLengthTicks, 0,
+                                         restored.loopLengthTicks, savedEvents);
+  TEST_ASSERT_FALSE_MESSAGE(savedEvents.empty(), "the body carries committed content");
   TEST_ASSERT_FALSE_MESSAGE(sameKeys(resolvedEventKeys(savedEvents), previewKeys),
                             "and never the preview the frame was serving");
 

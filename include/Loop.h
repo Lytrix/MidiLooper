@@ -995,6 +995,10 @@ struct Loop {
     storePublishedSnapshot(std::move(snapshot), revision, coveredPassRevision);
   }
   const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
+  /// Task 6.4: the box's enumerated pass queue and coverage watermark, so a fixture can prove receipt
+  /// coalescing enumerates exactly what sequential consumption does.
+  std::vector<PassId> pendingSnapshotQueuedPassIdsForTest() const;
+  uint32_t pendingSnapshotCoveredPassRevisionForTest() const;
   /// Queue the last committed pass for publication **without** a session exit, wrap journal or construction -- the
   /// pending shape the owner's gate cannot start on a playing track (a live-overdub pass id awaiting its turn).
   /// Selector fixtures only: no production path can build it without a live overdub session.
@@ -1254,6 +1258,12 @@ struct Loop {
   size_t captureSessionExitTail(CommitReason reason);
   /// Fill the captured tail's final pass id and make it consumable by the publisher.
   bool markSessionExitTailReady(size_t ringIndex, PassId lastPassId);
+  /// Task 6.4: release ring capacity without the publisher. A ready receipt is an inert identity list,
+  /// so adjacent ready receipts at the FIFO head are coalesced into one (order kept), and a `Publishing`
+  /// reserved obligation then moves into the freed slot (`Publishing -> Empty`). Touches neither the
+  /// pending publish box nor any not-ready receipt, so an in-flight stop job's bindings stay intact.
+  /// Ring occupancy is then bounded by outstanding stop jobs, not by unpublished sessions.
+  void settleReadySessionExitReceipts();
   /// earlier receipts drain, ring slots do not.
   SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex);
   const SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex) const;
@@ -1473,6 +1483,13 @@ struct Loop {
   /// True only when an active overdub may consume one fully prepared
   /// canonical-transfer row without growing canonical storage.
   bool hasActiveOverdubTransferAdmission() const;
+  /// Task 6.4: the horizon as counts, so stop admission can charge each outstanding job its own row.
+  /// Rows are prewarmed chunk-id rows (taken at `PrepareTransfer`); headroom is pass-vector capacity
+  /// (consumed at the atomic commit). Both are 0 while a legacy pending capture pass owns the slot.
+  size_t activeOverdubTransferRowCount() const;
+  size_t activeOverdubPassHeadroom() const;
+  /// Task 6.4: low-water test for the deferred top-up of a live overdub chain's horizon.
+  bool activeOverdubTransferHorizonLow() const;
   /// Stage an already canonicalized capture using one prewarmed transfer row.
   /// This is the active-path form of `stagePreparedCapturePass`; it denies
   /// instead of allocating when the declared horizon is exhausted.
@@ -1708,8 +1725,9 @@ struct Loop {
   /// in-flight one rather than being dropped: its enumeration is newer, so the last edge before the
   /// idle lane runs publishes at its own coverage.
   bool requestCommittedPassesOnPublicationLane(bool rebuildFromPassInventory);
-  friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
-                                            PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);
+  friend LoopSlotBodyApply applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
+                                                         PersistedLoopSnapshot&,
+                                                         ImmutableLoopSnapshotRef);
 
   /// Drop the private scan (cursor and staged rows) but keep the retained hold intents.
   void discardPrivateSourceScan();

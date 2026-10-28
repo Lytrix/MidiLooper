@@ -1321,12 +1321,35 @@ static bool writeLegacyLoopPersisted(const StorageIo& io, const Loop& loop) {
                                 loop.passes.loopGeometries, loop.passes.overdubPasses);
 }
 
+namespace {
+/// The loader's own canonical comparator, declared here because the save path decides the body format before
+/// that definition. One notion of equivalence for writer and reader (DEC-179).
+bool checkpointEventsEquivalent(const LoopSnapshot& root, SessionMidiEventVec& passEvents);
+}  // namespace
+
 bool STORAGE_LOOP_IO_MEM writeLoopPersisted(const StorageIo& io, const Loop& loop) {
   if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+    // Both sides are the **frozen** inputs of this save: the settled root to embed, and the pass-derived
+    // oracle that is about to be serialized twice below. Comparing these two needs no further staging, so a
+    // concurrent revision cannot make this "compare B, serialize C".
     const LoopSnapshotRef persistedOracle = loop.sharePassesSnapshot();
     const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
     if (!persistedOracle || !loopSnapshot) {
       return false;
+    }
+    // DEC-179: a body may embed a root **only if that exact root is proven equivalent to the passes being
+    // serialized**, using the loader's own comparator and the same staging shape (root vs the passes'
+    // effective event stream). A mismatch is a *format-selection* result, not a save error: the passes are
+    // authoritative, so the slot is written passes-authoritative instead of writing a body whose root the next
+    // boot is guaranteed to reject (the device's "restore applied saved passes; root not current" loop and its
+    // 11 s rootless paint wait).
+    SessionMidiEventVec saveEvents;
+    copyEffectiveCommittedEventsFromPasses(persistedOracle->passes, persistedOracle->loopLengthTicks, 0,
+                                           persistedOracle->loopLengthTicks, saveEvents);
+    if (!checkpointEventsEquivalent(*loopSnapshot, saveEvents)) {
+      // No serial line from this TU (it links without Arduino's Serial on host, and the save path stays
+      // quiet); the decision is observable in the body itself: passes-authoritative, no embedded root.
+      return writeLegacyLoopPersisted(io, loop);
     }
     return writeLoopSnapshotBodyFormatV1(io, *persistedOracle, *persistedOracle, *loopSnapshot);
   }
@@ -1491,24 +1514,47 @@ STORAGE_LOOP_IO_MEM bool checkpointEventsEquivalent(const LoopSnapshot& root, Se
 }
 }  // namespace
 
-void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
+LoopSlotBodyApply STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
     Loop& loop, Track& track, uint8_t slotIndex, bool usesLoopSnapshotBodyFormatV1,
     PersistedLoopSnapshot& persistedOracle, ImmutableLoopSnapshotRef loadedLoopSnapshot) {
   // 4.2: parity is judged **before** either staged source becomes authoritative. Both sides are staged load data;
-  // the target loop is untouched until the pre-publication comparison passes. A divergent body applies neither the
-  // candidate root nor the candidate passes, so an existing slot keeps its complete previous generation.
+  // the target loop is untouched until the pre-publication comparison passes. A divergent root is never installed,
+  // and an existing slot always keeps its complete previous generation. (An *empty* slot is the one case that must
+  // not end empty: see the mismatch branch.)
   if (usesLoopSnapshotBodyFormatV1 && loadedLoopSnapshot) {
     SessionMidiEventVec passEvents;
     copyEffectiveCommittedEventsFromPasses(persistedOracle.passes, persistedOracle.loopLengthTicks, 0,
                                            persistedOracle.loopLengthTicks, passEvents);
     if (!checkpointEventsEquivalent(*loadedLoopSnapshot, passEvents)) {
-      return;
+      // A divergent root is never installed. Two very different situations reach this point and must not share
+      // one silent outcome:
+      //  - a populated slot already owns a committed generation -> keep it (the previous behaviour, still right);
+      //  - an empty slot (a normal boot restore) has nothing to keep, and returning here left a perfectly valid
+      //    saved loop empty *while the restore request reported `committed`*. The body's passes are the storage
+      //    content; apply them, install no root, and let parity stay NoCheckpoint so nothing presents an
+      //    unverified root as current.
+      const bool hadGeneration = loop.loopLengthTicks != 0 || loop.hasCommittedPasses();
+      if (hadGeneration) return LoopSlotBodyApply::KeptExisting;
+      applySnapshotToLoop(loop, persistedOracle);
+      // Slice C: the restored generation must reach paint. A cache left clean by an earlier slice keeps
+      // serving pre-restore content otherwise (the same shape as the deferred-commit case in
+      // `markDeferredCommitDisplayRanges`), which is how a restored slot paints 0 notes while its passes exist.
+      loop.markDisplayCachesStale();
+      // DEC-088: the saved active pass records still reconstruct per-slot undo for both formats.
+#if defined(PIO_UNIT_TEST_NATIVE)
+      testRecordRebuildSlotFromLoopContentCall();
+#else
+      TrackUndo::rebuildSlotFromLoopContent(track, slotIndex);
+#endif
+      return LoopSlotBodyApply::AppliedPassesOnly;
     }
   }
   applySnapshotToLoop(loop, persistedOracle);
+  // Same paint contract on the coherent path: the loop's content is a new authoritative generation.
+  loop.markDisplayCachesStale();
   if (usesLoopSnapshotBodyFormatV1) {
     if (!loadedLoopSnapshot) {
-      return;
+      return LoopSlotBodyApply::Applied;
     }
     // DEC-073's restore edge. A body carries no coverage figure of its own, so this claim rests on the
     // WRITER's admission (RC2 -- `loopUsesLoopSnapshotBodyFormatV1ForSave`: only a *settled* root is
@@ -1526,6 +1572,7 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
 #else
   TrackUndo::rebuildSlotFromLoopContent(track, slotIndex);
 #endif
+  return LoopSlotBodyApply::Applied;
 }
 
 void applyLoopSlotMetadataToLoop(Loop& loop, const PersistedLoopSnapshot& metadata) {

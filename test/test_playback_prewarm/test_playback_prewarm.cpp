@@ -4642,7 +4642,15 @@ void test_canonical_prefix_live_changes_hide_results_and_restart_on_separate_tur
     TEST_ASSERT_NULL(f.runtime.canonicalPassInputs.data()); // Before any owner service.
     TEST_ASSERT_TRUE(f.needsService());
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, f.step());
-    TEST_ASSERT_TRUE(f.runtime.canonicalPassInputs.idle()); // Cleanup only.
+    // DEC-177: a **revision-only** move is window identity, not history identity -- the committed history is unchanged,
+    // so the build resumes it (inputs stay busy) instead of discarding and replaying it. Generation and loop-length
+    // moves are history/geometry identity and still restart on the cleanup turn.
+    if (field == 0) {
+      TEST_ASSERT_FALSE_MESSAGE(f.runtime.canonicalPassInputs.idle(),
+                                "a revision-only move must resume the certified history, not restart it");
+    } else {
+      TEST_ASSERT_TRUE(f.runtime.canonicalPassInputs.idle()); // Cleanup only.
+    }
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, f.step());
     TEST_ASSERT_FALSE(f.runtime.canonicalPassInputs.idle()); // Setup on a later turn.
     f.finish();

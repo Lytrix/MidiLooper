@@ -535,8 +535,15 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   // slice is a named deferral. Below the cap the declared, capped synchronous resolve still runs.
   bool usedContinuation = false;
   LoopContentResolution::BoundedDisplayRequest continuationRequest;
+  // DEC-179 / display contract: `BoundedContinuation` is a **continuation of an authoritative published
+  // root**, so it is eligible only while that root is current. A legitimately passes-authoritative slot (a
+  // restored body whose root was refused, a legacy body) has no root to continue from; offering it the
+  // continuation made the idle lane re-key the same candidate every turn for ~11 s on device (thousands of
+  // `idle_src,BoundedContinuation` rows, `lcr,srcskip … not_finished`) before falling back. With the gate it
+  // falls through to the capped synchronous `PassesResolve` immediately.
   const bool continuationRequired =
-      !usedSnapshot && !usedPrepared && !isPlaybackSessionExitPublicationGap() &&
+      publishedSnapshotIsCurrent() && !usedSnapshot && !usedPrepared &&
+      !isPlaybackSessionExitPublicationGap() &&
       LoopContentResolution::boundedDisplayNeedsProducer(passes);
   if (continuationRequired) {
     continuationRequest.owner = this;
@@ -617,8 +624,13 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
       // Declared, capped synchronous pass resolve (`kBoundedDisplaySynchronousEventCap`). Work is
       // bounded by the cap, not by the loop; above it the continuation branch above has handled the
       // miss and this slice never reaches here with whole-pass work.
+      // DEC-181 first paint: resolve **this slice's window**, not the whole pass. The chunk-range
+      // window (`CommittedEventRange::inWindow`) skips every chunk that does not intersect it, so the
+      // work is bounded by what the viewport asks for and does not grow with events elsewhere in the
+      // loop. Per-pass local pairing/NoteIds are unchanged (same helper, windowed layer).
       NoteUtils::DisplayNoteVec paired;
-      LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
+      LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, windowStart,
+                                                         windowLength, paired);
       if (!MemoryMonitor::admitDisplayProjectionReserve(
               sizeof(NoteUtils::DisplayNote) * paired.size())) {
         return;

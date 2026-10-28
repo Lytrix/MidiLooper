@@ -534,6 +534,10 @@ struct TrackCaptureStopTestAccess {
   static bool hasReadablePass(Track& t) { return t.ownedPendingCapturePass() != nullptr; }
   static uint64_t interval(const Track& t) { return t.captureInterval_; }
   static size_t jobs(const Track& t) { return t.captureStopQueueDepth(); }
+  static size_t jobCapacity() { return Track::CaptureStopJobs::kCapacity; }
+  static bool reservedObligationHasLiveOwner(const Track& t, const Loop& l) {
+    return t.hasLiveOwnerOfReservedSessionExitObligation(l);
+  }
   static void step(Track& t) {
     const auto* before = t.captureStopJobHead();
     if (before) {
@@ -9608,6 +9612,34 @@ void test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuse
 // actually lapsed. So the ring is the *second* condition, not the first: the refusal in the fixture above needs the
 // lapse (`admission=0`) as well. This control pins the half that must stay true — and is why the discriminating RED
 // belongs on the lapse state, not on ring occupancy alone.
+//
+// Task 6.4: settled (ready) receipts now coalesce at their job's retirement, so a ring of ready receipts no
+// longer fills; a full ring is reachable only behind outstanding stop jobs. The fixture therefore keeps the
+// settled cycles (whose ready receipts stay unconsumed: this shape has no root to publish against) and then
+// fills the ring with back-to-back stops, which is the full-ring shape that remains.
+namespace {
+/// Back-to-back stops (no grain between them) until the receipt ring is full. Returns the stops queued.
+int fillReceiptRingWithOutstandingStops(Track& t, Loop& loop, uint8_t slot) {
+  int queued = 0;
+  uint32_t tick = 96;
+  while (loop.sessionExitReceiptCount() < Loop::kSessionExitReceiptCapacity && queued < 16) {
+    t.setActiveLoopIndex(slot);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "a back-to-back start must be admitted while the ring fills");
+    t.noteOn(1, static_cast<uint8_t>(60 + queued % 12), 100, tick + 12);
+    t.noteOff(1, static_cast<uint8_t>(60 + queued % 12), 0, tick + 60);
+    tick = tick % 672 + 96;
+    clockManager.assignCurrentTickSilently(tick);
+    t.stopOverdubbing();
+    TEST_ASSERT_FALSE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                              "a back-to-back stop must be admitted while the ring fills");
+    ++queued;
+  }
+  return queued;
+}
+}  // namespace
+
 void test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_start() {
   LoopEventStore::initPool();
   Track& t = trackManager.getSelectedTrack();
@@ -9618,8 +9650,7 @@ void test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_star
   Loop& loop = t.getLoop(kSlot);
   char ctx[256];
   int settled = 0;
-  for (int cycle = 0; cycle < 64 && loop.sessionExitReceiptCount() < Loop::kSessionExitReceiptCapacity;
-       ++cycle) {
+  for (int cycle = 0; cycle < 8; ++cycle) {
     const uint32_t tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
     t.setActiveLoopIndex(kSlot);
     clockManager.assignCurrentTickSilently(tick);
@@ -9634,6 +9665,9 @@ void test_4_20_a_full_receipt_ring_alone_does_not_block_an_admitted_overdub_star
     driveStopToRetirement(t);
     ++settled;
   }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, loop.sessionExitReceiptCount(),
+                                   "settled ready receipts coalesce into one (task 6.4)");
+  (void)fillReceiptRingWithOutstandingStops(t, loop, kSlot);
   std::snprintf(ctx, sizeof(ctx),
                 "settled=%d receipts=%zu/%zu passes=%zu phase=%u pendPass=%d admission=%d",
                 settled, loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
@@ -9677,6 +9711,9 @@ void test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_s
   bool ownershipChecked = false;
   for (int cycle = 0; cycle < 64; ++cycle) {
     const uint32_t tick = 96u + static_cast<uint32_t>(cycle % 6) * 96u;
+    // Task 6.4: settled receipts coalesce at their job's retirement, so the full ring is built from
+    // outstanding stops, once, after the record-arm horizon has lapsed and been re-admitted (cycle 16).
+    if (cycle == 20) (void)fillReceiptRingWithOutstandingStops(t, loop, kSlot);
     t.setActiveLoopIndex(kSlot);
     clockManager.assignCurrentTickSilently(tick);
     t.startOverdubbing(tick);
@@ -9704,11 +9741,12 @@ void test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_s
     t.noteOff(1, static_cast<uint8_t>(60 + cycle % 12), 0, tick + 60);
     clockManager.assignCurrentTickSilently(tick + 96u);
     t.stopOverdubbing();
-    driveStopToRetirement(t);
-    if (fullRingStart && !ownershipChecked) {
+    const bool checkOwnership = fullRingStart && !ownershipChecked;
+    if (checkOwnership) {
       ownershipChecked = true;
       // Stop accepted with the ring still full (the loop above would have failed on a refusal), so the
       // interval owes exactly one publication obligation. Exclusive ownership, not "at least one".
+      // Checked at the transfer edge: task 6.4 releases the record when this job retires.
       const Loop::OverdubSessionRetention tail = loop.overdubSessionRetention();
       std::snprintf(ctx, sizeof(ctx),
                     "receipts=%zu/%zu claim=%u queued=%d pendingReceipt=%d sessionPass=%zu "
@@ -9721,15 +9759,24 @@ void test_4_20_lapse_boundary_red_full_ring_does_not_deny_start_and_obligation_s
       // Authorship transferred: the live session no longer owns the ids...
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(tail.passCount), ctx);
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(tail.companionCount), ctx);
-      // ...the admission-reserved record does — it is `Populated` (transferred, not yet ready) or
-      // already `Publishing` when the retirement filled its final pass id in this same turn...
+      // ...the admission-reserved record does (`Populated`: transferred, not yet ready)...
       TEST_ASSERT_TRUE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
       // ...the stop could not take a receipt slot (the ring was and still is full)...
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(Loop::kSessionExitReceiptCapacity,
                                      loop.sessionExitReceiptCount(), ctx);
-      // ...and the ownership is exclusive: `pendingSnapshotSessionExitQueued()` names one obligation
-      // (this one), never a second representation of the same identities.
-      // Exactly-once: capacity returns, the obligation publishes, and further turns do not republish.
+    }
+    driveStopToRetirement(t);
+    if (checkOwnership) {
+      // Task 6.4: the obligation left the reserved record at its own job's retirement, without a publisher
+      // turn: the ring coalesced its ready receipts and took it, so exactly one owner (the ring) holds it.
+      std::snprintf(ctx, sizeof(ctx), "after retirement: receipts=%zu/%zu claim=%u queued=%d",
+                    loop.sessionExitReceiptCount(), Loop::kSessionExitReceiptCapacity,
+                    static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                    loop.pendingSnapshotSessionExitQueued() ? 1 : 0);
+      TEST_ASSERT_FALSE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(loop.sessionExitReceiptCount()), ctx);
+      TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotSessionExitQueued(), ctx);
+      // Exactly-once: the ring receipt publishes, and further turns do not republish.
       const uint32_t revisionBefore = loop.publishedSnapshotRevision();
       for (int turn = 0;
            turn < 4096 &&
@@ -10190,6 +10237,595 @@ void test_long_first_record_stop_with_early_playhead_normalizes() {
   TEST_ASSERT_GREATER_THAN(0, TrackCaptureStopTestAccess::closureRuntime(t).canonicalCaptureOutput.store.size());
 }
 
+// ---------------------------------------------------------------------------------------------
+// **Task 6.4 — start/stop liveness over a continuous overdub chain while playing.**
+//
+// Device shape (`captures/session_20261028_112311.log`): twelve overdubs, each started a second or so after
+// the previous stop, with a current published root; the 13th press logs `Overdub start refused: the
+// session-exit publication obligation is still owned (slot=3 state=populated)`.
+//
+// Production path only: real `startOverdubbing` / `stopOverdubbing`, and every grain between presses comes
+// from `processDeferredIdleMaintenance` on the Snapshot and VisualCache lanes in rotation, exactly the
+// turns `main.cpp` delivers. The publisher is never called directly.
+namespace {
+struct OverdubChainReceipt {
+  int refusedAt = -1;
+  int retainedAt = -1;
+  size_t receipts = 0;
+  unsigned claim = 0;
+  size_t jobs = 0;
+  size_t maxReceipts = 0;
+  int startsRetained = 0;
+  bool retainedWithFullFifo = true;
+};
+
+/// `idleTail` owner turns follow the last retirement: the device runs thousands of idle turns in the
+/// ~1 s before the next press, the fixture grants a handful.
+void driveOwnerRotationUntilStopsRetire(Track& t, unsigned limit = 60000, unsigned idleTail = 8) {
+  unsigned tail = 0;
+  for (unsigned turn = 0; turn < limit && tail < idleTail; ++turn) {
+    const bool busy = TrackCaptureStopTestAccess::jobs(t) > 0 || t.hasAcceptedUnexecutedInteraction();
+    tail = busy ? 0 : tail + 1;
+    t.processDeferredIdleMaintenance(0, false,
+                                     (turn & 1u) ? MidiServiceDrain::DeferredIdleOwner::VisualCache
+                                                 : MidiServiceDrain::DeferredIdleOwner::Snapshot,
+                                     1);
+  }
+}
+
+/// `outstanding` stops are pressed back to back (each next start immediately after a stop, no turn in
+/// between) before the owner rotation runs; the chain then continues with the next start already live.
+OverdubChainReceipt runOverdubChain(Track& t, Loop& loop, int overdubs, int outstanding) {
+  OverdubChainReceipt out;
+  uint32_t tick = 96;
+  auto nextTick = [&tick]() {
+    tick += 96;
+    if (tick % 768 == 0) tick += 96;  // stay inside one loop cycle: no wrap journal opens the publisher
+    return tick;
+  };
+  t.setActiveLoopIndex(0);
+  clockManager.assignCurrentTickSilently(tick);
+  t.startOverdubbing(tick);
+  if (!t.isOverdubbing()) { out.refusedAt = 0; return out; }
+  for (int i = 0; i < overdubs; ++i) {
+    const auto note = static_cast<uint8_t>(48 + i % 24);
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    clockManager.assignCurrentTickSilently(nextTick());
+    t.stopOverdubbing();
+    if (t.isOverdubbing() || t.hasAcceptedUnexecutedInteraction()) {
+      out.retainedAt = i;
+      auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+      std::printf("6.4 retained stop i=%d jobs=%zu owner=%d canonOut=%d transfer=%d tail=%d chunksFree=%u "
+                  "overdubPasses=%zu cap=%zu\n",
+                  i, TrackCaptureStopTestAccess::jobs(t), rt.captureStopOwner != nullptr ? 1 : 0,
+                  rt.canonicalCaptureOutputAdmitted() ? 1 : 0, loop.hasActiveOverdubTransferAdmission() ? 1 : 0,
+                  loop.canCaptureSessionExitTail() ? 1 : 0, LoopEventStore::freeChunkCount(),
+                  loop.passes.overdubPasses.size(), loop.passes.overdubPasses.capacity());
+      return out;
+    }
+    if (i + 1 < overdubs) {
+      t.startOverdubbing(tick);
+      if (!t.isOverdubbing() && t.hasPendingOverdubStart()) {
+        // A retained press must be served, not merely remembered; it is legal only at a full stop FIFO.
+        ++out.startsRetained;
+        out.retainedWithFullFifo &= TrackCaptureStopTestAccess::jobs(t) == TrackCaptureStopTestAccess::jobCapacity();
+        driveOwnerRotationUntilStopsRetire(t);
+      }
+      if (!t.isOverdubbing()) {
+        out.refusedAt = i + 1;
+        out.receipts = loop.sessionExitReceiptCount();
+        out.claim = static_cast<unsigned>(loop.sessionExitPublishClaimState());
+        out.jobs = TrackCaptureStopTestAccess::jobs(t);
+        return out;
+      }
+    }
+    out.maxReceipts = std::max(out.maxReceipts, loop.sessionExitReceiptCount());
+    if ((i + 1) % outstanding == 0 || i + 1 == overdubs) driveOwnerRotationUntilStopsRetire(t);
+  }
+  out.receipts = loop.sessionExitReceiptCount();
+  out.claim = static_cast<unsigned>(loop.sessionExitPublishClaimState());
+  out.jobs = TrackCaptureStopTestAccess::jobs(t);
+  return out;
+}
+}  // namespace
+
+void test_6_4_continuous_overdub_chain_admits_every_start_and_stop() {
+  char ctx[256];
+  char first[256] = "";
+  for (int outstanding = 1; outstanding <= 8; ++outstanding) {
+    setUp();
+    LoopEventStore::initPool();
+    Track& t = trackManager.getTrack(0);
+    t.ensureLoopsAllocated();
+    prepareSlot(t, 0, true);
+    Loop& loop = t.getLoop(0);
+    installCurrentRootForDeferredConvergence(loop);
+    t.forceSetState(TRACK_PLAYING);
+    constexpr int kOverdubs = 24;
+    const OverdubChainReceipt r = runOverdubChain(t, loop, kOverdubs, outstanding);
+    std::snprintf(ctx, sizeof(ctx),
+                  "outstanding=%d refusedAt=%d retainedAt=%d startsRetained=%d fullFifo=%d receipts=%zu/%zu "
+                  "maxReceipts=%zu claim=%u jobs=%zu passes=%zu",
+                  outstanding, r.refusedAt, r.retainedAt, r.startsRetained, r.retainedWithFullFifo ? 1 : 0,
+                  r.receipts, Loop::kSessionExitReceiptCapacity, r.maxReceipts, r.claim, r.jobs,
+                  loop.passes.capturePassCount());
+    std::printf("6.4 chain: %s\n", ctx);
+    // Every M is measured before the verdict, so one run names the refusal index for each queue depth.
+    // Contract: no press is lost (`refusedAt`), no stop is retained under a normal cadence, and a start
+    // may only be retained -- then served -- when the stop FIFO itself is full.
+    const bool ok = r.refusedAt == -1 && r.retainedAt == -1 && r.jobs == 0 &&
+                    r.retainedWithFullFifo &&
+                    (outstanding < static_cast<int>(TrackCaptureStopTestAccess::jobCapacity()) ||
+                     r.startsRetained > 0) &&
+                    (outstanding >= static_cast<int>(TrackCaptureStopTestAccess::jobCapacity()) ||
+                     r.startsRetained == 0) &&
+                    loop.passes.capturePassCount() == 1u + kOverdubs &&
+                    r.claim == static_cast<unsigned>(Loop::SessionExitPublishClaim::Empty);
+    if (!ok && first[0] == '\0') std::snprintf(first, sizeof(first), "%s", ctx);
+  }
+  // Contract: every start is admitted and every stop executes; every interval's pass is committed
+  // (record + one per overdub) and the reserved obligation is released at the end.
+  TEST_ASSERT_TRUE_MESSAGE(first[0] == '\0', first);
+}
+
+/// 6.4 — every admitted overdub stop owns a transfer row. With two rows left, three back-to-back stops must
+/// not all be admitted against them: the old instantaneous `hasActiveOverdubTransferAdmission()` admitted all
+/// three and the third wedged at `PrepareTransfer` forever (no start can re-prewarm while a job is pending).
+/// The third is retained instead, and served once the jobs drain and the live chain's horizon is topped up.
+void test_6_4_outstanding_stops_never_share_the_last_transfer_row() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  char ctx[256];
+  uint32_t tick = 96;
+  auto cycleStart = [&](int i) {
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    std::snprintf(ctx, sizeof(ctx), "start i=%d rows=%zu headroom=%zu jobs=%zu", i,
+                  loop.activeOverdubTransferRowCount(), loop.activeOverdubPassHeadroom(),
+                  TrackCaptureStopTestAccess::jobs(t));
+    TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), ctx);
+    const auto note = static_cast<uint8_t>(48 + i % 24);
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    tick = tick % 672 + 96;
+    clockManager.assignCurrentTickSilently(tick);
+    t.stopOverdubbing();
+  };
+  // Settled cycles (each stop retires before the next start, the track is PLAYING in between) consume the
+  // record-arm horizon down to two rows; nothing re-prewarms it, because it has not lapsed.
+  int i = 0;
+  for (; i < PassConfig::ACTIVE_OVERDUB_TRANSFER_HORIZON - 2; ++i) {
+    cycleStart(i);
+    driveOwnerRotationUntilStopsRetire(t);
+  }
+  std::snprintf(ctx, sizeof(ctx), "precondition rows=%zu headroom=%zu", loop.activeOverdubTransferRowCount(),
+                loop.activeOverdubPassHeadroom());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(2, loop.activeOverdubTransferRowCount(), ctx);
+  // Three back-to-back intervals, no grain between them.
+  cycleStart(i++);
+  cycleStart(i++);
+  cycleStart(i++);
+  const bool thirdRetained = t.isOverdubbing() && t.hasAcceptedUnexecutedInteraction();
+  driveOwnerRotationUntilStopsRetire(t);
+  std::snprintf(ctx, sizeof(ctx),
+                "thirdRetained=%d jobs=%zu headPhase=%u latch=%d overdubbing=%d passes=%zu rows=%zu",
+                thirdRetained ? 1 : 0, TrackCaptureStopTestAccess::jobs(t),
+                TrackCaptureStopTestAccess::jobs(t) ? static_cast<unsigned>(TrackCaptureStopTestAccess::phase(t))
+                                                    : 99u,
+                t.hasAcceptedUnexecutedInteraction() ? 1 : 0, t.isOverdubbing() ? 1 : 0,
+                loop.passes.capturePassCount(), loop.activeOverdubTransferRowCount());
+  std::printf("6.4 transfer rows: %s\n", ctx);
+  TEST_ASSERT_TRUE_MESSAGE(thirdRetained, ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), ctx);
+  TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(), ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1u + static_cast<unsigned>(i), loop.passes.capturePassCount(), ctx);
+}
+
+/// 6.4 — coalescing ready receipts is invisible to the publisher: the box enumerates the same pass ids in
+/// the same order, the same counted companions (an undone redo tail stays excluded), the same coverage
+/// watermark and the newest reason, as when the same receipts are consumed one per turn.
+namespace {
+struct CoalescedBoxReceipt {
+  std::vector<PassId> passIds;
+  std::vector<EditPassId> companionIds;
+  uint32_t coverage = 0;
+  bool sessionExitQueued = false;
+  size_t receiptsBeforeConsume = 0;
+};
+
+CoalescedBoxReceipt consumeReadyReceipts(bool coalesce) {
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  installCurrentRootForDeferredConvergence(loop);
+  PassId next = 100;
+  for (int r = 0; r < 4; ++r) {
+    loop.openOverdubSession(0, /*forceNew=*/true);
+    const auto base = static_cast<EditPassId>(500 + r * 10);
+    loop.pushOverdubSessionPass(next++, EditPassIdList{base});
+    loop.pushOverdubSessionPass(next++, EditPassIdList{static_cast<EditPassId>(base + 1),
+                                                       static_cast<EditPassId>(base + 2)});
+    // An undone wrap: the row stays in the receipt past its cursor and must never be published.
+    if (r == 1) (void)loop.undoOverdubSession();
+    const size_t ring = loop.captureSessionExitTail(r == 3 ? CommitReason::OverdubStopToStopped
+                                                           : CommitReason::OverdubStop);
+    TEST_ASSERT_NOT_EQUAL(Loop::kInvalidSessionExitReceipt, ring);
+    TEST_ASSERT_TRUE(loop.markSessionExitTailReady(ring, next++));
+  }
+  if (coalesce) loop.settleReadySessionExitReceipts();
+  CoalescedBoxReceipt out;
+  out.receiptsBeforeConsume = loop.sessionExitReceiptCount();
+  // One receipt per publisher turn, and assembly never shares a turn with construction, so stopping as
+  // soon as the ring is empty observes the assembled queue before any construction consumes it.
+  for (int turn = 0; turn < 16 && loop.hasPendingSessionExitReceipt(); ++turn) {
+    (void)loop.stepPendingSnapshotPublish(64);
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSessionExitReceipt());
+  out.passIds = loop.pendingSnapshotQueuedPassIdsForTest();
+  if (const EditPassIdList* ids = loop.pendingSnapshotCompanionIds()) {
+    out.companionIds.assign(ids->begin(), ids->end());
+  }
+  out.coverage = loop.pendingSnapshotCoveredPassRevisionForTest();
+  out.sessionExitQueued = loop.pendingSnapshotSessionExitQueued();
+  return out;
+}
+}  // namespace
+
+void test_6_4_coalesced_receipts_enumerate_exactly_what_sequential_consumption_does() {
+  LoopEventStore::initPool();
+  const CoalescedBoxReceipt sequential = consumeReadyReceipts(false);
+  const CoalescedBoxReceipt coalesced = consumeReadyReceipts(true);
+  char ctx[256];
+  std::snprintf(ctx, sizeof(ctx), "receipts seq=%zu coal=%zu passes seq=%zu coal=%zu comps seq=%zu coal=%zu "
+                "coverage seq=%lu coal=%lu",
+                sequential.receiptsBeforeConsume, coalesced.receiptsBeforeConsume, sequential.passIds.size(),
+                coalesced.passIds.size(), sequential.companionIds.size(), coalesced.companionIds.size(),
+                static_cast<unsigned long>(sequential.coverage), static_cast<unsigned long>(coalesced.coverage));
+  std::printf("6.4 coalescing: %s\n", ctx);
+  for (const auto* r : {&sequential, &coalesced}) {
+    std::printf("6.4 coalescing companions:");
+    for (const EditPassId id : r->companionIds) std::printf(" %u", static_cast<unsigned>(id));
+    std::printf("\n");
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(4, sequential.receiptsBeforeConsume, ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, coalesced.receiptsBeforeConsume, ctx);
+  // 4 receipts x (2 wrap passes + final pass) = 12 pass ids, in order.
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(12, sequential.passIds.size(), ctx);
+  TEST_ASSERT_TRUE_MESSAGE(sequential.passIds == coalesced.passIds, ctx);
+  // 3 companions per receipt, minus the 2 on receipt 1's undone row = 10.
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(10, sequential.companionIds.size(), ctx);
+  TEST_ASSERT_TRUE_MESSAGE(sequential.companionIds == coalesced.companionIds, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(sequential.coverage, coalesced.coverage, ctx);
+  TEST_ASSERT_EQUAL_MESSAGE(sequential.sessionExitQueued, coalesced.sessionExitQueued, ctx);
+}
+
+/// 6.4b — device `session_20261028_143115.log`: one retained start at 146.1 s, then 18 presses over 37 s that never
+/// started, while the stop FIFO drained normally. Only a stop job's own cleanup can move the obligation
+/// `Populated -> Publishing`; once that job has retired, nothing owns the record any more and it refused every later
+/// start forever. An orphaned obligation owns committed identities, so it must be **published**, not dropped, and the
+/// next start must be admitted.
+void test_6_4_orphaned_reserved_obligation_is_published_and_does_not_refuse_the_next_start() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  clockManager.assignCurrentTickSilently(96);
+  char ctx[256];
+
+  // Manufacture the device state: the obligation is `Populated` with an interval that retired long ago, i.e. no
+  // pending stop job references the reserved record.
+  TEST_ASSERT_TRUE(loop.claimSessionExitPublishOwner());
+  loop.openOverdubSession(0, /*forceNew=*/true);
+  loop.pushOverdubSessionPass(7, EditPassIdList{});
+  TEST_ASSERT_TRUE_MESSAGE(loop.transferSessionExitToReservedPublishOwner(loop.sessionExitPublishClaimIdentity()),
+                           "the reserved record must take the tail");
+  // The interval that produced the record is gone: its session closed, no job owns it. (Closing releases only a
+  // payload-free `Reserved` claim; a `Populated` record is never dropped.)
+  loop.closeOverdubSession();
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), "no job owns the record in this shape");
+  std::snprintf(ctx, sizeof(ctx), "claim=%u jobs=%zu receipts=%zu",
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                TrackCaptureStopTestAccess::jobs(t), loop.sessionExitReceiptCount());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(Loop::SessionExitPublishClaim::Populated),
+                                   static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::reservedObligationHasLiveOwner(t, loop) == false,
+                           "precondition: the record has no live owner");
+
+  t.startOverdubbing(96);
+  std::snprintf(ctx, sizeof(ctx), "claim=%u jobs=%zu receipts=%zu passes=%zu",
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                TrackCaptureStopTestAccess::jobs(t), loop.sessionExitReceiptCount(),
+                loop.passes.capturePassCount());
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), ctx);
+  // The orphan was published (moved into the receipt ring), not dropped: exactly one owner downstream.
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasReservedSessionExitObligation(), ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(loop.sessionExitReceiptCount()), ctx);
+  t.noteOn(1, 60, 100, 108);
+  t.noteOff(1, 60, 0, 150);
+  t.stopOverdubbing();
+  driveOwnerRotationUntilStopsRetire(t);
+  std::snprintf(ctx, sizeof(ctx), "after stop: claim=%u jobs=%zu receipts=%zu",
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                TrackCaptureStopTestAccess::jobs(t), loop.sessionExitReceiptCount());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(Loop::SessionExitPublishClaim::Empty),
+                                   static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+}
+
+/// 6.4c / DEC-177 — the queue service cost. Each queued stop used to replay the whole committed history
+/// (`base_build_progress read=574..771`, ~8.5 s/job) because a live successor legitimately moved the *window*
+/// identity (`playbackRevision`/`snapshotIdentity`). The prepared prefix's **committed-history** identity is now
+/// certified separately, so a stop whose inventory is that history plus exactly one appended pass resumes from the
+/// retained normalized output instead. Oracle: the resume counter, and the retained pass count that a replay resets.
+void test_6_4c_a_queued_stop_resumes_the_certified_history_instead_of_replaying_it() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  char ctx[256];
+  constexpr int kOverdubs = 8;
+  // Two stops outstanding at a time: a successor is live while the predecessor retires, which is the shape that
+  // invalidated the window identity on device.
+  const uint32_t resumesBefore = canonicalPrefixAppendResumeTotal();
+  const OverdubChainReceipt r = runOverdubChain(t, loop, kOverdubs, /*outstanding=*/2);
+  const uint32_t resumesInChain = canonicalPrefixAppendResumeTotal() - resumesBefore;
+  const auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  std::snprintf(ctx, sizeof(ctx),
+                "refusedAt=%d retainedAt=%d resumes=%u completedPasses=%zu passes=%zu jobs=%zu",
+                r.refusedAt, r.retainedAt, rt.canonicalPrefixAppendResumes,
+                rt.canonicalPassInputs.completedPassCount(), loop.passes.capturePassCount(),
+                TrackCaptureStopTestAccess::jobs(t));
+  std::printf("6.4c history reuse: %s resumesInChain=%u\n", ctx, resumesInChain);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, r.refusedAt, ctx);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, r.retainedAt, ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1u + kOverdubs, loop.passes.capturePassCount(), ctx);
+  // Every queued stop after the first must reuse the committed history -- by resuming a certified append across a
+  // moved window identity, or by continuing the retained prefix when the window identity did not move at all -- and
+  // never by replaying the committed passes.
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(static_cast<unsigned>(kOverdubs - 2), resumesInChain, ctx);
+  // And the resumed build keeps its normalized output: the retained pass count does not fall back to zero.
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(static_cast<size_t>(kOverdubs - 2),
+                                       rt.canonicalPassInputs.completedPassCount(), ctx);
+}
+
+/// 6.4c negative (DEC-177) — the resume licence is **authority**, not convenience: it holds only for a certified
+/// history plus exactly one appended pass. Two appended passes, a same-count mutation, or a changed earlier row must
+/// each invalidate it, so the optimization can never weaken the "history changed" semantics it rides on.
+void test_6_4c_only_a_certified_append_may_resume_the_history() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  char ctx[256];
+  const OverdubChainReceipt r = runOverdubChain(t, loop, /*overdubs=*/4, /*outstanding=*/1);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, r.refusedAt, "the chain must be admitted");
+  const auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const size_t certified = rt.canonicalPrefixCertifiedPasses;
+  std::snprintf(ctx, sizeof(ctx), "certified=%d certifiedPasses=%zu passes=%zu", rt.canonicalPrefixCertified ? 1 : 0,
+                certified, loop.passes.capturePassCount());
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPrefixCertified, ctx);
+  TEST_ASSERT_GREATER_THAN_MESSAGE(0, certified, ctx);
+
+  // Grow the inventory to exactly the certified history, then to certified + 1 (one append) and + 2 (two).
+  auto growTo = [&](size_t targetPasses) {
+    while (loop.passes.capturePassCount() < targetPasses) {
+      OverdubPass row{};
+      row.id = loop.passes.overdubPasses.empty() ? 900 : loop.passes.overdubPasses.back().id + 1;
+      loop.passes.overdubPasses.push_back(row);
+    }
+  };
+  // The certified shape is the committed history the retained prefix represents; the live inventory is that shape.
+  std::snprintf(ctx, sizeof(ctx), "certified=%zu passes=%zu overdubs=%zu", certified,
+                loop.passes.capturePassCount(), loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(loop.passes.capturePassCount(), certified, ctx);
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPrefixHistoryIsCertifiedAppend(loop.passes),
+                           "the certified history itself is reusable as-is");
+  growTo(certified + 1);
+  TEST_ASSERT_TRUE_MESSAGE(rt.canonicalPrefixHistoryIsCertifiedAppend(loop.passes),
+                           "exactly one appended pass over the certified history is the legitimate case");
+  // Same count, changed state: an undo/replacement shape, never an append.
+  loop.passes.overdubPasses.back().state = CapturePassState::Disabled;
+  TEST_ASSERT_FALSE_MESSAGE(rt.canonicalPrefixHistoryIsCertifiedAppend(loop.passes),
+                            "a same-count mutation must never license a resume");
+  loop.passes.overdubPasses.back().state = CapturePassState::Active;
+  // Two appended passes: the build never certified the second one.
+  growTo(certified + 2);
+  TEST_ASSERT_FALSE_MESSAGE(rt.canonicalPrefixHistoryIsCertifiedAppend(loop.passes),
+                            "two appended passes must never license a resume");
+  // An undo inside the certified prefix (a disabled earlier row) invalidates it as well.
+  loop.passes.overdubPasses.front().state = CapturePassState::Disabled;
+  TEST_ASSERT_FALSE_MESSAGE(rt.canonicalPrefixHistoryIsCertifiedAppend(loop.passes),
+                            "a disabled earlier row must never license a resume");
+}
+
+/// DEC-178 (rate) — the stop lane's wall-clock cost on device is scheduler cadence, not CPU: a deferred stop grain
+/// measured 60-380 us (22 `PrepareTransfer` grains for 20 jobs, 76 us each), while one job took ~1.4 s because the lane
+/// got exactly **one grain per owner turn**. The contract this pins: with a backlog (>1 queued job) one owner turn
+/// delivers a bounded burst; with no backlog the old single-grain cadence is untouched.
+void test_6_5_backlogged_stops_burst_within_a_bounded_turn() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  char ctx[256];
+  // One stop: no backlog. The old cadence must hold -- exactly one grain per owner turn.
+  start(t, 0, true, 96, 60);
+  stop(t, true, 192);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t), "one stop owns the queue");
+  t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  std::snprintf(ctx, sizeof(ctx), "single-job turn grains=%u", stopGrainBurstLastTurnGrains());
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, stopGrainBurstLastTurnGrains(), ctx);
+  // Drain it, then build a backlog of four stops with no owner turns between them.
+  for (unsigned turn = 0; turn < 40000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), "the single stop must retire");
+  int queued = 0;
+  for (int i = 0; i < 4; ++i) {
+    start(t, 0, true, 768u + static_cast<uint32_t>(i) * 96u, static_cast<uint8_t>(60 + i));
+    stop(t, true, 768u + static_cast<uint32_t>(i) * 96u + 96u);
+    if (TrackCaptureStopTestAccess::jobs(t) > queued) ++queued;
+  }
+  std::snprintf(ctx, sizeof(ctx), "backlog queued=%d jobs=%zu", queued,
+                TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_GREATER_THAN_MESSAGE(1, queued, ctx);
+  // One owner turn with a backlog must deliver a burst, not a single grain...
+  t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  const unsigned burst = stopGrainBurstLastTurnGrains();
+  std::snprintf(ctx, sizeof(ctx), "backlog turn grains=%u jobs=%zu", burst,
+                TrackCaptureStopTestAccess::jobs(t));
+  std::printf("6.5 burst: %s\n", ctx);
+  TEST_ASSERT_GREATER_THAN_MESSAGE(1u, burst, ctx);
+  // ...and it stays bounded: never more than the declared per-turn cap.
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(8u, burst, ctx);
+  // The queue still drains completely, and every stop retires (no retention, no lost press).
+  for (unsigned turn = 0; turn < 40000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  std::snprintf(ctx, sizeof(ctx), "final jobs=%zu passes=%zu", TrackCaptureStopTestAccess::jobs(t),
+                loop.passes.capturePassCount());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1u + 1u + 4u, loop.passes.capturePassCount(), ctx);
+}
+
+/// DEC-178 queue-level RED — the producer/consumer mismatch made explicit. 22 overdubs at a ~1 s interaction cadence,
+/// with only a *couple* of owner turns granted per press interval (the scarce resource on device), a successor always
+/// live. Old lane: one grain per turn, so the queue grows and stops are retained. New lane: a backlogged turn bursts
+/// within its cap, so the queue stays bounded and no press is retained.
+void test_6_5_rapid_overdub_queue_does_not_grow() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  char ctx[256];
+  constexpr int kOverdubs = 22;
+  // What one press interval buys on device: the measured lane delivered ~21 deferred turns per second
+  // (`session_20261028_155453.log`: 610 grains over ~28 s), so a 1 s press interval is modelled as 20 turns.
+  constexpr int kOwnerTurnsPerPress = 20;
+  size_t maxQueue = 0;
+  int retainedStop = -1;
+  int retainedStops = 0;
+  int refusedStart = -1;
+  int retainedStart = -1;
+  uint32_t tick = 96;
+  for (int i = 0; i < kOverdubs; ++i) {
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    if (!t.isOverdubbing()) {
+      if (t.hasPendingOverdubStart()) retainedStart = i; else refusedStart = i;
+      break;
+    }
+    const auto note = static_cast<uint8_t>(48 + i % 24);
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    tick = tick % 672 + 96;
+    clockManager.assignCurrentTickSilently(tick);
+    t.stopOverdubbing();
+    if (t.hasAcceptedUnexecutedInteraction()) {
+      // A retained stop is legal *if it is served*: drive the lane and require the interval to end. (On device the
+      // remaining cause is a depleting transfer horizon during a back-to-back chain; see DEC-178 findings.)
+      ++retainedStops;
+      for (unsigned turn = 0; turn < 4000 && t.hasAcceptedUnexecutedInteraction(); ++turn) {
+        t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+      }
+      if (t.hasAcceptedUnexecutedInteraction()) { retainedStop = i; break; }
+    }
+    maxQueue = std::max(maxQueue, TrackCaptureStopTestAccess::jobs(t));
+    for (int turn = 0; turn < kOwnerTurnsPerPress; ++turn) {
+      t.processDeferredIdleMaintenance(0, false,
+                                       (turn & 1) ? MidiServiceDrain::DeferredIdleOwner::Snapshot
+                                                  : MidiServiceDrain::DeferredIdleOwner::VisualCache,
+                                       1);
+    }
+    maxQueue = std::max(maxQueue, TrackCaptureStopTestAccess::jobs(t));
+  }
+  std::snprintf(ctx, sizeof(ctx),
+                "refusedStart=%d retainedStart=%d retainedStop=%d retainedServed=%d maxQueue=%zu jobs=%zu "
+                "passes=%zu",
+                refusedStart, retainedStart, retainedStop, retainedStops, maxQueue,
+                TrackCaptureStopTestAccess::jobs(t),
+                loop.passes.capturePassCount());
+  std::printf("6.5 queue: %s\n", ctx);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, refusedStart, ctx);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, retainedStart, ctx);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-1, retainedStop, ctx);
+  // The producer runs at ~1 job/press; the consumer must keep up within a bounded queue, not grow monotonically.
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(static_cast<size_t>(4), maxQueue, ctx);
+  for (unsigned turn = 0; turn < 40000 && TrackCaptureStopTestAccess::jobs(t) > 0; ++turn) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1u + kOverdubs, loop.passes.capturePassCount(), ctx);
+}
+
+/// Control for 6.4: the same production turns, but every stop is settled **before** the next start (a pause
+/// in the gesture). Then turns exist where the track is neither overdubbing nor owing a stop, the publisher
+/// consumes the receipts, and no start is ever refused. This isolates the cause to *when* the publisher may
+/// run, not to how many stops are outstanding.
+void test_6_4_control_a_paused_chain_drains_the_receipt_ring() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  char ctx[256];
+  size_t maxReceipts = 0;
+  constexpr int kOverdubs = 24;
+  uint32_t tick = 96;
+  for (int i = 0; i < kOverdubs; ++i) {
+    t.setActiveLoopIndex(0);
+    clockManager.assignCurrentTickSilently(tick);
+    t.startOverdubbing(tick);
+    std::snprintf(ctx, sizeof(ctx), "i=%d receipts=%zu claim=%u jobs=%zu", i, loop.sessionExitReceiptCount(),
+                  static_cast<unsigned>(loop.sessionExitPublishClaimState()), TrackCaptureStopTestAccess::jobs(t));
+    TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), ctx);
+    const auto note = static_cast<uint8_t>(48 + i % 24);
+    t.noteOn(1, note, 100, tick + 12);
+    t.noteOff(1, note, 0, tick + 60);
+    tick += 96;
+    if (tick % 768 == 0) tick += 96;
+    clockManager.assignCurrentTickSilently(tick);
+    t.stopOverdubbing();
+    TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(), ctx);
+    driveOwnerRotationUntilStopsRetire(t);
+    for (unsigned turn = 0; turn < 4096 && loop.sessionExitReceiptCount() != 0; ++turn) {
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    }
+    maxReceipts = std::max(maxReceipts, loop.sessionExitReceiptCount());
+  }
+  std::snprintf(ctx, sizeof(ctx), "maxReceipts=%zu passes=%zu claim=%u", maxReceipts,
+                loop.passes.capturePassCount(), static_cast<unsigned>(loop.sessionExitPublishClaimState()));
+  std::printf("6.4 paused control: %s\n", ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1 + kOverdubs, loop.passes.capturePassCount(), ctx);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, maxReceipts, ctx);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses);
@@ -10198,6 +10834,15 @@ int main() {
   RUN_TEST(test_4_20_reserved_transfer_keeps_exactly_one_owner_of_the_session_ids);
   RUN_TEST(test_4_20_settled_overdub_heap_plateau_measurement_128_cycles);
   RUN_TEST(test_4_20_allocation_census_matches_the_owners_it_reports);
+  RUN_TEST(test_6_4_continuous_overdub_chain_admits_every_start_and_stop);
+  RUN_TEST(test_6_4_control_a_paused_chain_drains_the_receipt_ring);
+  RUN_TEST(test_6_4_outstanding_stops_never_share_the_last_transfer_row);
+  RUN_TEST(test_6_4_coalesced_receipts_enumerate_exactly_what_sequential_consumption_does);
+  RUN_TEST(test_6_4_orphaned_reserved_obligation_is_published_and_does_not_refuse_the_next_start);
+  RUN_TEST(test_6_4c_a_queued_stop_resumes_the_certified_history_instead_of_replaying_it);
+  RUN_TEST(test_6_4c_only_a_certified_append_may_resume_the_history);
+  RUN_TEST(test_6_5_backlogged_stops_burst_within_a_bounded_turn);
+  RUN_TEST(test_6_5_rapid_overdub_queue_does_not_grow);
   RUN_TEST(test_long_chromatic_record_rounded_stop_preparation_progresses_with_live_successor);
   RUN_TEST(test_record_button_starts_overdub_instead_of_muting_private_record);
   RUN_TEST(test_private_record_overdub_intent_survives_denial_and_starts_once);
