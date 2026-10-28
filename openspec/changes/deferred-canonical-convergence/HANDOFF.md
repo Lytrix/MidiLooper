@@ -11,6 +11,103 @@ Read `AGENTS.md` first; it is the entry point and this file does not override it
 
 ---
 
+## 0. MAIN ISSUE (owner's report, highest priority): after ~a dozen overdubs while playing, pressing
+## Record/Overdub neither starts nor stops an overdub
+
+**Owner's words:** "new overdubs cannot be started or stopped after X times while playing." The display still
+shows content and playback keeps running; the *gesture* stops working. This is a liveness defect in the deferred
+pipeline, not a content defect, and it is the issue that actually stops the owner's use of the instrument.
+
+### Measured shape
+
+**Start side — silent refusal.** Every occurrence is one button press that did nothing:
+
+```
+Overdub start refused: the session-exit publication obligation is still owned (slot=3 state=populated)
+```
+
+| capture | refusals |
+|---|---|
+| `session_20261027_140638.log` | 5 |
+| `session_20261027_172742.log` | 6 |
+| `session_20261027_190457.log` | 7 |
+| `session_20261027_201722.log` | 5 |
+| `session_20261027_211702.log` | 4 |
+| `session_20261027_214639.log` | 4 |
+| `session_20261027_231625.log` | 6 |
+| `session_20261027_235228.log` | 6 |
+| `session_20261028_110951.log` | 3 (132.8 / 134.7 / 136.0 s) |
+| `session_20261028_112311.log` | 3 (142.4 / 144.2 / 145.2 s, after the 12th overdub) |
+
+**Stop side — swallowed stop.** The stop is accepted but never executed while the head job is stuck:
+
+```
+Overdub stop retained (capacity): stop_job_pending slot=3 interval=17 phase=2 …
+```
+
+| capture | retained stops | head job |
+|---|---|---|
+| `session_20261027_160050.log` | 4 | unnamed (older image) |
+| `session_20261027_161759.log` | 4 | Record stop parked at `CanonicalOrder` (DEC-166 work) |
+| `session_20261028_104547.log` | 14 | Record normalization `preparation_denied` (wedge) |
+
+### Leading hypothesis (NOT proven — this is what to test)
+
+The two symptoms are one pipeline: **the reserved session-exit publication obligation stays `Populated` for as
+long as any stop job is outstanding, and the start admission guard refuses while it is owned.** DEC-168 already
+recorded the mechanism from the other side (`TrackOverdubLifecycle.cpp:~3300`): *"seven queued retargeted jobs …
+held the reserved session-exit record `Populated` and refused every overdub start for ~26 s."*
+
+Correlation in hand for the last capture: at the first refusal (142.4 s) the slot had `cap=9` passes after
+12 overdub starts — i.e. **three stop jobs were still outstanding** — and two of them were logging
+`canonical bridge window denied; companion path kept` stalls at 139.2 s and 144.5 s. The obligation drains only
+after the transport stop at 147 s flushes the queue (`cap` reaches 13).
+
+If that holds, the root cause is **stop-job latency**, and the refusal is its second-order symptom: the
+audio-visible defect (companions lost on the slow/retargeted route) and the gesture-visible defect
+(no new overdub) share one owner. The DEC-168 escape *moved* the latency rather than removing it; correction 4
+then restored the companion publish, and this refusal is what remains.
+
+### Root-cause questions (in order)
+
+1. **Who moves the obligation `Populated → Publishing → Empty`, and what can delay it?** Locate
+   `claimOverdubSessionExitObligation` (DEC-163), `ensureSessionExitReceiptRing`, `captureSessionExitTail`, the
+   receipt FIFO and the publisher lane. Enumerate every wait that can sit between `Populated` and the publisher
+   consuming the receipt.
+2. **Is the obligation held per stop job or per slot?** If one stop's receipt is the token, an outstanding
+   (slow) stop job blocks every start. If so, the admission guard converts *any* stop latency into a *user-visible
+   refusal* — the wrong coupling.
+3. **Is the refusal returned to the user?** Today it is a `WARN` row only; the button press yields nothing. Decide
+   whether an accepted-and-queued gesture (one pending start, retried) is the right contract instead of a refusal.
+4. **Can this deadlock?** Check the ordering: start admission refuses while the obligation is owned; the
+   obligation waits for a stop job to publish; the stop job may need admission (chunk credits, transfer horizon,
+   view prewarm) that the refused start never released. `session_20261028_104547.log` (14 retained stops plus a
+   wedged head) is the best candidate for a real cycle — test whether the wedge there is circular or merely slow.
+5. **What is the bounded behaviour?** There must be a named bound: after N turns the obligation either publishes
+   or is abandoned with a reason, and starts resume. Find whether such a bound exists at all.
+
+### Falsification plan (host-first)
+
+- Fixture: drive M outstanding overdub stops (M = 1…8) without letting the publisher drain, and assert the start
+  admission result for each M. Expected RED today: some M refuses. Then assert the *contract* you choose — either
+  queued-and-served within bounded turns, or an explicit capacity refusal with a named reason and no lost press.
+- Instrument (only if the fixture cannot reach it): add the obligation state + the owning job's identity/phase to
+  the existing refusal row, so the device names its holder instead of only its state.
+- Device confirmation, no new image until the fixture reds: `captures/session_20261028_112311.log` already shows
+  the correlation; a fresh capture with the instrumented row would name the holder.
+
+### Acceptance for the main issue
+
+- 20+ consecutive overdubs while playing: every start starts and every stop stops.
+- No `Overdub start refused: … still owned` row in a healthy take, and no `Overdub stop retained (capacity)` when
+  the transport is running normally.
+- If a bounded capacity refusal is genuinely unavoidable, the press is remembered and served when capacity
+  returns — never silently dropped.
+- The DEC-168 latency gain is preserved (no return to ~26 s stalls), and the companion publish from corrections
+  3–4 still happens.
+
+---
+
 ## 1. What is already fixed (do not re-litigate)
 
 The owner's complaint was: **overdubbed notes stay audible but disappear from the display.** Four corrections
@@ -35,7 +132,7 @@ gates: each removal is pinned by a fixture that reds if it returns.
 
 ## 2. The open defect
 
-**Statement.** Some overdub stops still commit **raw-only** and permanently discard the companion / note-edit
+**Statement (secondary to §0).** Some overdub stops still commit **raw-only** and permanently discard the companion / note-edit
 representation. Their notes therefore never appear on the display, even though they play back. The deferred
 convergence obligation is marked on these routes, but it rebuilds the **canonical bridge-base window**, which is
 not the artifact the display reads, and its target identity would move when a companion commit lands

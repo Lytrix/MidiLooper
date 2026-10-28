@@ -68,3 +68,11 @@
       overdubbed notes**. Still uncovered in that capture: one `no canonical base` stop and three `retargeted` stops
       at a transport stop (both raw-only), so this task stays open for 6.1b/6.2.
 - [x] 6.0 (done 2026-10-27) The three implementation defects the capture exposed: Track-level abandonment (now per job, fixture 1.11), the supersession gate's wrong premise (removed; obligation recorded after the raw commit), and `reset()` as a false slot-incarnation boundary (obligation survives a playback reset, cancelled only by a restarted timeline, fixture 1.10).
+- [ ] 6.4 **(MAIN ISSUE, owner report 2026-10-28)** After ~a dozen overdubs while playing, a Record/Overdub press
+      neither starts nor stops: `Overdub start refused: the session-exit publication obligation is still owned
+      (slot=3 state=populated)` (3-7× in ten captures), and stops are swallowed as
+      `Overdub stop retained (capacity): stop_job_pending` (4/4/14 rows in three captures). Leading hypothesis:
+      any outstanding stop job holds the reserved session-exit obligation, so stop latency becomes a start
+      refusal. Verify: a fixture with M outstanding stops shows the refusal; find who moves
+      `Populated -> Publishing -> Empty` and bound it. Accept: 20+ consecutive overdubs start and stop, no
+      silent press loss, DEC-168 latency gain preserved. Details and falsification plan: `HANDOFF.md` §0.
