@@ -263,3 +263,38 @@ Suite: 254 cases, 2 failed (DEC-193, DEC-194 window-lane REDs), 251 pass.
 Known ordering dependency: the gate reads the paged lane's *outcome*; on a turn where the pager has not yet answered, a
 rootless over-capacity interval would be served from passes for that turn. It is worth a dedicated adversarial case
 before this is called closed on device.
+
+## Device 2026-10-29 09:37 — rootless playback works; the guard's identity was wrong
+
+`session_20261029_093731.log` (image `3f7aa4c2…`, passes fallback):
+
+- `root_rev = 0` throughout; **`out = 10-16` per second**, 999 `MO` rows, out-sum after 20 s = **217**. Playback is
+  served from the committed passes with no root. **Acceptance met.**
+- The root still restarted **73 times** (`kind=start` 73, `kind=finish` 73, 1170 steps) and published at 82.86 s,
+  after the loop had already played once.
+
+Why the guard missed: its identity was `coveredPassRevision == committedPassRevision()`, and
+`committedPassRevision()` **is** `playbackRevision` (`LoopSnapshotLifetime.cpp:74`). That also moves for companion
+publication and wrap journals, so every unrelated bump looked like a newer inventory (the DEC-186 lesson).
+
+Repair: the identity is now the **pass + companion inventory** the request enumerates (record/overdub ids by
+multiplicity, active edit ids), not a revision stamp. Verified:
+
+- repeat request after partial progress → applied/queued unchanged;
+- a bare `++playbackRevision` → still idempotent (this is the case that broke on device);
+- adding a real pass row → supersedes (applied 0, queue refilled);
+- undo that changes companion rows → supersedes (the existing undo fixture caught this before the companion term was
+  added);
+- mutation (guard disabled) → reds exactly the idempotence assertion.
+
+Suite: 254 cases, 2 failed (the two window-lane REDs), 251 pass. Target build SUCCESS, RAM1 unchanged.
+
+### Root-before-loop-end: what it takes
+
+- Loop 31 bars @120 BPM = **62 s**. Owner cadence measured at ~**63 ms per snapshot turn** (1170 steps / 74 s).
+- With 73 restarts the build never had a chance; one clean build is `steps × cadence`.
+- Estimate: ~6,800 events / chunk-per-grain (≈100-160 grains) + ~7 grains per pass for merge/order ⇒ **~160-220 turns
+  ≈ 10-14 s**, i.e. **inside one loop** for this slot. That is the number to confirm on the next capture.
+- For a short loop (4 bars = 8 s) a whole-loop root cannot finish inside one cycle at 63 ms/turn; the requirement there
+  is served by the window lane, not by the root. So "root before loop end" holds only while
+  `steps × cadence < loop_seconds`, i.e. long loops with an uncontended owner.

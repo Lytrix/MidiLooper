@@ -8695,8 +8695,25 @@ void test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_public
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(queued), static_cast<uint32_t>(queuedAfter),
                                    "a repeat request must not repopulate the queue");
 
-  // Control: a **newer** inventory must still supersede the pending candidate.
+  // Control: a **newer inventory** must still supersede the pending candidate. A bare `++playbackRevision` is *not* an
+  // inventory change (companion publication and wrap journals move it too), so it must stay idempotent; adding a real
+  // pass row is what supersedes.
   ++loop.playbackRevision;
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  size_t appliedBumped = 0, queuedBumped = 0;
+  bool fragmentBumped = false;
+  TEST_ASSERT_TRUE(loop.pendingSnapshotProgressForTest(appliedBumped, queuedBumped, fragmentBumped));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(applied), static_cast<uint32_t>(appliedBumped),
+                                   "an unrelated playbackRevision bump must not restart the publication");
+  OverdubPass second{};
+  second.id = 901;
+  second.mergeSequence = 2;
+  second.state = CapturePassState::Active;
+  LoopEventStore secondStore;
+  TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(secondStore, 300, 1, 62, 100, 9002));
+  TEST_ASSERT_TRUE(secondStore.append(MidiEvent::NoteOff(400, 1, 62, 0)));
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(secondStore, second.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(second));
   TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
   size_t appliedNew = 0, queuedNew = 0;
   bool fragmentNew = false;
