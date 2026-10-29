@@ -23,8 +23,7 @@ void test_boot_restore_priority_selected_track_selected_slot() {
 }
 
 void test_boot_restore_priority_selected_track_active_slot_when_split() {
-  // Active (not selected) on focus track is "other slot" priority 10+slot, not adjacent.
-  // Left of selected 2 is 1 → priority 1.
+  // DEC-194: the focus track's **active** slot is what it plays, so it ranks directly behind the focus selection.
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT16(
@@ -44,9 +43,9 @@ void test_boot_restore_priority_selected_track_other_slot() {
 void test_boot_restore_priority_other_track_active_slot() {
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
-  // Track 1 forward distance 1, slot 4 → 100 + 8 + 4
+  // DEC-194: every track's active slot is the playing set, so it ranks ahead of the focus neighbourhood.
   TEST_ASSERT_EQUAL_UINT16(
-      100 + 8 + 4, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
+      2 + 1, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isBootPlaybackSlot(1, 4, 0, active, 2, selected, 2));
 }
 

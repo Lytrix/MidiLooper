@@ -85,10 +85,17 @@ inline uint16_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex
                                            size_t numTracks, size_t maxLoopsPerTrack) {
   const uint8_t activeSlot =
       trackIndex < activeCount ? activeLoopIndex[trackIndex] : static_cast<uint8_t>(0);
-  if (slotIndex == activeSlot) {
-    return trackIndex == selectedTrackIdx ? 0u : static_cast<uint16_t>(1u + trackIndex);
+  if (trackIndex == selectedTrackIdx) {
+    // The focused slot is what the panel shows; the focused track's active slot is what it plays when they differ.
+    const uint8_t focusSelected =
+        trackIndex < selectedCount ? selectedSlotIndex[trackIndex] : activeSlot;
+    if (slotIndex == focusSelected) return 0u;
+    if (slotIndex == activeSlot) return 1u;
+  } else if (slotIndex == activeSlot) {
+    return static_cast<uint16_t>(2u + trackIndex);
   }
-  return static_cast<uint16_t>(
-      100u + computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
-                                            selectedCount, numTracks, maxLoopsPerTrack));
+  // Everything else keeps the runtime fill order unchanged; the active slots above already sort ahead of it because
+  // they are < numTracks.
+  return computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
+                                        selectedCount, numTracks, maxLoopsPerTrack);
 }

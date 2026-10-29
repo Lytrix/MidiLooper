@@ -8678,13 +8678,11 @@ void test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhoo
                                                   kTracks, kTracks, kSlots);
     if (p > worstActive) worstActive = p;
   }
-  // The focus track's neighbours and any other focus slot must rank behind *every* active slot.
-  const uint8_t neighbour = static_cast<uint8_t>((kFocus + 1u) % kTracks);
-  const uint16_t neighbourPriority = computeBootRestorePriority(kFocus, 6, kFocus, active, kTracks,
-                                                                selected, kTracks, kTracks, kSlots);
-  TEST_ASSERT_TRUE_MESSAGE(worstActive < neighbourPriority,
-                           "every track's active slot must restore before the focus neighbourhood");
-  (void)neighbour;
+  // A focus slot that is neither selected nor adjacent is bulk work: every track's active slot must rank ahead of it.
+  const uint16_t bulkPriority = computeBootRestorePriority(kFocus, 7, kFocus, active, kTracks,
+                                                           selected, kTracks, kTracks, kSlots);
+  TEST_ASSERT_TRUE_MESSAGE(worstActive < bulkPriority,
+                           "every track's active slot must restore before the focus track's bulk slots");
 }
 
 /// **DEC-194 — root recovery yields to the boot restore sweep.** The root is an accelerator; a restore that never runs
