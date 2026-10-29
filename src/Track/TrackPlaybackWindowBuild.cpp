@@ -2123,26 +2123,21 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
     return false;
   }
   const auto& window = runtime->mergedMidiEvents;
-  if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
-    // Compatibility launch receipt only; immutable readiness has its own predicate.
-    // A non-null gathered source distinguishes valid empty coverage from a gather miss.
-    // A root-backed window and a **committed-pass** window are both valid coverage: the committed-pass source has no
-    // root identity to stamp, so requiring one would report every rootless slot unready and rebuild it on every turn.
-    const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
-        window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
-    const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();
-    // The window's length is `min(two bars, loop)` for **every** loop, so the readiness check reads the same rule the
-    // builder uses instead of hard-coding the long-loop case.
-    constexpr uint32_t kMergedWindowTicks = 2 * Config::TICKS_PER_BAR;
-    const uint32_t expectedWindow = loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks
-                                                                            : kMergedWindowTicks;
-    return !runtime->isStale(loop.playbackRevision, playbackGeneration) &&
-        window.builtFromRevision == loop.playbackRevision &&
-        (rootBacked || committedBacked) &&
-        window.windowLengthTicks == expectedWindow &&
-        !loop.playbackOrderDirty;
-  }
-  return window.builtFromRevision == loop.playbackRevision && !window.mergedEvents.empty();
+  // **One readiness rule for every length** (DEC-200). It answers the same question the builder answers -- "is the
+  // window I would build the window I hold?" -- so it cannot drift from it: same revision, a real source (root or
+  // committed passes), the builder's window span, and its order built. The former short-loop branch accepted *any*
+  // span and the former long-loop branch carried a staleness term the other did not, which is two policies for one
+  // question. Length appears only as the clamp inside `expectedWindow`, exactly as in the builder.
+  const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
+      window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
+  const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();
+  constexpr uint32_t kPlaybackWindowTicks = 2 * Config::TICKS_PER_BAR;
+  const uint32_t expectedWindow =
+      loop.loopLengthTicks < kPlaybackWindowTicks ? loop.loopLengthTicks : kPlaybackWindowTicks;
+  return window.builtFromRevision == loop.playbackRevision &&
+      (rootBacked || committedBacked) &&
+      window.windowLengthTicks == expectedWindow &&
+      !loop.playbackOrderDirty;
 }
 
 TRACK_COLD_MEM Track::PlaybackWindowReadiness Track::playbackWindowReadinessForSlot(
