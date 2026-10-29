@@ -143,3 +143,64 @@ inline const char* playbackCoverageRoleRefusalName(PlaybackCoverageRoleRefusal r
   }
   return "role_unknown";
 }
+
+/// **DEC-194 — why a completed promise was not judged (and therefore kept the coverage role blocked).**
+///
+/// Report-only. The first false precondition in `revalidateCompletedPlaybackWindow`'s own order. `None` means the
+/// promise was judged (cleared and published).
+enum class PlaybackRevalidateRefusal : uint8_t {
+  None = 0,
+  NoEpoch,
+  NoRuntime,
+  NotPending,
+  NeedsService,
+  NoViewSet,
+  BuildSlotOutOfRange,
+  GenerationMoved,
+  NotComplete,
+  InvalidCoverage,
+  LengthMismatchCandidate,
+  LengthMismatchWork,
+  PhaseOutOfRange,
+  PhaseNotBoundary,
+  SourceNotCurrent,
+  SourceRevision,
+  SourceIdentity,
+  PreviewInactive,
+  PreviewRevision,
+  PromiseInvalidated,
+  ClockBeforeAdmitted,
+  DeadlineOverflow,
+  TooEarly,
+  NotAligned,
+};
+
+inline const char* playbackRevalidateRefusalName(PlaybackRevalidateRefusal refusal) {
+  switch (refusal) {
+    case PlaybackRevalidateRefusal::None: return "rv_none";
+    case PlaybackRevalidateRefusal::NoEpoch: return "rv_no_epoch";
+    case PlaybackRevalidateRefusal::NoRuntime: return "rv_no_runtime";
+    case PlaybackRevalidateRefusal::NotPending: return "rv_not_pending";
+    case PlaybackRevalidateRefusal::NeedsService: return "rv_needs_service";
+    case PlaybackRevalidateRefusal::NoViewSet: return "rv_no_view_set";
+    case PlaybackRevalidateRefusal::BuildSlotOutOfRange: return "rv_build_slot";
+    case PlaybackRevalidateRefusal::GenerationMoved: return "rv_generation";
+    case PlaybackRevalidateRefusal::NotComplete: return "rv_not_complete";
+    case PlaybackRevalidateRefusal::InvalidCoverage: return "rv_invalid_coverage";
+    case PlaybackRevalidateRefusal::LengthMismatchCandidate: return "rv_length_candidate";
+    case PlaybackRevalidateRefusal::LengthMismatchWork: return "rv_length_work";
+    case PlaybackRevalidateRefusal::PhaseOutOfRange: return "rv_phase_range";
+    case PlaybackRevalidateRefusal::PhaseNotBoundary: return "rv_phase_boundary";
+    case PlaybackRevalidateRefusal::SourceNotCurrent: return "rv_source_not_current";
+    case PlaybackRevalidateRefusal::SourceRevision: return "rv_source_revision";
+    case PlaybackRevalidateRefusal::SourceIdentity: return "rv_source_identity";
+    case PlaybackRevalidateRefusal::PreviewInactive: return "rv_preview_inactive";
+    case PlaybackRevalidateRefusal::PreviewRevision: return "rv_preview_revision";
+    case PlaybackRevalidateRefusal::PromiseInvalidated: return "rv_invalidated";
+    case PlaybackRevalidateRefusal::ClockBeforeAdmitted: return "rv_clock_before_admitted";
+    case PlaybackRevalidateRefusal::DeadlineOverflow: return "rv_deadline_overflow";
+    case PlaybackRevalidateRefusal::TooEarly: return "rv_too_early";
+    case PlaybackRevalidateRefusal::NotAligned: return "rv_not_aligned";
+  }
+  return "rv_unknown";
+}

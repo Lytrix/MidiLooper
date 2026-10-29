@@ -474,6 +474,9 @@ public:
   /// projection, source and operation identity before releasing a completed candidate.
   bool revalidateCompletedPlaybackWindow(uint8_t slotIndex, uint32_t currentPhase,
                                          PlaybackDeadlineClock clock);
+  /// DEC-194 (report-only): the first false precondition of the revalidation, in its own order.
+  PlaybackRevalidateRefusal revalidateCompletedPlaybackWindowRefusal(
+      uint8_t slotIndex, uint32_t currentPhase, PlaybackDeadlineClock clock) const;
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7

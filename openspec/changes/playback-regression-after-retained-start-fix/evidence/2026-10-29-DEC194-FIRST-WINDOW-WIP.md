@@ -129,3 +129,38 @@ is kept as WIP, not as acceptance.
 Name `revalidateCompletedPlaybackWindow`'s first false precondition the same way (one enum, one row), then fix the
 actual term. Do not loosen the boundary rule itself: judging a late completion early is exactly the "silently
 re-grant the deadline" behaviour the spec forbids.
+
+## 9.4c — the revalidation's preconditions, and a publish-path crash
+
+`revalidateCompletedPlaybackWindowRefusal()` now names the first false precondition of the revalidation in its own
+order (24 terms; the predicate itself delegates to it, so verdict and name cannot disagree).
+
+Observed while a temporary lane caller drove it on the acceptance fixture:
+
+- first standing refusal: **`rv_phase_boundary`** — judgement requires `currentPhase == candidate.coverage.startPhase`
+  exactly, and the lane samples at arbitrary phases;
+- later turns move through the "one loop after the deadline" terms (`rv_too_early`, `rv_not_aligned`), so a late
+  completed promise is only judgeable at an exact later boundary;
+- **driving it far enough to actually publish crashed the native harness (179 of 253 cases)**, twice, with 4096-turn
+  windows. The execution path is therefore **not wired**: the lane caller and the reporting table were removed, and
+  only the naming helper remains.
+
+That crash is important in itself: the publish-after-rejudge path has no production caller today, so a route that
+reaches it is unproven code. It must not be enabled by wiring alone.
+
+### What this implies for the repair
+
+The first window in the measured state is not recoverable by re-judging: the promise completed late, and the only legal
+recovery boundary is one full loop later, after which publication takes the unproven path. The honest options are:
+
+1. **Make the first build land inside its window** (solve the timing at admission/lead), which avoids the late-completion
+   path entirely; or
+2. **Prove and harden the re-judge/publish path** with its own RED and crash-free evidence before any caller exists.
+
+Option 1 is the smaller, safer answer and matches the owner's framing: a bounded first window should be admitted with a
+lead it can actually meet, not recovered a loop late.
+
+### State
+
+Suite: 253 cases, 3 failed, 249 pass (DEC-194 RED naming `role_promise_pending`, DEC-193 RED, pre-existing
+characterization). `teensy41-capture-serial` SUCCESS, RAM1 unchanged. No upload, no device or SD action.

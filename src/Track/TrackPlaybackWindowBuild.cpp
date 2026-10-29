@@ -6436,20 +6436,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // slot holding a live promise -- not only the holder this turn happens to serve, and not only when a build completes.
   // The judgement never depends on the revision currency; the consequence is `noteMissedTraversalForSlot`'s.
   serviceAdmittedDeadlineMisses(clock);
-  // **DEC-194 — judge a completed promise before the gate can refuse the turn for it.** A completion that lands at or
-  // after its deadline leaves `completedPromisePendingJudgement` set, and the only clearer
-  // (`revalidateCompletedPlaybackWindow`) had **no production caller**: the role stayed blocked forever, the holder was
-  // skipped, and the standing demand could never be served. Judge at the lane's own boundary, ahead of holder
-  // selection. The call is precondition-guarded (boundary phase, later traversal, current source), so a completion
-  // that is not yet eligible simply stays pending.
-  for (uint8_t judgeSlot = 0; judgeSlot < Config::MAX_LOOPS_PER_TRACK; ++judgeSlot) {
-    const LoopPlaybackRuntime* judgeRuntime = playbackRuntime.slotIfAllocated(judgeSlot);
-    if (judgeRuntime == nullptr || !judgeRuntime->completedPromisePendingJudgement) continue;
-    const uint32_t judgeLength = loopForSlot(judgeSlot).loopLengthTicks;
-    if (judgeLength == 0) continue;
-    (void)revalidateCompletedPlaybackWindow(
-        judgeSlot, static_cast<uint32_t>(currentPhase % judgeLength), clock);
-  }
+  // DEC-194: the completed-promise judgement is **not wired here yet**. Driving `revalidateCompletedPlaybackWindow`
+  // from this lane reached its publish path and crashed the native harness (179/253 cases), so the execution path
+  // stays as it was; `revalidateCompletedPlaybackWindowRefusal()` names the preconditions for the next slice.
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders, clock);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding
@@ -8073,45 +8062,66 @@ TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex, uint8_
   return true;
 }
 
-TRACK_COLD_MEM bool Track::revalidateCompletedPlaybackWindow(
-    uint8_t slotIndex, uint32_t currentPhase, PlaybackDeadlineClock clock) {
-  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || clock.epoch == 0) return false;
-  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  if (runtime == nullptr || !runtime->completedPromisePendingJudgement ||
-      runtime->coverageBuildNeedsService()) return false;
-  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
-  if (set == nullptr || set->lifecycle.build >= RuntimePlaybackViewConfig::kViewCount ||
-      runtime->viewBuildOperationGeneration != playbackGeneration) return false;
+TRACK_COLD_MEM PlaybackRevalidateRefusal Track::revalidateCompletedPlaybackWindowRefusal(
+    uint8_t slotIndex, uint32_t currentPhase, PlaybackDeadlineClock clock) const {
+  // One implementation of the preconditions: the verdict and the reported term cannot disagree.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return PlaybackRevalidateRefusal::BuildSlotOutOfRange;
+  if (clock.epoch == 0) return PlaybackRevalidateRefusal::NoEpoch;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return PlaybackRevalidateRefusal::NoRuntime;
+  if (!runtime->completedPromisePendingJudgement) return PlaybackRevalidateRefusal::NotPending;
+  if (runtime->coverageBuildNeedsService()) return PlaybackRevalidateRefusal::NeedsService;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) return PlaybackRevalidateRefusal::NoViewSet;
+  if (set->lifecycle.build >= RuntimePlaybackViewConfig::kViewCount)
+    return PlaybackRevalidateRefusal::BuildSlotOutOfRange;
+  if (runtime->viewBuildOperationGeneration != playbackGeneration) return PlaybackRevalidateRefusal::GenerationMoved;
   const RuntimePlaybackView& candidate = set->views[set->lifecycle.build];
   const Loop& loop = loopForSlot(slotIndex);
   const auto& work = runtime->viewBuildWork;
-  if (!candidate.complete || !candidate.coverage.isValid() ||
-      loop.loopLengthTicks != candidate.coverage.loopLengthTicks ||
-      loop.loopLengthTicks != work.admittedLoopLength ||
-      currentPhase >= loop.loopLengthTicks || currentPhase != candidate.coverage.startPhase) return false;
+  if (!candidate.complete) return PlaybackRevalidateRefusal::NotComplete;
+  if (!candidate.coverage.isValid()) return PlaybackRevalidateRefusal::InvalidCoverage;
+  if (loop.loopLengthTicks != candidate.coverage.loopLengthTicks)
+    return PlaybackRevalidateRefusal::LengthMismatchCandidate;
+  if (loop.loopLengthTicks != work.admittedLoopLength) return PlaybackRevalidateRefusal::LengthMismatchWork;
+  if (currentPhase >= loop.loopLengthTicks) return PlaybackRevalidateRefusal::PhaseOutOfRange;
+  if (currentPhase != candidate.coverage.startPhase) return PlaybackRevalidateRefusal::PhaseNotBoundary;
   if (candidate.source.origin == PlaybackWindowOrigin::Committed) {
-    if (!playbackWindowSourceIsCurrentForSlot(slotIndex) || candidate.source.playbackRevision != loop.playbackRevision ||
-        candidate.source.snapshotIdentity != loop.publishedSnapshotIdentity()) return false;
-  } else if (!runtime->previewSourceActive ||
-             candidate.source.playbackRevision != runtime->previewSourceRevision) {
-    return false;
+    if (!playbackWindowSourceIsCurrentForSlot(slotIndex)) return PlaybackRevalidateRefusal::SourceNotCurrent;
+    if (candidate.source.playbackRevision != loop.playbackRevision) return PlaybackRevalidateRefusal::SourceRevision;
+    if (candidate.source.snapshotIdentity != loop.publishedSnapshotIdentity())
+      return PlaybackRevalidateRefusal::SourceIdentity;
+  } else {
+    if (!runtime->previewSourceActive) return PlaybackRevalidateRefusal::PreviewInactive;
+    if (candidate.source.playbackRevision != runtime->previewSourceRevision)
+      return PlaybackRevalidateRefusal::PreviewRevision;
   }
-  // In the original epoch a missed traversal remains fixed to its old revision.
-  // Recovery may only use a following entry, never the just-missed one. A new
-  // epoch has no positional relationship: the caller supplies its boundary phase.
+  // In the original epoch a missed traversal remains fixed to its old revision: recovery may only use a following
+  // entry, never the just-missed one. A new epoch has no positional relationship: the caller supplies the boundary phase.
   if (clock.epoch == work.clockEpoch) {
-    if (runtime->admittedPromiseInvalidated || clock.tick < work.admittedTick ||
-        work.deadlineTick > UINT64_MAX - work.admittedLoopLength ||
-        clock.tick < work.deadlineTick + work.admittedLoopLength ||
-        (clock.tick - work.deadlineTick) % work.admittedLoopLength != 0) return false;
+    if (runtime->admittedPromiseInvalidated) return PlaybackRevalidateRefusal::PromiseInvalidated;
+    if (clock.tick < work.admittedTick) return PlaybackRevalidateRefusal::ClockBeforeAdmitted;
+    if (work.deadlineTick > UINT64_MAX - work.admittedLoopLength)
+      return PlaybackRevalidateRefusal::DeadlineOverflow;
+    if (clock.tick < work.deadlineTick + work.admittedLoopLength) return PlaybackRevalidateRefusal::TooEarly;
+    if ((clock.tick - work.deadlineTick) % work.admittedLoopLength != 0)
+      return PlaybackRevalidateRefusal::NotAligned;
   }
+  return PlaybackRevalidateRefusal::None;
+}
+
+TRACK_COLD_MEM bool Track::revalidateCompletedPlaybackWindow(uint8_t slotIndex, uint32_t currentPhase,
+                                                             PlaybackDeadlineClock clock) {
+  if (revalidateCompletedPlaybackWindowRefusal(slotIndex, currentPhase, clock) != PlaybackRevalidateRefusal::None)
+    return false;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   runtime->completedPromisePendingJudgement = false;
   if (!publishCompletedPlaybackWindow(slotIndex)) {
     runtime->completedPromisePendingJudgement = true;
     return false;
   }
-  // Recovery does not erase fault history; the boundary consumer owns adoption
-  // and clearing a recovered episode. The admitted work record remains unchanged.
+  // Recovery does not erase fault history; the boundary consumer owns adoption and clearing a recovered episode. The
+  // admitted work record remains unchanged.
   return true;
 }
 

@@ -172,9 +172,13 @@ rooted changes how a window is *filled*, never how MIDI is played afterwards.
   (the only other clearer) had **no production caller**, so the role stayed blocked forever. Wired it at the lane
   boundary before the gate (guarded; no-op when ineligible). The acceptance fixture is **still RED** — one of the
   clearer's own preconditions is unmet — so this is WIP, not acceptance.
-- [ ] 9.4c **Name `revalidateCompletedPlaybackWindow`'s first false precondition** (same one-enum/one-row pattern) and
-  fix that term only. Do not relax the boundary rule: judging a late completion early re-grants a deadline the spec
-  forbids. Verify the acceptance fixture greens and DEC-193 stays named.
+- [x] 9.4c **Name the revalidation's preconditions — `rv_phase_boundary`, and a publish-path crash.** The helper names
+  all 24 terms in order. A temporary caller showed the standing refusal is the exact boundary phase, later terms are
+  the one-loop-later rule, and **driving it to publish crashed the harness (179/253)**. Execution path reverted; only
+  the naming remains. Do not relax the boundary rule.
+- [ ] 9.4d **Make the first build land inside its window** (admission/lead), so the late-completion path is never
+  needed. Verify the acceptance fixture greens with `root_rev = 0` and a serving window, without touching the
+  boundary rule. If that is impossible, prove the re-judge/publish path crash-free first (own RED) before wiring it.
 - [ ] 9.4 Rolling handoff: prove the second and third windows are built and adopted without a whole-root publication,
   with the same reader.
 - [ ] 9.5 Scaling property: 4-bar vs 40-bar first window in the same cost class (cost proportional to the content
