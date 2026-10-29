@@ -11278,6 +11278,25 @@ provisioned from its passes is legitimately "stale" by that term and still serve
 point. Removing **the term**, not the unification, is the repair; with it removed the two provisioning fixtures and the
 undo fixture pass.
 
+### Slice 2 (the interval policy) — implemented, measured, deliberately not landed
+
+`Track::playbackWindowInterval(loopLength, demoted, phase, out)` is the other half of the "short vs whole loop" split:
+`demoted == false` returns whole-loop coverage, `true` returns the two-bar clamp. Dropping the argument (always the
+clamp) is a 3-file change and it compiles and runs; measured at the suite, it changes exactly two fixtures, and both
+encode the discriminator rather than the behaviour:
+
+- `test_enforced_candidate_charges_derived_cost_and_eight_track_rotation` — `Expected 64 Was 63`: its 7-bar slot used
+  whole-loop coverage (both note boundaries inside), now takes the two-bar window like the 40-bar slot. Mechanical,
+  but it removes the fixture's size contrast, so the comment and the contrast must be re-chosen.
+- `test_3_10_the_declared_envelope_is_the_admissions_own_boundary` — its own comment states the premise: "A loop
+  **below** the demoted threshold (16 bars), so the policy's interval is the whole loop and the interval's start is
+  phase 0: the lead the admission judges is then exactly `length - phase`." With the clamp the start is the
+  playhead-centred window, so `requiredLead`, the positioned occurrence and the retained promise all change. This is an
+  admission-**soundness** oracle; re-deriving it requires the final policy, not a number bump.
+
+So the interval slice is held back to land **with** the keystone, once, against the final single policy -- re-deriving a
+soundness oracle twice would be the same work done at double the risk.
+
 ### The keystone — named, not changed
 
 `Track::requestCommittedPlaybackWindowForSlot` opens with:

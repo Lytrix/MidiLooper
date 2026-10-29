@@ -6100,7 +6100,11 @@ one predicate for every length (revision + real source + the builder's span + or
 `min(2 bars, loop)`; the staleness term the long-loop branch carried is removed (it false-failed rootless provisioning).
 **Next, in this order:** fix the DEC-194 first-window RED (`role_promise_pending`), then flip
 `requestCommittedPlaybackWindowForSlot`'s `if (!demoted) return NotServable` — the line that keeps every ≤16-bar loop off
-the window lane — then delete the legacy fallbacks. Census of the remaining length branches is in DEC-200. Not flashed.
+the window lane — then delete the legacy fallbacks. The **interval** slice (`playbackWindowInterval`'s `demoted`
+argument, 3 files) is implemented and measured but held back on purpose: it changes two fixtures that encode the
+discriminator, one of them an admission-**soundness** oracle whose premise is "a loop below the threshold has whole-loop
+coverage", so it lands once with the keystone against the final policy rather than being re-derived twice. Census of the
+remaining length branches is in DEC-200. Not flashed.
 
 **Active scope (2026-10-29, owner-directed, DEC-197): the merged playback fallback serves a short loop as one
 whole-loop window — EXECUTED natively, device open.**
