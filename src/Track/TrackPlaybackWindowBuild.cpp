@@ -5853,29 +5853,33 @@ TRACK_COLD_MEM PlaybackBuildRefusal Track::playbackBuildGateRefusal(uint8_t slot
 /// RAM2 on the target (off the clock path), plain state on the host.
 #if defined(__IMXRT1062__)
 DMAMEM uint8_t gPlaybackBuildRefusalLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+DMAMEM uint8_t gPlaybackDispatchLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
 #else
 uint8_t gPlaybackBuildRefusalLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+uint8_t gPlaybackDispatchLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
 #endif
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     uint8_t slotIndex, PlaybackDeadlineClock clock) {
   auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  // DEC-193 (report-only): an owed build that cannot advance names the first failing term once per change.
+  // DEC-193 (report-only): name the first failing term once per change, **and** prove reach when the gate is open.
   {
     const PlaybackBuildRefusal refusal = playbackBuildGateRefusal(slotIndex, clock);
-    if (!runtime || (refusal != PlaybackBuildRefusal::None &&
-                     refusal != PlaybackBuildRefusal::SourceRetiring)) {
-      if (slotIndex < Config::MAX_LOOPS_PER_TRACK) {
-        const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
-        if (trackIndex < Config::NUM_TRACKS &&
-            gPlaybackBuildRefusalLast[trackIndex][slotIndex] != static_cast<uint8_t>(refusal)) {
-          gPlaybackBuildRefusalLast[trackIndex][slotIndex] = static_cast<uint8_t>(refusal);
-          reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex),
-                                           playbackBuildRefusalName(refusal));
-        }
+    const bool blocked = !runtime || (refusal != PlaybackBuildRefusal::None &&
+                                      refusal != PlaybackBuildRefusal::SourceRetiring);
+    if (runtime != nullptr && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
+      const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
+      // `gate_open` is the reach proof: the retry was called and its gate let the turn through. Its absence (no row)
+      // means the step returned before the retry -- the scheduler-side question this probe exists to separate.
+      const uint8_t token = blocked ? static_cast<uint8_t>(refusal) : 0xFFu;
+      if (trackIndex < Config::NUM_TRACKS &&
+          gPlaybackBuildRefusalLast[trackIndex][slotIndex] != token) {
+        gPlaybackBuildRefusalLast[trackIndex][slotIndex] = token;
+        reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex),
+                                         blocked ? playbackBuildRefusalName(refusal) : "gate_open");
       }
-      return PlaybackViewTurnResult::Idle;
     }
+    if (blocked) return PlaybackViewTurnResult::Idle;
   }
   if (runtime->coverageSource.retiring()) {
     runtime->stepCoverageSourceRetirement(kPlaybackViewFillQuantum);
@@ -6426,23 +6430,52 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
   MidiServiceDrain::PlaybackHolderCursor& rotation =
       cursor != nullptr ? *cursor : sWithinTrackWindowCursors[trackIndex < Config::NUM_TRACKS ? trackIndex : 0];
+  // DEC-193 (report-only): one row per change, keyed by an id, so a turn that never reaches the service body is named.
+  const auto reportDispatch = [&](uint8_t slotForRow, uint8_t id, const char* name) {
+    if (slotForRow >= Config::MAX_LOOPS_PER_TRACK) return;
+    const uint8_t dispatchTrack = playbackRebuildTrackIndex(*this);
+    if (dispatchTrack < Config::NUM_TRACKS && gPlaybackDispatchLast[dispatchTrack][slotForRow] != id) {
+      gPlaybackDispatchLast[dispatchTrack][slotForRow] = id;
+      reportPlaybackViewMaintenanceRow(slotForRow, loopForSlot(slotForRow), name);
+    }
+  };
+  // DEC-193: an eligible holder whose `canProgress` is false is **skipped before the service body**, so the retry's own
+  // row can never explain it. `canProgress` is the same gate, so name it here, where it is asked.
+  for (uint8_t offerSlot = 0; offerSlot < Config::MAX_LOOPS_PER_TRACK; ++offerSlot) {
+    if (!holders[offerSlot].eligible || holders[offerSlot].canProgress) continue;
+    const PlaybackBuildRefusal gate = playbackBuildGateRefusal(offerSlot, clock);
+    if (gate != PlaybackBuildRefusal::None && gate != PlaybackBuildRefusal::SourceRetiring) {
+      reportDispatch(offerSlot, static_cast<uint8_t>(gate), playbackBuildRefusalName(gate));
+    }
+  }
   uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
   if (MidiServiceDrain::selectPlaybackHolder(rotation, holders, Config::MAX_LOOPS_PER_TRACK, chosen) !=
       MidiServiceDrain::PlaybackHolderSelection::Service) {
+    reportDispatch(getActiveLoopIndex(), 0xF0u, "dispatch_no_holder");
     return PlaybackViewTurnResult::Idle;
   }
   const uint8_t slot = chosen;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
-  if (runtime == nullptr) return PlaybackViewTurnResult::Idle;
+  if (runtime == nullptr) {
+    reportDispatch(slot, 0xF1u, "dispatch_no_runtime");
+    return PlaybackViewTurnResult::Idle;
+  }
   RuntimePlaybackViewBuild::PreparationTurn primaryTurn(runtime->viewBuild);
   RuntimePlaybackViewBuild::PreparationTurn bridgeTurn(runtime->bridgeWindowBuild);
-  if (!primaryTurn || !bridgeTurn) return PlaybackViewTurnResult::GrainDenied;
+  if (!primaryTurn || !bridgeTurn) {
+    reportDispatch(slot, 0xF2u, "dispatch_no_build_role");
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  // DEC-193: where this turn stopped, when it did not reach the committed retry. Reported once per change below.
+  PlaybackDispatchRefusal dispatch = PlaybackDispatchRefusal::SelectedNoBranch;
   // Every early return still reports cancellation of this selected owner's turn.
   const auto service = [&]() TRACK_COLD_MEM -> PlaybackViewTurnResult {
+  dispatch = PlaybackDispatchRefusal::ServiceEntered;
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
   if (slot == activeLoopIndex && isRecording() &&
       !hasPendingDeferredOverdubStop() && !hasQueuedPlaybackStart() &&
       liveRecordCaptureSource(loopForSlot(slot), *runtime)) {
+    dispatch = PlaybackDispatchRefusal::LiveCapture;
     auto& loop = loopForSlot(slot);
     auto* set = runtime->viewSetIfPrewarmed();
     auto& request = runtime->pendingViewRequest_;
@@ -6647,6 +6680,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       recordJob->owner->publishedSnapshotIsCurrent() && runtime->hasServableDeferredRecordView() &&
       isAudiblePlaybackActive() && runtime->hasBoundRecordReturnWindowForPendingJob() &&
       !runtime->coverageBuildNeedsService()) {
+    dispatch = PlaybackDispatchRefusal::RecordReturn;
     const Loop& recordLoop = loopForSlot(slot);
     const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
         currentPhase, projectionCycleStartTick, recordLoop.loopLengthTicks);
@@ -6707,7 +6741,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           // The Capture successor still owns its edge. Name the complete-root
           // obligation now, while the source is available, but do not consume
           // the occupied ready role or admit an unproven build on this turn.
-          if (runtime->ownsCoverageSource()) return stepCommittedPlaybackRetry(slot, clock);
+          if (runtime->ownsCoverageSource()) {
+            dispatch = PlaybackDispatchRefusal::Retry;
+      return stepCommittedPlaybackRetry(slot, clock);
+          }
           const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
           if (pending != nullptr) {
             if (pending->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot)
@@ -6757,6 +6794,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     if (runtime->coverageBuildNeedsService() || runtime->ownsCoverageSource() ||
         runtime->retainedGatherActive() ||
         (runtime->pagedActive && runtime->frozenViewRequest.active) || pending != nullptr) {
+      dispatch = PlaybackDispatchRefusal::Retry;
       return stepCommittedPlaybackRetry(slot, clock);
     }
     const bool currentRootReady = set->lifecycle.ready < set->views.size() &&
@@ -6837,8 +6875,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           pendingRoot->coverage.loopLengthTicks == rootCoverage.loopLengthTicks;
       // A missing first return view still needs the ordinary root retry grains. Re-requesting the
       // same demand on every turn starves qualification even when the retained promise is admissible.
-      if (runtime->ownsCoverageSource() || runtime->retainedGatherActive() || matchingRootDemand)
+      if (runtime->ownsCoverageSource() || runtime->retainedGatherActive() || matchingRootDemand) {
+        dispatch = PlaybackDispatchRefusal::Retry;
         return stepCommittedPlaybackRetry(slot, clock);
+      }
       const auto requested = requestCommittedPlaybackWindow(slot, rootCoverage, phase, clock);
       return requested == PlaybackViewRequestResult::DeferredSourceQualification
           ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
@@ -6949,7 +6989,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
     return PlaybackViewTurnResult::GrainServed;
   }
-  if (!runtime->coverageBuildNeedsService()) return stepCommittedPlaybackRetry(slot, clock);
+  if (!runtime->coverageBuildNeedsService()) {
+    dispatch = PlaybackDispatchRefusal::Retry;
+      return stepCommittedPlaybackRetry(slot, clock);
+  }
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Building) {
     const auto* set = runtime->viewSetIfPrewarmed();
     const auto& loop = loopForSlot(slot);
@@ -7087,6 +7130,15 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   return turnResult;
   };
   const auto outcome = service();
+  // DEC-193 (report-only): one row per change names where the turn stopped relative to the committed retry.
+  if (slot < Config::MAX_LOOPS_PER_TRACK) {
+    const uint8_t dispatchTrack = playbackRebuildTrackIndex(*this);
+    if (dispatchTrack < Config::NUM_TRACKS &&
+        gPlaybackDispatchLast[dispatchTrack][slot] != static_cast<uint8_t>(dispatch)) {
+      gPlaybackDispatchLast[dispatchTrack][slot] = static_cast<uint8_t>(dispatch);
+      reportPlaybackViewMaintenanceRow(slot, loopForSlot(slot), playbackDispatchRefusalName(dispatch));
+    }
+  }
   if (isAudiblePlaybackActive()) (void)serviceCaptureStopPresentations();
   return primaryTurn && bridgeTurn ? outcome : PlaybackViewTurnResult::GrainDenied;
 }

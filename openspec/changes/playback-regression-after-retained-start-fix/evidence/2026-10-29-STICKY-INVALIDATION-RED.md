@@ -101,3 +101,39 @@ That is the next place to name (same one-enum pattern, next slice).
   characterization) / 248 succeeded — the gate refactor changed no passing behaviour.
 - `pio run -e teensy41-capture-serial` **SUCCESS**: RAM1 `variables 96,192`, code `391,656`, padding `1,560`
   (unchanged); RAM2 `variables 169,952` (+64 B for the refusal table). No flash, no upload.
+
+## Dispatch probe — 2026-10-29 (3.5b), and the chain it names
+
+Added `PlaybackDispatchRefusal` (same header) and two report-only rows: the gate is now named **where the holder's
+`canProgress` is computed** (an eligible-but-blocked holder is skipped before the service body, so the retry's own row
+could never explain it), and the step reports where a turn stopped when it did not reach the committed retry.
+Behaviour-neutral: focused suite still 248 passing after the slice; target build SUCCESS, RAM1 unchanged
+(`variables 96,192`, code `391,656`, padding `1,560`), RAM2 `170,016` (+128 B for the two last-value tables).
+
+### Named chain (host, `test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`)
+
+1. demand active, epoch adopted, `positionInvalidated == false`;
+2. `playbackWindowServiceOffer(...).eligible == true` — the slot offers itself;
+3. `canProgress == false` — because the retry gate answers **`gate_no_role`**
+   (`!runtime->coverageRoleAvailable(privateRootOwed)`), so `fillPlaybackHolders` marks it blocked;
+4. `selectPlaybackHolder` skips blocked holders → **`dispatch_no_holder`**;
+5. `stepCommittedPlaybackRetry` is never reached → readiness stays `OwesBuild` → no window, no `playback_read`.
+
+So the defect is a **view-role leak**: after the promise's position is invalidated, a role in the prewarmed
+`RuntimePlaybackViewSet` stays occupied (no build role available) and nothing retires it, so the next legitimate epoch
+cannot start a build. It is not retention, epoch identity, dispatch eligibility or the gate's own logic.
+
+### Why this fits the device
+
+The device's silent sessions show `playback_build,pending_position_invalidated` (the invalidation) followed by no
+`playback_read`, with no pending stop and no retained Start. `gate_no_role` is exactly the state that produces that
+shape: invalidation first, then a slot that can never build again. The device row to look for on the next authorized
+image is `playback_build,gate_no_role` (or the dispatch token) during the silence.
+
+### Next
+
+- **Device correlation (minimal):** one authorized capture, rootless silent slot, look for the `gate_no_role` token.
+  Same name → repair; different name → the fixture is missing one production condition.
+- **Repair candidate (not authorized yet):** retire the stale role when the demand's position is invalidated, so
+  `coverageRoleAvailable` is true for the new epoch. One existing owner, no new state; must keep both oracles
+  (playback restored, retained-Start retry still cheap).

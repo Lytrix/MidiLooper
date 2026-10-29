@@ -78,3 +78,36 @@ inline const char* playbackBuildRefusalName(PlaybackBuildRefusal refusal) {
   }
   return "gate_unknown";
 }
+
+/// **DEC-193 — dispatch: was the build ever offered service?**
+///
+/// `PlaybackBuildRefusal` says *why the retry gate refused*. It cannot say *that the retry was never reached*: an owed
+/// build can be bypassed by role arbitration inside `stepPlaybackViewMaintenance` before the gate runs. This second
+/// name covers that half. `Retry` is the reach proof; `SelectedNoBranch` means the step returned before the service
+/// body; the branch values name where it stopped.
+enum class PlaybackDispatchRefusal : uint8_t {
+  /// The turn offered service and reached the committed retry.
+  Retry = 0,
+  /// A holder was selected but the step returned before the service body (e.g. no build/preparation role).
+  SelectedNoBranch,
+  /// The service body ran but no branch was recorded (an unnamed early return).
+  ServiceEntered,
+  /// The live-capture branch owned the turn.
+  LiveCapture,
+  /// The frozen Record-return branch owned the turn.
+  RecordReturn,
+  /// The rolling/cold path owned the turn.
+  Rolling,
+};
+
+inline const char* playbackDispatchRefusalName(PlaybackDispatchRefusal refusal) {
+  switch (refusal) {
+    case PlaybackDispatchRefusal::Retry: return "dispatch_retry";
+    case PlaybackDispatchRefusal::SelectedNoBranch: return "dispatch_selected_no_branch";
+    case PlaybackDispatchRefusal::ServiceEntered: return "dispatch_service_entered";
+    case PlaybackDispatchRefusal::LiveCapture: return "dispatch_live_capture";
+    case PlaybackDispatchRefusal::RecordReturn: return "dispatch_record_return";
+    case PlaybackDispatchRefusal::Rolling: return "dispatch_rolling";
+  }
+  return "dispatch_unknown";
+}

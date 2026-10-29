@@ -67,10 +67,18 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   also asserts the holder offer and the gate term: the slot **is** an eligible holder and the gate reports `none`.
   Build SUCCESS, RAM1 unchanged, RAM2 +64 B; focused suite still 248 passing. Evidence:
   [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#naming-probe-report-only--2026-10-29).
-- [ ] 3.5b **Name the step's branch.** Instrument `stepPlaybackViewMaintenance` between holder selection and the
-  `stepCommittedPlaybackRetry` call (same enum/row pattern, report-only) and record which early return prevents
-  `OwesBuild → Building` for the fixture's state. Verify the name on the device's `playback_build` row before
-  proposing any repair; this is now the repair candidate boundary.
+- [x] 3.5b **Name the step's branch.** **Done — the chain is named.** Eligible holder, but `canProgress` false because
+  the gate answers **`gate_no_role`** (no build role in the prewarmed view set); the selector skips it
+  (`dispatch_no_holder`) and the committed retry is never reached, so readiness stays `OwesBuild`. The defect is a
+  **view-role leak** after position invalidation. Report-only; target build SUCCESS, RAM1 unchanged, RAM2 +128 B.
+  Evidence: [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#dispatch-probe--2026-10-29-35b-and-the-chain-it-names).
+- [ ] 3.5c **Device correlation (minimal).** One authorized capture of the silent rootless slot; look for
+  `playback_build,gate_no_role` (or `dispatch_no_holder`) during the silence. Same name → repair; different name →
+  the fixture lacks one production condition; no row at all → the maintenance owner is not being called, which moves
+  the boundary up one level.
+- [ ] 3.5d **Repair candidate — retire the leaked role (gated).** When a demand's position is invalidated, retire the
+  stale view role so `coverageRoleAvailable` is true for the next epoch. One existing owner, no new state; verify both
+  oracles and that no accepted content or sounding slot is disturbed. Not authorized until 3.5c agrees on the name.
 - [ ] 3.6 Only if 3.5 names nothing actionable, build **one two-state pair** on a scratch worktree from
   checkpoint `a3d56f07`: `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree
   plus DEC-191 behavior), every unrelated DEC-192/post-02:00 edit identical and the DEC-192 recovery request

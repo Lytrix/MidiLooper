@@ -6131,6 +6131,11 @@ void test_capture_admission_refusal_on_the_overdub_path_gives_back_its_staging_r
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "the overdub interval is open");
   LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
   TEST_ASSERT_NOT_NULL(runtime);
+
+  // Class 7: does the step believe a coverage build needs service (the branch that pre-empts the retry)?
+  TEST_ASSERT_FALSE_MESSAGE(runtime->coverageBuildNeedsService(),
+                            "class 7: the step must not claim a coverage build needs service when none can advance");
+
   CaptureAdmissionStaging* staging = runtime->liveCaptureStagingIfPrewarmed();
   TEST_ASSERT_NOT_NULL_MESSAGE(staging, "the overdub interval owns a prewarmed ingress staging");
 
@@ -8498,11 +8503,14 @@ void test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_a
 /// next legitimate epoch (transport stop/start) issues a genuinely fresh request, or whether the invalidated one stays
 /// authoritative and suppresses the producer for that interval.
 ///
-/// **Result (2026-10-29, RED):** classes 1-3 are excluded. The demand survives the restart, adopts the new epoch and
-/// is **not** born-rejected; the deferred turn stays eligible and the gather reports no refusal, yet the slot's window
-/// readiness stays `OwesBuild` and no serving window is ever published over 256 production turns. So the stall is
-/// inside the build's own admission/service, not in the retention, the epoch identity or the dispatch eligibility.
-/// Each distinction is its own assertion so a failure names its class instead of "expected 1 was 0".
+/// **Result (2026-10-29, RED) — the chain is named end to end:** the demand survives the restart, adopts the new epoch
+/// and is not born-rejected; the slot offers itself as an **eligible** holder, but its `canProgress` is false because the
+/// retry gate answers **`gate_no_role`** (`coverageRoleAvailable` false: no build role in the prewarmed view set after
+/// the invalidated gather). The selector therefore skips it (`dispatch_no_holder`) and the retry is never called, so
+/// readiness stays `OwesBuild` and no serving window is published over 256 production turns.
+///
+/// That is a **role leak**, not a retention, epoch-identity or dispatch-eligibility defect: an invalidated promise
+/// leaves a view role occupied and nothing retires it, so the next legitimate epoch cannot start a build.
 void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served() {
   Track& track = prepareWindowOwnerSlot(0);
   Loop& loop = track.getLoop(0);
@@ -8567,8 +8575,24 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
       break;
     }
   }
-  TEST_ASSERT_EQUAL_STRING_MESSAGE("none", gateRefusal,
-                                   "class 5: the restarted demand must not be held by the build gate");
+  // `gate_open` = the retry was called and its gate allowed the turn; any other gate_* = the gate refused it;
+  // no row at all = the step returned before the retry was ever reached.
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("gate_open", gateRefusal,
+                                   "class 5: the restarted demand must reach an open retry gate");
+
+  // Class 5b: where did the turn stop relative to the committed retry? `dispatch_retry` is the reach proof.
+  {
+    const char* dispatchToken = "none";
+    for (size_t row = 0; row < PlaybackPathRows::count; ++row) {
+      if (PlaybackPathRows::paths[row] != nullptr &&
+          std::strncmp(PlaybackPathRows::paths[row], "dispatch_", 9) == 0) {
+        dispatchToken = PlaybackPathRows::paths[row];
+        break;
+      }
+    }
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("dispatch_retry", dispatchToken,
+                                     "class 5b: the turn must reach the committed retry");
+  }
 
   // Diagnostic split, so a failure names its class instead of only "expected true was false".
   const PlaybackViewPendingRequest* pending = track.pendingViewRequest(0);
