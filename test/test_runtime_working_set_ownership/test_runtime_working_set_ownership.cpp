@@ -8719,6 +8719,78 @@ void test_dec194_root_recovery_yields_to_the_boot_restore_sweep() {
 /// Device evidence (`session_20261029_032402.log`): the rootless recovery asked on every Snapshot owner turn, and each
 /// request cleared the box and re-queued every pass (`q` reset to 7, `a` back to 0, nine times in 38 s). The invariant
 /// belongs to the operation: same covered inventory + same construction shape while in flight is a no-op.
+/// **DEC-205 — undo *and redo* on a restored (rootless) slot must keep the surviving pass serving.**
+///
+/// Device `session_20261029_135319.log`, after the final reboot: the slot restored passes-authoritative
+/// (`BOOT,ready … root=0`, body = record + one overdub), then one undo stopped the MIDI events and a redo stopped the
+/// whole loop (`playback_build,compatibility` twice, `vcache` frozen at the undone content). The existing undo fixture
+/// starts from a **current root**; this one starts from the device's actual shape -- committed passes, **no root at
+/// all** -- and it drives both directions of the production pair (`setCapturePassState` + `requestCommittedPassesRepublish`),
+/// which is where the two directions differ: disabling the pass needs a smaller window, re-enabling it needs the
+/// retained source back for a revision that has already moved.
+void test_dec205_undo_and_redo_on_a_restored_rootless_slot_keep_the_surviving_pass() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+
+  OverdubPass overdub{};
+  overdub.id = 902;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  LoopEventStore overdubStore;
+  TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(overdubStore, bar + 96, 1, 60, 100, 9202));
+  TEST_ASSERT_TRUE(overdubStore.append(MidiEvent::NoteOff(bar + 144, 1, 60, 0)));
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(overdubStore, overdub.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(overdub));
+
+  // The restored shape: passes are the authority and there is no root to rewrite.
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture is the restored rootless shape");
+  TEST_ASSERT_NULL_MESSAGE(loop.publishedSnapshotIdentity(), "and it has no root identity at all");
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  track.reanchorPlaybackProjection(0, false);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+
+  const auto countPitch = [&](uint8_t pitch) {
+    size_t n = 0;
+    for (const MidiEvent& event : runtime->mergedMidiEvents.mergedEvents) {
+      if ((event.isNoteOn() || event.isNoteOff()) && event.data.noteData.note == pitch) ++n;
+    }
+    return n;
+  };
+
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(60)),
+                                   "baseline: the committed overdub serves from the passes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(48)),
+                                   "baseline: the record serves from the passes");
+  const size_t baselineTotal = runtime->mergedMidiEvents.mergedEvents.size();
+
+  // --- undo: disable the overdub pass -------------------------------------------------------------
+  TEST_ASSERT_TRUE(loop.setCapturePassState(902, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(countPitch(60)),
+                                   "undo: the disabled pass leaves the served window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(baselineTotal - 2u),
+                                   static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "undo: the surviving content is exactly the record");
+
+  // --- redo: re-enable the same pass --------------------------------------------------------------
+  TEST_ASSERT_TRUE(loop.setCapturePassState(902, CapturePassState::Active));
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(60)),
+                                   "redo: the re-enabled pass serves again (device: the whole loop went silent)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(48)),
+                                   "redo: the record still serves");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(baselineTotal),
+                                   static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "redo: the window is the full committed inventory again");
+}
+
 void test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication() {
   Track& track = prepareWindowOwnerSlot(0);
   Loop& loop = track.getLoop(0);
@@ -18688,6 +18760,7 @@ int main() {
   RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
   RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
   RUN_TEST(test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites);
+  RUN_TEST(test_dec205_undo_and_redo_on_a_restored_rootless_slot_keep_the_surviving_pass);
   RUN_TEST(test_dec194_root_recovery_yields_to_the_boot_restore_sweep);
   RUN_TEST(test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhood);
   RUN_TEST(test_dec194_boot_drain_runs_every_frame_and_never_twice);

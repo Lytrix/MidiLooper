@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-205](#dec-205--a-retained-playback-source-that-is-only-retiring-must-not-refuse-the-next-revisions-source) | 2026-10-29 | A retained playback source that is only retiring must not refuse the next revision's source | Accepted — RED fixture green, mutation-red, native 0 failed |
 | [DEC-204](#dec-204--an-ownerless-reserved-session-exit-claim-is-released-at-the-start-it-would-block) | 2026-10-29 | An ownerless reserved session-exit claim is released at the start it would block | Accepted — native green, build green; not flashed |
 | [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
@@ -11599,3 +11600,70 @@ release is logged by name (`released an orphaned session-exit reservation`) so t
 DEC-191 (the terminal this wires), DEC-174 (the `Populated` orphan and its publication), DEC-173/177/178 (stop service
 rate), DEC-203 (the merged-window repair, confirmed working in the same capture: the display tracked notes through
 multiple overdubs).
+
+## DEC-205 — A retained playback source that is only `Retiring` must not refuse the next revision's source
+
+**Date:** 2026-10-29
+**Owner:** `Track::retainPlaybackSourceForSlot` (`src/Track/TrackPlaybackWindowBuild.cpp`).
+**Status:** Accepted; RED fixture green; mutation-red proved; full native **3610 / 0 failed / 7 skipped / 3603**; build
+green; not flashed.
+
+### Problem (device `captures/session_20261029_135319.log`, final boot)
+
+The owner, on a restored (rootless) slot: *"hitting undo … does stop the midi events from playing, but it does not update
+the display. a redo totally stops playing the entire loop."*
+
+Reproduced on the host in the device's shape -- committed passes, **no root at all**, `TRACK_PLAYING`, both directions of
+the production pair (`setCapturePassState` + `requestCommittedPassesRepublish`):
+
+```
+undo  ->  window loses exactly the disabled pass           (correct)
+redo  ->  Expected 2 Was 0: the re-enabled pass never serves
+```
+
+Mechanism, measured at the redo: `playbackWindowSourceIsCurrentForSlot == false` and
+`retainPlaybackSourceForSlot(...) == RoleCapacityReached (4)`.
+
+A slot has **two** retained-source roles (`kMaxRetainedPlaybackSources`). Every inventory move retains a **new**
+revision, and the displaced source is only marked `Retiring` -- never dropped. So:
+
+```
+baseline  retain rev1 -> [Serving rev1, free]
+undo      retain rev2 -> [Retiring rev1, Serving rev2]
+redo      retain rev3 -> no free role -> RoleCapacityReached
+```
+
+The merged fallback requires `playbackWindowSourceIsCurrentForSlot(slot) || retain(...) == Admitted`; a refusal takes the
+"attempt that cannot serve" branch, which clears the window. Hence silence -- permanently, because every later move is
+refused the same way.
+
+### Decision
+
+When no role is free, ask the **existing release predicate** (`tryReleaseRetainedPlaybackSource`) before refusing. It is
+the one owner of "is this source still needed?" -- older than the loop's revision, not the published window, no build in
+service -- so a source that really is in use is still kept, and `RoleCapacityReached` still names a genuine refusal. If
+the predicate releases nothing, the behaviour is exactly as before.
+
+### Verification
+
+- `test_dec205_undo_and_redo_on_a_restored_rootless_slot_keep_the_surviving_pass` (`test_runtime_working_set_ownership`):
+  the device's shape and both directions; asserts the window's exact inventory after undo **and after redo**.
+- **Mutation-red proved:** disabling the release retry fails it with `Expected 2 Was 0` on the redo assertion.
+- Full native **3610 cases, 0 failed, 7 skipped, 3603 succeeded**; `teensy41-capture-serial` SUCCESS at RAM1
+  `variables 96,192` / ITCM `code 391,992 + padding 1,224` (unchanged).
+
+### What this explains, and what it does not
+
+- **Explains** the redo silence (`the entire loop` stopping) and, because the paint lane reads the same window, most of
+  the frozen panel that followed it.
+- **Does not claim** the display half: on device `vcache` did follow the undo (188 -> 127) while `paint_notes` stayed
+  188 with `dirty=0`. That is a separate invalidation/serving question and needs its own fixture if it survives this
+  fix on a flash.
+- **Does not explain** the earlier *content* finding: the body held record + one overdub while RAM had four passes
+  (`cap=4, edit=2, undo=4`), and the only completed save was 124 s earlier (`PERS,result,ok` at 30.5 s) -- that is a
+  persistence-completion question (DEC-195 / the DEC-173-178 service-rate family), still open.
+
+### Related
+
+DEC-194 (retention as the fallback's source establishment), DEC-199 (source by currency), DEC-200 (readiness),
+DEC-204 (the retained-start release, same session's other device failure).
