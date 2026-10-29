@@ -137,3 +137,14 @@ image is `playback_build,gate_no_role` (or the dispatch token) during the silenc
 - **Repair candidate (not authorized yet):** retire the stale role when the demand's position is invalidated, so
   `coverageRoleAvailable` is true for the new epoch. One existing owner, no new state; must keep both oracles
   (playback restored, retained-Start retry still cheap).
+
+## Device image prepared for 3.5c (not flashed)
+
+- HEX `3f74ecd5f07fc283438850ec71dd403cc4fb18fc0fff06b0951d89179f9f0718`, built from `0d475fb1` (clean tree),
+  env `teensy41-capture-serial`, RAM1 `96,192 / 391,656 / 1,560`, RAM2 `170,016`.
+- Bundle per the upload guide's retention rule: `captures/dec193-naming-image-20261029/` (firmware.hex, sha256.txt,
+  git-head.txt, git-status.txt, build-flags.txt).
+- Why a flash is required at all: the `playback_build,<gate|dispatch>` rows are new; the installed `c4841c91…` cannot
+  emit them, and no existing capture can answer the correlation.
+- Caveat: this image still carries DEC-192 recovery, so the silent window may be short. Capture from boot and take the
+  Stop/Start sequence early; if the device recovers before any row, the run is INCONCLUSIVE rather than negative.

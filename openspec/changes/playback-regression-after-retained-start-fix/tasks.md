@@ -72,10 +72,14 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   (`dispatch_no_holder`) and the committed retry is never reached, so readiness stays `OwesBuild`. The defect is a
   **view-role leak** after position invalidation. Report-only; target build SUCCESS, RAM1 unchanged, RAM2 +128 B.
   Evidence: [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#dispatch-probe--2026-10-29-35b-and-the-chain-it-names).
-- [ ] 3.5c **Device correlation (minimal).** One authorized capture of the silent rootless slot; look for
-  `playback_build,gate_no_role` (or `dispatch_no_holder`) during the silence. Same name → repair; different name →
-  the fixture lacks one production condition; no row at all → the maintenance owner is not being called, which moves
-  the boundary up one level.
+- [ ] 3.5c **Device correlation (minimal) — BLOCKED on upload authorization.** Image built and pinned:
+  HEX SHA-256 `3f74ecd5f07fc283438850ec71dd403cc4fb18fc0fff06b0951d89179f9f0718`, bundle
+  `captures/dec193-naming-image-20261029/` (firmware.hex, sha256, git-head, git-status, build-flags).
+  Recipe: capture from boot, play the restored rootless slot, then transport Stop → Start → Stop inside the first
+  window; look for `playback_build,gate_no_role` / `dispatch_no_holder` after `pending_position_invalidated`.
+  Acceptance: same name → 3.5d; different name → the fixture lacks one production condition; **no row at all** → the
+  maintenance owner is not being serviced, which moves the boundary up one level and forbids touching role retirement.
+  No SD write, no record, no slot change. Do not flash without the owner's word in the session that flashes.
 - [ ] 3.5d **Repair candidate — retire the leaked role (gated).** When a demand's position is invalidated, retire the
   stale view role so `coverageRoleAvailable` is true for the next epoch. One existing owner, no new state; verify both
   oracles and that no accepted content or sounding slot is disturbed. Not authorized until 3.5c agrees on the name.
