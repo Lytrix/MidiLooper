@@ -16,6 +16,7 @@
 #include "LooperState.h"
 #include "Looper.h"
 #include "StorageManager.h"
+#include "Utils/BootRestoreGate.h"
 #include "StorageManagerInternal.h"
 #include "DeferredJobScheduler.h"
 #include "SlotLoadSession.h"
@@ -1060,7 +1061,14 @@ void loop() {
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   uint32_t loadFrameUs = 0;
-  if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay &&
+  // **DEC-194 — boot drain cadence.** During the boot title drain one bounded load slice may run on every frame; the
+  // slice budget is untouched. Exactly one service per frame: when the deferred owner is already LoadAndDisplay the two
+  // terms describe the same call. At title release the flag clears and normal arbitration resumes unchanged.
+  const bool bootLoadFrame =
+      bootLoadAdmitsEveryFrame(StorageManager::isBootTitleLoadDrain(),
+                               StorageManager::hasPendingLoopSlotRestore());
+  if (bootLoadServicesThisFrame(
+          bootLoadFrame, deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay) &&
       deferredIdleOwnerAllowed) {
     const uint32_t loadFrameStartUs = micros();
     runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,

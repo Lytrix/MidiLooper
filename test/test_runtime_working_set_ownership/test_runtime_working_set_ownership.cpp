@@ -8659,6 +8659,24 @@ void test_dec194_coverage_role_refusal_names_the_first_false_term() {
   TEST_ASSERT_TRUE_MESSAGE(rt->coverageRoleAvailable(false), "and the term clears with the state");
 }
 
+/// **DEC-194 — boot drain cadence: more opportunities, same quantum, one service per frame.**
+///
+/// The measured defect was 38 cheap slices over ~3 s because owner turns are sparse. The boot exception adds *frames*,
+/// not a second service and not a wider slice; it ends at title release.
+void test_dec194_boot_drain_runs_every_frame_and_never_twice() {
+  TEST_ASSERT_TRUE_MESSAGE(bootLoadAdmitsEveryFrame(true, true),
+                           "boot title drain with a restore owed admits a slice on this frame");
+  TEST_ASSERT_FALSE_MESSAGE(bootLoadAdmitsEveryFrame(true, false),
+                            "nothing owed: no slice");
+  TEST_ASSERT_FALSE_MESSAGE(bootLoadAdmitsEveryFrame(false, true),
+                            "after title release the boot exception is off");
+  // Exactly one service per frame, including the frame where both terms are true.
+  TEST_ASSERT_TRUE(bootLoadServicesThisFrame(true, false));
+  TEST_ASSERT_TRUE(bootLoadServicesThisFrame(false, true));
+  TEST_ASSERT_TRUE(bootLoadServicesThisFrame(true, true));
+  TEST_ASSERT_FALSE(bootLoadServicesThisFrame(false, false));
+}
+
 /// **DEC-194 — the boot restore order is the playing set first.** At the first Play every track sounds from its
 /// file-active slot, so those slots must rank ahead of the focus neighbourhood: the old order put the focus track's
 /// neighbours and the rest of its slots first, and six of eight tracks had no content when Play was pressed.
@@ -18567,6 +18585,7 @@ int main() {
   RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
   RUN_TEST(test_dec194_root_recovery_yields_to_the_boot_restore_sweep);
   RUN_TEST(test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhood);
+  RUN_TEST(test_dec194_boot_drain_runs_every_frame_and_never_twice);
   RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
