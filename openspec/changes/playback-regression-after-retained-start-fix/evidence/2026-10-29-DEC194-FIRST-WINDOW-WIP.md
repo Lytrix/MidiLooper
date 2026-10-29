@@ -239,3 +239,27 @@ test_3_12_a_restored_over_l_interval_beyond_the_declared_closure_capacity_is_ref
 ```
 
 Suite at revert: 254 cases, 3 failed, 250 pass (DEC-193 RED, DEC-194 window-lane RED, the parked acceptance RED).
+
+## DEC-194 — passes-as-playback-source, landed with the paged-domain gate
+
+`ensurePlaybackMergedMidiEventsBuilt` (2-bar merged window, long-loop branch) now has a third source besides the root and
+the Record overlay: the **authoritative committed passes**, when
+
+- the slot is rootless (`!publishedSnapshotIsCurrent()`),
+- its committed source is qualified (`playbackWindowSourceIsCurrentForSlot` — the retained-source pin), and
+- the paged lane does **not** own the interval (`!pagedActive && pagedOutcome == None`).
+
+The window is filled with `copyEffectiveCommittedEventsInRange(winStart, winLen)`: bounded by the playhead's window,
+never by the pass inventory or loop length.
+
+Both oracles green, in the same run:
+
+- `test_pass_only_playback_serves_due_notes_before_whole_root_publication` — the parked acceptance criterion — **passes**;
+- `test_3_12_a_restored_over_l_interval_beyond_the_declared_closure_capacity_is_refused_by_name` — the over-capacity
+  refusal — **passes**.
+
+Suite: 254 cases, 2 failed (DEC-193, DEC-194 window-lane REDs), 251 pass.
+
+Known ordering dependency: the gate reads the paged lane's *outcome*; on a turn where the pager has not yet answered, a
+rootless over-capacity interval would be served from passes for that turn. It is worth a dedicated adversarial case
+before this is called closed on device.

@@ -728,6 +728,19 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                                                       winStart, winLen, &gatherPath, nullptr,
                                                       publishedRecordOverlay)) {
       usedSnapshotIdentity = buildIdentity;
+    } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
+               committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
+               !loop.publishedSnapshotIsCurrent() &&
+               track.playbackWindowSourceIsCurrentForSlot(committedSlot) &&
+               !runtime.pagedActive &&
+               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
+      // **DEC-194 — the authoritative committed passes serve the window; the root is not a precondition.** Only when the
+      // paged lane does not own this interval: an over-capacity interval is the pager's answer (refused by name), never
+      // a reason to serve it from a two-bar pass copy. The work is bounded by the playhead's window, never by the pass
+      // inventory or the loop length.
+      runtime.mergedMidiEvents.mergedEvents.clear();
+      loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
+      usedSnapshotIdentity = buildIdentity;
     } else {
       // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
       // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
