@@ -1,3 +1,12 @@
+**2026-10-29 — the "full-run only" playback failure named: a frozen two-bar merged window for 3..16-bar loops (DEC-197; native + build green, not flashed).**
+`test_record_note_stream_survives_four_sequential_overdub_publications` is red deterministically in the production-TU
+oracle binary (1.9 s alone) and green in the fixture binary, so the label was wrong: it is a production-code fact, not
+test order. An 8-bar Record + 4 overdubs served 6 of 20 events with every pass intact, because
+`ensurePlaybackMergedMidiEventsBuilt` capped the window at two bars for every length while the reuse guard only
+re-checked the playhead for long loops. The cap is now gated on `longLoop`; red → green with no test edit, window
+`3774/1536` → `0/6144`, Record events served `4` → `16`. Full native 3607/2 failed (the pre-existing DEC-193/DEC-194
+REDs only), build SUCCESS at unchanged RAM1/ITCM. Device effect unproven (fallback path only).
+
 **2026-10-29 — boot release now waits for the whole playback set; all tracks sound on the first Play (DEC-196; device PASS, `bea5a99b…`).**
 Owner report: a Play pressed right after boot sounded one track. Three causes in `session_20261029_113133.log`:
 the DEC-184 release fired on the **focused** slot (10.65 s, seven tracks unloaded); the drain's commit admission

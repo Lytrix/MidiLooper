@@ -720,8 +720,18 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     // **One path for every length.** The window is the playhead's coverage, capped by the loop: a long loop gets the
     // two-bar window centred on the playhead, a short one gets its whole loop. Length is data here, never a second
     // implementation (and never a second source decision).
+    //
+    // DEC-197: the cap is gated on `longLoop`, and that gate is load-bearing. Without it every loop longer than two bars
+    // got a **two-bar window**, while the reuse guard above only re-checks the window against the playhead for long
+    // loops (`!longLoop` returns on identity alone) — so a 3..16-bar slot served by this fallback played one two-bar
+    // slice and never moved it (`test_record_note_stream_survives_four_sequential_overdub_publications`, production-TU
+    // oracle: an 8-bar record + 4 overdubs served 6 of 20 events, the Record pass itself intact). The short-loop branch
+    // already gathered the whole loop for a NOTE_EDIT preview, and `reconcilePlaybackLedgerAfterFullLoopRebuild` only
+    // treats absence as removal for a full-loop window, which a short loop is meant to be.
     constexpr uint32_t kMergedWindowTicks = 2 * Config::TICKS_PER_BAR;
-    const uint32_t winLen = loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks : kMergedWindowTicks;
+    const uint32_t cappedWindow =
+        loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks : kMergedWindowTicks;
+    const uint32_t winLen = longLoop ? cappedWindow : loop.loopLengthTicks;
     uint32_t winStart = 0;
     if (loop.loopLengthTicks > winLen) {
       winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;

@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-197](#dec-197--the-merged-playback-fallback-serves-a-short-loop-as-one-whole-loop-window-not-a-frozen-two-bar-slice) | 2026-10-29 | The merged playback fallback serves a short loop as one whole-loop window, not a frozen two-bar slice | Accepted — native + build green; not flashed |
 | [DEC-196](#dec-196--the-boot-hold-ends-at-the-playback-set-not-the-focused-slot-and-the-boot-drain-keeps-the-playback-set-ordered-first) | 2026-10-29 | The boot hold ends at the playback set, not the focused slot, and the boot drain keeps the playback set ordered first | Accepted — device-verified (`bea5a99b…`) |
 | [DEC-195](#dec-195--a-deferred-body-write-waits-bounded-for-a-publication-owed-for-the-current-committed-state-and-a-rootless-body-is-re-persisted-once-its-root-settles) | 2026-10-29 | A deferred body write waits (bounded) for a publication owed for the current committed state; a rootless body is re-persisted once its root settles | Accepted — native + build green; not flashed |
 | [DEC-148](#dec-148--a-noteoff-behind-the-served-position-terminates-the-sounding-instance-a-closure-the-ledger-no-longer-holds-is-suppressed) | 2026-10-20 | A NoteOff behind the served position terminates the sounding instance; a closure the ledger no longer holds is suppressed | Accepted (landed, 4.5 increment) |
@@ -11095,4 +11096,77 @@ queue, a loader, or a commit path. The restore ranking changes ordering only; no
 DEC-184 (release condition, extended), DEC-194 (boot order, corrected), DEC-182 (sweep gate, unchanged), DEC-171
 (retry bound that terminates a refused slot, unchanged). Evidence:
 [`2026-10-29-DEC196-BOOT-PLAYBACK-SET.md`](../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC196-BOOT-PLAYBACK-SET.md).
+No data or format migration.
+
+## DEC-197 — The merged playback fallback serves a short loop as one whole-loop window, not a frozen two-bar slice
+
+**Date:** 2026-10-29
+**Owner:** `ensurePlaybackMergedMidiEventsBuilt` (`src/Track/TrackPlaybackWindowBuild.cpp`).
+**Status:** Accepted; native + build green; **not flashed**. Repairs the contract that
+`isPlaybackMergedMidiEventsReadyForSlot`, `reconcilePlaybackLedgerAfterFullLoopRebuild` and the `!longLoop` NOTE_EDIT
+branch already assume.
+
+### Problem
+
+The owner asked for the "full-run only" failure of
+`test_record_note_stream_survives_four_sequential_overdub_publications` (an 8-bar Record + 4 sequential overdubs must
+still serve all 16 Record events in one pass). It is **not** order-dependent and **not** green alone: the same test body
+is compiled into two different binaries, and it is red in the production-TU oracle
+(`test_frozen_record_reader_survival`, deterministic, 1.9 s alone) and green in the fixture branch
+(`test_playback_prewarm` 252/252, rolling disabled).
+
+Measured in the oracle (temporary probe, removed): the Record pass and all four overdub passes are intact and the root is
+current, but the replay serves **6 events** — Record bars 0–1 plus overdub 1 — because the merged window is
+`winStart=3774, winLen=1536` for a **6144-tick (8-bar)** loop.
+
+Cause: `ensurePlaybackMergedMidiEventsBuilt` capped the window at two bars for **every** length, while its reuse guard
+only re-checked the window against the playhead for long loops (`!longLoop` returned on revision+identity alone). So a
+3..16-bar slot served by the merged fallback built one two-bar slice and never moved it; the pass could only ever sound
+those two bars. The function's own comment states the intended contract — "a long loop gets the two-bar window centred
+on the playhead, **a short one gets its whole loop**" — and the `!longLoop` NOTE_EDIT branch beside it does gather the
+whole loop.
+
+### Decision
+
+1. **The two-bar cap is gated on `longLoop`.** `winLen = longLoop ? min(loopLength, 2 bars) : loopLength`. Length stays
+   data (`shouldAvoidFullVisualRebuild` is the one threshold); there is no second window policy.
+2. **No other rule moves.** The reuse guard, the playhead centring for long loops, the identity stamps, the DEC-143
+   overlay identity, the incremental last-overdub-seal admission and the DEC-194 committed-pass fallback are unchanged.
+
+### Rationale
+
+The cap was the only place that disagreed with the rest of the lane: `reconcilePlaybackLedgerAfterFullLoopRebuild` only
+treats absence from the incoming stream as removal for a **full-loop** window (a short loop is meant to be one), the
+short-loop readiness branch does not constrain the length, and `test_rolling_record_retirement` already asserts
+`windowLengthTicks == loopLength` for its short loop. Steady-state cost is unchanged — the build is still identity-gated,
+so an unchanged pass does no gather — and the larger window lives in `SessionMidiEventVec`
+(`ExternalMemoryFirstAllocator`, PSRAM), not the internal heap.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Re-check the window against the playhead for every length (move the two-bar slice) | Keeps 3..16-bar loops permanently inside a slice, so the full-loop ledger reconciliation and the documented "short one gets its whole loop" can never apply to them |
+| Fix the fixture instead (drive a prewarm/fixed view before replay) | The failing binary's expectation is the correct production contract — a committed, root-current 8-bar slot playing one pass must serve its whole inventory; making the fixture avoid the fallback would hide the defect rather than name it |
+| Mark the test order-dependent / tolerant | It is deterministic and single-run red; the label was wrong |
+| Raise `longLoop`'s threshold | The threshold is the *view* capacity boundary (16 bars); the defect is the gather window, not the threshold |
+
+### Verification and constraints
+
+- Red → green with **no test edit** in `test_frozen_record_reader_survival` (9/9). Before/after at the assertion:
+  window `3774/1536` → `0/6144`; merged events `6` → `26`; Record events served `4` → `16`.
+- Unchanged counts: `test_playback_prewarm` 252/252 (fixture branch), `test_shared_capture_finalization` 142/142,
+  `test_continuous_capture` 107/107, `test_frozen_record_reader_survival` 9/9.
+- Full native **3607 cases, 2 failed, 7 skipped, 3597 succeeded**; the only failures are the pre-existing DEC-193 and
+  DEC-194 REDs, both untouched.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192` unchanged, ITCM `code 392,056 + padding 1,160` unchanged
+  (the edited function is `TRACK_COLD_MEM`).
+- Not device-verified: the change only affects the merged **fallback** for 3..16-bar loops. One boot on a set with a
+  4-bar or 8-bar slot holding content settles whether production ever needs that path.
+
+### Related OpenSpec / migration
+
+DEC-143 (published-record overlay, unchanged), DEC-181/182 (display window bounds, untouched), DEC-192/193/194
+(rootless playback, untouched), DEC-196 (boot playback set, unrelated). Evidence:
+[`2026-10-29-DEC197-MERGED-WINDOW.md`](../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC197-MERGED-WINDOW.md).
 No data or format migration.

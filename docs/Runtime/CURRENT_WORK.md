@@ -6075,6 +6075,17 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**Active scope (2026-10-29, owner-directed, DEC-197): the merged playback fallback serves a short loop as one
+whole-loop window — EXECUTED natively, device open.**
+The owner asked for the "reproducible in full runs, green alone" failure of
+`test_record_note_stream_survives_four_sequential_overdub_publications`. It is neither: the test body is red
+deterministically in the production-TU oracle binary and green in the fixture binary, and the cause is production code —
+a two-bar merged window that a 3..16-bar loop could never move (`ensurePlaybackMergedMidiEventsBuilt`). Scope: that one
+window cap. **Not** touched: DEC-193/DEC-194 playback REDs, the display window policy (`shouldAvoidFullVisualRebuild`),
+the DEC-143 overlay, the incremental overdub-seal admission, and DEC-196 boot restore. Not flashed; the device effect is
+fallback-only and may be nil. Evidence:
+[`2026-10-29-DEC197-MERGED-WINDOW.md`](../../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC197-MERGED-WINDOW.md).
+
 **Active scope (2026-10-29, owner-directed, DEC-196): the boot hold ends at the playback set, and the boot drain keeps
 that set ordered first — EXECUTED, flashed and device-verified (`bea5a99b…`).**
 The owner's request was "if I start playing directly after boot only track 5 plays — can you make it so all tracks can
