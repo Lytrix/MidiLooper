@@ -71,31 +71,43 @@ inline uint16_t computeDeferredRestorePriority(uint8_t trackIndex, uint8_t slotI
                                slotIndex);
 }
 
-/// Boot restore priority — **the playing set first** (DEC-194).
+/// Every non-playback-slot restore sorts at or above this base, so the whole playback set (one or two slots per
+/// track) is provably ahead of every neighbour and every other slot.
+constexpr uint16_t kBootBackgroundRestorePriorityBase = 200u;
+
+/// Boot restore priority — **the playback set first** (DEC-194, DEC-196).
 ///
-/// At the first Play every track sounds from its **file-active** slot, so those slots are ranked ahead of the focus
-/// neighbourhood and of every other slot: the focus track's active slot is 0, the other tracks' active slots follow by
-/// track index, and everything else keeps the runtime fill order behind them. The measured problem this fixes: with the
-/// old model the focus neighbours (1, 2) and the rest of the focus track (10+) came before other tracks' active slots,
-/// so six of eight tracks had no content when Play was pressed and the set took >10 s to come up.
+/// A first Play sounds one slot per track (its active slot; while stopped `loadTransportSlotIndices` remaps
+/// active := selected, so both members of the boot union are playback slots). Those slots are ranked ahead of the
+/// focus neighbourhood and of every other slot, because the boot drain commits them in this order:
+///   0                 = focus track's selected slot (what the panel shows)
+///   1 + trackIndex    = that track's active/selected playback slot(s)
+///   >= 200            = everything else, in the runtime fill order behind them
+///
+/// Two measured defects shaped this. (1) The old model put the focus neighbours (1, 2) and the rest of the focus
+/// track (10+) ahead of other tracks' active slots, so six of eight tracks had no content when Play was pressed.
+/// (2) DEC-194's first version ranked only the *active* slot and left every other track's **selected** slot in the
+/// deferred band (100+), which is the slot a stopped boot actually plays (`session_20261029_113133.log`).
 inline uint16_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                            uint8_t selectedTrackIdx,
                                            const uint8_t* activeLoopIndex, size_t activeCount,
                                            const uint8_t* selectedSlotIndex, size_t selectedCount,
                                            size_t numTracks, size_t maxLoopsPerTrack) {
+  if (numTracks == 0 || maxLoopsPerTrack == 0 || trackIndex >= numTracks) {
+    return 0xFFFFu;
+  }
   const uint8_t activeSlot =
       trackIndex < activeCount ? activeLoopIndex[trackIndex] : static_cast<uint8_t>(0);
-  if (trackIndex == selectedTrackIdx) {
-    // The focused slot is what the panel shows; the focused track's active slot is what it plays when they differ.
-    const uint8_t focusSelected =
-        trackIndex < selectedCount ? selectedSlotIndex[trackIndex] : activeSlot;
-    if (slotIndex == focusSelected) return 0u;
-    if (slotIndex == activeSlot) return 1u;
-  } else if (slotIndex == activeSlot) {
-    return static_cast<uint16_t>(2u + trackIndex);
+  const uint8_t selectedSlot =
+      trackIndex < selectedCount ? selectedSlotIndex[trackIndex] : activeSlot;
+  if (slotIndex == activeSlot || slotIndex == selectedSlot) {
+    if (trackIndex == selectedTrackIdx && slotIndex == selectedSlot) {
+      return 0u;  // the panel's own slot: painted and sounded first
+    }
+    return static_cast<uint16_t>(1u + trackIndex);
   }
-  // Everything else keeps the runtime fill order unchanged; the active slots above already sort ahead of it because
-  // they are < numTracks.
-  return computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
-                                        selectedCount, numTracks, maxLoopsPerTrack);
+  return static_cast<uint16_t>(kBootBackgroundRestorePriorityBase +
+                               computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx,
+                                                              selectedSlotIndex, selectedCount, numTracks,
+                                                              maxLoopsPerTrack));
 }

@@ -62,6 +62,30 @@ void test_dec184_a_settled_but_unready_boot_still_holds_the_title() {
   TEST_ASSERT_FALSE(BootGate::bootTitleMayRelease(false, false));
 }
 
+// --- playbackSetSettled (DEC-196) ----------------------------------------------------------------------------
+// The panel becomes interactive only when a first Play sounds every track: the focused slot is painted *and* no
+// track is still owed its playback-slot restore.
+
+void test_dec196_a_focus_settled_playback_set_releases() {
+  TEST_ASSERT_TRUE(BootGate::playbackSetSettled(true, false));
+}
+
+void test_dec196_a_focus_settled_boot_with_tracks_still_owing_their_slot_does_not_release() {
+  // The measured defect: Play at 11.67 s with one restored slot, seven tracks still owed
+  // (`session_20261029_113133.log`). DEC-184's predicate released here; DEC-196 holds.
+  TEST_ASSERT_FALSE(BootGate::playbackSetSettled(true, true));
+}
+
+void test_dec196_an_unsettled_focus_slot_never_releases_on_the_playback_set() {
+  TEST_ASSERT_FALSE(BootGate::playbackSetSettled(false, false));
+  TEST_ASSERT_FALSE(BootGate::playbackSetSettled(false, true));
+}
+
+void test_dec196_the_whole_queue_drain_still_releases_a_set_that_cannot_settle() {
+  // An empty or unrecoverable playback set never settles; the original contract is the fallback, so no boot wedges.
+  TEST_ASSERT_TRUE(BootGate::bootTitleMayRelease(true, BootGate::playbackSetSettled(false, true)));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_dec184_a_committed_focus_slot_with_no_outstanding_work_is_settled);
@@ -72,5 +96,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_dec184_a_drained_queue_releases_the_title_as_before);
   RUN_TEST(test_dec184_a_settled_focus_slot_releases_the_title_with_restores_still_queued);
   RUN_TEST(test_dec184_a_settled_but_unready_boot_still_holds_the_title);
+  RUN_TEST(test_dec196_a_focus_settled_playback_set_releases);
+  RUN_TEST(test_dec196_a_focus_settled_boot_with_tracks_still_owing_their_slot_does_not_release);
+  RUN_TEST(test_dec196_an_unsettled_focus_slot_never_releases_on_the_playback_set);
+  RUN_TEST(test_dec196_the_whole_queue_drain_still_releases_a_set_that_cannot_settle);
   return UNITY_END();
 }

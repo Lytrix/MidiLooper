@@ -236,6 +236,38 @@ bool STORAGE_PERSIST_MEM StorageManager::isFocusedLoopSlotRestoreWork() {
     return StorageManagerInternal::isFocusDeferredLoopSlotRestorePending(focusTrack, focusSlot);
 }
 
+/// DEC-196 — **the playback set**, as one predicate: is any track still owed the restore of the slot a first Play
+/// sounds? That slot is the track's active slot (while stopped `loadTransportSlotIndices` remaps active := selected,
+/// which is exactly why both members of the boot union are restored).
+///
+/// Split from `isFocusedLoopSlotRestoreWork` on purpose: the focus slot is one track's slot, and DEC-184 released the
+/// boot hold on it alone — so the panel became interactive while seven tracks had no content, and a Play pressed there
+/// played one track (`captures/session_20261029_113133.log`). A slot with no SD payload is never queued and therefore
+/// never owed, so an empty slot cannot hold the boot. A refused/corrupt slot still terminates (DEC-171's retry bound),
+/// and `main` bounds the hold itself, so no boot can wedge here.
+bool STORAGE_PERSIST_MEM StorageManager::playbackSetRestoreWorkOwed() {
+    const uint8_t trackCount = trackManager.getTrackCount();
+    if (trackCount == 0) {
+        return false;
+    }
+    const uint8_t scanned = trackCount < Config::NUM_TRACKS ? trackCount : Config::NUM_TRACKS;
+    for (uint8_t t = 0; t < scanned; ++t) {
+        const uint8_t slot = trackManager.getActiveLoopIndex(t);
+        if (StorageManagerInternal::isActiveLoadLoopJobFor(t, slot)) {
+            return true;
+        }
+        if (StorageManagerInternal::isParkedLoadLoopJobFor(t, slot)) {
+            return true;
+        }
+        // The queue carries its own done-test (`hasCommittedPasses`), so a slot that is already satisfied cannot hold
+        // the boot even if its request record has not been retired yet.
+        if (StorageManagerInternal::isFocusDeferredLoopSlotRestorePending(t, slot)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void STORAGE_PERSIST_MEM StorageManager::setBootTitleLoadDrain(bool enabled) {
     StorageManagerInternal::setBootTitleLoadDrain(enabled);
 }

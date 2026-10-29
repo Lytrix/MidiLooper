@@ -264,11 +264,18 @@ DMAMEM uint8_t gBootSweepEnqueued;
 DMAMEM uint32_t gPaintGateLastMs;
 // DEC-189: `#STOP_TRACE` rate stamp. RAM2 because a new plain static costs DTCM and the budget gate refuses it.
 DMAMEM uint32_t gStopTraceLastMs;
+// DEC-196: deadline for the playback-set boot hold (see `runDeferredLoadAndDisplayFrame`). RAM2 like the sweep gate.
+DMAMEM uint32_t gBootPlaybackSetHoldDeadlineMs;
 #else
 uint32_t gBootSweepDueMs;
 uint8_t gBootSweepEnqueued;
 uint32_t gPaintGateLastMs;
+uint32_t gBootPlaybackSetHoldDeadlineMs;
 #endif
+
+// DEC-196: the longest the boot panel waits for every track's playback slot. The measured playback set is ~2-3 s of
+// drain; 15 s leaves room for a slow card while still releasing a set that can never settle (corrupt/refused slot).
+constexpr uint32_t kBootPlaybackSetHoldMaxMs = 15000u;
 
 // The remaining-slot sweep restores every other slot and re-dirties a cache per slot. It must not run before the
 // selected slot's first cache build, or the panel waits for the whole set. Device (`session_20261028_211734.log`,
@@ -285,6 +292,33 @@ FLASHMEM __attribute__((noinline)) static bool bootSweepMayRun(uint32_t now) {
     }
   }
   return static_cast<int32_t>(now - gBootSweepDueMs) >= 0;
+}
+
+// DEC-196: **one report per boot, on the release turn.** The question the owner asked is "can every track sound
+// from here?", which is a fact about the moment the panel/USB becomes interactive — not a periodic sample. (It
+// replaces the DEC-194 probe that printed every 4 s for the first minute; RAM1 is on its bank boundary, so this
+// lives in flash and keeps no state.) `settled=0` means the hold expired instead of the set settling, so the rows
+// tell the truth about a boot that was released by the 15 s deadline.
+FLASHMEM __attribute__((noinline)) static void reportBootPlaybackSetReady(bool settled) {
+  const uint8_t trackCount = trackManager.getTrackCount();
+  Serial.printf_P(PSTR("BOOT,ready,settled=%u,tracks=%u\r\n"), settled ? 1u : 0u,
+                  static_cast<unsigned>(trackCount));
+  for (uint8_t t = 0; t < trackCount; ++t) {
+    Track& readyTrack = trackManager.getTrack(t);
+    if (!readyTrack.loopsAllocated()) {
+      Serial.printf_P(PSTR("BOOT,ready,track=%u,no_loops\r\n"), static_cast<unsigned>(t));
+      continue;
+    }
+    const uint8_t slot = readyTrack.getActiveLoopIndex();
+    const Loop& loop = readyTrack.getLoop(slot);
+    Serial.printf_P(PSTR("BOOT,ready,track=%u,slot=%u,state=%u,enabled=%u,passes=%u,root=%u,vcache=%u\r\n"),
+                    static_cast<unsigned>(t), static_cast<unsigned>(slot),
+                    readyTrack.isPlaying() ? 1u : 0u,
+                    trackManager.isSlotEnabled(t, slot) ? 1u : 0u,
+                    loop.hasCommittedPasses() ? 1u : 0u,
+                    loop.publishedSnapshotIdentity() != nullptr ? 1u : 0u,
+                    static_cast<unsigned>(loop.visualCache.notes.size()));
+  }
 }
 
 // Keep LoadLoopJob + OLED orchestration out of ITCM — RAM1 is at the 32KB page edge.
@@ -450,23 +484,44 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   // (`bootInteractiveReady()`), and the boot queue is each track's selected slot plus its two neighbours: 8 x 3 =
   // 24 restores on device, ~4 s after the slot the panel actually shows has already committed
   // (`session_20261028_214829_paintgate5.log`: selected slot committed 6.85 s, title released 10.89 s).
-  // Release as soon as the **selected** slot is settled; the rest of the queue keeps restoring behind the
-  // paint-first background path. An empty selected slot never settles, so that boot keeps the old contract --
-  // and the enqueue is idempotent (`queueDeferredLoopSlotRestoreWithPayloadSource` skips pending entries and
-  // slots that no longer need a load), so the post-boot sweep cannot double-queue the remainder.
+  // DEC-196 -- the hold now ends at the **playback set**, not the focused slot: one slot per track must be committed,
+  // otherwise a Play pressed right after boot sounds the focused track alone (`session_20261029_113133.log`: Play at
+  // 11.67 s with one slot restored; the rest then sat in `waiting_commit_gate` because the transport was running).
+  // The rest of the queue keeps restoring behind the paint-first background path. An empty playback slot is never
+  // owed, so that boot keeps the old contract -- and the enqueue is idempotent
+  // (`queueDeferredLoopSlotRestoreWithPayloadSource` skips pending entries and slots that no longer need a load), so
+  // the post-boot sweep cannot double-queue the remainder.
   const bool focusSettledForBootRelease = BootGate::focusSlotSettled(
       trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses(),
       StorageManager::isFocusedLoopSlotRestoreWork(), SlotLoadSession::isActive(),
       StorageManagerInternal::anyLoadLoopJobActive());
+  // Only asked while the boot still owes the release: after it, the queue holds the background sweep and this walk
+  // would be pure per-turn cost.
+  bool playbackSetSettledForBootRelease = true;
+  if (bootSlotLoadRefreshPending) {
+    playbackSetSettledForBootRelease = BootGate::playbackSetSettled(
+        focusSettledForBootRelease, StorageManager::playbackSetRestoreWorkOwed());
+  }
+  if (bootSlotLoadRefreshPending && gBootPlaybackSetHoldDeadlineMs == 0) {
+    // RAM2 deadline: a set that cannot settle (corrupt slot, refused payload) must release the panel rather than
+    // hold it forever. The whole-queue fallback still ends the hold earlier in every healthy boot.
+    gBootPlaybackSetHoldDeadlineMs = now + kBootPlaybackSetHoldMaxMs;
+  }
+  const bool playbackSetHoldExpired =
+      gBootPlaybackSetHoldDeadlineMs != 0 &&
+      static_cast<int32_t>(now - gBootPlaybackSetHoldDeadlineMs) >= 0;
   if (bootSlotLoadRefreshPending &&
-      BootGate::bootTitleMayRelease(StorageManager::bootInteractiveReady(),
-                                    focusSettledForBootRelease) &&
+      (BootGate::bootTitleMayRelease(StorageManager::bootInteractiveReady(),
+                                     playbackSetSettledForBootRelease) ||
+       playbackSetHoldExpired) &&
       !timingCriticalTrackActive) {
 #if defined(SESSION_CAPTURE)
     const uint32_t bootCommitStartUs = micros();
 #endif
     bootSlotLoadRefreshPending = false;
+    gBootPlaybackSetHoldDeadlineMs = 0;
     StorageManager::setBootTitleLoadDrain(false);
+    reportBootPlaybackSetReady(playbackSetSettledForBootRelease);
     gBootSweepDueMs = now + 3000;
     gBootSweepEnqueued = 0;
     displayManager.finishBootSetup();

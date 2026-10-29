@@ -34,26 +34,31 @@ void test_boot_restore_priority_selected_track_active_slot_when_split() {
 void test_boot_restore_priority_selected_track_other_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
-  // Right of selected 2 is 3 → priority 2.
+  // DEC-196: a non-playback slot on the focus track is background, behind the whole playback set. It keeps the
+  // runtime fill order inside that band (here: the selected slot's right neighbour, deferred priority 2).
   TEST_ASSERT_EQUAL_UINT16(
-      2, computeBootRestorePriority(0, 3, 0, active, 2, selected, 2, 2, 8));
+      kBootBackgroundRestorePriorityBase +
+          computeDeferredRestorePriority(0, 3, 0, selected, 2, 2, 8),
+      computeBootRestorePriority(0, 3, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_FALSE(isBootPlaybackSlot(0, 3, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_active_slot() {
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
-  // DEC-194: every track's active slot is the playing set, so it ranks ahead of the focus neighbourhood.
+  // DEC-194/196: every track's active slot is the playing set, so it ranks ahead of the focus neighbourhood.
   TEST_ASSERT_EQUAL_UINT16(
-      2 + 1, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
+      1 + 1, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isBootPlaybackSlot(1, 4, 0, active, 2, selected, 2));
 }
 
 void test_boot_restore_priority_other_track_selected_slot() {
   const uint8_t active[] = {1, 4};
   const uint8_t selected[] = {2, 0};
+  // DEC-196: while stopped, `loadTransportSlotIndices` remaps active := selected, so another track's **selected**
+  // slot is a playback slot too -- it must not sit in the deferred band behind the neighbours.
   TEST_ASSERT_EQUAL_UINT16(
-      100 + 8 + 0, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2, 2, 8));
+      1 + 1, computeBootRestorePriority(1, 0, 0, active, 2, selected, 2, 2, 8));
   TEST_ASSERT_TRUE(isBootPlaybackSlot(1, 0, 0, active, 2, selected, 2));
 }
 
@@ -61,7 +66,39 @@ void test_boot_restore_priority_other_track_non_selected_slot() {
   const uint8_t active[] = {1, 0};
   const uint8_t selected[] = {2, 0};
   TEST_ASSERT_EQUAL_UINT16(
-      100 + 8 + 4, computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
+      kBootBackgroundRestorePriorityBase + 100 + 8 + 4,
+      computeBootRestorePriority(1, 4, 0, active, 2, selected, 2, 2, 8));
+}
+
+void test_dec196_every_playback_slot_ranks_ahead_of_every_background_slot() {
+  // The ordering contract the boot hold depends on: with 8 tracks the set is served before any neighbour, so a Play
+  // pressed after the hold sounds every track that has content (session_20261029_113133.log: it did not).
+  constexpr size_t kTracks = 8;
+  constexpr size_t kLoops = 8;
+  uint8_t active[kTracks] = {7, 3, 0, 5, 1, 6, 2, 4};
+  uint8_t selected[kTracks] = {0, 3, 2, 5, 1, 6, 7, 4};
+  constexpr uint8_t kFocusTrack = 4;
+  uint16_t worstPlayback = 0;
+  uint16_t bestBackground = 0xFFFFu;
+  for (size_t t = 0; t < kTracks; ++t) {
+    for (size_t s = 0; s < kLoops; ++s) {
+      const uint16_t priority = computeBootRestorePriority(
+          static_cast<uint8_t>(t), static_cast<uint8_t>(s), kFocusTrack, active, kTracks, selected,
+          kTracks, kTracks, kLoops);
+      if (isBootPlaybackSlot(static_cast<uint8_t>(t), static_cast<uint8_t>(s), kFocusTrack, active,
+                             kTracks, selected, kTracks)) {
+        if (priority > worstPlayback) worstPlayback = priority;
+      } else if (priority < bestBackground) {
+        bestBackground = priority;
+      }
+    }
+  }
+  TEST_ASSERT_TRUE(worstPlayback < kBootBackgroundRestorePriorityBase);
+  TEST_ASSERT_TRUE(worstPlayback < bestBackground);
+  // The focus track's selected slot is still first, so the panel's own slot paints and sounds before the rest.
+  TEST_ASSERT_EQUAL_UINT16(
+      0, computeBootRestorePriority(kFocusTrack, selected[kFocusTrack], kFocusTrack, active, kTracks,
+                                    selected, kTracks, kTracks, kLoops));
 }
 
 void test_deferred_priority_left_right_wrap() {
@@ -247,6 +284,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_boot_restore_priority_other_track_active_slot);
   RUN_TEST(test_boot_restore_priority_other_track_selected_slot);
   RUN_TEST(test_boot_restore_priority_other_track_non_selected_slot);
+  RUN_TEST(test_dec196_every_playback_slot_ranks_ahead_of_every_background_slot);
   RUN_TEST(test_deferred_priority_left_right_wrap);
   RUN_TEST(test_slot_has_loop_content_ram_only);
   RUN_TEST(test_slot_has_loop_content_sd_only);

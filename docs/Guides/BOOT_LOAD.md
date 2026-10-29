@@ -35,7 +35,7 @@ sequenceDiagram
   loop->>SD: while-drain audible processDeferredLoopSlotRestore
   Note over Loop: OSTINATIX title; audible Commit; no piano roll yet
 
-  Loop->>Loop: finishBootSetup when restore queue empty
+  Loop->>Loop: finishBootSetup when the playback set is committed (DEC-184/196)
   Loop->>USB: beginUsbHost
   Note over USB: BOOT,usb_host,begin
   USB->>USB: Task() poll up to 300 ms (cold-plug enumerate)
@@ -64,7 +64,7 @@ sequenceDiagram
 | Post-boot slot restore | after ready + holdoff; bounded background **preparation** is admitted while transport runs | `FocusRestoreUs` / `BackgroundRestoreUs`; demote parks one in-flight job. **Updated by `deferred-slot-restore-liveness` A2.2:** an open/read/parse slice of a queued background request now advances under active transport (`canPrepareBackgroundLoadLoopNow`), so a request is no longer deferred merely because a track is playing. **Commit and cleanup still require the idle gate** (`canRunBackgroundLoadLoopNow` / `MidiServiceDrain::admitLoadJobChild`), which is global across both job instances: a prepare-complete request reports the named `waiting_commit_gate`, and a sibling blocked by that global gate reports `waiting_job_capacity`. Applying a restore under active transport is **not** delivered here — it waits on `resumable-midi-boundary-playback-maintenance` task 3.3 (bounded Commit). |
 | Restore request identity | — | `deferred-slot-restore-liveness` A2.1: a request is `(track, slot, requestGeneration, setEpoch)` with `queued`/`running`/`waiting`/`terminal` state and named waits (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`, `waiting_retry`) versus terminals (`committed`, `unnecessary`, `refused`, `superseded`). Publication revalidates the captured identity immediately before install and publishes nothing if it is stale. Read it with `!STOP_STATUS` / `StorageManager::probeRestoreState`; transitions are the `RRQ` capture line. |
 | Deferred undo hydrate | same | Reads undo bodies from bundle |
-| **finishBootSetup + USB Host** | `bootInteractiveReady()` only | Title must not wait for visual-cache or `LoopSnapshot` current (`020111` stayed on title 185 s after `load_frame` went idle). Automatic loaded snapshot hydration stays off after `boot_commit` (`023222`). After title, Stage 2.1 pass fallback may fill STOPPED caches. Do not call `invalidateForSlotChange` from `onBootSlotLoadComplete`. STOPPED track switch / undo must not wipe `visualCache.notes` either (`invalidateForSlotChange` marks stale; idle uses a budgeted gather and defers wrap-append). While PLAYING, a queued destination that is not yet `getActiveLoop()` also keeps its `visualCache` — idle slices only service the active loop. |
+| **finishBootSetup + USB Host** | focused slot settled **and** playback set committed (`BootGate::playbackSetSettled`, DEC-184/196) | Title must not wait for visual-cache or `LoopSnapshot` current (`020111` stayed on title 185 s after `load_frame` went idle). Automatic loaded snapshot hydration stays off after `boot_commit` (`023222`). After title, Stage 2.1 pass fallback may fill STOPPED caches. Do not call `invalidateForSlotChange` from `onBootSlotLoadComplete`. STOPPED track switch / undo must not wipe `visualCache.notes` either (`invalidateForSlotChange` marks stale; idle uses a budgeted gather and defers wrap-append). While PLAYING, a queued destination that is not yet `getActiveLoop()` also keeps its `visualCache` — idle slices only service the active loop. **DEC-196:** the playback set is one slot per track; `StorageManager::playbackSetRestoreWorkOwed()` names it and the boot drain ranks it first, so the hold costs the set (≈2–3 s), not the whole 26-slot queue. A slot with no SD payload is never owed, and the hold is bounded at 15 s (RAM2). |
 | First-commit playback prewarm | same load-frame as first slot commit | `154353` `first_commit=128693` during boot. Deferring it until after the first piano roll hung `160519`. |
 | DROID LED refresh | after `beginUsbHost` | `clearLeds`, note 100 flash, `onBootSlotLoadComplete` |
 | Mid-pass persistence | idle transport | `PERS,mid_pass` during/after restore |
@@ -99,7 +99,13 @@ Emitted via `emitBootMilestone` (`include/Utils/BootTelemetry.h`). Use capture-s
 2. **Do not** call `clearLeds()` / `forceLedUpdate()` from `setup()` — run from the boot-slot-complete gate (or `onBootSlotLoadComplete`).
 3. **Do** pump `usbHost.Task()` after `begin()` for up to 300 ms when DROID is cold-plugged at power-on (`MidiHandler::beginUsbHost`).
 4. **Do** keep ch15 LED outbound queued and paced (`MidiConfig::DroidUsbHost`) — see DROID guide.
-5. **Do not** clear the boot title (`finishBootSetup`) until `bootInteractiveReady()` — piano roll only after audible Commit.
+5. **Do not** clear the boot title (`finishBootSetup`) before the focused slot is painted **and** the playback set is
+   committed — `BootGate::playbackSetSettled` (DEC-184 + DEC-196): one slot per track (the active slot, i.e. the
+   selected slot while stopped) must be restored, so a Play pressed right after boot sounds every track that has
+   content. `bootInteractiveReady()` (whole queue drained) is the fallback, and `main` bounds the hold at 15 s so a
+   slot that cannot restore cannot wedge the panel. Before DEC-196 a release on the focused slot alone left seven
+   tracks unloaded, and their restores then waited in `waiting_commit_gate` because the transport was already running
+   ([`113133`](../../captures/session_20261029_113133.log)).
 6. Arm `setBootTitleLoadDrain(true)` in `setup()` so the first `loop()` turn cannot run STOPPED idle gather before title clear ([`145953`](../../captures/session_20260821_145953.log) `idle_gather=136084342`). Do not blank the OLED in `finishBootSetup()` — [`151555`](../../captures/session_20260821_151555.log) stayed black until the first piano-roll paint.
 
 ---

@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-196](#dec-196--the-boot-hold-ends-at-the-playback-set-not-the-focused-slot-and-the-boot-drain-keeps-the-playback-set-ordered-first) | 2026-10-29 | The boot hold ends at the playback set, not the focused slot, and the boot drain keeps the playback set ordered first | Accepted — device-verified (`bea5a99b…`) |
 | [DEC-195](#dec-195--a-deferred-body-write-waits-bounded-for-a-publication-owed-for-the-current-committed-state-and-a-rootless-body-is-re-persisted-once-its-root-settles) | 2026-10-29 | A deferred body write waits (bounded) for a publication owed for the current committed state; a rootless body is re-persisted once its root settles | Accepted — native + build green; not flashed |
 | [DEC-148](#dec-148--a-noteoff-behind-the-served-position-terminates-the-sounding-instance-a-closure-the-ledger-no-longer-holds-is-suppressed) | 2026-10-20 | A NoteOff behind the served position terminates the sounding instance; a closure the ledger no longer holds is suppressed | Accepted (landed, 4.5 increment) |
 | [DEC-147](#dec-147--a-handoff-lead-refusal-is-a-position-refusal-the-traversal-budget-is-counted-in-spans) | 2026-10-19 | A handoff-lead refusal is a position refusal; the traversal budget is counted in spans | Accepted (landed; logged 2026-10-20) |
@@ -10998,3 +10999,100 @@ and only when the first write could not embed a root.
 `openspec/changes/root-bearing-loop-persist` (new). DEC-074 RC2 (settle admission, extended), DEC-180 (writer
 equivalence gate, unchanged), DEC-179 (passes-only restore, unchanged), DEC-192 (playback recovery, untouched). No data
 or format migration: existing bodies keep loading unchanged.
+
+## DEC-196 — The boot hold ends at the playback set, not the focused slot, and the boot drain keeps the playback set ordered first
+
+**Date:** 2026-10-29
+**Owner:** `BootGate::playbackSetSettled` / `bootTitleMayRelease` (`include/BootGate.h`), the boot release in
+`runDeferredLoadAndDisplayFrame` (`src/main.cpp`), `StorageManager::playbackSetRestoreWorkOwed`
+(`src/StorageManager.cpp`), `computeBootRestorePriority` (`include/Utils/BootLoopSlotRestore.h`),
+`reprioritizeDeferredLoopSlotRestoreEntries` + `currentBootRestorePriority`
+(`src/StorageManager/LoopSlotRestoreQueue.cpp`), `reportBootPlaybackSetReady` (`src/main.cpp`, one report per boot on the
+release turn in place of the DEC-194 periodic probe).
+**Status:** Accepted; **device-verified** (`sha256 bea5a99b…`, owner capture `session_20261029_120230.log`). Extends
+DEC-184 (release condition) and DEC-194 (boot restore ordering); supersedes neither.
+
+### Problem
+
+The owner reports that a Play pressed directly after boot sounds **one** track (channel 5); the earlier read of
+`captures/session_20261029_113133.log` as "every track sounds by 18.5 s" was wrong — at 18.47 s the owner *stopped*
+the transport, which is what let the drain continue. The capture names two independent defects:
+
+1. **The release condition is the wrong set.** DEC-184 releases the boot hold when the *focused* slot is settled
+   (`BootGate::focusSlotSettled`). At 10.65 s only track 4's slot had committed, so the panel and USB host became
+   interactive with seven tracks still unloaded. Play at 11.675 s started five tracks (their lengths are metadata) and
+   sounded the one with content.
+2. **The drain stalls as soon as the transport runs.** `canRunBackgroundLoadLoopNow()` is false while the sequencer
+   runs, and the drain flag is already cleared by the release, so track 5's request sat in
+   `RRQ,5,0,…,waiting,waiting_commit_gate` from 11.99 s until the owner's stop at 18.47 s. Content cannot arrive while
+   the set is being played — which is exactly the state the owner is in.
+3. **The playback-set ranking was being overwritten.** `computeBootRestorePriority` (DEC-194) ranks the playing set
+   first, but `reprioritizeDeferredLoopSlotRestoreEntries()` recomputed the whole queue with
+   `computeDeferredRestorePriority` on every idle selection turn *and* on the focus-footer's per-track
+   `prioritizeLoopSlotRestoreForFocus` call. The served order in the capture is therefore per-track (`4/0, 4/7, 4/1,
+   5/0, 5/1, 5/7, …`), not playing-set-first: track 0's content committed at 23.4 s, 13 s after the focus slot. The
+   DEC-194 ranking never reached the device.
+
+### Decision
+
+1. **The hold ends at the playback set.** `BootGate::playbackSetSettled(focusSettled, playbackSetRestoreWorkOwed)`
+   requires the focused slot to be settled *and* no track to still owe the restore of the slot a first Play sounds —
+   its active slot, which is the selected slot while stopped (`loadTransportSlotIndices` remaps active := selected).
+   `StorageManager::playbackSetRestoreWorkOwed()` answers with the existing per-slot predicates (active job, parked
+   job, queued request) over one slot per track. A slot with no SD payload is never queued, so an empty slot cannot
+   hold the boot; `bootInteractiveReady()` (whole-queue drain) stays the fallback, and the hold itself is bounded at
+   15 s in RAM2 so an unrecoverable slot cannot wedge the panel.
+2. **The ranking is a queue contract while the boot drain owns the queue.** `reprioritizeDeferredLoopSlotRestoreEntries`
+   keeps the boot order (`computeBootRestorePriority`) while `getBootTitleLoadDrain()` is set and only falls back to
+   the runtime fill order afterwards. Because the drain flag also makes `canRunBackgroundLoadLoopNow()` true, a Play
+   pressed *during* the hold no longer blocks the commits the hold is waiting for.
+3. **The priority scheme is total.** `computeBootRestorePriority` now ranks `0` = focus selected, `1 + trackIndex` =
+   any track's active **or** selected slot, and everything else at `kBootBackgroundRestorePriorityBase (200) +
+   computeDeferredRestorePriority(...)`, so **every** playback slot provably precedes **every** neighbour/bulk slot.
+   The DEC-194 version left other tracks' selected slots in the deferred band (100+) even though that is the slot a
+   stopped boot plays.
+
+### Rationale
+
+The measured failure is not restore throughput: it is that the boot declared itself ready at a set of one, and the
+only admission that could have finished the set was closed by the release. Both halves reuse existing owners — the
+boot gate, the restore queue's priority field, and the commit-admission predicate — and neither adds a producer, a
+queue, a loader, or a commit path. The restore ranking changes ordering only; no slot is added, removed or skipped.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Relax the commit gate so the playback set may commit while playing (after the release) | The commit stop-gate under transport is deliberately bounded by `resumable-midi-boundary-playback-maintenance` task 3.3; relaxing it here contradicts that recorded bound, and it would still not help while the drain flag is off |
+| Hold until the whole queue is empty (pre-DEC-184) | 26 slots ≈ 18 s of black panel; the set is 8 of them |
+| Queue/refuse the Play press until the set is ready | New "pending transport start" state on the MIDI edge for a 2 s window, with no owner today |
+| Rebuild the ranking inside each caller | The queue's priority field is the one source; every caller (scan, focus footer, idle selection) now shares one predicate |
+| Leave DEC-194's scheme and only fix the clobber | Still puts another track's **selected** slot (the one a stopped boot plays) behind the focus neighbours |
+
+### Verification and constraints
+
+- `test_boot_focus_handoff` 12/12: `playbackSetSettled` (settled set releases; any track still owing holds; an
+  unsettled focus never releases on the playback set) and the fallback (a drained queue releases a set that cannot
+  settle). The DEC-184 cases are unchanged.
+- `test_slot_focus_policy` 29/29: the reworked priority expectations, plus
+  `test_dec196_every_playback_slot_ranks_ahead_of_every_background_slot` — 8 tracks × 8 slots with active ≠ selected,
+  asserting `worstPlayback < 200 <= bestBackground` and that the focus selected slot is still `0`.
+- Gates: full native **3608 cases, 3 failed, 7 skipped, 3596 succeeded**. The failures are the pre-existing
+  DEC-193 RED, the DEC-194 RED, and the order-dependent
+  `test_record_note_stream_survives_four_sequential_overdub_publications` (green alone: `test_playback_prewarm`
+  252/252; it fails only inside the composite `test_frozen_record_reader_survival` run). `teensy41-capture-serial`
+  SUCCESS: RAM1 `variables 96,192`, ITCM `code 392,248 + padding 968` (floor 840; the DEC-194 report-only probe is
+  still in the working tree and is not part of this decision).
+- **Device PASS** (`bea5a99b…`, `session_20261029_120230.log`): the eight playback slots committed in set order
+  (`4/0, 0/0, 1/0, 2/0, 3/0, 5/0, 6/0, 7/3`) inside 0.48 s; `BOOT,ready,settled=1` + `BOOT,usb_host,begin` at 7.4 s
+  (pre-fix: 10.65 s with one slot); Play at 9.07 s emitted note-ons on ch 1, 2, 3, 5, 6, 8 within 14 ms. The two
+  silent tracks (3 and 6, 0-based) restore a body with **zero committed passes** and have no `stored_notes` row; the
+  owner confirmed they are **empty by design**, so six sounding channels is the correct expectation for this set. Owner confirmation: "all tracks sending
+  midinotes directly after boot".
+
+### Related OpenSpec / migration
+
+DEC-184 (release condition, extended), DEC-194 (boot order, corrected), DEC-182 (sweep gate, unchanged), DEC-171
+(retry bound that terminates a refused slot, unchanged). Evidence:
+[`2026-10-29-DEC196-BOOT-PLAYBACK-SET.md`](../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC196-BOOT-PLAYBACK-SET.md).
+No data or format migration.

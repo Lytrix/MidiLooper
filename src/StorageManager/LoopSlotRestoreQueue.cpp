@@ -78,6 +78,27 @@ uint16_t currentDeferredRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
                                           Config::MAX_LOOPS_PER_TRACK);
 }
 
+/// DEC-196: the boot playback-set order, recomputed the same way the boot scan ranked it.
+///
+/// The boot ranking is a **contract on the queue**, not a one-off sort: while the title drain owns the queue, any
+/// reprioritize must keep the playback set (one slot per track) ahead of every neighbour, or the set is served
+/// per-track in the runtime fill order and the last track's content lands ~18 s late
+/// (`captures/session_20261029_113133.log`: the set committed 10.6 s ... 29.0 s, Play at 11.7 s heard one track).
+/// After the footer, active == selected in RAM, so the file-active slot is read from the runtime (which is the slot
+/// playback uses) — `isBootPlaybackSlot` deliberately keeps both identities during the scan.
+STORAGE_PERSIST_MEM uint16_t currentBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex) {
+    const uint8_t selectedTrackIdx = trackManager.getSelectedTrackIndex();
+    uint8_t activeSlotIndex[Config::NUM_TRACKS]{};
+    uint8_t selectedSlotIndex[Config::NUM_TRACKS]{};
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        activeSlotIndex[t] = trackManager.getActiveLoopIndex(t);
+        selectedSlotIndex[t] = trackManager.getSelectedSlotIndex(t);
+    }
+    return computeBootRestorePriority(trackIndex, slotIndex, selectedTrackIdx, activeSlotIndex,
+                                      Config::NUM_TRACKS, selectedSlotIndex, Config::NUM_TRACKS,
+                                      Config::NUM_TRACKS, Config::MAX_LOOPS_PER_TRACK);
+}
+
 void queueDeferredLoopSlotRestoreWithPayloadSource(uint8_t trackIndex, uint8_t slotIndex,
                                                    bool refreshPayloadFromSd,
                                                    bool deferPriorityAndSort) {
@@ -340,13 +361,19 @@ STORAGE_PERSIST_MEM bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uin
     return false;
 }
 
-void reprioritizeDeferredLoopSlotRestoreEntries() {
+STORAGE_PERSIST_MEM void reprioritizeDeferredLoopSlotRestoreEntries() {
     if (pendingLoopSlotRestores_.count == 0) {
         return;
     }
+    // DEC-196: while the boot title drain owns the queue, keep the **boot playback-set order**. The focus footer
+    // queues every track's neighbours through `prioritizeLoopSlotRestoreForFocus`, and the idle selection turn calls
+    // this too; both used to rewrite the whole queue in the runtime fill order, which put one track's three slots
+    // ahead of the next track's playback slot and stretched the set across ~18 s of drain.
+    const bool bootOrder = getBootTitleLoadDrain();
     for (uint16_t i = 0; i < pendingLoopSlotRestores_.count; ++i) {
         DeferredLoopSlotRestore& pending = pendingLoopSlotRestores_.entries[i];
-        pending.restorePriority = currentDeferredRestorePriority(pending.track, pending.slot);
+        pending.restorePriority = bootOrder ? currentBootRestorePriority(pending.track, pending.slot)
+                                           : currentDeferredRestorePriority(pending.track, pending.slot);
     }
     sortPendingLoopSlotRestoresByPriority();
 }

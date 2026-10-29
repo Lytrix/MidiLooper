@@ -6075,6 +6075,26 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**Active scope (2026-10-29, owner-directed, DEC-196): the boot hold ends at the playback set, and the boot drain keeps
+that set ordered first — EXECUTED, flashed and device-verified (`bea5a99b…`).**
+The owner's request was "if I start playing directly after boot only track 5 plays — can you make it so all tracks can
+play after boot?", with `captures/session_20261029_113133.log` as the evidence. Scope: `BootGate`'s release predicate,
+`StorageManager::playbackSetRestoreWorkOwed()`, the boot drain's priority recomputation, and `computeBootRestorePriority`'s
+ranking. Done in this session: the hold releases only when every track's playback slot (active, i.e. selected while
+stopped) is settled, bounded by a 15 s RAM2 deadline with the whole-queue fallback; `reprioritizeDeferredLoopSlotRestoreEntries`
+keeps the boot order while `getBootTitleLoadDrain()`; the priority scheme is total (`0` focus selected, `1+trackIndex`
+any track's active or selected slot, `>=200` everything else). Explicitly **not** touched: the commit stop-gate under
+transport (`resumable-midi-boundary-playback-maintenance` task 3.3), the restore loader/body format, DEC-195 persistence,
+and the DEC-193/DEC-194 playback work with its own REDs. Flashed on the owner's word as `sha256 bea5a99b…`
+(HEX retained in `captures/bea5a99b/`), and the owner accepted the boot behaviour. **Device PASS**
+(`session_20261029_120230.log`, owner-confirmed): set committed in order within 0.48 s, `BOOT,ready,settled=1` +
+`BOOT,usb_host,begin` at 7.4 s (pre-fix 10.65 s with one slot), one Play at 9.07 s sounding ch 1, 2, 3, 5, 6, 8 within
+14 ms; tracks 3 and 6 (0-based) restore zero committed passes and are silent, which the owner confirmed is correct — those
+slots are empty. The DEC-194 periodic probe is
+replaced by one `BOOT,ready,…` report on the release turn. Evidence:
+[`2026-10-29-DEC196-BOOT-PLAYBACK-SET.md`](../../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC196-BOOT-PLAYBACK-SET.md).
+No SD operation.
+
 **Active scope (2026-10-29, owner-directed, DEC-195): root-bearing loop persistence — EXECUTED natively, device open.***
 The owner's request was "store a valid root, so I don't have to create one on boot". Scope: the deferred body write's
 settle admission, the per-slot record of a body written without a root, and the persistence owner turn that re-writes

@@ -1,3 +1,19 @@
+**2026-10-29 — boot release now waits for the whole playback set; all tracks sound on the first Play (DEC-196; device PASS, `bea5a99b…`).**
+Owner report: a Play pressed right after boot sounded one track. Three causes in `session_20261029_113133.log`:
+the DEC-184 release fired on the **focused** slot (10.65 s, seven tracks unloaded); the drain's commit admission
+closes once the transport runs, so the rest waited in `waiting_commit_gate` until the owner *stopped* at 18.47 s
+(the earlier "all tracks by 18.5 s" read mistook that stop for playback); and DEC-194's playing-set ranking was
+overwritten on the first idle selection turn, so the served order was per-track. Landed: `BootGate::playbackSetSettled`
++ `StorageManager::playbackSetRestoreWorkOwed()` (one slot per track, 15 s RAM2 bound, whole-queue fallback), a boot
+order that survives reprioritisation, and a total priority scheme (all playback slots before any neighbour). The
+DEC-194 periodic probe became one `BOOT,ready,…` report on the release turn. **Device PASS**
+(`session_20261029_120230.log`): the eight playback slots committed in order within 0.48 s, release + `BOOT,usb_host,begin`
+at **7.4 s** (pre-fix 10.65 s with one slot), and one Play at 9.07 s emitted note-ons on ch 1, 2, 3, 5, 6, 8 within
+14 ms. Tracks 3 and 6 (0-based) restore a body with zero committed passes and stay silent; the owner confirmed those slots
+are empty, so this is the correct result. Gates: full native 3608/3 failed (pre-existing DEC-193/DEC-194 REDs + the order-dependent
+`test_record_note_stream…`), `teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192` / ITCM `code 392,056 +
+padding 1,160`. HEX retained in `captures/bea5a99b/`.
+
 **2026-10-29 — playback reopened as an image-boundary regression; display packet frozen (DEC-193; docs only).**
 Owner direction: playback worked before the retained-Start fix and stopped after it, so the question is
 "what changed at the DEC-191 boundary", not "which new playback architecture". Boundary measured from

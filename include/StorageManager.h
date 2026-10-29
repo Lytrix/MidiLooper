@@ -80,6 +80,10 @@ public:
     static bool hasPendingLoopSlotRestore();
     /// True when the in-flight, parked, or next queued restore targets the selected track/slot.
     static bool isFocusedLoopSlotRestoreWork();
+    /// DEC-196: true when any track is still owed the restore of its **playback slot** (the active slot, which is the
+    /// selected slot while stopped). The boot hold releases only when this is false, so a Play pressed right after
+    /// boot sounds every track that has content.
+    static bool playbackSetRestoreWorkOwed();
     /// Boot title playback drain: disable demote/park so parked jobs cannot block title clear.
     static void setBootTitleLoadDrain(bool enabled);
     /// True while OSTINATIX title drain is active (set in setup, cleared at boot_commit).
