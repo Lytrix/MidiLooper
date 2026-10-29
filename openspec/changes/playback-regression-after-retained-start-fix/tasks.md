@@ -17,10 +17,16 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   [BOUNDARY-2026-10-29.md](evidence/BOUNDARY-2026-10-29.md) and correct any row whose provenance cannot be
   established (e.g. `session_20261029_012142.log` sits between flashes). Verify no image identity is taken
   from a source comment.
-- [ ] 1.2 Read-only card inventory: dump the current slot's pass/root/pass-edit inventory and diff it against
-  the pre-regression backup `captures/sd-backup-20261029_001835/`. Record whether the live body is still
-  passes-only (unrepaired), already republished (DEC-192 repaired it), or never damaged. **No SD write, no
-  delete, no rename.** Verify the conclusion does not depend on the withdrawn 01:55 causal story.
+- [x] 1.2 Read-only card inventory (**done 2026-10-29**). Attached to the running image without reset and sent
+  only `!LIB_OBSERVE` (`scripts/hitl_boot_census.py --library-observe --no-reset`); no upload, no SD write, no
+  transport gesture. Live state: 16 committed slots, 8 required for initial playback, 16 pass-backed and 7
+  root-backed after DEC-192 recovery. **Restore-time shape is rootless on both sides:** the pre-regression
+  session (`session_20261029_002728.log`) shows `root_rev,0` after restore yet plays (`playback_read` at 168.2 s,
+  `lcr … from=passes, root_rev=0`), while the first-bad session never builds a root. Verify next time that a
+  conclusion is not drawn from the window (it reported `complete=0`) but from the per-slot rows plus the boot
+  logs. **The 00:18 backup is not a body reference** for this slot (78-byte stub, no 23808-tick body), so do not
+  plan a byte-level body diff against it. Evidence:
+  [BOUNDARY-2026-10-29.md](evidence/BOUNDARY-2026-10-29.md#card-inventory--2026-10-29-read-only-no-upload-no-sd-write).
 
 ## 2. Reproduce the regression (RED first)
 
@@ -38,9 +44,14 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
 - [ ] 3.1 Enumerate the production behavioral deltas D1–D5 from [design](design.md#dec-191-behavioral-deltas--the-complete-candidate-set)
   against the actual tree, and verify each is either absent, reverted, or reachable from a production call site.
   Record reachability per delta; do not test a delta that no production path can enter.
-- [ ] 3.2 Run the minimal mutation matrix on a scratch tree: D4 alone, D3 alone, D1+D2 alone, then combinations
-  that remain reachable. Verify Oracle A reds on exactly the smallest mutation and greens otherwise; record the
-  matrix. Remove every scratch mutation before proceeding (verify `git diff` contains none of them).
+- [ ] 3.2 Build **one two-state pair first** on a scratch worktree from checkpoint `a3d56f07`:
+  `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree plus DEC-191 behavior),
+  every unrelated DEC-192/post-02:00 edit identical between them and the DEC-192 recovery request guarded off in
+  the fixture. Verify the pair differs only in the DEC-191 deltas (`git diff reconstruction-control..reconstruction-dec191`)
+  and that playback toggles between them under Oracle A. Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`.
+- [ ] 3.3 Only if 3.2 toggles, split behaviorally: D1+D2 only, D3 only, D4 only, then all. Verify Oracle A reds on
+  exactly the smallest mutation and greens otherwise; record interactions instead of forcing a single winner.
+  Remove every scratch mutation before proceeding (verify `git diff` on the primary tree contains none of them).
 
 ## 4. Name the first missing producer or opportunity
 
@@ -81,7 +92,10 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   (no record/clear on the owner's set). Verify no auto-heartbeat, source mutation or SD action is implied.
 - [ ] 8.2 Run last-good vs repaired on the **same pinned body**: first due event after Start, `playback_read`
   non-zero, `out=` note-ons, no second Play press, no Stop/restart. Record the exact image hashes, boot proof
-  and separate USB output evidence. A repaired card that shows playback on both images is not acceptance.
+  and separate USB output evidence. Retain each programmed HEX per
+  [TEENSY_FIRMWARE_UPLOAD](../../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md#procedure) step 8 — the four
+  2026-10-29 images are already unrecoverable. A repaired card that shows playback on both images is not
+  acceptance.
 
 ## Not authorized by this list
 

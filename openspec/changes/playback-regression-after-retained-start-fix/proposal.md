@@ -14,8 +14,9 @@ and is **not** authorized by this change.
 ## What Changes
 
 - Pin the last-good and first-bad images, sessions and the measured playback difference between them.
-- Resolve the one remaining fork before any code change: **code-path regression** vs **card-state
-  regression** (a slot body rewritten during the failed runs).
+- Resolve the one remaining fork before any code change. **Resolved 2026-10-29:** the card-state explanation
+  does not hold (the slot restores rootless on both sides and the pre-regression image still plays from passes),
+  so the code path is the live hypothesis.
 - If it is code, bisect only the DEC-191 behavioral deltas (cheap preflight, retry park/wake, session-exit
   orphan settlement, idle-lane orphan settlement, deferred-owner opportunity order) to the smallest
   mutation that switches playback off.
@@ -57,10 +58,15 @@ See [design](design.md), [boundary evidence](evidence/BOUNDARY-2026-10-29.md) an
   (`0dbf08c1…`) records `playback_read` = 0 with note-on counts at 0 in 68 of 72 sampled rows.
 - VERIFIED: the symptom survived removing the idle-lane orphan settlement (`3e79bd1b…`) and, per the
   recorded owner report, the full DEC-191 call-site revert (`c06f2e43…`).
-- VERIFIED: a pre-regression card backup exists (`captures/sd-backup-20261029_001835/`, taken before the
-  first-bad flash), so the card-state fork is testable without re-recording.
-- UNKNOWN: which of the two forks applies. Not assumed; it is the first task.
-- UNKNOWN: which DEC-191 delta is load-bearing if the fork resolves to code.
+- VERIFIED: the card-state fork is measured and rejected for the rootless property. The pre-regression boot
+  restores the slot rootless (`root_rev,0`) and still plays from the pass resolution; the first-bad boot never
+  builds a root. The persisted shape is not the differentiator.
+- VERIFIED: the 00:18 backup is **not** a body reference for the 31-bar slot (78-byte stub, no 23808-tick
+  body). It cannot support a byte-level pre/post body diff.
+- VERIFIED: the live device has 16 committed slots and 8 required for initial playback; 7 carry a root only
+  because DEC-192 recovery rebuilt them after boot.
+- UNKNOWN: which DEC-191 delta is load-bearing. The next experiment is a two-state reconstruction
+  (`reconstruction-control` vs `reconstruction-dec191`), not historical images.
 - No new timing, memory, or physical-output guarantee is claimed by the repair itself.
 
 ## Non-goals

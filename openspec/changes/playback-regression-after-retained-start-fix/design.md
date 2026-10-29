@@ -33,13 +33,13 @@ owner report, on `c06f2e43…` (all DEC-191 production call sites reverted).
 Fork 1 — **code path.** A DEC-191 delta removed a playback/source opportunity. Weakened by the reported
 persistence after revert, but not falsified: a rebuild is not guaranteed to equal the pre-DEC-191 tree.
 
-Fork 2 — **card state.** A broken run rewrote the slot body, and every later image inherits it. The 01:55
-entry records a deferred save writing a passes-only body with no root (paint 384 of 672 passes), but the
-causal claim that orphan release caused it was later **withdrawn**. Treat it as a hypothesis, not a premise.
-Complication to respect: DEC-192's recovery has since rebuilt a root on the device, so the live card may
-already be repaired and would show "playback works" on **both** images. A pre-regression backup exists
-(`captures/sd-backup-20261029_001835/`, 00:18, before the 01:12 flash) and is the only trustworthy
-pre-regression body.
+Fork 2 — **card state.** *Measured 2026-10-29 and rejected for the rootless property.* A broken run was
+suspected of rewriting the slot body so every later image inherits it, but the pre-regression boot restores the
+same slot **rootless** (`root_rev,0`) and still serves playback from the pass resolution, while the first-bad
+boot never builds a root at all. The persisted shape is not the differentiator. The 00:18 backup cannot serve
+as the pre-regression body either: its `loop_07_03.bin` is a 78-byte stub and no slot body in it is the 31-bar
+shape. A save/publication parity defect of a different kind is not excluded, but it is not this regression and
+is out of scope. Full readings: [BOUNDARY-2026-10-29.md](evidence/BOUNDARY-2026-10-29.md#card-inventory--2026-10-29-read-only-no-upload-no-sd-write).
 
 Owners (unchanged, do not extend): `main.cpp` deferred dispatch; `Track::processDeferredIdleMaintenance` and
 the Snapshot-slot opportunity; `Loop` committed passes, its private publication candidate and the publisher;
@@ -83,21 +83,26 @@ window producer, standby pool, or rootless emitter fails review even if A passes
 
 ## Diagnostic ladder (stop at the first branch that answers the question)
 
-1. **Read-only card inventory.** Dump the current slot's passes/root/pass-edit inventory and compare with the
-   00:18 backup. Distinguishes "body was damaged and is now repaired" from "body was never damaged". No SD
-   write. If the current body matches the pre-regression shape, Fork 2 loses most of its weight.
-2. **Image A/B on a controlled body.** Last-good vs first-bad on a body known to be pre-regression (backup
-   copy on a quarantined slot, or a fresh scratch slot recorded once for this test). Requires explicit
-   permission for any SD write and one upload authorization per image. Outcome: playback differs → code fork;
-   playback identical → data fork (and the defect is a save/publication parity defect, not DEC-191).
-3. **Minimal mutation matrix (code fork only).** Re-enable exactly one delta at a time on the pre-regression
-   tree: D4 alone, D3 alone, D1+D2 alone, then combinations. The smallest mutation that switches playback off
-   names the repair boundary. Each run uses Oracle A and records `playback_read`/`out=` counts.
+1. ~~**Read-only card inventory.**~~ **DONE 2026-10-29.** The slot is restored rootless on the
+   pre-regression image too, which still plays from the pass resolution; the first-bad boot never builds a
+   root. Fork 2 (card state) does not explain the regression. Readings in
+   [BOUNDARY-2026-10-29.md](evidence/BOUNDARY-2026-10-29.md#card-inventory--2026-10-29-read-only-no-upload-no-sd-write).
+2. **Two-state reconstruction first — do not build historical images.** From the checkpoint, produce
+   `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (the same tree plus DEC-191
+   behavior), keeping every unrelated DEC-192/post-02:00 edit identical between them, and with the DEC-192
+   recovery request guarded off in the fixture so the historical repair cannot satisfy the oracle. Name them
+   as reconstructions, never as `0dbf08c1`/`3e79bd1b`: they are causal instruments, not historical truth.
+   Toggle only the DEC-191 behavior to ask whether playback switches at all.
+3. **Behavioral split, only if step 2 toggles.** Re-apply one piece at a time: D1+D2 only (retry storm
+   prevention), D3 only (ownership repair), D4 only (idle-lane/scheduling), then all together. The smallest
+   mutation that switches playback off names the repair boundary; note any interaction instead of forcing a
+   single winner.
 4. **Name the lost producer.** For the winning mutation, trace which producer no longer runs (root
    publication request, source admission, or the reader's qualification) and its refusing predicate.
 5. **Repair only that boundary**, reusing the existing owner. No new state.
 6. **Oracle B** on the repaired tree; then Oracle A; then focused native, full native, build, scoped review.
-7. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output.
+7. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output. Record the HEX per
+   [TEENSY_FIRMWARE_UPLOAD](../../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md#procedure) step 8.
 
 ## Execution packet — first implementation slice (task 2 only)
 

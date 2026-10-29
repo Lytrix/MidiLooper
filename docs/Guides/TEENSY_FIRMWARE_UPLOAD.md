@@ -61,6 +61,14 @@ shasum -a 256 "$hex"
    managed capture/drain rules before starting a content test.
 7. Record the image left on the board. Normal boot recovery may write workspace
    metadata; no upload permission implies permission to quarantine/delete SD data.
+8. **Retain the HEX (mandatory since 2026-10-29).** Builds here are routinely made on deliberately
+   dirty trees, so the source tree does not identify an image. After every authorized flash, copy the
+   exact programmed HEX into `captures/<image-id>/` and write beside it:
+   `sha256.txt`, `git-head.txt`, `git-status.txt`, `git-diff.patch` (when the tree is dirty),
+   `build-flags.txt` (env, `PLATFORMIO_BUILD_DIR`, RAM1/ITCM figures) and `upload.log`. The project
+   build cache holds only the newest `firmware.hex`, so an overwritten build is unrecoverable.
+   Rationale: four 2026-10-29 images (`852b15f7…`, `0dbf08c1…`, `3e79bd1b…`, `c06f2e43…`) are
+   referenced by the DEC-193 playback regression but cannot be re-flashed or rebuilt exactly.
 
 ## Evidence and limits
 
