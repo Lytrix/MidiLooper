@@ -72,7 +72,13 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   (`dispatch_no_holder`) and the committed retry is never reached, so readiness stays `OwesBuild`. The defect is a
   **view-role leak** after position invalidation. Report-only; target build SUCCESS, RAM1 unchanged, RAM2 +128 B.
   Evidence: [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#dispatch-probe--2026-10-29-35b-and-the-chain-it-names).
-- [ ] 3.5c **Device correlation (minimal) — BLOCKED on upload authorization.** Image built and pinned:
+- [x] 3.5c **Device correlation (minimal) — DIVERGENT.** Flashed `3f74ecd5…`, captured
+  `session_20261029_032402.log`: at 20.16 s `playback_build,pending_position_invalidated` for t7s3, 1 ms later
+  `snapshot_unit,kind=start`, root published at 58.49 s (**~38.3 s**), zero `gate_*` rows. The device answers an
+  invalidated demand with whole-root publication, not a window build; without a retained source it never reaches the
+  role question. **3.5d is therefore not authorized.** Evidence:
+  [device run 2](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#device-run-2-session_20261029_032402log--the-device-answers-with-whole-root-publication).
+  (Superseded recipe text follows for the record.) Image built and pinned:
   HEX SHA-256 `3f74ecd5f07fc283438850ec71dd403cc4fb18fc0fff06b0951d89179f9f0718`, bundle
   `captures/dec193-naming-image-20261029/` (firmware.hex, sha256, git-head, git-status, build-flags).
   Recipe: capture from boot, play the restored rootless slot, then transport Stop → Start → Stop inside the first
@@ -80,7 +86,7 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   Acceptance: same name → 3.5d; different name → the fixture lacks one production condition; **no row at all** → the
   maintenance owner is not being serviced, which moves the boundary up one level and forbids touching role retirement.
   No SD write, no record, no slot change. Do not flash without the owner's word in the session that flashes.
-- [ ] 3.5d **Repair candidate — retire the leaked role (gated).** When a demand's position is invalidated, retire the
+- [ ] 3.5d **Repair candidate — retire the leaked role (NOT AUTHORIZED; device diverged).** When a demand's position is invalidated, retire the
   stale view role so `coverageRoleAvailable` is true for the next epoch. One existing owner, no new state; verify both
   oracles and that no accepted content or sounding slot is disturbed. Not authorized until 3.5c agrees on the name.
 - [ ] 3.6 Only if 3.5 names nothing actionable, build **one two-state pair** on a scratch worktree from

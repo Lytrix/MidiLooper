@@ -172,3 +172,42 @@ gate, so the reach question is still answerable.
 
 Second attempt recipe: reset with `capture_session.py --boot-reset`, press Start as soon as the first paint appears
 (≤5 s), keep playing ~20 s through the root build, then Stop → Start → Stop.
+
+## Device run 2 `session_20261029_032402.log` — the device answers with whole-root publication
+
+Setup note: `--boot-reset` was **refused** (`!REBOOT is transport-gated`, the transport was still running), so this is
+a capture of the already-playing device, not a fresh boot. That makes it the relevant state: **playing, rootless,
+demand invalidated**.
+
+Timeline (device micros):
+
+- `20.156 s` `playback_build,pending_position_invalidated,0,23808,0,1,7,3,…` — the invalidated demand for t7s3.
+- `20.170 s` `snapshot_unit,kind=start … q=2,a=0,if=1` — a **whole-root publication** begins 1 ms later.
+- `58.493 s` `snapshot_unit,kind=publish … n=7990` — the root lands. **~38.3 s** after the invalidation.
+- Zero `gate_*` rows and zero `dispatch_*` rows in the whole log.
+
+Interpretation, with its limit stated:
+
+- The device's producer after invalidation is the **root publication** (DEC-192's recovery), not a window build.
+- No `gate_*` row means the retry gate never refused this slot. But the flashed image cannot report
+  `dispatch_retry` (the sentinel bug fixed after it was built), so "no dispatch row" cannot distinguish "retry
+  reached for another slot" from "lane not offered". Only `gate_*` is trustworthy here, and it is absent.
+
+**Verdict: divergent, not correlated.** Host: retained source → `OwesBuild` → `gate_no_role` (role leak). Device:
+no retained source → `OwesSource`-shaped slot → the lane's only producer is the whole-root publication. Per the
+agreed rule, **3.5d (role retirement) is NOT authorized** by this evidence.
+
+The product defect the owner reports is confirmed and measured: playback for the restored slot waits ~38 s for a
+whole-loop root, and that wait is the thing to remove.
+
+### Where the two shapes differ (the missing production condition)
+
+| | host fixture | device |
+|---|---|---|
+| retained source | seeded by the fixture (`retainPlaybackSourceForSlot`) | absent at boot/Start |
+| readiness | `OwesBuild` | `OwesSource`-shaped (root publication owns it) |
+| producer | window retry (blocked by `gate_no_role`) | `snapshot_unit` republish |
+| outcome | silent 256 turns | audible only after ~38 s |
+
+So the device never reaches the role question: without a retained source there is no window demand to admit. The
+role leak would only matter **after** a first-window producer exists.
