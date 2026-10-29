@@ -753,6 +753,19 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                                                       loop.loopLengthTicks, &gatherPath, nullptr,
                                                       publishedRecordOverlay)) {
       usedSnapshotIdentity = buildIdentity;
+    } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
+               committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
+               !loop.publishedSnapshotIsCurrent() &&
+               track.playbackWindowSourceIsCurrentForSlot(committedSlot) &&
+               !runtime.pagedActive &&
+               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
+      // **DEC-194 — the same committed-pass fallback for a whole-take (short) loop.** A short slot never enters the
+      // two-bar branch above, so without this it had no pass source at all while rootless: device
+      // `session_20261029_100611` shows channel 5 silent while channel 1 played. The whole loop is the bound here, and
+      // it is short by construction (whole-take slots are the undemoted ones).
+      runtime.mergedMidiEvents.mergedEvents.clear();
+      loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, 0, loop.loopLengthTicks);
+      usedSnapshotIdentity = buildIdentity;
     } else {
       // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
       // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
