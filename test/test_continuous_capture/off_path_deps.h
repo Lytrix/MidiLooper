@@ -143,8 +143,11 @@ void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 // suites that assert a committed switch keep this observable.
 #if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {}
+// DEC-210: the track-focus route is a display notification; this boundary keeps it observable.
+void DisplayManager::onTrackFocusChanged(uint8_t, uint8_t) {}
 #else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+void DisplayManager::onTrackFocusChanged(uint8_t, uint8_t) { OFF_PATH(); }
 #endif
 #endif
 // A suite that links the real StorageManager load path (which defines these two) opts out with

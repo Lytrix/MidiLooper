@@ -1,3 +1,22 @@
+**2026-10-29 — boot visual caches prewarmed and preserved across track focus (DEC-210; owner-confirmed).**
+The boot playback set now prepares each active slot's first 16-bar visual window before the restore sweep
+(bounded 3 s), and a track focus change no longer takes the slot-change cache clear. Device
+`session_20261029_190227.log`: owner reports snappy; prepared tracks paint 215/32/58/42/230 notes on the first
+frame, the one unprepared slot builds 5 notes on the switch edge and paints the next frame, and the boot gate
+recorded its bounded fallback (`ready=0,bound=1`). Native **3647 / 7 skipped / 3640 pass / 0 fail**, target
+build SUCCESS at unchanged RAM1. The capture is a STOPPED cycle; PLAYING switches are native-verified. No agent
+upload, SD operation, archive or PR. [DEC-210](DECISION_LOG.md).
+
+**2026-10-29 — reboot undo/redo fixed and owner/manual device-accepted (DEC-208/DEC-209).**
+Playback-source descriptor reuse retains the same owned chunks without admission-path release; explicit
+closed-committed cache refresh now repaints repeated undo/redo while its replacement root is pending.
+Owner confirms instant display updates after reboot; `session_20261029_174940.log` corroborates eleven
+gestures, changing clean cache/paint counts and uninterrupted playback. Native3636 pass/7 existing skips,
+clean capture-serial build at unchanged RAM1 and focused independent review pass. Offered image73391624…;
+owner uploaded/tested, no independent uploader/hash receipt. Scoped defect accepted, not automated hardware
+inventory/timing or universal rolling qualification. No commit/archive performed.
+[Acceptance evidence and limits](../openspec/changes/reboot-undo-redo-consistency/evidence/DEVICE-174940.md).
+
 **2026-10-29 — the "full-run only" playback failure named: a frozen two-bar merged window for 3..16-bar loops (DEC-197; native + build green, not flashed).**
 `test_record_note_stream_survives_four_sequential_overdub_publications` is red deterministically in the production-TU
 oracle binary (1.9 s alone) and green in the fixture binary, so the label was wrong: it is a production-code fact, not

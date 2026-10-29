@@ -441,6 +441,46 @@ flowchart LR
 
 ---
 
+## Committed undo display refresh after restore
+
+Playback source turnover uses the existing two retained descriptors. On capacity pressure, Track may
+re-identify an older quiescent Retiring descriptor only for the same ordered pinned capture/edit IDs
+and chunk IDs, a current request identity and the same slot identity. Live capture/session/finalization,
+builders, gathers/source borrows and complete views referencing that revision block reuse. The pins
+and chunk references are kept unchanged; no admission-path release or extra role is introduced.
+Different bodies/membership retain the existing named refusal. Native repeated rooted/rootless
+undo/redo and refusal controls are documented in
+[source-turnover evidence](../../openspec/changes/reboot-undo-redo-consistency/evidence/CONTINUATION.md).
+Device/long-loop rolling qualification remains separate from that native evidence.
+
+The current implementation can replace a rootless publication-gap held frame with the existing cache
+after an explicit pass-state refresh completely and successfully resolves its committed passes and
+stamps `visualCache.builtFromRevision`. For a closed committed slot, that explicit refresh can run even
+when its replacement snapshot is pending; ordinary idle slices still defer. Active Capture, an open
+overdub session, a staged pending pass or a sealed-range borrow retains the private-content hold.
+`Loop::tryCopyCurrentVisualCacheDisplayNotesInWindow` requires
+that revision and clean coverage for the requested interval; a successful empty result clears old notes,
+while stale/partial/denied output keeps the coherent frame/key. Projection refusals during both pass
+resolution and later wrap completion leave the slice retryable, not certified. Live Capture/overdub
+handoff holds keep their existing policy; no MIDI gather is added to paint and no playback-source
+retention changes here. Native display regression coverage is recorded in
+[reboot undo/redo Apply evidence](../../openspec/changes/reboot-undo-redo-consistency/evidence/APPLY.md).
+Repeated-redo playback and pending-publication repaint are owner/manual device-accepted after reboot:
+the capture follows eleven undo/redo actions with clean changing cache/paint counts and uninterrupted
+playback. See [device acceptance and limits](../../openspec/changes/reboot-undo-redo-consistency/evidence/DEVICE-174940.md).
+
+**Boot playback-set visual caches (DEC-210).** The boot restore prepares one active slot per track for
+playback (DEC-196); the display companion is `TrackManager::playbackSetVisualCachesReady()`: an empty
+slot is ready, a current published root is ready, and a rootless slot is ready when its visual cache has
+notes and the first `kMaxDetailedWindowBars` (16) bars are clean. The remaining-slot restore sweep waits
+for that set, bounded by the existing 3 s deadline, so the VisualCache idle lane can fill the set before
+the sweep re-dirties each restored slot's cache. A **track focus change** is not a slot change:
+`DisplayManager::onTrackFocusChanged` drops the outgoing live frame and recenters the viewport, but
+leaves the target loop's `visualCache.notes` intact. The draw-source read still checks
+`builtFromRevision`, dirty-bar coverage and `playbackRevision`, so a stale cache cannot be served.
+See [DEC-210](../DECISION_LOG.md) and the boot guide's finishBootSetup row.
+This scoped acceptance is not an automated inventory/timing campaign or universal rolling qualification.
+
 ## Capture lifecycle
 
 **Files:** `include/Loop.h`, `src/Loop.cpp`, `src/Track.cpp`

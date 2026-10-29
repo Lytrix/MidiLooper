@@ -1021,10 +1021,18 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     // frame's honest hole rather than inventing rows for an interval no source covers.
     bool composedForRequest = false;
     const char* qualifiedSourceToken = "-";
-    if (heldRetainedContent && detailedWindowRequestedSlot_ == displaySlot &&
-        requestedLengthTicks > 0 &&
-        (requestedStartTick != windowStart || requestedLengthTicks != windowLength) &&
-        loop.collectQualifiedCommittedDisplayNotes(requestedStartTick, requestedLengthTicks, candidate)) {
+    // A pass-state refresh may already cover this very window while its replacement root is pending.
+    // Prefer that qualified cache (including an empty interval) to the pre-undo held frame. Capture
+    // handoffs keep their existing policy: they may still owe accepted preview content beyond the cache.
+    const bool currentCacheReplacement = holdSessionExitGapHandoff &&
+        !loop.captureActive() && !loop.hasOverdubSession() &&
+        loop.tryCopyCurrentVisualCacheDisplayNotesInWindow(
+            requestedStartTick, requestedLengthTicks, candidate);
+    if (currentCacheReplacement ||
+        (heldRetainedContent && detailedWindowRequestedSlot_ == displaySlot &&
+         requestedLengthTicks > 0 &&
+         (requestedStartTick != windowStart || requestedLengthTicks != windowLength) &&
+         loop.collectQualifiedCommittedDisplayNotes(requestedStartTick, requestedLengthTicks, candidate))) {
         // One generation, one base. The retained rows contribute nothing here: the frame is the provider's
         // committed rows for the requested interval, and its content key is that interval.
         windowStart = requestedStartTick;

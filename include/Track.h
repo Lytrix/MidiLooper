@@ -1608,6 +1608,8 @@ void resetPlaybackMergedRebuildCountForTest();
   void settleEmptyRecordGeometry();
 
 private:
+  /// Existing physical-retirement eligibility, shared with descriptor reuse; no mutation.
+  bool canRetireRetainedPlaybackSource(uint8_t slotIndex, const RetainedPlaybackSource& source) const;
   /// Off-clock Snapshot eligibility for an enabled playing slot with no source producer.
   /// Shared by slot selection and admission; never starts work or changes a claim.
   bool playbackSourceRecoveryNeededForSlot(uint8_t slotIndex) const;

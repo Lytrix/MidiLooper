@@ -348,6 +348,10 @@ void resetNativeTestPressureInputs();
 /// Force `admitOperationMemory` to deny, so a test can assert that a failed required
 /// prewarm refuses admission rather than being ignored.
 void setNativeForcedReserveDenied(bool denied);
+/// Allocator-boundary interleaving: count projection attempts and deny after N successful attempts.
+/// UINT32_MAX disables the countdown. No target storage/code is introduced.
+uint32_t nativeProjectionReserveAttemptCount();
+void setNativeProjectionReserveDenialAfter(uint32_t successfulAttempts);
 /// The declared-cap report is a device `printf`, so a host fixture cannot read the row. This records what
 /// the owner asked to report, which is what makes S4.4's policy path host-assertable for the first time:
 /// the count of reports, the class bit last named and the holder last named (`kNoWorkingSetClassHolder`

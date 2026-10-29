@@ -83,6 +83,9 @@ enum class RetainedSourceRole : uint8_t { None, Serving, Candidate, Retiring };
 /// own clause ("with actual body ownership"): it is what makes the eleven `Loop::resetPassTimeline` call sites safe
 /// without a veto in any of them -- they release the loop's reference, and this holder keeps its own until the one
 /// release predicate drops it.
+/// A quiescent Retiring descriptor may be re-identified for the exact same ordered pins/bodies
+/// once no reader needs its old revision. This keeps every body reference unchanged (DEC-208);
+/// it never changes a still-observed revision or releases storage to satisfy the two-role cap.
 struct RetainedPlaybackSource {
   uint32_t revision = 0;
   uint32_t generation = 0;

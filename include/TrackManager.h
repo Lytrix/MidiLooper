@@ -53,6 +53,10 @@ public:
   bool takeDeferredPlaybackPrewarm(uint8_t& trackIndex, uint8_t& slotIndex);
   /// Build visual cache for the selected display slot (cold path; defer from setup).
   void prewarmSelectedDisplayVisualCache();
+  /// Boot readiness companion to `StorageManager::playbackSetRestoreWorkOwed`: true when every
+  /// track's active slot has a display source for its first paint window. An empty slot, or one
+  /// whose published root is current, is ready without a cache build.
+  bool playbackSetVisualCachesReady() const;
 
   // --- Track Selection ---
   void setSelectedTrack(uint8_t index);

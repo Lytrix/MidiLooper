@@ -4,6 +4,9 @@
 #define HARNESS_REAL_CAPTURE_STOP
 #define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_LINKS_REAL_DISPLAY_MANAGER
+// DEC-210: drive the production `TrackManager::setSelectedTrack` path; the edit-session
+// neighbours are presentation-only here and must not fail the focus-change fixture.
+#define HARNESS_OBSERVABLE_TRACK_SELECT
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -54,6 +57,9 @@ struct DisplayCaptureTestAccess {
   static auto phase() { return displayManager.pendingPaintPhase_; }
   static auto& api() { return displayManager._display.api; }
   static auto key() { return displayManager.liveDrawSourceKey_; }
+  static const DisplayNoteVec& resolveCommitted(const Track& track, uint8_t slot, uint32_t tick) {
+    return displayManager.resolveDisplayNotesByDrawSource(track, slot, tick, 0, 127);
+  }
   static uint8_t track() { return displayManager.paintTrackIndex_; }
   static uint8_t slot() { return displayManager.paintSlot_; }
   static uint32_t rectangles() { return displayManager._display.gfx.rectangles; }
@@ -1893,6 +1899,77 @@ void test_restored_slot_cache_fills_through_the_idle_lane_without_a_root() {
   completeFrame();
 }
 
+// DEC-210: a boot playback-set slot is prewarmed for its first paint window. The switch path must
+// not throw that cache away: before this rule a PLAYING track switch ran `invalidateDisplayCaches()`
+// on the target loop, so the panel painted `n=0` until the idle lane rebuilt it
+// (`session_20261029_174940`: the owner cycled tracks and saw notes only after stopping).
+static void seedRootlessRestoredVisualCache(Track& track, uint8_t basePitch, NoteId baseId) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  LoopEventStore record;
+  for (unsigned n = 0; n < 2; ++n) {
+    MidiEvent on = MidiEvent::NoteOn(n * 96 + 12, 1, static_cast<uint8_t>(basePitch + n), 100);
+    on.noteId = baseId + n;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(
+        MidiEvent::NoteOff(n * 96 + 52, 1, static_cast<uint8_t>(basePitch + n), 0)));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = bar;
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  loop.ensureVisualCacheBuilt();
+  TEST_ASSERT_FALSE_MESSAGE(loop.visualCacheDirty, "the fixture must start from a clean prewarmed cache");
+  TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+}
+
+void test_dec210_a_playing_track_focus_change_preserves_the_target_visual_cache() {
+  Track& target = trackManager.getTrack(1);
+  seedRootlessRestoredVisualCache(target, 70, 2000);
+  target.forceSetState(TRACK_PLAYING);
+  Loop& targetLoop = target.getActiveLoop();
+  const size_t cachedNotes = targetLoop.visualCache.notes.size();
+  const uint32_t cacheRevision = targetLoop.visualCache.revision;
+
+  trackManager.setSelectedTrack(0);
+  trackManager.setSelectedTrack(1);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(cachedNotes, targetLoop.visualCache.notes.size(),
+                                   "a track switch must not clear the target's prewarmed visual cache");
+  TEST_ASSERT_EQUAL_UINT32(cacheRevision, targetLoop.visualCache.revision);
+  TEST_ASSERT_FALSE(targetLoop.visualCacheDirty);
+
+  const DisplayNoteVec& resolved =
+      DisplayCaptureTestAccess::resolveCommitted(target, target.getActiveLoopIndex(), 0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(cachedNotes, resolved.size(),
+                                   "the switched-to PLAYING track must paint from its prewarmed cache");
+}
+
+void test_dec210_playback_set_visual_cache_readiness_waits_for_every_active_slot() {
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.playbackSetVisualCachesReady(),
+                           "tracks with no loops/content cannot hold the boot set");
+  Track& first = trackManager.getTrack(0);
+  seedRootlessRestoredVisualCache(first, 60, 1000);
+  TEST_ASSERT_TRUE(trackManager.playbackSetVisualCachesReady());
+
+  Track& second = trackManager.getTrack(1);
+  second.ensureLoopsAllocated();
+  Loop& secondLoop = second.getActiveLoop();
+  LoopEventStore record;
+  MidiEvent on = MidiEvent::NoteOn(12, 1, 80, 100);
+  on.noteId = 3000;
+  TEST_ASSERT_TRUE(record.append(on));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(52, 1, 80, 0)));
+  secondLoop.seedRecordPassFromStore(record);
+  secondLoop.loopLengthTicks = Config::TICKS_PER_BAR;
+  secondLoop.markDisplayCachesStale();
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.playbackSetVisualCachesReady(),
+                            "one unready playback slot must hold the visual set");
+  secondLoop.ensureVisualCacheBuilt();
+  TEST_ASSERT_TRUE(trackManager.playbackSetVisualCachesReady());
+}
+
 /// Slice G oracle: **a rootless restored slot must obtain a published root on the publication lane**, because
 /// without one the panel cannot paint until the visual cache is rebuilt (device: length correct at 11 s, first
 /// content only after the restore sweep ended at 21-28 s). The fast first boot after the restore fix is the
@@ -1951,6 +2028,8 @@ int main() {
   RUN_TEST(test_chain_oracle_separates_missing_service_from_missing_content);
   RUN_TEST(test_painted_notes_follow_committed_passes_on_a_stationary_viewport);
   RUN_TEST(test_restored_slot_cache_fills_through_the_idle_lane_without_a_root);
+  RUN_TEST(test_dec210_a_playing_track_focus_change_preserves_the_target_visual_cache);
+  RUN_TEST(test_dec210_playback_set_visual_cache_readiness_waits_for_every_active_slot);
   RUN_TEST(test_rootless_restored_slot_gains_a_published_root_on_the_publication_lane);
   RUN_TEST(test_rounded_record_stop_follows_wrapped_overdub_before_publication);
   RUN_TEST(test_empty_overdub_start_cannot_grow_frozen_record_tails);

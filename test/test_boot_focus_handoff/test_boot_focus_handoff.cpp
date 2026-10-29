@@ -86,6 +86,21 @@ void test_dec196_the_whole_queue_drain_still_releases_a_set_that_cannot_settle()
   TEST_ASSERT_TRUE(BootGate::bootTitleMayRelease(true, BootGate::playbackSetSettled(false, true)));
 }
 
+// --- bootSweepMayRun (DEC-210) ---------------------------------------------------------------------------------
+// The sweep may not re-dirty cache after cache while the playback set is still preparing its first paint.
+
+void test_dec210_the_sweep_waits_for_the_playback_set_visual_caches() {
+  TEST_ASSERT_FALSE_MESSAGE(BootGate::bootSweepMayRun(true, false, false),
+                            "the focus cache alone no longer releases the sweep");
+  TEST_ASSERT_TRUE_MESSAGE(BootGate::bootSweepMayRun(true, true, false),
+                           "a prepared playback set releases the sweep");
+}
+
+void test_dec210_the_sweep_bound_releases_an_unpreparable_set() {
+  TEST_ASSERT_TRUE(BootGate::bootSweepMayRun(false, false, true));
+  TEST_ASSERT_TRUE(BootGate::bootSweepMayRun(true, false, true));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_dec184_a_committed_focus_slot_with_no_outstanding_work_is_settled);
@@ -100,5 +115,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_dec196_a_focus_settled_boot_with_tracks_still_owing_their_slot_does_not_release);
   RUN_TEST(test_dec196_an_unsettled_focus_slot_never_releases_on_the_playback_set);
   RUN_TEST(test_dec196_the_whole_queue_drain_still_releases_a_set_that_cannot_settle);
+  RUN_TEST(test_dec210_the_sweep_waits_for_the_playback_set_visual_caches);
+  RUN_TEST(test_dec210_the_sweep_bound_releases_an_unpreparable_set);
   return UNITY_END();
 }

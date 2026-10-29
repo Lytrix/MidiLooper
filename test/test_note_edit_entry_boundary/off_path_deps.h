@@ -91,6 +91,11 @@ void DisplayManager::invalidateForSlotChange(uint8_t track, uint8_t from, uint8_
   observation.from = from;
   observation.to = to;
 }
+// DEC-210: a track focus change reports through its own entry point; record it as the
+// same-track identity the focus contract asserts.
+void DisplayManager::onTrackFocusChanged(uint8_t track, uint8_t slot) {
+  invalidateForSlotChange(track, slot, slot);
+}
 bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { return false; }
 void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) {}
 void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) {}

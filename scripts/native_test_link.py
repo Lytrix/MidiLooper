@@ -49,6 +49,7 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # Arduino/SD hardware boundaries as the windowed-preview and continuous-capture harnesses.
     "test_note_edit_entry_boundary",
     "test_live_capture_display_boundary",
+    "test_reboot_undo_redo",
     # runtime-working-set-ownership I4 (Set browser index ownership): the suite links the catalog SD
     # owners (`SetRevisionCatalog`, the legacy reconcile and the boot ensure) against the in-memory
     # card, so it needs the same Arduino/SD hardware boundaries.
@@ -61,7 +62,7 @@ if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
     env.Append(LINKFLAGS=["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"])
-    if env.get("PIOTEST_RUNNING_NAME") in {"test_live_capture_display_boundary", "test_immediate_visual_cache_probe"}:
+    if env.get("PIOTEST_RUNNING_NAME") in {"test_live_capture_display_boundary", "test_immediate_visual_cache_probe", "test_reboot_undo_redo"}:
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_live_capture_display_boundary/firmware"])
     if env.get("PIOTEST_RUNNING_NAME") == "test_midi_input_clock_integration":
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_midi_input_clock_integration/firmware"])

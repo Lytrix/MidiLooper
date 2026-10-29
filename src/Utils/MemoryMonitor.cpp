@@ -737,6 +737,8 @@ namespace MemoryMonitor {
 
 uint32_t g_nativeTestFreeHeap = UINT32_MAX;
 bool g_nativeTestHeapOverride = false;
+static uint32_t sNativeProjectionReserveAttempts = 0;
+static uint32_t sNativeProjectionAttemptsBeforeDenial = UINT32_MAX;
 
 void setNativeTestFreeHeap(uint32_t bytes) {
   g_nativeTestFreeHeap = bytes;
@@ -851,6 +853,13 @@ HeapCapacityLadder probeHeapCapacityLadder(uint32_t needBytes) {
 }
 
 bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
+  if (operation == OperationKind::DisplayProjectionReserve) {
+    ++sNativeProjectionReserveAttempts;
+    if (sNativeProjectionAttemptsBeforeDenial != UINT32_MAX) {
+      if (sNativeProjectionAttemptsBeforeDenial == 0) return false;
+      --sNativeProjectionAttemptsBeforeDenial;
+    }
+  }
   if (sNativeForcedReserveDenied) return false;
   // Task 4.20 (DEC-169): the native mirror matches the device — floor + margin, resolved against the modeled largest
   // free chunk (`nativeAllocatableCapacityBytes`, defaulting to the injected tail) for user-gesture admissions, and
@@ -868,6 +877,10 @@ bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
   return !heapLow;
 }
 void setNativeForcedReserveDenied(bool denied) { sNativeForcedReserveDenied = denied; }
+uint32_t nativeProjectionReserveAttemptCount() { return sNativeProjectionReserveAttempts; }
+void setNativeProjectionReserveDenialAfter(uint32_t successfulAttempts) {
+  sNativeProjectionAttemptsBeforeDenial = successfulAttempts;
+}
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 namespace {

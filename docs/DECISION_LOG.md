@@ -11655,3 +11655,193 @@ notes -- before it ever reaches a board.
 
 DEC-199 (source by currency), DEC-194 (retention establishes the fallback's source), DEC-204 (the same session's other
 device fix, unaffected).
+
+## DEC-206 — Reboot undo/redo uses a focused saved-slot regression scope
+
+**Date:** 2026-10-29
+
+**Owner:** TrackUndo / Loop / DisplayManager / Track
+
+**Status:** Accepted scope and verification boundary; production repair not implemented
+
+### Problem
+
+Owner reports reboot undo removes an overdub audibly but not visually, and redo silences the slot. `session_20261029_143903.log` confirms a clean post-undo cache of 171 notes while the retained frame still paints 204 (`hold_gap`). The same-window display handoff is the named boundary. DEC-205's release-from-admission repair is reverted at `7c3f69ff` and remains rejected.
+
+### Decision
+
+Owner explicitly selected both symptoms with saved-slot production-path fixtures. Open `reboot-undo-redo-consistency`: establish real serialized-body load→undo→display/playback oracles first; contract a qualified same-window display replacement, including empty results and allocation refusal, through existing owners. Redo production repair is blocked on loaded-slot resource attribution; only its acceptance/characterization fixture is ready. No new ownership/lifetime model is approved by this scope decision.
+
+### Rationale and alternatives
+
+The cache already rebuilt, so another rebuild or waiting for a whole root does not address the display boundary. Unconditional frame clearing/gap bypass breaks existing capture continuity. Reapplying DEC-205 ignores its loaded-slot regression. A third retained role or altered chunk reference accounting would choose architecture before the failing ownership boundary is established and is not authorized.
+
+### Affected modules and constraints
+
+TrackUndo editing derivation, Loop cache qualification, DisplayManager draw-source handoff and Track source admission; StorageLoopIo for genuine saved-slot fixtures. No persistent format change, SD operation, automatic upload, new role/queue/lease, MIDI-edge gather or global playback-policy cleanup. Preserve explicit Record replacement behavior and accepted saved content on ordinary source maintenance. Planning artifacts are not passing verification or a delivered fix.
+
+### Related OpenSpec and migration
+
+[`reboot-undo-redo-consistency`](../openspec/changes/reboot-undo-redo-consistency/proposal.md), [design and execution packets](../openspec/changes/reboot-undo-redo-consistency/design.md). Existing DEC-205 exclusions stand, not superseded. No data migration. Next Apply request implements fixtures/display only within its stated packet; redo repair returns to design once its concrete trace exists.
+
+## DEC-207 — A complete rootless pass-state display refresh certifies its existing cache revision
+
+**Date:** 2026-10-29
+
+**Owner:** Loop cache builder / DisplayManager draw-source handoff
+
+**Status:** Accepted by owner during Apply; implemented, device acceptance open
+
+### Problem
+
+The real saved-slot fixture reproduces the stale same-window frame after global undo. It also shows that `rebuildVisualCacheIdleSlice` produces the correct smaller rootless cache but never stamps its built-from revision: its fallback-coverage argument was always false. The planned qualified-source reuse would still reject that cache. The user explicitly approved including this prerequisite rather than weakening qualification.
+
+### Decision
+
+Use existing metadata only: when explicit pass-state refresh has actually completed PassesResolve and its admitted copy, all dirty bars are clean, and no stale-root overlay was rejected, stamp the cache's existing `builtFromRevision`. Copy/filter the current covered cache through its Loop owner, with true including an empty interval and false including projection refusal. Display may atomically replace the same-window rootless gap frame with that source when live Capture/overdub is not active. Otherwise preserve the existing coherent fallback and key.
+
+Observe allocation refusal through late wrap completion too; refuse the slice before cache mutation, dirty-bar clearing or deferred-wrap acknowledgement. A native-only allocator countdown isolates this later boundary. No new target field, lifetime model, queue, role or storage format is introduced.
+
+### Rationale and alternatives
+
+Rebuilding the already-correct cache or waiting for a whole root does not fix handoff. Disabling every publication-gap hold breaks live Record/overdub continuity. Treating empty as unavailable retains removed notes; treating denied as empty can erase surviving notes. Keeping qualification strict while certifying only actual successful owner work preserves these distinctions.
+
+### Constraints and validation
+
+No added MIDI-content gather on paint or gestures, no new timing/capacity claim, no retained-source change or reapplication of DEC-205. Stale, partial, rejected-overlay and allocation-refused output stays unqualified. Independent review's late-wrap denial finding was reproduced RED and repaired/retested. Rootless repeated redo still saturates two roles with readable payloads; the accepted-root shape also eventually serves the wrong inventory. Those production repairs remain blocked, not implicitly approved by this decision.
+
+### Related OpenSpec / migration
+
+[`reboot-undo-redo-consistency`](../openspec/changes/reboot-undo-redo-consistency/tasks.md), [Apply evidence and build](../openspec/changes/reboot-undo-redo-consistency/evidence/APPLY.md), [review finding/retest](../openspec/changes/reboot-undo-redo-consistency/REVIEW.md). No user-data migration, upload or SD action. Existing capture-gap and root-publication ownership remain intact.
+
+## DEC-208 — Reuse a quiescent same-inventory retained-source descriptor without releasing its bodies
+
+**Date:** 2026-10-29
+
+**Owner:** Track playback-source admission
+
+**Status:** Owner-approved narrow implementation contract; verification/device gates open
+
+### Problem and evidence
+
+Actual saved-slot tests exhaust both retained descriptors through state-only undo/redo while all stored chunks remain readable. Rootless redo emits nothing; the rooted shape eventually serves the wrong inventory. Existing physical retirement has no production caller. An explicit native retirement preserves live pass bytes/refcounts but advances the global alias token; this does not prove what caused DEC-205's device regression and is not permission to reconnect its rejected admission release.
+
+The two Record failures were fixture mistakes: persisted LoopId did not match Track's slot descriptor, and the effective query ran before ordinary root publication. Corrected same-identity/raw-content/publication controls pass without Record firmware changes.
+
+### Decision
+
+The user explicitly approved reuse of an older quiescent **Retiring** descriptor only when its ordered pinned capture/edit IDs and committed chunk IDs exactly match the current slot. Share the existing pure retirement eligibility terms, with additional reuse-only exclusions for capture/session, primary/bridge builds, retained gathers, coverage-source borrows, finalization and complete current/ready/retained views referencing that revision. Keep descriptor pins and owned chunks intact; update revision/generation/role and rebuild the existing interval index through the normal source handoff. Reference counts and alias generation must not change on reuse.
+
+### Constraints / rationale
+
+No `releaseChunkRefs`, clearing owned bodies, release/re-retain cycle, third role, new resident field, queue, owner, storage format or activation authority. Mismatch or any live reader retains existing named capacity refusal. This extends the existing source owner; matching is a non-allocating linear metadata walk inside the already content-dependent/unbounded admission path, not a new timing guarantee. DEC-108's still-needed-source protection and DEC-205's rejection stand; no older revision is overwritten while needed. A physical release remains a separate operation with no new production caller.
+
+### Verification and migration
+
+Fixture-first eight-cycle rooted/rootless saved-slot MIDI parity plus stable refs/alias and refusal negatives; same-identity Record/successor controls; focused independent lifecycle review, full native, firmware RAM1/bank/hash and separately authorized device gate. [Contract/packet](../openspec/changes/reboot-undo-redo-consistency/design.md#execution-packet--same-inventory-source-descriptor-reuse-owner-approved), [tasks](../openspec/changes/reboot-undo-redo-consistency/tasks.md). No data migration or automatic upload.
+
+## DEC-209 — Explicit closed-committed refresh bypasses a snapshot-only display hold
+
+**Date:** 2026-10-29
+
+**Owner:** Loop visual-cache builder; existing TrackUndo explicit refresh entry
+
+**Status:** Implemented; owner/manual device acceptance confirmed in `session_20261029_174940.log`. No automated inventory/timing qualification claim. [Acceptance evidence](../openspec/changes/reboot-undo-redo-consistency/evidence/DEVICE-174940.md).
+
+### Problem / evidence
+
+Owner self-uploaded the prior image and confirms playback works, but `session_20261029_171433.log` shows display acceptance failing. First undo13.647s repaints195→190 with dirty0. Redo16.312s and later edges leave190/dirty1/`hold_gap` while publication remains pending. The old native display oracle explicitly completed publication before checking redo, so it hid this condition.
+
+### Decision
+
+Reuse the existing transient `visualCachePassStateRefreshActive_` flag. An explicit refresh may rebuild from complete committed passes during a rootless publication gap only when there is committed content and no active Capture, open overdub session, staged pending pass or sealed Capture borrow. Compute one local deferral predicate and use it consistently for early return, continuation eligibility, source selection and fallback reconstruction. Ordinary idle and private/finalizing-content paths retain their hold.
+
+No new state, worker, queue, source role, snapshot lifetime, playback change or SD behavior. The same four four-bar slices, allocation/refusal guards (including late wrap completion) and revision/coverage qualification remain in force. Do not certify partial/denied/rejected output, clear live accepted content, or finish a pending root just to make the paint test pass.
+
+### Rationale / constraints
+
+Committed pass selection is already authoritative for the explicit undo/redo edge; its separate snapshot construction need not complete first. Removing every gap hold would regress private Record/overdub continuity; changing the publisher or playback would broaden the confirmed display defect. This enables intended work in the existing content-dependent refresh owner, not a new timing guarantee; native/build and separate device latency/content verification remain required.
+
+### Validation and migration
+
+Fixture-first Undo/Redo/Undo/Undo/Redo/Redo for eight rounds, exact completed-frame note IDs/geometry/key/current cache and unchanged pending publication counters after each action, with **no snapshot worker step**; ordinary-idle/private-borrow/live-session/pressure controls and the unchanged capture matrix. [Evidence, G0 and packet](../openspec/changes/reboot-undo-redo-consistency/evidence/DEVICE-171433.md), tasks section5. No data migration or agent upload authorization is inferred from the owner's earlier self-upload.
+
+## DEC-210 — The boot playback set prewarms every active slot's visual cache, and a track focus change preserves it
+
+**Date:** 2026-10-29
+**Owner:** `TrackManager::setSelectedTrack` / `TrackManager::playbackSetVisualCachesReady` (`src/TrackManager.cpp`,
+`include/TrackManager.h`), `DisplayManager::onTrackFocusChanged` (`src/DisplayManager/DisplayCacheLifecycle.cpp`,
+`include/DisplayManager.h`), `Loop::visualCacheFirstWindowReady` (`src/Loop/LoopVisualCache.cpp`, `include/Loop.h`),
+`BootGate::bootSweepMayRun` (`include/BootGate.h`) and the boot sweep site (`src/main.cpp`).
+**Status:** Implemented; native + target build green; **owner-confirmed on device** (`session_20261029_190227.log`)
+as snappy, with the bounded boot fallback recorded below. The capture cycles tracks while STOPPED; the PLAYING
+switch path is covered by the native fixture, not by this device run.
+
+### Problem / evidence
+
+DEC-196 makes every track's active slot playable from the first Play, but it says nothing about that slot's
+**display** source. On the next boot, `captures/session_20261029_174940.log`:
+
+- `BOOT,ready` at 6.87 s reports `passes=1, root=0, vcache=0` for the six sounding tracks. The idle lane builds
+  only a few tracks before Play (8.484 s), because the focus-first title drain and the restore sweep keep the
+  VisualCache owner busy elsewhere.
+- Track switches at 185.94 s (track 0) and 187.37 s (track 1) paint `disp_turn n=0` and `#PAINT_BEAT notes=0`
+  while the slot is PLAYING and has committed content. The later cycle at 742.4 s paints `n=5/29/8/...` from
+  caches that the idle lane has since rebuilt (the owner's "only after having cycled them" shape).
+- Cause: `TrackManager::setSelectedTrack` called `DisplayManager::invalidateForSlotChange(index, focusSlot,
+  focusSlot)`. For an audible playback track that branch calls `Loop::invalidateDisplayCaches()`, which clears
+  `visualCache.notes`; the target cache was discarded at the exact moment the user switched to it. The display
+  then had no current root (the boot restores passes-only) and no cache, so it painted an empty window until the
+  idle lane rebuilt the cache after the switch.
+
+### Decision
+
+1. **A track focus change is not a slot change.** `setSelectedTrack` now reports through
+   `DisplayManager::onTrackFocusChanged`, which drops the outgoing live frame and recenters the viewport on the
+   playhead when the target is playing, but leaves the target loop's `visualCache` intact. The draw-source read
+   already qualifies the cache by `builtFromRevision`, dirty-bar coverage and the recorded `playbackRevision`, so
+   no stale slot can be served.
+2. **The boot restore sweep waits for the playback set's first paint window.** `bootSweepMayRun` now requires
+   `TrackManager::playbackSetVisualCachesReady()` in addition to the focus cache, bounded by the existing 3 s
+   deadline from the boot release. Readiness is `Loop::visualCacheFirstWindowReady(kMaxDetailedWindowBars)`:
+   an empty slot is ready, a current published root is ready, and a rootless slot is ready when its cache has
+   notes and the first 16 bars are clean (a completed build that resolves no visible notes is ready too).
+3. No new queue, owner, worker, persistence state or allocation role. The VisualCache idle lane performs the
+   builds it already knows how to perform; the sweep gate only gives it the window it needs before the sweep
+   re-dirties caches for the remaining slots.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Make the title/USB hold wait for all visual caches | DEC-182 records why the title must not wait for a visual-cache build (the measured cost was 185 s in the worst boot); the playback set can be prepared after release without blocking interactivity |
+| Rebuild the target cache synchronously on the switch | Puts a whole-window gather on the MIDI-sensitive focus edge; the pump already exists in the idle owner |
+| Keep clearing on every track switch and rely on the idle lane | This is the measured defect: a PLAYING switch painted an empty interval for seconds, and switching again before the rebuild kept clearing the next target |
+| Wait for the whole loop of every long slot to be clean | Long loops would hold the sweep far past its bound; the first 16-bar window is what the piano roll asks for at boot, and later bars remain idle-slice work |
+
+### Verification and constraints
+
+- `test_live_capture_display_boundary`: the new track-focus fixture is RED on the pre-DEC-210 tree
+  (`Expected 2 Was 0. a track switch must not clear the target's prewarmed visual cache`) and GREEN after the
+  change; the playback-set readiness fixture pins empty/ready/rootless states. Suite **45/45**.
+- `test_boot_focus_handoff`: `BootGate::bootSweepMayRun` cases pin the focus-only control (false), the prepared
+  set (true) and the deadline fallback. Suite **14/14**.
+- Full native green: **3647 cases / 7 existing skips / 3640 succeeded / 0 failed**.
+- `teensy41-capture-serial` SUCCESS; RAM1 `variables 96,192`, ITCM `391,992 + 1,224` (padding floor 840);
+  HEX `sha256 95ebffa781a29a635f1f3ced7276af0894a2ded45572a2cbbaf153e5e8dbb57b`.
+- Device result (`session_20261029_190227.log`, owner-uploaded): the post-boot track cycle is **snappy** and
+  every prepared slot paints its full `stored_notes` count on the first frame — track 1 `n=215`, track 2
+  `n=32`, track 4 `n=58`, track 5 `n=42`, track 7 `n=230`. Track 0 (`n=0` on the first `disp_turn` at 28.882 s)
+  had its cache built on the switch edge (`VCACHE,slice_clean notes=5` at 28.877 s) and the next `DISP` frame at
+  28.889 s carries 5, i.e. one frame rather than the reported seconds.
+- This boot printed `BOOT,visual_cache,ready=0,bound=1` at 13.93 s: the 3 s bound released the sweep before the
+  whole set was prepared. That is the documented bounded fallback, and the on-switch idle build covered the one
+  remaining slot in milliseconds. The capture is a STOPPED cycle; the PLAYING switch shape remains
+  native-verified (RED before the change, GREEN after), not device-exercised by this run.
+  Exact flashed hash/uploader transcript is owner-performed and not independently proven. No agent upload, SD
+  operation, archive or PR is claimed here.
+
+### Related
+
+DEC-182 (sweep waits for the focus first paint), DEC-184/196 (boot release and playback set), DEC-188 (visual-cache
+undo invariants). Evidence capture: `captures/session_20261029_174940.log` (boot 2, switches 185.94/187.37 s).

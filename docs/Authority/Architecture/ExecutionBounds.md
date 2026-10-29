@@ -94,6 +94,16 @@ remains separate. Production Record normalization remains inline and unbounded;
 ordering/policy composition and worker admission/publication are still open.
 See [filter execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
 
+## Quiescent retained-source descriptor reuse
+
+Track's existing source-admission/window-build owner may reuse one of its two retained descriptors
+after proving no reader needs the old revision and matching the exact ordered pass/chunk inventory
+(DEC-208). Matching allocates nothing and leaves chunk references/alias generation unchanged, but
+its metadata walk is content-dependent. Existing index rebuild and the row2 **Unbounded** classification
+are unchanged; neither the two-candidate cap nor native correctness is a new timing guarantee.
+No retirement worker, MIDI boundary, resident field or source role is added. Contract and verification:
+[source-reuse packet](../../../openspec/changes/reboot-undo-redo-consistency/design.md#execution-packet--same-inventory-source-descriptor-reuse-owner-approved).
+
 ## Interval path
 
 ### On-demand recovery of a missing playback root

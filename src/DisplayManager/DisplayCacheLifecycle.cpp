@@ -72,6 +72,24 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
     }
 }
 
+void DisplayManager::onTrackFocusChanged(uint8_t trackIndex, uint8_t focusSlot) {
+    if (trackIndex >= trackManager.getTrackCount()) {
+        return;
+    }
+    invalidateLiveDisplayCache();
+    Track& track = trackManager.getTrack(trackIndex);
+    const uint8_t activeSlot = track.getActiveLoopIndex();
+    const bool playbackActive = track.isAudiblePlaybackActive();
+    // The target loop's visual cache is not invalidated: `resolveDisplayNotesCommitted` checks
+    // `builtFromRevision` / dirty bars before using it, and a PLAYING track switch previously
+    // cleared a correct boot-prewarmed cache (session_20261029_174940: switched tracks painted
+    // n=0 until idle rebuilt the cache).
+    if (playbackActive && trackIndex == trackManager.getSelectedTrackIndex() &&
+        !isPreviewPlayheadPending(focusSlot, activeSlot, playbackActive)) {
+        centerDetailedWindowOnPlayhead(track, focusSlot, clockManager.getCurrentTick());
+    }
+}
+
 void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                                    uint32_t storagePhaseTickInLoop) {
     // Current snapshot selected by the draw-source predicate is authority. Otherwise

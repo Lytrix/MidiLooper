@@ -79,6 +79,12 @@ void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {
   ++DrainHarness::slotChangeInvalidations();
 }
 
+// DEC-210: the production track-focus route reports through its own entry point; keep it
+// observable on the same counter the focus route used before.
+void DisplayManager::onTrackFocusChanged(uint8_t, uint8_t) {
+  ++DrainHarness::slotChangeInvalidations();
+}
+
 void EditManager::beforeSelectedTrackChange(Track&) { ++DrainHarness::trackChangeNotifications(); }
 void EditManager::onTrackChanged(Track&) { ++DrainHarness::trackChangeNotifications(); }
 void EditManager::beforeSelectedSlotChange(Track&) { ++DrainHarness::slotChangeNotifications(); }

@@ -261,6 +261,8 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
 #if defined(__IMXRT1062__)
 DMAMEM uint32_t gBootSweepDueMs;
 DMAMEM uint8_t gBootSweepEnqueued;
+// DEC-210: one report per boot when the playback-set visual gate opens (RAM2 like the sweep gate).
+DMAMEM uint8_t gBootVisualCacheReported;
 DMAMEM uint32_t gPaintGateLastMs;
 // DEC-189: `#STOP_TRACE` rate stamp. RAM2 because a new plain static costs DTCM and the budget gate refuses it.
 DMAMEM uint32_t gStopTraceLastMs;
@@ -269,6 +271,7 @@ DMAMEM uint32_t gBootPlaybackSetHoldDeadlineMs;
 #else
 uint32_t gBootSweepDueMs;
 uint8_t gBootSweepEnqueued;
+uint8_t gBootVisualCacheReported;
 uint32_t gPaintGateLastMs;
 uint32_t gBootPlaybackSetHoldDeadlineMs;
 #endif
@@ -284,14 +287,28 @@ constexpr uint32_t kBootPlaybackSetHoldMaxMs = 15000u;
 FLASHMEM __attribute__((noinline)) static bool bootSweepMayRun(uint32_t now) {
   if (gBootSweepEnqueued) return false;
   const uint8_t focusTrackIndex = trackManager.getSelectedTrackIndex();
+  bool focusCacheHasNotes = false;
   if (focusTrackIndex < trackManager.getTrackCount()) {
     Track& focusTrack = trackManager.getTrack(focusTrackIndex);
     if (focusTrack.loopsAllocated()) {
-      const Loop& focusLoop = focusTrack.getActiveLoop();
-      if (!focusLoop.visualCache.notes.empty()) return true;
+      focusCacheHasNotes = !focusTrack.getActiveLoop().visualCache.notes.empty();
     }
   }
-  return static_cast<int32_t>(now - gBootSweepDueMs) >= 0;
+  // DEC-210: do not start the sweep until the whole **playback set** has its first paint window
+  // prepared, not just the focus slot: a track switched to while PLAYING must paint its prewarmed
+  // notes instead of waiting for the idle lane (session_20261029_174940: switches painted n=0).
+  // The 3 s bound from the release still ends the wait for a slot that cannot prepare.
+  const bool boundReached = static_cast<int32_t>(now - gBootSweepDueMs) >= 0;
+  const bool visualSetReady = trackManager.playbackSetVisualCachesReady();
+  const bool mayRun = BootGate::bootSweepMayRun(focusCacheHasNotes, visualSetReady, boundReached);
+  if (mayRun && !gBootVisualCacheReported) {
+    // One row per boot, so the device proves whether the set was prepared or the bound released it.
+    gBootVisualCacheReported = 1;
+    Serial.printf_P(PSTR("BOOT,visual_cache,ready=%u,bound=%u,tracks=%u\r\n"),
+                    visualSetReady ? 1u : 0u, boundReached ? 1u : 0u,
+                    static_cast<unsigned>(trackManager.getTrackCount()));
+  }
+  return mayRun;
 }
 
 // DEC-196: **one report per boot, on the release turn.** The question the owner asked is "can every track sound
@@ -524,6 +541,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     reportBootPlaybackSetReady(playbackSetSettledForBootRelease);
     gBootSweepDueMs = now + 3000;
     gBootSweepEnqueued = 0;
+    gBootVisualCacheReported = 0;
     displayManager.finishBootSetup();
     if (!midiHandler.isUsbHostReady()) {
       midiHandler.beginUsbHost();
@@ -827,6 +845,7 @@ FLASHMEM void setup() {
   // DEC-183: DMAMEM is not guaranteed zero-initialised here, and a garbage rate-limit stamp makes
   // `now - stamp` negative for the whole boot, silently suppressing every `paint_gate` row.
   gPaintGateLastMs = 0;
+  gBootVisualCacheReported = 0;
   HOT_PATH_TELEMETRY_RESET();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);

@@ -41,6 +41,15 @@ inline bool bootTitleMayRelease(bool wholeQueueReady, bool playbackSetSettled) {
   return wholeQueueReady || playbackSetSettled;
 }
 
+/// DEC-210: the background restore sweep re-dirties one cache per restored slot and competes with the
+/// VisualCache owner. It may start only once the focused slot paints **and** every playback-set slot has
+/// its first paint window prepared, so a track switched to while PLAYING paints its prewarmed notes
+/// instead of waiting for the idle lane. The bound keeps an unprepared slot from holding the sweep.
+inline bool bootSweepMayRun(bool focusCacheHasNotes, bool playbackSetVisualsReady,
+                            bool boundReached) {
+  return (focusCacheHasNotes && playbackSetVisualsReady) || boundReached;
+}
+
 }  // namespace BootGate
 
 #endif  // BOOT_GATE_H

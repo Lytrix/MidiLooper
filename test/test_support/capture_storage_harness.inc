@@ -124,7 +124,16 @@ uint32_t ClockManager::getMicrosPerTick() const { return microsPerTick; }
 #include "../../src/StorageManager/FileIo.cpp"
 #include "../../src/StorageManager/SlotReset.cpp"
 #include "../../src/StorageManager/LoadLoopBudget.cpp"
+#if defined(HARNESS_REAL_STORAGE_LOOP_UNDO)
+// Integration fixtures must execute the target's undo reconstruction, not the native counter seam.
+// Limit the target-mode inclusion to this TU; the other native observation seams remain available.
+#pragma push_macro("PIO_UNIT_TEST_NATIVE")
+#undef PIO_UNIT_TEST_NATIVE
+#endif
 #include "../../src/StorageLoopIo.cpp"
+#if defined(HARNESS_REAL_STORAGE_LOOP_UNDO)
+#pragma pop_macro("PIO_UNIT_TEST_NATIVE")
+#endif
 #include "../../src/StorageLoopIoBodyFormatV1.cpp"
 #include "../../src/StorageManager/CurrentWorkspaceStorage.cpp"
 #include "../../src/StorageManager/LoadLoopSelectionPolicy.cpp"

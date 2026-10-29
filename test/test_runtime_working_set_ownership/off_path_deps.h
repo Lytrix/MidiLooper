@@ -178,6 +178,15 @@ void DisplayManager::invalidateForSlotChange(uint8_t track, uint8_t from, uint8_
 #else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
 #endif
+// DEC-210: the production track-focus route reports through `onTrackFocusChanged`; keep the same
+// recorded slot identities the focus contract asserts.
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+void DisplayManager::onTrackFocusChanged(uint8_t track, uint8_t slot) {
+  invalidateForSlotChange(track, slot, slot);
+}
+#else
+void DisplayManager::onTrackFocusChanged(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
 // A suite that links the real StorageManager load path (which defines these two) opts out with
 // `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
 #if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)

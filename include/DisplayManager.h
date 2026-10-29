@@ -104,6 +104,11 @@ public:
     /// Invalidate display caches after slot selection changes (no synchronous draw).
     void invalidateForSlotChange(uint8_t trackIndex, uint8_t previousSlot, uint8_t newSlot);
 
+    /// Drop the outgoing track's live frame and recenter the viewport after a track focus
+    /// change. The target loop's visual cache is left intact: it belongs to that loop and its
+    /// revision is checked by the draw-source read, so a prewarmed cache paints immediately.
+    void onTrackFocusChanged(uint8_t trackIndex, uint8_t focusSlot);
+
     /// Drop live frame caches so the next update re-resolves notes (no slot geometry side effects).
     void invalidateLiveDisplayCache(bool preserveDisplayNotes = false);
 

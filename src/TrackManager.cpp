@@ -12,6 +12,7 @@
 #include "DisplayManager.h"
 #include "TrackDisplayState.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/DisplayWindowUtils.h"
 
 TrackManager trackManager;
 
@@ -90,6 +91,22 @@ FLASHMEM bool TrackManager::takeDeferredPlaybackPrewarm(uint8_t& trackIndex, uin
   trackIndex = deferredPlaybackPrewarmTrack_;
   slotIndex = deferredPlaybackPrewarmSlot_;
   deferredPlaybackPrewarmPending_ = false;
+  return true;
+}
+
+FLASHMEM bool TrackManager::playbackSetVisualCachesReady() const {
+  const uint8_t trackCount = getTrackCount();
+  for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+    const Track& track = tracks[trackIndex];
+    if (!track.loopsAllocated()) {
+      continue;
+    }
+    const uint8_t slot = getActiveLoopIndex(trackIndex);
+    const Loop& loop = track.getLoop(slot);
+    if (!loop.visualCacheFirstWindowReady(DisplayWindowUtils::kMaxDetailedWindowBars)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -233,7 +250,10 @@ void TrackManager::setSelectedTrack(uint8_t index) {
     editManager.onTrackChanged(tracks[selectedTrack]);
     const uint8_t focusSlot = getSelectedSlotIndex(index);
     StorageManager::prioritizeLoopSlotRestoreForFocus(index, focusSlot);
-    displayManager.invalidateForSlotChange(index, focusSlot, focusSlot);
+    // A track focus change is not a slot change: the target loop's visual cache belongs to
+    // that loop and is revision-checked when read. Clearing it here made every PLAYING track
+    // switch pay a fresh gather, so a boot-prewarmed set painted empty after the switch.
+    displayManager.onTrackFocusChanged(index, focusSlot);
   }
   if (!bootLoadInProgress_ && trackChanged) {
     StorageManager::requestWorkspaceFooterPersistWhenSafe();

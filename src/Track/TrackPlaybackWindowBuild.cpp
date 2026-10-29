@@ -2218,6 +2218,32 @@ TRACK_COLD_MEM const char* Track::playbackWindowReadinessHolder(PlaybackWindowRe
   }
   return "unknown";
 }
+namespace {
+TRACK_COLD_MEM bool retainedSourceMatchesPassInventory(const RetainedPlaybackSource& source,
+                                                       const LoopPasses& passes) {
+  size_t passIndex = 0;
+  size_t chunkIndex = 0;
+  const auto matchesCapture = [&](PassId id, const CommittedChunkIdList& chunks) {
+    if (passIndex >= source.pins.capturePassIds.size() || source.pins.capturePassIds[passIndex++] != id)
+      return false;
+    for (uint16_t chunk : chunks) {
+      if (chunkIndex >= source.ownedChunks.size() || source.ownedChunks[chunkIndex++] != chunk)
+        return false;
+    }
+    return true;
+  };
+  if (passes.hasRecordPass() && !matchesCapture(passes.recordPass.id, passes.recordPass.committedChunkIds))
+    return false;
+  for (const auto& pass : passes.overdubPasses)
+    if (!matchesCapture(pass.id, pass.committedChunkIds)) return false;
+  if (passIndex != source.pins.capturePassIds.size() || chunkIndex != source.ownedChunks.size() ||
+      passes.editPasses.size() != source.pins.editPassIds.size()) return false;
+  for (size_t i = 0; i < passes.editPasses.size(); ++i)
+    if (passes.editPasses[i].id != source.pins.editPassIds[i]) return false;
+  return true;
+}
+}  // namespace
+
 TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForSlot(uint8_t slotIndex,
                                                                                   uint32_t revision,
                                                                                   uint32_t generation) {
@@ -2246,6 +2272,33 @@ TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForS
     return PlaybackSourceRetainResult::AlreadyRetained;
   }
   entry = runtime->freeRetainedSourceSlot();
+  bool reuseOwnedSource = false;
+  if (entry == nullptr && revision == loop.playbackRevision && generation == playbackGeneration &&
+      loop.loopId == loopIdForSlot(slotIndex) &&
+      !isRecording() && !isOverdubbing() && !loop.captureActive() && !loop.hasOverdubSession() &&
+      !runtime->viewBuild.active() && !runtime->bridgeWindowBuild.active() &&
+      !runtime->retainedGatherActive() && !runtime->ownsCoverageSource()) {
+    // State-only undo/redo keeps the same immutable bodies. Reuse an unobserved retired
+    // descriptor without dropping/reacquiring even one reference (or advancing alias tokens).
+    for (auto& candidate : runtime->retainedSources) {
+      if (candidate.role != RetainedSourceRole::Retiring ||
+          !canRetireRetainedPlaybackSource(slotIndex, candidate)) continue;
+      bool viewNeedsRevision = false;
+      if (const auto* views = runtime->viewSetIfPrewarmed()) {
+        for (uint8_t role : {views->lifecycle.current, views->lifecycle.ready, views->lifecycle.retained}) {
+          if (role < views->views.size() && views->views[role].complete &&
+              views->views[role].source.playbackRevision == candidate.revision) {
+            viewNeedsRevision = true;
+            break;
+          }
+        }
+      }
+      if (viewNeedsRevision || !retainedSourceMatchesPassInventory(candidate, loop.passes)) continue;
+      entry = &candidate;
+      reuseOwnedSource = true;
+      break;
+    }
+  }
   if (entry == nullptr) {
     return PlaybackSourceRetainResult::RoleCapacityReached;
   }
@@ -2253,19 +2306,21 @@ TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForS
   // `Loop::reclaimUnreferencedDisabled*Passes` honours; the owned references are what stops the store's
   // `releaseChunkRefs` on the direct reset/replacement path from freeing or recycling the same bodies underneath a
   // retained window. Both describe one revision, and both are dropped by the one release predicate.
-  pinPassesFromLoopPasses(loop.passes, entry->pins);
-  entry->ownedChunks.clear();
-  if (loop.passes.hasRecordPass()) {
-    for (uint16_t id : loop.passes.recordPass.committedChunkIds) {
-      entry->ownedChunks.push_back(id);
+  if (!reuseOwnedSource) {
+    pinPassesFromLoopPasses(loop.passes, entry->pins);
+    entry->ownedChunks.clear();
+    if (loop.passes.hasRecordPass()) {
+      for (uint16_t id : loop.passes.recordPass.committedChunkIds) {
+        entry->ownedChunks.push_back(id);
+      }
     }
-  }
-  for (const OverdubPass& pass : loop.passes.overdubPasses) {
-    for (uint16_t id : pass.committedChunkIds) {
-      entry->ownedChunks.push_back(id);
+    for (const OverdubPass& pass : loop.passes.overdubPasses) {
+      for (uint16_t id : pass.committedChunkIds) {
+        entry->ownedChunks.push_back(id);
+      }
     }
+    LoopEventStore::retainChunkRefs(entry->ownedChunks);
   }
-  LoopEventStore::retainChunkRefs(entry->ownedChunks);
   entry->revision = revision;
   entry->generation = generation;
   entry->role = RetainedSourceRole::Serving;
@@ -2334,17 +2389,26 @@ TRACK_COLD_MEM size_t Track::retainedPlaybackSourceCountForSlot(uint8_t slotInde
   return count;
 }
 
+TRACK_COLD_MEM bool Track::canRetireRetainedPlaybackSource(
+    uint8_t slotIndex, const RetainedPlaybackSource& source) const {
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !loopsAllocated() || !source.isRetained()) return false;
+  const Loop& loop = loopForSlot(slotIndex);
+  const bool contentGone = !loop.hasCommittedPasses() || loop.loopLengthTicks == 0;
+  if (!contentGone && source.revision >= loop.playbackRevision) return false;
+  PlaybackWindowIdentity published{};
+  if (publishedPlaybackWindowIdentityForSlot(slotIndex, published) &&
+      published.playbackRevision == source.revision) return false;
+  return !runtime->coverageBuildNeedsService() && !runtime->ownsLiveFinalization();
+}
+
 TRACK_COLD_MEM bool Track::tryReleaseRetainedPlaybackSource(uint8_t slotIndex) {
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr) {
     return false;
   }
-  const Loop& loop = loopForSlot(slotIndex);
   bool released = false;
   for (RetainedPlaybackSource& entry : runtime->retainedSources) {
-    if (!entry.isRetained()) {
-      continue;
-    }
     // **The one release predicate.** Every clause is a reason the source is still needed; the source is dropped only
     // when none holds. The builder clause is deliberately conservative for this slice: while a build is outstanding
     // its frozen source is not inspectable from here, so the sources are held rather than risk releasing one a
@@ -2352,21 +2416,7 @@ TRACK_COLD_MEM bool Track::tryReleaseRetainedPlaybackSource(uint8_t slotIndex) {
     // The content the source describes can also be **gone** -- a clear/reset or a replacement load -- and then the
     // counter never advances past the retained revision, so it is released here too rather than held forever. Still
     // this one predicate, and still only when nothing references it.
-    const bool contentGone = !loop.hasCommittedPasses() || loop.loopLengthTicks == 0;
-    if (!contentGone && entry.revision >= loop.playbackRevision) {
-      continue;
-    }
-    PlaybackWindowIdentity published{};
-    if (publishedPlaybackWindowIdentityForSlot(slotIndex, published) &&
-        published.playbackRevision == entry.revision) {
-      continue;
-    }
-    if (runtime->coverageBuildNeedsService()) {
-      continue;
-    }
-    if (runtime->ownsLiveFinalization()) {
-      continue;
-    }
+    if (!canRetireRetainedPlaybackSource(slotIndex, entry)) continue;
     LoopEventStore::releaseChunkRefs(entry.ownedChunks);
     entry.clear();
     released = true;

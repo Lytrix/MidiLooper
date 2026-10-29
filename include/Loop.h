@@ -1489,6 +1489,10 @@ struct Loop {
   /// (snapshot NoteRef / resolve miss). Cold path — kept for non-snapshot
   /// source-view origins and diagnostics; visual/adopt call sites unwound.
   void mergeOmittedCommittedNoteOnIdentitiesInto(NoteUtils::DisplayNoteVec& dest) const;
+  /// Boot playback-set readiness: the loop has a display source for its **first paint window**
+  /// (`maxBars` from bar 0). A current published root paints directly; a rootless slot needs a
+  /// non-empty visual cache whose window bars are clean. An empty slot is ready (nothing to paint).
+  bool visualCacheFirstWindowReady(uint8_t maxBars) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
   /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.
@@ -1528,6 +1532,10 @@ struct Loop {
   };
   bool collectQualifiedCommittedDisplayNotes(uint32_t windowStart, uint32_t windowLength,
                                              NoteUtils::DisplayNoteVec& out) const;
+  /// Current, covered cache projection only; true includes an authoritative empty interval.
+  /// False (stale/partial/invalid or reserve refusal) leaves `out` empty. Never gathers MIDI.
+  bool tryCopyCurrentVisualCacheDisplayNotesInWindow(uint32_t windowStart, uint32_t windowLength,
+                                                    NoteUtils::DisplayNoteVec& out) const;
   QualifiedDisplaySource lastQualifiedDisplaySource() const {
     return lastQualifiedDisplaySource_;
   }

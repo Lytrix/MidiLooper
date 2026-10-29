@@ -322,6 +322,26 @@ LOOP_COLD_MEM bool Loop::stepVisualCacheSourceContinuation() {
 // source envelope's exact live prefix, the prepared window's revision stamp, and the visual cache's
 // `builtFromRevision` plus clean-bar coverage. Nothing here reads a private cursor, stretches a source
 // beyond its coverage, or invents rows for an unqualified interval.
+LOOP_COLD_MEM bool Loop::tryCopyCurrentVisualCacheDisplayNotesInWindow(
+    uint32_t windowStart, uint32_t windowLength, NoteUtils::DisplayNoteVec& out) const {
+  out.clear();
+  if (visualCache.builtFromRevision != playbackRevision || windowStart >= loopLengthTicks ||
+      windowLength == 0 || windowLength > loopLengthTicks - windowStart ||
+      !visualCacheCoversWindow(visualCacheDirty, visualCache.dirtyBars, windowStart, windowLength,
+                               loopLengthTicks, Config::TICKS_PER_BAR)) {
+    return false;
+  }
+  const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
+  NoteUtils::DisplayNoteVec filtered = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+      visualCache.notes, windowStart, windowLength, loopLengthTicks);
+  if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+    return false;
+  }
+  out.swap(filtered);
+  lastQualifiedDisplaySource_ = QualifiedDisplaySource::VisualCache;
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::collectQualifiedCommittedDisplayNotes(uint32_t windowStart,
                                                              uint32_t windowLength,
                                                              NoteUtils::DisplayNoteVec& out) const {
@@ -424,7 +444,13 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
-  if (isPlaybackSessionExitPublicationGap()) {
+  // Global undo/redo selects complete committed passes even while their replacement root is
+  // pending. That explicit refresh need not wait for the root; private Capture sources still do.
+  // Use the same answer for every source decision below, not just the initial early return.
+  const bool explicitCommittedRefresh = visualCachePassStateRefreshActive_ && hasCommittedPasses() &&
+      !captureActive() && !hasOverdubSession() && !hasPendingCapturePass() && !hasSealedCaptureBorrow();
+  const bool deferForPublicationGap = isPlaybackSessionExitPublicationGap() && !explicitCommittedRefresh;
+  if (deferForPublicationGap) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
     emitVisualCacheIdleGatherPath();
     return;
@@ -534,6 +560,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   // notes for this loop; until it does, the previous complete frame stays authoritative and this
   // slice is a named deferral. Below the cap the declared, capped synchronous resolve still runs.
   bool usedContinuation = false;
+  bool usedPassesResolve = false;
   LoopContentResolution::BoundedDisplayRequest continuationRequest;
   // DEC-179 / display contract: `BoundedContinuation` is a **continuation of an authoritative published
   // root**, so it is eligible only while that root is current. A legitimately passes-authoritative slot (a
@@ -543,7 +570,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   // falls through to the capped synchronous `PassesResolve` immediately.
   const bool continuationRequired =
       publishedSnapshotIsCurrent() && !usedSnapshot && !usedPrepared &&
-      !isPlaybackSessionExitPublicationGap() &&
+      !deferForPublicationGap &&
       LoopContentResolution::boundedDisplayNeedsProducer(passes);
   if (continuationRequired) {
     continuationRequest.owner = this;
@@ -571,7 +598,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Prepared;
   } else if (usedContinuation) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::BoundedContinuation;
-  } else if (isPlaybackSessionExitPublicationGap()) {
+  } else if (deferForPublicationGap) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   } else if (fallbackGatherComplete) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::PassesResolve;
@@ -618,7 +645,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
         return;
       }
       sliceNotes.swap(rebuilt);
-    } else if (isPlaybackSessionExitPublicationGap()) {
+    } else if (deferForPublicationGap) {
       sliceNotes.clear();
     } else {
       // Declared, capped synchronous pass resolve (`kBoundedDisplaySynchronousEventCap`). Work is
@@ -629,8 +656,12 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
       // work is bounded by what the viewport asks for and does not grow with events elsewhere in the
       // loop. Per-pass local pairing/NoteIds are unchanged (same helper, windowed layer).
       NoteUtils::DisplayNoteVec paired;
+      const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
       LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, windowStart,
-                                                         windowLength, paired);
+                                                          windowLength, paired);
+      if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+        return;
+      }
       if (!MemoryMonitor::admitDisplayProjectionReserve(
               sizeof(NoteUtils::DisplayNote) * paired.size())) {
         return;
@@ -642,6 +673,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
           sliceNotes.push_back(note);
         }
       }
+      usedPassesResolve = true;
     }
   }
 #if defined(SESSION_CAPTURE)
@@ -662,7 +694,11 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #endif
   if (appendOverdub) {
     if (allowOverdubWrapAppend) {
+      const uint32_t refusalsBefore = MemoryMonitor::displayProjectionRefusalCount();
       appendOverdubPassDisplayNotes(sliceNotes);
+      if (MemoryMonitor::displayProjectionRefusalCount() != refusalsBefore) {
+        return;
+      }
       clearDeferredVisualCacheWrapAppend(*this);
     } else {
       markDeferredVisualCacheWrapAppend(*this);
@@ -743,7 +779,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCache.dirtyBars.clear();
     if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
             lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared || usedContinuation,
-            false)) {
+            visualCachePassStateRefreshActive_ && usedPassesResolve)) {
       visualCache.builtFromRevision = playbackRevision;
       // Current-root Snapshot gather stamps identity; prepared/fallback do not
       // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).
@@ -1003,6 +1039,36 @@ LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
       visualCache.notes.push_back(candidate);
     }
   }
+}
+
+LOOP_COLD_MEM bool Loop::visualCacheFirstWindowReady(uint8_t maxBars) const {
+  if (loopLengthTicks == 0) {
+    return true;
+  }
+  if (!hasCommittedPasses()) {
+    // No pass inventory for the idle lane to build from: an empty (or root-only) slot must not
+    // hold the boot. A current root still paints directly; a stale root-only slot is unqualified.
+    return true;
+  }
+  if (publishedSnapshotIsCurrent()) {
+    return true;  // the current root resolves the first frame without the cache
+  }
+  if (visualCache.notes.empty()) {
+    // A completed build may legitimately resolve no visible notes (all rows edited away);
+    // only a dirty empty cache is still owed.
+    return !visualCacheDirty;
+  }
+  uint32_t windowBars = maxBars != 0 ? maxBars : 1u;
+  const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
+  if (windowBars > totalBars) {
+    windowBars = totalBars;
+  }
+  uint32_t windowLength = windowBars * Config::TICKS_PER_BAR;
+  if (windowLength > loopLengthTicks) {
+    windowLength = loopLengthTicks;
+  }
+  return visualCacheCoversWindow(visualCacheDirty, visualCache.dirtyBars, 0, windowLength,
+                                 loopLengthTicks, Config::TICKS_PER_BAR);
 }
 
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
