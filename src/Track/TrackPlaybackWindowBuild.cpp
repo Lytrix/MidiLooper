@@ -7133,9 +7133,11 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // DEC-193 (report-only): one row per change names where the turn stopped relative to the committed retry.
   if (slot < Config::MAX_LOOPS_PER_TRACK) {
     const uint8_t dispatchTrack = playbackRebuildTrackIndex(*this);
-    if (dispatchTrack < Config::NUM_TRACKS &&
-        gPlaybackDispatchLast[dispatchTrack][slot] != static_cast<uint8_t>(dispatch)) {
-      gPlaybackDispatchLast[dispatchTrack][slot] = static_cast<uint8_t>(dispatch);
+    // +1: `Retry` is enum value 0, and the table is zero-initialised, so a raw value would make the *most important*
+    // outcome indistinguishable from "never reported". Zero must mean "unseen" and nothing else.
+    const uint8_t dispatchId = static_cast<uint8_t>(dispatch) + 1u;
+    if (dispatchTrack < Config::NUM_TRACKS && gPlaybackDispatchLast[dispatchTrack][slot] != dispatchId) {
+      gPlaybackDispatchLast[dispatchTrack][slot] = dispatchId;
       reportPlaybackViewMaintenanceRow(slot, loopForSlot(slot), playbackDispatchRefusalName(dispatch));
     }
   }
