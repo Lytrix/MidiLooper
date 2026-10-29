@@ -30,6 +30,12 @@
 #include "WindowPagedStream.h"  // task 3.7a (I1): the paged stream's page capacity is the gather's slice size
 #include "PlaybackMergedMidiEvents.h"
 
+namespace {
+/// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
+/// the builder and the readiness predicate cannot be handed different constants.
+constexpr uint32_t kMergedWindowTicks = 2u * Config::TICKS_PER_BAR;
+}  // namespace
+
 void playbackCursorAdvanceSend(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
 void playbackCursorAdvanceApplyLedger(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
 
@@ -609,9 +615,10 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       noteEditPreview ? nullptr : loop.publishedSnapshotIdentity();
   // One window, one centring rule, one reuse rule — for a 1-bar loop and a 40-bar loop alike. The only place length is
   // consulted is the clamp itself.
-  constexpr uint32_t kPlaybackWindowTicks = 2 * Config::TICKS_PER_BAR;
   const uint32_t playbackWindowTicks =
-      loop.loopLengthTicks < kPlaybackWindowTicks ? loop.loopLengthTicks : kPlaybackWindowTicks;
+      mergedPlaybackWindowLengthTicks(loop.loopLengthTicks,
+                                      loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                                      kMergedWindowTicks);
   uint32_t playhead = 0;
   if (!prepareLaunch && loop.loopLengthTicks > 0) {
     playhead = IntervalProjection::tickPhaseInProjectionCycle(
@@ -2131,9 +2138,10 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
       window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
   const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();
-  constexpr uint32_t kPlaybackWindowTicks = 2 * Config::TICKS_PER_BAR;
   const uint32_t expectedWindow =
-      loop.loopLengthTicks < kPlaybackWindowTicks ? loop.loopLengthTicks : kPlaybackWindowTicks;
+      mergedPlaybackWindowLengthTicks(loop.loopLengthTicks,
+                                      loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                                      kMergedWindowTicks);
   return window.builtFromRevision == loop.playbackRevision &&
       (rootBacked || committedBacked) &&
       window.windowLengthTicks == expectedWindow &&

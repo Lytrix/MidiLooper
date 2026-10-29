@@ -6,12 +6,48 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/IntervalProjection.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
+#include "PlaybackMergedMidiEvents.h"
 #include "Utils/BootLoopSlotRestore.h"
 #include "Utils/LoopEditDepartGeometry.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "Utils/SlotLaunchCommit.h"
 #include "Utils/SlotLoopContent.h"
 #include "ActiveNoteLedger.h"
+
+/// **DEC-203 — the merged window policy has exactly one answer for a given loop.**
+///
+/// The builder and the readiness predicate are two callers of the same question ("which span does this slot's merged
+/// window cover?"). They drifted once: the builder wrote a whole-loop window for a short loop while readiness expected
+/// the two-bar clamp for every loop, so on device every 3..16-bar slot read "not ready" forever and re-prepared its
+/// window every turn -- 34 ms `track_update` stalls, patchy windows, wrong note pairing and missing notes after undo
+/// (`captures/session_20261029_133409.log`). This pins the single answer across the boundaries that matter, so the two
+/// callers cannot disagree again without a red test.
+void test_dec203_the_merged_window_length_has_one_answer_across_every_boundary() {
+  constexpr uint32_t kBar = 768u;   // Config::TICKS_PER_BAR; this suite links no Config header
+  struct Row {
+    uint32_t bars;
+    bool longLoop;   // the caller's shouldAvoidFullVisualRebuild verdict
+    uint32_t expected;
+  };
+  const Row rows[] = {
+      {1, false, 1 * kBar},      // a loop shorter than the window is its whole self
+      {2, false, 2 * kBar},      // exactly the window: whole self, not a clamp
+      {3, false, 3 * kBar},      // the drift case: builder wrote the whole loop
+      {5, false, 5 * kBar},      // the measured device shape (34095 us)
+      {8, false, 8 * kBar},
+      {16, false, 16 * kBar},    // last loop below the long-loop threshold
+      {17, true, 2 * kBar},      // first long loop: two bars, clamped by nothing here
+      {31, true, 2 * kBar},
+      {1, true, 1 * kBar},       // a long verdict on a tiny loop still cannot exceed the loop
+  };
+  for (const Row& row : rows) {
+    const uint32_t loopLength = row.bars * kBar;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(row.expected, mergedPlaybackWindowLengthTicks(loopLength, row.longLoop, 2u * kBar),
+                                     "the one window policy");
+    // A zero-length loop has no window at all; the policy must not invent one.
+    TEST_ASSERT_EQUAL_UINT32(0u, mergedPlaybackWindowLengthTicks(0u, row.longLoop, 2u * kBar));
+  }
+}
 
 void test_boot_restore_priority_selected_track_selected_slot() {
   // Focus selected is priority 0.
@@ -285,6 +321,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_boot_restore_priority_other_track_selected_slot);
   RUN_TEST(test_boot_restore_priority_other_track_non_selected_slot);
   RUN_TEST(test_dec196_every_playback_slot_ranks_ahead_of_every_background_slot);
+  RUN_TEST(test_dec203_the_merged_window_length_has_one_answer_across_every_boundary);
   RUN_TEST(test_deferred_priority_left_right_wrap);
   RUN_TEST(test_slot_has_loop_content_ram_only);
   RUN_TEST(test_slot_has_loop_content_sd_only);

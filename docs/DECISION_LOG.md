@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
 | [DEC-201](#dec-201--the-dec-194-rootless-first-window-red-was-three-fixture-preconditions-the-lane-serves-it) | 2026-10-29 | The DEC-194 rootless-first-window RED was three fixture preconditions; the lane serves it | Accepted — fixture corrected, behaviour unchanged |
 | [DEC-200](#dec-200--one-playback-window-policy-and-one-readiness-rule-length-is-a-clamp-not-a-branch) | 2026-10-29 | One playback window policy and one readiness rule: length is a clamp, not a branch | Accepted — first slice landed; keystone named |
@@ -11460,3 +11461,75 @@ argument and its two discriminator-shaped fixtures) lands and the legacy merged/
 
 DEC-193 (the defect this names), DEC-200 (the keystone), DEC-201 (the sibling RED, fixture preconditions), DEC-108 §13b
 (the promise/judgement design), DEC-194 (passes are enough for a first window).
+
+## DEC-203 — The merged window length is one function, two callers: the builder and the readiness predicate had drifted
+
+**Date:** 2026-10-29
+**Owner:** `mergedPlaybackWindowLengthTicks` (`include/PlaybackMergedMidiEvents.h`), used by
+`ensurePlaybackMergedMidiEventsBuilt` and `isPlaybackMergedMidiEventsReadyForSlot`
+(`src/Track/TrackPlaybackWindowBuild.cpp`).
+**Status:** Accepted; regression fixed; native **0 failed**; build green. Device re-verification open.
+
+### Problem (device regression, image `f76a05a0…`)
+
+The owner reported, on the image flashed at 13:28: overdubs "connecting the wrong note on/offs", not all notes drawn
+after undo/redo, a broken display, and a long MIDI-timing stall when a new overdub starts
+(`captures/session_20261029_133409.log`). The capture shows a large, unambiguous regression against the previous image:
+
+| capture | image | `track_update` samples | > 2 ms | max |
+|---|---|---|---|---|
+| `session_20261029_121423.log` (12:14) | `bea5a99b…` | 6904 | 5 (0.07 %) | 5.2 ms |
+| `session_20261029_133409.log` (13:34) | `f76a05a0…` | 427 | **80 (19 %)** | **34.1 ms** |
+
+The stalls are on the *playing* tracks (7: 34.1 ms; 1: 8.3; 2: 8.8; plus 4 and 5), and the capture shows the lane
+churning (`playback_build,compatibility` 48 rows, 3977 `snapshot_unit`, `build_drop,released_without_site`).
+
+Root cause, measured: **the builder and the readiness predicate disagreed about the window length.** Track 7's slot is
+`len=3840` = **5 bars**, so:
+
+- the builder (DEC-197) wrote a **whole-loop** window (3840 ticks) because 5 bars is not `longLoop`;
+- the readiness predicate (DEC-200) expected `min(2 bars, loop)` = **1536 ticks for every loop**.
+
+`isPlaybackMergedMidiEventsReadyForSlot` therefore answered **false forever** for every 3..16-bar slot. Its consumers
+re-preparing on that answer (`launchPreparation == Fallback` re-runs `ensurePlaybackMergedEventsForSlot` while not ready;
+`playbackLaunchReadyForSlot` never reports ready) rebuilt a whole-loop merged window on every turn -- a whole-loop gather
+on the MIDI edge, per playing track, per turn. That single inconsistency explains all four symptoms: the 34 ms
+`track_update`, windows replaced mid-note (wrong On/Off pairing), content missing after undo/redo (a window rebuilt
+faster than it can be served), and a display reading the same churning source.
+
+The mistake is mine: DEC-200's readiness rule was written against the *unified clamp* state of the interval slice, which
+I had reverted; the tree at that moment still had DEC-197's whole-loop rule. The suite could not catch it because no
+fixture asserts that the two rules agree.
+
+### Decision
+
+One function answers "which span does this slot's merged window cover", and **both** callers use it:
+
+```cpp
+// include/PlaybackMergedMidiEvents.h
+inline uint32_t mergedPlaybackWindowLengthTicks(uint32_t loopLengthTicks, bool longLoop, uint32_t windowTicks) {
+  if (!longLoop) return loopLengthTicks;                       // DEC-197 rule, in force until the clamp slice lands
+  return loopLengthTicks < windowTicks ? loopLengthTicks : windowTicks;
+}
+```
+
+`windowTicks` is one file-local constant in the TU that holds both callers, so they cannot be handed different
+constants either. Behaviour is unchanged from the *builder's* rule -- the readiness predicate is what moves back into
+agreement -- so this is a repair, not a policy change. When the owner's "one clamp for every length" slice lands, it
+changes in this one function and both callers follow.
+
+### Verification
+
+- `test_dec203_the_merged_window_length_has_one_answer_across_every_boundary` (`test_slot_focus_policy`) pins the one
+  answer across the boundaries that matter: 1, 2, **3**, **5** (the measured device shape), 8, 16, 17, 31 bars, a long
+  verdict on a tiny loop, and a zero-length loop.
+- Full native **3608 cases, 0 failed, 7 skipped, 3601 succeeded**.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, ITCM `code 391,992 + padding 1,224` (unchanged).
+- **Device re-verification open**, with the same A/B metric: `track_update` samples above 2 ms should return to the
+  previous image's rate (~0.07 %), and the overdub/undo content symptoms should disappear.
+
+### Related
+
+DEC-197 (the builder rule this keeps), DEC-200 (the readiness rule, corrected here), DEC-199 (source by currency,
+unaffected), DEC-202 (late completion, unaffected), DEC-200's keystone (still the next slice; this drift is exactly the
+class of failure the single-policy direction exists to end).
