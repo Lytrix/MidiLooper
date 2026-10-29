@@ -60,10 +60,17 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
   Fixture `test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`; 2 failures out of
   251 (the other is the pre-existing frozen-packet characterization). Evidence:
   [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md).
-- [ ] 3.5 **Name the build refusal.** Instrument the admission under `playbackWindowServiceOffer` /
-  `requestPlaybackViewMaintenance` for the fixture's exact state and record the refusing predicate (one
-  implementation, named row; no behavioural change). Verify the named term reproduces on the device's
-  `playback_build` row before proposing any repair. This is the current repair candidate boundary.
+- [x] 3.5 **Name the build refusal (retry gate).** **Done — report-only, negative for this site.** Added
+  `PlaybackBuildRefusal` + `playbackBuildRefusalName` (`include/Utils/PlaybackBuildRefusal.h`),
+  `Track::playbackBuildGateRefusal` (the gate's order, written once; `committedPlaybackRetryCanProgress`
+  delegates), and a once-per-change `playback_build,<token>` row in `stepCommittedPlaybackRetry`. The fixture now
+  also asserts the holder offer and the gate term: the slot **is** an eligible holder and the gate reports `none`.
+  Build SUCCESS, RAM1 unchanged, RAM2 +64 B; focused suite still 248 passing. Evidence:
+  [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md#naming-probe-report-only--2026-10-29).
+- [ ] 3.5b **Name the step's branch.** Instrument `stepPlaybackViewMaintenance` between holder selection and the
+  `stepCommittedPlaybackRetry` call (same enum/row pattern, report-only) and record which early return prevents
+  `OwesBuild → Building` for the fixture's state. Verify the name on the device's `playback_build` row before
+  proposing any repair; this is now the repair candidate boundary.
 - [ ] 3.6 Only if 3.5 names nothing actionable, build **one two-state pair** on a scratch worktree from
   checkpoint `a3d56f07`: `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree
   plus DEC-191 behavior), every unrelated DEC-192/post-02:00 edit identical and the DEC-192 recovery request

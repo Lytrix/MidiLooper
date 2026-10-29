@@ -16,6 +16,7 @@
 #include "Utils/MidiServiceDrain.h"
 #include "Utils/NoteUtils.h"    // For CachedNoteList
 #include "Utils/MemoryPool.h"   // For pooled MIDI event vectors
+#include "Utils/PlaybackBuildRefusal.h"
 #include "TrackState.h"
 #include "TrackDisplayState.h"
 #include "Loop.h"
@@ -592,6 +593,9 @@ public:
   /// position and the coverage are untouched.
   void refreshRetainedDemandIdentityForSlot(uint8_t slotIndex);
   bool committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
+  /// DEC-193 (report-only): the **first failing term** of `committedPlaybackRetryCanProgress`, named once per change by
+  /// the retry turn. One implementation of the gate's order; no decision reads the name.
+  PlaybackBuildRefusal playbackBuildGateRefusal(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
   PlaybackViewTurnResult stepCommittedPlaybackRetry(uint8_t slotIndex, PlaybackDeadlineClock clock);
 
   /// Task 3.15h — **coverage-build drop trace, and why it exists**. The board's stall is the job → `build+job` → `job`

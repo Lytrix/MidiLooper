@@ -8538,6 +8538,7 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
   // rolling owner services it. This is the question -- does the restarted epoch ever reach a serving window?
   PlaybackViewSourceIdentity identityOut{};
   PlaybackCoverageInterval coverageOut{};
+  PlaybackPathRows::reset();
   bool served = false;
   for (unsigned turn = 0; turn < 256 && !served; ++turn) {
     nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
@@ -8547,6 +8548,28 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
     (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
     served = track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut);
   }
+  // Class 6: is the slot even offered as a holder? (The turn can only name the gate if it is chosen.)
+  {
+    const MidiServiceDrain::PlaybackHolder offer =
+        track.playbackWindowServiceOffer(static_cast<uint32_t>(nativePlaybackDeadlineClock.tick % loop.loopLengthTicks),
+                                         nativePlaybackDeadlineClock);
+    TEST_ASSERT_TRUE_MESSAGE(offer.eligible,
+                             "class 6: the owing slot must offer itself as an eligible holder");
+  }
+
+  // Class 5: the gate's own name for why the owed build did not advance. `none` means the gate was open and the stall
+  // is further down; any `gate_*` token is the first failing term.
+  const char* gateRefusal = "none";
+  for (size_t row = 0; row < PlaybackPathRows::count; ++row) {
+    if (PlaybackPathRows::paths[row] != nullptr &&
+        std::strncmp(PlaybackPathRows::paths[row], "gate_", 5) == 0) {
+      gateRefusal = PlaybackPathRows::paths[row];
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("none", gateRefusal,
+                                   "class 5: the restarted demand must not be held by the build gate");
+
   // Diagnostic split, so a failure names its class instead of only "expected true was false".
   const PlaybackViewPendingRequest* pending = track.pendingViewRequest(0);
   TEST_ASSERT_NOT_NULL_MESSAGE(pending, "class 1: the demand must still be owed after the restart, not silently dropped");

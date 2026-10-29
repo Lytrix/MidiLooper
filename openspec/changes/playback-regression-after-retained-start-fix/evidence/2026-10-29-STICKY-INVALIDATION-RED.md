@@ -67,3 +67,37 @@ DEC-191: nothing in these lanes was touched by the deltas.
 Instrument `requestPlaybackViewMaintenance` / `stepPlaybackViewMaintenance` for this exact state and name the
 refusing predicate (the same one-implementation naming pattern DEC-186/189 used). The candidate refusals live in
 the admission below `playbackWindowServiceOffer`, not in the retention helpers.
+
+## Naming probe (report-only) — 2026-10-29
+
+Added one canonical refusal name for the retry gate, so host and device report the same word for the same state:
+
+- `include/Utils/PlaybackBuildRefusal.h` — `PlaybackBuildRefusal` (19 terms) plus `playbackBuildRefusalName()`
+  (if/else, flash literals). Not a table; no decision reads it.
+- `Track::playbackBuildGateRefusal()` — the gate's order written once; `committedPlaybackRetryCanProgress()`
+  now delegates to it, so the yes/no answer and the reported term cannot disagree.
+- `stepCommittedPlaybackRetry()` reports the term **once per change** per (track, slot) through the existing
+  `playback_build,<token>` row (`reportPlaybackViewMaintenanceRow`), so no new capture tag and no tier change.
+  The last-value table is 64 B in RAM2 on target.
+
+Fixture assertions added, so the failure names its class:
+
+- class 5 — the gate's own term (`gate_*` token, `none` when open);
+- class 6 — whether the owing slot is offered at all (`playbackWindowServiceOffer(...).eligible`).
+
+### Result: still RED, one step further down
+
+- class 6 **passes**: the owing slot is an eligible holder.
+- class 5 **passes as `none`**: the retry gate is open (or never reached) — it is not the refusing term.
+- class 4a still fails: readiness stays `OwesBuild`.
+
+So the stall is in `stepPlaybackViewMaintenance`'s service branch **between holder selection and the
+`stepCommittedPlaybackRetry` call**, not in retention, epoch identity, dispatch eligibility, the offer, or the gate.
+That is the next place to name (same one-enum pattern, next slice).
+
+### Behaviour neutrality and cost
+
+- Focused suite unchanged at 251 cases / 2 failed (this fixture + the pre-existing frozen-packet
+  characterization) / 248 succeeded — the gate refactor changed no passing behaviour.
+- `pio run -e teensy41-capture-serial` **SUCCESS**: RAM1 `variables 96,192`, code `391,656`, padding `1,560`
+  (unchanged); RAM2 `variables 169,952` (+64 B for the refusal table). No flash, no upload.

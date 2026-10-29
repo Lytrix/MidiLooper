@@ -5783,78 +5783,100 @@ TRACK_COLD_MEM void Track::traceCoverageBuildDrop(uint8_t slotIndex, CoverageBui
                              static_cast<uint8_t>(reason), flags, 0u);
 }
 
-TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const {
+TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex,
+                                                             PlaybackDeadlineClock clock) const {
+  // DEC-193: one implementation of the gate's order -- the yes/no answer and the reported refusal cannot disagree.
+  const PlaybackBuildRefusal refusal = playbackBuildGateRefusal(slotIndex, clock);
+  return refusal == PlaybackBuildRefusal::None || refusal == PlaybackBuildRefusal::SourceRetiring;
+}
+
+/// **DEC-193 — the gate's first failing term, named.** Same order as the predicate has always evaluated; the early
+/// `None` answers are the gate being open (including the two "this turn has work" states), and every other value is the
+/// term that stopped an owed build from advancing. Report-only: nothing reads it to decide.
+TRACK_COLD_MEM PlaybackBuildRefusal Track::playbackBuildGateRefusal(uint8_t slotIndex,
+                                                                   PlaybackDeadlineClock clock) const {
   const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  if (!runtime) return false;
-  if (runtime->coverageSource.retiring()) return true;
-  if (rootQualificationWaitsForCaptureReady(slotIndex, *runtime, clock)) return false;
+  if (!runtime) return PlaybackBuildRefusal::NoRuntime;
+  if (runtime->coverageSource.retiring()) return PlaybackBuildRefusal::SourceRetiring;
+  if (rootQualificationWaitsForCaptureReady(slotIndex, *runtime, clock)) return PlaybackBuildRefusal::CaptureReadyWait;
   // A frozen reservation always gets a turn, including cancellation/invalidity.
-  if (runtime->ownsCoverageSource()) return true;
-  // Task 3.7a (I2): a **retained-source gather in flight** is this lane's own work. The frozen demand carries the
-  // promise (the pending record was discharged by the freeze, exactly as the root-backed qualification discharges it),
-  // so the turn must be able to serve the next slice.
-  if (runtime->retainedGatherActive()) return runtime->frozenViewRequest.active;
-  // Task 3.7a (I3b): a **paged preparation in flight** is this lane's own work too -- the frozen demand is its promise
-  // and the ring is its destination -- so the turn must be able to produce the next page (or report that its consumer is
-  // behind). Its *completion* does not keep the gate open: a standing delivery is the pager's consumer's business, and
-  // a demand that was discharged is not re-granted here.
-  if (runtime->pagedActive && runtime->frozenViewRequest.active) return true;
+  if (runtime->ownsCoverageSource()) return PlaybackBuildRefusal::None;
+  // Task 3.7a (I2): a retained-source gather in flight is this lane's own work; the frozen demand carries the promise.
+  if (runtime->retainedGatherActive())
+    return runtime->frozenViewRequest.active ? PlaybackBuildRefusal::None : PlaybackBuildRefusal::NoDemand;
+  // Task 3.7a (I3b): a paged preparation in flight is this lane's own work too.
+  if (runtime->pagedActive && runtime->frozenViewRequest.active) return PlaybackBuildRefusal::None;
   const auto* request = pendingViewRequest(slotIndex);
-  const bool launch = request && request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
+  if (request == nullptr) return PlaybackBuildRefusal::NoDemand;
+  const bool launch = request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-  const bool cold = request && coldRollingRequest(*runtime, *request);
+  const bool cold = coldRollingRequest(*runtime, *request);
 #else
   const bool cold = false;
 #endif
-  // DEC-136: the bound frozen reader's privately prepared successor is owed **without a deadline**, so an absent
-  // position is not an expired promise here. The structural classification is the only thing that makes this true.
-  const bool privateRootOwed = request != nullptr &&
-      rootReturnSuccessorIsOwedForSlot(slotIndex, *request, clock);
-  if (!request || (!launch && request->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) ||
-      request->positionInvalidated ||
-      (!launch && !cold && !privateRootOwed &&
-       (request->clockEpoch == 0 || clock.epoch != request->clockEpoch ||
-        clock.tick < request->work.admittedTick || clock.tick >= request->deadlineTick)) ||
-      request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
-      // Task 3.15g: these two are **the paged lane's own answer**, so they are terminal only while that lane still says
-      // so. The board showed a demand carrying `ClosuresExceedDeclaredCapacity` at instants where the lane reported
-      // `pagedOutcome = None` twenty microseconds earlier: the stamp outlived its producing outcome, and a terminal
-      // reason is never retried, so the job never retired and the accepted stop waited behind it. A refusal with a name
-      // is an answer *about the live outcome*; once the outcome is gone the demand is owed a re-answer, not silence.
-      // `WindowExceedsRetainedCapacity` stays unconditional: it is a property of the interval's own size, not an
-      // outcome that can clear.
-      (request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity &&
-       runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity) ||
-      (request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved &&
-       runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved) ||
-      (!privateRootOwed && request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff) ||
-      // Task 3.15g: the DEC-136 private route may **keep** the Capture-origin successor that occupies the ready role --
-      // that is what `coverageRoleAvailable(keepCaptureReady)` is for, and it still requires that successor to be an
-      // unpublished Capture window with the build role distinct from it. Passing the default here made the role look
-      // unavailable for exactly the shape the route exists for: the board sits with a complete Capture successor in
-      // `ready`, `roleAvailable(false)` answers 0, `roleAvailable(true)` answers 1, and nothing ever started.
-      !runtime->coverageRoleAvailable(privateRootOwed) || playbackViewOutstandingGrains(slotIndex) != 0) return false;
-  const auto& loop = loopForSlot(slotIndex);
-  if (request->loopLengthTicks != loop.loopLengthTicks || !playbackWindowSourceIsCurrentForSlot(slotIndex)) return false;
-  // Task 3.15g: for a **Committed** demand the cached identity is a cache, not the truth. The board's stall reads
-  // `revEq = 0` at the very instant the offer names this slot progressable, because the retained record flips
-  // active/inactive *inside* a turn: `retireCoverageSource` installs the frozen obligation (with its pre-publication
-  // identity) where the record was empty, so a refresh that runs at the start of a turn misses it and the gate keeps
-  // judging the cached stamp. A Committed window is content **of the published root** -- the build reads that root
-  // through the live snapshot (`beginCoverageQualification`), and the interval/geometry terms above are what actually
-  // decide whether this demand can be served. So when that root is current, the demand is for it, whatever its stamp
-  // says; a genuinely foreign demand is refused by the source/generation/coverage terms, not by this equality.
-  if (request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
-      loop.publishedSnapshotIsCurrent()) {
-    return true;
+  // DEC-136: the bound frozen reader's privately prepared successor is owed **without a deadline**.
+  const bool privateRootOwed = rootReturnSuccessorIsOwedForSlot(slotIndex, *request, clock);
+  if (!launch && request->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot)
+    return PlaybackBuildRefusal::NoDemand;
+  if (request->positionInvalidated) return PlaybackBuildRefusal::DemandInvalidated;
+  if (!launch && !cold && !privateRootOwed) {
+    if (request->clockEpoch == 0) return PlaybackBuildRefusal::Unqualified;
+    if (clock.epoch != request->clockEpoch) return PlaybackBuildRefusal::EpochMismatch;
+    if (clock.tick < request->work.admittedTick) return PlaybackBuildRefusal::AdmittedTickAhead;
+    if (clock.tick >= request->deadlineTick) return PlaybackBuildRefusal::DeadlineExpired;
   }
-  return request->source.playbackRevision == loop.playbackRevision;
+  if (request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity)
+    return PlaybackBuildRefusal::WindowExceedsRetainedCapacity;
+  // Task 3.15g: these two are the paged lane's own answer, terminal only while that lane still says so.
+  if (request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity &&
+      runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity)
+    return PlaybackBuildRefusal::ClosuresExceedDeclaredCapacity;
+  if (request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved &&
+      runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved)
+    return PlaybackBuildRefusal::PinnedEditRowsUnresolved;
+  if (!privateRootOwed && request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff)
+    return PlaybackBuildRefusal::CannotCompleteBeforeHandoff;
+  if (!runtime->coverageRoleAvailable(privateRootOwed)) return PlaybackBuildRefusal::NoCoverageRole;
+  if (playbackViewOutstandingGrains(slotIndex) != 0) return PlaybackBuildRefusal::SiblingOutstanding;
+  const auto& loop = loopForSlot(slotIndex);
+  if (request->loopLengthTicks != loop.loopLengthTicks) return PlaybackBuildRefusal::GeometryChanged;
+  if (!playbackWindowSourceIsCurrentForSlot(slotIndex)) return PlaybackBuildRefusal::SourceNotCurrent;
+  // Task 3.15g: a Committed window is content of the published root; when that root is current the demand is for it.
+  if (request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      loop.publishedSnapshotIsCurrent()) return PlaybackBuildRefusal::None;
+  if (request->source.playbackRevision != loop.playbackRevision) return PlaybackBuildRefusal::RevisionMismatch;
+  return PlaybackBuildRefusal::None;
 }
+
+/// DEC-193: the last refusal reported per (track, slot). The row is a **transition** record, so a slot parked on the
+/// same term costs one row while every move is still named -- a row per turn would evict the evidence it explains.
+/// RAM2 on the target (off the clock path), plain state on the host.
+#if defined(__IMXRT1062__)
+DMAMEM uint8_t gPlaybackBuildRefusalLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+#else
+uint8_t gPlaybackBuildRefusalLast[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+#endif
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     uint8_t slotIndex, PlaybackDeadlineClock clock) {
   auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  if (!runtime || !committedPlaybackRetryCanProgress(slotIndex, clock)) return PlaybackViewTurnResult::Idle;
+  // DEC-193 (report-only): an owed build that cannot advance names the first failing term once per change.
+  {
+    const PlaybackBuildRefusal refusal = playbackBuildGateRefusal(slotIndex, clock);
+    if (!runtime || (refusal != PlaybackBuildRefusal::None &&
+                     refusal != PlaybackBuildRefusal::SourceRetiring)) {
+      if (slotIndex < Config::MAX_LOOPS_PER_TRACK) {
+        const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
+        if (trackIndex < Config::NUM_TRACKS &&
+            gPlaybackBuildRefusalLast[trackIndex][slotIndex] != static_cast<uint8_t>(refusal)) {
+          gPlaybackBuildRefusalLast[trackIndex][slotIndex] = static_cast<uint8_t>(refusal);
+          reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex),
+                                           playbackBuildRefusalName(refusal));
+        }
+      }
+      return PlaybackViewTurnResult::Idle;
+    }
+  }
   if (runtime->coverageSource.retiring()) {
     runtime->stepCoverageSourceRetirement(kPlaybackViewFillQuantum);
     return PlaybackViewTurnResult::GrainServed;
