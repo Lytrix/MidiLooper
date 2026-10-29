@@ -1697,8 +1697,13 @@ void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstru
   // Rootless committed playback has neither the sealed Record reader nor a root
   // for the merged fallback. Reuse launch's on-demand publisher on this deferred
   // owner, once, without resetting any publication/capture/receipt owner.
-  if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop)) &&
-      rootRecoveryAllowedDuringBoot(bootRestoreSweepPending())) {
+  // **DEC-194 — during the boot restore sweep the shared session belongs to the loads.** Not only recovery: *any*
+  // snapshot construction (hydrated-root publication included) competes for the same deferred turn and the same SD
+  // session, and the measured waits (3-25 s per slot, 0.19 s of actual work) come from that competition. A root is an
+  // accelerator; nothing in the boot set needs one before its content is back. The sweep is short, so the root work
+  // starts immediately afterwards.
+  if (bootRestoreSweepPending()) return;
+  if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop))) {
     (void)snapshotLoop.requestCommittedPassesRepublish();
     // DEC-192 (report-only): name why a repeat request was not idempotent, once per change.
     const PublicationIdentityRefusal identity = loopLastPublicationIdentityRefusal(snapshotLoop);
