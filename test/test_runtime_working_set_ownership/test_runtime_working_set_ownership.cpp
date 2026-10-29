@@ -4,6 +4,7 @@
 #define UNIFIED_RECORD_CAPTURE_INITIAL_ORACLE 1
 #define PLAYBACK_SOURCE_MASK_QUALIFICATION 1
 #include "../test_support/PlaybackSourceMaskFixture.h"
+#include "Utils/BootRestoreGate.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -8655,6 +8656,16 @@ void test_dec194_coverage_role_refusal_names_the_first_false_term() {
                            playbackCoverageRoleRefusalName(rt->coverageRoleRefusal(false)));
   rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Idle;
   TEST_ASSERT_TRUE_MESSAGE(rt->coverageRoleAvailable(false), "and the term clears with the state");
+}
+
+/// **DEC-194 — root recovery yields to the boot restore sweep.** The root is an accelerator; a restore that never runs
+/// leaves a track with no content at all (device 2026-10-29: 3 slots in 21.7 s while root work shared the boot window,
+/// versus 26 in 17.1 s before). The decision is pure so both directions are pinned.
+void test_dec194_root_recovery_yields_to_the_boot_restore_sweep() {
+  TEST_ASSERT_FALSE_MESSAGE(rootRecoveryAllowedDuringBoot(true),
+                            "while the restore sweep is pending, root recovery must not take the session");
+  TEST_ASSERT_TRUE_MESSAGE(rootRecoveryAllowedDuringBoot(false),
+                           "once the sweep is done, root recovery proceeds normally");
 }
 
 /// **DEC-192 guard — a repeat request for the same inventory must not restart a pending publication.**
@@ -18527,6 +18538,7 @@ int main() {
   RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
   RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
   RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
+  RUN_TEST(test_dec194_root_recovery_yields_to_the_boot_restore_sweep);
   RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);

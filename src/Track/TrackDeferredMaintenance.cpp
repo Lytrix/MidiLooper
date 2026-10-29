@@ -14,6 +14,7 @@
 #include "LoopEventStore.h"
 #include "SlotLoadSession.h"
 #include "StorageManager.h"
+#include "Utils/BootRestoreGate.h"
 #include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/InvestigationCaptureLog.h"
@@ -1675,6 +1676,17 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
   }
 }
 
+namespace {
+/// The native harness has no restore sweep; the gate's decision itself is pinned by its own test there.
+bool bootRestoreSweepPending() {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  return false;
+#else
+  return StorageManager::hasPendingLoopSlotRestore();
+#endif
+}
+}  // namespace
+
 #if defined(__IMXRT1062__)
 DMAMEM PublicationIdentityRefusal sLastPublicationIdentityRefusal = PublicationIdentityRefusal::None;
 #else
@@ -1685,7 +1697,8 @@ void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstru
   // Rootless committed playback has neither the sealed Record reader nor a root
   // for the merged fallback. Reuse launch's on-demand publisher on this deferred
   // owner, once, without resetting any publication/capture/receipt owner.
-  if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop))) {
+  if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop)) &&
+      rootRecoveryAllowedDuringBoot(bootRestoreSweepPending())) {
     (void)snapshotLoop.requestCommittedPassesRepublish();
     // DEC-192 (report-only): name why a repeat request was not idempotent, once per change.
     const PublicationIdentityRefusal identity = loopLastPublicationIdentityRefusal(snapshotLoop);
