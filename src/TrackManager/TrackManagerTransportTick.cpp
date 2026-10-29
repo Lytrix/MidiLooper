@@ -231,6 +231,12 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(i);
       if (targetSlot >= Config::MAX_LOOPS_PER_TRACK) {
         cancelPendingSlotSwitch(i);
+      } else if (tracks[i].hasStopInFlight()) {
+        // **DEC-194 — prepare early, adopt at the same safe boundary.** The target's source may be retained and its
+        // window prepared while the predecessor finalizes; the **switch** must not commit until that finalization is
+        // done. This hold used to be implicit: a rootless target never looked ready, so the readiness gate happened to
+        // block adoption. Making the target provisionable from its committed passes exposed the missing explicit term
+        // (`test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits`).
       } else if (!tracks[i].hasCommittedPassesInSlot(targetSlot)) {
         // HEADER_READY / SD still loading: keep pending until Commit.
         // hasDataInSlot is true from metadata length alone — launching that empty 64-bar
