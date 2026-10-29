@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-205](#dec-205--a-retiring-retained-source-must-not-refuse-the-next-revisions-source) | 2026-10-29 | A retiring retained source must not refuse the next revision's source | Accepted — re-applied 2026-10-29: the revert's evidence was retracted (a muted DAW channel, not this change) |
+| [DEC-205](#dec-205--reverted-a-retiring-retained-source-must-not-refuse-the-next-revisions-source) | 2026-10-29 | **Reverted** — a retiring retained source must not refuse the next revision's source | Reverted twice: it empties the serving window of a restored slot |
 | [DEC-204](#dec-204--an-ownerless-reserved-session-exit-claim-is-released-at-the-start-it-would-block) | 2026-10-29 | An ownerless reserved session-exit claim is released at the start it would block | Accepted — native green, build green; not flashed |
 | [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
@@ -11601,11 +11601,12 @@ DEC-191 (the terminal this wires), DEC-174 (the `Populated` orphan and its publi
 rate), DEC-203 (the merged-window repair, confirmed working in the same capture: the display tracked notes through
 multiple overdubs).
 
-## DEC-205 — A retiring retained source must not refuse the next revision's source (reverted, then re-applied)
+## DEC-205 — **REVERTED**: a retiring retained source must not refuse the next revision's source
 
 **Date:** 2026-10-29
-**Status:** **Accepted** (re-applied 2026-10-29). It was reverted in `358aa702` and re-applied the same day once the
-revert's evidence was retracted; both steps are kept here because an image with and without it reached the board.
+**Status:** **Reverted** -- first in `358aa702`, re-applied in `ad344997`, and reverted again the same day on the
+owner's A/B. Do **not** re-apply this shape (releasing a retained source from the admission path): it empties the serving
+window of a *restored* slot.
 
 ### What it tried to fix
 
@@ -11631,16 +11632,24 @@ Image `0e5058b9…` broke the **record** path. `captures/session_20261029_142816
 128.8 s PERS,result … ok
 ```
 
-**Retracted by the owner the same day:** the DAW channel was **muted**, so the take legitimately captured nothing. The
-`cap=2 -> cap=0` step is not this change either -- a long-press Record on a slot with content **replaces** the slot with
-the new take, and an empty take is discarded, which is why the census read 0 and the panel stayed empty. The capture
-still shows the merged/retention path barely running during the record (4 `playback_build` rows in the whole run, none
-in the record window), consistent with this change having no part in it.
+The first revert was attributed to a muted DAW channel (an empty take, and a long-press Record replacing the slot), and
+the change was re-applied. The owner's A/B then separated them cleanly:
 
-**Kept as a lesson though:** the original fixture (undo -> redo) was an insufficient *gate* for anything touching the
-record path. If this seam is touched again, add a record-path fixture first -- committed passes + the production Record
-start/stop, asserting the passes survive and the new take finalises -- and consider gating the release retry on capture
-state. Neither is needed for this change's own claim.
+| | before (`session_20261029_143903.log`) | after (`session_20261029_144252.log`) |
+|---|---|---|
+| restore | `passes=1`, `stored_notes=204` | `passes=1`, `stored_notes=171` |
+| census | `cap` falls to 0 only at the undo | `cap=2` at 12.4 s, 0 later |
+| piano roll | `PAINT_BEAT notes=204`, playing | **`notes=0`** while `state=5` (playing) |
+
+So the slot **loads** (the passes and their notes are there) but nothing is drawn or played: the release frees the chunk
+payloads of the loaded revision, and the rebuilt window then has nothing to serve. The defect this change was aimed at --
+undo after a reboot removing the audio while the piano roll stays stale -- is visible in the *before* column and is a
+**display** defect, not a source-lifetime one.
+
+**Lesson for the next attempt:** releasing a retained source is the wrong lever for the capacity refusal. If the capacity
+problem is revisited, it needs a fix that does not free a revision's payloads (a third role, or a builder that serves
+without ownership), and it needs a **loaded-slot** fixture -- restore, then assert the first window carries the restored
+notes -- before it ever reaches a board.
 
 ### Related
 
