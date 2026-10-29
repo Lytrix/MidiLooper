@@ -164,3 +164,24 @@ lead it can actually meet, not recovered a loop late.
 
 Suite: 253 cases, 3 failed, 249 pass (DEC-194 RED naming `role_promise_pending`, DEC-193 RED, pre-existing
 characterization). `teensy41-capture-serial` SUCCESS, RAM1 unchanged. No upload, no device or SD action.
+
+## 9.4d — three hypotheses excluded, none replaced
+
+Tried, in order, and **excluded** by measurement (all host, all reverted afterwards):
+
+1. **"The builder is starved of turns."** Ran the fixture at one tick per owner turn (production-like density) instead
+   of 64 ticks. Still no serving window. Excluded.
+2. **"Prewarm leaves a promise pending."** Asserted `completedPromisePendingJudgement == false` before the first owner
+   turn. Passed. Excluded.
+3. **"The completion transition is observable and late."** Sampled the flag after every turn and captured
+   admitted/deadline/completed plus fill/order grains at the false→true transition. The transition was **never
+   observed**, while the gate-time role term still read `role_promise_pending`.
+
+The third result contradicts a simple late-completion model: the flag is true when the gate reads it and false when the
+turn ends, so the refusal is **transient inside a turn**, and the fixture's "first blocked term" was reading that
+transient rather than the standing cause. The standing cause is therefore *after* the role: something else keeps the
+window from being served once the role is free.
+
+Consequence: do not implement a lead change yet. The next instrument must be **per-turn and slot-qualified at the gate**
+(turn index, role term, holder eligibility, retry entry) so a transient single-turn refusal cannot be mistaken for the
+standing blocker. Suite unchanged: 253 cases, 3 failed, 249 pass.
