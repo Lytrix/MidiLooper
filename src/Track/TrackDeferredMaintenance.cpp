@@ -1684,12 +1684,28 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
   }
 }
 
+#if defined(__IMXRT1062__)
+DMAMEM PublicationIdentityRefusal sLastPublicationIdentityRefusal = PublicationIdentityRefusal::None;
+#else
+PublicationIdentityRefusal sLastPublicationIdentityRefusal = PublicationIdentityRefusal::None;
+#endif
+
 void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits) {
   // Rootless committed playback has neither the sealed Record reader nor a root
   // for the merged fallback. Reuse launch's on-demand publisher on this deferred
   // owner, once, without resetting any publication/capture/receipt owner.
   if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop))) {
     (void)snapshotLoop.requestCommittedPassesRepublish();
+    // DEC-192 (report-only): name why a repeat request was not idempotent, once per change.
+    const PublicationIdentityRefusal identity = loopLastPublicationIdentityRefusal(snapshotLoop);
+    if (identity != PublicationIdentityRefusal::None &&
+        identity != sLastPublicationIdentityRefusal) {
+      sLastPublicationIdentityRefusal = identity;
+      reportPlaybackViewMaintenanceRow(playbackSlotIndexForLoop(snapshotLoop), snapshotLoop,
+                                       publicationIdentityRefusalName(identity));
+    } else if (identity == PublicationIdentityRefusal::None) {
+      sLastPublicationIdentityRefusal = identity;
+    }
     return; // Request/enumeration is its own turn; construction keeps its normal quantum.
   }
   const bool havePublishedSnapshot = static_cast<bool>(snapshotLoop.publishedSnapshot());

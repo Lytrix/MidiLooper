@@ -204,3 +204,33 @@ inline const char* playbackRevalidateRefusalName(PlaybackRevalidateRefusal refus
   }
   return "rv_unknown";
 }
+
+/// **DEC-192 — why a repeat publication request did *not* look idempotent.**
+///
+/// Report-only. Named at the request so a restarting rebuild explains itself instead of being inferred from `q`/`a`.
+enum class PublicationIdentityRefusal : uint8_t {
+  None = 0,
+  RebuildFlagMismatch,
+  FromLoaded,
+  PassCountMismatch,
+  RecordRowMissing,
+  RecordRowExtra,
+  OverdubRowMissing,
+  CompanionCountMismatch,
+  CompanionRowMissing,
+};
+
+inline const char* publicationIdentityRefusalName(PublicationIdentityRefusal refusal) {
+  switch (refusal) {
+    case PublicationIdentityRefusal::None: return "pubident_ok";
+    case PublicationIdentityRefusal::RebuildFlagMismatch: return "pubident_rebuild_flag";
+    case PublicationIdentityRefusal::FromLoaded: return "pubident_from_loaded";
+    case PublicationIdentityRefusal::PassCountMismatch: return "pubident_pass_count";
+    case PublicationIdentityRefusal::RecordRowMissing: return "pubident_record_missing";
+    case PublicationIdentityRefusal::RecordRowExtra: return "pubident_record_extra";
+    case PublicationIdentityRefusal::OverdubRowMissing: return "pubident_overdub_missing";
+    case PublicationIdentityRefusal::CompanionCountMismatch: return "pubident_companion_count";
+    case PublicationIdentityRefusal::CompanionRowMissing: return "pubident_companion_missing";
+  }
+  return "pubident_unknown";
+}

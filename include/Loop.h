@@ -13,6 +13,7 @@
 #define LOOP_H
 
 #pragma once
+#include "Utils/PlaybackBuildRefusal.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -35,6 +36,10 @@
 #include "PassReclaim.h"
 #include "PendingNoteChange.h"
 #include "Utils/LoopStopFinalize.h"
+
+/// DEC-192 (report-only): why the last publication request for this Loop was not treated as the same in-flight
+/// inventory. A free function, deliberately: `sizeof(Loop)` is pinned and a diagnostic byte must not move it.
+PublicationIdentityRefusal loopLastPublicationIdentityRefusal(const Loop& loop);
 
 class RuntimeCaptureCompanions;
 class RuntimeCanonicalPassInputs;

@@ -1962,6 +1962,22 @@ bool Loop::pendingSnapshotProgressForTest(size_t& applied, size_t& queued, bool&
 }
 #endif
 
+namespace {
+// RAM2 on the target: a report-only probe must not move the RAM1 budget. Both are written before any read.
+#if defined(__IMXRT1062__)
+DMAMEM const Loop* gLastPublicationIdentityLoop;
+DMAMEM PublicationIdentityRefusal gLastPublicationIdentityRefusal;
+#else
+const Loop* gLastPublicationIdentityLoop = nullptr;
+PublicationIdentityRefusal gLastPublicationIdentityRefusal = PublicationIdentityRefusal::None;
+#endif
+}  // namespace
+
+PublicationIdentityRefusal loopLastPublicationIdentityRefusal(const Loop& loop) {
+  return &loop == gLastPublicationIdentityLoop ? gLastPublicationIdentityRefusal
+                                               : PublicationIdentityRefusal::None;
+}
+
 LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
   return requestCommittedPassesOnPublicationLane(/*rebuildFromPassInventory=*/false);
 }
@@ -1988,7 +2004,7 @@ bool passIdTrackedByBox(const PendingSnapshotPublishBox& box, PassId id) {
 /// `committedPassRevision()` is literally `playbackRevision`, which also moves for companion publication, wrap
 /// journals and other non-inventory reasons (the DEC-186 lesson). Using it here made every unrelated bump supersede an
 /// in-flight rebuild: the device restarted the root publication 73 times in 74 s (`session_20261029_093731`).
-bool pendingInventoryMatches(const Loop& loop, const PendingSnapshotPublishBox& box) {
+PublicationIdentityRefusal pendingInventoryCheck(const Loop& loop, const PendingSnapshotPublishBox& box) {
   size_t tracked = box.queuedPassIds.size() + box.appliedPassIds.size() +
                    (box.constructionPassId != kInvalidPassId ? 1u : 0u);
   size_t inventory = 0;
@@ -2004,20 +2020,21 @@ bool pendingInventoryMatches(const Loop& loop, const PendingSnapshotPublishBox& 
         pass.id == kInvalidPassId) continue;
     inventory += 1;
   }
-  if (inventory != tracked) return false;
+  if (inventory != tracked) return PublicationIdentityRefusal::PassCountMismatch;
   // Every inventory row must be tracked exactly once, and every tracked row must exist in the inventory.
-  if (recordCounted && !passIdTrackedByBox(box, loop.passes.recordPass.id)) return false;
+  if (recordCounted && !passIdTrackedByBox(box, loop.passes.recordPass.id))
+    return PublicationIdentityRefusal::RecordRowMissing;
   if (!recordCounted && passIdTrackedByBox(box, loop.passes.recordPass.id) &&
-      loop.passes.hasRecordPass()) return false;
+      loop.passes.hasRecordPass()) return PublicationIdentityRefusal::RecordRowExtra;
   size_t matched = 0;
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty() ||
         pass.id == kInvalidPassId) continue;
-    if (!passIdTrackedByBox(box, pass.id)) return false;
+    if (!passIdTrackedByBox(box, pass.id)) return PublicationIdentityRefusal::OverdubRowMissing;
     matched += 1;
   }
   if (recordCounted) matched += 1;
-  if (matched != tracked) return false;
+  if (matched != tracked) return PublicationIdentityRefusal::PassCountMismatch;
   // The **companion** inventory (active edit rows) is part of the same request: an undo that deactivates or adds an edit
   // row changes the representation the candidate must carry, so it supersedes even when the pass ids are unchanged.
   size_t companionInventory = 0;
@@ -2025,16 +2042,17 @@ bool pendingInventoryMatches(const Loop& loop, const PendingSnapshotPublishBox& 
     if (edit.state != EditPassState::Active || edit.id == kInvalidEditPassId) continue;
     companionInventory += 1;
   }
-  if (companionInventory != box.companionIds.size()) return false;
+  if (companionInventory != box.companionIds.size())
+    return PublicationIdentityRefusal::CompanionCountMismatch;
   for (const EditPass& edit : loop.passes.editPasses) {
     if (edit.state != EditPassState::Active || edit.id == kInvalidEditPassId) continue;
     bool found = false;
     for (EditPassId trackedCompanion : box.companionIds) {
       if (trackedCompanion == edit.id) { found = true; break; }
     }
-    if (!found) return false;
+    if (!found) return PublicationIdentityRefusal::CompanionRowMissing;
   }
-  return true;
+  return PublicationIdentityRefusal::None;
 }
 
 }  // namespace
@@ -2048,10 +2066,17 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesOnPublicationLane(bool rebuildFro
   // recovery asked again on every Snapshot owner turn, restarting the rebuild nine times in 38 s
   // (`session_20261029_032402`: `q` reset to 7, `a` back to 0, repeatedly). The identity is the inventory the request
   // covers (`coveredPassRevision`, DEC-073) plus the construction shape; a *newer* inventory still supersedes.
-  if (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->fromLoadedPasses == false &&
-      pendingSnapshotPublishBox_->rebuildFromPassInventory == rebuildFromPassInventory &&
-      pendingInventoryMatches(*this, *pendingSnapshotPublishBox_)) {
-    return true;  // already in flight for exactly this inventory
+  gLastPublicationIdentityLoop = this;
+  gLastPublicationIdentityRefusal = PublicationIdentityRefusal::None;
+  if (pendingSnapshotPublishBox_) {
+    gLastPublicationIdentityRefusal = pendingInventoryCheck(*this, *pendingSnapshotPublishBox_);
+    if (pendingSnapshotPublishBox_->fromLoadedPasses) {
+      gLastPublicationIdentityRefusal = PublicationIdentityRefusal::FromLoaded;
+    } else if (pendingSnapshotPublishBox_->rebuildFromPassInventory != rebuildFromPassInventory) {
+      gLastPublicationIdentityRefusal = PublicationIdentityRefusal::RebuildFlagMismatch;
+    } else if (gLastPublicationIdentityRefusal == PublicationIdentityRefusal::None) {
+      return true;  // already in flight for exactly this inventory
+    }
   }
   // Deliberately does NOT clear `publishedSnapshotBox_`: the previous root stays the audible source
   // until the replacement publishes, so an undo/redo never opens a playback gap. The idle Snapshot
