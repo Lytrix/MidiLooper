@@ -41,17 +41,30 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
 
 ## 3. Diff the DEC-191 deltas to the smallest switching mutation
 
-- [ ] 3.1 Enumerate the production behavioral deltas D1–D5 from [design](design.md#dec-191-behavioral-deltas--the-complete-candidate-set)
-  against the actual tree, and verify each is either absent, reverted, or reachable from a production call site.
-  Record reachability per delta; do not test a delta that no production path can enter.
-- [ ] 3.2 Build **one two-state pair first** on a scratch worktree from checkpoint `a3d56f07`:
-  `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree plus DEC-191 behavior),
-  every unrelated DEC-192/post-02:00 edit identical between them and the DEC-192 recovery request guarded off in
-  the fixture. Verify the pair differs only in the DEC-191 deltas (`git diff reconstruction-control..reconstruction-dec191`)
-  and that playback toggles between them under Oracle A. Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`.
-- [ ] 3.3 Only if 3.2 toggles, split behaviorally: D1+D2 only, D3 only, D4 only, then all. Verify Oracle A reds on
+- [x] 3.1 Enumerate the production behavioral deltas D1–D5 from [design](design.md#dec-191-behavioral-deltas--the-complete-candidate-set)
+  against the actual tree and record reachability. **Done:** no DEC-191 production call site remains; only
+  helpers plus tests (`overdubStartPreflight`, `overdubStartRetryDecision`,
+  `settleOrphanedSessionExitReservation`). See [delta review](evidence/2026-10-29-DELTA-REVIEW.md).
+- [x] 3.2 Review each delta for owner eligibility/order, claim lifetime, and early returns before the playback
+  producer. **Done:** D1/D2 low; D3 medium (claim lifetime, Start path); D4 high for the `011304` signature but
+  its removal did not restore playback; the playback lane (`main.cpp:571`) is not gated by the retained latch,
+  so turn consumption is *not* the playback cause. Verify the two signatures do not match before choosing the
+  next experiment.
+- [ ] 3.3 **D4 single mutation** on a scratch worktree (only the unconditional idle-lane settlement restored):
+  verify whether the `pub=1` / `hold_gap` / `playback_read 0` signature returns with a decoy Record stop. If it
+  does, D4's claim release is the named boundary; if not, record NON-REPRODUCTION and do not infer.
+- [ ] 3.4 **Sticky-invalidation probe** (native, no device): rootless passes slot + Start + transport stop/start.
+  Verify whether a new playback request is issued after the invalidated one (`TrackPlaybackWindowBuild.cpp:203`
+  makes rejection sticky for the interval). If it is not, that is the producer boundary for the persistent
+  silence, independent of DEC-191, and it becomes the repair target.
+- [ ] 3.5 Only if 3.3 and 3.4 fail to name a boundary, build **one two-state pair** on a scratch worktree from
+  checkpoint `a3d56f07`: `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree
+  plus DEC-191 behavior), every unrelated DEC-192/post-02:00 edit identical and the DEC-192 recovery request
+  guarded off in the fixture. Verify the pair differs only in the DEC-191 deltas and that playback toggles.
+  Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`.
+- [ ] 3.6 If 3.5 toggles, split behaviorally: D1+D2 only, D3 only, D4 only, then all. Verify Oracle A reds on
   exactly the smallest mutation and greens otherwise; record interactions instead of forcing a single winner.
-  Remove every scratch mutation before proceeding (verify `git diff` on the primary tree contains none of them).
+  Remove every scratch mutation before proceeding (verify `git diff` on the primary tree contains none).
 
 ## 4. Name the first missing producer or opportunity
 

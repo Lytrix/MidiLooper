@@ -87,21 +87,25 @@ window producer, standby pool, or rootless emitter fails review even if A passes
    pre-regression image too, which still plays from the pass resolution; the first-bad boot never builds a
    root. Fork 2 (card state) does not explain the regression. Readings in
    [BOUNDARY-2026-10-29.md](evidence/BOUNDARY-2026-10-29.md#card-inventory--2026-10-29-read-only-no-upload-no-sd-write).
-2. **Two-state reconstruction first — do not build historical images.** From the checkpoint, produce
-   `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (the same tree plus DEC-191
-   behavior), keeping every unrelated DEC-192/post-02:00 edit identical between them, and with the DEC-192
-   recovery request guarded off in the fixture so the historical repair cannot satisfy the oracle. Name them
-   as reconstructions, never as `0dbf08c1`/`3e79bd1b`: they are causal instruments, not historical truth.
-   Toggle only the DEC-191 behavior to ask whether playback switches at all.
-3. **Behavioral split, only if step 2 toggles.** Re-apply one piece at a time: D1+D2 only (retry storm
-   prevention), D3 only (ownership repair), D4 only (idle-lane/scheduling), then all together. The smallest
-   mutation that switches playback off names the repair boundary; note any interaction instead of forcing a
-   single winner.
-4. **Name the lost producer.** For the winning mutation, trace which producer no longer runs (root
-   publication request, source admission, or the reader's qualification) and its refusing predicate.
-5. **Repair only that boundary**, reusing the existing owner. No new state.
-6. **Oracle B** on the repaired tree; then Oracle A; then focused native, full native, build, scoped review.
-7. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output. Record the HEX per
+2. ~~**Delta review against the tree.**~~ **DONE 2026-10-29.** No DEC-191 production call site remains; D1/D2 are
+   low, D3 is a narrow claim-lifetime change, D4 is the only delta with a demonstrated mechanism (`011304`), and
+   the playback lane is *not* gated by the retained latch. Two different failure signatures exist. See
+   [delta review](evidence/2026-10-29-DELTA-REVIEW.md).
+3. **D4 single mutation.** Restore only the unconditional idle-lane settlement on a scratch worktree and check
+   whether the `pub=1`/`hold_gap`/`playback_read 0` signature returns with a decoy Record stop. Cheap and
+   falsifiable; NON-REPRODUCTION is a valid result.
+4. **Sticky-invalidation probe (native).** Rootless passes slot, Start, transport stop/start: is a *new* playback
+   request issued after the invalidated one (`TrackPlaybackWindowBuild.cpp:203` makes rejection sticky for the
+   interval)? If not, that is the producer boundary for the persistent silence.
+5. **Two-state reconstruction — only if steps 3 and 4 name nothing.** `reconstruction-control` (no DEC-191
+   behavior) vs `reconstruction-dec191` (same tree plus DEC-191 behavior), unrelated edits identical and the
+   DEC-192 recovery guarded off. Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`. If it toggles,
+   split D1+D2 / D3 / D4.
+6. **Name the lost producer.** For the winning experiment, trace which producer no longer runs (publication
+   request, source admission, or the reader's qualification) and its refusing predicate.
+7. **Repair only that boundary**, reusing the existing owner. No new state.
+8. **Oracle B** on the repaired tree; then Oracle A; then focused native, full native, build, scoped review.
+9. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output. Record the HEX per
    [TEENSY_FIRMWARE_UPLOAD](../../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md#procedure) step 8.
 
 ## Execution packet — first implementation slice (task 2 only)
