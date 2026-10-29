@@ -185,3 +185,30 @@ window from being served once the role is free.
 Consequence: do not implement a lead change yet. The next instrument must be **per-turn and slot-qualified at the gate**
 (turn index, role term, holder eligibility, retry entry) so a transient single-turn refusal cannot be mistaken for the
 standing blocker. Suite unchanged: 253 cases, 3 failed, 249 pass.
+
+## DEC-192 guard — publication requests are idempotent while in flight
+
+Device evidence: `session_20261029_032402.log` shows the rootless recovery asking on every Snapshot owner turn; each
+`requestCommittedPassesOnPublicationLane` began with `clearPendingSnapshotPublish()` and re-queued every pass, so the
+rebuild restarted **nine times** in 38 s (`q` reset 0..2 → 7, `a` back to 0, restart interval shrinking to ~0.5 s).
+
+Repair (at the operation, so every caller is covered — Snapshot owner, undo, future callers):
+
+```
+if (pending box && !fromLoadedPasses && coveredPassRevision == committedPassRevision()
+    && rebuildFromPassInventory == rebuildFromPassInventory) return true;  // already in flight
+```
+
+Identity is the inventory the request covers (`coveredPassRevision`, DEC-073) plus the construction shape. A newer
+inventory still supersedes.
+
+Verification:
+
+- `test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication`: partial progress on a two-pass
+  inventory → repeat request → applied/queued unchanged; newer inventory (`++playbackRevision`) → candidate replaced
+  (applied 0, queue refilled).
+- Mutation: disabling the guard reds exactly that fixture (`Expected 1 Was 2 — a repeat request must not repopulate the
+  queue`); restored.
+- Native 254 cases / 3 failed / 250 pass (the two known REDs plus the pre-existing characterization).
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, code `391,992` (+336 B), padding `1,224` (floor 840).
+  No upload.

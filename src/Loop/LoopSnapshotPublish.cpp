@@ -1949,6 +1949,19 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
   return true;
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+bool Loop::pendingSnapshotProgressForTest(size_t& applied, size_t& queued, bool& fragment) const {
+  applied = 0;
+  queued = 0;
+  fragment = false;
+  if (!pendingSnapshotPublishBox_) return false;
+  applied = pendingSnapshotPublishBox_->appliedPassIds.size();
+  queued = pendingSnapshotPublishBox_->queuedPassIds.size();
+  fragment = pendingSnapshotPublishBox_->passChangeProgress.active;
+  return true;
+}
+#endif
+
 LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
   return requestCommittedPassesOnPublicationLane(/*rebuildFromPassInventory=*/false);
 }
@@ -1960,6 +1973,16 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesRebuild() {
 LOOP_COLD_MEM bool Loop::requestCommittedPassesOnPublicationLane(bool rebuildFromPassInventory) {
   if (loopLengthTicks == 0 || !hasCommittedPasses()) {
     return false;
+  }
+  // **Idempotent while in flight (DEC-192 guard).** A request for the inventory a pending publication already
+  // represents must not destroy it: `clearPendingSnapshotPublish()` below re-queues every pass, and the rootless
+  // recovery asked again on every Snapshot owner turn, restarting the rebuild nine times in 38 s
+  // (`session_20261029_032402`: `q` reset to 7, `a` back to 0, repeatedly). The identity is the inventory the request
+  // covers (`coveredPassRevision`, DEC-073) plus the construction shape; a *newer* inventory still supersedes.
+  if (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->fromLoadedPasses == false &&
+      pendingSnapshotPublishBox_->coveredPassRevision == committedPassRevision() &&
+      pendingSnapshotPublishBox_->rebuildFromPassInventory == rebuildFromPassInventory) {
+    return true;  // already in flight for exactly this inventory
   }
   // Deliberately does NOT clear `publishedSnapshotBox_`: the previous root stays the audible source
   // until the replacement publishes, so an undo/redo never opens a playback gap. The idle Snapshot

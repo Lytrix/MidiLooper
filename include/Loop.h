@@ -1774,6 +1774,8 @@ struct Loop {
 #if defined(PIO_UNIT_TEST_NATIVE)
   // Fixture-only STOPPED legacy cleanup; never called by the adoption commands.
   void clearPendingSnapshotPublishForTest() { clearPendingSnapshotPublish(); }
+  /// Test-only: the pending publication's progress (applied passes, queued passes, active fragment). Read-only.
+  bool pendingSnapshotProgressForTest(size_t& applied, size_t& queued, bool& fragment) const;
 #endif
 
   enum class CommittedSnapshotInventoryAdoptionMode : uint8_t { Loaded, Republish };

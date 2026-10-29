@@ -8654,6 +8654,58 @@ void test_dec194_coverage_role_refusal_names_the_first_false_term() {
   TEST_ASSERT_TRUE_MESSAGE(rt->coverageRoleAvailable(false), "and the term clears with the state");
 }
 
+/// **DEC-192 guard — a repeat request for the same inventory must not restart a pending publication.**
+///
+/// Device evidence (`session_20261029_032402.log`): the rootless recovery asked on every Snapshot owner turn, and each
+/// request cleared the box and re-queued every pass (`q` reset to 7, `a` back to 0, nine times in 38 s). The invariant
+/// belongs to the operation: same covered inventory + same construction shape while in flight is a no-op.
+void test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  // A second committed pass, so "partial progress" is a real state (applied >= 1 with work still queued).
+  OverdubPass overdub{};
+  overdub.id = 900;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, 100, 1, 60, 100, 9001));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, overdub.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(overdub));
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  TEST_ASSERT_TRUE_MESSAGE(loop.requestCommittedPassesRepublish(), "the first request starts a publication");
+  size_t applied = 0, queued = 0;
+  bool fragment = false;
+  for (unsigned turn = 0; turn < 64 && loop.hasPendingSnapshotPublish(); ++turn) {
+    (void)loop.pendingSnapshotProgressForTest(applied, queued, fragment);
+    if (queued < 2) break;  // the first pass has been taken: partial progress is a real state
+    (void)loop.stepPendingSnapshotPublish(1, true, 0);
+  }
+  TEST_ASSERT_TRUE(loop.pendingSnapshotProgressForTest(applied, queued, fragment));
+  TEST_ASSERT_TRUE_MESSAGE(queued < 2 || applied >= 1, "fixture needs partial progress on a two-pass inventory");
+
+  // Same inventory, same shape: idempotent. Applied must not return to zero and the queue must not refill.
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  size_t appliedAfter = 0, queuedAfter = 0;
+  bool fragmentAfter = false;
+  TEST_ASSERT_TRUE(loop.pendingSnapshotProgressForTest(appliedAfter, queuedAfter, fragmentAfter));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(applied), static_cast<uint32_t>(appliedAfter),
+                                   "a repeat request must not reset applied progress");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(queued), static_cast<uint32_t>(queuedAfter),
+                                   "a repeat request must not repopulate the queue");
+
+  // Control: a **newer** inventory must still supersede the pending candidate.
+  ++loop.playbackRevision;
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  size_t appliedNew = 0, queuedNew = 0;
+  bool fragmentNew = false;
+  TEST_ASSERT_TRUE(loop.pendingSnapshotProgressForTest(appliedNew, queuedNew, fragmentNew));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(appliedNew),
+                                   "a request for a newer inventory must replace the candidate");
+  TEST_ASSERT_TRUE_MESSAGE(queuedNew >= 2, "and re-queue that inventory");
+}
+
 /// **DEC-194 — a rootless, pass-backed playing slot must build its first window without a whole-root publication.**
 ///
 /// The device shape (`session_20261029_032402.log`): restored passes, `root_rev 0`, `TRACK_PLAYING`, no whole-root
@@ -18454,6 +18506,7 @@ int main() {
   RUN_TEST(test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance);
   RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
   RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
+  RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
   RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
