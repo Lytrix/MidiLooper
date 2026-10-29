@@ -10511,6 +10511,54 @@ void test_6_4_coalesced_receipts_enumerate_exactly_what_sequential_consumption_d
 /// `Populated -> Publishing`; once that job has retired, nothing owns the record any more and it refused every later
 /// start forever. An orphaned obligation owns committed identities, so it must be **published**, not dropped, and the
 /// next start must be admitted.
+/// **DEC-204 — an orphaned `Reserved` claim is payload-free: the next start must be admitted.**
+///
+/// Device `session_20261029_135319.log`: a stop was retained at 43.2 s (`Overdub stop retained (capacity):
+/// canonical_output slot=3 interval=1`), and at 115.2 s the Start was refused with
+/// `Overdub start retained (capacity): the session-exit publication obligation is still owned (slot=3
+/// state=reserved jobs=0 receipts=0 reserved_owner=0)`, then reported as still retained at 115.4/123.4 s. Nothing
+/// released the record: the populated-orphan path cannot (`markSessionExitTailReady` accepts only `Populated`), and the
+/// terminal that can (`releaseOrphanedSessionExitReservation`) had no caller.
+///
+/// The shape below is exactly that: `Reserved`, never opened, no stop job, not capturing. A reservation claimed and
+/// never used holds **no identities**, so releasing it loses nothing; leaving it refuses every later start forever and
+/// starves the display through the retained carrier's retries.
+void test_dec204_an_orphaned_reserved_claim_does_not_refuse_the_next_start() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  clockManager.assignCurrentTickSilently(96);
+
+  // Manufacture the device state: the obligation is reserved for a session that never opened, and no job owns it.
+  TEST_ASSERT_TRUE(loop.claimSessionExitPublishOwner());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(Loop::SessionExitPublishClaim::Reserved),
+                                   static_cast<uint32_t>(loop.sessionExitPublishClaimState()),
+                                   "precondition: the record is reserved");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(loop.sessionExitPublishClaimIdentity()),
+                                   "precondition: the session never opened");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), "precondition: no stop job owns it");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::reservedObligationHasLiveOwner(t, loop));
+
+  char ctx[256];
+  t.startOverdubbing(96);
+  std::snprintf(ctx, sizeof(ctx), "claim=%u jobs=%zu receipts=%zu overdubbing=%u",
+                static_cast<unsigned>(loop.sessionExitPublishClaimState()),
+                TrackCaptureStopTestAccess::jobs(t), loop.sessionExitReceiptCount(),
+                t.isOverdubbing() ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), ctx);
+  // The admitted interval owns a fresh reservation; the abandoned one left no trace.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(Loop::SessionExitPublishClaim::Reserved),
+                                   static_cast<uint32_t>(loop.sessionExitPublishClaimState()), ctx);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::reservedObligationHasLiveOwner(t, loop) ||
+                               t.isOverdubbing(),
+                           "the live interval owns its own reservation");
+}
+
 void test_6_4_orphaned_reserved_obligation_is_published_and_does_not_refuse_the_next_start() {
   LoopEventStore::initPool();
   Track& t = trackManager.getTrack(0);
@@ -10839,6 +10887,7 @@ int main() {
   RUN_TEST(test_6_4_outstanding_stops_never_share_the_last_transfer_row);
   RUN_TEST(test_6_4_coalesced_receipts_enumerate_exactly_what_sequential_consumption_does);
   RUN_TEST(test_6_4_orphaned_reserved_obligation_is_published_and_does_not_refuse_the_next_start);
+  RUN_TEST(test_dec204_an_orphaned_reserved_claim_does_not_refuse_the_next_start);
   RUN_TEST(test_6_4c_a_queued_stop_resumes_the_certified_history_instead_of_replaying_it);
   RUN_TEST(test_6_4c_only_a_certified_append_may_resume_the_history);
   RUN_TEST(test_6_5_backlogged_stops_burst_within_a_bounded_turn);

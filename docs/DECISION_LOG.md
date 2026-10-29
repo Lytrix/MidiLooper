@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-204](#dec-204--an-ownerless-reserved-session-exit-claim-is-released-at-the-start-it-would-block) | 2026-10-29 | An ownerless reserved session-exit claim is released at the start it would block | Accepted — native green, build green; not flashed |
 | [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
 | [DEC-201](#dec-201--the-dec-194-rootless-first-window-red-was-three-fixture-preconditions-the-lane-serves-it) | 2026-10-29 | The DEC-194 rootless-first-window RED was three fixture preconditions; the lane serves it | Accepted — fixture corrected, behaviour unchanged |
@@ -11533,3 +11534,68 @@ changes in this one function and both callers follow.
 DEC-197 (the builder rule this keeps), DEC-200 (the readiness rule, corrected here), DEC-199 (source by currency,
 unaffected), DEC-202 (late completion, unaffected), DEC-200's keystone (still the next slice; this drift is exactly the
 class of failure the single-policy direction exists to end).
+
+## DEC-204 — An ownerless `Reserved` session-exit claim is released at the start it would block
+
+**Date:** 2026-10-29
+**Owner:** `Track::claimOverdubSessionExitObligation` (`src/Track/TrackOverdubLifecycle.cpp`), calling the existing
+`Track::settleOrphanedSessionExitReservation` -> `Loop::releaseOrphanedSessionExitReservation`.
+**Status:** Accepted; fixture mutation-red-proved; full native **3609 / 0 failed / 7 skipped / 3602**; build green; not
+flashed.
+
+### Problem (device `captures/session_20261029_135319.log`)
+
+The owner reported that start/stop kept stalling and that the last overdub "did not even want to go to overdub", with
+the display freezing. The capture names it:
+
+```
+ 43.212 s  Overdub stop retained (capacity): canonical_output slot=3 interval=1 track=7
+115.229 s  Overdub start retained (capacity): the session-exit publication obligation is still owned
+              (slot=3 state=reserved jobs=0 receipts=0)
+115.353 s  Overdub start still retained: obligation owned (slot=3 state=reserved jobs=0 receipts=0 reserved_owner=0)
+123.407 s  Overdub start still retained: ... (same)
+```
+
+A retained stop left the slot's session-exit claim in `Reserved` with **no live owner** (`jobs=0`,
+`reserved_owner=0`). Nothing released it:
+
+- the populated-orphan path cannot -- `markSessionExitTailReady` only accepts a `Populated` record;
+- the terminal for the `Reserved` shape already exists (`Track::settleOrphanedSessionExitReservation` ->
+  `Loop::releaseOrphanedSessionExitReservation`, DEC-191, whose own comment describes this exact shape) but it had **no
+  caller**.
+
+So every later Start on that slot was refused, the press was retained on the start carrier, and the carrier's retry
+ran every turn -- which is the stall and the starved display the owner saw. `track_update` still shows 44 samples above
+2 ms in this capture (max 20.7 ms), clustered in that window.
+
+### Decision
+
+Wire the existing terminal at the Start claim path, where the refusal is produced and where an abandoned reservation is
+provable: `claimOverdubSessionExitObligation` calls `settleOrphanedSessionExitReservation()` before claiming. That
+predicate refuses a live capture interval (`isOverdubbing()` / `isRecording()`) and a record with a live stop job, and
+the release itself refuses any record that holds identities, so nothing still owned can be dropped. A successful
+release is logged by name (`released an orphaned session-exit reservation`) so the transition is visible on device.
+
+### Verification
+
+- New fixture `test_dec204_an_orphaned_reserved_claim_does_not_refuse_the_next_start`
+  (`test_shared_capture_finalization`): manufactures the device shape (`Reserved`, identity 0, `jobs=0`, no live owner)
+  and requires the next `startOverdubbing` to be admitted and to own a fresh reservation.
+- **Mutation-red proved:** with the wiring disabled the fixture fails with the device's own row --
+  `claim=1 jobs=0 receipts=0 overdubbing=0`.
+- Full native **3609 cases, 0 failed, 7 skipped, 3602 succeeded**; `teensy41-capture-serial` SUCCESS at RAM1
+  `variables 96,192` / ITCM `code 391,992 + padding 1,224` (unchanged).
+
+### What this does and does not explain
+
+- **Explains** the refused overdub start, the retained-press retry storm and the display starvation in that window.
+- **Does not explain** the *retained stop* itself (43.2 s, `canonical_output`) -- that is the DEC-173/177/178 rate
+  family, and it is what manufactures the orphan. Nor the post-reboot undo/content loss the owner also reported
+  (measured: after reboot the slot restores `cap=5 edit=0 undo=4`, live it was `cap=5 edit=22 undo=4`, so the edit
+  representation is not restored while the undo stack is).
+
+### Related
+
+DEC-191 (the terminal this wires), DEC-174 (the `Populated` orphan and its publication), DEC-173/177/178 (stop service
+rate), DEC-203 (the merged-window repair, confirmed working in the same capture: the display tracked notes through
+multiple overdubs).

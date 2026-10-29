@@ -589,6 +589,21 @@ TRACK_COLD_MEM bool Track::claimOverdubSessionExitObligation() {
   Loop& loop = getActiveLoop();
   // Task 6.4: a ready (`Publishing`) obligation needs only a free ring slot, not a publisher turn.
   loop.settleReadySessionExitReceipts();
+  // **DEC-204** (device `session_20261029_135319.log`): a stop retained at 43.2 s left the reservation `Reserved` with
+  // **no live owner** (`jobs=0 reserved_owner=0`), and nothing ever released it. The orphan path below cannot apply --
+  // `markSessionExitTailReady` only accepts a `Populated` record -- so every later start was refused
+  // (`Overdub start retained (capacity): ... state=reserved`) while the retained carrier retried every turn, starving
+  // the display. The terminal for exactly this shape exists (`settleOrphanedSessionExitReservation`, DEC-191: a
+  // payload-free reservation has nothing to publish) but had **no caller**; it is wired here, where the refusal is
+  // produced and where the reservation is provably abandoned. It refuses a live capture interval and a record with a
+  // live stop job, so it can never release an obligation that is still owned.
+  if (settleOrphanedSessionExitReservation()) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start: released an orphaned session-exit reservation (slot=%u state=empty jobs=%u receipts=%u)",
+               static_cast<unsigned>(activeLoopIndex),
+               static_cast<unsigned>(captureStopQueueDepth()),
+               static_cast<unsigned>(loop.sessionExitReceiptCount()));
+  }
   // Task 6.4 (device `session_20261028_143115.log`): an obligation whose interval has already retired can never be
   // marked ready again -- only that job's `completeDeferredCleanup` moves `Populated -> Publishing` -- so if no pending
   // job references the reserved record it has **zero live owners** and would refuse every later start forever (the
