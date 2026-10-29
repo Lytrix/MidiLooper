@@ -716,17 +716,19 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
-  } else if (longLoop) {
-    // Two bars centered on playhead — enough for LoopEnd launch + clock catch-up.
-    constexpr uint32_t kMergedMidiEventsGatherBars = 2;
-    const uint32_t winLen = kMergedMidiEventsGatherBars * Config::TICKS_PER_BAR;
-    uint32_t winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;
-    if (winStart + winLen > loop.loopLengthTicks) {
-      winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
+  } else {
+    // **One path for every length.** The window is the playhead's coverage, capped by the loop: a long loop gets the
+    // two-bar window centred on the playhead, a short one gets its whole loop. Length is data here, never a second
+    // implementation (and never a second source decision).
+    constexpr uint32_t kMergedWindowTicks = 2 * Config::TICKS_PER_BAR;
+    const uint32_t winLen = loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks : kMergedWindowTicks;
+    uint32_t winStart = 0;
+    if (loop.loopLengthTicks > winLen) {
+      winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;
+      if (winStart + winLen > loop.loopLengthTicks) winStart = loop.loopLengthTicks - winLen;
     }
-    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents,
-                                                      winStart, winLen, &gatherPath, nullptr,
-                                                      publishedRecordOverlay)) {
+    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen,
+                                                      &gatherPath, nullptr, publishedRecordOverlay)) {
       usedSnapshotIdentity = buildIdentity;
     } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
                committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
@@ -736,8 +738,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
       // **DEC-194 — the authoritative committed passes serve the window; the root is not a precondition.** Only when the
       // paged lane does not own this interval: an over-capacity interval is the pager's answer (refused by name), never
-      // a reason to serve it from a two-bar pass copy. The work is bounded by the playhead's window, never by the pass
-      // inventory or the loop length.
+      // a reason to serve it from a pass copy. The copy is bounded by the window above, never by the pass inventory.
       runtime.mergedMidiEvents.mergedEvents.clear();
       loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
       usedSnapshotIdentity = buildIdentity;
@@ -748,31 +749,6 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     }
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
-  } else {
-    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, 0,
-                                                      loop.loopLengthTicks, &gatherPath, nullptr,
-                                                      publishedRecordOverlay)) {
-      usedSnapshotIdentity = buildIdentity;
-    } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
-               committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
-               !loop.publishedSnapshotIsCurrent() &&
-               track.playbackWindowSourceIsCurrentForSlot(committedSlot) &&
-               !runtime.pagedActive &&
-               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
-      // **DEC-194 — the same committed-pass fallback for a whole-take (short) loop.** A short slot never enters the
-      // two-bar branch above, so without this it had no pass source at all while rootless: device
-      // `session_20261029_100611` shows channel 5 silent while channel 1 played. The whole loop is the bound here, and
-      // it is short by construction (whole-take slots are the undemoted ones).
-      runtime.mergedMidiEvents.mergedEvents.clear();
-      loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, 0, loop.loopLengthTicks);
-      usedSnapshotIdentity = buildIdentity;
-    } else {
-      // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
-      // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
-      usedSnapshotIdentity = recordOverlayIdentity;
-    }
-    runtime.mergedMidiEvents.windowStartTick = 0;
-    runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   }
   runtime.mergedMidiEvents.builtFromRevision = windowRevision;
   // DEC-143: the identity is the published root when one supplies the window, and the **sealed extent** while the
@@ -2120,11 +2096,15 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
     const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
         window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
     const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();
+    // The window's length is `min(two bars, loop)` for **every** loop, so the readiness check reads the same rule the
+    // builder uses instead of hard-coding the long-loop case.
+    constexpr uint32_t kMergedWindowTicks = 2 * Config::TICKS_PER_BAR;
+    const uint32_t expectedWindow = loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks
+                                                                            : kMergedWindowTicks;
     return !runtime->isStale(loop.playbackRevision, playbackGeneration) &&
         window.builtFromRevision == loop.playbackRevision &&
         (rootBacked || committedBacked) &&
-        window.windowStartTick == 0 &&
-        window.windowLengthTicks == 2 * Config::TICKS_PER_BAR &&
+        window.windowLengthTicks == expectedWindow &&
         !loop.playbackOrderDirty;
   }
   return window.builtFromRevision == loop.playbackRevision && !window.mergedEvents.empty();
