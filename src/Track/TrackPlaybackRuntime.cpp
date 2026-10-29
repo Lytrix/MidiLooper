@@ -2134,21 +2134,33 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
   return true;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageRoleAvailable(bool keepCaptureReady) const {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM PlaybackCoverageRoleRefusal LoopPlaybackRuntime::coverageRoleRefusal(
+    bool keepCaptureReady) const {
+  // One implementation of the order: the yes/no answer below cannot disagree with the reported term.
   const auto* set = viewSetIfPrewarmed();
-  if (!set || viewBuild.active() || completedPromisePendingJudgement || ownsCoverageSource() ||
-      (canonicalWindowPhase != CanonicalWindowPhase::Idle &&
-       canonicalWindowPhase != CanonicalWindowPhase::Ready) ||
-      set->lifecycle.build >= set->views.size() || set->views[set->lifecycle.build].published ||
-      set->views[set->lifecycle.build].complete) return false;
+  if (!set) return PlaybackCoverageRoleRefusal::NoViewSet;
+  if (viewBuild.active()) return PlaybackCoverageRoleRefusal::BuildActive;
+  if (completedPromisePendingJudgement) return PlaybackCoverageRoleRefusal::CompletedPromisePending;
+  if (ownsCoverageSource()) return PlaybackCoverageRoleRefusal::OwnsCoverageSource;
+  if (canonicalWindowPhase != CanonicalWindowPhase::Idle &&
+      canonicalWindowPhase != CanonicalWindowPhase::Ready)
+    return PlaybackCoverageRoleRefusal::CanonicalWindowBusy;
+  if (set->lifecycle.build >= set->views.size()) return PlaybackCoverageRoleRefusal::BuildRoleOutOfRange;
+  if (set->views[set->lifecycle.build].published) return PlaybackCoverageRoleRefusal::BuildRolePublished;
+  if (set->views[set->lifecycle.build].complete) return PlaybackCoverageRoleRefusal::BuildRoleComplete;
   if (set->lifecycle.ready >= set->views.size() || !set->views[set->lifecycle.ready].complete)
-    return true;
+    return PlaybackCoverageRoleRefusal::None;
   const auto& ready = set->views[set->lifecycle.ready];
-  return keepCaptureReady && !ready.published &&
-      ready.source.origin == PlaybackWindowOrigin::Capture &&
+  if (keepCaptureReady && !ready.published && ready.source.origin == PlaybackWindowOrigin::Capture &&
       set->lifecycle.build != set->lifecycle.ready &&
       set->lifecycle.build != set->lifecycle.current &&
-      set->lifecycle.build != set->lifecycle.retained;
+      set->lifecycle.build != set->lifecycle.retained)
+    return PlaybackCoverageRoleRefusal::None;
+  return PlaybackCoverageRoleRefusal::ReadyRoleOccupied;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageRoleAvailable(bool keepCaptureReady) const {
+  return coverageRoleRefusal(keepCaptureReady) == PlaybackCoverageRoleRefusal::None;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageQualification(

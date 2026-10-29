@@ -161,9 +161,17 @@ rooted changes how a window is *filled*, never how MIDI is played afterwards.
 - [ ] 9.2 Acceptance fixture (RED): `test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root` —
   committed passes, no root, `TRACK_PLAYING`, no fixture-side retention; require a serving window with
   `root_rev = 0`. Verify it fails before 9.3 and passes after.
-- [ ] 9.3 Name the transient role refusal (`gate_no_role` during the first turns, available later) with the same
-  one-enum/one-row pattern, then fix only that term, identity-scoped: an invalidated/unqualified demand retires only
-  the role it owns, never a current build/generation. Negative control: an unrelated role survives.
+- [x] 9.3 **Name the transient role refusal — `role_promise_pending`.** `coverageRoleRefusal()` names the first false
+  term (pure mapping test passes); the acceptance fixture reports `role_promise_pending` at the gate
+  (`completedPromisePendingJudgement`), so the gate answers `gate_no_role` and the retry never runs. This is the
+  lane's **own** completed promise awaiting judgement — not a stale owner, so retirement is the wrong repair. A naive
+  gate bypass crashed the suite (179/253) and was reverted. Evidence:
+  [9.3 result](evidence/2026-10-29-DEC194-FIRST-WINDOW-WIP.md#93-result--the-blocking-term-is-role_promise_pending).
+- [ ] 9.4b **Prove which turn clears the pending judgement**, with a RED, before changing the gate: trace where
+  `completedPromisePendingJudgement` is set and cleared (`revalidateCompletedPlaybackWindow`,
+  `finishPlaybackViewGrain`) and whether that site is reachable on a turn the gate admits. Then choose between
+  letting that turn run ahead of the gate (reoffer) or clearing the flag at its own completion site. Do **not** retire
+  the role; the owner is current.
 - [ ] 9.4 Rolling handoff: prove the second and third windows are built and adopted without a whole-root publication,
   with the same reader.
 - [ ] 9.5 Scaling property: 4-bar vs 40-bar first window in the same cost class (cost proportional to the content

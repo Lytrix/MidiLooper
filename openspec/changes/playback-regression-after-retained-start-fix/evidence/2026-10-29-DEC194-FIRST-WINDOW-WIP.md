@@ -62,3 +62,35 @@ prewarmed view set is still settling. That is the next term to name, not a reaso
 2. Fix only that term (identity-scoped), then re-run the acceptance fixture: `root_rev 0` allowed, serving window
    required, whole-root publication still absent.
 3. Then the rolling handoff and the 4-bar vs 40-bar cost-class assertion.
+
+## 9.3 result — the blocking term is `role_promise_pending`
+
+Mechanism: `LoopPlaybackRuntime::coverageRoleRefusal(keepCaptureReady)` now names the first false term of
+`coverageRoleAvailable` in its own order (one implementation; availability delegates). Report-only.
+
+- Pure mapping test `test_dec194_coverage_role_refusal_names_the_first_false_term` **passes**: a fresh prewarmed
+  runtime is `role_available`; forcing `completedPromisePendingJudgement` yields `role_promise_pending` with
+  availability false; forcing `canonicalWindowPhase = Merge` yields `role_canonical_busy`; clearing restores
+  availability. Availability is exactly `term == none`.
+- The acceptance fixture now names its blocker at the gate: **`role_promise_pending`** for slot 0
+  (`completedPromisePendingJudgement` true), which is why the gate answers `gate_no_role`, the selector skips the
+  holder, and the retry never runs.
+
+So this is the second category the review named: **not a stale owner** (retirement would be the wrong repair), but a
+role occupied by the lane's *own* completed promise awaiting judgement. The shape is a self-deadlock candidate: the
+gate refuses the turn that would judge the promise.
+
+### The naive bypass was unsafe and is reverted
+
+Treating `CompletedPromisePending` as progress in the gate was tried and **crashed the suite** (179 of 253 cases),
+so it is reverted. It is not a fix candidate until the judgement path is traced: where
+`completedPromisePendingJudgement` is set, who clears it (`revalidateCompletedPlaybackWindow` /
+`finishPlaybackViewGrain`), and whether that site is reachable on a turn the gate admits.
+
+Suite after the naming slice: **253 cases, 3 failed, 249 pass**; `teensy41-capture-serial` SUCCESS, RAM1 unchanged.
+
+### Next (9.4)
+
+Trace the judgement path and prove, with a RED, which turn is supposed to clear the flag; then either
+(a) let that turn run before the gate (reoffer), or (b) clear the flag at its own completion site. Do not retire the
+role — the owner is current.

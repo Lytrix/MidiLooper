@@ -6459,6 +6459,15 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     const PlaybackBuildRefusal gate = playbackBuildGateRefusal(offerSlot, clock);
     if (gate != PlaybackBuildRefusal::None && gate != PlaybackBuildRefusal::SourceRetiring) {
       reportDispatch(offerSlot, static_cast<uint8_t>(gate), playbackBuildRefusalName(gate));
+      // DEC-194: when the gate's term is the role, name the role's own first false term at the same instant.
+      if (gate == PlaybackBuildRefusal::NoCoverageRole) {
+        const LoopPlaybackRuntime* offerRuntime = playbackRuntime.slotIfAllocated(offerSlot);
+        if (offerRuntime != nullptr) {
+          const PlaybackCoverageRoleRefusal role = offerRuntime->coverageRoleRefusal(false);
+          reportDispatch(offerSlot, static_cast<uint8_t>(0xE0u + static_cast<uint8_t>(role)),
+                         playbackCoverageRoleRefusalName(role));
+        }
+      }
     }
   }
   uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;

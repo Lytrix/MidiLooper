@@ -94,15 +94,17 @@ inline void recordOverrun(uint32_t permitted, uint32_t overruns, uint32_t overru
 namespace PlaybackPathRows {
 inline const char* paths[64] = {};
 inline uint32_t revisions[64] = {};
+inline uint8_t tracks[64] = {};
+inline uint8_t slots[64] = {};
 inline size_t count = 0;
 inline void reset() { count = 0; }
 inline void record(uint8_t track, uint8_t slot, uint32_t loopLengthTicks, uint32_t revision, const char* path) {
-  (void)track;
-  (void)slot;
   (void)loopLengthTicks;
   if (count < sizeof(paths) / sizeof(paths[0])) {
     paths[count] = path;
     revisions[count] = revision;
+    tracks[count] = track;
+    slots[count] = slot;
   }
   ++count;
 }
@@ -8617,6 +8619,41 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
   TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "and the slot is still rootless afterwards");
 }
 
+/// **DEC-194 (9.3) — the role predicate's terms are nameable and the yes/no answer delegates to them.**
+///
+/// Pure mapping: no playback turn, no demand. Forces the two terms that can be set without fabricating a view set
+/// (a completed promise awaiting judgement, and a busy canonical window) and checks that the name follows the state,
+/// that availability is exactly `term == none`, and that an untouched fresh runtime reports `none`.
+void test_dec194_coverage_role_refusal_names_the_first_false_term() {
+  Track& track = prepareWindowOwnerSlot(0);
+  LoopPlaybackRuntime* rt = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(rt);
+  TEST_ASSERT_TRUE_MESSAGE(rt->viewSetIfPrewarmed() != nullptr, "the fixture prewarms a view set");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackCoverageRoleRefusal::None),
+                            static_cast<int>(rt->coverageRoleRefusal(false)),
+                            "a fresh prewarmed runtime has a coverage role");
+  TEST_ASSERT_TRUE(rt->coverageRoleAvailable(false));
+
+  rt->completedPromisePendingJudgement = true;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackCoverageRoleRefusal::CompletedPromisePending),
+                            static_cast<int>(rt->coverageRoleRefusal(false)),
+                            "a completed promise awaiting judgement is the blocking term");
+  TEST_ASSERT_FALSE_MESSAGE(rt->coverageRoleAvailable(false),
+                            "and availability is exactly `term == none`, not a second opinion");
+  TEST_ASSERT_EQUAL_STRING("role_promise_pending",
+                           playbackCoverageRoleRefusalName(rt->coverageRoleRefusal(false)));
+  rt->completedPromisePendingJudgement = false;
+
+  rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Merge;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackCoverageRoleRefusal::CanonicalWindowBusy),
+                            static_cast<int>(rt->coverageRoleRefusal(false)),
+                            "a busy canonical window is the blocking term");
+  TEST_ASSERT_EQUAL_STRING("role_canonical_busy",
+                           playbackCoverageRoleRefusalName(rt->coverageRoleRefusal(false)));
+  rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Idle;
+  TEST_ASSERT_TRUE_MESSAGE(rt->coverageRoleAvailable(false), "and the term clears with the state");
+}
+
 /// **DEC-194 — a rootless, pass-backed playing slot must build its first window without a whole-root publication.**
 ///
 /// The device shape (`session_20261029_032402.log`): restored passes, `root_rev 0`, `TRACK_PLAYING`, no whole-root
@@ -8632,6 +8669,10 @@ void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root(
   TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the authoritative source is the committed passes");
   PlaybackViewSourceIdentity identity{};
   PlaybackCoverageInterval coverage{};
+  LoopPlaybackRuntime* rt = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(rt);
+  uint8_t firstBlockedTerm = static_cast<uint8_t>(PlaybackCoverageRoleRefusal::None);
+  bool clearedWhileDemandOwed = false;
   bool served = false;
   for (unsigned turn = 0; turn < 256 && !served; ++turn) {
     nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
@@ -8639,7 +8680,36 @@ void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root(
     (void)track.requestCommittedPlaybackWindowForSlot(0, phase, nativePlaybackDeadlineClock);
     (void)track.stepPlaybackViewMaintenance(phase, nullptr, false, nativePlaybackDeadlineClock);
     (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    const PlaybackCoverageRoleRefusal role = rt->coverageRoleRefusal(false);
+    if (role != PlaybackCoverageRoleRefusal::None &&
+        firstBlockedTerm == static_cast<uint8_t>(PlaybackCoverageRoleRefusal::None)) {
+      firstBlockedTerm = static_cast<uint8_t>(role);
+    }
+    if (role == PlaybackCoverageRoleRefusal::None && firstBlockedTerm != 0 &&
+        track.pendingViewRequest(0) != nullptr) {
+      clearedWhileDemandOwed = true;
+    }
     served = track.publishedPlaybackWindowForSlot(0, identity, coverage);
+  }
+  // Diagnostics, printed as names (built outside the loop):
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(playbackCoverageRoleRefusalName(PlaybackCoverageRoleRefusal::None),
+                                   playbackCoverageRoleRefusalName(
+                                       static_cast<PlaybackCoverageRoleRefusal>(firstBlockedTerm)),
+                                   "DEC-194 diag: first blocked role term");
+  TEST_ASSERT_TRUE_MESSAGE(clearedWhileDemandOwed || firstBlockedTerm == 0,
+                           "DEC-194 diag: the role must clear while the demand is still owed");
+  {
+    const char* firstToken = "none";
+    for (size_t row = 0; row < PlaybackPathRows::count; ++row) {
+      const char* path = PlaybackPathRows::paths[row];
+      if (path == nullptr) continue;
+      if (PlaybackPathRows::slots[row] != 0) continue;
+      if (std::strncmp(path, "role_", 5) == 0) {
+        firstToken = path;
+        break;
+      }
+    }
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("role_available", firstToken, "DEC-194 diag: first blocked role term at the gate");
   }
   TEST_ASSERT_TRUE_MESSAGE(served, "the rootless playing slot must reach a serving window from the committed passes");
   TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
@@ -18378,6 +18448,7 @@ int main() {
   RUN_TEST(test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_history);
   RUN_TEST(test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance);
   RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
+  RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
   RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);

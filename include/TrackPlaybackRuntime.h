@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "LoopEventStore.h"
 #include "LoopPasses.h"
+#include "Utils/PlaybackBuildRefusal.h"
 #include "PassReclaim.h"  // task 3.6: RetainedPlaybackSource + the source-role vocabulary
 #include "PlaybackMergedMidiEvents.h"
 #include "RuntimePlaybackView.h"
@@ -1007,6 +1008,8 @@ struct LoopPlaybackRuntime {
   void retireCoverageSource();
   bool stepCoverageSourceRetirement(size_t quantum);
   bool coverageRoleAvailable(bool keepCaptureReady = false) const;
+  /// DEC-194 (report-only): the first failing term of `coverageRoleAvailable`, in its own order.
+  PlaybackCoverageRoleRefusal coverageRoleRefusal(bool keepCaptureReady) const;
 
   /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
   /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it

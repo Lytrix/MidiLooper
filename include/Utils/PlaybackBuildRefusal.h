@@ -111,3 +111,35 @@ inline const char* playbackDispatchRefusalName(PlaybackDispatchRefusal refusal) 
   }
   return "dispatch_unknown";
 }
+
+/// **DEC-194 — which term of `coverageRoleAvailable` is false, when the window lane needs a role.**
+///
+/// Report-only. The first failing term in the predicate's own order, so "the role is unavailable" becomes a word.
+enum class PlaybackCoverageRoleRefusal : uint8_t {
+  None = 0,
+  NoViewSet,
+  BuildActive,
+  CompletedPromisePending,
+  OwnsCoverageSource,
+  CanonicalWindowBusy,
+  BuildRoleOutOfRange,
+  BuildRolePublished,
+  BuildRoleComplete,
+  ReadyRoleOccupied,
+};
+
+inline const char* playbackCoverageRoleRefusalName(PlaybackCoverageRoleRefusal refusal) {
+  switch (refusal) {
+    case PlaybackCoverageRoleRefusal::None: return "role_available";
+    case PlaybackCoverageRoleRefusal::NoViewSet: return "role_no_view_set";
+    case PlaybackCoverageRoleRefusal::BuildActive: return "role_build_active";
+    case PlaybackCoverageRoleRefusal::CompletedPromisePending: return "role_promise_pending";
+    case PlaybackCoverageRoleRefusal::OwnsCoverageSource: return "role_owns_source";
+    case PlaybackCoverageRoleRefusal::CanonicalWindowBusy: return "role_canonical_busy";
+    case PlaybackCoverageRoleRefusal::BuildRoleOutOfRange: return "role_build_slot";
+    case PlaybackCoverageRoleRefusal::BuildRolePublished: return "role_build_published";
+    case PlaybackCoverageRoleRefusal::BuildRoleComplete: return "role_build_complete";
+    case PlaybackCoverageRoleRefusal::ReadyRoleOccupied: return "role_ready_occupied";
+  }
+  return "role_unknown";
+}
