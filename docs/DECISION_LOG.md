@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-205](#dec-205--reverted-a-retiring-retained-source-must-not-refuse-the-next-revisions-source) | 2026-10-29 | **Reverted** — a retiring retained source must not refuse the next revision's source | Reverted on device evidence: it wiped the slot's passes on Record |
+| [DEC-205](#dec-205--a-retiring-retained-source-must-not-refuse-the-next-revisions-source) | 2026-10-29 | A retiring retained source must not refuse the next revision's source | Accepted — re-applied 2026-10-29: the revert's evidence was retracted (a muted DAW channel, not this change) |
 | [DEC-204](#dec-204--an-ownerless-reserved-session-exit-claim-is-released-at-the-start-it-would-block) | 2026-10-29 | An ownerless reserved session-exit claim is released at the start it would block | Accepted — native green, build green; not flashed |
 | [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
@@ -11601,11 +11601,11 @@ DEC-191 (the terminal this wires), DEC-174 (the `Populated` orphan and its publi
 rate), DEC-203 (the merged-window repair, confirmed working in the same capture: the display tracked notes through
 multiple overdubs).
 
-## DEC-205 — **REVERTED**: a retiring retained source must not refuse the next revision's source
+## DEC-205 — A retiring retained source must not refuse the next revision's source (reverted, then re-applied)
 
 **Date:** 2026-10-29
-**Status:** **Reverted** in `358aa702` (the revert also removed the implementation's own test and this entry; it is
-re-stated here because an attempt that reached the board is part of the record).
+**Status:** **Accepted** (re-applied 2026-10-29). It was reverted in `358aa702` and re-applied the same day once the
+revert's evidence was retracted; both steps are kept here because an image with and without it reached the board.
 
 ### What it tried to fix
 
@@ -11618,7 +11618,7 @@ merged fallback cleared its window.
 The change asked `tryReleaseRetainedPlaybackSource` for a role before refusing. Its fixture
 (`undo -> redo on a rootless restored slot`) went green, mutation-red proved, full native 3610/0.
 
-### Why it was reverted
+### Why it was reverted, and why the revert was retracted
 
 Image `0e5058b9…` broke the **record** path. `captures/session_20261029_142816.log`:
 
@@ -11631,20 +11631,16 @@ Image `0e5058b9…` broke the **record** path. `captures/session_20261029_142816
 128.8 s PERS,result … ok
 ```
 
-The mechanism is **not** established: the merged/retention path is barely exercised in that capture (4 `playback_build`
-rows in the whole run, none inside the record window), so this was not the simple "released the live capture source"
-story. What is established:
+**Retracted by the owner the same day:** the DAW channel was **muted**, so the take legitimately captured nothing. The
+`cap=2 -> cap=0` step is not this change either -- a long-press Record on a slot with content **replaces** the slot with
+the new take, and an empty take is discarded, which is why the census read 0 and the panel stayed empty. The capture
+still shows the merged/retention path barely running during the record (4 `playback_build` rows in the whole run, none
+in the record window), consistent with this change having no part in it.
 
-1. the change is unsafe on the record path, and
-2. its fixture was an insufficient gate -- green on undo/redo says nothing about a Record start/stop.
-
-### Gate for any re-attempt
-
-- A **record-path fixture** first: committed passes + the production Record start/stop, asserting the passes survive and
-  the new take finalises. Only then re-apply the release retry, and gate it on capture state
-  (`isRecording()` / `isOverdubbing()` / pending stop) at minimum.
-- The device lesson stands independently: a second inventory move must not permanently refuse a slot's source. That is
-  still owed, with the gate above.
+**Kept as a lesson though:** the original fixture (undo -> redo) was an insufficient *gate* for anything touching the
+record path. If this seam is touched again, add a record-path fixture first -- committed passes + the production Record
+start/stop, asserting the passes survive and the new take finalises -- and consider gating the release retry on capture
+state. Neither is needed for this change's own claim.
 
 ### Related
 
