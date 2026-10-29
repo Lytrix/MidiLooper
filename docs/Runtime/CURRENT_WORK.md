@@ -6075,6 +6075,23 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**Active scope (2026-10-29, owner-directed, DEC-199): an undo must move the playback source — EXECUTED natively, device
+open.** The owner report ("track 8 slot 4 was undo-ed and that stopped MIDI events being sent to the USB MIDI out",
+`captures/session_20261029_121423.log`) is not covered by a planned step: 5.8/5.8a are closed (the *request* and the
+*display union*), 4.14 is the live in-session shape, and 6.6.5 is deferred. It is the missing DEC-194 clause — **a stale
+root is not a content authority** — recorded as section 10 of
+[`playback-regression-after-retained-start-fix`](../../openspec/changes/playback-regression-after-retained-start-fix/tasks.md).
+Done in this slice: the capture read (undo at 15.253 s, `pub=1` for **72.4 s**, replacement root only at 88.379 s after
+84 `snapshot_unit` units, `hold_gap`/`dirty=1` for the whole playing window), the RED fixture
+`test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites` (`Expected 0 Was 2`), and the repair:
+the merged window's source is chosen by **currency, not length** — a current root serves it, a stale root is bypassed in
+favour of the **committed passes**, a slot with no root keeps DEC-143's sealed extent, and the paged lane keeps its
+over-capacity veto. One window rule for every loop replaces the long/short split in this path. Gates: full native
+**3608 / 2 failed / 7 skipped / 3598** (the two failures are the pre-existing DEC-193/DEC-194 REDs),
+`teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192` / ITCM `code 392,056 + padding 1,160`. Explicitly **not**
+done: no upload, no SD operation; the device leg (10.4) waits for the owner's word. Evidence:
+[`2026-10-29-UNDO-REDO-PLAYBACK-SOURCE.md`](../../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-UNDO-REDO-PLAYBACK-SOURCE.md).
+
 **Active scope (2026-10-29, owner-directed, DEC-197): the merged playback fallback serves a short loop as one
 whole-loop window — EXECUTED natively, device open.**
 The owner asked for the "reproducible in full runs, green alone" failure of

@@ -184,3 +184,38 @@ rooted changes how a window is *filled*, never how MIDI is played afterwards.
 - [ ] 9.5 Scaling property: 4-bar vs 40-bar first window in the same cost class (cost proportional to the content
   intersecting the requested window, not bars × passes × events).
 - [ ] 9.6 Keep DEC-192 whole-root publication as background only; verify enabling/disabling it cannot gate playback.
+
+## 10. Undo/redo must move the playback source (owner report 2026-10-29)
+
+Direction: `immutable-loop-snapshot-passes` 5.8/5.8a are closed and cover the *request* and the *display union*, and
+`immediate-record-overdub-handoff` 4.14 is a different shape (live in-session undo). This defect is the missing
+DEC-194 clause: **a stale root changes where the window is filled from, never what it contains.**
+Evidence: [`2026-10-29-UNDO-REDO-PLAYBACK-SOURCE.md`](evidence/2026-10-29-UNDO-REDO-PLAYBACK-SOURCE.md).
+
+- [x] 10.1 **Read the device capture and name the defect.** `session_20261029_121423.log`: Undo at 15.253 s,
+  `#STOP_TRACE … pub=1` for 72.4 s (73 rows, `stop=0`), the replacement root publishing at 88.379 s after 84
+  `snapshot_unit` units, `playback_read` 0 for the whole run, `hold_gap`/`dirty=1` for the whole playing window.
+  Code: `tryGatherPublishedSnapshotEventsInWindow` serves a stale root's membership with **no pass-state filter** and
+  only *adds* the pending box's passes; the DEC-194 passes fallback is reached only on a gather **miss**, so a pass an
+  undo disabled cannot leave the window until the root rewrites. Documentation only; no firmware edit, no upload.
+- [x] 10.2 **RED fixture (landed, failing).**
+  `test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites`
+  (`test_runtime_working_set_ownership`): 64-bar slot, record + one committed overdub, root published from the
+  passes, then the production undo pair only (`setCapturePassState(Disabled)` + `requestCommittedPassesRepublish`).
+  Measured `Expected 0 Was 2`; the window holds the stale root's 4 events, and the surviving pass is **not**
+  duplicated (`countPitch(48)` = 2), so the additive overlay is not the mechanism. Suite 258 / 3 failed / 254 passed
+  (this RED + the two pre-existing DEC-193/DEC-194 REDs).
+- [x] 10.3 **Repair landed (DEC-199) — the window's source is chosen by currency, not by length.** While a root exists
+  but is **not current** (undo/redo/enable/disable/companion change), the window is filled from the **committed passes**
+  (`copyEffectiveCommittedEventsInRange`, pass-state filtered, window-bounded); the root serves only while it *is*
+  current; a slot with **no root** keeps the DEC-143 sealed-extent and gather-miss paths; the paged lane keeps its
+  over-capacity veto. Two details the RED exposed: presence is read from `publishedSnapshotCoveredRevision()`
+  (`publishedSnapshotIdentity()` answers null *while stale* by design), and the readiness receipt drops its redundant
+  `runtime->isStale()` term (which failed the two `s4b_6` provisioning fixtures under the unified window). One window
+  rule for every loop also replaces the long/short split in this path — `min(2 bars, loop)`, the loop only bounds it.
+  Verify: 10.2 greens (`Expected 0 Was 2` → pass); full native **3608 / 2 failed / 7 skipped / 3598** (the two failures
+  are the pre-existing DEC-193/DEC-194 REDs); `teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192` / ITCM
+  `code 392,056 + padding 1,160`. No upload.
+- [ ] 10.4 **Device acceptance.** Same 31-bar slot, undo while playing: the emitted content must change inside the
+  current loop without waiting for `snapshot_unit,kind=publish`; record `out=`, `#CAP,MO` (unsampled) or an
+  equivalent content oracle, `pub=1` duration and `hold_gap`/`dirty=` behaviour. No SD write, no record, no clear.

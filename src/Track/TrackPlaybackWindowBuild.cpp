@@ -591,11 +591,13 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   // Projection boundary (linear-loop-tick-storage): mergedEvents are read-only input to
   // playback order + MIDI send. Playback mergedMidiEvents is committed-only (224719):
   // live capture must not fold into this representation. NOTE_EDIT uses session store
-  // (Tier 2) — full replace, no materialized underlay. Outside NOTE_EDIT, the published
-  // LoopSnapshot is the committed source when a published root exists (current or
-  // stale-plus-unpublished overlay); otherwise chunk-ref merge of committed passes
-  // (DEC-016). Long loops use windowed gather — full-loop gather after
-  // LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
+  // (Tier 2) — full replace, no materialized underlay.
+  //
+  // **One rule for every loop length.** The window is `min(2 bars, loopLength)` ticks starting at the playhead, and the
+  // loop only ever *bounds* it; nothing here branches on how long the loop is. The window is filled from one source at
+  // a time: the published root while it is current, otherwise the committed passes (the same authority the display
+  // resolves), otherwise chunk-ref merge (DEC-016). Never a full-loop gather outside that window — the full-loop gather
+  // after LoadLoopJob Commit hard-faults (session_20260718_210532 / 210001).
   if (mergedMidiEventsBuildInProgress) {
     return false;
   }
@@ -605,7 +607,11 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                                                     : loop.playbackRevision;
   const void* snapshotIdentity =
       noteEditPreview ? nullptr : loop.publishedSnapshotIdentity();
-  const bool longLoop = loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+  // One window, one centring rule, one reuse rule — for a 1-bar loop and a 40-bar loop alike. The only place length is
+  // consulted is the clamp itself.
+  constexpr uint32_t kPlaybackWindowTicks = 2 * Config::TICKS_PER_BAR;
+  const uint32_t playbackWindowTicks =
+      loop.loopLengthTicks < kPlaybackWindowTicks ? loop.loopLengthTicks : kPlaybackWindowTicks;
   uint32_t playhead = 0;
   if (!prepareLaunch && loop.loopLengthTicks > 0) {
     playhead = IntervalProjection::tickPhaseInProjectionCycle(
@@ -631,16 +637,12 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   const void* const buildIdentity =
       snapshotIdentity != nullptr ? snapshotIdentity : recordOverlayIdentity;
 
-  if (!longLoop) {
-    if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
-        runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity) {
-      DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return false;
-    }
-  } else if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
-             runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity &&
-             (buildIdentity != nullptr || !runtime.mergedMidiEvents.empty()) &&
-             runtime.mergedMidiEvents.windowLengthTicks > 0) {
+  // One reuse rule: same identity **and** the window still covers the playhead. The coverage half is what lets the
+  // windowed path move; without it a window is frozen at wherever it was first built (DEC-197).
+  if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
+      runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity &&
+      (buildIdentity != nullptr || !runtime.mergedMidiEvents.empty()) &&
+      runtime.mergedMidiEvents.windowLengthTicks > 0) {
     const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
     const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
     const uint32_t margin = Config::TICKS_PER_BAR / 2;
@@ -651,8 +653,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     }
   }
 
-  if (!noteEditPreview && !longLoop &&
-      loop.tryAdmitLastOverdubSealIntoMergedEvents(runtime.mergedMidiEvents)) {
+  // The admission decides by **coverage** (`isFullLoopMergedPlaybackWindow` inside), never by length: a seal that fits
+  // the window being served is folded in; one that does not takes the ordinary rebuild below.
+  if (!noteEditPreview && loop.tryAdmitLastOverdubSealIntoMergedEvents(runtime.mergedMidiEvents)) {
     // The increment extends **this** window, so it keeps this window's source identity. The Loop's admit stamps a null
     // identity because it cannot see which source served the window; while the DEC-143 overlay serves it, that null
     // would make the next maintenance turn rebuild from the sealed extent alone and silently drop the wrap just
@@ -683,18 +686,16 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   const void* usedSnapshotIdentity = nullptr;
   Loop::SnapshotWindowGatherPath gatherPath = Loop::SnapshotWindowGatherPath::None;
+  bool servedFromCommittedPasses = false;
   if (noteEditPreview && loop.publishedSnapshotIsCurrent()) {
     // A current-root NoteEditSession stores only its edit delta. Keep the committed
     // interval as playback base and replace just identities the session changed.
-    constexpr uint32_t kMergedMidiEventsGatherBars = 2;
-    const uint32_t winLen = longLoop
-        ? kMergedMidiEventsGatherBars * Config::TICKS_PER_BAR : loop.loopLengthTicks;
+    // DEC-198: the same window as every other source -- the session delta is applied to the served coverage.
+    const uint32_t winLen = playbackWindowTicks;
     uint32_t winStart = 0;
-    if (longLoop) {
+    if (loop.loopLengthTicks > winLen) {
       winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;
-      if (winStart + winLen > loop.loopLengthTicks) {
-        winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
-      }
+      if (winStart + winLen > loop.loopLengthTicks) winStart = loop.loopLengthTicks - winLen;
     }
     runtime.mergedMidiEvents.mergedEvents.clear();
     if (loop.tryGatherPublishedSnapshotEventsInWindow(
@@ -717,49 +718,63 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
   } else {
-    // **One path for every length.** The window is the playhead's coverage, capped by the loop: a long loop gets the
-    // two-bar window centred on the playhead, a short one gets its whole loop. Length is data here, never a second
-    // implementation (and never a second source decision).
-    //
-    // DEC-197: the cap is gated on `longLoop`, and that gate is load-bearing. Without it every loop longer than two bars
-    // got a **two-bar window**, while the reuse guard above only re-checks the window against the playhead for long
-    // loops (`!longLoop` returns on identity alone) — so a 3..16-bar slot served by this fallback played one two-bar
-    // slice and never moved it (`test_record_note_stream_survives_four_sequential_overdub_publications`, production-TU
-    // oracle: an 8-bar record + 4 overdubs served 6 of 20 events, the Record pass itself intact). The short-loop branch
-    // already gathered the whole loop for a NOTE_EDIT preview, and `reconcilePlaybackLedgerAfterFullLoopRebuild` only
-    // treats absence as removal for a full-loop window, which a short loop is meant to be.
-    constexpr uint32_t kMergedWindowTicks = 2 * Config::TICKS_PER_BAR;
-    const uint32_t cappedWindow =
-        loop.loopLengthTicks < kMergedWindowTicks ? loop.loopLengthTicks : kMergedWindowTicks;
-    const uint32_t winLen = longLoop ? cappedWindow : loop.loopLengthTicks;
+    // **One path for every length** (DEC-198): one window length, one centring rule, one reuse rule above. The loop
+    // bounds the window; it never selects a different policy.
+    const uint32_t winLen = playbackWindowTicks;
     uint32_t winStart = 0;
     if (loop.loopLengthTicks > winLen) {
       winStart = playhead > (winLen / 2) ? playhead - (winLen / 2) : 0;
       if (winStart + winLen > loop.loopLengthTicks) winStart = loop.loopLengthTicks - winLen;
     }
-    if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen,
-                                                      &gatherPath, nullptr, publishedRecordOverlay)) {
-      usedSnapshotIdentity = buildIdentity;
-    } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
-               committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
-               !loop.publishedSnapshotIsCurrent() &&
-               !runtime.pagedActive &&
-               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None &&
-               // **DEC-194 — the fallback establishes the source it is about to read**, for this slot and revision
-               // only, instead of requiring another lane to have retained it first. That prior requirement made
-               // playback depend on the display having resolved the same slot (`session_20261029_100846`: t4/s0, a
-               // 2-bar committed slot, silent with `n=0` until the piano roll filled). Retention is pass/chunk pins,
-               // idempotent for a repeat attempt, and bounded by the inventory.
-               (track.playbackWindowSourceIsCurrentForSlot(committedSlot) ||
-                track.retainPlaybackSourceForSlot(committedSlot, loop.playbackRevision,
-                                                  track.getPlaybackGeneration()) ==
-                    Track::PlaybackSourceRetainResult::Admitted)) {
-      // **DEC-194 — the authoritative committed passes serve the window; the root is not a precondition.** Only when the
-      // paged lane does not own this interval: an over-capacity interval is the pager's answer (refused by name), never
-      // a reason to serve it from a pass copy. The copy is bounded by the window above, never by the pass inventory.
+    // **One source rule for every loop length.** The window is filled from exactly one source, chosen by *currency*,
+    // never by length:
+    //   * the published root, while it is **current** — an immutable membership, so it is only ever right when it
+    //     represents the committed inventory we are about to play;
+    //   * otherwise the **committed passes** — they are the authority an undo/redo/disable just moved, filtered by pass
+    //     state, bounded by the same window and never by the pass inventory. A stale root is a cached answer, not a
+    //     content authority: serving it kept an undone pass sounding for 72.4 s on the device
+    //     (`captures/session_20261029_121423.log`, 31-bar slot) because a root can only gain rows, never lose them;
+    //   * the DEC-143 sealed Record extent, for a take that has no root yet — it owns the source while it is sealed, so
+    //     it is never mixed with the committed-pass set.
+    const auto committedPassesServeWindow = [&]() -> bool {
+      const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
+      if (committedSlot >= Config::MAX_LOOPS_PER_TRACK || !loop.hasCommittedPasses() ||
+          runtime.pagedActive ||
+          runtime.pagedOutcome != LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
+        // An over-capacity interval is the pager's answer (refused by name), never a reason to serve a pass copy.
+        return false;
+      }
+      // The fallback establishes the source it is about to read (DEC-194), for this slot and revision only, instead of
+      // requiring another lane to have retained it first. Retention is pass/chunk pins, idempotent for a repeat attempt.
+      if (track.playbackWindowSourceIsCurrentForSlot(committedSlot)) {
+        return true;
+      }
+      return track.retainPlaybackSourceForSlot(committedSlot, loop.playbackRevision,
+                                              track.getPlaybackGeneration()) ==
+          Track::PlaybackSourceRetainResult::Admitted;
+    };
+    // A root that exists but is not current is the **stale** case (an undo/redo/enable/disable moved the inventory
+    // under it). Presence has to be read from the coverage stamp, not from `publishedSnapshotIdentity()` -- that
+    // accessor deliberately answers null while a root is stale, which is exactly the state this rule is about. A slot
+    // with no root at all keeps the DEC-143 sealed-extent and gather-miss paths below.
+    const bool stalePublishedRoot =
+        !loop.publishedSnapshotIsCurrent() &&
+        loop.publishedSnapshotCoveredRevision() != kSnapshotCoverageUnset;
+    if (stalePublishedRoot && committedPassesServeWindow()) {
       runtime.mergedMidiEvents.mergedEvents.clear();
       loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
       usedSnapshotIdentity = buildIdentity;
+      servedFromCommittedPasses = true;
+    } else if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen,
+                                                              &gatherPath, nullptr, publishedRecordOverlay)) {
+      usedSnapshotIdentity = buildIdentity;
+    } else if (committedPassesServeWindow()) {
+      // **The committed passes serve the window; a root is not a precondition.** Same copy as above: bounded by the
+      // window, filtered by pass state.
+      runtime.mergedMidiEvents.mergedEvents.clear();
+      loop.copyEffectiveCommittedEventsInRange(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
+      usedSnapshotIdentity = buildIdentity;
+      servedFromCommittedPasses = true;
     } else {
       // An attempt that cannot serve is still the same identity: stamping it keeps the next maintenance turn from
       // re-walking the extent (DEC-143 bounded work). A root publication changes the identity, never this stamp.
@@ -783,7 +798,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
       noteEditPreview
           ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
-          : (gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
+          : servedFromCommittedPasses
+                ? RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses
+                : (gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
                  ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
                  : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
                         ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
@@ -2109,8 +2126,8 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
     // Compatibility launch receipt only; immutable readiness has its own predicate.
     // A non-null gathered source distinguishes valid empty coverage from a gather miss.
-    // A root-backed window and a **committed-pass** window are both valid coverage: the fallback (DEC-194) has no root
-    // identity to stamp, so requiring one would report every rootless slot unready and rebuild it on every turn.
+    // A root-backed window and a **committed-pass** window are both valid coverage: the committed-pass source has no
+    // root identity to stamp, so requiring one would report every rootless slot unready and rebuild it on every turn.
     const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
         window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
     const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();

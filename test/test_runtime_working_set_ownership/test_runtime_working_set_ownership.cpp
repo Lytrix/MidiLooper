@@ -8782,6 +8782,89 @@ void test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_public
   TEST_ASSERT_TRUE_MESSAGE(queuedNew >= 2, "and re-queue that inventory");
 }
 
+/// **Undo on the playback source — a disabled pass must leave the window before the root rewrites.**
+///
+/// Device `session_20261029_121423.log`: a global Undo of an overdub at 15.25 s left the rewrite owed for **72.4 s**
+/// (73 `#STOP_TRACE … pub=1` rows, `stop=0` so no stop job was involved, `q` 6→0, `a` 0→7, the replacement root
+/// publishing at 88.38 s), and the source served in between was the **stale published root**.
+/// `tryGatherPublishedSnapshotEventsInWindow` serves that root's immutable membership with **no pass-state filter**
+/// (`gatherPublishedSnapshotMembership`), and only *adds* the passes the pending box enumerates. So between the undo
+/// and the rewrite the window carries a pass the undo already disabled: the root is the authority for content, and no
+/// path narrows it when the inventory shrinks.
+///
+/// The claim: once the pass state moves, the served window is the **committed pass set**. A stale root changes
+/// *where* the window is filled from, never *what* it contains. Fixture is production-only: `setCapturePassState`
+/// plus `requestCommittedPassesRepublish` is exactly the pair `TrackUndo`'s record/overdub edge performs.
+///
+/// Measured at the RED: the window after the undo held **4** events — the record's two *and* the disabled overdub's
+/// two — i.e. exactly the stale root's membership. The record was not duplicated (`countPitch(48)` = 2), so the additive
+/// overlay was not the mechanism; the unfiltered root membership was.
+///
+/// The repair this fixture gates: while a root exists but is **not current**, the window is filled from the committed
+/// passes (pass-state filtered) instead of the root's membership. The root stays the source while it *is* current, and a
+/// slot with no root at all keeps the DEC-143 sealed-extent and gather-miss paths. Green after that change.
+void test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+
+  // An overdub pass whose note lands inside the window the playhead will ask for.
+  OverdubPass overdub{};
+  overdub.id = 901;
+  overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  LoopEventStore overdubStore;
+  TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(overdubStore, bar + 96, 1, 60, 100, 9101));
+  TEST_ASSERT_TRUE(overdubStore.append(MidiEvent::NoteOff(bar + 144, 1, 60, 0)));
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(overdubStore, overdub.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(overdub));
+
+  // Publish the root the shipping way, from the committed passes: the fixture starts from "root current and equal to
+  // `passes`", which is the state the device undo starts from.
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+  for (unsigned turn = 0; turn < 1024 && loop.hasPendingSnapshotPublish(); ++turn) {
+    (void)loop.stepPendingSnapshotPublish(64, true, 0);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "fixture precondition: the root finished publishing");
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "fixture precondition: a current root");
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  track.reanchorPlaybackProjection(0, false);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+
+  const auto countPitch = [&](uint8_t pitch) {
+    size_t n = 0;
+    for (const MidiEvent& event : runtime->mergedMidiEvents.mergedEvents) {
+      if ((event.isNoteOn() || event.isNoteOff()) && event.data.noteData.note == pitch) ++n;
+    }
+    return n;
+  };
+
+  // Baseline: the window carries the record note (pitch 48, tick 0) and the overdub note (pitch 60, bar 1) once each.
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(60)),
+                                   "baseline: the active overdub is in the window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(countPitch(48)),
+                                   "baseline: the record is in the window");
+  const size_t baselineTotal = runtime->mergedMidiEvents.mergedEvents.size();
+
+  // The production undo edge: the pass state moves, then the source is requeued. Nothing else.
+  TEST_ASSERT_TRUE(loop.setCapturePassState(901, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasPendingSnapshotPublish(),
+                           "the fixture must observe the window while the rewrite is still owed");
+
+  // One rebuild turn while the root is stale and the rewrite is pending.
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(countPitch(60)),
+                                   "the undone pass must leave the window before the root rewrites");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(baselineTotal - 2u),
+                                   static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "and the window must be the surviving pass alone, not the stale root's set");
+}
+
 /// **DEC-194 — a rootless, pass-backed playing slot must build its first window without a whole-root publication.**
 ///
 /// The device shape (`session_20261029_032402.log`): restored passes, `root_rev 0`, `TRACK_PLAYING`, no whole-root
@@ -18583,6 +18666,7 @@ int main() {
   RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
   RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
   RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
+  RUN_TEST(test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites);
   RUN_TEST(test_dec194_root_recovery_yields_to_the_boot_restore_sweep);
   RUN_TEST(test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhood);
   RUN_TEST(test_dec194_boot_drain_runs_every_frame_and_never_twice);

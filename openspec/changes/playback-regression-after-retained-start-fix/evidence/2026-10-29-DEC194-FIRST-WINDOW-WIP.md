@@ -347,3 +347,20 @@ pass sooner, i.e. whether this is preparation timing (acceptable) or adoption ti
 named, the assertion stays as the safe contract.
 
 State: suite 254 / **3 failed** (this RED + the two window-lane REDs) / 250 pass; build SUCCESS, RAM1 unchanged.
+
+### `s4b_1` resolved: the hold was implicit, now explicit
+
+Trace result (this is why the assertion was not changed):
+
+- `SlotStateMachine::shouldCommitPendingSlotSwitch` = quantization only (`NextGrid`/`LoopEnd`).
+- `TrackManager::updateAllTracks` then gates on: committed passes, **launch readiness for demoted targets**, inbound
+  occupancy.
+- With a rootless target, *readiness* was never true, so the readiness gate was silently acting as the
+  predecessor-finalization hold. Making the target provisionable from its passes removed that accidental hold — and a
+  diagnostic asserted the predecessor **was still finalizing** at the moment the switch committed.
+
+Repair: an explicit adoption term at the commit site — `Track::hasStopInFlight()` ("an admitted job owns the slot's
+finalization resources, or a stop is accepted and not yet executed"). Preparation of the target still proceeds early;
+the switch waits for the same boundary as before.
+
+Result: `test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits` passes **unmodified**.

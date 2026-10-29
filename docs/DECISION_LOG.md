@@ -11170,3 +11170,81 @@ DEC-143 (published-record overlay, unchanged), DEC-181/182 (display window bound
 (rootless playback, untouched), DEC-196 (boot playback set, unrelated). Evidence:
 [`2026-10-29-DEC197-MERGED-WINDOW.md`](../openspec/changes/playback-regression-after-retained-start-fix/evidence/2026-10-29-DEC197-MERGED-WINDOW.md).
 No data or format migration.
+
+## DEC-199 — A stale published root is not a playback content authority; the committed passes are
+
+**Date:** 2026-10-29
+**Owner:** `ensurePlaybackMergedMidiEventsBuilt` (`src/Track/TrackPlaybackWindowBuild.cpp`), the source-selection half of
+the merged playback window. Consumes DEC-198 (one window for every loop length) and DEC-194 (a root is an accelerator,
+not a precondition).
+**Status:** Accepted; native + build green; **not flashed**. No new state, owner, queue or allocation.
+
+### Problem
+
+Owner report: *"an undo is pressed … that stopped MIDI events being sent to the USB MIDI out (playback)"*, with
+`captures/session_20261029_121423.log` (31-bar slot, track 8 slot 4 = the focused slot).
+
+The capture shows the request works and the *content* does not follow it:
+
+* Undo at 15.253 s (`entries=6` → `undo_count=5`); `#STOP_TRACE` reports `pub=1` on **73 consecutive rows** from
+  15.344 s to 87.743 s, with `stop=0` (no stop job involved), `q` 6→0 and `a` 0→7.
+* The replacement root publishes at **88.379 s** after 84 `snapshot_unit` start/finish units (6,629 events): **72.4 s**,
+  one full loop later.
+* The display holds the same gap (`why=hold_gap` ×23; `dirty=1` on every `#PAINT_BEAT` while playing).
+* Nothing serves the committed window in between: `playback_read` = 0 for the run. That counter is only emitted when
+  `publishedSnapshotIsCurrent()`, so its absence is a *symptom* of the stale root, not independent evidence.
+
+Code: `tryGatherPublishedSnapshotEventsInWindow` served the **stale** root by walking its immutable membership
+(`gatherPublishedSnapshotMembership` — no pass-state filter) and then *adding* the passes the pending box enumerates. A
+root can only gain rows, never lose them, so a pass an undo disabled could not leave the audible set until the rewrite
+landed. The DEC-194 committed-pass fallback was reached only on a gather **miss**, which this path never produces.
+
+Fixture `test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewrites` pinned it: after the production
+undo pair (`setCapturePassState(Disabled)` + `requestCommittedPassesRepublish`) the window held **4** events (the record's
+two and the undone overdub's two) with the surviving pass *not* duplicated — so the additive overlay was not the
+mechanism, the unfiltered root membership was.
+
+### Decision
+
+1. **Currency, not length, chooses the source.** While a published root **is current** it serves the window (it is an
+   immutable, exact membership). While a root **exists but is not current** — an undo/redo/enable/disable/companion change
+   moved the inventory under it — the window is filled from the **committed passes**
+   (`copyEffectiveCommittedEventsInRange`, pass-state filtered, bounded by the window). A slot with **no root at all**
+   keeps its existing paths (DEC-143 sealed Record extent, then the gather miss → passes fallback).
+2. **Presence is read from coverage, not from identity.** `publishedSnapshotIdentity()` answers null *while a root is
+   stale* by design, so it cannot detect a stale root; `publishedSnapshotCoveredRevision() != kSnapshotCoverageUnset`
+   does.
+3. **The paged lane keeps its veto.** An over-capacity interval is the pager's answer (refused by name), never a reason to
+   serve a pass copy — the guard is `!pagedActive && pagedOutcome == None`, unchanged.
+4. **The readiness receipt reads the same rule.** It drops the extra `runtime->isStale()` term: `builtFromRevision ==
+   playbackRevision` on this runtime's own cache already states currency, and a rootless slot's runtime has no synced
+   root to compare against (that term made the two `s4b_6` provisioning fixtures fail under the unified window).
+
+### Rationale
+
+The rewrite is the slow path on any long slot (72.4 s measured) and is *background* work by DEC-194's own contract. A
+cached root is an optimization keyed on currency; using it as content authority makes every inventory shrink wait for the
+rewrite. The committed passes are already the authority the display resolves for the same slot, so playback and display
+now agree by construction.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Filter the root's membership by `passes` state per row | The snapshot stores no pass identity per event; the committed passes already are the filtered set |
+| Clear the published root at the undo edge | Opens a real playback gap (the gap DEC-058/5.8 requeue exists to avoid) and would silence the slot until the rewrite |
+| Only fix the additive overlay (append only what the root lacks) | Does not remove the disabled pass, which is the reported symptom |
+| Keep the `isStale()` term in the readiness receipt | It fails a slot whose window was just built from its passes; currency of the cache is already stated by `builtFromRevision` |
+
+### Verification and constraints
+
+- Fixture red → green with the production undo pair only: `Expected 0 Was 2` → pass.
+- Full native **3608 cases / 2 failed / 7 skipped / 3598 succeeded** — the two failures are the pre-existing DEC-193
+  (`gate_no_role`) and DEC-194 (`role_promise_pending`) REDs, unchanged. Focused: `test_runtime_working_set_ownership`
+  258 (same 2), `test_playback_prewarm` 252/252, `test_playback_midi_output` 18/18,
+  `test_windowed_preview_integration` 48/48, `test_continuous_capture` 107/107,
+  `test_live_capture_display_boundary` 43/43, `test_shared_capture_finalization` 142/142.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192` unchanged, ITCM `code 392,056 + padding 1,160`
+  (floor 840, 320 B headroom), locals 34,880.
+- **Device acceptance open:** the same 31-bar slot, undo while playing, must change the emitted content inside the current
+  loop without waiting for `snapshot_unit,kind=publish`. No upload, no SD operation, no record/clear.
