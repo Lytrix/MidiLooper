@@ -8674,7 +8674,9 @@ void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root(
   uint8_t firstBlockedTerm = static_cast<uint8_t>(PlaybackCoverageRoleRefusal::None);
   bool clearedWhileDemandOwed = false;
   bool served = false;
-  for (unsigned turn = 0; turn < 256 && !served; ++turn) {
+  // A late completion is judged one loop after its deadline (`revalidateCompletedPlaybackWindow`), so the window must
+  // span at least that boundary.
+  for (unsigned turn = 0; turn < 4096 && !served; ++turn) {
     nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
     const uint32_t phase = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick % loop.loopLengthTicks);
     (void)track.requestCommittedPlaybackWindowForSlot(0, phase, nativePlaybackDeadlineClock);
@@ -8709,7 +8711,10 @@ void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root(
         break;
       }
     }
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("role_available", firstToken, "DEC-194 diag: first blocked role term at the gate");
+    if (!served) {
+      TEST_ASSERT_EQUAL_STRING_MESSAGE("role_available", firstToken,
+                                       "DEC-194 diag: first blocked role term at the gate");
+    }
   }
   TEST_ASSERT_TRUE_MESSAGE(served, "the rootless playing slot must reach a serving window from the committed passes");
   TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),

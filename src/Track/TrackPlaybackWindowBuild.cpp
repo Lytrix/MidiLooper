@@ -6436,6 +6436,20 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // slot holding a live promise -- not only the holder this turn happens to serve, and not only when a build completes.
   // The judgement never depends on the revision currency; the consequence is `noteMissedTraversalForSlot`'s.
   serviceAdmittedDeadlineMisses(clock);
+  // **DEC-194 — judge a completed promise before the gate can refuse the turn for it.** A completion that lands at or
+  // after its deadline leaves `completedPromisePendingJudgement` set, and the only clearer
+  // (`revalidateCompletedPlaybackWindow`) had **no production caller**: the role stayed blocked forever, the holder was
+  // skipped, and the standing demand could never be served. Judge at the lane's own boundary, ahead of holder
+  // selection. The call is precondition-guarded (boundary phase, later traversal, current source), so a completion
+  // that is not yet eligible simply stays pending.
+  for (uint8_t judgeSlot = 0; judgeSlot < Config::MAX_LOOPS_PER_TRACK; ++judgeSlot) {
+    const LoopPlaybackRuntime* judgeRuntime = playbackRuntime.slotIfAllocated(judgeSlot);
+    if (judgeRuntime == nullptr || !judgeRuntime->completedPromisePendingJudgement) continue;
+    const uint32_t judgeLength = loopForSlot(judgeSlot).loopLengthTicks;
+    if (judgeLength == 0) continue;
+    (void)revalidateCompletedPlaybackWindow(
+        judgeSlot, static_cast<uint32_t>(currentPhase % judgeLength), clock);
+  }
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders, clock);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding

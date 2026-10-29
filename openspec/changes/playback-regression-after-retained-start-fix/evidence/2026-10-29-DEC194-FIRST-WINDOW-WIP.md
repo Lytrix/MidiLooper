@@ -94,3 +94,38 @@ Suite after the naming slice: **253 cases, 3 failed, 249 pass**; `teensy41-captu
 Trace the judgement path and prove, with a RED, which turn is supposed to clear the flag; then either
 (a) let that turn run before the gate (reoffer), or (b) clear the flag at its own completion site. Do not retire the
 role — the owner is current.
+
+## 9.4b — the missing caller is real, but wiring it is not yet sufficient
+
+`completedPromisePendingJudgement` lifecycle, traced:
+
+- **set** on build completion with a qualified epoch (`TrackPlaybackWindowBuild.cpp` completion path), then cleared
+  inline **only** when the completion is inside its own window: not invalidated, same epoch, `admittedTick <= finished
+  < deadlineTick`, no missed traversal, same loop length.
+- A completion **at or after** its deadline therefore leaves the flag set. The only other clearer is
+  `Track::revalidateCompletedPlaybackWindow`, and it had **no production caller at all** (verified by grep: definition
+  and tests only).
+
+That is a real missing handoff, and it matches the "missing reoffer" category rather than a role leak.
+
+Wired it at the lane boundary (before holder selection / the gate), per slot, with the loop-relative phase:
+
+```
+for each slot with completedPromisePendingJudgement:
+  revalidateCompletedPlaybackWindow(slot, currentPhase % loopLength, clock)
+```
+
+Result: **still RED** — the acceptance fixture does not reach a serving window, and the first gate-time role term is
+still `role_promise_pending`. So one of the clearer's own preconditions is not met in this state. Candidates, in its
+order: `coverageBuildNeedsService()` still true; boundary phase never matches `candidate.coverage.startPhase`;
+`clock.tick < deadlineTick + admittedLoopLength` (judgement is only legal one loop after the deadline); or the source
+identity moved.
+
+The call is guarded and precondition-checked, so leaving it wired is a no-op for every state that is not eligible; it
+is kept as WIP, not as acceptance.
+
+### Next
+
+Name `revalidateCompletedPlaybackWindow`'s first false precondition the same way (one enum, one row), then fix the
+actual term. Do not loosen the boundary rule itself: judging a late completion early is exactly the "silently
+re-grant the deadline" behaviour the spec forbids.

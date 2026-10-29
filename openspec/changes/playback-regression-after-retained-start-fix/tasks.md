@@ -167,11 +167,14 @@ rooted changes how a window is *filled*, never how MIDI is played afterwards.
   lane's **own** completed promise awaiting judgement — not a stale owner, so retirement is the wrong repair. A naive
   gate bypass crashed the suite (179/253) and was reverted. Evidence:
   [9.3 result](evidence/2026-10-29-DEC194-FIRST-WINDOW-WIP.md#93-result--the-blocking-term-is-role_promise_pending).
-- [ ] 9.4b **Prove which turn clears the pending judgement**, with a RED, before changing the gate: trace where
-  `completedPromisePendingJudgement` is set and cleared (`revalidateCompletedPlaybackWindow`,
-  `finishPlaybackViewGrain`) and whether that site is reachable on a turn the gate admits. Then choose between
-  letting that turn run ahead of the gate (reoffer) or clearing the flag at its own completion site. Do **not** retire
-  the role; the owner is current.
+- [x] 9.4b **Trace the pending judgement — the clearer had no caller.** Set on completion; cleared inline only when the
+  completion lands inside its window. A late completion leaves the flag set, and `revalidateCompletedPlaybackWindow`
+  (the only other clearer) had **no production caller**, so the role stayed blocked forever. Wired it at the lane
+  boundary before the gate (guarded; no-op when ineligible). The acceptance fixture is **still RED** — one of the
+  clearer's own preconditions is unmet — so this is WIP, not acceptance.
+- [ ] 9.4c **Name `revalidateCompletedPlaybackWindow`'s first false precondition** (same one-enum/one-row pattern) and
+  fix that term only. Do not relax the boundary rule: judging a late completion early re-grants a deadline the spec
+  forbids. Verify the acceptance fixture greens and DEC-193 stays named.
 - [ ] 9.4 Rolling handoff: prove the second and third windows are built and adopted without a whole-root publication,
   with the same reader.
 - [ ] 9.5 Scaling property: 4-bar vs 40-bar first window in the same cost class (cost proportional to the content
