@@ -71,12 +71,24 @@ inline uint16_t computeDeferredRestorePriority(uint8_t trackIndex, uint8_t slotI
                                slotIndex);
 }
 
-/// Alias for boot playback-set sort (same priority model as runtime fill).
+/// Boot restore priority — **the playing set first** (DEC-194).
+///
+/// At the first Play every track sounds from its **file-active** slot, so those slots are ranked ahead of the focus
+/// neighbourhood and of every other slot: the focus track's active slot is 0, the other tracks' active slots follow by
+/// track index, and everything else keeps the runtime fill order behind them. The measured problem this fixes: with the
+/// old model the focus neighbours (1, 2) and the rest of the focus track (10+) came before other tracks' active slots,
+/// so six of eight tracks had no content when Play was pressed and the set took >10 s to come up.
 inline uint16_t computeBootRestorePriority(uint8_t trackIndex, uint8_t slotIndex,
                                            uint8_t selectedTrackIdx,
-                                           const uint8_t* /*activeLoopIndex*/, size_t /*activeCount*/,
+                                           const uint8_t* activeLoopIndex, size_t activeCount,
                                            const uint8_t* selectedSlotIndex, size_t selectedCount,
                                            size_t numTracks, size_t maxLoopsPerTrack) {
-  return computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
-                                        selectedCount, numTracks, maxLoopsPerTrack);
+  const uint8_t activeSlot =
+      trackIndex < activeCount ? activeLoopIndex[trackIndex] : static_cast<uint8_t>(0);
+  if (slotIndex == activeSlot) {
+    return trackIndex == selectedTrackIdx ? 0u : static_cast<uint16_t>(1u + trackIndex);
+  }
+  return static_cast<uint16_t>(
+      100u + computeDeferredRestorePriority(trackIndex, slotIndex, selectedTrackIdx, selectedSlotIndex,
+                                            selectedCount, numTracks, maxLoopsPerTrack));
 }

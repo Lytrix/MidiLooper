@@ -5,6 +5,7 @@
 #define PLAYBACK_SOURCE_MASK_QUALIFICATION 1
 #include "../test_support/PlaybackSourceMaskFixture.h"
 #include "Utils/BootRestoreGate.h"
+#include "Utils/BootLoopSlotRestore.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -8656,6 +8657,34 @@ void test_dec194_coverage_role_refusal_names_the_first_false_term() {
                            playbackCoverageRoleRefusalName(rt->coverageRoleRefusal(false)));
   rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Idle;
   TEST_ASSERT_TRUE_MESSAGE(rt->coverageRoleAvailable(false), "and the term clears with the state");
+}
+
+/// **DEC-194 — the boot restore order is the playing set first.** At the first Play every track sounds from its
+/// file-active slot, so those slots must rank ahead of the focus neighbourhood: the old order put the focus track's
+/// neighbours and the rest of its slots first, and six of eight tracks had no content when Play was pressed.
+void test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhood() {
+  constexpr size_t kTracks = Config::NUM_TRACKS;
+  constexpr size_t kSlots = Config::MAX_LOOPS_PER_TRACK;
+  constexpr uint8_t kFocus = 3;
+  uint8_t active[kTracks] = {};
+  uint8_t selected[kTracks] = {};
+  for (size_t t = 0; t < kTracks; ++t) {
+    active[t] = 5;      // every track plays slot 5
+    selected[t] = 5;
+  }
+  uint16_t worstActive = 0;
+  for (uint8_t t = 0; t < kTracks; ++t) {
+    const uint16_t p = computeBootRestorePriority(t, active[t], kFocus, active, kTracks, selected,
+                                                  kTracks, kTracks, kSlots);
+    if (p > worstActive) worstActive = p;
+  }
+  // The focus track's neighbours and any other focus slot must rank behind *every* active slot.
+  const uint8_t neighbour = static_cast<uint8_t>((kFocus + 1u) % kTracks);
+  const uint16_t neighbourPriority = computeBootRestorePriority(kFocus, 6, kFocus, active, kTracks,
+                                                                selected, kTracks, kTracks, kSlots);
+  TEST_ASSERT_TRUE_MESSAGE(worstActive < neighbourPriority,
+                           "every track's active slot must restore before the focus neighbourhood");
+  (void)neighbour;
 }
 
 /// **DEC-194 — root recovery yields to the boot restore sweep.** The root is an accelerator; a restore that never runs
@@ -18539,6 +18568,7 @@ int main() {
   RUN_TEST(test_dec194_coverage_role_refusal_names_the_first_false_term);
   RUN_TEST(test_dec192_a_repeat_request_for_the_same_inventory_does_not_restart_publication);
   RUN_TEST(test_dec194_root_recovery_yields_to_the_boot_restore_sweep);
+  RUN_TEST(test_dec194_every_tracks_active_slot_restores_before_the_focus_neighbourhood);
   RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
