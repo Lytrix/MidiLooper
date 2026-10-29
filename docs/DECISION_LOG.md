@@ -10386,3 +10386,520 @@ An earlier reading of this capture claimed the focus slot was re-restored once (
 slipped to 9.37 s. That was an **artifact of pooling three boots into one timeline**: the file repeats the boot
 banner, so slots and `boot_commit` rows from different boots interleaved. Measured per boot, no slot is ever served
 twice in any of the three runs, and the focus restore appears once per boot. No accepted-cost entry is warranted.
+
+## DEC-186 — A begun companion preparation is invalidated by any later `playbackRevision` move, and nothing re-admits or escapes it
+
+**Date:** 2026-10-28
+**Owner:** `Loop::preparedCompanionHistorySourceCurrent` / `beginPreparedCompanionHistory` (the horizon)
+and `Track::processDeferredOverdubStopGrain`'s `CompanionHistory` branch (the silent wait). Diagnostic
+reporting added to `Loop::preparedCompanionHistoryBeginRefusal` /
+`whyCompanionPreparationCannotAdvance` / `preparedCompanionHistorySourceRefusal` and
+`TrackPreparedStopCommit::stepPreparation`.
+**Status:** **Liveness half landed (owner decision (b)): native-green, promoted into the default gate. The
+companion-row republication is task 6.1b and remains open.**
+
+### Problem
+Owner report 2026-10-28 (three symptoms, `captures/session_20261028_220707.log`): repeated overdubs
+eventually cannot be stopped; recorded notes are not painted past bar 16 after the wrap; overdubbed notes
+are not played. The stop side is measured in that capture: one deferred job holds
+`DIAG,stop_phase,7,3,7,9,0,0,50121,...` — phase 7 (`CompanionHistory`), 50,121 serviced grains of ~53 us
+each, no phase advance, for ~32 s — while the two later Stop presses are
+`Overdub stop retained (capacity): stop_job_pending ... phase=7`. No `MEM_DENIED` rows; heap steady at
+86,016 B; DMA continues. Transport Stop then retargets the job and the raw-only escape drains the queue.
+
+The branch was **silent by construction**: `CompanionHistory` had no stall report, so a job that cannot
+advance there produced no row at all. `stopPreparationIsBounded` also does not cover it: the only escapes
+are `CanonicalPrefix` and the *retargeted* `CanonicalTail..CompanionBridge` range.
+
+### Mechanism (identified by measurement, not inspection)
+`beginPreparedCompanionHistory` pins the horizon's source identity, including
+`work.revision = playbackRevision`. `preparedCompanionHistorySourceCurrent()` then requires that identity to
+hold for the whole preparation. A commit that moves `playbackRevision` while the preparation is in flight
+— a wrap pass, a companion publication, a note-edit commit — makes the preparation **stale**:
+
+1. `preparedCompanionHistoryCanStep` becomes false;
+2. `stepPreparedCompanionHistory` would mark `Phase::Denied`, but only when it is allowed to step;
+3. `beginPreparedCompanionHistory` refuses because the phase is no longer `Prewarmed`
+   (`CompanionPreparationRefusal::PhaseNotPrewarmed`);
+4. nothing bounds phase 7 for a non-retargeted job, so the head waits forever and every later stop is
+   retained behind it.
+
+Native proof — `test_companion_history_survives_overlap_rows_wrap_and_a_backlogged_stop`
+(`COMPANION_REVISION_RED=1 pio test -e native -f test_continuous_capture`):
+
+```
+phase=7 inFlight=1 reach=30 grains=20000 edit=0 cap=2 credit=2 revAtReach=1 revAfterWrap=2
+refusal=playback revision moved atReach=preparation step made no progress  [FAILED]
+```
+
+The preparation is begun at revision **1**; a later wrap commit moves the loop to revision **2**; 20,000
+grains do not retire it. The control
+`test_companion_history_retires_when_no_commit_moves_the_revision` runs the same long-note overlap, the
+same begun preparation and the same successor start **without** a mid-phase commit and retires, so the
+revision move — not the overlap rows, the begun preparation or the successor alone — is the trigger.
+`credit=2` also falsifies "declared grain credit exhausted" for this shape, and `edit=0` shows the reason
+the other two owner symptoms follow: the raw-only escapes publish the pass without its companion rows,
+which is what the display resolves overdub transforms from.
+
+### Decision
+1. **Record-only in this change.** The refusing predicate is named at the point of refusal, once per job,
+   through the existing `noteStallOnce` channel (`Deferred stop stalled: <name>`), because the branch had no
+   report and the device symptom was therefore unattributable. The classification is the *same* predicate
+   set the admission and step use (one implementation, no duplicated guard list), so it cannot disagree with
+   behaviour. No behavior, predicate, budget, phase order or bound class changed.
+2. **The repair is a separate decision.** The options are architectural, not mechanical:
+   (a) re-pin a stale begun preparation (resume across a revision move under an explicit licence, in the
+   shape DEC-177 used for the canonical prefix); (b) treat it by cause — a preparation whose pinned revision
+   moved retires raw-only *deterministically* and owes the deferred companion convergence (DEC-172), which
+   keeps liveness and the existing content contract; or (c) drop the pin for the companion half only.
+   (b) is the only one that needs no new licence and reuses the existing obligation, but it publishes no
+   companions inline. Choose with the owner before patching.
+3. **Do not** silently widen `stopPreparationIsBounded` to phase 7 as a fix: a count-only bound there was
+   already tried and withdrawn for the PLAYING path (`kRetargetedCompanionStallGrainLimit` note in
+   `include/TrackPlaybackRuntime.h`), and it converts a content defect into silent loss.
+
+### Constraints created
+- The diagnostic names are read-only literals in `LoopPreparedCompanionHistory.cpp`; they crossed the
+  `_VectorsRam`/periodictable align edge on their own (`variables 96,192 -> 100,288`, ITCM `code`
+  byte-identical), so they are carved out in `linker/imxrt1062_t41_lcr.ld` rather than re-basing the RAM1
+  budget. RAM1 is unchanged at `variables 96,192`, padding 2,232.
+- The RED reproducer ships gated (`COMPANION_REVISION_RED=1`) so a known wedge cannot hide a new failure
+  in the default gate — the same arrangement the former `REENTRY_RED` case used (OpenSpec 5.5).
+- No new owner, queue, lease or scheduler. `CompanionPreparationRefusal` is a diagnostic enum, not a
+  domain noun; it does not enter `NAMING.md`.
+
+### Affected modules
+`include/Loop.h`, `src/Loop/LoopPreparedCompanionHistory.cpp`, `include/TrackPreparedStopCommit.h`,
+`src/Track/TrackPreparedStopCommit.cpp`, `src/Track/TrackOverdubLifecycle.cpp`,
+`linker/imxrt1062_t41_lcr.ld`, `test/test_continuous_capture`.
+
+### Verification
+`COMPANION_REVISION_RED=1 pio test -e native -f test_continuous_capture` → the RED above plus 101 green.
+Default `pio test -e native -f test_continuous_capture` → 101/101 (control and both new passing shapes in
+the gate). Full `pio test -e native` → **3584 cases, 7 skipped, 3577 succeeded, 0 failed**.
+`pio run -e teensy41-capture-serial` → SUCCESS, RAM1 `variables 96,192`, ITCM `code 390,984 + padding
+2,232`. No upload, reboot, SD action or device claim in this change.
+
+### Implemented (owner decision (b), same day)
+The owner chose **retire-by-cause onto DEC-172's deferred convergence**, keeping the revision pin: re-pinning risks
+mixing a stale preparation with newer authority, and dropping the pin removes the invalidation signal.
+
+`CompanionHistory` now treats `SourceRevision` as **terminal for the inline attempt**:
+
+1. `Loop::preparedCompanionHistoryRevisionMoved()` states the cause as one predicate -- a **begun** preparation whose
+   pinned revision differs from the live one (`Cold`/`Prewarmed` carry no pin and are never stale).
+2. The grain logs the cause once, retires the companion family's estimates
+   (`retireObsoleteCompanionPreparation`, the same retirement contract as the abandoned-base escape), re-syncs the
+   horizon to `Prewarmed` (allocation-free; a discard is only the does-not-fit fallback), sets
+   `PendingStopAdmission::companionRevisionSuperseded`, and continues at `AtomicTransfer`.
+3. The authoritative raw pass commits through the **normal** route -- the causal base is current; only the inline
+   companion *candidate* is obsolete.
+4. **After** that commit, when `committedPassRevision()` is final, the job marks
+   `LoopPlaybackRuntime::markDeferredConvergenceOwed(postCommitRevision, loopLengthTicks)`, exactly as the
+   superseded route does. The obligation therefore names the generation this retire produced, and DEC-172's
+   standing-demand coalescing keeps **one** obligation targeting the newest committed generation.
+
+Measured acceptance (production path, `test_continuous_capture`):
+
+- bounded retirement: **14 grains** after the revision move (was 20,000+ and never), destination stays `Playing`, so
+  no transport Stop / retarget is involved, and the record + overdub + wrap passes all commit (`cap=3`);
+- the obligation is armed and its target equals `committedPassRevision()` -- never a pre-commit value;
+- coalescing: a second production commit (another wrap) advances `first=3 -> now=4 == committed=4` on one service
+  turn, still one obligation.
+
+**Remaining, and not claimed:** the obligation rebuilds the **canonical** derived representation. The
+companion/note-edit rows the display resolves overdub transforms from are not republished by the deferred lane --
+that is task **6.1b** (and its target re-scope, 6.2), which applies equally to the three pre-existing raw-retire
+causes. Until 6.1b lands this change fixes liveness and hands the content debt to an owned obligation; it does not
+by itself make the overlap rows visible/audible after the escape.
+
+### Open
+Device confirmation of the named reason needs one run on a diagnostic image (the row is emitted once per
+job). Until then the *predicate* is host-proven for the wrap-commit shape, and the device source of the
+revision move is an **assumption** (wrap commit, companion publication or note-edit commit).
+
+## DEC-188 — On a loop longer than 16 bars, undoing a committed pass leaves the painted content stale until the transport stops and restarts
+
+**Date:** 2026-10-29
+**Owner:** `TrackUndo`'s committed-pass apply path (`refreshPlaybackAfterCommittedPassStateChange` /
+`refreshVisualCacheAfterPassStateChange` in `src/TrackUndo.cpp`, `src/Loop/LoopVisualCache.cpp`) and the
+display draw-source selection. Report-only entry: **no repair in this change.**
+**Status:** **Repaired (length-invariant pass-state refresh), native-green, NOT flashed.**
+
+### Problem
+Owner report: after undoing overdubs the display keeps showing the old content; only a transport stop +
+start paints the correct state. Device `captures/session_20261028_232855.log` (image `27fbb26c…`, loop
+18,432 ticks / 24 bars, window `b=16`):
+
+- `#PAINT_BEAT` (un-sheddable, 1 Hz) holds `notes=557` through the undos at 209.7, 213.0, 220.2 and 223.0 s
+  (`undo_count` 9 -> 6 -> 5, i.e. committed passes were removed), and the page still follows the playhead
+  (`win` 0 -> 4584, `paint ≈ play`).
+- Only after `Transport stopped` (225.6) and `Transport started` (228.4) does the painted set change:
+  `notes=498` at 229.4 and `310` at 231.4.
+- `out=8-15` note-ons/s with varying `last=` pitches throughout, so the overdubbed content was **audible**;
+  this defect is display-only.
+- No `companion preparation obsolete` row and no `stop retained` row: the DEC-186 escape is unrelated and
+  still unexercised on device.
+
+### Repair (2026-10-29)
+`Loop::refreshVisualCacheAfterPassStateChange()` no longer has a length split. It used to fill **every** bar
+synchronously for loops of <=16 bars and then `return` above 16 -- the exact short-vs-long asymmetry the
+rolling-window work is meant to delete, and the reason a 24-bar undo stayed dirty until a transport stop. Both
+lengths now take one path: mark, then spend at most `kRefreshSlices = 4` slices of 4 bars (one paint window);
+anything left dirty stays for the idle lane, so no call is proportional to loop length. Device capture
+`captures/session_20261029_002728.log` (<=16 bars) shows the healthy shape this pins: `vcache` 207 -> 181 at the
+first undo and the painted `notes` following it, i.e. the cache drained and the paint tracked it.
+
+Pinned by `test_continuous_capture`: `test_pass_state_refresh_is_bounded_on_a_short_loop` (8 bars -> 0 dirty)
+and `..._on_a_long_loop` (24 bars -> at most 8 dirty). Mutation-red: restoring the `totalBars > 16` early
+return fails the long-loop case with `dirty=24 allowed=8`. Gates: `test_continuous_capture` **106/106**,
+`test_live_capture_display_boundary` **43/43**, `test_display_dma_health` **9/9**, `teensy41-capture-serial`
+SUCCESS, RAM1 `variables 96,192` unchanged.
+
+### Mechanism (identified, superseded by the repair above)
+`Loop::refreshVisualCacheAfterPassStateChange()` marks every bar stale and then **returns without building
+anything when the loop has more than 16 bars** (`kImmediateFillBarLimit`), so a long loop depends on the
+idle slice to rebuild. The painted set did not follow, and the first content rebuild in the log is
+`VCACHE,slice_clean notes,498` at 228.855 s -- after the restart. At 228.4 the lane reports
+`idle_src,OverlayRejected,src,PassesResolve,root_rev,20,playback_rev,21`, i.e. the published root was stale
+against the advanced `playbackRevision` and only then resolved from passes.
+
+Two candidate causes remain, and they are not separated by this run: (a) the idle slice is not scheduled
+while PLAYING with no stop job, so the all-bars-stale set is never drained; (b) the draw source keeps
+serving the stale root/cache, so draining the cache would not change the painted set.
+
+### Why it is not proven
+The capture lost the deciding rows again: `RING,overflow,122255918`,
+`RING,tier_a_evicted,2360,first=121534024`, `RING,shed,38321`. `VCACHE`/`DISP` absence in 205-228 s is
+therefore **not evidence**. Only the `#PAINT_BEAT` series (direct serial) is trustworthy here.
+
+### Decision
+1. **Record only.** No behaviour change, no bound change, no new owner. The next step is a **host fixture**
+   at the display boundary: 24-bar loop with a committed record and overdub pass, cache built clean, then the
+   production undo of the overdub pass must drop its notes from the painted set (and from the idle slice's
+   rebuilt cache). That fixture separates (a) from (b) without a device run.
+2. Do not "fix" it by rebuilding the whole cache on every undo: the >16-bar split exists so paste/undo
+   cannot do whole-loop work on the interval path (DEC-043/ExecutionBounds). Any repair must mark **and
+   drain** by bars, or make the draw source resolve from the post-undo pass inventory.
+
+### Affected modules
+`src/TrackUndo.cpp`, `src/Loop/LoopVisualCache.cpp`, `src/DisplayManager/DisplayNoteWindowGather.cpp`
+(draw-source selection). No firmware source changed by this entry.
+
+### Open
+Fixture + attribution, then the repair decision (drain-by-bars vs draw-source resolution).
+
+## DEC-189 — A truncated first Record stop parks the Record lane at `CanonicalOrder` without advancing, the session-exit publication never finishes, and the display holds its retained frame
+
+**Date:** 2026-10-29
+**Owner:** Record deferred finalization (`Track::processDeferredOverdubStopGrain`'s Record phases /
+`RecordPreparation`) and the Snapshot publication lane in `Track::processDeferredIdleMaintenance`.
+Report-only: **no repair in this change.**
+**Status:** **Identified on device from a clean (non-shedded) capture. Open.**
+
+### Problem
+Owner report on image `8b5778a1…`: recording stops after ~6 bars, the display freezes, and after a reboot the
+first frame paints no notes. `captures/session_20261028_234839.log` (12,903 lines, only `RING,shed,2`, so
+this capture is **complete**):
+
+- Record starts 15.03 s (`Recording started @ tick 0`), length 5376, stop 28.652 s at tick **5168**
+  (`RECS,stopToStopped,3,5168,0,5168,5376,0`) -- a **truncated** take (stop tick < length).
+- `RECS,stage`: `finalize ... deferred`, `visual_cache_request ... deferred`, `revt_queue ... deferred`,
+  `save_request ... deferred`; only `state_advance ... ok`.
+- The stop job then visits phase 0 (`ReservedClosure`) -> 12 (`DeferredCleanup`) -> **2 (`CanonicalOrder`)**
+  and repeats phase 2 for the rest of the run: `stop_phase,7,3,2,1,0,1,<calls>` reaching 647 calls with no
+  phase change and **no** `Deferred Record stop stalled:` row (the grains report `Pending`, not `Denied`,
+  so the existing stall reporter never fires).
+- `alloc_census` keeps `cap=0, edit=0` for the remaining 42 s: **no pass was ever committed**.
+- The Snapshot unit starts at 28.216 (`snapshot_unit,kind=start,...,n=4771,s=13`) and **never reaches
+  `finish`/publish**.
+- The display's last `disp_turn` (28.933) is `st=ret, why=hold_gap`: it is holding the retained frame because
+  `isPlaybackSessionExitPublicationGap()` never clears -- the gap is real, the publication is stuck.
+- `win_frozen_readiness,build_drop,completed_unpublished` at 28.761 names the same loss from the window lane.
+- The deferred save still wrote a body for the slot (`LoopPersist,slot:7:4,...,LoopSnapshotTail`, 384 notes),
+  i.e. a **root-shaped body with no committed passes** -- so after reboot there is nothing to restore into
+  the slot's pass inventory, and the first frame has no notes.
+
+### Why this is not DEC-186/187
+No `companion preparation obsolete` row, no undo, and no overdub CompanionHistory job in the run; the
+diagnostic build's only differences were report rows. The Record lane and the publication lane were not
+touched by DEC-186/187. The take shape (truncated stop) matches the documented open
+"truncated first-Record normalization wedge" (CURRENT_WORK, 2026-10-27/28 entries).
+
+### Decision
+Record only. The next step is a **named no-progress row** for this lane -- the Record `CanonicalOrder` grain
+that returns `Pending` without advancing must say so once per job (the existing `noteStallOnce` path only
+covers `Denied`), and the Snapshot lane needs the same treatment (`kind=start` without `finish`). Both are
+report-only and bounded. Do not "fix" it by gating the publication on the record job finishing: that is what
+already starves it.
+
+### Affected modules
+`src/Track/TrackOverdubLifecycle.cpp` (Record phases), `src/Track/TrackDeferredMaintenance.cpp` (publication
+lane), `src/Track/TrackPreparedStopCommit.cpp` (Record steps). No firmware source changed by this entry.
+
+## DEC-190 — A fault during slot restore parks exactly that slot for the next boot, and nothing is deleted
+
+**Date:** 2026-10-29
+**Owner:** `StorageManagerInternal` restore queue (`appendBootLoopSlotRestore`), `beginLoadLoopJob`
+(the breadcrumb arm point) and `setup()` (the consume point). No new manager, queue or lease.
+**Status:** Implemented, native-green, **NOT flashed**.
+
+### Problem
+The board appeared to fault-reboot repeatedly. **Correction (evidence reviewed 2026-10-29 00:30):** the
+`crashlog.txt` records (`DACCVIOL`, 218 records) are **historical** -- the newest is 2026-10-28 20:46, i.e.
+before the 00:00 image, and no fault was logged during the recent boots. Tonight's "crash on first frame" is
+therefore the DEC-189 publish-stall/blank-first-frame path, **not** a logged CPU fault. This decision is kept
+as a safety net (it costs nothing when no fault occurs) but it is *not* the explanation of the current
+symptom. The existing bounded park
+(`scheduleLoopSlotRestoreRetry`, DEC-171) already handles a *corrupt* slot by treating it as empty after 3
+attempts -- but it is driven by parse/validation failures *inside* the job, and a CPU fault never returns to
+it. Owner direction: do not remove the loop; make the firmware survive the violation and keep as much of the
+set as possible.
+
+### Decision
+1. **Breadcrumb across the fault reboot.** `beginLoadLoopJob` arms a small record
+   (`RestoreFaultBreadcrumb{magic, track, slot}`) in RAM2 (`DMAMEM`, NOLOAD -- the fault handler resets
+   without clearing RAM) immediately before a slot body is verified/parsed. It stays armed through that
+   slot's restore and first paint.
+2. **Consume it once, only after a real fault.** `setup()` reads `CrashReport` (already used for
+   `DIAG,boot_reset,crash=`): with a crash report it consumes the breadcrumb and marks that single slot
+   parked; with no crash report it just clears the breadcrumb, so a normal reboot never parks anything.
+3. **Park = skip the request, never touch the file.** `appendBootLoopSlotRestore` drops a parked slot's
+   request (one serial line naming it, once), so the slot stays empty for this boot while every other slot
+   restores normally. Nothing is deleted, renamed or quarantined; the slot can be retried after the cause is
+   fixed, and `!LIB_OBSERVE` still reports its bytes.
+4. **Per boot, and bounded.** The skip table is cleared at the start of every boot (`resetRestoreFaultSkips`)
+   so one fault parks one slot for one boot; a repeat fault re-arms the breadcrumb and parks it again.
+
+### Why not remove/quarantine the slot
+Deleting the slot (or the workspace) destroys the evidence and the data the owner asked to keep. Parking is
+reversible by definition: the file is untouched.
+
+### Verification
+`test_storage_manager_load` **36/36**, including `test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot`
+(breadcrumb consumed once, parked slot never enqueued, neighbour still admitted, clearing the table restores
+normal admission). `test_continuous_capture` **103/103**. `teensy41-capture-serial` SUCCESS, RAM1
+`variables 96,192` unchanged, ITCM `code 391,656 + padding 1,560` (720 B above the floor; both tables are
+RAM2 because DTCM refused +128 B).
+
+### Open
+The **cause** of the DACCVIOL is still unidentified. `!CRASH_LOG` dumps only the last 4 KB, which contains the
+reboot summaries but not the fault body/PC; `crashlog.txt` (458 KB, SD root) holds them but needs a card read.
+Until that PC is known this is survival + attribution, not a fix of the pointer.
+
+## DEC-191 — A retained overdub Start is re-driven every owner turn, and each attempt costs ~109 ms, so the whole loop runs at 7.5 Hz
+
+**Date:** 2026-10-29
+**Owner:** retained-interaction re-drive (`Track`'s accepted-interaction service, `startOverdubbingTrack`) with
+`Track::startOverdubbing` as the costly callee.
+**Status (2026-10-29 correction):** production preflight/wake/orphan-settlement call sites are REVERTED.
+Unused helpers and decision-table tests remain, not an active stall repair. Earlier claims that idle
+orphan release caused a lost playback root or damaged saved content are UNPROVEN and withdrawn.
+DEC-192 records the separately reproduced missing-source recovery; its native success does not prove
+the causal origin of the device regression or deliver this retained-Start gate. The "Landed" narrative
+below is historical and does not describe current activation.
+
+### Problem
+Owner report: after a while the display updates only ~once per beat. `captures/session_20261029_004321.log`
+(31-bar loop, 353 notes) names the cause, and it is **not** the display:
+
+- `DIAG,idle_maint` jumps from **1.7 ms** (552.7 s) to **130.8 ms** (562.8 s) and stays there until the
+  transport stops; `DIAG,loop_rem,idle_maint,130815,255,255,255,0` repeats ~7x/s, and `DIAG,midi_gap` goes
+  from 8.2 ms to **132 ms** in the same second.
+- Inside that window `ODUB,stage,manager_enter` -> `enter` -> `manager_done,109330` repeats every ~130 ms:
+  `TrackManager::startOverdubbingTrack` -> `Track::startOverdubbing()` costs **109 ms** and does not open the
+  session, so the accepted-interaction carrier retains the Start and calls it again **on the next turn**
+  (`src/Track/TrackOverdubLifecycle.cpp`: `return false; // Ordinary admission refused: retain the exact
+  request for recovery`).
+- Consequences measured in the same capture: paint frames complete only **7 per 10 s** (0.7 fps) with the paint
+  phase parked in `Draw` (`phase=2` in every `#PAINT_BEAT` sample), `paint` lags `play` by ~**160 ticks**
+  (0.83 beat), and `disp_turn`/`BAR` rows thin out — i.e. exactly "one update per beat".
+- The display path itself is healthy: `dirty=0`, `vcache` correct, `dma` timeouts 0, and the draw cost stays
+  3.5-7 ms. Nothing in `DisplayManager` is implicated.
+
+### Mechanism
+A retained Start is retried on **every** owner turn. The retry is not a cheap predicate: it runs
+`Track::startOverdubbing` (109 ms) first and only then discovers it cannot open the session, so a single
+unadmittable request converts the whole instrument into a ~7.5 Hz loop. The existing rate limit covers the
+**log line** ("Overdub start still retained", once per 8 s), not the **retry**.
+
+### Landed (2026-10-29, first half)
+1. **The cause is named on device, not guessed.** `captures/session_20261029_004321.log` carries
+   `Overdub start retained (capacity): the session-exit publication obligation is still owned (slot=3
+   state=reserved jobs=0 receipts=0 reserved_owner=0)` and then `still retained` every 8 s -- so the refusing
+   predicate is the **session-exit publish owner**, not the stop FIFO, heap or transfer horizon.
+2. **Cheap preflight** `Track::overdubStartPreflight(uint8_t&)` runs at the top of `startOverdubbing`, before
+   any prewarm/allocation/claim: staging handles present, and the publish-owner state `Empty` or releasable as
+   an orphan. It mirrors the real admission predicates (the same `sessionExitPublishClaimState` /
+   `hasReservedSessionExitObligation` / `hasLiveOwnerOfReservedSessionExitObligation` terms), allocates nothing
+   and mutates nothing.
+3. **The wake identity is NOT the claim enum alone** (owner review, 2026-10-29). `hasLiveOwnerOfReservedSessionExitObligation` walks the stop FIFO, and `markSessionExitTailReady` can fail while the state still reads `Reserved`, so ownership and receipt-ring occupancy can move *without* the enum moving. The gate therefore keys on **(claim state, live reserved owner present, session-exit receipt-ring occupancy)**; `playbackRevision` is explicitly excluded. A parked request whose identity never moves again is a **starvation** case, not a solved one -- see Open.
+4. **Refusal-keyed re-drive gate.** The carrier no longer re-enters `startOverdubbingTrack` while the refusal
+   is `session_exit_obligation` **and** `sessionExitPublishClaimState()` is still the value recorded at the
+   refusal. The wake token is that claim state -- deliberately *not* `playbackRevision`, which moves for
+   unrelated musical reasons and would reawaken the expensive path.
+4. **Un-sheddable row** (`#ODUB_START,<ms>,refused=<name>,claim=<state>,track=`) once per 8 s, so the next
+   device run names the refusal without the capture ring.
+
+### Not done yet
+- **Gate pinned as a pure decision (`include/Utils/OverdubStartGate.h`).** The host UI path cannot reach
+  `Reserved + live owner` (a deferred stop leaves the claim `Empty`; a live interval rejects the press at the
+  already-overdubbing guard), so the gate is proven as a decision table instead of a manufactured chain:
+  `test_dec191_the_start_wake_identity_is_the_three_part_tuple_only` covers unchanged -> `Park`; each tuple
+  member (claim state, live owner, ring occupancy) -> `Retry`; a non-session-exit refusal -> `Retry`; and 128
+  unchanged turns staying `Park`. Mutation-red: bypassing the gate (always `Retry`) fails it.
+- **Superseded note (kept for the record): no native fixture landed yet.** The host shape used so far admits the successor Start (DEC-072), so
+  the refusal path was never exercised; the attempt to add one was backed out rather than left half-patched.
+  Still owed: a construction that forces `SessionExitPublishClaim::Reserved` **with a live owner** (or with a
+  failing `markSessionExitTailReady`), held unchanged for hundreds of carrier turns, plus the wake,
+  irrelevant-change, cancellation and mutation-proof cases. Device counters to drive them already exist:
+  `overdubStartPreflightRefusalCount()` and `overdubStartBodyEntryCount()`.
+- **Second defect, root-caused and repaired:** the orphan branch could never resolve the device state.
+  `Loop::markSessionExitTailReady` returns false unless the claim is **`Populated`** (`Reserved -> Publishing` is
+  not a transition), so a `Reserved` claim with no live owner was left untouched forever -- exactly the device's
+  `state=reserved jobs=0 reserved_owner=0` with the releasing row absent. A `Reserved` claim is **payload-free by
+  construction** (`claimSessionExitPublishOwner` zeroes the record), so the missing terminal is
+  `Reserved -> Empty`: `Loop::releaseOrphanedSessionExitReservation()` (refuses if the record holds any identity)
+  plus `Track::settleOrphanedSessionExitReservation()`, driven by the **deferred idle lane** as well as the Start
+  claim path. Recovery therefore no longer depends on a user pressing Start.
+  Fixture `test_dec191_an_ownerless_reserved_claim_is_released_by_the_ownership_lane`: claim `Reserved` with no
+  stop job -> the ownership lane releases it to `Empty` (idempotent afterwards). Mutation-red: removing the
+  terminal keeps `state=1` for all 64 turns. `test_continuous_capture` **106/106**.
+
+### Previous decision text (report-only, superseded by the above)
+No behaviour change yet. The repair must make the re-drive **event-driven, not polled**: re-attempt only when
+an input that can change admission actually moved (pending stop-job count / receipt ring occupancy / heap
+tail / playback revision), and make the cheap refusal happen *before* the 109 ms work. A plain time gate is
+explicitly rejected: at 109 ms per attempt even a 4 Hz retry keeps ~44% of the loop.
+
+### Open
+Why `Track::startOverdubbing` takes 109 ms and refuses is itself unmeasured (no refusal row is emitted in this
+capture); that is the second half of the fix and needs one focused instrument on the start path.
+
+## DEC-192 — Rootless sounding-slot recovery belongs to the deferred Snapshot owner
+
+**Date:** 2026-10-29
+**Owner:** Track Snapshot-slot selection and Loop's existing committed-pass publisher.
+**Status:** Accepted narrow same-owner repair; native/build verified, FLASHED on owner authorization.
+USB re-enumeration verified; device playback acceptance pending the owner's own test (flash-only scope).
+
+### Problem
+
+The owner reports all playing slots silent after the retained-Start work. The capture contains a
+rootless passes-authoritative display source. Native production Snapshot maintenance reproduces
+the missing producer: a playing passes-only slot without a root or publication request remains
+source-less after 20,000 turns. The MIDI fallback cannot gather that shape. Launch preparation
+already asks for an on-demand committed-pass republish; an already-playing slot had no equivalent
+producer. This establishes a defect, not which earlier edit made the device encounter it.
+
+### Decision
+
+When no Track publication already owns the turn, the existing Snapshot owner may select an enabled
+playing slot with committed passes, nonzero length and **no selected root**. Recovery requires no
+pending stop, target Capture, overdub session or session-exit claim. Request the existing
+`requestCommittedPassesRepublish()` once, on a request-only turn. Subsequent turns use the existing
+publisher, gates and construction quantum. Active slots win recovery ties; enabled layered slots
+and background Tracks remain reachable through their existing selection/dispatch.
+
+The predicate is shared by selection and admission, with enablement looked up on the owning Track.
+No receipt is settled/released, no pending publisher is reset, no stale root is discarded, no
+inactive-library hydration is enabled and no SD content or undo representation changes. After
+admission, completion and clear/load/undo cancellation remain the Loop publisher's responsibility.
+
+### Rationale
+
+A waiting playback request cannot repair a missing source unless some existing owner produces it.
+Keep that work off the MIDI tick and out of boot restore. Request setup can allocate and enumerates
+pass/edit identities; it is not priced as one constant-time construction grain and is not a new
+timing guarantee. Construction keeps the existing admitted quantum and reserve/deadline gates.
+
+### Alternatives considered
+
+- Unconditional barrier clear: removed; a stopped-state barrier sample did not prove a playing-state
+  mute, and that patch had no discriminating fixture.
+- Rebuild at one loader parity-mismatch return: removed; it misses normal passes-only restores,
+  hydrates content before playback demand, and was not acceptance-tested through actual MIDI output.
+- Pass gather on the MIDI tick: rejected; it adds content-dependent work where playback must consume.
+- Full `requestCommittedPassesRebuild`: unnecessary for an absent root; use the incremental operation
+  whose empty-parent behavior already reconstructs the inventory (DEC-150 stays unchanged).
+- Re-record/delete damaged slot: rejected by the owner; retained committed content is the input.
+
+### Verification and constraints
+
+`test_playing_pass_only_slots_recover_their_missing_playback_source` exercises two background Tracks,
+one layered slot, UI focus elsewhere, production requester/rolling/deferred paths and exact emitted
+MIDI against accepted event identities: 288 events over two cycles. Disabling only the request
+reds the source assertion. `test_playback_source_recovery_preserves_stopped_disabled_capture_and_claim_owners`
+checks non-recovery and ownership controls. Focused native 500/500, scoped independent review APPROVE;
+incremental capture-serial build SUCCESS with RAM1 variables 96,192 / code 391,656 / padding 1,560.
+No physical timing or device-recovery claim; no upload without permission. The original retained-Start
+stall gate remains reverted; its completion is a separate outstanding acceptance item.
+
+### Related OpenSpec / migration
+
+`display-freeze-under-overdub-chain` tasks 5.1–5.4; exact trace, review and command evidence in
+`evidence/2026-10-29-PLAYBACK-REGRESSION.md`. No data/format migration, commit or destructive SD action.
+
+## DEC-193 — Playback is investigated as a decision-boundary regression before any window-first architecture
+
+**Date:** 2026-10-29
+**Owner:** silent-playback investigation scope; existing Track/Loop publication and source-servicing owners.
+**Status:** Accepted as the active scope (documentation only at this point). No firmware, test, build, upload
+or SD action. The window-first direction is parked, unauthorized, not withdrawn.
+
+### Problem
+
+Playback worked on the image immediately before the DEC-191 retained-Start repair and stopped working on the
+first image after it. The packet `display-freeze-under-overdub-chain` then grew an approved-but-unimplemented
+replacement architecture: root-independent startup, any supported slot, continuous coverage, standby pools,
+source-lifetime analysis and physical timing gates. That is a multi-week product direction, and it was
+reached by inference from a single failed repair — not from evidence that the last-good image's playback was
+architecturally invalid.
+
+### Boundary (measured, not recalled)
+
+`852b15f7…` / `session_20261029_004321.log`: 92 `playback_read` rows, 41/41 painted seconds with note-ons.
+`0dbf08c1…` / `session_20261029_011304.log`: 0 `playback_read` rows, 68/72 painted seconds with `out=0`.
+The symptom persisted on `3e79bd1b…` (idle-lane orphan settlement removed) and, per the 01:30 owner report,
+on `c06f2e43…` (all DEC-191 call sites reverted). `session_20261029_012142.log` sits between flashes and is not
+a bisect point. Full table and commands: `playback-regression-after-retained-start-fix/evidence/BOUNDARY-2026-10-29.md`.
+
+### Decision
+
+1. **Freeze `display-freeze-under-overdub-chain`** as the historical display/restore/boot packet. Tasks 1–4
+   stand; section 5 is a rejected-experiment record; section 6 is removed from the change.
+2. **Park the window-first material** in `docs/Plans/future_root_independent_playback.md` — a design record,
+   not a task list, not authority, and not implementation approval.
+3. **Open the narrow change** `playback-regression-after-retained-start-fix`, whose only question is: what
+   changed between the last-good and first-bad images that stopped existing playback-source servicing?
+4. **Resolve the fork before coding:** code-path regression vs card-state regression. A pre-regression card
+   backup exists (`captures/sd-backup-20261029_001835/`, 00:18), and DEC-192 has since rebuilt a root on the
+   device, so an A/B on the *current* card can produce a false "no regression". Pin the body, not just the image.
+5. **Bisect only the DEC-191 deltas** (cheap preflight; refusal-keyed retry park/wake; session-exit orphan
+   settlement from the Start claim path; the same settlement from the deferred idle lane; implied deferred-owner
+   order), one at a time, to the smallest mutation that switches playback off.
+6. **Accept exactly two behaviors:** playback matches the last-good image for the pinned slot shape, and an
+   unadmittable retained Start does not re-enter the ~109 ms preparation body every main-loop turn.
+7. **Stop-and-ask rule:** only if last-good playback is *proven* to depend on an unsafe or accidental behavior
+   that cannot legitimately be restored may the parked architecture be reopened, with explicit owner approval.
+
+### Alternatives considered
+
+- Continue the window-first implementation now: rejected as scope inflation; it answers a requirement the
+  regression has not established, and its own G0/G1/G2 readiness work is still blocked.
+- Revert to the last-good image and call it fixed: rejected; it discards the 7.5 Hz stall fix and the display
+  and boot repairs, and would still not explain the persisted body fork.
+- Repair from the DEC-192 whole-root recovery side only: kept as historical eventual recovery, not acceptance.
+
+### Verification and constraints
+
+Boundary counts are reproducible with the commands in the evidence file. The active change fixes its two
+oracles (playback restored; retry storm stayed fixed) before any production edit, requires a RED whose fixture
+does not depend on DEC-192 recovery, and requires one focused independent review of the named boundary. No new
+owner, queue, lifetime, persistence or working-set contract; no restore, re-record, SD delete/rename or bulk
+hydration. Device work needs per-image upload authorization and a registered non-destructive stimulus.
+
+### Related OpenSpec / migration
+
+`playback-regression-after-retained-start-fix` (new, active); `display-freeze-under-overdub-chain` (frozen,
+section 6 moved); `docs/Plans/future_root_independent_playback.md` (parked). No data or format migration.

@@ -1,11 +1,22 @@
 ## Context
 
+**2026-10-29 — FROZEN as a historical packet (DEC-193). Documentation only.** The display, restore/parity
+and boot first-paint repairs (tasks 1–4) stand as recorded. Silent playback was split out and is now
+investigated as an image-boundary regression in
+[`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/design.md);
+the window-first / root-independent material that had been growing here is parked, unauthorized, in
+[`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md).
+The playback-recovery experiment below (`c4841c91…`, DEC-192) remains an honest record of what was
+implemented and why its startup behavior was rejected; it is **not** an acceptance claim and **not** a
+contract for this change. This document authorizes no firmware/test mutation, build, upload, transport
+gesture or SD operation, and it must not gain new playback tasks.
+
 See [proposal](proposal.md) for scope and [investigation](INVESTIGATION.md) for retained captures.
 Baseline is the dirty `feature/unified-rolling-playback-path` tree, not just Git HEAD. Preserve all pre-existing edits. Installed-image claims must use the recorded HEX hash; the current source already contains a later 4-grain/600-us burst variant and `STOP_GRAIN_BURST_DISABLED`, whereas the captured qualification image is described as 8 grains/1500 us. Neither comment is evidence of what was flashed.
 
 ## Goals / Non-Goals
 
-Restore display progress under the same admitted chain while retaining stop throughput. Separate frame service from content freshness and source qualification. No new owner, source lifetime, queue, lease, persistence representation or MIDI timing guarantee. Scope excludes restore diagnosis and speculative boot repair.
+Restore display progress under the same admitted chain while retaining stop throughput. Separate frame service from content freshness and source qualification. Playback is out of scope after the 2026-10-29 split (DEC-193): it is tracked as an image-boundary regression in [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/design.md), and the broader root-independent direction is parked in [`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md). No new owner, queue, lease, persistence representation or unmeasured timing guarantee is approved here. Unrelated restore diagnosis and speculative boot repair remain excluded.
 
 ## G0 — evidence and implementation trace
 
@@ -81,6 +92,50 @@ Allowed repair boundary: correct the demonstrated eligibility/continuation omiss
 Validation after a repair: focused display, stop, service-drain and DMA suites; full `pio test -e native`; `pio run -e teensy41-capture-serial`; unchanged RAM1 budget and one focused independent lifecycle review. Then authorized same-scenario device evaluation with image hash and boot proof. Existing registered stimulus must be listed/reused, never edited in place. No automatic upload or SD manipulation. Update display/execution authority only where behavior actually changed, and append/supersede a decision only if its policy changed.
 
 ## Risks / Trade-offs
+
+### Rejected playback recovery — historical implementation, not acceptance
+
+The [earlier recovery packet](evidence/2026-10-29-PLAYBACK-REGRESSION.md) and
+DEC-192 — rootless sounding-slot recovery requested whole-loop committed-pass publication after
+Play. That implementation can eventually produce audible content, but **is rejected as the repair
+for immediate or continuous playback**. Its native oracle froze the clock until the root became
+current, then checked output. The 500 focused passes and scoped review apply only to that narrower
+eventual-recovery claim; they do not approve any replacement contract. The replacement direction is
+**parked, not approved** — see the split-out section below.
+
+Device evidence: `captures/session_20261029_020455.log` has a playing 31-bar slot with publication
+still at `q=7,a=0,if=1` around 17.668–21.675 s. In
+`captures/session_20261029_021341.log`, the selected slot's recovery is queued at 17.974 s and the
+eight-pass publication sequence finishes at 70.724757 s (about 52.75 s later); a later Start at
+129.018 s has playback-build rows for track 7 / slot 3 and much larger note-on deltas. The owner's
+USB-to-Mac observation confirms the unwanted wait for root creation. These observations do not
+establish which earlier display-lag edit originally exposed the source gap.
+
+The native characterization
+`test_pass_only_playback_serves_due_notes_before_whole_root_publication` advances the clock during
+bounded maintenance and fails at its first scheduled On: **Expected 1 Was 0**. The last run of
+`pio test -e native -f test_runtime_working_set_ownership` reported that one behavioral failure
+with 248 other cases passing, then runner SIGHUP/ERRORED. This is an explicit RED, not a green
+suite. Log: `/private/var/folders/ms/9n65q9vx7gxf9k911t93v34w0000gn/T/opencode/playback-startup-red.log`.
+
+The existing whole-root recovery code is not removed by this documentation edit. Whether it stays, changes or is
+replaced now belongs to [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/design.md):
+that change must first name the boundary, and simply deleting the request would restore the permanently
+source-less case. No playback acceptance is closed here.
+
+## Playback — split out (DEC-193)
+
+The window-first / root-independent playback contract that was drafted here is **not part of this change**.
+It is parked, unauthorized, in
+[`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md),
+together with its readiness unknowns and acceptance gates. That note is a design record, not a task list.
+
+The active question is a regression at the DEC-191 image boundary, tracked in
+[`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/design.md).
+Nothing in this document authorizes that architecture, and no playback acceptance is closed here. The RED
+characterization named above is now owned by that change as a regression fixture, not as a window-first gate.
+
+### Display risks and trade-offs (unchanged)
 
 - Transition sampling mistaken for freeze → observe phase/completion separately; corrected investigation inference.
 - Source is stale while physical frames continue → explicit content oracle, not just counters.

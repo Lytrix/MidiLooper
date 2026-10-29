@@ -1,3 +1,7 @@
+**2026-10-28 22:20 — companion-preparation parking predicate identified (DEC-186); repair not started.** The refusing predicate is `preparedCompanionHistorySourceCurrent()` → `work.revision != playbackRevision`: the horizon pins `playbackRevision` at `begin`, a later commit (wrap pass, companion publication, note-edit commit) moves it, `CanStep` goes false, `begin` refuses because the phase is no longer `Prewarmed`, and no bound covers a non-retargeted phase 7 — so the stop FIFO head waits forever and later stops are retained. Host reproducer `test_companion_history_survives_overlap_rows_wrap_and_a_backlogged_stop` (gated `COMPANION_REVISION_RED=1`) and control `test_companion_history_retires_when_no_commit_moves_the_revision` prove causality; the diagnostic names the reason once per job on device. Gates: full native 3582 / 7 skipped / 3575 succeeded / 0 failed, `teensy41-capture-serial` SUCCESS, RAM1 unchanged. **Next is an owner choice of repair shape (DEC-186 options a/b/c), then one device run to read the emitted reason; no silent widening of `stopPreparationIsBounded`.** [DEC-186](DECISION_LOG.md) · [Evidence](2026-10-28-overdub-three-regressions.md)
+
+**2026-10-28 22:07 owner capture — reopen repeated-overdub liveness, late-bar paint and overdub playback acceptance.** `session_20261028_220707.log` shows a serviced CompanionHistory head stuck ~32 s, two retained Stop presses, and transport-stop raw-only escape. Existing combined chain fixture starts with a current Record root, drains pending stops before each Start and stays in early bars; it does not establish acceptance for this private-Record/backlogged-stop/wrap/scroll shape. Exact companion refusal, late-bar NoteIds and full emitted inventory remain unknown. Read-only investigation, no repair or device operation. [Evidence and next fixture requirements](2026-10-28-overdub-three-regressions.md).
+
 **2026-10-28 — ~4 s boot gap (restore commit → first build) reproduced and now instrumented (DEC-183; report-only, device-unconfirmed).** Two captures show the same gap: restore 13.41 s → build 17.44 s → content 17.56 s, and restore 11.05 s → build 15.14 s → content 15.26 s. DEC-182's sweep gate is verified (content 11.99 s with the sweep's first request at 13.07 s), so the remaining 4 s is not the sweep, the root wait, or the paint work. Landed: `#CAP,…,DIAG,paint_gate,<owner>,<allStopped>,<titleDrain>,<clock>,<restorePending>,<commitPending>,<queue>,<notes>,<dirty>` emitted once per second while the selected slot owes its first paint, with the tag registered in the capture tier classifier (the first attempt's rows were silently dropped by tiering). Build SUCCESS, RAM1 `variables 96,192` unchanged; focused display 43/43. The captures supplied so far contain no `paint_gate` rows (they predate the tier fix), so the 4 s cause is **not claimed**. Next: one boot on this image, read the rows, then decide. [Evidence](../../openspec/changes/display-freeze-under-overdub-chain/evidence/REGRESSION.md)
 
 **2026-10-28 — boot first paint now precedes the whole-set restore sweep: 22–24 s → 15.2 s (window-bounded work) → ~12.0 s (sweep gated behind the selected slot), and the tree is byte-identical to the board image `cb30b042…` (DEC-182).** Evidence `session_20261028_211734.log` boot1: restore committed 7.87 s, first cache build 11.88 s, **first content 11.99 s** (104 notes, 359 by 12.49 s), and the sweep's first request only at 13.07 s. `enqueueRemainingLoopSlotRestoresFromSd()` (boot call **and** per-turn re-admission) now waits for the selected slot's cache to have notes, bounded at 3 s; gate state is in RAM2. Full native **3572 / 3565 passed / 7 skipped / 0 failed**; build SUCCESS, RAM1 `variables 96,192` unchanged (ITCM `390,968 + 2,248`). **Open:** ~4 s between restore commit (7.87 s) and first build (11.88 s) is still unexplained (owner-lane rotation vs the boot drain's last slots); not claimed. [Evidence](../../openspec/changes/display-freeze-under-overdub-chain/evidence/REGRESSION.md)
@@ -6071,7 +6075,26 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
-**Active regression scope (2026-10-28, owner-approved):** `openspec/changes/display-freeze-under-overdub-chain`.
+**Active scope (2026-10-29, owner-directed, DEC-193): playback is a regression at the DEC-191 image
+boundary, not a window-first rebuild.** Change:
+[`playback-regression-after-retained-start-fix`](../../openspec/changes/playback-regression-after-retained-start-fix/proposal.md).
+Pin last-good `852b15f7…` vs first-bad `0dbf08c1…`, resolve the **code-path vs card-state** fork before any
+patch, bisect only the DEC-191 deltas (cheap `overdubStartPreflight`, refusal-keyed retry park/wake,
+session-exit orphan settlement from the Start path and from the idle lane, implied deferred-owner order), then
+repair only the first missing producer/opportunity in the existing owner. Acceptance is exactly two behaviors:
+playback matches last-good for the pinned slot shape, and an unadmittable retained Start does not re-enter the
+~109 ms preparation body every main-loop turn. `display-freeze-under-overdub-chain` is **FROZEN**; its
+window-first section is parked, unauthorized, in
+[`docs/Plans/future_root_independent_playback.md`](../Plans/future_root_independent_playback.md). The current
+slice is documentation only: no firmware/test edit, build, upload, serial command or SD operation. Device work
+needs per-image upload authorization and a registered non-destructive stimulus; the pre-regression card backup
+`captures/sd-backup-20261029_001835/` is the body reference and must not be written over without explicit
+permission in the same session. DEC-192 whole-root recovery stays in the tree as eventual recovery only — it is
+not playback acceptance and the active fixture must not depend on it. The previous barrier/lost-root causal
+claims remain withdrawn.
+
+**Frozen packet (2026-10-28 scope, closed 2026-10-29 by DEC-193):** `openspec/changes/display-freeze-under-overdub-chain`.
+Historical display/restore/boot record only; no new tasks, no playback claim.
 **Latest checkpoint (DEC-183/184):** the boot first-paint hold is named and released. The DEC-183 row is reachable
 (its RAM2 rate-limit stamp is now initialised) and reported `drain=1, restore=1` with the boot restore queue
 `24 → 0`; `BootGate::focusSlotSettled` releases the title at the focus commit, so focus commit → first content is

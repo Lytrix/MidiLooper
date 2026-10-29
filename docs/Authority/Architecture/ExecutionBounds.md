@@ -96,6 +96,16 @@ See [filter execution evidence](../../../openspec/changes/runtime-working-set-ow
 
 ## Interval path
 
+### On-demand recovery of a missing playback root
+
+The Snapshot owner may request the existing `Loop::requestCommittedPassesRepublish` for one enabled
+playing rootless slot, only without an existing publication/capture/stop/claim owner (DEC-192).
+The request and construction occur on separate turns. Request setup allocates the existing pending
+box and enumerates pass/edit identities: it is **content-dependent**, not the constant/page-bounded
+row-22 construction quantum and not a physical timing guarantee. Subsequent construction uses the
+unchanged reserve, deadline and per-unit gates. No enumeration is added to the MIDI tick. Native
+liveness/output is verified; device admission-turn cost remains a qualification obligation.
+
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.
 
 `main.cpp::loop()` owns service order. Domain owners own the work they step.

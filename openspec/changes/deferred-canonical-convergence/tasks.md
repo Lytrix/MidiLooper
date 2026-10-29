@@ -60,7 +60,7 @@
       store-unchanged proof instead of discarding (`supersessionReady()` tolerance + `commitPreparedCaptureAndCompanionsSupersession`,
       `PendingStopAdmission::supersededCompanionExchange`). Fixture 1.13; mutation M10 reds it; flashed
       2026-10-28 (boot `crash=0`/`BOOT,load,ok`); **owner-confirmed on device** — the overdubbed notes are visible.
-- [ ] 6.1b Rebuild the **companion / note-edit representation** for a *prefix-denied* raw retire (the remaining case), not only the canonical bridge-base window. The display resolves overdubbed notes from the companion (`preparedCompanionHistory_` → `editPasses`), so a window rebuild is invisible to the owner. Verify: a device or native fixture shows a raw-retired overdub's overlapping note resolved into a companion edit pass after convergence.
+- [ ] 6.1b **(now the only content blocker; see DEC-186)** Rebuild the **companion / note-edit representation** for a *prefix-denied* raw retire and for a *revision-moved* inline candidate (DEC-186), not only the canonical bridge-base window. The display resolves overdubbed notes from the companion (`preparedCompanionHistory_` → `editPasses`), so a window rebuild is invisible to the owner. Verify: a device or native fixture shows a raw-retired overdub's overlapping note resolved into a companion edit pass after convergence.
 - [ ] 6.2 (needed only for 6.1b) Re-scope the obligation's target identity per the task 2.0 fallback: the companion-history commit advances `committedPassRevision()` (`publishPreparedCompanionHistory`), so the target must be the **raw-pass commit revision** (or an equivalent pass-inventory identity) and the obligation's own companion publication must not re-arm it. Verify: a fixture converges once, and the published companion does not create a second obligation.
 - [ ] 6.3 Re-capture on device after 6.1/6.2 with the same rapid-overdub gesture; verify every stop either derives its companion inline or converges afterwards, and that no later stop takes the "canonical base unavailable" shortcut.
       **Partial (2026-10-28):** `captures/session_20261028_112311.log` on `551cac47…` shows the early stops publishing
@@ -84,3 +84,19 @@
       row accounting and a deferred top-up. A start refused at a full stop FIFO is now retained and served.
       Fixtures `test_6_4_*` (RED→GREEN, M1–M5 red-proved); full native 3,549/7 skip/0 fail; build RAM1 unchanged; **flashed 2026-10-28** (HEX `sha256 ce6cdb22…`, boot `crash=0`/`BOOT,load,ok`); owner 20+ overdub run is the remaining gate.
       **Device 2026-10-28 `session_20261028_135050.log`: NOT accepted** -- DEC-173's paths were clean, but starts were refused by task-4.20 heap admission (28 KB tail, 0 publishes); 6.4 stays open on that second mechanism.
+      **Device 2026-10-28 `session_20261028_220707.log`: a THIRD mechanism, now identified (DEC-186).** No heap denial
+      in that run, yet one deferred job parked in `CompanionHistory` for ~32 s with 50,121 serviced no-progress grains and
+      two later Stops `retained (capacity): stop_job_pending ... phase=7`; the transport Stop then forced the raw-only
+      escape and the companions were never published (`edit` flat). Cause, reproduced on host: the horizon pins
+      `playbackRevision` at `begin`, a later commit moves it, `preparedCompanionHistorySourceCurrent()` goes false,
+      `begin` refuses the now-non-`Prewarmed` phase, and no bound covers a non-retargeted phase 7. The branch now names the
+      refusal once per job; 6.4 acceptance therefore needs this fix (owner choice among DEC-186 options a/b/c) before a
+      20+ overdub device run can prove liveness.
+      **2026-10-28 (DEC-186 option b, native-green; NOT flashed):** the owner chose retire-by-cause. `SourceRevision` is
+      now terminal for the inline companion attempt: the estimate family retires, the horizon re-syncs to `Prewarmed`, the
+      authoritative raw pass commits on the normal route, and the job owes `markDeferredConvergenceOwed(postCommitRevision)`
+      after that commit -- so 6.4's liveness half is fixed without a transport Stop and without re-pinning. Measured: 14-grain
+      bounded retirement (was unbounded), obligation target == `committedPassRevision()`, coalescing `3 -> 4` on one turn.
+      **This makes 6.1b the only remaining content gap:** the obligation still rebuilds the canonical representation, so the
+      companion/note-edit rows are not republished after the escape, and the same is true of the three pre-existing
+      raw-retire causes. 6.3's device gesture must therefore be run after 6.1b for the audibility/visibility clause.

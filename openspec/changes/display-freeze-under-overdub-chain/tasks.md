@@ -1,3 +1,10 @@
+> **Status 2026-10-29 — FROZEN (DEC-193).** Tasks 1–4 are the closed historical record of the display,
+> restore/parity and boot first-paint repairs. Section 5 is a rejected experiment record. Section 6 (window-first
+> playback) was removed from this change: its design is parked in
+> [`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md) and
+> the active playback work is [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/tasks.md).
+> A checked or unchecked box here is **not** a playback acceptance claim. Do not add tasks to this change.
+
 ## 1. Regression fixture and attribution (packet A)
 
 Owner, preconditions, invariants, non-goals and working-branch boundary: [design packet A](design.md#execution-packet-a--regression-observation-and-fixture). These are fixture/observation tasks, not permission to change production scheduling. No firmware repair task is generated while packet B is blocked.
@@ -45,3 +52,31 @@ Packet B is blocked until task 1.4 pins the exact repair. At that point add the 
 
 Remaining, not repaired here: absolute boot-to-content is still 7.0-9.4 s, dominated by when the boot restore queue starts
 (3.86-6.12 s on these boots) and the 366 ms `boot_commit`. Recorded as boot cost, not a defect.
+
+## 5. Historical whole-root recovery — REJECTED for playback acceptance
+
+**Closed historical record (kept checked as "work performed", not as acceptance).** The
+[earlier recovery packet](evidence/2026-10-29-PLAYBACK-REGRESSION.md) records the implemented experiment.
+These checkoffs establish only that work was performed; **none closes playback acceptance**. The replacement
+question moved to [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/tasks.md);
+the window-first direction is parked in
+[`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md).
+
+- [x] 5.1 Historical experiment: demonstrate missing-source RED, freeze the clock until whole-root recovery completes, then check emitted content. This tests eventual recovery only; its startup oracle is rejected.
+- [x] 5.2 Historical experiment: implement on-demand whole-root publication for playing rootless slots and remove speculative barrier/load-time patches. The code remains in the tree/installed image, but its dependency on whole-root readiness is rejected; it must be replaced under the window-first contract, not called accepted.
+- [x] 5.3 Historical checks: 500 focused cases and the incremental capture-serial build passed for that narrower experiment. They are not evidence for the new startup/continuous-playback gates. The later advancing-clock startup characterization fails (one behavioral failure, 248 other cases pass); the suite is not currently green.
+- [ ] 5.4 Device playback acceptance **FAILED**: owner captures `session_20261029_020455.log` and `session_20261029_021341.log` show/confirm playback waiting for root creation. The latter recovery sequence takes about 52.75 s. A later successful Start does not pass immediate-start acceptance. Do not archive or request another flash as though this repair were complete.
+
+## 6. Window-first replacement — MOVED OUT (DEC-193)
+
+Removed from this change on 2026-10-29. No window-first / root-independent playback task belongs to
+`display-freeze-under-overdub-chain`, and none is authorized.
+
+- The drafted requirements, readiness unknowns and the unstarted acceptance gates now live in
+  [`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md).
+  That note is a parked design record, not a task list and not authority.
+- The active playback question is
+  [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/tasks.md):
+  reproduce the last-good vs first-bad difference at the DEC-191 image boundary, repair only the named
+  boundary, and keep the 7.5 Hz stall fix. Reopen the parked direction only if that narrow repair is proven
+  impossible for a legitimate reason, with explicit owner approval.

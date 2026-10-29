@@ -2,7 +2,30 @@
 
 Preserve responsive, coherent piano-roll feedback while rapid overdub stops retire, without sacrificing accepted recording interactions or MIDI service.
 
+**Status 2026-10-29 (DEC-193):** this capability delta is frozen with the display packet. The first
+requirement below records the historical eventual-recovery behavior; it is **not** playback acceptance and is
+not the active contract. Active playback work is
+[`playback-regression-after-retained-start-fix`](../../../playback-regression-after-retained-start-fix/specs/playback-servicing-regression/spec.md).
+
 ## ADDED Requirements
+
+### Requirement: Playing passes-only slots have a source recovery producer
+
+*Historical / eventual-recovery only. Does not satisfy startup or continuous playback; see the status note above.*
+
+A playing enabled slot with committed content but no published playback root SHALL NOT remain
+permanently silent solely because no publication request exists. With no live capture, pending
+stop, publication or session-exit claim owner, the existing deferred Snapshot owner SHALL request
+on-demand publication from the committed inventory. Existing publication work SHALL NOT be restarted.
+No re-record, slot removal, bulk inactive-slot hydration or synchronous full gather on the MIDI tick
+is required or permitted by this recovery.
+
+#### Scenario: Multiple playing restored slots lack roots
+
+- **WHEN** enabled active or layered slots on playing Tracks have committed passes but no root or publisher
+- **THEN** their existing Snapshot owner requests and completes source recovery
+- **AND** playback emits their committed MIDI identities through the existing readers
+- **AND** disabled or stopped slots do not acquire a recovery request merely because they are loaded
 
 ### Requirement: Overdub chains preserve display service
 

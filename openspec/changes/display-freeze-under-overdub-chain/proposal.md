@@ -1,3 +1,11 @@
+> **Status 2026-10-29 — FROZEN as a historical packet (DEC-193).**
+> Tasks 1–4 are the closed record of the display, restore/parity and boot first-paint repairs. Sections 5–6
+> were split out: silent playback is now investigated as an **image-boundary regression** in
+> [`playback-regression-after-retained-start-fix`](../playback-regression-after-retained-start-fix/proposal.md),
+> and the window-first/root-independent material is parked (not authorized) in
+> [`docs/Plans/future_root_independent_playback.md`](../../../docs/Plans/future_root_independent_playback.md).
+> No playback acceptance is claimed or closed here. Do not add tasks to this change; open a new one.
+
 ## Why
 
 The owner reports that the display freezes after several overdubs on the image that repaired stop throughput. Restore display responsiveness without rolling back the working stop lane or guessing from transition-only telemetry.

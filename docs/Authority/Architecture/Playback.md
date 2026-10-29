@@ -82,6 +82,14 @@ Playback **does not** own storage or display representations.
 
 ## Build policy
 
+An enabled playing passes-only slot with no selected root and no existing publication/capture/stop
+or session-exit claim owner can request its missing source on the existing deferred Snapshot lane.
+Track selects the active or layered sounding slot; Loop's existing on-demand committed-pass publisher
+produces the root. No boot-wide hydration, stale-root replacement or MIDI-tick pass gather is added.
+The request-only turn can allocate/enumerate pass/edit identities; construction keeps its existing
+quantum. Native recovery is verified; hardware timing/recovery remains pending. See
+[DEC-192 — rootless sounding-slot recovery](../../DECISION_LOG.md#dec-192--rootless-sounding-slot-recovery-belongs-to-the-deferred-snapshot-owner).
+
 - **No** `LoopPlaybackRuntime` allocation on first tick after transport start (prewarm when heap allows).
 - Rebuild playback order off hot path when `invalidateCaches()` or pass revision changes.
 - NOTE_EDIT: `sessionPreviewRevision_` gates preview refresh. For a current published root, the playback interval remains the committed base and only changed/hidden/deleted session identities overlay it; hidden/deleted active soundings close by identity. A stale-root session keeps its materialized session projection. Neither path reads display notes as playback authority or rematerializes another whole-loop copy on the current-root path.

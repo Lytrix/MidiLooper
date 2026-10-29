@@ -1,3 +1,22 @@
+**2026-10-29 — playback reopened as an image-boundary regression; display packet frozen (DEC-193; docs only).**
+Owner direction: playback worked before the retained-Start fix and stopped after it, so the question is
+"what changed at the DEC-191 boundary", not "which new playback architecture". Boundary measured from
+existing captures: `852b15f7…` has 92 `playback_read` rows and 41/41 painted seconds with note-ons;
+`0dbf08c1…` has 0 `playback_read` rows and 68/72 seconds at `out=0`; the symptom survived the idle-lane
+settlement removal (`3e79bd1b…`) and the reported full revert (`c06f2e43…`). `display-freeze-under-overdub-chain`
+is FROZEN (tasks 1–4 historical, section 5 rejected, section 6 removed); the window-first design is parked in
+`docs/Plans/future_root_independent_playback.md`; active change is `playback-regression-after-retained-start-fix`
+with two acceptance behaviors (playback matches last-good; retained-Start refusal stays cheap). Open fork:
+code path vs persisted card body — the pre-regression backup `captures/sd-backup-20261029_001835/` is the
+reference. No firmware/test/build/upload/SD action; no acceptance closed.
+
+**2026-10-29 — silent-playback recovery flashed, owner acceptance pending (DEC-192).**
+Enabled playing passes-only slots now request their missing playback source through the existing
+Snapshot owner, including layered/background slots. Exact 288-event/two-cycle oracle and 500 focused
+native cases pass; mutation proof and independent review pass; RAM1 unchanged. Image `c4841c91…`
+is FLASHED (CLI 2.3, Programming/Booting, exit 0; USB Teensy MIDI `16C0:0489`). Owner requested
+flash only and will test. Existing saved-set playback acceptance remains open; no re-record or SD changes.
+
 **2026-10-28 — early-overdub display loss fixed and accepted on device (DEC-172 corrections 3-4).**
 Two routes closed the gap: a Ready companion derivation is published losslessly across a moved
 `playbackRevision` (correction 3), and a stop that kept its companion path on a **window** denial may take that
