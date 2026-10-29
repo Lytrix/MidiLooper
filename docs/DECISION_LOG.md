@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-201](#dec-201--the-dec-194-rootless-first-window-red-was-three-fixture-preconditions-the-lane-serves-it) | 2026-10-29 | The DEC-194 rootless-first-window RED was three fixture preconditions; the lane serves it | Accepted — fixture corrected, behaviour unchanged |
 | [DEC-200](#dec-200--one-playback-window-policy-and-one-readiness-rule-length-is-a-clamp-not-a-branch) | 2026-10-29 | One playback window policy and one readiness rule: length is a clamp, not a branch | Accepted — first slice landed; keystone named |
 | [DEC-199](#dec-199--a-stale-published-root-is-not-a-playback-content-authority-the-committed-passes-are) | 2026-10-29 | A stale published root is not a playback content authority; the committed passes are | Accepted — native + build green; device open |
 | [DEC-197](#dec-197--the-merged-playback-fallback-serves-a-short-loop-as-one-whole-loop-window-not-a-frozen-two-bar-slice) | 2026-10-29 | The merged playback fallback serves a short loop as one whole-loop window, not a frozen two-bar slice | Accepted — native + build green; not flashed |
@@ -11342,3 +11343,58 @@ than the window.
 
 DEC-194 (rootless first window -- the keystone's blocker), DEC-197 (the frozen two-bar fallback this direction
 subsumes), DEC-199 (source by currency, same day), DEC-181/182 (display window bounds, untouched).
+
+## DEC-201 — The DEC-194 rootless-first-window RED was three fixture preconditions; the lane serves it
+
+**Date:** 2026-10-29
+**Owner:** the fixture `test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root`
+(`test/test_runtime_working_set_ownership`). No production change.
+**Status:** Accepted; the fixture is green, the full native suite has **one** remaining failure (the DEC-193 RED).
+
+### What the RED actually was
+
+Earlier in the day this fixture was read as a production defect: the gate answered `gate_no_role`, the role named
+`role_promise_pending`, and a later note suspected (correctly) that the term was transient and the standing cause was
+somewhere after it. Turn-by-turn instrumentation at the demand (`[d194]`/`[d194req]`, temporary, removed) settled it:
+
+| turn | request | clock epoch | retained request | gate | dispatch |
+|---|---|---|---|---|---|
+| 0 | `DeferredSourceQualification` | **0** | `active=1 clockEpoch=0 deadlineTick=0` | `gate_unqualified` | `dispatch_no_holder` |
+| 1..4095 | identical | 0 | identical | `gate_unqualified` | `dispatch_no_holder` |
+
+1. **The clock was never qualified.** The fixture advanced `nativePlaybackDeadlineClock.tick` but never re-stamped
+   `epoch`, which a neighbouring fixture had left at 0. `retainRefusedPlaybackViewRequest` only stamps a deadline and
+   epoch when `clock.epoch != 0`, so every staged demand carried `clockEpoch = 0` and the gate refused it
+   `Unqualified` -- by name, correctly. 4096 turns of a self-consistent refusal.
+2. **No adoption turn.** With a qualified clock the lane qualifies the retained pass source, admits, and reports
+   `build_complete` on turn 2; but the completed window stays `ready`, never `current`, so
+   `publishedPlaybackWindowForSlot` stays false. Production adopts the prepared successor
+   (`adoptPreparedPlaybackWindow`, the turn the 3.2 fixture already models); the fixture never ran it.
+3. **The diagnostic counted progress as a block.** It recorded *any* non-`None` role term as "the first blocked term",
+   and `role_build_active` (a build in progress) is normal. Only the non-progress terms are standing refusals.
+
+With the three corrected -- qualified stamp per turn, the adoption turn, `BuildActive` treated as progress -- the
+production lane **serves the first window from the committed passes with no published root**, which is exactly the
+claim. No production line changed.
+
+### Consequence for DEC-200's keystone
+
+The keystone (`requestCommittedPlaybackWindowForSlot` refusing every loop <= 16 bars) was held back because the lane
+"cannot build its first window" for the rootless playing shape. That is no longer true: the remaining RED is
+**DEC-193**, a different shape -- an admitted promise whose build completes **late**, latching
+`completedPromisePendingJudgement`, whose only clearer (`revalidateCompletedPlaybackWindow`) still has **no production
+caller**. That is a real gap, not a fixture defect, and it is the last blocker for the keystone and for the interval
+slice.
+
+### Verification
+
+- Full native **3608 cases, 1 failed, 7 skipped, 3599 succeeded** -- the single failure is
+  `test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, ITCM `code 391,992 + padding 1,224`.
+- No production file touched; no test assertion weakened -- the fixture still requires a serving window, the committed
+  revision on it, and no whole-root publication.
+
+### Related
+
+DEC-194 (the claim), DEC-193 (the remaining RED, now precisely the late-completion judge), DEC-200 (the keystone this
+unblocks), DEC-199 (source by currency).

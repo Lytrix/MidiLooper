@@ -8871,6 +8871,18 @@ void test_an_undo_disabled_pass_leaves_the_playback_window_before_the_root_rewri
 /// publication yet. The device's only producer today is the ~38 s root republish; the claim here is that the
 /// **committed passes** are enough for the first bounded window, exactly as they already are for the display's first
 /// frame. No fixture-side retention: the production demand itself must establish the source.
+///
+/// **DEC-201 — three fixture preconditions were missing, and together they were the RED.** Measured turn by turn:
+///  1. the deadline clock was never re-stamped (`epoch` left at 0 by a neighbour), so every staged demand retained
+///     `clockEpoch = 0` / `deadlineTick = 0` and the gate answered `gate_unqualified` -> `dispatch_no_holder` on every
+///     turn, for all 4096. Enforced admission requires a **qualified** stamp; with one the lane qualifies, admits,
+///     builds and reports `build_complete` in three turns;
+///  2. the fixture never ran the adoption turn, so the completed window stayed `ready` and was never `current`
+///     (production adopts the prepared successor -- `adoptPreparedPlaybackWindow`, as the 3.2 fixture does);
+///  3. the diagnostic treated **any** non-`None` role term as a block, including `role_build_active`, which is a build
+///     in progress. Only the non-progress terms count.
+/// With those three the production lane serves the first window from the committed passes, which is what the claim
+/// says. The earlier `role_promise_pending` reading was the transient the WIP suspected, not a standing cause.
 void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root() {
   Track& track = prepareWindowOwnerSlot(0);
   Loop& loop = track.getLoop(0);
@@ -8888,14 +8900,22 @@ void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root(
   // A late completion is judged one loop after its deadline (`revalidateCompletedPlaybackWindow`), so the window must
   // span at least that boundary.
   for (unsigned turn = 0; turn < 4096 && !served; ++turn) {
-    nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
+    // A **qualified** stamp on every turn: epoch 0 means "unqualified", and enforced admission refuses an unqualified
+    // demand by name (`gate_unqualified`) -- leaving it at a neighbour's 0 made this fixture spin for 4096 turns.
+    nativePlaybackDeadlineClock = {64ull * (turn + 1u), 1};
     const uint32_t phase = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick % loop.loopLengthTicks);
     (void)track.requestCommittedPlaybackWindowForSlot(0, phase, nativePlaybackDeadlineClock);
     (void)track.stepPlaybackViewMaintenance(phase, nullptr, false, nativePlaybackDeadlineClock);
     (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    // The production adoption turn: a completed build becomes the ready successor and is adopted as `current`.
+    if (!track.publishedPlaybackWindowForSlot(0, identity, coverage)) {
+      (void)track.adoptPreparedPlaybackWindow(0);
+    }
     const PlaybackCoverageRoleRefusal role = rt->coverageRoleRefusal(false);
-    if (role != PlaybackCoverageRoleRefusal::None &&
-        firstBlockedTerm == static_cast<uint8_t>(PlaybackCoverageRoleRefusal::None)) {
+    // `role_build_active` is **progress**, not a block: a build is running. Only the other terms are standing refusals.
+    const bool roleBlocked = role != PlaybackCoverageRoleRefusal::None &&
+                             role != PlaybackCoverageRoleRefusal::BuildActive;
+    if (roleBlocked && firstBlockedTerm == static_cast<uint8_t>(PlaybackCoverageRoleRefusal::None)) {
       firstBlockedTerm = static_cast<uint8_t>(role);
     }
     if (role == PlaybackCoverageRoleRefusal::None && firstBlockedTerm != 0 &&
