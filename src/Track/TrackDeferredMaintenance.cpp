@@ -1062,19 +1062,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       displayTrack.getActiveLoop().isPlaybackSessionExitPublicationGap() &&
       !displayTrack.getActiveLoop().privateSourceOwedForSeal();
   const bool deferBackgroundVisualSource = displayGapSourceOwed && &displayTrack != this;
-  // **DEC-194 — a playing rootless slot must sound from its committed passes without waiting for a root.** The merged
-  // window is otherwise rebuilt only when the playback order is dirtied (a root, a commit, a seek). A slot that built
-  // an empty order once never re-attempts, so it stays silent until something unrelated dirties it: device
-  // `session_20261029_094446` shows track 5 first sounding at 189 s while the other tracks started at 136-150 s.
-  // Re-attempt on the deferred lane while no stream exists. The rebuild is bounded by the playhead's two-bar window and
-  // carries its own reuse check, so a slot that already has a stream pays one predicate.
-  if (isPlaying() && loopsAllocated()) {
-    Loop& soundingLoop = getActiveLoop();
-    if (!soundingLoop.publishedSnapshotIsCurrent() && soundingLoop.hasCommittedPasses() &&
-        !isPlaybackMergedMidiEventsReadyForSlot(activeLoopIndex)) {
-      rebuildPlaybackOrder();
-    }
-  }
+  // DEC-194: the passes-backed stream is built on demand by the playback path (`rebuildPlaybackOrder`), which is
+  // where a missing stream is noticed. An unconditional re-attempt from this lane was tried and **removed**: it ran a
+  // multi-bar gather every idle turn for every playing track without a stream and starved the boot restore sweep
+  // (device 2026-10-29: 4-5 slots committed in 34 s, versus 26 in 17 s on the 02:13 image).
   // DEC-191: the orphan settlement is deliberately NOT run from this lane. It ran here unconditionally and the
   // device regressed (`session_20261029_011304.log`): a deferred Record stop parked at `CanonicalPrefix` with
   // `pub=1`, `playback_read` zero and the panel holding `why=hold_gap` -- i.e. the settlement released a
