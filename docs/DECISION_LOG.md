@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-200](#dec-200--one-playback-window-policy-and-one-readiness-rule-length-is-a-clamp-not-a-branch) | 2026-10-29 | One playback window policy and one readiness rule: length is a clamp, not a branch | Accepted — first slice landed; keystone named |
+| [DEC-199](#dec-199--a-stale-published-root-is-not-a-playback-content-authority-the-committed-passes-are) | 2026-10-29 | A stale published root is not a playback content authority; the committed passes are | Accepted — native + build green; device open |
 | [DEC-197](#dec-197--the-merged-playback-fallback-serves-a-short-loop-as-one-whole-loop-window-not-a-frozen-two-bar-slice) | 2026-10-29 | The merged playback fallback serves a short loop as one whole-loop window, not a frozen two-bar slice | Accepted — native + build green; not flashed |
 | [DEC-196](#dec-196--the-boot-hold-ends-at-the-playback-set-not-the-focused-slot-and-the-boot-drain-keeps-the-playback-set-ordered-first) | 2026-10-29 | The boot hold ends at the playback set, not the focused slot, and the boot drain keeps the playback set ordered first | Accepted — device-verified (`bea5a99b…`) |
 | [DEC-195](#dec-195--a-deferred-body-write-waits-bounded-for-a-publication-owed-for-the-current-committed-state-and-a-rootless-body-is-re-persisted-once-its-root-settles) | 2026-10-29 | A deferred body write waits (bounded) for a publication owed for the current committed state; a rootless body is re-persisted once its root settles | Accepted — native + build green; not flashed |
@@ -11248,3 +11250,76 @@ now agree by construction.
   (floor 840, 320 B headroom), locals 34,880.
 - **Device acceptance open:** the same 31-bar slot, undo while playing, must change the emitted content inside the current
   loop without waiting for `snapshot_unit,kind=publish`. No upload, no SD operation, no record/clear.
+
+## DEC-200 — One playback window policy and one readiness rule: length is a clamp, not a branch
+
+**Date:** 2026-10-29
+**Owner:** `Track::isPlaybackMergedMidiEventsReadyForSlot` (`src/Track/TrackPlaybackWindowBuild.cpp`); the direction
+applies to the whole playback lane.
+**Status:** Accepted; first slice landed, native + build green; the keystone below is named and deliberately not
+removed yet.
+
+### Direction (owner, 2026-10-29)
+
+"length should not be the discriminator, there should only be one DRY logic to handle playback. short and whole loop
+logic should be removed everywhere in the codebase." This supersedes DEC-197's *window* clause (a short loop is one
+whole-loop window): a short loop is not a special window, it is the same window clamped by the loop.
+
+### Landed in this slice
+
+`isPlaybackMergedMidiEventsReadyForSlot` answered one question two ways: the long-loop branch required the builder's
+span **and** a staleness term, the short-loop branch accepted any span and no staleness term. It is now one predicate --
+same revision, a real source (current root **or** committed passes), the builder's window span, order built -- with
+length present only inside the clamp (`min(2 bars, loop)`), exactly as in `ensurePlaybackMergedMidiEventsBuilt`.
+
+Measured while getting there: the first attempt added `!runtime->isStale(playbackRevision, playbackGeneration)` to the
+unified form and failed three fixtures (two rootless-provisioning cases, one undo-window case). A rootless slot
+provisioned from its passes is legitimately "stale" by that term and still serves from its window -- DEC-194's original
+point. Removing **the term**, not the unification, is the repair; with it removed the two provisioning fixtures and the
+undo fixture pass.
+
+### The keystone — named, not changed
+
+`Track::requestCommittedPlaybackWindowForSlot` opens with:
+
+```cpp
+const bool demoted = loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+if (!demoted) return PlaybackViewRequestResult::NotServable;   // every loop <= 16 bars
+```
+
+The rolling window lane therefore **does not exist** for any loop at or below 16 bars; those slots are served by the
+legacy merged/bridge fallback instead. That single line is the "short vs whole loop" split the owner wants gone, and it
+is also why the DEC-197 defect was reachable: a 3..16-bar slot fell back to a merged window while the windowed lane --
+the only path that moves its window -- was refused by construction.
+
+It is **not** flipped here: the lane's first-window build for the rootless playing shape is the DEC-194 RED
+(`role_promise_pending`). Routing every short loop into a lane that cannot yet build its first window would replace a
+working fallback with silence. Order is therefore: DEC-194 first window -> flip this line -> delete the fallbacks.
+
+### Remaining length branches (census 2026-10-29)
+
+| owner | sites | what length still decides | disposition |
+|---|---|---|---|
+| `requestCommittedPlaybackWindowForSlot` | 1 | whether the window lane runs at all | **keystone**; flip after DEC-194 |
+| `playbackWindowInterval` + 4 call sites (overlay demand, preview, committed request, note-edit preview) | 5 | whole-loop vs two-bar interval | collapses to the clamp once the keystone lands; the function then keeps one shape and loses its `demoted` argument |
+| demotion / publication / stopped-oracle / rolling gates in `TrackPlaybackWindowBuild` | 10 | whole-take view reservation, demotion, root publication shape | needs a capacity input (budget, not bars); separate slice |
+| `Loop::fullTakePlaybackViewAdmissible` + `TrackOverdubLifecycle` | 2 | whole-take view reservation | same slice as above |
+| `Loop::shouldAvoidFullVisualRebuild` definition (16-bar threshold) | 1 | the threshold itself | replaced by the capacity input |
+| `LoopPendingNoteChange` overdub source window | 2 | source window length | own slice |
+| display (`kMaxDetailedWindowBars` clamp, piano-roll window, cache) | 17 | display window | display contract, not playback; DEC-184/188 depend on it -- last |
+
+`isFullLoopMergedPlaybackWindow` and its consumers are **not** length branches to delete: they are coverage predicates
+("does this window cover the whole loop"), which stay correct under one policy and simply become false for loops longer
+than the window.
+
+### Verification
+
+- `test_runtime_working_set_ownership` 258 cases, **2 failed** -- only the pre-existing DEC-193 and DEC-194 REDs.
+- Full native **3608 cases, 2 failed, 7 skipped, 3598 succeeded** -- the same two REDs.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, ITCM `code 391,992 + padding 1,224` (floor 840).
+- No test weakened, skipped or edited for this slice.
+
+### Related
+
+DEC-194 (rootless first window -- the keystone's blocker), DEC-197 (the frozen two-bar fallback this direction
+subsumes), DEC-199 (source by currency, same day), DEC-181/182 (display window bounds, untouched).
