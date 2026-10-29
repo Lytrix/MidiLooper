@@ -313,3 +313,37 @@ re-attempts `rebuildPlaybackOrder()`. The rebuild is bounded by the playhead's t
 check, so a slot that already has a stream pays one predicate.
 
 Suite unchanged (254 / 2 failed / 251 pass); target build SUCCESS. Device verification pending.
+
+## 2026-10-29 — the display dependency, and the retired "rootless ⇒ empty" contract
+
+Device `session_20261029_100846`: t4/s0 is a 2-bar committed slot; `disp_turn n=0` until the piano roll resolved,
+zero `MO,5` rows. Playback's merged fallback required a **prior retained source**, and retention was only established
+by the window-lane demand — which that track never got. The display resolved passes independently, so notes appeared
+and playback then started: the dependency the owner reported.
+
+Repair: the fallback **establishes the retained source it is about to read**, for that slot and revision only
+(`retainPlaybackSourceForSlot`, pass/chunk pins, idempotent for a repeat attempt). `playbackWindowSourceIsCurrentForSlot`
+remains the fast path.
+
+Contract retired (owner-approved): *"a hand-committed/rootless slot has no published root, therefore the merged window
+stays empty"*. New contract: **a committed pass-backed slot may provision its playback source directly from passes;
+root availability affects source choice/performance, not whether a window can exist.** The two `s4b_6` fixtures now
+assert the positive form (merged window ready, readiness `OwesBuild`) instead of emptiness. The paged-lane negative
+control remains the over-L refusal fixture.
+
+### `s4b_1` — RED, ordering risk under investigation (do not update its assertion)
+
+`test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits` now fails at
+*"the queued switch must not commit while the predecessor finalizes"*. Read so far:
+
+- `SlotStateMachine::shouldCommitPendingSlotSwitch` decides **quantization only** (`NextGrid` grid tick, `LoopEnd`
+  boundary) — it does not read finalization;
+- the commit site in `TrackManager::updateAllTracks` (`TrackManagerTransportTick.cpp:229`) then refuses on missing
+  committed passes, missing launch readiness for **demoted** targets, and missing inbound occupancy.
+
+So the predecessor-finalization hold must live on one of those paths (most likely the provisioning/occupancy gate, or
+`queuePlayingSlotSwitch`). The open question is whether early provisioning of the **target** let the occupancy gate
+pass sooner, i.e. whether this is preparation timing (acceptable) or adoption timing (not acceptable). Until that is
+named, the assertion stays as the safe contract.
+
+State: suite 254 / **3 failed** (this RED + the two window-lane REDs) / 250 pass; build SUCCESS, RAM1 unchanged.

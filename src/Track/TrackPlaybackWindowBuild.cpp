@@ -733,9 +733,17 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     } else if (const uint8_t committedSlot = playbackRebuildSlotIndex(track, loop);
                committedSlot < Config::MAX_LOOPS_PER_TRACK && loop.hasCommittedPasses() &&
                !loop.publishedSnapshotIsCurrent() &&
-               track.playbackWindowSourceIsCurrentForSlot(committedSlot) &&
                !runtime.pagedActive &&
-               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
+               runtime.pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::None &&
+               // **DEC-194 — the fallback establishes the source it is about to read**, for this slot and revision
+               // only, instead of requiring another lane to have retained it first. That prior requirement made
+               // playback depend on the display having resolved the same slot (`session_20261029_100846`: t4/s0, a
+               // 2-bar committed slot, silent with `n=0` until the piano roll filled). Retention is pass/chunk pins,
+               // idempotent for a repeat attempt, and bounded by the inventory.
+               (track.playbackWindowSourceIsCurrentForSlot(committedSlot) ||
+                track.retainPlaybackSourceForSlot(committedSlot, loop.playbackRevision,
+                                                  track.getPlaybackGeneration()) ==
+                    Track::PlaybackSourceRetainResult::Admitted)) {
       // **DEC-194 — the authoritative committed passes serve the window; the root is not a precondition.** Only when the
       // paged lane does not own this interval: an over-capacity interval is the pager's answer (refused by name), never
       // a reason to serve it from a pass copy. The copy is bounded by the window above, never by the pass inventory.

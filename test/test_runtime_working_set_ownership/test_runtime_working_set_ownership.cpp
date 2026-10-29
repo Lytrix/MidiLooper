@@ -3135,15 +3135,18 @@ void assert_s4b_6_a_switch_provisions_off_clock(uint32_t lengthTicks) {
   // tripwire on the harness, not on the firmware -- if a fixture ever publishes a root, it fails and the
   // assertion moves to the ready side. Discharge path for the missing evidence: the published-root fixture
   // owed under S4b.6's demoted-target item (the windowed publication lane, S4c/F).
-  TEST_ASSERT_FALSE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
-                            "a hand-committed slot has no published root, so the merged window stays empty");
-  // Task 3.5 re-point: readiness no longer reads that buffer. No window was published for this slot, and with no
-  // published root no build could have gathered one -- so readiness names the **source** as the holder rather than
-  // relying on "the merged window is empty".
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+  // **DEC-194 (contract retired 2026-10-29):** a committed pass-backed slot provisions its playback source from the
+  // passes. A root affects the *source choice*, not whether a playback window can exist. The old assertion here pinned
+  // "no root, therefore empty", which is the dependency this change removes. The paged lane's own eligibility stays
+  // pinned by the over-L refusal fixture, which is the negative control for this rule.
+  TEST_ASSERT_TRUE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
+                           "a rootless committed slot is served from its passes, not left empty");
+  // DEC-194: the fallback established the retained committed source, so readiness now names the **build** as the
+  // holder. The source is no longer the missing prerequisite; a root is not either.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild),
                     static_cast<int>(track.playbackWindowReadinessForSlot(kTarget)));
-  TEST_ASSERT_EQUAL_STRING("published_source", Track::playbackWindowReadinessHolder(
-                                                   track.playbackWindowReadinessForSlot(kTarget)));
+  TEST_ASSERT_EQUAL_STRING("window_build_owner", Track::playbackWindowReadinessHolder(
+                                                     track.playbackWindowReadinessForSlot(kTarget)));
   for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
        ++round) {
     const uint32_t base = clockManager.getCurrentTick();
