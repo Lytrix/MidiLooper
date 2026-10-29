@@ -155,6 +155,14 @@ SECTIONS
 		   A future change that needs that TU's literals back in DTCM must remove this row and re-base
 		   `scripts/ram1_budget.json`, not merely edit a comment. */
 		*TrackDeferredMaintenance.cpp.o(.rodata.str* .rodata.*.str*)
+		/* DEC-186 (2026-10-28): the companion-preparation refusal names are ~450 B of new read-only
+		   literals in `LoopPreparedCompanionHistory.cpp`, and they cross the same
+		   `_VectorsRam`/periodictable align edge as the entries above: `variables` 96,192 -> 100,288
+		   (+4,096 B, ITCM `code` byte-identical) measured by building without this line. The TU owns no
+		   mutable state (the horizon lives in externally allocated `Loop`), so only literals move and
+		   invariant 36 holds. Same whole-TU caveat as the row above: a future change that needs this
+		   TU's literals back in DTCM must remove this row and re-base `scripts/ram1_budget.json`. */
+		*LoopPreparedCompanionHistory.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

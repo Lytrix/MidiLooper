@@ -1042,7 +1042,46 @@ SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t 
   emitCapPrintf("#CAP,%lu,MI,%c,%u,%u,%u,%u\r\n", (unsigned long)micros(), src, type, ch, d1, d2);
 }
 
+// DEC-187: un-sheddable audible counter for the `#PAINT_BEAT` row. The `MO` rows live in the capture ring,
+// which shed 71,895 records in `session_20261028_231216.log`; "no note-ons after 139 s" was therefore
+// unreadable as "silent". These two words are RAM2 (`DMAMEM`, NOLOAD -> the reader treats a wrapped value as
+// a fresh count rather than trusting an initialiser).
+#if defined(__IMXRT1062__)
+DMAMEM uint32_t gMidiOutNoteOnCount;
+DMAMEM uint8_t gMidiOutLastNote;
+#else
+uint32_t gMidiOutNoteOnCount;
+uint8_t gMidiOutLastNote;
+#endif
+
+SC_MEM_ATTR void stopTraceRow(uint32_t nowMs, bool stopPending, uint8_t stopMode, uint8_t stopPhase,
+                              uint32_t stopGeneration, uint64_t orderGrains, uint64_t canonicalGrains,
+                              uint64_t rankedGrains, uint64_t undoGrains, bool publishPending,
+                              uint32_t publishQueued, uint32_t publishApplied, bool publishInFlight,
+                              bool hasCommittedPasses, uint32_t loopLengthTicks) {
+  Serial.printf_P(
+      PSTR("#STOP_TRACE,%lu,stop=%u,mode=%u,phase=%u,gen=%lu,order=%llu,canon=%llu,ranked=%llu,undo=%llu,"
+           "pub=%u,q=%lu,a=%lu,if=%u,passes=%u,len=%lu\r\n"),
+      static_cast<unsigned long>(nowMs), stopPending ? 1u : 0u,
+      static_cast<unsigned>(stopMode), static_cast<unsigned>(stopPhase),
+      static_cast<unsigned long>(stopGeneration),
+      static_cast<unsigned long long>(orderGrains),
+      static_cast<unsigned long long>(canonicalGrains),
+      static_cast<unsigned long long>(rankedGrains),
+      static_cast<unsigned long long>(undoGrains), publishPending ? 1u : 0u,
+      static_cast<unsigned long>(publishQueued), static_cast<unsigned long>(publishApplied),
+      publishInFlight ? 1u : 0u, hasCommittedPasses ? 1u : 0u,
+      static_cast<unsigned long>(loopLengthTicks));
+}
+
+SC_MEM_ATTR uint32_t midiOutNoteOnCount() { return gMidiOutNoteOnCount; }
+SC_MEM_ATTR uint8_t midiOutLastNote() { return gMidiOutLastNote; }
+
 SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2, uint32_t tick) {
+  if ((type & 0xF0u) == 0x90u && d2 != 0u) {
+    ++gMidiOutNoteOnCount;
+    gMidiOutLastNote = d1;
+  }
   if (shouldSampleMidiOutCapture()) {
     return;
   }

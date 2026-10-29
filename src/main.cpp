@@ -261,6 +261,8 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
 DMAMEM uint32_t gBootSweepDueMs;
 DMAMEM uint8_t gBootSweepEnqueued;
 DMAMEM uint32_t gPaintGateLastMs;
+// DEC-189: `#STOP_TRACE` rate stamp. RAM2 because a new plain static costs DTCM and the budget gate refuses it.
+DMAMEM uint32_t gStopTraceLastMs;
 #else
 uint32_t gBootSweepDueMs;
 uint8_t gBootSweepEnqueued;
@@ -805,6 +807,21 @@ FLASHMEM void setup() {
 #if defined(SESSION_CAPTURE)
   emitBootResetCapture(hadCrashReport);
 #endif
+  // DEC-190: after a fault, park **only** the slot whose restore/first paint was in flight. The file is not
+  // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal
+  // reboot leaves no crash report, so a stale breadcrumb is ignored and cleared.
+  StorageManagerInternal::resetRestoreFaultSkips();
+  if (hadCrashReport) {
+    uint8_t faultTrack = 0;
+    uint8_t faultSlot = 0;
+    if (StorageManagerInternal::takeFaultedLoopSlot(faultTrack, faultSlot)) {
+      (void)StorageManagerInternal::markRestoreFaultSkip(faultTrack, faultSlot);
+      Serial.printf_P(PSTR("[StorageManager] Fault during slot restore: track=%u slot=%u parked for this boot\r\n"),
+                      static_cast<unsigned>(faultTrack), static_cast<unsigned>(faultSlot));
+    }
+  } else {
+    StorageManagerInternal::clearLoopSlotRestoreBreadcrumb();
+  }
 
   // Initialise the global MIDI event pool now that the Teensy core has completed
   // PSRAM hardware initialisation. This must happen before any Track/Loop allocations.
@@ -1086,6 +1103,23 @@ void loop() {
                       census.undoEntries, census.internalBytes, census.editPassBytes,
                       census.undoIdBytes, census.externalBytes);
       HeapPeakTrace::emitPending(6);
+    }
+    // DEC-189: one direct-serial row per second while a stop job or a publication is pending. `#CAP` rows for
+      // both lanes live in the ring, which a busy run sheds; `phase`/`a`/`q` staying flat across rows is the
+      // proof that a lane is not advancing.
+    {
+      constexpr uint32_t kStopTraceIntervalMs = 1000;
+      const Track::StallCensus stall = trackManager.getSelectedTrack().stallCensus();
+      // `.bss.dma` is NOLOAD: a zero stamp means "not armed yet", and a garbage stamp at worst delays one row.
+      if ((stall.stopPending || stall.publishPending) &&
+          (gStopTraceLastMs == 0 ||
+           static_cast<uint32_t>(now - gStopTraceLastMs) >= kStopTraceIntervalMs)) {
+        gStopTraceLastMs = now;
+        DebugSessionCapture::stopTraceRow(now, stall.stopPending, stall.stopMode, stall.stopPhase,
+            stall.stopGeneration, stall.orderGrains, stall.canonicalGrains, stall.rankedGrains,
+            stall.undoGrains, stall.publishPending, stall.publishQueued, stall.publishApplied,
+            stall.publishInFlight, stall.hasCommittedPasses, stall.loopLengthTicks);
+      }
     }
   }
 #endif

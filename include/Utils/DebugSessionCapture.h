@@ -163,6 +163,19 @@ void flushCaptureBuffer(size_t maxRecords = 64);
 SC_MEM_ATTR void sessionHeader();
 SC_MEM_ATTR void midiIn(char src, uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2);
 SC_MEM_ATTR void midiOut(uint8_t type, uint8_t ch, uint8_t d1, uint8_t d2, uint32_t tick);
+/// DEC-187: audible output since boot (note-ons only) and the last pitch, sampled by `#PAINT_BEAT` so
+/// "the panel looked right but nothing was heard" is measurable without the capture ring. RAM2 words.
+/// DEC-189: one direct-serial row naming the two lanes that can strand a publication. Written to USB like
+/// `#DMA_XFER`/`#PAINT_BEAT` so a busy capture ring cannot hide it; emitted at most once a second by the
+/// diagnostics turn while a stop job or a publication is pending.
+SC_MEM_ATTR void stopTraceRow(uint32_t nowMs, bool stopPending, uint8_t stopMode, uint8_t stopPhase,
+                              uint32_t stopGeneration, uint64_t orderGrains, uint64_t canonicalGrains,
+                              uint64_t rankedGrains, uint64_t undoGrains, bool publishPending,
+                              uint32_t publishQueued, uint32_t publishApplied, bool publishInFlight,
+                              bool hasCommittedPasses, uint32_t loopLengthTicks);
+
+SC_MEM_ATTR uint32_t midiOutNoteOnCount();
+SC_MEM_ATTR uint8_t midiOutLastNote();
 SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
 /** S7.5a envelope instruments: one aggregated row per telemetry window (see the definition for the fields). */
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,

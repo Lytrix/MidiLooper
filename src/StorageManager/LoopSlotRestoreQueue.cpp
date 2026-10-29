@@ -361,7 +361,50 @@ void clearPendingLoopSlotRestoresAtBoot() {
 
 STORAGE_PERSIST_MEM void resetAllLoopSlotRestoreAttempted() { resetAllRestoreRequestState(); }
 
+// DEC-190: a slot whose restore (or its first paint) faulted on the previous boot is parked for this boot.
+// The file is left untouched on SD -- nothing is deleted or renamed -- so the whole set restores around it and
+// the one slot can be retried after the cause is fixed.
+// `.bss.dma` is NOLOAD, so both tables are cleared explicitly at boot (`resetRestoreFaultSkips`) before the
+// scan consults them -- an uninitialised `true` would park a healthy slot.
+#if defined(__IMXRT1062__)
+DMAMEM bool gRestoreFaultSkip[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+DMAMEM bool gRestoreFaultSkipReported[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+#else
+bool gRestoreFaultSkip[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+bool gRestoreFaultSkipReported[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+#endif
+
+void resetRestoreFaultSkips() {
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            gRestoreFaultSkip[t][s] = false;
+            gRestoreFaultSkipReported[t][s] = false;
+        }
+    }
+}
+
+bool markRestoreFaultSkip(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+    gRestoreFaultSkip[trackIndex][slotIndex] = true;
+    return true;
+}
+
+bool restoreFaultSkipped(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+    return gRestoreFaultSkip[trackIndex][slotIndex];
+}
+
 bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority) {
+    if (restoreFaultSkipped(trackIndex, slotIndex)) {
+        if (!gRestoreFaultSkipReported[trackIndex][slotIndex]) {
+            gRestoreFaultSkipReported[trackIndex][slotIndex] = true;
+            Serial.printf_P(PSTR("[StorageManager] Slot parked after a fault reboot: track=%u slot=%u "
+                                 "(file untouched; the rest of the set restores)\r\n"),
+                            static_cast<unsigned>(trackIndex), static_cast<unsigned>(slotIndex));
+        }
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
     if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {
         return false;
     }

@@ -1062,6 +1062,11 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       displayTrack.getActiveLoop().isPlaybackSessionExitPublicationGap() &&
       !displayTrack.getActiveLoop().privateSourceOwedForSeal();
   const bool deferBackgroundVisualSource = displayGapSourceOwed && &displayTrack != this;
+  // DEC-191: the orphan settlement is deliberately NOT run from this lane. It ran here unconditionally and the
+  // device regressed (`session_20261029_011304.log`): a deferred Record stop parked at `CanonicalPrefix` with
+  // `pub=1`, `playback_read` zero and the panel holding `why=hold_gap` -- i.e. the settlement released a
+  // reservation the stop's publication still needed, and nothing was logged. Recovery stays where the defect was
+  // observed (the Start claim path), where a Start is actually asking for the slot.
   // STOPPING owns the active capture and consumes exactly one declared
   if (hasPendingDeferredOverdubStop()) {
     CaptureStopJob* pendingStop = captureStopJobHead();
@@ -1667,6 +1672,13 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
 }
 
 void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits) {
+  // Rootless committed playback has neither the sealed Record reader nor a root
+  // for the merged fallback. Reuse launch's on-demand publisher on this deferred
+  // owner, once, without resetting any publication/capture/receipt owner.
+  if (playbackSourceRecoveryNeededForSlot(playbackSlotIndexForLoop(snapshotLoop))) {
+    (void)snapshotLoop.requestCommittedPassesRepublish();
+    return; // Request/enumeration is its own turn; construction keeps its normal quantum.
+  }
   const bool havePublishedSnapshot = static_cast<bool>(snapshotLoop.publishedSnapshot());
   const bool visualCacheNeedsFirstPaint =
       snapshotLoop.hasCommittedPasses() && snapshotLoop.visualCacheDirty &&
@@ -1790,4 +1802,32 @@ void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstru
 #if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
   InvestigationCaptureLog::appendSnapshotIdleLines(snapshotLoop, snapshotIdleStartUs);
 #endif
+}
+
+// DEC-189: the two lanes that can strand a publication, read without touching an owner. Called from the
+// 1 s diagnostics turn; emits nothing itself (the row is `#STOP_TRACE`, direct serial, so it cannot be shed).
+TRACK_COLD_MEM Track::StallCensus Track::stallCensus() const {
+  StallCensus census{};
+  if (captureStopJobs_ != nullptr && captureStopJobs_->count != 0) {
+    const CaptureStopJob& head = captureStopJob();
+    census.stopPending = head.admission.pending;
+    census.stopMode = static_cast<uint8_t>(head.mode);
+    census.stopPhase = static_cast<uint8_t>(head.admission.phase);
+    census.stopGeneration = head.admission.frozenGeneration;
+    census.orderGrains = head.admission.remainingOrderGrains;
+    census.canonicalGrains = head.admission.remainingCanonicalPreparationGrains;
+    census.rankedGrains = head.admission.remainingRankedPreparationGrains;
+    census.undoGrains = head.admission.remainingUndoCollectionGrains;
+  }
+  const uint8_t slot = activeLoopIndex;
+  if (slot < Config::MAX_LOOPS_PER_TRACK && playbackRuntime.slotIfAllocated(slot) != nullptr) {
+    const Loop& loop = loopForSlot(slot);
+    census.publishPending = loop.hasPendingSnapshotPublish();
+    census.publishQueued = static_cast<uint32_t>(loop.pendingSnapshotQueuedPassCount());
+    census.publishApplied = static_cast<uint32_t>(loop.pendingSnapshotAppliedPassCount());
+    census.publishInFlight = loop.hasInFlightSnapshotConstruction();
+    census.hasCommittedPasses = loop.hasCommittedPasses();
+    census.loopLengthTicks = loop.loopLengthTicks;
+  }
+  return census;
 }

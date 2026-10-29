@@ -99,46 +99,150 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   return true;
 }
 
+LOOP_COLD_MEM CompanionPreparationRefusal Loop::preparedCompanionHistoryBeginRefusal(
+    const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
+    const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner,
+    PendingCapturePass* capturePass) const {
+  // DEC-186: exactly the guard sequence `beginPreparedCompanionHistory` applies, in the same order, so the
+  // name a stalled job reports is the guard that refused it. Every predicate is a pure read.
+  const auto& work = preparedCompanionHistory_;
+  const size_t historyCount = passes.editPasses.size();
+  if (work.phase != PreparedCompanionHistory::Phase::Prewarmed) return CompanionPreparationRefusal::PhaseNotPrewarmed;
+  if (!preparedCompanionHistoryOwnedBy(owner)) return CompanionPreparationRefusal::OwnerMismatch;
+  // Fit is a capacity question, never a current-size one: `Phase::Trim` (and the recycle path) shrink the
+  // vector's *size* to the last interval's actual demand, so a later, larger interval is admitted against the reserve.
+  if (work.rows.capacity() < historyCount + rows.size()) return CompanionPreparationRefusal::RowsCapacity;
+  if (historyCount > work.rowLimit) return CompanionPreparationRefusal::RowLimit;
+  if (rows.size() > work.rowLimit - historyCount) return CompanionPreparationRefusal::RowLimit;
+  if (rows.size() > work.companionCapacity) return CompanionPreparationRefusal::CompanionCapacity;
+  if (rows.size() > work.companionIds.capacity()) return CompanionPreparationRefusal::CompanionIdCapacity;
+  if (passes.editPasses.capacity() < work.rowLimit) return CompanionPreparationRefusal::EditCapacity;
+  if (!rows.ready(capture)) return CompanionPreparationRefusal::RowsNotReady;
+  if (nextPassId_ == kInvalidPassId || rows.size() > UINT32_MAX - nextPassId_)
+    return CompanionPreparationRefusal::PassIdExhausted;
+  const size_t snapshotCount = pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->companionIds.size() : 0;
+  if (!pendingSnapshotPublishBox_) return CompanionPreparationRefusal::SnapshotBoxMissing;
+  if (snapshotCount > work.snapshotIds.capacity() ||
+      rows.size() > work.snapshotIds.capacity() - snapshotCount)
+    return CompanionPreparationRefusal::SnapshotCapacity;
+  if (snapshotCount > work.snapshotLimit || rows.size() > work.snapshotLimit - snapshotCount ||
+      pendingSnapshotPublishBox_->companionIds.capacity() < work.snapshotLimit)
+    return CompanionPreparationRefusal::SnapshotLimit;
+  const PendingCapturePass* boundCapturePass = capturePass;
+  if (boundCapturePass == nullptr && hasPendingCapturePass_) boundCapturePass = &pendingCapturePass_;
+  if (boundCapturePass != nullptr && boundCapturePass->preparationPending)
+    return CompanionPreparationRefusal::StagedPassPreparing;
+  if (captureInputs != nullptr) {
+    if (boundCapturePass == nullptr || boundCapturePass->id == kInvalidPassId)
+      return CompanionPreparationRefusal::CanonicalInputsUnbound;
+    if (boundCapturePass->committedChunkIds.empty()) return CompanionPreparationRefusal::CanonicalInputsNoChunks;
+    if (boundCapturePass->committedChunkIds.size() > PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS)
+      return CompanionPreparationRefusal::CanonicalInputsChunkOverflow;
+    if (!captureInputs->includesFrozenOverdub())
+      return CompanionPreparationRefusal::CanonicalInputsNotFrozenOverdub;
+    if (captureInputs->frozenCapture() != &capture)
+      return CompanionPreparationRefusal::CanonicalInputsOtherCapture;
+  }
+  return CompanionPreparationRefusal::None;
+}
+
+LOOP_COLD_MEM CompanionPreparationRefusal Loop::whyCompanionPreparationCannotAdvance(
+    const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
+    const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner,
+    PendingCapturePass* capturePass) const {
+  const auto& work = preparedCompanionHistory_;
+  // A `Denied` phase is terminal by construction: no branch of `stepPreparedCompanionHistory` leaves it, and
+  // `begin` refuses because the phase is no longer `Prewarmed`.
+  if (work.phase == PreparedCompanionHistory::Phase::Denied) return CompanionPreparationRefusal::PhaseDenied;
+  if (!preparedCompanionHistoryOwnedBy(owner)) return CompanionPreparationRefusal::OwnerMismatch;
+  if (work.phase == PreparedCompanionHistory::Phase::Cold ||
+      work.phase == PreparedCompanionHistory::Phase::Prewarmed) {
+    return preparedCompanionHistoryBeginRefusal(rows, capture, captureInputs, owner, capturePass);
+  }
+  if (!preparedCompanionHistorySourceCurrent()) return preparedCompanionHistorySourceRefusal();
+  return CompanionPreparationRefusal::StepNoProgress;
+}
+
+LOOP_COLD_MEM const char* Loop::companionPreparationRefusalName(CompanionPreparationRefusal refusal) {
+  // if/else chain: a `switch` over this enum emits a jump table into `.data`, which the RAM1 rule forbids.
+  if (refusal == CompanionPreparationRefusal::PhaseNotPrewarmed) return "horizon not prewarmed";
+  if (refusal == CompanionPreparationRefusal::OwnerMismatch) return "horizon owned by another interval";
+  if (refusal == CompanionPreparationRefusal::RowsCapacity) return "row reserve too small";
+  if (refusal == CompanionPreparationRefusal::RowLimit) return "row limit reached";
+  if (refusal == CompanionPreparationRefusal::CompanionCapacity) return "companion capacity reached";
+  if (refusal == CompanionPreparationRefusal::CompanionIdCapacity) return "companion id reserve too small";
+  if (refusal == CompanionPreparationRefusal::EditCapacity) return "canonical edit reserve too small";
+  if (refusal == CompanionPreparationRefusal::RowsNotReady) return "frozen companions not ready";
+  if (refusal == CompanionPreparationRefusal::PassIdExhausted) return "pass id exhausted";
+  if (refusal == CompanionPreparationRefusal::SnapshotBoxMissing) return "snapshot publish box missing";
+  if (refusal == CompanionPreparationRefusal::SnapshotCapacity) return "snapshot id reserve too small";
+  if (refusal == CompanionPreparationRefusal::SnapshotLimit) return "snapshot id limit reached";
+  if (refusal == CompanionPreparationRefusal::StagedPassPreparing) return "staged pass still preparing";
+  if (refusal == CompanionPreparationRefusal::CanonicalInputsUnbound) return "canonical inputs without a staged pass";
+  if (refusal == CompanionPreparationRefusal::CanonicalInputsNoChunks) return "staged pass has no chunks";
+  if (refusal == CompanionPreparationRefusal::CanonicalInputsChunkOverflow) return "staged pass exceeds chunk horizon";
+  if (refusal == CompanionPreparationRefusal::CanonicalInputsNotFrozenOverdub)
+    return "canonical inputs do not include this overdub";
+  if (refusal == CompanionPreparationRefusal::CanonicalInputsOtherCapture)
+    return "canonical inputs belong to another capture";
+  if (refusal == CompanionPreparationRefusal::SourceNotCurrent) return "preparation source no longer current";
+  if (refusal == CompanionPreparationRefusal::SourceSnapshotGeneration)
+    return "snapshot companion generation moved";
+  if (refusal == CompanionPreparationRefusal::SourceSnapshotCount) return "snapshot companion count moved";
+  if (refusal == CompanionPreparationRefusal::SourceStorageGeneration)
+    return "canonical storage generation moved";
+  if (refusal == CompanionPreparationRefusal::SourceRevision) return "playback revision moved";
+  if (refusal == CompanionPreparationRefusal::SourceHistoryCount) return "companion history count moved";
+  if (refusal == CompanionPreparationRefusal::SourceFirstId) return "next pass id moved";
+  if (refusal == CompanionPreparationRefusal::SourceRowGeneration)
+    return "frozen companion source generation moved";
+  if (refusal == CompanionPreparationRefusal::SourceRowsNotReady) return "frozen companions no longer ready";
+  if (refusal == CompanionPreparationRefusal::SourceCapturePassReleased)
+    return "staged pass released under the preparation";
+  if (refusal == CompanionPreparationRefusal::SourceCapturePassId)
+    return "staged pass identity moved";
+  if (refusal == CompanionPreparationRefusal::SourceCaptureChunks)
+    return "staged pass chunk storage moved";
+  if (refusal == CompanionPreparationRefusal::SourceInputsGeneration)
+    return "canonical inputs generation moved";
+  if (refusal == CompanionPreparationRefusal::SourceInputsNotFrozenOverdub)
+    return "canonical inputs dropped this overdub";
+  if (refusal == CompanionPreparationRefusal::SourceInputsOtherCapture)
+    return "canonical inputs rebound to another capture";
+  if (refusal == CompanionPreparationRefusal::PhaseDenied) return "preparation entered Denied";
+  if (refusal == CompanionPreparationRefusal::DeniedRowIdOutOfRange)
+    return "companion row id not prospective";
+  if (refusal == CompanionPreparationRefusal::DeniedRowPayloadCapacity)
+    return "canonical row payload exceeded its reserve";
+  if (refusal == CompanionPreparationRefusal::DeniedRowNotATransform)
+    return "companion row is not a Shorten/Hide transform";
+  if (refusal == CompanionPreparationRefusal::DeniedCaptureChunkUnreadable)
+    return "staged capture chunk unreadable";
+  if (refusal == CompanionPreparationRefusal::DeniedCaptureEventCount)
+    return "staged capture event count differs";
+  if (refusal == CompanionPreparationRefusal::DeniedCaptureEventMismatch)
+    return "staged capture event differs from the frozen input";
+  if (refusal == CompanionPreparationRefusal::GrainCreditExhausted) return "preparation grain credit exhausted";
+  if (refusal == CompanionPreparationRefusal::StepNoProgress) return "preparation step made no progress";
+  return "-";
+}
+
 LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
     const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
     const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner,
     PendingCapturePass* capturePass) {
+  // DEC-186: the guards live in one place (`preparedCompanionHistoryBeginRefusal`) so the reported reason and
+  // the admission decision cannot drift. Behaviour is unchanged: a non-`None` answer returns `false` exactly
+  // where the former inline guards did.
+  if (preparedCompanionHistoryBeginRefusal(rows, capture, captureInputs, owner, capturePass) !=
+      CompanionPreparationRefusal::None) {
+    return false;
+  }
   auto& work = preparedCompanionHistory_;
   const size_t historyCount = passes.editPasses.size();
-  // Prewarm reserves storage, not a borrowed canonical-history version. Wrap
-  // publication can append metadata before this worker begins. Bind the live
-  // version below, after checking that the existing reservation still fits.
-  // Once begun, preparedCompanionHistorySourceCurrent keeps the strict version
-  // checks; never restart an in-flight worker by rebinding its inputs.
-  if (work.phase != PreparedCompanionHistory::Phase::Prewarmed ||
-      !preparedCompanionHistoryOwnedBy(owner) ||
-      // Fit is a capacity question, never a current-size question: `Phase::Trim` (and
-      // the recycle path) shrink the vector's *size* to the last interval's actual
-      // demand, so a later, larger interval must still be admitted against the reserve.
-      work.rows.capacity() < historyCount + rows.size() ||
-      historyCount > work.rowLimit || rows.size() > work.rowLimit - historyCount ||
-      rows.size() > work.companionCapacity || rows.size() > work.companionIds.capacity() ||
-      passes.editPasses.capacity() < work.rowLimit ||
-      !rows.ready(capture) ||
-      nextPassId_ == kInvalidPassId || rows.size() > UINT32_MAX - nextPassId_) return false;
   const size_t snapshotCount = pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->companionIds.size() : 0;
-  if (!pendingSnapshotPublishBox_ || snapshotCount > work.snapshotIds.capacity() ||
-      rows.size() > work.snapshotIds.capacity() - snapshotCount ||
-      snapshotCount > work.snapshotLimit || rows.size() > work.snapshotLimit - snapshotCount ||
-      pendingSnapshotPublishBox_->companionIds.capacity() < work.snapshotLimit) return false;
-  // OpenSpec 5.12 / D8: bind the interval's own staged pass by address. A deferred job passes its
-  // job-owned receipt, so a successor interval's capture start can neither destroy nor rebind this
-  // preparation's verification source. A caller that supplies no pass (`nullptr`, the default) is on
-  // the live producer path -- or a fixture that staged through the Loop slot -- where the Loop's own
-  // staged pass is the only receipt that exists; there is no other fallback, so a deferred job must
-  // always name its own receipt (production passes `&job.pendingPass` unconditionally).
   PendingCapturePass* boundCapturePass = capturePass;
   if (boundCapturePass == nullptr && hasPendingCapturePass_) boundCapturePass = &pendingCapturePass_;
-  if (boundCapturePass != nullptr && boundCapturePass->preparationPending) return false;
-  if (captureInputs && (boundCapturePass == nullptr || boundCapturePass->id == kInvalidPassId ||
-      boundCapturePass->committedChunkIds.empty() ||
-      boundCapturePass->committedChunkIds.size() > PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS ||
-      !captureInputs->includesFrozenOverdub() || captureInputs->frozenCapture() != &capture)) return false;
   work.historyCount = historyCount;
   work.storageGeneration = canonicalStorageGeneration;
   work.captureInputs = captureInputs;
@@ -193,26 +297,86 @@ LOOP_COLD_MEM bool Loop::preparedCompanionHistorySourceCurrent() const {
        work.captureInputs->includesFrozenOverdub() && work.captureInputs->frozenCapture() == work.capture));
 }
 
-LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t owner) {
+LOOP_COLD_MEM CompanionPreparationRefusal Loop::preparedCompanionHistorySourceRefusal() const {
+  // DEC-186: one value per term of `preparedCompanionHistorySourceCurrent`, in that predicate's order. It is
+  // the term a parked `CompanionHistory` job trips, so the name is the mechanism, not a summary.
+  const auto& work = preparedCompanionHistory_;
+  if (!pendingSnapshotPublishBox_) return CompanionPreparationRefusal::SourceSnapshotGeneration;
+  if (work.snapshotGeneration != pendingSnapshotCompanionGeneration_)
+    return CompanionPreparationRefusal::SourceSnapshotGeneration;
+  if (work.snapshotCount != pendingSnapshotPublishBox_->companionIds.size())
+    return CompanionPreparationRefusal::SourceSnapshotCount;
+  if (work.storageGeneration != canonicalStorageGeneration)
+    return CompanionPreparationRefusal::SourceStorageGeneration;
+  if (work.revision != playbackRevision) return CompanionPreparationRefusal::SourceRevision;
+  if (work.historyCount != passes.editPasses.size()) return CompanionPreparationRefusal::SourceHistoryCount;
+  if (work.firstId != nextPassId_) return CompanionPreparationRefusal::SourceFirstId;
+  if (!work.source || !work.capture) return CompanionPreparationRefusal::SourceRowGeneration;
+  if (work.source->preparationGeneration() != work.rowGeneration)
+    return CompanionPreparationRefusal::SourceRowGeneration;
+  if (!work.source->ready(*work.capture)) return CompanionPreparationRefusal::SourceRowsNotReady;
+  if (work.captureInputs) {
+    const PendingCapturePass* boundPass = work.capturePass;
+    if (boundPass == nullptr) return CompanionPreparationRefusal::SourceCapturePassReleased;
+    if (boundPass->preparationPending || boundPass->id != work.capturePassId)
+      return CompanionPreparationRefusal::SourceCapturePassId;
+    if (boundPass->committedChunkIds.data() != work.captureChunks ||
+        boundPass->committedChunkIds.size() != work.captureChunkCount)
+      return CompanionPreparationRefusal::SourceCaptureChunks;
+    if (work.captureInputs->generation() != work.captureInputsGeneration)
+      return CompanionPreparationRefusal::SourceInputsGeneration;
+    if (!work.captureInputs->includesFrozenOverdub())
+      return CompanionPreparationRefusal::SourceInputsNotFrozenOverdub;
+    if (work.captureInputs->frozenCapture() != work.capture)
+      return CompanionPreparationRefusal::SourceInputsOtherCapture;
+  }
+  return CompanionPreparationRefusal::None;
+}
+
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryRevisionMoved() const {
+  // DEC-186: one predicate, used by the escape. It is deliberately narrower than "source not current": the
+  // decision keeps the pin and treats **only** the revision move as a terminal inline cause. A horizon that
+  // was never begun (`Cold`/`Prewarmed`) carries no pinned revision and is not stale.
+  const auto& work = preparedCompanionHistory_;
+  if (work.phase == PreparedCompanionHistory::Phase::Cold ||
+      work.phase == PreparedCompanionHistory::Phase::Prewarmed) return false;
+  return work.revision != playbackRevision;
+}
+
+LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t owner,
+                                                      CompanionPreparationRefusal* outRefusal) {
   auto& work = preparedCompanionHistory_;
   using Phase = PreparedCompanionHistory::Phase;
+  const auto refuse = [outRefusal](CompanionPreparationRefusal reason) {
+    if (outRefusal != nullptr) *outRefusal = reason;
+    return false;
+  };
   if (!quantum || work.phase == Phase::Cold || work.phase == Phase::Prewarmed ||
       work.phase >= Phase::Committed)
-    return false;
-  if (!preparedCompanionHistoryOwnedBy(owner)) return false;
-  if (!preparedCompanionHistorySourceCurrent()) { work.phase = Phase::Denied; return false; }
+    return refuse(CompanionPreparationRefusal::PhaseNotPrewarmed);
+  if (!preparedCompanionHistoryOwnedBy(owner)) return refuse(CompanionPreparationRefusal::OwnerMismatch);
+  if (!preparedCompanionHistorySourceCurrent()) {
+    work.phase = Phase::Denied;
+    return refuse(preparedCompanionHistorySourceRefusal());
+  }
   while (quantum-- && work.phase != Phase::Ready) {
     if (work.phase == Phase::CopySnapshot) {
       const auto id = pendingSnapshotPublishBox_->companionIds[work.snapshotIndex++];
       // Prospective IDs must be fresh, so no duplicate-search belongs in the handoff.
-      if (id >= work.firstId) { work.phase = Phase::Denied; return false; }
+      if (id >= work.firstId) {
+        work.phase = Phase::Denied;
+        return refuse(CompanionPreparationRefusal::DeniedRowIdOutOfRange);
+      }
       work.snapshotIds.push_back(id);
       if (work.snapshotIndex == work.snapshotCount)
         work.phase = work.historyCount ? Phase::CopyRow : Phase::Append;
     } else if (work.phase == Phase::CopyRow) {
       const auto& source = passes.editPasses[work.row];
       auto& destination = work.rows[work.row];
-      if (source.addedEvents.size() > destination.addedEvents.capacity()) { work.phase = Phase::Denied; return false; }
+      if (source.addedEvents.size() > destination.addedEvents.capacity()) {
+        work.phase = Phase::Denied;
+        return refuse(CompanionPreparationRefusal::DeniedRowPayloadCapacity);
+      }
       copyPreparedEditMetadata(destination, source); work.event = 0;
       if (source.addedEvents.empty()) {
         if (++work.row == work.historyCount) work.phase = Phase::Append;
@@ -229,7 +393,8 @@ LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t o
       if (!source.addedEvents.empty() || source.passType != EditPassType::Note ||
           !(source.actionType == EditActionType::Delete ||
             (source.actionType == EditActionType::Update && source.propertyType == EditPropertyType::Length))) {
-        work.phase = Phase::Denied; return false;
+        work.phase = Phase::Denied;
+        return refuse(CompanionPreparationRefusal::DeniedRowNotATransform);
       }
       auto& destination = work.rows[work.row]; copyPreparedEditMetadata(destination, source);
       destination.id = work.firstId + work.row - work.historyCount;
@@ -245,19 +410,24 @@ LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t o
     } else if (work.phase == Phase::VerifyCapture) {
       MidiEvent event; bool atEnd = false;
       if (!LoopEventStore::readSealedChunkEvent(work.captureChunks[work.captureChunk],
-          work.captureEvent, event, atEnd)) { work.phase = Phase::Denied; return false; }
+          work.captureEvent, event, atEnd)) {
+        work.phase = Phase::Denied;
+        return refuse(CompanionPreparationRefusal::DeniedCaptureChunkUnreadable);
+      }
       if (atEnd) {
         work.captureEvent = 0;
         if (++work.captureChunk == work.captureChunkCount) {
           if (work.comparedEvents != work.captureInputs->frozenCaptureEventCount()) {
-            work.phase = Phase::Denied; return false;
+            work.phase = Phase::Denied;
+            return refuse(CompanionPreparationRefusal::DeniedCaptureEventCount);
           }
           work.phase = Phase::Ready;
         }
       } else {
         const auto* expected = work.captureInputs->frozenCaptureEvent(work.comparedEvents);
         if (!expected || !RuntimeCompanionBridgeMap::inputEventsMatch(event, *expected)) {
-          work.phase = Phase::Denied; return false;
+          work.phase = Phase::Denied;
+          return refuse(CompanionPreparationRefusal::DeniedCaptureEventMismatch);
         }
         ++work.captureEvent; ++work.comparedEvents;
       }

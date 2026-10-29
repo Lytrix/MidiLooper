@@ -433,18 +433,32 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::commitSupersededCausalBase(
 }
 
 TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepPreparation(
-    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop, size_t quantum) {
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop, size_t quantum,
+    CompanionPreparationRefusal* outRefusal, PendingCapturePass* capturePass) {
   const auto* views = runtime.viewSetIfPrewarmed();
-  if (!views || !stop.pending || !quantum || quantum != stop.canonicalPreparationQuantum ||
-      stop.remainingClosureGrains || views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
-      !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
-      !loop.preparedCompanionHistoryCanStep(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(),
-                                            runtime.canonicalPassInputs, stop.intervalToken()))
+  // DEC-186: the diagnostic names one of these guards instead of returning silently. `CompanionHistory` had
+  // no stall report at all, which is why a job could consume 50,121 grains there without a single row.
+  const auto deny = [outRefusal](CompanionPreparationRefusal reason) {
+    if (outRefusal != nullptr) *outRefusal = reason;
     return RuntimePlaybackOrderBuildResult::Denied;
+  };
+  if (!views || !stop.pending || !quantum || quantum != stop.canonicalPreparationQuantum ||
+      stop.remainingClosureGrains || views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration)
+    return deny(CompanionPreparationRefusal::PhaseNotPrewarmed);
+  if (!runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch))
+    return deny(CompanionPreparationRefusal::CanonicalInputsUnbound);
+  if (!loop.preparedCompanionHistoryCanStep(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(),
+                                            runtime.canonicalPassInputs, stop.intervalToken()))
+    return deny(loop.whyCompanionPreparationCannotAdvance(runtime.frozenCaptureCompanions,
+                                                          views->frozenCaptureStaging(),
+                                                          &runtime.canonicalPassInputs,
+                                                          stop.intervalToken(), capturePass));
   if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
     return RuntimePlaybackOrderBuildResult::Complete;
-  if (!stop.consumeCanonicalPreparationGrain()) return RuntimePlaybackOrderBuildResult::Denied;
-  if (!loop.stepPreparedCompanionHistory(quantum, stop.intervalToken())) return RuntimePlaybackOrderBuildResult::Denied;
+  if (!stop.consumeCanonicalPreparationGrain())
+    return deny(CompanionPreparationRefusal::GrainCreditExhausted);
+  if (!loop.stepPreparedCompanionHistory(quantum, stop.intervalToken(), outRefusal))
+    return RuntimePlaybackOrderBuildResult::Denied;
   return loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken())
       ? RuntimePlaybackOrderBuildResult::Complete : RuntimePlaybackOrderBuildResult::Pending;
 }

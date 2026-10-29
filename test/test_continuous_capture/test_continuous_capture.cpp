@@ -446,6 +446,63 @@ struct TrackCaptureStopTestAccess {
   static bool canonicalHasFrozenBinding(Track& track) {
     return runtime(track).canonicalPassInputs.hasFrozenBinding();
   }
+  /// DEC-172/186: the slot-level deferred-convergence obligation, read-only.
+  static unsigned deferredConvergencePhase(Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt == nullptr ? 255u : static_cast<unsigned>(rt->deferredConvergencePhase);
+  }
+  static uint32_t deferredConvergenceTarget(Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt == nullptr ? 0u : rt->deferredConvergenceTarget;
+  }
+  static bool deferredConvergenceOwes(Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->deferredConvergenceActive();
+  }
+  static size_t editPassCount(Track& track) {
+    return track.loopForSlot(track.getActiveLoopIndex()).passes.editPasses.size();
+  }
+  /// DEC-172's slot-level owner turn, without the persistence/display branches of
+  /// `processDeferredIdleMaintenance` (this harness does not link the storage session).
+  static bool preflight(Track& track, uint8_t& refusal) { return track.overdubStartPreflight(refusal); }
+  static bool liveReservedOwner(Track& track) {
+    return track.hasLiveOwnerOfReservedSessionExitObligation(track.getActiveLoop());
+  }
+  static int claimState(Track& track) {
+    return static_cast<int>(track.getActiveLoop().sessionExitPublishClaimState());
+  }
+  static bool settleOrphanedReservation(Track& track) {
+    return track.settleOrphanedSessionExitReservation();
+  }
+  static bool serviceDeferredConvergence(Track& track) {
+    return track.serviceDeferredCanonicalConvergence();
+  }
+  /// Drive the accepted-interaction carrier (a Start/Stop retained while an obligation was pending).
+  static bool serviceAcceptedInteractionTurnForTest(Track& track) { return track.serviceAcceptedInteractionTurn(); }
+  /// DEC-186: has this job's companion preparation actually begun (phase left `Cold`/`Prewarmed`)?
+  /// That is the device state the boundary checkpoint never exercises.
+  static bool companionPreparationInFlight(Track& track) {
+    return track.loopForSlot(job(track).slot)
+        .preparedCompanionHistoryInFlight(job(track).admission.intervalToken());
+  }
+  /// DEC-186: the predicate that keeps this job's companion preparation from advancing, named. Read-only;
+  /// it re-evaluates the production guard set, so printing it cannot change the outcome.
+  static const char* companionRefusalName(Track& track) {
+    auto* rt = runtimeIfAllocated(track, job(track).slot);
+    if (rt == nullptr) return "no runtime";
+    const auto* views = rt->viewSetIfPrewarmed();
+    if (views == nullptr) return "no views";
+    return Loop::companionPreparationRefusalName(
+        track.loopForSlot(job(track).slot)
+            .whyCompanionPreparationCannotAdvance(rt->frozenCaptureCompanions,
+                                                  views->frozenCaptureStaging(),
+                                                  &rt->canonicalPassInputs,
+                                                  job(track).admission.intervalToken(),
+                                                  &job(track).pendingPass));
+  }
+  static uint64_t pendingCanonicalPreparationGrains(Track& track) {
+    return job(track).admission.remainingCanonicalPreparationGrains;
+  }
   static uint64_t frozenOrderStorageGeneration(Track& track) {
     return runtime(track).frozenCaptureOrderStorageGeneration;
   }
@@ -3036,6 +3093,386 @@ void test_ineligible_stored_verification_queue_keeps_pending_dump() {
 /// ever reached with a job pending. It used to call `resumeCanonicalAfterAppend` -- whose
 /// `resumeCurrentAfterAppend` resets the frozen capture binding -- and to discard the frozen
 /// order/rewrite builders unconditionally. This pins the guard directly.
+/// DEC-186 / owner report 2026-10-28 (`captures/session_20261028_220707.log`): on the device a deferred overdub
+/// stop parks in `CompanionHistory` (phase 7) while later overdub intervals keep starting on the same slot, and
+/// it is serviced there for ~32 s (50,121 grains of ~53 us, no progress) until a transport Stop forces the
+/// raw-only escape. Two later Stop presses are retained behind it. Nothing named the refusing predicate.
+///
+/// The existing `test_adversarial_reentry_at_a_companion_checkpoint` pauses the predecessor at the phase
+/// *boundary*, so the successor arrives before the preparation binds. This case is the missing state: the
+/// preparation has already begun (`companionPreparationInFlight`), which is what the device reaches, and the
+/// successor then starts and stops while it waits.
+void test_companion_history_survives_successor_starts_after_the_preparation_begins() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // A: reach CompanionHistory and let the preparation bind, not the boundary.
+  unsigned reachGrains = 0;
+  for (; reachGrains < 20000; ++reachGrains) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) ==
+            static_cast<uint8_t>(PendingStopPhase::CompanionHistory) &&
+        TrackCaptureStopTestAccess::companionPreparationInFlight(track))
+      break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
+                                  TrackCaptureStopTestAccess::jobPhase(track),
+                                  "predecessor must reach the companion phase");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::companionPreparationInFlight(track),
+      "the companion preparation must already be begun (the device state)");
+  // B, C, D: successors start and stop while A waits, the device's ~1-3 s cadence.
+  for (unsigned successor = 0; successor < 3; ++successor) {
+    const uint32_t start = 192 + successor * 96;
+    clockManager.assignCurrentTickSilently(start);
+    midiButtonActions.handleToggleRecord();
+    if (!track.isOverdubbing()) {
+      TEST_ASSERT_TRUE_MESSAGE(track.hasPendingOverdubStart() ||
+                               track.hasAcceptedUnexecutedInteraction(),
+                               "a start met by a pending predecessor must be retained, not dropped");
+      continue;
+    }
+    inputNote(static_cast<uint8_t>(62 + successor), start + 12, start + 60);
+    clockManager.assignCurrentTickSilently(start + 72);
+    midiButtonActions.handleToggleRecord();
+    for (unsigned turn = 0; turn < 40; ++turn) (void)TrackCaptureStopTestAccess::step(track);
+  }
+  // A must still retire. The device never does until the transport stops the whole rack.
+  unsigned retireGrains = 0;
+  for (; retireGrains < 20000 && track.hasPendingDeferredOverdubStop(); ++retireGrains)
+    (void)TrackCaptureStopTestAccess::step(track);
+  char message[320];
+  std::snprintf(message, sizeof(message),
+      "a companion preparation begun before the successor starts must still retire "
+      "(phase=%u inFlight=%u grains=%u credit=%llu refusal=%s)",
+      static_cast<unsigned>(TrackCaptureStopTestAccess::jobPhase(track)),
+      TrackCaptureStopTestAccess::companionPreparationInFlight(track) ? 1u : 0u,
+      retireGrains,
+      static_cast<unsigned long long>(TrackCaptureStopTestAccess::pendingCanonicalPreparationGrains(track)),
+      TrackCaptureStopTestAccess::companionRefusalName(track));
+  std::printf("companion wedge probe: %s\n", message);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), message);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the record pass must survive the chain");
+}
+
+/// DEC-186 shape B: the same as shape A, but with the content conditions the device had -- a long record note
+/// that every overdub *overlaps* (so the stop must publish Shorten/Hide companion rows, the device's
+/// `edit=30`), a wrap that commits a pass mid-chain, and a second stop queued behind the head. A companion
+/// preparation that cannot publish here is what the owner sees as "overdubbed notes are not played" and
+/// "cannot stop overdubbing".
+void test_companion_history_survives_overlap_rows_wrap_and_a_backlogged_stop() {
+  // Setup mirrors `preparePlayingTrack()`, but with a **long** record note: every overdub below overlaps it, so
+  // the stop must publish Shorten companion rows the way the device's `edit=30` history did.
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(767, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  loop.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  track.prewarmPlaybackForSlot(0, true);
+  track.forceSetState(TRACK_PLAYING);
+  // A: an overlapping overdub, stopped -> deferred job reaching CompanionHistory with a begun preparation.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 120, 240);
+  clockManager.assignCurrentTickSilently(240);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  unsigned reachGrains = 0;
+  for (; reachGrains < 20000; ++reachGrains) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) ==
+            static_cast<uint8_t>(PendingStopPhase::CompanionHistory) &&
+        TrackCaptureStopTestAccess::companionPreparationInFlight(track))
+      break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  const char* reachRefusal = TrackCaptureStopTestAccess::companionRefusalName(track);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
+                                  TrackCaptureStopTestAccess::jobPhase(track),
+                                  "predecessor must reach the companion phase");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::companionPreparationInFlight(track),
+      "the companion preparation must already be begun");
+  const uint32_t revisionAtReach = loop.playbackRevision;
+  // B: starts, overlaps, wraps a pass, and its own stop is retained behind A.
+  clockManager.assignCurrentTickSilently(300);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 700, 900);           // crosses the loop bound at 768
+  clockManager.assignCurrentTickSilently(900);
+  (void)track.commitOverdubWrap();
+  midiButtonActions.handleToggleRecord();  // retained: the stop FIFO head is A
+  // DEC-186 acceptance: after the revision move the head must retire by cause, inside a small bound, and
+  // **without** a transport Stop / retarget. Measured pre-fix: 20,000 grains, never retired.
+  constexpr unsigned kBoundedRetirementGrains = 64;
+  unsigned retireGrains = 0;
+  for (; retireGrains < kBoundedRetirementGrains && track.hasPendingDeferredOverdubStop(); ++retireGrains)
+    (void)TrackCaptureStopTestAccess::step(track);
+  const uint32_t revisionAfterWrap = loop.playbackRevision;
+  char message[448];
+  std::snprintf(message, sizeof(message),
+      "a revision-moved companion preparation must retire by cause inside %u grains "
+      "(phase=%u inFlight=%u reach=%u grains=%u edit=%u cap=%u credit=%llu revAtReach=%lu revAfterWrap=%lu "
+      "refusal=%s atReach=%s)",
+      kBoundedRetirementGrains,
+      static_cast<unsigned>(TrackCaptureStopTestAccess::jobPhase(track)),
+      TrackCaptureStopTestAccess::companionPreparationInFlight(track) ? 1u : 0u,
+      reachGrains, retireGrains,
+      static_cast<unsigned>(loop.passes.editPasses.size()),
+      static_cast<unsigned>(loop.passes.capturePassCount()),
+      static_cast<unsigned long long>(TrackCaptureStopTestAccess::pendingCanonicalPreparationGrains(track)),
+      static_cast<unsigned long>(revisionAtReach),
+      static_cast<unsigned long>(revisionAfterWrap),
+      TrackCaptureStopTestAccess::companionRefusalName(track), reachRefusal);
+  std::printf("companion wedge probe B: %s\n", message);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), message);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<uint8_t>(PendingStopDestination::Playing),
+                            TrackCaptureStopTestAccess::jobDestination(track),
+                            "the escape must not depend on a transport Stop / retarget");
+  // The authoritative pass must be committed even though the inline companion derivation was dropped.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(3, static_cast<uint32_t>(loop.passes.capturePassCount()),
+      "record + overdub + wrap must all be committed");
+  // DEC-172: the dropped derivation must be OWED through the post-commit generation, not forgotten.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredConvergenceOwes(track, 0),
+      "the raw retire must owe the deferred convergence obligation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.committedPassRevision(),
+                                   TrackCaptureStopTestAccess::deferredConvergenceTarget(track, 0),
+      "the obligation must target the generation this commit produced, never a pre-commit value");
+}
+
+/// DEC-186 coalescing: one obligation, newest generation. A second stop committing after the first escaped
+/// obligation must advance the single target, never stack a second job/obligation.
+void test_obsolete_companion_obligation_coalesces_onto_the_newest_generation() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(767, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  loop.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  track.prewarmPlaybackForSlot(0, true);
+  track.forceSetState(TRACK_PLAYING);
+  // First interval: obsolete companion preparation -> escape -> obligation at generation G.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 120, 240);
+  clockManager.assignCurrentTickSilently(240);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  for (unsigned grain = 0; grain < 20000; ++grain) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) ==
+            static_cast<uint8_t>(PendingStopPhase::CompanionHistory) &&
+        TrackCaptureStopTestAccess::companionPreparationInFlight(track))
+      break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::companionPreparationInFlight(track));
+  clockManager.assignCurrentTickSilently(300);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 700, 900);
+  clockManager.assignCurrentTickSilently(900);
+  (void)track.commitOverdubWrap();
+  for (unsigned grain = 0; grain < 64 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredConvergenceOwes(track, 0));
+  const uint32_t firstTarget = TrackCaptureStopTestAccess::deferredConvergenceTarget(track, 0);
+  // A second production commit that derives nothing of its own: another wrap on the live successor. This is
+  // the owner's coalescing case -- one obligation, newest generation -- not a second job.
+  inputNote(66, 910, 950);
+  clockManager.assignCurrentTickSilently(950);
+  TEST_ASSERT_TRUE(track.commitOverdubWrap());
+  const uint32_t newestCommitted = loop.committedPassRevision();
+  char message[320];
+  std::snprintf(message, sizeof(message),
+      "the second commit must advance the committed generation (first=%lu newest=%lu)",
+      static_cast<unsigned long>(firstTarget), static_cast<unsigned long>(newestCommitted));
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(firstTarget, newestCommitted, message);
+  // One owner turn coalesces the single obligation onto the newest committed generation.
+  (void)TrackCaptureStopTestAccess::serviceDeferredConvergence(track);
+  std::snprintf(message, sizeof(message),
+      "one obligation must coalesce to the newest generation (first=%lu now=%lu committed=%lu owes=%u)",
+      static_cast<unsigned long>(firstTarget),
+      static_cast<unsigned long>(TrackCaptureStopTestAccess::deferredConvergenceTarget(track, 0)),
+      static_cast<unsigned long>(newestCommitted),
+      TrackCaptureStopTestAccess::deferredConvergenceOwes(track, 0) ? 1u : 0u);
+  std::printf("companion obligation coalescing: %s\n", message);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredConvergenceOwes(track, 0), message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(newestCommitted,
+                                   TrackCaptureStopTestAccess::deferredConvergenceTarget(track, 0), message);
+}
+
+/// DEC-186 control: the same long-note overlap and the same begun preparation, **without** a commit that moves
+/// `playbackRevision` under it. This pair is the causality proof: the control retires, the wrap variant above
+/// does not, so the revision move -- not the overlap rows or the begun preparation alone -- is the trigger.
+void test_companion_history_retires_when_no_commit_moves_the_revision() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(767, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  loop.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  track.prewarmPlaybackForSlot(0, true);
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 120, 240);
+  clockManager.assignCurrentTickSilently(240);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  unsigned reachGrains = 0;
+  for (; reachGrains < 20000; ++reachGrains) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) ==
+            static_cast<uint8_t>(PendingStopPhase::CompanionHistory) &&
+        TrackCaptureStopTestAccess::companionPreparationInFlight(track))
+      break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
+                          TrackCaptureStopTestAccess::jobPhase(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::companionPreparationInFlight(track));
+  const uint32_t revisionAtBegin = loop.playbackRevision;
+  unsigned retireGrains = 0;
+  for (; retireGrains < 20000 && track.hasPendingDeferredOverdubStop(); ++retireGrains)
+    (void)TrackCaptureStopTestAccess::step(track);
+  char message[256];
+  std::snprintf(message, sizeof(message),
+      "control: no revision move, so the preparation must retire (rev=%lu grains=%u refusal=%s edit=%u)",
+      static_cast<unsigned long>(revisionAtBegin), retireGrains,
+      TrackCaptureStopTestAccess::companionRefusalName(track),
+      static_cast<unsigned>(loop.passes.editPasses.size()));
+  std::printf("companion wedge control: %s\n", message);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), message);
+  // The stop's *own* atomic transfer publishes companions and moves the revision after this phase, which is
+  // correct; the control's claim is only that the begun preparation retired without a mid-phase commit.
+}
+
+/// DEC-188: the undo/redo pass-state refresh must spend the **same bounded work at every loop length**.
+/// The former code filled every bar synchronously for loops of <=16 bars and returned immediately above that,
+/// so a 24-bar undo left all 24 bars dirty (and the painted set stale until a transport stop). The contract
+/// pinned here is "at most one paint window of bars is left dirty", never "the loop length" of them.
+void exercisePassStateRefreshAcrossLoopLengths(uint32_t bars) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  const uint32_t length = bars * Config::TICKS_PER_BAR;
+  loop.loopLengthTicks = length;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(length - 1, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(length, CommitReason::RecordStop));
+  loop.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  track.prewarmPlaybackForSlot(0, true);
+  track.forceSetState(TRACK_PLAYING);
+  // The refresh drains through the same slice path the display uses, so the slot needs a resolvable source
+  // (an authoritative published root); without one every slice is refused and the bar count proves nothing.
+  for (unsigned turn = 0; turn < 4096 && !loop.publishedSnapshotIsCurrent(); ++turn)
+    (void)loop.stepPendingSnapshotPublish(16);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  // The undo/redo edge: a committed-pass state change refreshes the display cache.
+  loop.refreshVisualCacheAfterPassStateChange();
+  uint32_t dirtyBars = 0;
+  for (unsigned char flag : loop.visualCache.dirtyBars) dirtyBars += flag ? 1u : 0u;
+  const uint32_t totalBars = (length + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  const uint32_t windowBars = 16;  // one paint window: the bound is the same for every loop length
+  const uint32_t allowedDirty = totalBars > windowBars ? totalBars - windowBars : 0;
+  char message[220];
+  std::snprintf(message, sizeof(message),
+      "pass-state refresh may leave at most one window dirty (%u bars: dirty=%u allowed=%u)",
+      static_cast<unsigned>(bars), static_cast<unsigned>(dirtyBars),
+      static_cast<unsigned>(allowedDirty));
+  std::printf("pass-state refresh: %s\n", message);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(allowedDirty, dirtyBars, message);
+}
+
+void test_pass_state_refresh_is_bounded_on_a_short_loop() {
+  exercisePassStateRefreshAcrossLoopLengths(8);
+}
+void test_pass_state_refresh_is_bounded_on_a_long_loop() {
+  exercisePassStateRefreshAcrossLoopLengths(24);
+}
+
+/// DEC-191 (ownership defect): `Reserved` with no live owner must not stay stuck. The ownerless reservation is
+/// payload-free, so the ownership lane resolves it to `Empty` -- without a Start press, and without waiting for
+/// `markSessionExitTailReady` (which only accepts a `Populated` record and therefore can never move it).
+void test_dec191_an_ownerless_reserved_claim_is_released_by_the_ownership_lane() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(loop.claimSessionExitPublishOwner());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Loop::SessionExitPublishClaim::Reserved),
+                        static_cast<int>(loop.sessionExitPublishClaimState()));
+  // No stop job exists, so the claim has no live owner; nothing else will ever move it.
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  unsigned turns = 0;
+  for (; turns < 64 && loop.sessionExitPublishClaimState() ==
+                         Loop::SessionExitPublishClaim::Reserved; ++turns) {
+    (void)TrackCaptureStopTestAccess::settleOrphanedReservation(track);
+  }
+  char message[200];
+  std::snprintf(message, sizeof(message),
+      "an ownerless Reserved claim must resolve by itself (turns=%u state=%u)",
+      turns, static_cast<unsigned>(loop.sessionExitPublishClaimState()));
+  std::printf("dec191 orphan ownership: %s\n", message);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(Loop::SessionExitPublishClaim::Empty),
+                                static_cast<int>(loop.sessionExitPublishClaimState()), message);
+  // Idempotent: a second settlement moves nothing.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::settleOrphanedReservation(track));
+}
+
+/// DEC-191: the retained-Start wake identity, pinned as a decision table. The gate parks while the identity
+/// that refused admission is unchanged, and re-drives when any member of it moves. `playbackRevision` is not a
+/// member: it changes for unrelated musical reasons and re-driving on it is exactly the 109 ms storm.
+void test_dec191_the_start_wake_identity_is_the_three_part_tuple_only() {
+  // Refusal was NOT the session-exit obligation: nothing to park on, always retry.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Retry),
+                        static_cast<int>(overdubStartRetryDecision(false, 1, 1, true, true, 3, 3)));
+  // Unchanged identity: park. This is the pathological shape (a live owner keeps `Reserved` for a while).
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Park),
+                        static_cast<int>(overdubStartRetryDecision(true, 1, 1, true, true, 3, 3)));
+  // Claim state moves  -> retry.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Retry),
+                        static_cast<int>(overdubStartRetryDecision(true, 1, 0, true, true, 3, 3)));
+  // Live-owner truth moves (the owner retired) -> retry.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Retry),
+                        static_cast<int>(overdubStartRetryDecision(true, 1, 1, true, false, 3, 3)));
+  // Receipt-ring occupancy moves (the publisher drained a slot) -> retry.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Retry),
+                        static_cast<int>(overdubStartRetryDecision(true, 1, 1, true, true, 3, 2)));
+  // Same tuple, different occupancy *value* observed twice -> still a change; the decision only compares.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Retry),
+                        static_cast<int>(overdubStartRetryDecision(true, 1, 1, true, true, 2, 3)));
+  // 64/128 unchanged turns: the decision is stable, i.e. it cannot provide a retry for an unchanged tuple.
+  for (unsigned turn = 0; turn < 128; ++turn) {
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(OverdubStartWake::Park),
+                          static_cast<int>(overdubStartRetryDecision(true, 1, 1, true, true, 3, 3)));
+  }
+}
+
 void test_successor_wrap_keeps_the_predecessors_frozen_builders() {
   Track& track = preparePlayingTrack();
   // A: deferred stop whose job owns the frozen role and binds the slot's canonical source.
@@ -4065,7 +4502,7 @@ void test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once() {
   // Dispatch reachability: the deferred owner lane drives the latch. The park re-runs the
   // interval slot's canonical reservation, so the stop completes without a second press.
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
                            "the accepted stop must be admitted once capacity returns");
@@ -4132,7 +4569,7 @@ void test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target() 
 
   // The park acquires the canonical target in a deferred turn and the drive then binds one job.
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track),
                            "the accepted stop's park must acquire the canonical target");
@@ -4315,7 +4752,7 @@ void test_s2b6_park_terminal_never_cancels_an_accepted_stop() {
 
   // Drive well past the terminal threshold. The terminal is a report; the request must survive it.
   for (size_t turn = 0; turn < 40; ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
                            "the park terminal must never abandon the accepted stop");
@@ -4332,7 +4769,7 @@ void test_s2b6_park_terminal_never_cancels_an_accepted_stop() {
   // The owner frees: the same single request now executes, exactly once, with no second press.
   TrackCaptureStopTestAccess::clearCanonicalOutput(track, 0);
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
                            "the parked stop must execute when the owner frees");
@@ -4411,7 +4848,7 @@ void test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes() {
 
   // The park acquires the canonical target and the drive binds one job to the interval's slot.
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
@@ -4463,7 +4900,7 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   // S4f.4 transition 4 -- repeated retries. Driving the accepted interaction again while the retargeted
   // job is still pending must not stack a second descriptor or a second obligation.
   for (size_t turn = 0; turn < 4; ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)),
                                    "repeated retries must not stack a second stop job");
@@ -4494,7 +4931,7 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   nativeTransportRunning = true;
   clockManager.assignCurrentTickSilently(192);
   for (size_t turn = 0; turn < 8; ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
                             "a consumed stop must not be re-created when the transport restarts");
@@ -4557,7 +4994,7 @@ void test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop() {
   TEST_ASSERT_NOT_EQUAL(latchedInterval, TrackCaptureStopTestAccess::interval(track));
 
   // One drive turn: superseded and retired, never bound to the replacement.
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track),
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track),
                            "the drive must act on the obligation rather than ignore it");
   TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
                             "a request whose interval a replacement removed is superseded, not retained");
@@ -4568,7 +5005,7 @@ void test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop() {
   TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
 
   // A second drive has nothing left to do: exactly one supersession.
-  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track),
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track),
                             "the supersession must be consumed exactly once");
   // Task 2.2: the supersession is the *consumption* edge of the latch, and it reports the reason the owner
   // took, on the interval the obligation was accepted under (the replacement's identity must not appear).
@@ -4710,7 +5147,7 @@ void test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_driv
 
   // Repeated drive turns must not re-create it, and must not add a second descriptor.
   for (size_t turn = 0; turn < 8; ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
                             "no drive turn may re-create a consumed obligation");
@@ -4740,14 +5177,14 @@ void test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound() {
   TrackCaptureStopTestAccess::advanceInterval(track);
   TEST_ASSERT_NOT_EQUAL(staleInterval, TrackCaptureStopTestAccess::interval(track));
 
-  (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
                             "a stale request is superseded and retired, not retained");
   TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
                             "a stale request must not bind to the replacement content");
   TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
   // A second drive has nothing left to do: exactly one supersession.
-  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track));
 }
 
 /// S4f.4 transition 2 (seek/reset): the boundary is recomputed in the tick domain present at execution, not
@@ -4766,7 +5203,7 @@ void test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution() {
 
   // A seek moves the tick domain before the request executes.
   clockManager.assignCurrentTickSilently(600);
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track));
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
 
   const uint64_t executedPhaseTick = TrackCaptureStopTestAccess::jobPhaseTick(track);
@@ -5106,7 +5543,7 @@ void test_task22_a_retained_stop_reports_its_own_sequenced_identity_evidence() {
   TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
 
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
@@ -5152,13 +5589,13 @@ void test_task22_the_consumption_reason_names_the_edge_that_took_it() {
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
   for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
-    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   }
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
   const std::vector<LatchRows::Row> consumes = LatchRows::of("consume");
   TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(consumes.size()));
   TEST_ASSERT_EQUAL_STRING("admitted", consumes[0].outcome);
-  (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurnForTest(track);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(LatchRows::of("consume").size()),
                                    "the obligation is consumed exactly once, so it is reported once");
 }
@@ -5190,6 +5627,14 @@ int main() {
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
   // the default gate): it keeps an investigation trace from being diluted by every other fixture.
   if (getenv("ONLY_COMPANION") != nullptr) {
+    RUN_TEST(test_pass_state_refresh_is_bounded_on_a_short_loop);
+  RUN_TEST(test_pass_state_refresh_is_bounded_on_a_long_loop);
+  RUN_TEST(test_dec191_an_ownerless_reserved_claim_is_released_by_the_ownership_lane);
+  RUN_TEST(test_dec191_the_start_wake_identity_is_the_three_part_tuple_only);
+  RUN_TEST(test_companion_history_retires_when_no_commit_moves_the_revision);
+    RUN_TEST(test_companion_history_survives_successor_starts_after_the_preparation_begins);
+    RUN_TEST(test_companion_history_survives_overlap_rows_wrap_and_a_backlogged_stop);
+    RUN_TEST(test_obsolete_companion_obligation_coalesces_onto_the_newest_generation);
     RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
     return UNITY_END();
   }
@@ -5233,6 +5678,20 @@ int main() {
   RUN_TEST(test_adversarial_reentry_at_a_canonical_rewrite_checkpoint);
   // OpenSpec 5.5 promoted the D8-fixed `CompanionHistory` checkpoint into the default gate.
   RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
+  // DEC-186: the state that checkpoint does not reach -- the preparation is already begun when the
+  // successor starts, which is the device shape.
+  RUN_TEST(test_pass_state_refresh_is_bounded_on_a_short_loop);
+  RUN_TEST(test_pass_state_refresh_is_bounded_on_a_long_loop);
+  RUN_TEST(test_dec191_an_ownerless_reserved_claim_is_released_by_the_ownership_lane);
+  RUN_TEST(test_dec191_the_start_wake_identity_is_the_three_part_tuple_only);
+  RUN_TEST(test_companion_history_retires_when_no_commit_moves_the_revision);
+  RUN_TEST(test_companion_history_survives_successor_starts_after_the_preparation_begins);
+  // DEC-186 RED reproducer: a commit that moves `playbackRevision` under a begun companion preparation parks
+  // the job in `CompanionHistory` forever. Named refusals: `COMPANION_REVISION_RED=1 pio test -e native
+  // -f test_continuous_capture`. Gated so the known wedge cannot mask a new failure in the default gate,
+  // exactly as the former `REENTRY_RED` case was (OpenSpec 5.5).
+  RUN_TEST(test_companion_history_survives_overlap_rows_wrap_and_a_backlogged_stop);
+  RUN_TEST(test_obsolete_companion_obligation_coalesces_onto_the_newest_generation);
   RUN_TEST(test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint);
   RUN_TEST(test_adversarial_reentry_at_the_publication_checkpoint);
   RUN_TEST(test_simultaneous_interval_owned_staged_passes);

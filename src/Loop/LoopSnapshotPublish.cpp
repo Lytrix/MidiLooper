@@ -2075,6 +2075,22 @@ LOOP_COLD_MEM bool Loop::claimSessionExitPublishOwner() {
   return true;
 }
 
+/// DEC-191: an orphaned reservation has no live owner and, because `claimSessionExitPublishOwner` zeroes the
+/// record it reserves, **nothing left to publish**. The existing orphan path could not resolve it:
+/// `markSessionExitTailReady` only accepts a `Populated` record (`Reserved -> Publishing` is not a transition),
+/// so a `Reserved` claim with no owner stayed `Reserved` forever and refused every later Start on that slot.
+/// This is the missing terminal: release it to `Empty`. A record that does hold identities is *not* released --
+/// committed identities are never dropped.
+LOOP_COLD_MEM bool Loop::releaseOrphanedSessionExitReservation() {
+  if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Reserved) return false;
+  SessionExitSnapshotHandoff* record = reservedSessionExit();
+  if (record == nullptr) return false;
+  if (record->pending || !record->passIds.empty() || !record->companionIds.empty()) return false;
+  *record = SessionExitSnapshotHandoff{};
+  sessionExitPublishClaimState_ = SessionExitPublishClaim::Empty;
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::releaseSessionExitPublishOwner(uint64_t sessionIdentity) {
   if (sessionExitPublishClaimState_ != SessionExitPublishClaim::Reserved) {
     // A populated/publishing record owns committed identities the publisher still owes; releasing

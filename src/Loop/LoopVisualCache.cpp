@@ -1069,20 +1069,24 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
 }
 
 LOOP_COLD_MEM void Loop::refreshVisualCacheAfterPassStateChange() {
+  // DEC-188: one code path for every loop length. The former split -- a full synchronous fill for loops of
+  // <=16 bars and an immediate `return` above that -- was the short-vs-long asymmetry the rolling-window work
+  // is meant to delete, and it is why an undo on a 24-bar loop left the painted set stale until a transport
+  // stop: the long path marked the cache and then relied on a lane that never drained it in time.
+  //
+  // The bounded work is now the same everywhere: mark, then spend at most `kRefreshSlices` slices of
+  // `kBarsPerBarSlice` bars (16 bars, i.e. one full paint window), whichever the loop length. Anything left
+  // dirty stays for the idle lane exactly as before, so no call becomes proportional to the loop length.
   markDisplayCachesStale();
   const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
   if (totalBars == 0) {
     return;
   }
-  constexpr uint32_t kImmediateFillBarLimit = 16;
-  if (totalBars > kImmediateFillBarLimit) {
-    return;
-  }
-  constexpr uint8_t kBarsPerSlice = 4;
-  const uint32_t maxSlices = (totalBars + kBarsPerSlice - 1) / kBarsPerSlice + 1;
+  constexpr uint8_t kBarsPerBarSlice = 4;
+  constexpr uint32_t kRefreshSlices = 4;  // <= 16 bars: one window, independent of loop length
   visualCachePassStateRefreshActive_ = true;
-  for (uint32_t slice = 0; slice < maxSlices && visualCacheDirty; ++slice) {
-    rebuildVisualCacheIdleSlice(kBarsPerSlice, 0);
+  for (uint32_t slice = 0; slice < kRefreshSlices && visualCacheDirty; ++slice) {
+    rebuildVisualCacheIdleSlice(kBarsPerBarSlice, 0);
   }
   visualCachePassStateRefreshActive_ = false;
 }

@@ -292,6 +292,73 @@ DISP_COLD_MEM __attribute__((noinline)) void DisplayManager::checkDmaStagingDiag
     // which is exactly the qualification image's padding above the approved 840 B floor (`code 392,376 + padding 840`
     // -> `392,392 + 824`). Same build set (`SESSION_CAPTURE && ARDUINO`); the sampler is a no-op outside capture builds.
     observeDetailedWindowTransition();
+    reportPaintBeatTransport();
+}
+#endif
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && defined(__IMXRT1062__)
+// DEC-187 diagnostic: one row per second of **what the paint path handed to the glass** against where the
+// playhead actually is. A capture cannot answer this from `#CAP` receipts alone: `DISP,3` dedupes on note
+// count, `DFRAME`/`disp_turn` are ring records that a busy capture sheds, and `RING,shed` then makes their
+// absence non-evidence. This row is written straight to USB (like `#DMA_XFER`), so it cannot be shed: the two
+// tick fields decide the branch -- `paint` lagging `play` means the paint input is frozen, `paint == play`
+// with a stale panel means the transfer path is. `phase` is the pending paint phase, `xfer` the transport's
+// own busy flag, and `dma` proves frames still complete while the panel looks frozen.
+/// `DMAMEM` is NOLOAD (not zero-initialised), so `lastOut` is never trusted as an initialiser: a wrapped or
+/// garbage value only ever yields a clamped delta, and `lastMs == 0` means "not armed yet".
+struct PaintBeatState {
+    uint32_t lastMs;
+    uint32_t lastOut;
+    uint32_t armedMagic;
+};
+#if defined(__IMXRT1062__)
+DMAMEM PaintBeatState gPaintBeat;
+#else
+PaintBeatState gPaintBeat;
+#endif
+constexpr uint32_t kPaintBeatArmedMagic = 0x50425431u;  // 'PBT1'
+
+void DisplayManager::reportPaintBeatTransport() {
+    static constexpr uint32_t kPaintBeatIntervalMs = 1000u;
+    const uint32_t nowMs = millis();
+    if (gPaintBeat.armedMagic == kPaintBeatArmedMagic &&
+        nowMs - gPaintBeat.lastMs < kPaintBeatIntervalMs) return;
+    const Track& selected = trackManager.getSelectedTrack();
+    if (!selected.isAudiblePlaybackActive() && !selected.isRecording()) return;
+    // DEC-188: the display cache's own state, so a frozen painted set is attributable in one run: `dirty=1`
+    // with a stale `notes` means the owning lane never drained the marked bars (scheduling); `dirty=0` with
+    // `vcache` still holding the undone rows means the rebuild ran against a stale source.
+    uint32_t cacheDirty = 1u;
+    uint32_t cacheNotes = 0u;
+    if (paintSlot_ < Config::MAX_LOOPS_PER_TRACK) {
+        const Loop& paintedLoop = selected.getLoop(paintSlot_);
+        cacheDirty = paintedLoop.visualCacheDirty ? 1u : 0u;
+        cacheNotes = static_cast<uint32_t>(paintedLoop.visualCache.notes.size());
+    }
+    const uint32_t outNow = DebugSessionCapture::midiOutNoteOnCount();
+    const uint32_t outDelta = (gPaintBeat.armedMagic == kPaintBeatArmedMagic && outNow >= gPaintBeat.lastOut)
+                                  ? outNow - gPaintBeat.lastOut
+                                  : outNow;
+    gPaintBeat.lastMs = nowMs;
+    gPaintBeat.lastOut = outNow;
+    gPaintBeat.armedMagic = kPaintBeatArmedMagic;
+    const uint8_t state = static_cast<uint8_t>(selected.getState());
+    const uint32_t playTick = clockManager.getCurrentTick();
+    const uint32_t winStart = paintSlot_ < kDisplaySlotCount ? detailedWindowStartTick_[paintSlot_] : 0u;
+    const uint8_t winBars = paintSlot_ < kDisplaySlotCount ? detailedWindowBars_[paintSlot_] : 0u;
+    Serial.printf_P(
+        PSTR("#PAINT_BEAT,%lu,state=%u,paint=%lu,play=%lu,win=%lu/%u,notes=%lu,phase=%u,xfer=%u,dma=%lu,"
+             "out=%lu,last=%u,dirty=%u,vcache=%lu\r\n"),
+        static_cast<unsigned long>(nowMs), static_cast<unsigned>(state),
+        static_cast<unsigned long>(paintDisplayTick_), static_cast<unsigned long>(playTick),
+        static_cast<unsigned long>(winStart), static_cast<unsigned>(winBars),
+        static_cast<unsigned long>(resolvedPaintNotes().size()),
+        static_cast<unsigned>(pendingPaintPhase_),
+        _display.api.isDisplayTransferActive() ? 1u : 0u,
+        static_cast<unsigned long>(_display.api.dmaCompletedFrameCount()),
+        static_cast<unsigned long>(outDelta),
+        static_cast<unsigned>(DebugSessionCapture::midiOutLastNote()),
+        static_cast<unsigned>(cacheDirty), static_cast<unsigned long>(cacheNotes));
 }
 #endif
 

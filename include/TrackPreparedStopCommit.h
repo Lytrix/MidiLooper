@@ -13,6 +13,8 @@ struct EmissionCursor;
 struct PreparedCapturePassTransfer;
 struct PendingCapturePass;
 struct CapturePreview;
+/// DEC-186 diagnostic reason, declared in `Loop.h`; only ever passed by pointer here.
+enum class CompanionPreparationRefusal : uint8_t;
 // Stateless implementation of Track's handoff, kept independent of Arduino
 // so native tests execute the same joint preflight and publication body.
 namespace TrackPreparedStopCommit {
@@ -56,8 +58,11 @@ bool commitSupersededCausalBase(Loop& loop, PendingStopAdmission& stop,
     TrackUndoPublication* undo, PendingCapturePass* pendingPass = nullptr);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
+// `outRefusal` (DEC-186, diagnostic) names the guard that refused when this returns `Denied`.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,
-    PendingStopAdmission& stop, size_t quantum);
+    PendingStopAdmission& stop, size_t quantum,
+    CompanionPreparationRefusal* outRefusal = nullptr,
+    PendingCapturePass* capturePass = nullptr);
 // Explicit acknowledgement that undo/snapshot consumers have consumed the
 // committed ID receipt. Charges a separate setup turn and ends receipt access.
 bool beginHistoryRecycle(Loop& loop, PendingStopAdmission& stop);

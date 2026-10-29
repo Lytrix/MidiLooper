@@ -402,6 +402,10 @@ private:
     /// line, like the canary reporter above.
     void reportDisplayDmaTransport();
 
+    /// DEC-187 diagnostic: one un-sheddable row per second comparing the painted tick with the playhead,
+    /// plus the pending paint phase and the transport's busy flag. Flash-resident and out of line.
+    void reportPaintBeatTransport();
+
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);

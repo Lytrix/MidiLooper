@@ -147,6 +147,104 @@ def receive(readline, output: Path, max_bytes: int = 1024**3, preserve_duplicate
         raise
 
 
+def receive_root_txt_list(readline) -> list[str]:
+    """Read the device's bounded root `*.txt` listing (`TXTLIST` / `TXT <hexname> <size>` / `ENDTXTLIST`)."""
+    def line():
+        raw = readline()
+        if not raw or not raw.endswith(b'\n') or len(raw) > 2048:
+            raise TransferError('Transfer timed out, disconnected, or sent an incomplete line')
+        try:
+            text = raw.decode('ascii').strip()
+        except UnicodeError as exc:
+            raise TransferError('Non-protocol data from device') from exc
+        if text.startswith('ERROR '):
+            raise TransferError(text)
+        return text.split()
+
+    if line() != ['TXTLIST']:
+        raise TransferError('Missing root .txt listing header')
+    names: list[str] = []
+    while True:
+        row = line()
+        if row == ['ENDTXTLIST']:
+            return names
+        if len(row) != 3 or row[0] != 'TXT' or len(names) >= 16:
+            raise TransferError(f'Unexpected root listing record: {row[:1]}')
+        try:
+            name = bytes.fromhex(row[1]).decode('utf-8')
+        except (ValueError, UnicodeError) as exc:
+            raise TransferError('Invalid root file name encoding') from exc
+        if (not name.endswith('.txt') or '/' in name or '\\' in name or len(name) > 48):
+            raise TransferError(f'Device offered a non-.txt root file: {name!r}')
+        names.append(name)
+
+
+def receive_root_file(readline, output: Path, name: str, max_bytes: int) -> Path:
+    """Fetch one **root-level** read-only file (default `crashlog.txt`) after the folder copy.
+
+    The device whitelists the name; this never enumerates the card root. The file is written to
+    `<output>/<name>` and checked exactly like a folder entry (length, CRC32, SHA-256), and the
+    manifest records it under `root_files` so the backup stays auditable.
+    """
+    if (not name or '/' in name or '\\' in name or name in ('.', '..') or
+            any(ord(c) < 32 or ord(c) == 127 for c in name)):
+        raise TransferError(f'Invalid root file name: {name}')
+
+    def line():
+        raw = readline()
+        if not raw or not raw.endswith(b'\n') or len(raw) > 2048:
+            raise TransferError('Transfer timed out, disconnected, or sent an incomplete line')
+        try:
+            text = raw.decode('ascii').strip()
+        except UnicodeError as exc:
+            raise TransferError('Non-protocol data from device') from exc
+        if text.startswith('ERROR '):
+            raise TransferError(text)
+        return text.split()
+
+    row = line()
+    if len(row) != 3 or row[0] != 'FILE':
+        raise TransferError(f'{name}: expected a FILE record, got {row[:1]}')
+    try:
+        declared = bytes.fromhex(row[1]).decode('utf-8')
+    except (ValueError, UnicodeError) as exc:
+        raise TransferError('Invalid root file name encoding') from exc
+    if declared != name:
+        raise TransferError(f'{name}: device named {declared!r}')
+    length = int(row[2])
+    if length < 0 or length > max_bytes:
+        raise TransferError(f'{name}: {length} bytes exceeds the configured limit')
+    path = output / name
+    if path.exists():
+        raise TransferError(f'{name}: refusing to overwrite an existing file')
+    crc = 0
+    sha = hashlib.sha256()
+    received = 0
+    with path.open('xb') as file:
+        while True:
+            data_row = line()
+            if len(data_row) == 2 and data_row[0] == 'END':
+                if received != length or int(data_row[1], 16) != crc:
+                    raise TransferError(
+                        f'{name}: received {received}/{length} bytes; CRC {crc:08x}, device {data_row[1]}')
+                break
+            if len(data_row) != 2 or data_row[0] != 'DATA':
+                raise TransferError(f'{name}: expected file data or checksum')
+            data = bytes.fromhex(data_row[1])
+            received += len(data)
+            if not data or len(data) > 256 or received > length:
+                raise TransferError(f'{name}: invalid data chunk length')
+            file.write(data)
+            sha.update(data)
+            crc = zlib.crc32(data, crc)
+    manifest_path = output / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    manifest.setdefault('root_files', []).append(
+        {'name': name, 'bytes': length, 'sha256': sha.hexdigest(), 'crc32': f'{crc:08x}'})
+    manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True, help='USB serial port running the standalone reader')
@@ -154,6 +252,9 @@ def main():
     parser.add_argument('--max-mib', type=int, default=1024, help='Download limit, default 1024 MiB')
     parser.add_argument('--preserve-duplicate-files', action='store_true',
                         help='Preserve duplicate directory entries under duplicate_entries; record the ambiguity')
+    parser.add_argument('--root-file', action='append', default=None,
+                        help='Fetch this root-level .txt file after the folder copy (repeatable). '
+                             'Omit to fetch every root .txt the device lists (bounded to 16).')
     parser.add_argument('--reader-installed', action='store_true', required=True,
                         help='Confirm approved standalone reader firmware is installed; never use on looper firmware')
     args = parser.parse_args()
@@ -182,6 +283,18 @@ def main():
             return raw
         result = receive(acknowledged_line, args.output, args.max_mib * 1024**2,
                          args.preserve_duplicate_files)
+        names = list(args.root_file or [])
+        if not names:
+            # Only root `*.txt` files, and only through the device's bounded listing: the card holds many
+            # unrelated files and this tool never enumerates the root itself.
+            ser.write(b'MLREADER_LS_TXT\n')
+            names = receive_root_txt_list(acknowledged_line)
+            print(f"Root .txt files: {len(names)}")
+        for name in names:
+            ser.write(f'MLREADER_FILE {name}\n'.encode('ascii'))
+            saved = receive_root_file(acknowledged_line, args.output, name,
+                                      args.max_mib * 1024**2)
+            print(f"Root file: {name} -> {saved}")
         print(f"Complete: {len(result['files'])} files, {result['bytes']:,} bytes -> {args.output}")
         if result['duplicate_paths']:
             print(f"Warning: {len(result['duplicate_paths'])} duplicate file paths preserved separately; see manifest")

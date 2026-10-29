@@ -1306,6 +1306,34 @@ void test_a34a_guard_predicate_is_false_without_an_owner() {
   TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
 }
 
+/// DEC-190: a fault breadcrumb survives the fault reboot and parks **one** slot on the next boot, leaving the
+/// file on SD and the rest of the set untouched. Pins the policy, not the SD I/O: the breadcrumb is consumed
+/// once, a parked slot is never enqueued, and clearing the table restores normal admission.
+void test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot() {
+  StorageManagerInternal::resetRestoreFaultSkips();
+  StorageManagerInternal::clearLoopSlotRestoreBreadcrumb();
+  uint8_t track = 0xFF, slot = 0xFF;
+  TEST_ASSERT_FALSE(StorageManagerInternal::takeFaultedLoopSlot(track, slot));
+  StorageManagerInternal::armLoopSlotRestoreBreadcrumb(7, 3);
+  TEST_ASSERT_TRUE(StorageManagerInternal::takeFaultedLoopSlot(track, slot));
+  TEST_ASSERT_EQUAL_UINT8(7, track);
+  TEST_ASSERT_EQUAL_UINT8(3, slot);
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::takeFaultedLoopSlot(track, slot),
+                            "the breadcrumb is consumed once, so a clean boot parks nothing");
+  TEST_ASSERT_TRUE(StorageManagerInternal::markRestoreFaultSkip(7, 3));
+  TEST_ASSERT_TRUE(StorageManagerInternal::restoreFaultSkipped(7, 3));
+  StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::appendBootLoopSlotRestore(7, 3, 0),
+                            "a parked slot must never reach the parse/apply path");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::appendBootLoopSlotRestore(7, 4, 0),
+                           "the rest of the set still restores");
+  StorageManagerInternal::resetRestoreFaultSkips();
+  StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
+  TEST_ASSERT_FALSE(StorageManagerInternal::restoreFaultSkipped(7, 3));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(7, 3, 0));
+  StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
@@ -1353,5 +1381,6 @@ int main(int, char**) {
   RUN_TEST(test_a34a_a_nested_scope_cannot_acquire_or_release_the_owner);
   RUN_TEST(test_a34a_guard_is_released_and_a_later_drain_can_take_it);
   RUN_TEST(test_a34a_guard_predicate_is_false_without_an_owner);
+  RUN_TEST(test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot);
   return UNITY_END();
 }

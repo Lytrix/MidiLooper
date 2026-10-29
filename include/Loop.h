@@ -51,6 +51,65 @@ struct PublishedSnapshotBox;
 struct PendingSnapshotPublishBox;
 struct SessionExitSnapshotHandoff;
 
+/// Why a prepared companion history cannot advance. **Diagnostic only** (DEC-186): the classification is the
+/// same predicate set `beginPreparedCompanionHistory` / `stepPreparedCompanionHistory` already use, so it can
+/// never disagree with behaviour and adds no state. Before this, a job parked in `CompanionHistory` reported
+/// nothing at all: the device capture `session_20261028_220707.log` serviced 50,121 grains of that phase in
+/// ~32 s without one row naming the refusing predicate.
+enum class CompanionPreparationRefusal : uint8_t {
+  None = 0,
+  /// The horizon is not `Prewarmed`, so `begin` cannot bind it: an in-flight/`Denied`/foreign preparation.
+  PhaseNotPrewarmed,
+  /// A begun preparation belongs to another interval (successor or released owner).
+  OwnerMismatch,
+  RowsCapacity,
+  RowLimit,
+  CompanionCapacity,
+  CompanionIdCapacity,
+  EditCapacity,
+  RowsNotReady,
+  PassIdExhausted,
+  SnapshotBoxMissing,
+  SnapshotCapacity,
+  SnapshotLimit,
+  StagedPassPreparing,
+  CanonicalInputsUnbound,
+  CanonicalInputsNoChunks,
+  CanonicalInputsChunkOverflow,
+  CanonicalInputsNotFrozenOverdub,
+  CanonicalInputsOtherCapture,
+  /// The begun preparation's pinned identities moved. One value per term of
+  /// `preparedCompanionHistorySourceCurrent`, because that is the predicate a parked job trips.
+  SourceNotCurrent,
+  SourceSnapshotGeneration,
+  SourceSnapshotCount,
+  SourceStorageGeneration,
+  SourceRevision,
+  SourceHistoryCount,
+  SourceFirstId,
+  SourceRowGeneration,
+  SourceRowsNotReady,
+  SourceCapturePassReleased,
+  SourceCapturePassId,
+  SourceCaptureChunks,
+  SourceInputsGeneration,
+  SourceInputsNotFrozenOverdub,
+  SourceInputsOtherCapture,
+  /// The phase machine itself gave up. One value per internal denial site, because each is a different
+  /// mechanism (content shape, capacity, or frozen-capture verification).
+  PhaseDenied,
+  DeniedRowIdOutOfRange,
+  DeniedRowPayloadCapacity,
+  DeniedRowNotATransform,
+  DeniedCaptureChunkUnreadable,
+  DeniedCaptureEventCount,
+  DeniedCaptureEventMismatch,
+  /// The job's declared canonical-preparation grain credit is spent.
+  GrainCreditExhausted,
+  /// The step ran but the phase never advanced (a `Denied` spin or a foreign ready horizon).
+  StepNoProgress,
+};
+
 /// Overdub-session totals for `#CAP,DIAG,oh` (`add`/`shorten`/`hide` last). Incremented on note-off; emitted at stop.
 struct OverlapHoldTotals {
   uint32_t noteOffs = 0;
@@ -828,9 +887,33 @@ struct Loop {
                                      const RuntimeCanonicalPassInputs* captureInputs = nullptr,
                                      uint64_t owner = 0,
                                      PendingCapturePass* capturePass = nullptr);
+  /// DEC-186 diagnostic: **which** guard would refuse `beginPreparedCompanionHistory` with these arguments.
+  /// Same order, same predicates, no side effect; `None` means the call would be admitted. `begin` itself
+  /// consults this, so a reported reason is the reason that actually fired.
+  CompanionPreparationRefusal preparedCompanionHistoryBeginRefusal(
+      const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
+      const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner,
+      PendingCapturePass* capturePass) const;
+  /// DEC-186 diagnostic: why a job already in `CompanionHistory` made no progress this turn. Distinguishes
+  /// an un-admittable horizon from a begun preparation whose pinned source moved.
+  CompanionPreparationRefusal whyCompanionPreparationCannotAdvance(
+      const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
+      const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner,
+      PendingCapturePass* capturePass) const;
+  /// DEC-186 diagnostic: the single term of `preparedCompanionHistorySourceCurrent` that is false, in the
+  /// same order as that predicate. `None` means the source is current.
+  CompanionPreparationRefusal preparedCompanionHistorySourceRefusal() const;
+  /// DEC-186 cause predicate: a **begun** preparation is pinned to a `playbackRevision` that has since moved.
+  /// This is exactly `CompanionPreparationRefusal::SourceRevision` for an in-flight preparation, stated as one
+  /// step so the escape cannot read a `Cold`/`Prewarmed` horizon as stale. Pure read.
+  bool preparedCompanionHistoryRevisionMoved() const;
+  /// Flash-resident name for the reason. Never allocates.
+  static const char* companionPreparationRefusalName(CompanionPreparationRefusal refusal);
   /// One unit is row metadata, a payload/snapshot item, an unused tail row,
   /// or one staged-capture event/chunk-boundary comparison.
-  bool stepPreparedCompanionHistory(size_t quantum, uint64_t owner = 0);
+  /// `outRefusal` (DEC-186, diagnostic) names the predicate when this call refuses; it never changes the result.
+  bool stepPreparedCompanionHistory(size_t quantum, uint64_t owner = 0,
+                                    CompanionPreparationRefusal* outRefusal = nullptr);
   bool preparedCompanionHistoryReady(uint64_t owner = 0) const;
   bool preparedCompanionCaptureVerified(const RuntimeCanonicalPassInputs& inputs,
                                         uint64_t owner = 0) const;
@@ -1225,6 +1308,12 @@ struct Loop {
   /// admission, before the interval is live. Refuses (and reports) when the single obligation is
   /// already reserved, populated or publishing — the caller then names that refusal.
   bool claimSessionExitPublishOwner();
+  /// DEC-191: resolve an **orphaned** reservation. A `Reserved` claim is payload-free by construction
+  /// (`claimSessionExitPublishOwner` zeroes the record), and `markSessionExitTailReady` only accepts a
+  /// `Populated` record, so without this terminal an ownerless `Reserved` claim never leaves the state and the
+  /// slot's Start is refused forever. Returns true only when it actually moved the claim to `Empty`; a record
+  /// that holds committed identities is never released.
+  bool releaseOrphanedSessionExitReservation();
   /// Release a payload-free reservation. `sessionIdentity` 0 releases a reservation whose session
   /// never opened (an aborted start); a populated/publishing obligation is never dropped here
   /// because it owns committed identities the publisher still owes.
@@ -1447,6 +1536,9 @@ struct Loop {
   }
   /// After pass-state change: mark stale and fill short loops via idle slices (same oracle
   /// as PLAYING). Long loops stay idle-deferred — no `VCACHE,full` flatten+append.
+  /// DEC-188: identical bounded work for **every** loop length -- mark, then at most one paint window
+  /// (4 slices x 4 bars) of drain, with the remainder left to the idle lane. There is deliberately no
+  /// short-loop full-fill branch and no long-loop early return.
   void refreshVisualCacheAfterPassStateChange();
   /// RC-N1: if settled pitch is present at the mover start, drop the previous home pitch there.
   /// `retainedEndTicks` are same-pitch same-start sibling ends that must survive (152627).

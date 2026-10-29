@@ -6,7 +6,7 @@ namespace {
 constexpr char kRoot[] = "/MidiLooper";
 constexpr unsigned kMaxDepth = 16;
 constexpr size_t kMaxPath = 512;
-char command[24];
+char command[96];  // DEC-190 C: `MLREADER_FILE <name>` needs room for a 48-char .txt name
 size_t used = 0;
 bool overflow = false;
 uint32_t files = 0;
@@ -98,6 +98,73 @@ bool walk(File& dir, const char* relative, unsigned depth) {
   return false;
 }
 
+// DEC-190 option C: read-only export of a small **root-level** diagnostic file (`crashlog.txt`), which the
+// folder walk cannot reach because its root is `/MidiLooper`. Whitelisted on purpose: this image must never be
+// able to enumerate or read arbitrary card content. Same FILE/DATA/END framing as a folder entry, so the host
+// reuses one decoder and one CRC check.
+// Root reads are restricted to `*.txt` on purpose: the card carries many unrelated files and this image must
+// never enumerate or read arbitrary card content. Names are plain (no separators), short and bounded.
+constexpr unsigned kMaxRootTxtName = 48;
+
+bool isAllowedRootFile(const char* name) {
+  if (name == nullptr || !*name || strchr(name, '/') || strchr(name, '\\')) return false;
+  const size_t length = strlen(name);
+  return length > 4 && length <= kMaxRootTxtName && !strcmp(name + length - 4, ".txt");
+}
+
+// Bounded listing of root `*.txt` entries only. One line per name with its size, so the host can fetch each
+// through `MLREADER_FILE`. Nothing else at the root is ever named.
+void listRootTxtFiles() {
+  if (!SD.begin(BUILTIN_SDCARD)) { fail("sd_unavailable"); return; }
+  File root = SD.open("/", FILE_READ);
+  if (!root || !root.isDirectory()) { fail("root_unavailable"); return; }
+  Serial.println("TXTLIST");
+  if (!acknowledge()) { root.close(); return; }
+  unsigned count = 0;
+  while (count < 16) {
+    File entry = root.openNextFile(FILE_READ);
+    if (!entry) break;
+    const char* name = entry.name();
+    if (name != nullptr && !entry.isDirectory() && isAllowedRootFile(name)) {
+      Serial.print("TXT "); hex(reinterpret_cast<const uint8_t*>(name), strlen(name));
+      Serial.printf(" %llu\n", static_cast<unsigned long long>(entry.size()));
+      if (!acknowledge()) { entry.close(); root.close(); return; }
+      ++count;
+    }
+    entry.close();
+  }
+  root.close();
+  Serial.println("ENDTXTLIST");
+  acknowledge();
+}
+
+void exportRootFile(const char* name) {
+  if (!isAllowedRootFile(name)) { fail("root_file_not_allowed"); return; }
+  if (!SD.begin(BUILTIN_SDCARD)) { fail("sd_unavailable"); return; }
+  File file = SD.open(name, FILE_READ);
+  if (!file || file.isDirectory()) { fail("root_file_missing"); return; }
+  const uint64_t length = file.size();
+  const size_t nameLength = strlen(name);
+  Serial.print("FILE "); hex(reinterpret_cast<const uint8_t*>(name), nameLength);
+  Serial.printf(" %llu\n", static_cast<unsigned long long>(length));
+  if (!acknowledge()) { file.close(); return; }
+  uint64_t remaining = length;
+  uint32_t crc = 0xffffffffu;
+  uint8_t buffer[256];
+  while (remaining) {
+    size_t want = remaining < sizeof(buffer) ? static_cast<size_t>(remaining) : sizeof(buffer);
+    int got = file.read(buffer, want);
+    if (got <= 0) { file.close(); fail("file_read"); return; }
+    crc = crcUpdate(crc, buffer, got);
+    Serial.print("DATA "); hex(buffer, got); Serial.println();
+    if (!acknowledge()) { file.close(); return; }
+    remaining -= got;
+  }
+  file.close();
+  Serial.printf("END %08lx\n", static_cast<unsigned long>(crc ^ 0xffffffffu));
+  acknowledge();
+}
+
 void exportFolder() {
   files = 0; bytes = 0;
   // Mount only on explicit export. All opens are read-only; never enumerate card root.
@@ -124,6 +191,8 @@ void loop() {
       command[used] = 0;
       if (!overflow && !strcmp(command, "MLREADER_HELLO")) Serial.println("MLREADER2 READ_ONLY /MidiLooper");
       else if (!overflow && !strcmp(command, "MLREADER_EXPORT")) exportFolder();
+      else if (!overflow && !strncmp(command, "MLREADER_FILE ", 14)) exportRootFile(command + 14);
+      else if (!overflow && !strcmp(command, "MLREADER_LS_TXT")) listRootTxtFiles();
       else fail("unknown_command");
       used = 0; overflow = false;
     } else if (used < sizeof(command)-1) command[used++] = c;

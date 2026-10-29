@@ -181,6 +181,17 @@ TRACK_COLD_MEM Track::AllocationCensus Track::allocationCensus() const {
 /// journal), 2 = any other pending publication. Lowest rank wins; ties go to the active loop, then slot order. Stateless
 /// and bounded by `MAX_LOOPS_PER_TRACK`. While recording, the active loop keeps absolute priority: live-record
 /// progress is its own clause of the owner's gate.
+TRACK_COLD_MEM bool Track::playbackSourceRecoveryNeededForSlot(uint8_t slotIndex) const {
+  if (!isPlaying() || !loopsAllocated() || slotIndex >= Config::MAX_LOOPS_PER_TRACK ||
+      hasPendingDeferredOverdubStop() || hasPendingSnapshotPublishOnAnySlot()) return false;
+  const Loop& loop = getLoop(slotIndex);
+  return trackManager.isSlotEnabled(resolveTrackIndexForPersistence(*this), slotIndex) &&
+      loop.loopLengthTicks != 0 && loop.hasCommittedPasses() &&
+      loop.publishedSnapshotIdentity() == nullptr && !loop.captureActive() &&
+      !loop.hasOverdubSession() &&
+      loop.sessionExitPublishClaimState() == Loop::SessionExitPublishClaim::Empty;
+}
+
 TRACK_COLD_MEM Loop& Track::loopWithPendingSnapshotPublish() {
   Loop& active = getActiveLoop();
   const bool activePending = active.hasPendingSnapshotPublish();
@@ -209,7 +220,14 @@ TRACK_COLD_MEM Loop& Track::loopWithPendingSnapshotPublish() {
       bestRank = r;
     }
   }
-  return best != nullptr ? *best : active;
+  if (best != nullptr) return *best;
+  // A passes-only restore has no queued publisher. Select a sounding slot only:
+  // the existing Snapshot turn must produce its missing source, not hydrate the library.
+  if (playbackSourceRecoveryNeededForSlot(activeLoopIndex)) return active;
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (playbackSourceRecoveryNeededForSlot(s)) return getLoop(s);
+  }
+  return active;
 }
 
 TRACK_COLD_MEM bool Track::hasAnySlotData() const {

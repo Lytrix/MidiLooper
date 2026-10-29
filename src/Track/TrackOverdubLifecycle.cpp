@@ -18,9 +18,65 @@
 #include "TrackPreparedStopCommit.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ExternalPoolAccounting.h"
+#include "Utils/OverdubStartGate.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+
+namespace {
+// DEC-191: why a retained overdub Start could not be admitted, and the wake token that alone may re-drive it.
+// RAM2 (`DMAMEM`) so a byte per track cannot move the RAM1 line; `.bss.dma` is NOLOAD, so the boot turn clears it.
+enum class OverdubStartRefusal : uint8_t { None = 0, SessionExitObligation = 1, StagingUnavailable = 2 };
+#if defined(__IMXRT1062__)
+DMAMEM uint8_t gOverdubStartRefusal[Config::NUM_TRACKS];
+DMAMEM uint8_t gOverdubStartRefusalClaim[Config::NUM_TRACKS];
+DMAMEM uint32_t gOverdubStartReportMs;
+DMAMEM uint32_t gOverdubStartPreflightRefusals;
+DMAMEM uint32_t gOverdubStartBodyEntries;
+// DEC-191: the wake identity is **not** the claim enum alone. Ownership can disappear and the receipt ring can
+// drain while the state still reads `Reserved`, and either transition is exactly what makes admission possible.
+DMAMEM uint8_t gOverdubStartWokeLiveOwner[Config::NUM_TRACKS];
+DMAMEM uint8_t gOverdubStartWokeRingCount[Config::NUM_TRACKS];
+#else
+uint8_t gOverdubStartRefusal[Config::NUM_TRACKS];
+uint8_t gOverdubStartRefusalClaim[Config::NUM_TRACKS];
+uint32_t gOverdubStartReportMs;
+uint32_t gOverdubStartPreflightRefusals;
+uint32_t gOverdubStartBodyEntries;
+uint8_t gOverdubStartWokeLiveOwner[Config::NUM_TRACKS];
+uint8_t gOverdubStartWokeRingCount[Config::NUM_TRACKS];
+#endif
+
+uint8_t claimStateCode(const Loop& loop) { return static_cast<uint8_t>(loop.sessionExitPublishClaimState()); }
+
+const char* overdubStartRefusalName(uint8_t reason) {
+  if (reason == static_cast<uint8_t>(OverdubStartRefusal::SessionExitObligation))
+    return "session_exit_obligation";
+  if (reason == static_cast<uint8_t>(OverdubStartRefusal::StagingUnavailable)) return "staging_unavailable";
+  return "none";
+}
+}  // namespace
+
+/// DEC-191 preflight: the **cheap** half of overdub-start admission, run before any allocation, prewarm or
+/// claim. It answers with the same predicates the real admission uses (staging handles present, the
+/// session-exit publish owner free *or* releasable as an orphan), never mutates, and never allocates. A retained
+/// Start that cannot pass this must not re-enter the preparation body at all -- on device that body cost 109 ms
+/// and one unadmittable press re-drove it every turn (130 ms loop, 0.7 fps display).
+TRACK_COLD_MEM bool Track::overdubStartPreflight(uint8_t& refusalOut) {
+  refusalOut = static_cast<uint8_t>(OverdubStartRefusal::None);
+  const Loop& loop = getActiveLoop();
+  if (playbackRuntime.trySlot(activeLoopIndex) == nullptr || !captureStopJobs_) {
+    refusalOut = static_cast<uint8_t>(OverdubStartRefusal::StagingUnavailable);
+    return false;
+  }
+  // `Free` admits. A reserved-but-unowned obligation is releasable (the claim path below does exactly that), so
+  // it also admits. Anything still owned by a live interval must wait for that owner's transition.
+  if (loop.sessionExitPublishClaimState() == Loop::SessionExitPublishClaim::Empty) return true;
+  if (loop.hasReservedSessionExitObligation() && !hasLiveOwnerOfReservedSessionExitObligation(loop)) return true;
+  refusalOut = static_cast<uint8_t>(OverdubStartRefusal::SessionExitObligation);
+  return false;
+}
+
 
 namespace {
 
@@ -3434,6 +3490,29 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     return false;
   }
   if (stop.phase == PendingStopPhase::CompanionHistory) {
+    // DEC-186: the inline attempt is pinned to the revision it began at. That revision legitimately moves --
+    // a wrap pass, a companion publication, a note-edit commit -- and when it does, this candidate describes
+    // history that is no longer authoritative. The pin is kept (it is what makes the invalidation visible);
+    // the inline cause becomes **terminal** here: commit the authoritative raw pass, owe the derived
+    // representation through the post-commit generation (DEC-172), and let the stop retire. Without this the
+    // phase had no bounded exit at all for a non-retargeted job, so the FIFO head waited forever and every
+    // later Stop was retained behind it (`session_20261028_220707.log`).
+    if (stop.destination == PendingStopDestination::Playing &&
+        loop.preparedCompanionHistoryRevisionMoved()) {
+      noteStallOnce("companion preparation obsolete (playback revision moved); deferring convergence");
+      stop.setPhase(PendingStopPhase::PrepareTransfer);
+      if (!stop.retireObsoleteCompanionPreparation()) return false;
+      // Keep the horizon usable for the next interval (allocation-free re-sync to the current history). The
+      // discard is the fallback when the reserve no longer fits; it can never be the happy path, because a
+      // discarded horizon leaves the next stop with nothing to begin on.
+      if (!loop.restoreSupersededPreparedCompanionHistory(stop.intervalToken()) &&
+          !loop.preparedCompanionHistoryPrewarmed()) {
+        loop.discardPreparedCompanionHistory(stop.intervalToken());
+      }
+      stop.companionRevisionSuperseded = true;
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+      return false;
+    }
     if (!loop.preparedCompanionHistoryReady(job.admission.intervalToken())) {
       const bool canStep = loop.preparedCompanionHistoryCanStep(runtime->frozenCaptureCompanions,
                                                                 staging, runtime->canonicalPassInputs,
@@ -3447,13 +3526,24 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
                                                  staging, &runtime->canonicalPassInputs,
                                                  job.admission.intervalToken(),
                                                  &job.pendingPass)) {
+          // DEC-186: name the refusing predicate once per job. Before this the branch was silent by
+          // construction, so a device job could spend 50,121 grains here with no row explaining why.
+          noteStallOnce(Loop::companionPreparationRefusalName(
+              loop.whyCompanionPreparationCannotAdvance(runtime->frozenCaptureCompanions, staging,
+                                                        &runtime->canonicalPassInputs,
+                                                        job.admission.intervalToken(),
+                                                        &job.pendingPass)));
           return false;
         }
         return false; // Setup is its own admitted owner turn.
       }
+      CompanionPreparationRefusal refusal = CompanionPreparationRefusal::None;
       const auto result = TrackPreparedStopCommit::stepPreparation(
-          loop, *runtime, stop, kDeferredStopPreparationQuantum);
-      if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
+          loop, *runtime, stop, kDeferredStopPreparationQuantum, &refusal, &job.pendingPass);
+      if (result == RuntimePlaybackOrderBuildResult::Denied) {
+        noteStallOnce(Loop::companionPreparationRefusalName(refusal));
+        return false;
+      }
       return false;
     }
     if (!stop.retireCompletedPreparation()) return false;
@@ -3723,6 +3813,16 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (committed) {
       requestLoopSlotPersistAndSaveState(*this, job.slot,
                                          MemoryMonitor::getInternalHeapFreeBytes());
+      // DEC-186: this job escaped `CompanionHistory` as obsolete, so the pass it just committed is
+      // authoritative but its companion/note-edit representation was never published. Owe it through the
+      // generation this commit produced -- marked **after** the commit, when `committedPassRevision()` is
+      // final, for the same reason the superseded route records it here (a pre-commit target would be a
+      // speculative value that a restarted timeline cannot be distinguished from).
+      if (stop.companionRevisionSuperseded) {
+        stop.companionRevisionSuperseded = false;
+        if (stop.destination == PendingStopDestination::Playing)
+          runtime->markDeferredConvergenceOwed(loop.committedPassRevision(), loop.loopLengthTicks);
+      }
     }
     return false;
   }
@@ -4387,4 +4487,25 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   logger.logTrackEvent("Overdubbing stopped (to STOPPED)", currentTick);
   HotPathTelemetry::requestDeferredSummary("overdub_stop_to_stopped");
   loop.closeOverdubSession();
+}
+
+
+/// DEC-191 test/telemetry accessor: how many retained-Start attempts were stopped by the cheap preflight.
+uint32_t overdubStartPreflightRefusalCount() { return gOverdubStartPreflightRefusals; }
+
+/// DEC-191: how many attempts were admitted past the cheap preflight (i.e. entered the expensive body).
+uint32_t overdubStartBodyEntryCount() { return gOverdubStartBodyEntries; }
+
+
+/// DEC-191: the ownership system resolves `Reserved + no live owner` by itself. Called from the deferred idle
+/// lane (bounded per turn) and from the Start claim path; either way the retry belongs to the session-exit owner,
+/// never to the retained-Start carrier.
+TRACK_COLD_MEM bool Track::settleOrphanedSessionExitReservation() {
+  if (!loopsAllocated()) return false;
+  Loop& loop = getActiveLoop();
+  if (loop.sessionExitPublishClaimState() != Loop::SessionExitPublishClaim::Reserved) return false;
+  if (hasLiveOwnerOfReservedSessionExitObligation(loop)) return false;
+  // A live capture interval owns its reservation until its stop takes it over: never release that one.
+  if (isOverdubbing() || isRecording()) return false;
+  return loop.releaseOrphanedSessionExitReservation();
 }

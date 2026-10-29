@@ -324,6 +324,11 @@ struct PendingStopAdmission {
   /// the FIFO head at `CanonicalTail`/`AtomicTransfer`. The atomic transfer then commits the
   /// staged pass without a successor window (superseded route, taken by cause).
   bool retireCompanionSkippedForBaseAbandonment();
+  /// DEC-186: the same retirement contract for a second cause -- a **begun** companion preparation whose
+  /// pinned `playbackRevision` moved, so the inline candidate is obsolete and the job retires raw and owes
+  /// DEC-172 convergence. One implementation: either way the companion family cannot complete on this job,
+  /// so the estimates it would consume are not work.
+  bool retireObsoleteCompanionPreparation() { return retireCompanionSkippedForBaseAbandonment(); }
   void setPhase(PendingStopPhase next) { phase = next; }
   bool permitsPlaybackEmission() const {
     return !pending || destination == PendingStopDestination::Playing;
@@ -352,6 +357,11 @@ struct PendingStopAdmission {
   /// `Loop::preparedCompanionHistoryStoreUnchanged` (DEC-172 correction 3). A window-denied base
   /// (the prefix stayed current) keeps the normal owner proof.
   bool supersededCompanionExchange = false;
+  /// DEC-186: this job escaped `CompanionHistory` because its begun companion preparation was pinned to a
+  /// `playbackRevision` that moved under it (`SourceRevision`). The pass commits raw; the derived companion
+  /// representation is owed through the post-commit generation by DEC-172's slot-level obligation, exactly
+  /// like a superseded base. Marked after the commit (never before), so the target is never speculative.
+  bool companionRevisionSuperseded = false;
   bool finalizationComplete() const {
     return pending && remainingClosureGrains == 0 && remainingOrderGrains == 0 &&
            remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0 &&

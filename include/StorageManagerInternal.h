@@ -397,6 +397,16 @@ uint16_t pendingLoopSlotRestoreCount();
 void clearPendingLoopSlotRestoresAtBoot();
 void resetAllLoopSlotRestoreAttempted();
 bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority);
+/// DEC-190: the fault breadcrumb. `arm` runs before a slot body is verified/parsed; the record survives a fault
+/// reboot (RAM2 is NOLOAD) and is consumed once by the next boot, which parks that single slot. `clear` runs on a
+/// healthy boot (no crash report), so a normal reboot never parks anything.
+void armLoopSlotRestoreBreadcrumb(uint8_t trackIndex, uint8_t slotIndex);
+void clearLoopSlotRestoreBreadcrumb();
+bool takeFaultedLoopSlot(uint8_t& trackIndex, uint8_t& slotIndex);
+/// Park one slot for this boot only: its restore request is dropped, the file is left untouched.
+bool markRestoreFaultSkip(uint8_t trackIndex, uint8_t slotIndex);
+void resetRestoreFaultSkips();
+bool restoreFaultSkipped(uint8_t trackIndex, uint8_t slotIndex);
 void sortPendingLoopSlotRestoreQueue();
 bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out);
 void setRestoredSetBundlePath(const char* path);

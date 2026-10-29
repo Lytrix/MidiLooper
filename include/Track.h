@@ -1484,6 +1484,28 @@ void resetPlaybackMergedRebuildCountForTest();
     uint32_t sessionBytes = 0;
     uint32_t externalBytes = 0;
   };
+  /// DEC-189: read-only snapshot of the two lanes that can strand a publication -- the deferred stop job's
+  /// phase and unspent estimates, and the selected loop's publication progress. Nothing here allocates or
+  /// mutates; it exists so one direct-serial row per second can prove a lane is not advancing (`phase`,
+  /// `applied` and `queued` are flat) without depending on the capture ring.
+  struct StallCensus {
+    bool stopPending = false;
+    uint8_t stopMode = 0;       // CapturePhase (Record = 2, Overdub = 6 ... see enum)
+    uint8_t stopPhase = 0;      // PendingStopPhase
+    uint32_t stopGeneration = 0;
+    uint64_t orderGrains = 0;
+    uint64_t canonicalGrains = 0;
+    uint64_t rankedGrains = 0;
+    uint64_t undoGrains = 0;
+    bool publishPending = false;
+    uint32_t publishQueued = 0;
+    uint32_t publishApplied = 0;
+    bool publishInFlight = false;
+    bool hasCommittedPasses = false;
+    uint32_t loopLengthTicks = 0;
+  };
+  StallCensus stallCensus() const;
+
   /// Bounded, read-only walk of the active slot (the loop that is being recorded) plus a per-slot count of
   /// committed passes. No allocation, no mutation; safe on an idle turn and cold (FLASH) by construction.
   AllocationCensus allocationCensus() const;
@@ -1568,6 +1590,9 @@ void resetPlaybackMergedRebuildCountForTest();
   void settleEmptyRecordGeometry();
 
 private:
+  /// Off-clock Snapshot eligibility for an enabled playing slot with no source producer.
+  /// Shared by slot selection and admission; never starts work or changes a claim.
+  bool playbackSourceRecoveryNeededForSlot(uint8_t slotIndex) const;
   friend class TrackUndo;
 #if defined(PIO_UNIT_TEST_NATIVE)
   friend struct TrackCaptureStopTestAccess;
@@ -1987,6 +2012,13 @@ private:
   /// admission (FLASH-resident cold path; the ITCM caller must not carry the refusal text). Refuses by
   /// name when a predecessor's obligation is still owned.
   bool claimOverdubSessionExitObligation();
+  /// DEC-191: the **cheap** half of overdub-start admission -- no allocation, no prewarm, no mutation. Used by the
+  /// retained-Start carrier so an unchanged refusal costs a preflight instead of the full preparation body.
+  /// `refusalOut` names why it refused (0 = admissible).
+  bool overdubStartPreflight(uint8_t& refusalOut);
+  /// DEC-191: resolve an ownerless `Reserved` session-exit claim from the **ownership** lane, so recovery never
+  /// depends on a later Start press. Cheap, non-allocating, idempotent; false when nothing moved.
+  bool settleOrphanedSessionExitReservation();
   /// The aborted-start rollback: release a reservation that never reached a live interval.
   void releaseOverdubSessionExitObligation();
   /// Task 6.4: whether a pending stop job still owns the reserved session-exit record. No owner means the
@@ -2283,3 +2315,7 @@ private:
 #include "TrackUndo.h"
 
 #endif
+
+/// DEC-191: how many retained-Start attempts the cheap preflight stopped (test/telemetry read of a RAM2 counter).
+uint32_t overdubStartPreflightRefusalCount();
+uint32_t overdubStartBodyEntryCount();

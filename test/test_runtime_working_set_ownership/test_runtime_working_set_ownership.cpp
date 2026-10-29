@@ -10823,6 +10823,215 @@ void test_immutable_launch_sibling_interference_is_a_temporary_wait() {
   drainImmutableLaunch(track, 2);
 }
 
+// Storage/I/O boundary for the playback-recovery trace: boot is finished and no
+// SD load/save is active. Track selection, publication and MIDI emission stay real.
+bool StorageManager::bootInteractiveReady() { return true; }
+bool StorageManager::isBootTitleLoadDrain() { return false; }
+bool SlotLoadSession::isActive() { return false; }
+uint16_t PersistenceWorkQueue::queueDepth() { return 0; }
+uint16_t PersistenceWorkQueue::writingWorkItemCount() { return 0; }
+namespace StorageManagerInternal {
+StorageSession storageSession;
+bool undoSnapshotsPending_ = false;
+}
+
+void test_playing_pass_only_slots_recover_their_missing_playback_source() {
+  LoopEventStore::initPool();
+  constexpr uint32_t bars = 24;
+  constexpr uint32_t length = bars * Config::TICKS_PER_BAR;
+  SessionMidiEventVec expected[2][2];
+  for (uint8_t ti = 0; ti < 2; ++ti) {
+    Track& track = trackManager.getTrack(ti);
+    track.ensureLoopsAllocated();
+    track.setMidiChannel(ti + 1);
+    for (uint8_t slot = 0; slot < (ti == 0 ? 3 : 1); ++slot) {
+      commitBarSpacedPassIntoTrackSlot(track, slot, bars, 48 + ti * 12 + slot,
+                                      96, 144);
+      Loop& loop = track.getLoop(slot);
+      for (unsigned turn = 0; turn < 20000 && loop.hasPendingSnapshotPublish(); ++turn)
+        loop.stepPendingSnapshotPublish(2, true, 0);
+      TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+      loop.storePublishedSnapshotForTest({}, 0);
+      TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+      TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+      if (slot < 2)
+        LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds,
+                                             expected[ti][slot]);
+    }
+    TrackCaptureStopTestAccess::selectSlot(track, 0);
+    track.prewarmBootPlaybackRuntimeSlots();
+    trackManager.setSlotEnabled(ti, 0, true);
+    if (ti == 0) trackManager.setSlotEnabled(ti, 1, true);
+    track.forceSetState(TRACK_STOPPED);
+  }
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  for (uint8_t ti = 0; ti < 2; ++ti) trackManager.getTrack(ti).startPlaying(0);
+  trackManager.setSelectedTrack(7); // Neither sounding Track is the UI focus.
+
+  bool sourcesReady = false;
+  uint8_t backgroundCursor = 0;
+  for (unsigned turn = 0; turn < 20000 && !sourcesReady; ++turn) {
+    for (uint8_t ti = 0; ti < 2; ++ti) {
+      Track& candidate = trackManager.getTrack(ti);
+      (void)candidate.requestActiveCommittedPlaybackWindow(0, nativePlaybackDeadlineClock);
+      (void)candidate.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+      candidate.serviceAdmittedDeadlineMisses(nativePlaybackDeadlineClock);
+      (void)candidate.stepPlaybackViewMaintenance(0, nullptr, true, nativePlaybackDeadlineClock);
+    }
+    // main.cpp's Snapshot arbitration: no realtime work on selected Track 7;
+    // one eligible background Track gets one construction unit per turn.
+    if (trackManager.backgroundSnapshotWorkAllowed()) {
+      for (uint8_t offset = 0; offset < Config::NUM_TRACKS; ++offset) {
+        const uint8_t ti = (backgroundCursor + offset) % Config::NUM_TRACKS;
+        if (ti == trackManager.getSelectedTrackIndex()) continue;
+        Track& candidate = trackManager.getTrack(ti);
+        if (!candidate.canServiceBackgroundSnapshotOwnerTurn()) continue;
+        candidate.processDeferredIdleMaintenance(
+            turn, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+        backgroundCursor = (ti + 1) % Config::NUM_TRACKS;
+        break;
+      }
+    }
+    sourcesReady = trackManager.getTrack(0).getLoop(0).publishedSnapshotIsCurrent() &&
+        trackManager.getTrack(0).getLoop(1).publishedSnapshotIsCurrent() &&
+        trackManager.getTrack(1).getLoop(0).publishedSnapshotIsCurrent();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sourcesReady,
+      "enabled playing passes-only slots need a source producer; waiting cannot repair silence");
+  TEST_ASSERT_NULL_MESSAGE(trackManager.getTrack(0).getLoop(2).publishedSnapshot().get(),
+      "a disabled slot must not be bulk hydrated to repair playing slots");
+
+  for (uint8_t ti = 0; ti < 2; ++ti) trackManager.getTrack(ti).clearSentPlaybackMidiForTest();
+  for (uint32_t cycle = 0; cycle < 2; ++cycle) {
+    for (uint32_t phase = 0; phase < length; ++phase) {
+      const uint32_t tick = cycle * length + phase;
+      nativePlaybackDeadlineClock = {tick, 1};
+      clockManager.assignCurrentTickSilently(tick);
+      for (uint8_t ti = 0; ti < 2; ++ti) {
+        Track& candidate = trackManager.getTrack(ti);
+        (void)candidate.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
+        (void)candidate.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+        candidate.serviceAdmittedDeadlineMisses(nativePlaybackDeadlineClock);
+        (void)candidate.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+      }
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  for (uint8_t ti = 0; ti < 2; ++ti) {
+    const Track& track = trackManager.getTrack(ti);
+    const size_t slots = ti == 0 ? 2 : 1;
+    size_t seen[2] = {};
+    TEST_ASSERT_EQUAL_UINT32(slots * bars * 4, track.sentPlaybackMidiCountForTest());
+    TEST_ASSERT_EQUAL_UINT32(0, track.sentPlaybackMidiDroppedForTest());
+    for (size_t i = 0; i < track.sentPlaybackMidiCountForTest(); ++i) {
+      const auto& sent = track.sentPlaybackMidiAtForTest(i);
+      TEST_ASSERT_LESS_THAN_UINT8(slots, sent.slotIndex);
+      TEST_ASSERT_EQUAL_UINT8(48 + ti * 12 + sent.slotIndex, sent.event.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT8(ti + 1, sent.event.channel);
+      const auto& accepted = expected[ti][sent.slotIndex];
+      TEST_ASSERT_EQUAL_UINT32(bars * 2, accepted.size());
+      const auto& source = accepted[seen[sent.slotIndex]++ % accepted.size()];
+      TEST_ASSERT_EQUAL_UINT32(source.tick, sent.event.tick);
+      TEST_ASSERT_EQUAL_UINT32(source.noteId, sent.event.noteId);
+      TEST_ASSERT_EQUAL_UINT8(source.type, sent.event.type);
+      TEST_ASSERT_EQUAL_UINT8(source.data.noteData.velocity, sent.event.data.noteData.velocity);
+    }
+  }
+}
+
+void test_playback_source_recovery_preserves_stopped_disabled_capture_and_claim_owners() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 24);
+  Loop& loop = track.getLoop(0);
+  for (unsigned turn = 0; turn < 20000 && loop.hasPendingSnapshotPublish(); ++turn)
+    loop.stepPendingSnapshotPublish(2, true, 0);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.storePublishedSnapshotForTest({}, 0);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  track.prewarmBootPlaybackRuntimeSlots();
+  trackManager.setSlotEnabled(0, 0, true);
+  track.forceSetState(TRACK_STOPPED);
+  const auto snapshotTurn = [&]() {
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot);
+  };
+  snapshotTurn();
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "stopped slots are not bulk hydrated");
+  track.startPlaying(0);
+  trackManager.setSlotEnabled(0, 0, false);
+  snapshotTurn();
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "a disabled active slot is not sounding");
+  trackManager.setSlotEnabled(0, 0, true);
+  TEST_ASSERT_TRUE(loop.claimSessionExitPublishOwner());
+  const auto claim = loop.sessionExitPublishClaimState();
+  const uint64_t identity = loop.sessionExitPublishClaimIdentity();
+  snapshotTurn();
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "an existing claim is not recovery permission");
+  TEST_ASSERT_EQUAL(static_cast<int>(claim), static_cast<int>(loop.sessionExitPublishClaimState()));
+  TEST_ASSERT_EQUAL_UINT64(identity, loop.sessionExitPublishClaimIdentity());
+  TEST_ASSERT_EQUAL_UINT32(0, loop.sessionExitReceiptCount());
+  TEST_ASSERT_TRUE(loop.releaseSessionExitPublishOwner(identity));
+
+  track.forceSetState(TRACK_RECORDING);
+  loop.beginCapture(CapturePhase::Record);
+  snapshotTurn();
+  TEST_ASSERT_FALSE_MESSAGE(loop.pendingSnapshotSessionExitQueued(),
+      "the live Record owner must not be replaced with committed-pass recovery");
+  TEST_ASSERT_TRUE(loop.captureActive());
+}
+
+// Device regression 020455: freeze-until-ready proves eventual publication, not
+// audible readiness. The accepted Start must serve the first scheduled pair
+// while the clock and bounded maintenance opportunities continue normally.
+void test_pass_only_playback_serves_due_notes_before_whole_root_publication() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(7);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 3, 31, 60, 96, 144);
+  Loop& loop = track.getLoop(3);
+  for (unsigned turn = 0; turn < 20000 && loop.hasPendingSnapshotPublish(); ++turn)
+    loop.stepPendingSnapshotPublish(2, true, 0);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.storePublishedSnapshotForTest({}, 0);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  SessionMidiEventVec accepted;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, accepted);
+  TEST_ASSERT_EQUAL_UINT32(62, accepted.size());
+  track.prewarmBootPlaybackRuntimeSlots();
+  trackManager.setSlotEnabled(7, 3, true);
+  track.forceSetState(TRACK_STOPPED);
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0, 1};
+  track.startPlaying(0);
+  track.clearSentPlaybackMidiForTest();
+  for (uint32_t tick = 0; tick <= 144; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+    if (tick % 8 == 0) {
+      (void)track.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
+      (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+      track.serviceAdmittedDeadlineMisses(nativePlaybackDeadlineClock);
+      (void)track.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+      track.processDeferredIdleMaintenance(
+          tick, false, MidiServiceDrain::DeferredIdleOwner::Snapshot);
+    }
+    trackManager.updateAllTracks(tick);
+    if (tick == 96)
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, track.sentPlaybackMidiCountForTest(),
+          "accepted Start must emit the due On; waiting for a whole-loop root is silence");
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, track.sentPlaybackMidiCountForTest());
+  for (size_t i = 0; i < 2; ++i) {
+    const auto& sent = track.sentPlaybackMidiAtForTest(i);
+    TEST_ASSERT_EQUAL_UINT8(3, sent.slotIndex);
+    TEST_ASSERT_EQUAL_UINT32(accepted[i].noteId, sent.event.noteId);
+    TEST_ASSERT_EQUAL_UINT32(accepted[i].tick, sent.event.tick);
+    TEST_ASSERT_EQUAL_UINT8(accepted[i].type, sent.event.type);
+  }
+}
+
 void test_rootless_restored_launch_requests_its_source_once_and_becomes_ready() {
   LoopEventStore::initPool();
   auto& track = trackManager.getTrack(0);
@@ -17788,6 +17997,9 @@ int main() {
 
 
   UNITY_BEGIN();
+  RUN_TEST(test_pass_only_playback_serves_due_notes_before_whole_root_publication);
+  RUN_TEST(test_playing_pass_only_slots_recover_their_missing_playback_source);
+  RUN_TEST(test_playback_source_recovery_preserves_stopped_disabled_capture_and_claim_owners);
   RUN_TEST(test_rolling_record_observation_absent_and_empty_preserves_mask);
   RUN_TEST(test_rolling_record_observation_growth_and_current_is_nonmutating);
   RUN_TEST(test_rolling_record_observation_playing_stop_responsibility);

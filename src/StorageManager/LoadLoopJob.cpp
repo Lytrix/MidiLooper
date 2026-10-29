@@ -114,6 +114,40 @@ bool bootTitleLoadDrain_ = false;
 
 /// Definition lives in `LoopSlotRestoreQueue.cpp`; the retry path re-queues through it.
 bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority);
+bool markRestoreFaultSkip(uint8_t trackIndex, uint8_t slotIndex);
+bool restoreFaultSkipped(uint8_t trackIndex, uint8_t slotIndex);
+
+// DEC-190: a fault breadcrumb that survives the fault reboot. `.bss.dma` is NOLOAD and the Teensy fault
+// handler resets without clearing RAM, so a magic-stamped record written before a slot's body is applied (and
+// kept until the boot reaches its interactive point) names the slot that was in flight when the CPU faulted.
+// The next boot parks exactly that slot; nothing is deleted, so the whole set still restores around it.
+struct RestoreFaultBreadcrumb {
+    uint32_t magic;
+    uint16_t track;
+    uint16_t slot;
+};
+#if defined(__IMXRT1062__)
+DMAMEM RestoreFaultBreadcrumb gRestoreFaultBreadcrumb;
+#else
+RestoreFaultBreadcrumb gRestoreFaultBreadcrumb;
+#endif
+constexpr uint32_t kRestoreFaultMagic = 0x52464231u;  // 'RFB1'
+
+void armLoopSlotRestoreBreadcrumb(uint8_t trackIndex, uint8_t slotIndex) {
+    gRestoreFaultBreadcrumb.track = trackIndex;
+    gRestoreFaultBreadcrumb.slot = slotIndex;
+    gRestoreFaultBreadcrumb.magic = kRestoreFaultMagic;
+}
+
+void clearLoopSlotRestoreBreadcrumb() { gRestoreFaultBreadcrumb.magic = 0; }
+
+bool takeFaultedLoopSlot(uint8_t& trackIndex, uint8_t& slotIndex) {
+    if (gRestoreFaultBreadcrumb.magic != kRestoreFaultMagic) return false;
+    trackIndex = static_cast<uint8_t>(gRestoreFaultBreadcrumb.track);
+    slotIndex = static_cast<uint8_t>(gRestoreFaultBreadcrumb.slot);
+    clearLoopSlotRestoreBreadcrumb();
+    return trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK;
+}
 
 STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     if (job.session != nullptr) {
@@ -397,6 +431,9 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
         markLoopSlotRestoreAttempted(trackIndex, slotIndex);
         return false;
     }
+    // DEC-190: from here to the boot's interactive point this slot is "in flight" -- a fault inside the
+    // verify/parse/apply path (or the first paint of it) leaves this breadcrumb behind for the next boot.
+    armLoopSlotRestoreBreadcrumb(trackIndex, slotIndex);
     if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
         resetLoopSlotToEmpty(loop, slotIndex);
         // A2.4: a bad token can be a torn/partial write, so it is retryable up to the bound rather than
