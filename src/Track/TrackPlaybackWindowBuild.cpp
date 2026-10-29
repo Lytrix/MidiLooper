@@ -2102,10 +2102,14 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
     // Compatibility launch receipt only; immutable readiness has its own predicate.
     // A non-null gathered source distinguishes valid empty coverage from a gather miss.
+    // A root-backed window and a **committed-pass** window are both valid coverage: the fallback (DEC-194) has no root
+    // identity to stamp, so requiring one would report every rootless slot unready and rebuild it on every turn.
+    const bool rootBacked = window.builtFromSnapshotIdentity != nullptr &&
+        window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity();
+    const bool committedBacked = !loop.publishedSnapshotIsCurrent() && !window.mergedEvents.empty();
     return !runtime->isStale(loop.playbackRevision, playbackGeneration) &&
         window.builtFromRevision == loop.playbackRevision &&
-        window.builtFromSnapshotIdentity != nullptr &&
-        window.builtFromSnapshotIdentity == loop.publishedSnapshotIdentity() &&
+        (rootBacked || committedBacked) &&
         window.windowStartTick == 0 &&
         window.windowLengthTicks == 2 * Config::TICKS_PER_BAR &&
         !loop.playbackOrderDirty;
