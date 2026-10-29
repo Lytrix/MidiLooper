@@ -94,18 +94,23 @@ window producer, standby pool, or rootless emitter fails review even if A passes
 3. **D4 single mutation.** Restore only the unconditional idle-lane settlement on a scratch worktree and check
    whether the `pub=1`/`hold_gap`/`playback_read 0` signature returns with a decoy Record stop. Cheap and
    falsifiable; NON-REPRODUCTION is a valid result.
-4. **Sticky-invalidation probe (native).** Rootless passes slot, Start, transport stop/start: is a *new* playback
-   request issued after the invalidated one (`TrackPlaybackWindowBuild.cpp:203` makes rejection sticky for the
-   interval)? If not, that is the producer boundary for the persistent silence.
-5. **Two-state reconstruction — only if steps 3 and 4 name nothing.** `reconstruction-control` (no DEC-191
+4. ~~**Sticky-invalidation probe (native).**~~ **DONE 2026-10-29 — RED.** The demand survives the restart, adopts
+   the new epoch, is not born-rejected, keeps the turn eligible and has no gather refusal; readiness stays
+   `OwesBuild` and no window is published in 256 production turns. The stall is inside the build's own
+   admission/service, not in retention or dispatch. See
+   [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md).
+5. **Name the build refusal.** Instrument the admission under `playbackWindowServiceOffer` /
+   `requestPlaybackViewMaintenance` for that state and record the refusing predicate; confirm it against the
+   device's `playback_build` row before any repair.
+6. **Two-state reconstruction — only if step 5 names nothing actionable.** `reconstruction-control` (no DEC-191
    behavior) vs `reconstruction-dec191` (same tree plus DEC-191 behavior), unrelated edits identical and the
    DEC-192 recovery guarded off. Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`. If it toggles,
    split D1+D2 / D3 / D4.
-6. **Name the lost producer.** For the winning experiment, trace which producer no longer runs (publication
+7. **Name the lost producer.** For the winning experiment, trace which producer no longer runs (publication
    request, source admission, or the reader's qualification) and its refusing predicate.
-7. **Repair only that boundary**, reusing the existing owner. No new state.
-8. **Oracle B** on the repaired tree; then Oracle A; then focused native, full native, build, scoped review.
-9. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output. Record the HEX per
+8. **Repair only that boundary**, reusing the existing owner. No new state.
+9. **Oracle B** on the repaired tree; then Oracle A; then focused native, full native, build, scoped review.
+10. **Device A/B**: same slot, same gesture, both oracles, physical USB-to-Mac output. Record the HEX per
    [TEENSY_FIRMWARE_UPLOAD](../../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md#procedure) step 8.
 
 ## Execution packet — first implementation slice (task 2 only)

@@ -8490,6 +8490,86 @@ void test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_a
       "revalidation does not erase the interval's fault history");
 }
 
+/// **DEC-193 — does a transport restart mint a fresh playback request after an invalidated promise?**
+///
+/// Device evidence (`session_20261029_011932.log`, `session_20261029_012142.log`): a rootless slot reports
+/// `playback_build,pending_position_invalidated` and then never emits `playback_read`, with **no** pending stop and
+/// **no** retained Start. The promise is invalidated when the clock crosses its deadline; the question is whether the
+/// next legitimate epoch (transport stop/start) issues a genuinely fresh request, or whether the invalidated one stays
+/// authoritative and suppresses the producer for that interval.
+///
+/// **Result (2026-10-29, RED):** classes 1-3 are excluded. The demand survives the restart, adopts the new epoch and
+/// is **not** born-rejected; the deferred turn stays eligible and the gather reports no refusal, yet the slot's window
+/// readiness stays `OwesBuild` and no serving window is ever published over 256 production turns. So the stall is
+/// inside the build's own admission/service, not in the retention, the epoch identity or the dispatch eligibility.
+/// Each distinction is its own assertion so a failure names its class instead of "expected 1 was 0".
+void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t revision = loop.playbackRevision;
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a slot with no published root");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                            static_cast<int>(track.retainPlaybackSourceForSlot(0, revision, 41)),
+                            "the rootless slot needs its retained pass source before it can be asked for a window");
+  track.forceSetState(TRACK_PLAYING);
+
+  constexpr uint32_t kPlayhead = 500;
+  const PlaybackDeadlineClock first{1000, 1};
+  nativePlaybackDeadlineClock = first;
+  SessionMidiEventVec& scratch = windowSourceScratch(0);
+  scratch.clear();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, scratch, first)),
+                            "the rootless slot admits one promise from its retained pass source");
+
+  // One gather turn under the first epoch, then the transport restarts before the gather completes: the exact
+  // state the device is in when it reports `pending_position_invalidated`.
+  (void)track.stepPlaybackViewMaintenance();
+  clockManager.assignCurrentTickSilently(0);
+  nativePlaybackDeadlineClock = {0u, 2u};
+  const PlaybackDeadlineClock restarted = nativePlaybackDeadlineClock;
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(1u, restarted.epoch, "the fixture needs a new epoch to model stop/start");
+
+  // The gather's next turn sees the epoch change: it voids the promise's position and coalesces the demand back.
+  PlaybackPathRows::reset();
+  (void)track.stepPlaybackViewMaintenance();
+
+  // The production turn sequence: main's owner re-issues the demand with the advancing playhead every turn and the
+  // rolling owner services it. This is the question -- does the restarted epoch ever reach a serving window?
+  PlaybackViewSourceIdentity identityOut{};
+  PlaybackCoverageInterval coverageOut{};
+  bool served = false;
+  for (unsigned turn = 0; turn < 256 && !served; ++turn) {
+    nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
+    const uint32_t phase = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick % loop.loopLengthTicks);
+    (void)track.requestCommittedPlaybackWindowForSlot(0, phase, nativePlaybackDeadlineClock);
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, false, nativePlaybackDeadlineClock);
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    served = track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut);
+  }
+  // Diagnostic split, so a failure names its class instead of only "expected true was false".
+  const PlaybackViewPendingRequest* pending = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(pending, "class 1: the demand must still be owed after the restart, not silently dropped");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(restarted.epoch, pending->clockEpoch,
+                                   "class 2: the re-issued demand must adopt the restarted epoch");
+  TEST_ASSERT_FALSE_MESSAGE(pending->positionInvalidated,
+                            "class 3: the re-issued demand must not stay born-rejected");
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                           "class 4b: an owed build must keep the deferred turn eligible");
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::None),
+                            static_cast<int>(runtime->retainedGatherRefusal),
+                            "class 4c: the restarted demand must not be held by a gather refusal");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                            static_cast<int>(track.playbackWindowReadinessForSlot(0)),
+                            "class 4a: the restarted slot's window readiness must reach Ready");
+  TEST_ASSERT_TRUE_MESSAGE(served, "class 4: the restarted epoch must reach a serving window for the rootless slot");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision, identityOut.playbackRevision,
+                                   "the serving window carries the retained revision");
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "and the slot is still rootless afterwards");
+}
+
 /// **Blocker 3, increment 28 — a promise that completes at/after its deadline is still judged.**
 ///
 /// Dispatch and completion have separate controlled clocks. Crossing D in the final
@@ -18219,6 +18299,7 @@ int main() {
   RUN_TEST(test_a_late_arrival_is_named_even_when_the_served_window_carries_the_wanted_revision);
   RUN_TEST(test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_history);
   RUN_TEST(test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance);
+  RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
   RUN_TEST(test_invalidated_successor_preserves_serving_content_until_boundary_revalidation);

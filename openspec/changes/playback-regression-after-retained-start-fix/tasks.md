@@ -53,16 +53,23 @@ unchecked until a RED is observed. No new architecture is authorized anywhere in
 - [ ] 3.3 **D4 single mutation** on a scratch worktree (only the unconditional idle-lane settlement restored):
   verify whether the `pub=1` / `hold_gap` / `playback_read 0` signature returns with a decoy Record stop. If it
   does, D4's claim release is the named boundary; if not, record NON-REPRODUCTION and do not infer.
-- [ ] 3.4 **Sticky-invalidation probe** (native, no device): rootless passes slot + Start + transport stop/start.
-  Verify whether a new playback request is issued after the invalidated one (`TrackPlaybackWindowBuild.cpp:203`
-  makes rejection sticky for the interval). If it is not, that is the producer boundary for the persistent
-  silence, independent of DEC-191, and it becomes the repair target.
-- [ ] 3.5 Only if 3.3 and 3.4 fail to name a boundary, build **one two-state pair** on a scratch worktree from
+- [x] 3.4 **Sticky-invalidation probe** (native, no device): rootless passes slot + Start + transport restart.
+  **Done — RED, and the simple hypothesis is excluded.** The demand survives, adopts the new epoch, is not
+  born-rejected, keeps the turn eligible and has no gather refusal; readiness stays `OwesBuild` and no serving
+  window is published in 256 production turns. The stall is inside the build's own admission/service.
+  Fixture `test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`; 2 failures out of
+  251 (the other is the pre-existing frozen-packet characterization). Evidence:
+  [sticky-invalidation RED](evidence/2026-10-29-STICKY-INVALIDATION-RED.md).
+- [ ] 3.5 **Name the build refusal.** Instrument the admission under `playbackWindowServiceOffer` /
+  `requestPlaybackViewMaintenance` for the fixture's exact state and record the refusing predicate (one
+  implementation, named row; no behavioural change). Verify the named term reproduces on the device's
+  `playback_build` row before proposing any repair. This is the current repair candidate boundary.
+- [ ] 3.6 Only if 3.5 names nothing actionable, build **one two-state pair** on a scratch worktree from
   checkpoint `a3d56f07`: `reconstruction-control` (no DEC-191 behavior) and `reconstruction-dec191` (same tree
   plus DEC-191 behavior), every unrelated DEC-192/post-02:00 edit identical and the DEC-192 recovery request
   guarded off in the fixture. Verify the pair differs only in the DEC-191 deltas and that playback toggles.
   Name them as reconstructions, never as `0dbf08c1`/`3e79bd1b`.
-- [ ] 3.6 If 3.5 toggles, split behaviorally: D1+D2 only, D3 only, D4 only, then all. Verify Oracle A reds on
+- [ ] 3.7 If 3.6 toggles, split behaviorally: D1+D2 only, D3 only, D4 only, then all. Verify Oracle A reds on
   exactly the smallest mutation and greens otherwise; record interactions instead of forcing a single winner.
   Remove every scratch mutation before proceeding (verify `git diff` on the primary tree contains none).
 
