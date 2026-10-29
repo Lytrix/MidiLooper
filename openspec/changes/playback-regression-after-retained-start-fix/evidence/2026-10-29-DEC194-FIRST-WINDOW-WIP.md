@@ -212,3 +212,30 @@ Verification:
 - Native 254 cases / 3 failed / 250 pass (the two known REDs plus the pre-existing characterization).
 - `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, code `391,992` (+336 B), padding `1,224` (floor 840).
   No upload.
+
+## DEC-194 — passes-as-playback-source: proven, then gated out again
+
+Implemented in `ensurePlaybackMergedMidiEventsBuilt` (the 2-bar merged window, long-loop branch): when the gather has
+no root and no Record overlay, and the slot's committed source is qualified (`playbackWindowSourceIsCurrentForSlot`,
+i.e. the retained-source pin from `8e5b47e3`), fill the same bounded window with
+`loop.copyEffectiveCommittedEventsInRange(events, winStart, winLen)`.
+
+Measured result:
+
+- **The parked acceptance RED turned green**: `test_pass_only_playback_serves_due_notes_before_whole_root_publication`
+  ("accepted Start must emit the due On; waiting for a whole-loop root is silence") passed with `root_rev = 0`. That is
+  direct proof that the committed passes can serve playback without a whole-root publication.
+- **It broke an existing contract**: `test_3_12_a_restored_over_l_interval_beyond_the_declared_closure_capacity_is_refused_by_name`
+  failed (`Expected 0 Was 2513`) because the fallback served an interval that must be refused by name and served by the
+  paged lane. Bounding the copy by `RuntimePlaybackViewConfig::kWindowAdmissionLimit` did not separate the cases.
+
+Not shipped: reverted. The missing piece is a **paged-domain gate** — take the passes fallback only when the paged lane
+does not own the interval. That predicate is decided inside the paged requester; exposing/reusing it is the next slice,
+after which this fallback can be re-landed with both oracles:
+
+```
+test_pass_only_playback_serves_due_notes_before_whole_root_publication   → green
+test_3_12_a_restored_over_l_interval_beyond_the_declared_closure_capacity_is_refused_by_name → green
+```
+
+Suite at revert: 254 cases, 3 failed, 250 pass (DEC-193 RED, DEC-194 window-lane RED, the parked acceptance RED).
