@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-205](#dec-205--reverted-a-retiring-retained-source-must-not-refuse-the-next-revisions-source) | 2026-10-29 | **Reverted** — a retiring retained source must not refuse the next revision's source | Reverted on device evidence: it wiped the slot's passes on Record |
 | [DEC-204](#dec-204--an-ownerless-reserved-session-exit-claim-is-released-at-the-start-it-would-block) | 2026-10-29 | An ownerless reserved session-exit claim is released at the start it would block | Accepted — native green, build green; not flashed |
 | [DEC-203](#dec-203--the-merged-window-length-is-one-function-two-callers-the-builder-and-the-readiness-predicate-had-drifted) | 2026-10-29 | The merged window length is one function, two callers — the builder and readiness had drifted | Accepted — regression fixed, native green |
 | [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
@@ -11599,3 +11600,53 @@ release is logged by name (`released an orphaned session-exit reservation`) so t
 DEC-191 (the terminal this wires), DEC-174 (the `Populated` orphan and its publication), DEC-173/177/178 (stop service
 rate), DEC-203 (the merged-window repair, confirmed working in the same capture: the display tracked notes through
 multiple overdubs).
+
+## DEC-205 — **REVERTED**: a retiring retained source must not refuse the next revision's source
+
+**Date:** 2026-10-29
+**Status:** **Reverted** in `358aa702` (the revert also removed the implementation's own test and this entry; it is
+re-stated here because an attempt that reached the board is part of the record).
+
+### What it tried to fix
+
+Device `captures/session_20261029_135319.log`, restored rootless slot: undo silenced the MIDI events and a redo stopped
+the entire loop. Reproduced on the host: undo lost exactly the disabled pass, redo served nothing, because
+`retainPlaybackSourceForSlot` answered `RoleCapacityReached` -- a slot has two retained-source roles, every inventory
+move retains a new revision, and the displaced one is only marked `Retiring`, so the third move had no free role and the
+merged fallback cleared its window.
+
+The change asked `tryReleaseRetainedPlaybackSource` for a role before refusing. Its fixture
+(`undo -> redo on a rootless restored slot`) went green, mutation-red proved, full native 3610/0.
+
+### Why it was reverted
+
+Image `0e5058b9…` broke the **record** path. `captures/session_20261029_142816.log`:
+
+```
+91.5 s  alloc_census cap=2          (the slot's committed passes)
+91.6 s  Button press: Record/Overdub (long)
+93.5 s  alloc_census cap=0          ← the passes are gone
+        … take never finalises, no notes in the piano roll, no overdub possible
+128.5 s PERS,result … ok            ← the empty state is persisted
+128.8 s PERS,result … ok
+```
+
+The mechanism is **not** established: the merged/retention path is barely exercised in that capture (4 `playback_build`
+rows in the whole run, none inside the record window), so this was not the simple "released the live capture source"
+story. What is established:
+
+1. the change is unsafe on the record path, and
+2. its fixture was an insufficient gate -- green on undo/redo says nothing about a Record start/stop.
+
+### Gate for any re-attempt
+
+- A **record-path fixture** first: committed passes + the production Record start/stop, asserting the passes survive and
+  the new take finalises. Only then re-apply the release retry, and gate it on capture state
+  (`isRecording()` / `isOverdubbing()` / pending stop) at minimum.
+- The device lesson stands independently: a second inventory move must not permanently refuse a slot's source. That is
+  still owed, with the gate above.
+
+### Related
+
+DEC-199 (source by currency), DEC-194 (retention establishes the fallback's source), DEC-204 (the same session's other
+device fix, unaffected).
