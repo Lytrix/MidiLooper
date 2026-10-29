@@ -2247,17 +2247,6 @@ TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForS
   }
   entry = runtime->freeRetainedSourceSlot();
   if (entry == nullptr) {
-    // **DEC-205** -- two roles are all a slot has, and an inventory move retains a *new* revision each time (undo,
-    // redo, a pass enabled/disabled). The replaced source is marked `Retiring`, never dropped, so the second move fills
-    // both roles and the third is refused here for good: the merged fallback then serves an empty window, which is the
-    // device's "a redo totally stops playing the entire loop" (`captures/session_20261029_135319.log`, final boot).
-    // Ask the **existing release predicate** before refusing -- it is the one owner of "is this source still needed?"
-    // (older revision, not the published window, no build in service), so a source that really is still in use is
-    // still kept and the refusal still names itself.
-    (void)tryReleaseRetainedPlaybackSource(slotIndex);
-    entry = runtime->freeRetainedSourceSlot();
-  }
-  if (entry == nullptr) {
     return PlaybackSourceRetainResult::RoleCapacityReached;
   }
   // Two protections, each read by the consumer that would otherwise destroy the source. The descriptor pins are what
