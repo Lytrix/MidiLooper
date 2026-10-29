@@ -6476,9 +6476,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // slot holding a live promise -- not only the holder this turn happens to serve, and not only when a build completes.
   // The judgement never depends on the revision currency; the consequence is `noteMissedTraversalForSlot`'s.
   serviceAdmittedDeadlineMisses(clock);
-  // DEC-194: the completed-promise judgement is **not wired here yet**. Driving `revalidateCompletedPlaybackWindow`
-  // from this lane reached its publish path and crashed the native harness (179/253 cases), so the execution path
-  // stays as it was; `revalidateCompletedPlaybackWindowRefusal()` names the preconditions for the next slice.
+  // **DEC-202 -- a completed promise is judged or released on this turn, never held.** The earlier attempt wired
+  // `revalidateCompletedPlaybackWindow` alone; its publish path had no production caller and crashed the native harness,
+  // and it can only ever agree at one exact boundary. This turn asks the same predicate, judges only when it agrees, and
+  // otherwise releases the completion so the slot's role is not locked. Every slot is swept here because the promise
+  // belongs to the slot, not to the holder the rotation happens to serve.
+  for (uint8_t promiseSlot = 0; promiseSlot < Config::MAX_LOOPS_PER_TRACK; ++promiseSlot) {
+    (void)retireUnjudgeableCompletedPromise(promiseSlot, currentPhase, clock);
+  }
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders, clock);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding
@@ -8162,6 +8167,42 @@ TRACK_COLD_MEM bool Track::revalidateCompletedPlaybackWindow(uint8_t slotIndex, 
   }
   // Recovery does not erase fault history; the boundary consumer owns adoption and clearing a recovered episode. The
   // admitted work record remains unchanged.
+  return true;
+}
+
+/// **DEC-202 -- the late-completion judge-or-release turn.** See the declaration for the contract; the order is:
+///  1. nothing pending, or work still needing service -> nothing to do;
+///  2. the revalidation is **legal now** -> judge it (publish). This is the only place the recovery path is reached, and
+///     only when every precondition that names a boundary says so;
+///  3. otherwise **release** the completion: discard its candidate, reset the build role to a shell, clear the flag and
+///     the operation generation, and name the drop. The slot can build its next window on the next demand.
+/// The failure this repairs is a deadlock, not a timing miss: a completion that arrives after its own window leaves
+/// `completedPromisePendingJudgement` set, `coverageRoleRefusal` answers `role_promise_pending`, the gate refuses
+/// `gate_no_role`, no holder is served, and nothing in the firmware ever clears it
+/// (`test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`).
+TRACK_COLD_MEM bool Track::retireUnjudgeableCompletedPromise(uint8_t slotIndex, uint32_t currentPhase,
+                                                            PlaybackDeadlineClock clock) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->completedPromisePendingJudgement) return false;
+  if (runtime->coverageBuildNeedsService()) return false;
+  if (revalidateCompletedPlaybackWindowRefusal(slotIndex, currentPhase, clock) == PlaybackRevalidateRefusal::None) {
+    // Legal boundary: the existing recovery path owns it (and re-sets the flag if its publication refuses).
+    return !revalidateCompletedPlaybackWindow(slotIndex, currentPhase, clock);
+  }
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
+  if (set != nullptr && set->lifecycle.build < set->views.size()) {
+    RuntimePlaybackView& dropped = set->views[set->lifecycle.build];
+    if (runtime->viewBuild.completedDestinationIs(dropped)) {
+      // Keep the destination's generation (another owner may be reading it); only the *candidate* goes.
+      runtime->viewBuild.discard(&dropped);
+      dropped.resetMetadata();
+    }
+  }
+  runtime->completedPromisePendingJudgement = false;
+  runtime->viewBuildOperationGeneration = 0;
+  traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::CompletionUnjudgeable, dropBefore);
   return true;
 }
 

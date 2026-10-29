@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-202](#dec-202--a-late-completion-is-judged-or-released-never-held-the-promise-flag-is-not-a-role-lock) | 2026-10-29 | A late completion is judged or released, never held: the promise flag is not a role lock | Accepted — native green (0 failures), build green |
 | [DEC-201](#dec-201--the-dec-194-rootless-first-window-red-was-three-fixture-preconditions-the-lane-serves-it) | 2026-10-29 | The DEC-194 rootless-first-window RED was three fixture preconditions; the lane serves it | Accepted — fixture corrected, behaviour unchanged |
 | [DEC-200](#dec-200--one-playback-window-policy-and-one-readiness-rule-length-is-a-clamp-not-a-branch) | 2026-10-29 | One playback window policy and one readiness rule: length is a clamp, not a branch | Accepted — first slice landed; keystone named |
 | [DEC-199](#dec-199--a-stale-published-root-is-not-a-playback-content-authority-the-committed-passes-are) | 2026-10-29 | A stale published root is not a playback content authority; the committed passes are | Accepted — native + build green; device open |
@@ -11398,3 +11399,64 @@ slice.
 
 DEC-194 (the claim), DEC-193 (the remaining RED, now precisely the late-completion judge), DEC-200 (the keystone this
 unblocks), DEC-199 (source by currency).
+
+## DEC-202 — A late completion is judged or released, never held: the promise flag is not a role lock
+
+**Date:** 2026-10-29
+**Owner:** `Track::retireUnjudgeableCompletedPromise` (`src/Track/TrackPlaybackWindowBuild.cpp`), called from the
+playback-view maintenance turn; `CoverageBuildDropReason::CompletionUnjudgeable` (`include/Track.h`).
+**Status:** Accepted; the full native suite has **no failures**; build green.
+
+### Problem
+
+`completedPromisePendingJudgement` is set when a build completes (`viewBuild` completion path) and cleared inline only
+when the completion lands **inside its own window**. A completion that arrives after its deadline leaves it set, and
+`coverageRoleRefusal` answers `CompletedPromisePending` **before** every other term, so:
+
+```
+role_promise_pending  ->  playbackBuildGateRefusal == NoCoverageRole  ->  gate_no_role
+                      ->  holder never progresses  ->  dispatch_no_holder  ->  forever
+```
+
+The only clearer is `revalidateCompletedPlaybackWindow`, which is legal at exactly one boundary
+(`currentPhase == candidate.coverage.startPhase`, one loop past the deadline, aligned) and had **no production caller**.
+Device and fixture agree on the result: the slot never builds again (`test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served`:
+`role_promise_pending`, `gate_no_role`, `dispatch_no_holder` for every turn).
+
+### Decision
+
+The flag is a **transient**, not a lock. On the lane's own turn, for every slot (`stepPlaybackViewMaintenance`, beside
+`serviceAdmittedDeadlineMisses`):
+
+1. nothing pending, or work still needing service -> nothing to do;
+2. `revalidateCompletedPlaybackWindowRefusal(...) == None` -> **judge** it through the existing recovery path (that
+   function is now reachable in production, but only where every boundary precondition agrees);
+3. otherwise -> **release** it: discard the candidate (keeping its destination generation), reset the build role's
+   metadata, clear the flag and the operation generation, and emit `CompletionUnjudgeable`.
+
+A late completion is therefore never *served*: a window built for a past traversal is not content a later one may
+present as current. Releasing costs nothing that matters -- the next demand rebuilds the window from the committed
+passes (DEC-194 proved that needs no root) -- and it ends the deadlock.
+
+### Verification
+
+- `test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served` -- the RED that named this defect:
+  `role_promise_pending / gate_no_role / dispatch_no_holder` -> `dispatch_retry -> dispatch_service_entered ->
+  build_complete`, `served=1`. It now **serves a window**; the assertion is unchanged except for the gate reading below.
+- **Fixture correction (recorded, measured):** the lane emits a `gate_*` row only when the gate **refuses**; an open
+  gate is silent. The fixture read "no `gate_*` row" as "the step returned before the retry was reached", which was
+  false once the gate opened. Class 5 now asserts *no refusal row*, and reachability stays class 5b's `dispatch_retry`.
+- Full native **3607 cases, 0 failed, 7 skipped, 3600 succeeded** -- the whole suite is green.
+- `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192`, ITCM `code 391,992 + padding 1,224` (floor 840) --
+  unchanged, the new turn is `TRACK_COLD_MEM`.
+
+### Consequence
+
+DEC-200's keystone is now unblocked: `requestCommittedPlaybackWindowForSlot`'s `if (!demoted) return NotServable` can be
+flipped so every loop takes the window lane, after which the interval slice (`playbackWindowInterval`'s `demoted`
+argument and its two discriminator-shaped fixtures) lands and the legacy merged/bridge fallbacks are deleted.
+
+### Related
+
+DEC-193 (the defect this names), DEC-200 (the keystone), DEC-201 (the sibling RED, fixture preconditions), DEC-108 §13b
+(the promise/judgement design), DEC-194 (passes are enough for a first window).

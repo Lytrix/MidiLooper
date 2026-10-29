@@ -477,6 +477,14 @@ public:
   /// DEC-194 (report-only): the first false precondition of the revalidation, in its own order.
   PlaybackRevalidateRefusal revalidateCompletedPlaybackWindowRefusal(
       uint8_t slotIndex, uint32_t currentPhase, PlaybackDeadlineClock clock) const;
+  /// **DEC-202 -- a late completion is retired, not held.** `completedPromisePendingJudgement` is a *transient*, not a
+  /// role lock: while it is set the slot can neither build nor be served by the window lane, and the only clearer
+  /// (`revalidateCompletedPlaybackWindow`) is legal only at the candidate's own start phase one loop after its deadline.
+  /// This turn judges when that is legal and otherwise releases the completion -- discarding the candidate and freeing
+  /// its role for the next demand. The late window is never served: a window built for a past traversal is not content
+  /// a later one may present as current. Returns true when a candidate was retired.
+  bool retireUnjudgeableCompletedPromise(uint8_t slotIndex, uint32_t currentPhase,
+                                         PlaybackDeadlineClock clock);
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
@@ -649,6 +657,9 @@ public:
     PublishReadyRefused,
     /// A completed build could not become the served window -- the current role refused the swap.
     PublishCurrentRefused,
+    /// **DEC-202** -- a completion that arrived outside its own window was retired instead of held: the promise could
+    /// not be judged at this boundary, so its role was released for the next demand rather than locked forever.
+    CompletionUnjudgeable,
   };
   /// The builder's state before a release site runs, packed for one row: bit0 active, bits1-3 `nextGrain()`,
   /// bit4 coverage-owned, bit5 the build role is the completed destination, bit6 live-capture borrow,

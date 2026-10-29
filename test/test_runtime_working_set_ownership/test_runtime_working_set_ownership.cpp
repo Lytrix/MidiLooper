@@ -8582,10 +8582,11 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
       break;
     }
   }
-  // `gate_open` = the retry was called and its gate allowed the turn; any other gate_* = the gate refused it;
-  // no row at all = the step returned before the retry was ever reached.
-  TEST_ASSERT_EQUAL_STRING_MESSAGE("gate_open", gateRefusal,
-                                   "class 5: the restarted demand must reach an open retry gate");
+  // **DEC-202 correction (measured):** the lane reports a row only when the gate **refuses**; an open gate emits
+  // nothing, so "no `gate_*` row" is the *open* case, not "never reached" -- reachability is class 5b's
+  // `dispatch_retry`, which is asserted below. The old reading made an open gate look like a stall.
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("none", gateRefusal,
+                                   "class 5: the gate must not refuse this turn (no gate_* refusal row)");
 
   // Class 5b: where did the turn stop relative to the committed retry? `dispatch_retry` is the reach proof.
   {
