@@ -148,3 +148,27 @@ image is `playback_build,gate_no_role` (or the dispatch token) during the silenc
   emit them, and no existing capture can answer the correlation.
 - Caveat: this image still carries DEC-192 recovery, so the silent window may be short. Capture from boot and take the
   Stop/Start sequence early; if the device recovers before any row, the run is INCONCLUSIVE rather than negative.
+
+## Device run `session_20261029_032119.log` — INCONCLUSIVE (gesture timing), and one probe bug found
+
+Image `3f74ecd5…` (naming rows present), boot `crash=0`, 24-slot restore sweep, `t7s3` restored.
+
+What the log shows:
+
+- `root_rev,0` until **32.10 s**; `snapshot_unit kind=finish/publish` at 32.10–32.11 s; first `playback_build,snapshot`
+  at 32.13 s. The slot is rootless for the first ~32 s, exactly the reported product defect.
+- Transport **started at 40.9 s and stopped at 49.1 s** — i.e. *after* the root published. The 8 s of playing had a
+  root, so the window lane was never asked in the silent state.
+- Zero `gate_*` / `dispatch_*` rows. That is consistent with the maintenance owner not being serviced during
+  boot→32 s (transport stopped), not with a refusal.
+
+Probe bug found and fixed: `PlaybackDispatchRefusal::Retry` is enum value **0**, and the last-value table is
+zero-initialised, so the *reach proof* (`dispatch_retry`) could never be emitted on a fresh boot. The table id is now
+`value + 1` so zero means "unseen" only. This does not affect the `gate_open` / `gate_*` rows already on the board.
+
+Verdict: **inconclusive, not a divergence.** The run must Start playback immediately after boot and stay playing while
+the root is still absent. No flash is needed for that: the flashed image reports `gate_open` (0xFF) on the first open
+gate, so the reach question is still answerable.
+
+Second attempt recipe: reset with `capture_session.py --boot-reset`, press Start as soon as the first paint appears
+(≤5 s), keep playing ~20 s through the root build, then Stop → Start → Stop.
