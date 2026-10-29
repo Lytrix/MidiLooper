@@ -1815,6 +1815,100 @@ void test_i4_revision_without_transport_restores_first_occupied_runtime_indices(
   TEST_ASSERT_TRUE(trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotB).hasCommittedPasses());
 }
 
+/// **`root-bearing-loop-persist` slice 2: a body written without a root is re-written with it once the
+/// root publishes.**
+///
+/// The defect this pins is the owner's report: every boot restored rootless bodies, so playback had no
+/// root and a take had to be recorded before the material played. The save is admitted from the commit,
+/// before the publication exists, so the first body is legitimately passes-authoritative (DEC-180). The
+/// persistence owner must then converge that slot to a root-bearing body on its own, without another
+/// gesture, and only once the root is actually settled.
+void test_a_rootless_saved_body_is_rewritten_with_its_root_once_the_publication_settles() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+
+  Loop& loop = trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotA);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasSettledPublishedSnapshotForSave(),
+                            "a restored passes-authoritative slot starts with no root to embed");
+  TEST_ASSERT_FALSE_MESSAGE(
+      StorageManagerInternal::currentSetLoopSlotRootRewritePending[S41Footer::kTrack][S41Footer::kSlotA],
+      "the record starts clear; only a body write may set it");
+
+  // The stop path's own admission, through the production composite (mark dirty + admit + wake).
+  S41Footer::admitSlotKeyedPersistForA();
+  (void)S41Footer::driveWorkerToIdle();
+  char state[512];
+  S41Footer::formatWorkerState(state, sizeof(state));
+  char idleMessage[640];
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the first body write must discharge within the turn budget (%s)", state);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), idleMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the first body write must complete, not fail and drop its obligation");
+
+  // The first body carried no root, and the write itself queued no second save: the record is the wait.
+  TEST_ASSERT_TRUE_MESSAGE(
+      StorageManagerInternal::currentSetLoopSlotRootRewritePending[S41Footer::kTrack][S41Footer::kSlotA],
+      "a passes-authoritative body for a slot with committed passes must be recorded");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasDeferredSaveWork(),
+                            "the body write must not queue its own re-save");
+
+  // No settled root yet -> the owner admits nothing and keeps the record.
+  StorageManager::serviceRootlessSlotRepersist(looperState.getLooperState());
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasDeferredSaveWork(),
+                            "nothing may be re-written while the slot has no settled root");
+  TEST_ASSERT_TRUE_MESSAGE(
+      StorageManagerInternal::currentSetLoopSlotRootRewritePending[S41Footer::kTrack][S41Footer::kSlotA],
+      "the record is the wait, not a drop");
+
+  // The publication for the committed passes runs, through the production publisher.
+  TEST_ASSERT_TRUE_MESSAGE(loop.requestCommittedPassesRepublish(),
+                           "the fixture needs the production republish request");
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 20000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasSettledPublishedSnapshotForSave(),
+                           "the production publisher must settle the root before the owner turn");
+
+  StorageManager::serviceRootlessSlotRepersist(looperState.getLooperState());
+  TEST_ASSERT_FALSE_MESSAGE(
+      StorageManagerInternal::currentSetLoopSlotRootRewritePending[S41Footer::kTrack][S41Footer::kSlotA],
+      "the redeemed record must clear before the admission, so a failure cannot loop");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::hasDeferredSaveWork() ||
+                               PersistenceWorkQueue::queueDepth() > 0,
+                           "a settled root must admit exactly that slot's re-write");
+
+  const uint32_t rewriteTurns = S41Footer::driveWorkerToIdle();
+  S41Footer::formatWorkerState(state, sizeof(state));
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the re-write must discharge within the turn budget (turns=%u %s)",
+           static_cast<unsigned>(rewriteTurns), state);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), idleMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the re-write must complete, not fail and drop its obligation");
+  TEST_ASSERT_FALSE_MESSAGE(
+      StorageManagerInternal::currentSetLoopSlotRootRewritePending[S41Footer::kTrack][S41Footer::kSlotA],
+      "a root-bearing body must clear the record");
+
+  // A further owner turn must admit nothing: the convergence is exactly once.
+  StorageManager::serviceRootlessSlotRepersist(looperState.getLooperState());
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasDeferredSaveWork(),
+                            "a converged slot must not re-admit itself");
+
+  // The card now holds a root-bearing body: the production loader installs it as current.
+  S41Footer::reloadWorkspaceFromCard();
+  Loop& restored = trackManager.getTrack(S41Footer::kTrack).getLoop(S41Footer::kSlotA);
+  TEST_ASSERT_TRUE_MESSAGE(restored.hasCommittedPasses(),
+                           "the re-written body must still restore its committed content");
+  TEST_ASSERT_TRUE_MESSAGE(restored.publishedSnapshotIsCurrent(),
+                           "the re-written body must carry a root the loader accepts as current");
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotA, S41Footer::kNoteA,
+                                       "A after the root re-write");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_drain_suite_links_the_closed_import_set);
@@ -1833,6 +1927,7 @@ int main(int, char**) {
   RUN_TEST(test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus);
   RUN_TEST(test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands);
   RUN_TEST(test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff);
+  RUN_TEST(test_a_rootless_saved_body_is_rewritten_with_its_root_once_the_publication_settles);
   RUN_TEST(test_s75b_capture_pass_payload_writes_are_bounded_and_byte_exact);
   // F4 / DEC-091 -- a failed workspace completion must not hold the queue.
   RUN_TEST(test_f4_a_failed_completion_is_discharged_and_releases_the_queue);

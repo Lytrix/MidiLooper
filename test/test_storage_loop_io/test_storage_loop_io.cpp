@@ -1807,6 +1807,57 @@ void test_loop_persist_body_decision_awaits_settlement_within_its_budget() {
                     decideLoopPersistBodyFormat(loop, true));
 }
 
+/// `root-bearing-loop-persist` slice 1: the settle wait must cover a publication **owed for the current
+/// committed state**, not only an already-coverage-current root. Every record/overdub stop admits the
+/// deferred save from the commit, when `committedPassRevision()` has already advanced and the selected
+/// root is one revision behind, so the old predicate
+/// (`publishedSnapshotIsCurrent() && hasPendingSnapshotPublish()`) was false on exactly the path that
+/// needs the wait -- and every body was written passes-authoritative.
+void test_publication_owed_for_the_committed_state_is_waited_for() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(120, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(220, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 220));
+
+  // The stop's own state: the committed passes are new, the publication for them has not run, and the
+  // selected root (if any) covers the previous revision. This is the save's `Header` stage on device.
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasPendingSnapshotPublish(),
+                           "a committed pass always owes its publication");
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_MESSAGE(LoopPersistBodyDecision::AwaitSettled,
+                            decideLoopPersistBodyFormat(loop, true),
+                            "an owed publication is transient and is waited for while budget remains");
+  TEST_ASSERT_EQUAL_MESSAGE(LoopPersistBodyDecision::PassesAuthoritative,
+                            decideLoopPersistBodyFormat(loop, false),
+                            "an exhausted window never waits");
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), loop));
+  TEST_ASSERT_EQUAL_MESSAGE(LoopSnapshotBodyFormatProbeResult::Legacy,
+                            probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()),
+                            "a body written while the root is owed carries no root; DEC-180 is unchanged");
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.hasSettledPublishedSnapshotForSave());
+  TEST_ASSERT_EQUAL_MESSAGE(LoopPersistBodyDecision::Lsv1SelectedRoot,
+                            decideLoopPersistBodyFormat(loop, false),
+                            "inside the window the same state resolves to the root-bearing body");
+  std::vector<uint8_t> settledBuffer;
+  MemoryStorageIo settledMem(&settledBuffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(settledMem.io(), loop));
+  TEST_ASSERT_EQUAL_MESSAGE(LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                            probeLoopSnapshotBodyFormat(settledBuffer.data(), settledBuffer.size()),
+                            "once the publication lands the body embeds the proven root");
+}
+
 void test_lsv1_rejects_duplicate_loop_snapshot_section() {
   const ImmutableLoopSnapshotRef snapshot =
       LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
@@ -3351,6 +3402,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
   RUN_TEST(test_write_loop_persisted_requires_a_settled_published_snapshot);
   RUN_TEST(test_loop_persist_body_decision_awaits_settlement_within_its_budget);
+  RUN_TEST(test_publication_owed_for_the_committed_state_is_waited_for);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
   RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);

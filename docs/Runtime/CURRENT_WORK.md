@@ -6075,6 +6075,18 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**Active scope (2026-10-29, owner-directed, DEC-195): root-bearing loop persistence — EXECUTED natively, device open.***
+The owner's request was "store a valid root, so I don't have to create one on boot". Scope: the deferred body write's
+settle admission, the per-slot record of a body written without a root, and the persistence owner turn that re-writes
+it. Change: [`root-bearing-loop-persist`](../../openspec/changes/root-bearing-loop-persist/proposal.md). Done in this
+session: `decideLoopPersistBodyFormat` waits for a publication owed for the current committed state; the window is
+wall-clock plus a turn cap; a deferral closes the slot temp file; a synchronous drain never waits; slot finalize records
+`currentSetLoopSlotRootRewritePending` and `StorageManager::serviceRootlessSlotRepersist` redeems it once the root
+settles; the host build can allocate the LSV1 save scratch again. Explicitly **not** touched: the DEC-180 writer
+equivalence gate, the loader/body format, boot restore, and the DEC-193/DEC-194 playback work (still the next
+playback task, unchanged, with its three known REDs). Not flashed; acceptance needs an owner-authorized image and one
+record → power cycle → non-zero `root_rev` read. No SD operation.
+
 **Active scope (2026-10-29, owner-directed, DEC-193): playback is a regression at the DEC-191 image
 boundary, not a window-first rebuild.** Change:
 [`playback-regression-after-retained-start-fix`](../../openspec/changes/playback-regression-after-retained-start-fix/proposal.md).

@@ -263,6 +263,26 @@ Capture passes persist as **chunk refs**, not flattened RAM buffers:
 
 Load path validates the completion marker and can **quarantine** a partial file on failure (`quarantineStorageFile`).
 
+### Body format: settle window and root-bearing convergence
+
+Two rules decide whether a slot body carries an embedded root (DEC-074 RC2, DEC-180, DEC-195):
+
+1. **Settle window.** `deferUnsettledLoopPersist` asks `decideLoopPersistBodyFormat`. `AwaitSettled` returns while the
+   loop has a snapshot publication **owed for its current committed state** (`hasPendingSnapshotPublish()`), even
+   though the selected root is still one revision behind — which is always the case at the save's `Header` stage,
+   because every record/overdub stop admits the save from the commit, before its publication exists. The wait writes
+   nothing, leaves the stage at `Header`, closes the slot temp file (no SD handle across the wait), and is bounded by
+   `kLoopPersistSettleWaitMs` **and** `kLoopPersistSettleMaxDeferrals` (whichever comes first). A **synchronous drain**
+   (`saveState()`, the clear path) never waits: it runs inside a user gesture.
+2. **Root-bearing convergence.** At slot finalize the write records `currentSetLoopSlotRootRewritePending[track][slot]`
+   when the body carried no root for a slot that holds committed passes. `StorageManager::serviceRootlessSlotRepersist`
+   (called once per idle turn beside the persistence turn in `main.cpp`) re-admits exactly that slot through
+   `markLoopSlotMaterialDirty` + `admitLoopSlotPersist` + `requestDeferredSaveState` once the slot's root is settled,
+   clearing the record first so a failure cannot loop. A restore from SD clears the record for the restored slot.
+
+The writer's admission is unchanged: a body embeds a root only when that root is proven equivalent to the passes being
+serialized. Convergence is one extra slot-body write per take, on the idle lane.
+
 ---
 
 ## Boot load sequence

@@ -27,11 +27,15 @@ namespace StorageManagerInternal {
 /// is emitted only in a capture build; the counter exists in both so the reset site needs no guard.
 DMAMEM uint32_t loopSnapshotTailWriteStepRows = 0;
 
-/// DEC-073 RC2: bounded settle re-admissions per loop body write. A coverage-current root with a
-/// publication still pending is transient (the publisher is rebuilding the same committed state on
-/// its idle lane), so the save waits for it at most this many writer turns before committing to
-/// the passes-authoritative body. The bound keeps a blocked publisher from wedging the save.
-constexpr uint8_t kLoopPersistSettleDeferralBound = 128;
+/// `root-bearing-loop-persist`: bounded settle wait per loop body write. A publication owed for the
+/// loop's current committed state is transient (the publisher re-enumerates that same state on its own
+/// lane), so the save waits for it -- at most this long -- before committing to the passes-authoritative
+/// body. Wall-clock, because the old writer-turn count (128) expired in milliseconds and could never
+/// span a real publication: on device the body finished ~0.4 s before its root published.
+constexpr uint32_t kLoopPersistSettleWaitMs = 1500;
+/// Secondary cap: a virtual-clock fixture can never expire the window above, and a publisher that is not
+/// being serviced must not park the save forever. Whichever bound is reached first ends the wait.
+constexpr uint16_t kLoopPersistSettleMaxDeferrals = 2048;
 
 STORAGE_PERSIST_MEM void quarantineLegacyMonolithStorageFile() {
 #if defined(ARDUINO)
@@ -53,6 +57,23 @@ STORAGE_PERSIST_MEM void clearCurrentSetLoopSlotDirty(uint8_t trackIndex, uint8_
         return;
     }
     currentSetLoopSlotDirty[trackIndex][slotIndex] = false;
+}
+
+/// `root-bearing-loop-persist`: after a slot body is finalized, record whether it carries a root. The
+/// pinned body decision (`loopWriteUsesLsv1`) is the writer's own answer, so the record cannot disagree
+/// with the bytes on the card. A passes-authoritative body for a slot that holds committed passes is the
+/// one shape that can be improved later, once its root publishes; `serviceRootlessSlotRepersist` redeems
+/// it. Both body-write paths (the monolithic workspace save and the slot-keyed `LoopPersist` work item)
+/// call this, so the record does not depend on which one ran.
+STORAGE_PERSIST_MEM void recordLoopSlotPersistedRootState(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    const bool wroteRoot = storageSession.currentWorkspaceSave.loopBodyCarriesRoot;
+    Track& track = trackManager.getTrack(trackIndex);
+    const bool holdsPasses =
+        track.loopsAllocated() && track.getLoop(slotIndex).hasCommittedPasses();
+    markCurrentSetLoopSlotRootRewritePending(trackIndex, slotIndex, !wroteRoot && holdsPasses);
 }
 
 STORAGE_PERSIST_MEM void resetDeferredLoopFinalizeState() {
@@ -90,8 +111,12 @@ STORAGE_PERSIST_MEM bool loopPersistTailWriteResumeActive(const PersistKey& key)
 STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
     disarmLoopPersistTailWriteResume();
     storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::Header;
-    // DEC-073 RC2: the body-format pin and its settle allowance are per loop write.
+    // DEC-073 RC2: the body-format pin and its settle window are per loop write.
     storageSession.currentWorkspaceSave.loopWriteUsesLsv1 = false;
+    // `root-bearing-loop-persist`: a new loop write has not completed a body yet. The two completion
+    // sites below set this **after** this reset, so the finalize step can still read it.
+    storageSession.currentWorkspaceSave.loopBodyCarriesRoot = false;
+    storageSession.currentWorkspaceSave.loopSettleDeadlineMs = 0;
     storageSession.currentWorkspaceSave.loopSettleDeferrals = 0;
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
@@ -600,19 +625,34 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chun
 /// unchanged). Kept out of the stage switch deliberately: growing that switch's tables moves DTCM
 /// alignment by 4 KB on this tree (see `.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`).
 STORAGE_PERSIST_MEM bool deferUnsettledLoopPersist(const Loop& loop, bool& loopDone) {
+    CurrentWorkspaceSaveJob& job = storageSession.currentWorkspaceSave;
+    const uint32_t nowMs = millis();
+    if (job.loopSettleDeadlineMs == 0) {
+        job.loopSettleDeadlineMs = nowMs + kLoopPersistSettleWaitMs;
+    }
+    // Wrap-safe "still inside the window" test, plus the turn cap. A **synchronous** drain (the
+    // clear/saveState path) never waits: it runs inside a user gesture while the transport may be playing,
+    // so a bounded wait there is a latency the gesture never asked for. The wait is a deferred-lane
+    // optimisation only.
     const bool settleBudgetRemaining =
-        storageSession.currentWorkspaceSave.loopSettleDeferrals < kLoopPersistSettleDeferralBound;
+        static_cast<int32_t>(job.loopSettleDeadlineMs - nowMs) > 0 &&
+        job.loopSettleDeferrals < kLoopPersistSettleMaxDeferrals &&
+        !isPersistenceDrainInProgress();
     const LoopPersistBodyDecision bodyDecision =
         decideLoopPersistBodyFormat(loop, settleBudgetRemaining);
     if (bodyDecision == LoopPersistBodyDecision::AwaitSettled) {
         // Nothing written, stage unchanged: the work item stays active and retries on a later
-        // persistence slice while the publisher settles.
-        ++storageSession.currentWorkspaceSave.loopSettleDeferrals;
+        // persistence slice while the publisher settles. The slot temp file is closed for the wait so
+        // a deferred write never holds an SD handle across it (the caller reopens it next turn).
+        if (job.loopFileOpen) {
+            job.loopFile.close();
+            job.loopFileOpen = false;
+        }
+        ++job.loopSettleDeferrals;
         loopDone = false;
         return true;
     }
-    storageSession.currentWorkspaceSave.loopWriteUsesLsv1 =
-        bodyDecision == LoopPersistBodyDecision::Lsv1SelectedRoot;
+    job.loopWriteUsesLsv1 = bodyDecision == LoopPersistBodyDecision::Lsv1SelectedRoot;
     return false;
 }
 
@@ -738,6 +778,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                 return true;
             }
             resetDeferredLoopWriteState();
+            storageSession.currentWorkspaceSave.loopBodyCarriesRoot = false;
             loopDone = true;
             return true;
         }
@@ -774,6 +815,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,done");
 #endif
             resetDeferredLoopWriteState();
+            storageSession.currentWorkspaceSave.loopBodyCarriesRoot = true;
             loopDone = true;
             return true;
         }

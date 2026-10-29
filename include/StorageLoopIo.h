@@ -203,15 +203,16 @@ bool loopUsesLoopSnapshotBodyFormatV1ForSave(const Loop& loop);
 enum class LoopPersistBodyDecision : uint8_t {
   /// The selected root is settled: write LSV1 with the embedded root.
   Lsv1SelectedRoot = 0,
-  /// The root is coverage-current but a publication is pending and the caller still has settle
-  /// budget: write nothing yet and retry the decision on a later slice.
+  /// A publication is owed for the loop's current committed state and the caller still has settle
+  /// budget: write nothing yet and retry the decision on a later slice. The selected root does not
+  /// have to be coverage-current yet -- after a commit it never is at the save's `Header` stage.
   AwaitSettled = 1,
   /// No settled root is reachable: write the passes-authoritative body.
   PassesAuthoritative = 2,
 };
 
-/// Resolves the loop body format. `settleBudgetRemaining` is false once the caller's bounded
-/// re-admission allowance is exhausted, which forces `PassesAuthoritative` rather than waiting.
+/// Resolves the loop body format. `settleBudgetRemaining` is false once the caller's wall-clock
+/// settle window is exhausted, which forces `PassesAuthoritative` rather than waiting.
 LoopPersistBodyDecision decideLoopPersistBodyFormat(const Loop& loop,
                                                     bool settleBudgetRemaining);
 

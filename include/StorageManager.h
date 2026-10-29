@@ -50,6 +50,10 @@ public:
     static void markTrackSlotsMaterialDirty(uint8_t trackIndex);
     /// Admit slot meta + slot-keyed loop payload persist for one slot (clear / full slot rewrite).
     static void admitLoopSlotPersist(uint8_t trackIndex, uint8_t slotIndex);
+    /// `root-bearing-loop-persist`: re-admit the body write of every slot whose persisted body carries no
+    /// root once that slot's root is settled, so the card converges to a root-bearing body without another
+    /// gesture. Reads only memory when nothing is recorded; admits at most one work item per redeemable slot.
+    static void serviceRootlessSlotRepersist(const LooperState& state);
     /// Admit track meta + slot-keyed loop persist for every slot on a track.
     static void admitTrackSlotPersistence(uint8_t trackIndex);
 

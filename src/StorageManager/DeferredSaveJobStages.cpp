@@ -277,6 +277,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
                 return true;
             }
             ++storageSession.currentWorkspaceSave.loopSlotsWritten;
+            // `root-bearing-loop-persist`: the pinned decision says whether this body carries a root.
+            recordLoopSlotPersistedRootState(trackIndex, slotIndex);
             clearCurrentSetLoopSlotDirty(trackIndex, slotIndex);
 
             storageSession.currentWorkspaceSave.poolCursor++;

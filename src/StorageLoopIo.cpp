@@ -1264,11 +1264,16 @@ LoopPersistBodyDecision STORAGE_LOOP_IO_MEM decideLoopPersistBodyFormat(
   if (loop.hasSettledPublishedSnapshotForSave()) {
     return LoopPersistBodyDecision::Lsv1SelectedRoot;
   }
-  // A coverage-current root with a publication pending is transient: the pending work is a rebuild
-  // of the same committed state, so give the publisher a bounded chance to settle before dropping
-  // to the passes-authoritative body. A stale/uncovered root is not transient and never waits.
-  if (settleBudgetRemaining && loop.publishedSnapshotIsCurrent() &&
-      loop.hasPendingSnapshotPublish()) {
+  // A publication in flight is transient: the pending box always re-enumerates the live committed
+  // state, so give the publisher a bounded chance to settle before dropping to the
+  // passes-authoritative body. **This used to require `publishedSnapshotIsCurrent()`, which made the
+  // wait dead on the only path that needs it**: a record/overdub stop admits the save from the commit,
+  // i.e. after `committedPassRevision()` has advanced and before the publication exists, so the
+  // selected root is always one revision behind at the save's `Header` stage and the decision was
+  // `PassesAuthoritative` on the first writer turn. Measured on device: `PERS,result` 0.4 s before
+  // `snapshot_unit,kind=publish`. An uncovered root with nothing owed is still not transient and never
+  // waits.
+  if (settleBudgetRemaining && loop.hasPendingSnapshotPublish()) {
     return LoopPersistBodyDecision::AwaitSettled;
   }
   return LoopPersistBodyDecision::PassesAuthoritative;

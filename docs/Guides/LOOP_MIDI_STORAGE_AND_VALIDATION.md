@@ -843,13 +843,20 @@ Slot **payload** (inside epoch wrapper + **SAVE** footer) may be:
 | Probe | Body | Load authority | Save |
 |-------|------|----------------|------|
 | No `LSV1` prefix | Legacy bare `PersistedLoopSnapshot` + pass stream + edit tail | Passes via `applyLoadedLoopSlotBodyCommit` → `rebuildSlotFromLoopContent` | Legacy until `publishedSnapshotIsCurrent()` |
-| `LSV1` + `formatVersion == 1` | Dual-write: `LoopMetadata` + `PersistedLoopSnapshot` (oracle) + `LoopSnapshot` | `LoopSnapshot` section via `storePublishedSnapshot`; oracle non-authoritative; GUS depth **0** | When `loopUsesLoopSnapshotBodyFormatV1ForSave` |
+| `LSV1` + `formatVersion == 1` | Dual-write: `LoopMetadata` + `PersistedLoopSnapshot` (oracle) + `LoopSnapshot` | `LoopSnapshot` section via `storePublishedSnapshot`; oracle non-authoritative; GUS depth **0** | When `loopUsesLoopSnapshotBodyFormatV1ForSave`, after the bounded settle window (DEC-195) |
 | `LSV1` + `formatVersion != 1` | — | **Reject** slot load | — |
 
 **Save-time migration (no eager owner):** legacy file on SD → runtime load adopts passes →
 `queueLoadedSnapshotPublish` + idle snapshot construction → next successful
 `writeLoopPersisted` / deferred save emits LSV1. Slots saved before hydration
 stay legacy on disk until a current published root exists.
+
+**Root-bearing convergence (DEC-195):** the deferred body write waits (bounded, idle lane only) while a publication is
+owed for the loop's current committed state, so a normal record/overdub stop persists the root on its first write. If
+the window expires, the body is written passes-authoritative and the slot is recorded in
+`currentSetLoopSlotRootRewritePending`; `StorageManager::serviceRootlessSlotRepersist` re-writes exactly that slot once
+its root settles. A restore from SD clears the record for the restored slot. The DEC-180 rule is unchanged: an
+embedded root is always proven equivalent to the passes being serialized.
 
 **Owners:** `readLoopSnapshotBodyFormatV1` / `stepLoopSnapshotBodyFormatV1LoadParse`
 (parse only, never publish); `LoadLoopJob` commit via `applyLoadedLoopSlotBodyCommit`;

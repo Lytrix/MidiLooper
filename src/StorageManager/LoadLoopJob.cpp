@@ -668,6 +668,10 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     loadLoopJob_.loadedLoopSnapshot = nullptr;
 
     markLoopCommittedChunksPersistedFromSdLoad(loop);
+    // `root-bearing-loop-persist`: the slot's content now comes from the card, so a record that our last
+    // body for it carried no root is obsolete -- nothing is owed a re-write until this runtime writes it.
+    StorageManagerInternal::markCurrentSetLoopSlotRootRewritePending(loadLoopJob_.track,
+                                                                    loadLoopJob_.slot, false);
     // The parity gate inside `applyLoadedLoopSlotBodyCommit` can decline to publish, and that used to be
     // indistinguishable from a successful apply: the request still reported `committed` while the slot stayed
     // empty. Name the outcome, so `RRQ`/`!LIB_OBSERVE` tell the truth.

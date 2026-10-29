@@ -394,6 +394,9 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
   }
 
   clearLoopSlotDirty(job.trackIndex, job.slotIndex);
+  // `root-bearing-loop-persist`: record whether this body carries a root (same rule as the monolithic
+  // workspace save), so a passes-authoritative body can be re-written once its root publishes.
+  recordLoopSlotPersistedRootState(job.trackIndex, job.slotIndex);
   return completePersistenceWorkItem(job, "done", true);
 }
 

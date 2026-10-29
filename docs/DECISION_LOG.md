@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-195](#dec-195--a-deferred-body-write-waits-bounded-for-a-publication-owed-for-the-current-committed-state-and-a-rootless-body-is-re-persisted-once-its-root-settles) | 2026-10-29 | A deferred body write waits (bounded) for a publication owed for the current committed state; a rootless body is re-persisted once its root settles | Accepted — native + build green; not flashed |
 | [DEC-148](#dec-148--a-noteoff-behind-the-served-position-terminates-the-sounding-instance-a-closure-the-ledger-no-longer-holds-is-suppressed) | 2026-10-20 | A NoteOff behind the served position terminates the sounding instance; a closure the ledger no longer holds is suppressed | Accepted (landed, 4.5 increment) |
 | [DEC-147](#dec-147--a-handoff-lead-refusal-is-a-position-refusal-the-traversal-budget-is-counted-in-spans) | 2026-10-19 | A handoff-lead refusal is a position refusal; the traversal budget is counted in spans | Accepted (landed; logged 2026-10-20) |
 | [DEC-144](#dec-144--the-matched-terminal-is-dec-136-aware-same-reader-where-the-pre-stop-window-is-current-continuous-same-take-serving-across-the-generation-handoff) | 2026-10-19 | The matched terminal is DEC-136-aware: same reader where the pre-Stop window is current, continuous same-take serving across the generation handoff | Accepted and implemented — native RED→GREEN + host fixtures + offline re-verification + device matched PASS; three-group aggregate PASS |
@@ -10903,3 +10904,97 @@ hydration. Device work needs per-image upload authorization and a registered non
 
 `playback-regression-after-retained-start-fix` (new, active); `display-freeze-under-overdub-chain` (frozen,
 section 6 moved); `docs/Plans/future_root_independent_playback.md` (parked). No data or format migration.
+
+## DEC-195 — A deferred body write waits, bounded, for a publication owed for the current committed state, and a rootless body is re-persisted once its root settles
+
+**Date:** 2026-10-29
+**Owner:** `decideLoopPersistBodyFormat` (`src/StorageLoopIo.cpp`), `deferUnsettledLoopPersist` /
+`resetDeferredLoopWriteState` / `recordLoopSlotPersistedRootState` (`src/StorageManager/WorkspaceSave.cpp`),
+`CurrentWorkspaceSaveJob::loopSettleDeadlineMs` / `loopSettleDeferrals` / `loopBodyCarriesRoot`
+(`include/StorageSession.h`), `currentSetLoopSlotRootRewritePending` + `StorageManager::serviceRootlessSlotRepersist`
+(`src/StorageManager/{Internal,PersistenceAdmit,DeferredSaveJobStages,PersistenceWorkItemPersist}.cpp`,
+`src/main.cpp`).
+**Status:** Accepted; native + build green; **not flashed**. Extends DEC-074 RC2; supersedes only its "a
+stale/uncovered root is never transient and never waits" clause.
+
+### Problem
+
+The owner reports that every boot restores rootless slot bodies, so playback has no root and a take must be recorded
+before the restored material plays. The writer is not at fault: DEC-180 already refuses to embed a root it cannot prove
+equivalent to the passes it serializes. The defect is that the save is **admitted before the root is offered**.
+`markLoopSlotMaterialDirty` + `admitLoopSlotPersist` + `requestDeferredSaveState` run from every record/overdub commit,
+and `decideLoopPersistBodyFormat`'s settle branch required `publishedSnapshotIsCurrent() && hasPendingSnapshotPublish()`.
+A commit advances `committedPassRevision()`, so at the save's `Header` stage the selected root is always one revision
+behind and the first term is false: the decision was `PassesAuthoritative` on the first writer turn, the settle budget
+was never consumed, and the body was written without a root. Measured on device
+(`captures/session_20261029_021341.log`): `PERS,request` 19.069 s → `PERS,result` 19.195 s →
+`snapshot_unit,kind=publish` **19.619 s** — the body is finished ~0.4 s before its root exists.
+
+### Decision
+
+1. **The wait covers an owed publication.** `AwaitSettled` now returns whenever `hasPendingSnapshotPublish()` is true
+   and the caller still has budget, whether or not the selected root is coverage-current. The pending box always
+   re-enumerates the live committed state, so the wait can only ever end in a root that represents it. An uncovered
+   root with **nothing** owed still never waits.
+2. **The window is wall-clock.** `kLoopPersistSettleWaitMs = 1500` replaces the 128 writer-turn allowance, which
+   expired in milliseconds and could not span a real publication (`snapshot_unit` steps are tens of milliseconds
+   each). `kLoopPersistSettleMaxDeferrals = 2048` is a secondary cap so a virtual-clock fixture, or a publisher that is
+   never serviced, still terminates the wait. A deferral writes nothing, keeps the stage at `Header`, and **closes the
+   slot temp file** so no SD handle is held across the wait.
+3. **A synchronous drain never waits.** The clear/`saveState()` path runs inside a user gesture, possibly while the
+   transport is playing; `isPersistenceDrainInProgress()` suppresses the window there. The wait is a deferred-lane
+   optimisation only.
+4. **A rootless body is remembered and re-persisted.** At slot finalize (both body-write paths: the monolithic
+   workspace save and the slot-keyed `LoopPersist` work item) the write records
+   `currentSetLoopSlotRootRewritePending[track][slot]` when the completed body carried no root and the slot holds
+   committed passes. `StorageManager::serviceRootlessSlotRepersist`, called once per idle turn beside the deferred
+   persistence turn, re-admits exactly that slot through the existing
+   `markLoopSlotMaterialDirty` + `admitLoopSlotPersist` + `requestDeferredSaveState` path once
+   `hasSettledPublishedSnapshotForSave()` holds, clearing the record **before** the admission. A restore from SD clears
+   the record for the restored slot; the workspace-load reset clears all of them.
+
+### Rationale
+
+The root the body should carry already exists on the loop's own publication lane; the save simply never waited for it
+and never came back for it. Both halves reuse existing owners and the existing work queue — no new producer, no new
+queue, no format change — and the writer's equivalence admission is untouched, so an embedded root remains provably
+equivalent to the serialized passes. The cost is bounded: one extra slot-body write at most per take, on the idle lane,
+and only when the first write could not embed a root.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Build a whole-loop root inside the writer | A second construction path on the persistence lane, for work the publisher already owns; DEC-180 named "rebuild a root at boot" as not required for correctness once the display/pass paths are right |
+| Embed the selected root without the equivalence gate | DEC-180's invariant: a body either carries a provably equivalent root or is explicitly passes-authoritative |
+| Wait on a writer-turn count only | 128 idle turns are milliseconds; it cannot span a publication (this is the measured defect) |
+| Re-save every publication unconditionally | Write amplification for changes that do not affect the persisted body; the record makes the re-write specific to a body that lacks a root |
+| Load-time rebuild instead | Removed in DEC-192: it hydrates content before playback demand and was not acceptance-tested through MIDI output |
+
+### Verification and constraints
+
+- `test_storage_loop_io::test_publication_owed_for_the_committed_state_is_waited_for` — `AwaitSettled` for an owed
+  publication, `PassesAuthoritative` when the window is exhausted, `Legacy` body while owed, `SupportedV1` body once
+  the production publisher settles. Mutation-red: restoring the `publishedSnapshotIsCurrent()` term fails it
+  (`Expected 1 Was 2`).
+- `test_storage_drain_restore::test_a_rootless_saved_body_is_rewritten_with_its_root_once_the_publication_settles` —
+  the production save records the rootless body, admits nothing before the root settles, re-admits exactly that slot
+  once, clears the record, admits nothing further, and the reloaded slot reports `publishedSnapshotIsCurrent()`.
+  Mutation-red: disabling `serviceRootlessSlotRepersist` fails it at the redemption assertion.
+- Host-build enablement: `StorageLoopIoBodyFormatV1.cpp` selected the external pool whenever `ARDUINO` was defined, so
+  a native suite that defines it (the storage harnesses) could never allocate the LSV1 save scratch and every LSV1
+  write failed. The guard now also requires `__IMXRT1062__`, matching `InternalHeapFirstAllocator.h`; the device path
+  is unchanged.
+- Gates: focused `test_storage_loop_io` 67/67, `test_storage_drain_restore` 24/24; full native **3597 cases, 3 failed,
+  7 skipped, 3586 succeeded** — the three failures are the pre-existing DEC-193/DEC-194 REDs
+  (`test_dec193_…`, `test_dec194_…`, `test_pass_only_playback_serves_due_notes_before_whole_root_publication`), which
+  this change does not touch. `teensy41-capture-serial` SUCCESS: RAM1 `variables 96,192` unchanged, ITCM
+  `code 391,992 + padding 1,224` (floor 840, 384 B above).
+- No device claim: the expected device effect (a restored slot with a non-zero `root_rev` after a record/stop and a
+  power cycle) is unverified until an owner-authorized flash.
+
+### Related OpenSpec / migration
+
+`openspec/changes/root-bearing-loop-persist` (new). DEC-074 RC2 (settle admission, extended), DEC-180 (writer
+equivalence gate, unchanged), DEC-179 (passes-only restore, unchanged), DEC-192 (playback recovery, untouched). No data
+or format migration: existing bodies keep loading unchanged.

@@ -71,6 +71,17 @@ void clearCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slotIndex)
     currentSetLoopSlotDirty[trackIndex][slotIndex] = false;
 }
 
+bool anyCurrentSetLoopSlotRootRewritePending() {
+    for (uint8_t track = 0; track < Config::NUM_TRACKS; ++track) {
+        for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+            if (currentSetLoopSlotRootRewritePending[track][slot]) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool anyAllocatedLoopEditStateDirty() {
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
         Track& track = trackManager.getTrack(t);
@@ -287,6 +298,53 @@ void StorageManager::processEditAutosave(const LooperState& state) {
     }
     requestDeferredSaveState(state);
     lastEditAutosaveMs = nowMs;
+}
+
+void StorageManager::serviceRootlessSlotRepersist(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    return;
+#else
+    if (!anyCurrentSetLoopSlotRootRewritePending()) {
+        return;
+    }
+    bool admitted = false;
+    const uint8_t trackCount = trackManager.getTrackCount();
+    for (uint8_t t = 0; t < trackCount && t < Config::NUM_TRACKS; ++t) {
+        Track& track = trackManager.getTrack(t);
+        if (!track.loopsAllocated()) {
+            for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+                markCurrentSetLoopSlotRootRewritePending(t, s, false);
+            }
+            continue;
+        }
+        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+            if (!currentSetLoopSlotRootRewritePending[t][s]) {
+                continue;
+            }
+            Loop& loop = track.getLoop(s);
+            // A slot that no longer holds committed passes has nothing to carry a root for.
+            if (!loop.hasCommittedPasses()) {
+                markCurrentSetLoopSlotRootRewritePending(t, s, false);
+                continue;
+            }
+            // The body can only improve once its root is settled; until then the record is the wait.
+            // (A publication that never settles is not repaired here -- after the settle window the
+            // body stays passes-authoritative and this record simply stays set.)
+            if (!loop.hasSettledPublishedSnapshotForSave()) {
+                continue;
+            }
+            markCurrentSetLoopSlotRootRewritePending(t, s, false);
+            StorageManager::markLoopSlotMaterialDirty(t, s);
+            StorageManager::admitLoopSlotPersist(t, s);
+            admitted = true;
+        }
+    }
+    if (admitted) {
+        // The re-write is owed like any other material change: one wake for the whole turn.
+        StorageManager::requestDeferredSaveState(state);
+    }
+#endif
 }
 
 void StorageManager::deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs) {

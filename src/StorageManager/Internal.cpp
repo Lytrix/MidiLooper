@@ -27,6 +27,12 @@ CurrentSetStorage::AnchorFields currentSetAnchorFields{};
 bool forceCurrentSetFullLoopWrite = false;
 STORAGE_PERSIST_DATA std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty{};
+/// `root-bearing-loop-persist`: true while the card's body for this slot carries **no root**, i.e. the
+/// last finalized body was written passes-authoritative for a slot that has committed passes. Redeemed
+/// (written again with its root) once the slot's root settles; see
+/// `StorageManager::serviceRootlessSlotRepersist`.
+STORAGE_PERSIST_DATA std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
+    currentSetLoopSlotRootRewritePending{};
 uint32_t currentSetLastActiveUnix = 0;
 STORAGE_PERSIST_DATA char currentSetLoadedFromFolder[16] = {};
 uint32_t currentWorkspaceEpoch = 0;

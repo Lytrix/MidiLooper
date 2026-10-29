@@ -163,8 +163,21 @@ struct CurrentWorkspaceSaveJob {
   /// and the snapshot tail both read this pin, so a committed-state change mid-write can never
   /// leave an LSV1 preamble without its tail (or vice versa).
   bool loopWriteUsesLsv1 = false;
-  /// DEC-073 RC2: bounded settle re-admissions consumed for this loop write. Reset with the stage.
-  uint8_t loopSettleDeferrals = 0;
+  /// `root-bearing-loop-persist`: whether the body just **completed** carried an embedded root. Distinct
+  /// from `loopWriteUsesLsv1`, which is the in-progress pin and is cleared by
+  /// `resetDeferredLoopWriteState()` at the end of the write: the finalize step (which records the state
+  /// on the slot) runs after that reset, so it needs the completed answer, not the pin.
+  bool loopBodyCarriesRoot = false;
+  /// DEC-074 RC2 + `root-bearing-loop-persist`: the wall-clock deadline of this loop write's bounded
+  /// settle wait (0 = not armed). A publication owed for the current committed state is transient, so
+  /// the save waits for it -- but only inside this window, so a blocked publisher cannot wedge the
+  /// save. Counted in time, not writer turns: 128 idle turns are milliseconds and cannot span a real
+  /// publication (`snapshot_unit` steps are tens of milliseconds each).
+  uint32_t loopSettleDeadlineMs = 0;
+  /// `root-bearing-loop-persist`: hard cap on deferrals for this loop write. The wall-clock window is the
+  /// real bound, but a fixture with a virtual clock cannot expire it, so the wait is also capped in turns
+  /// -- whichever comes first. A deferral writes nothing and costs one early return, so the cap is cheap.
+  uint16_t loopSettleDeferrals = 0;
   /// When armed, LoopPersist job recovery resumes `LoopSnapshotTail` scratch (RC-P1.3).
   PersistKey loopPersistTailResumeKey{};
   bool loopPersistTailResumeArmed = false;

@@ -28,7 +28,10 @@
 #include <string>
 #include <vector>
 
-#if defined(ARDUINO)
+// The external pool exists only on the IMXRT1062. A host build that defines `ARDUINO` for the firmware
+// headers must fall back to `std::malloc`, exactly like `InternalHeapFirstAllocator.h` does, or every
+// LSV1 save scratch allocation returns null and the body can never be written natively.
+#if defined(ARDUINO) && defined(__IMXRT1062__)
 extern "C" void* extmem_malloc(size_t size);
 #else
 #include <cstdlib>
@@ -1602,7 +1605,7 @@ LSV1_IO_MEM LoopSnapshotBodyFormatV1SaveScratch* acquireLoopSnapshotBodyFormatV1
   if (scratch != nullptr) {
     return scratch;
   }
-#if defined(ARDUINO)
+#if defined(ARDUINO) && defined(__IMXRT1062__)
   void* memory = extmem_malloc(sizeof(LoopSnapshotBodyFormatV1SaveScratch));
 #else
   void* memory = std::malloc(sizeof(LoopSnapshotBodyFormatV1SaveScratch));

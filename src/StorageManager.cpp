@@ -343,6 +343,9 @@ void syncCurrentSetDirtyTrackingFromLoadedState() {
     for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
             currentSetLoopSlotDirty[t][s] = false;
+            // `root-bearing-loop-persist`: the record describes the bodies this runtime wrote. After a load
+            // the card is the source, so nothing is owed a re-write until a body is written again.
+            currentSetLoopSlotRootRewritePending[t][s] = false;
         }
     }
 }

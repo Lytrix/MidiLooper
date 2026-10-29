@@ -1140,6 +1140,10 @@ void loop() {
 #if defined(SESSION_CAPTURE)
   const uint32_t persistSaveStartUs = micros();
 #endif
+  // `root-bearing-loop-persist`: a slot whose body was written without a root is re-admitted here once
+  // its publication settles, so the card converges to a root-bearing body without another gesture. One
+  // scan of a 64-slot record that is normally all-clear, on the same idle lane.
+  StorageManager::serviceRootlessSlotRepersist(looperState.getLooperState());
   // Offer the existing owner for workspace, revision commit/load, or sealed chunks.
   // The worker retains its own SD/load/capture exclusion and slice budget.
   (void)MidiServiceDrain::serviceDeferredPersistenceTurn<StorageManager>(

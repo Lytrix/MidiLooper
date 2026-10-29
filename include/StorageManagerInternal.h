@@ -58,6 +58,9 @@ extern CurrentSetStorage::AnchorFields currentSetAnchorFields;
 extern bool forceCurrentSetFullLoopWrite;
 extern std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty;
+/// True while the persisted body for this slot carries no root (`root-bearing-loop-persist`).
+extern std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
+    currentSetLoopSlotRootRewritePending;
 extern uint32_t currentSetLastActiveUnix;
 extern char currentSetLoadedFromFolder[16];
 extern uint32_t currentWorkspaceEpoch;
@@ -74,6 +77,19 @@ extern bool workspaceFooterPersistDeferred;
 bool anyAllocatedLoopEditStateDirty();
 void markCurrentSetLoopSlotDirtyInternal(uint8_t trackIndex, uint8_t slotIndex,
                                          bool markMaterialChange = true);
+/// `root-bearing-loop-persist`: record that this slot's persisted body carries no root, or clear the
+/// record when a root-bearing body is written (or the slot stops holding committed passes). Inline so a
+/// suite that links only the restore/commit path (e.g. `test_storage_manager_load`) can clear the record at
+/// its restore edge without pulling the whole persistence admission TU in.
+inline void markCurrentSetLoopSlotRootRewritePending(uint8_t trackIndex, uint8_t slotIndex, bool pending) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    currentSetLoopSlotRootRewritePending[trackIndex][slotIndex] = pending;
+}
+bool anyCurrentSetLoopSlotRootRewritePending();
+/// Record the root state of a slot body just finalized by either body-write path.
+void recordLoopSlotPersistedRootState(uint8_t trackIndex, uint8_t slotIndex);
 void markCurrentSetTrackDirtyInternal(uint8_t trackIndex, bool markMaterialChange = true);
 void markAllCurrentSetLoopSlotsDirtyInternal(bool markMaterialChange = true);
 

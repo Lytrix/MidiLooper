@@ -1112,6 +1112,12 @@ class.
 Revision layout no longer serializes loop bodies to measure them: private chunk
 length placeholders are patched from actual emitted bytes before directory/footer
 CRC and validation. One completed body/header patch yields before another body.
+`deferUnsettledLoopPersist` may also return without writing while a publication is owed for the current committed
+state (DEC-195). That deferral is one early return -- no SD read/write, no allocation -- and is bounded by
+`kLoopPersistSettleWaitMs` and `kLoopPersistSettleMaxDeferrals`, so it adds no bound class and no indivisible step.
+The root-bearing re-write it can schedule (`serviceRootlessSlotRepersist`) admits the existing `LoopPersist` work item;
+it adds no new owner.
+
 Existing owner/time/SD gates and empirical class stay unchanged; metadata/sort/SD
 step duration and hardware seconds-scale completion are not qualified by byte caps.
 Forward cursors reuse existing scalar scratch; local512-byte output buffer only,
