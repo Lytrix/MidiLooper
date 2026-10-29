@@ -298,3 +298,18 @@ Suite: 254 cases, 2 failed (the two window-lane REDs), 251 pass. Target build SU
 - For a short loop (4 bars = 8 s) a whole-loop root cannot finish inside one cycle at 63 ms/turn; the requirement there
   is served by the window lane, not by the root. So "root before loop end" holds only while
   `steps × cadence < loop_seconds`, i.e. long loops with an uncontended owner.
+
+## All slots, not just the one that happened to dirty its order
+
+`session_20261029_094446.log` (owner report: track 5 only started sounding after the set had run ~31 bars). Channel
+first-row times: ch1 136.0 s, ch3 150.5 s, ch6 150.6 s, ch8 135.9 s, **ch5 189.0 s** — i.e. one track sat silent for
+~53 s after the others began.
+
+Cause: the merged window is rebuilt only when the playback order is dirtied (a root, a commit, a seek). A slot that
+built an empty order once never re-attempts, so a rootless slot stays silent until something unrelated dirties it.
+
+Repair: on the deferred lane, a playing slot that is rootless, has committed passes and has no merged stream
+re-attempts `rebuildPlaybackOrder()`. The rebuild is bounded by the playhead's two-bar window and carries its own reuse
+check, so a slot that already has a stream pays one predicate.
+
+Suite unchanged (254 / 2 failed / 251 pass); target build SUCCESS. Device verification pending.
