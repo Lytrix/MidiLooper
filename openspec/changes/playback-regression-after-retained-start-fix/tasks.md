@@ -148,3 +148,24 @@ Window-first/root-independent playback, standby pools, any-slot coverage, lifeti
 restore/re-record, SD deletion or rename, bulk boot hydration, MIDI-tick gather, automatic upload, archive.
 Reopening the parked architecture requires a recorded reason (last-good playback depended on an unsafe
 accident) and explicit owner approval.
+
+## 9. Bounded rootless first window (DEC-194 — owner-directed)
+
+Direction (2026-10-29, owner): rolling/windowed playback over the **authoritative committed passes**; a whole-loop
+root is an **optional acceleration source**, not a precondition. One reader, several source providers — rootless vs
+rooted changes how a window is *filled*, never how MIDI is played afterwards.
+
+- [x] 9.1 Wire the retained committed source into the production demand. `requestCommittedPlaybackWindowForSlot`
+  establishes it for a rootless slot being asked for playback (`retainPlaybackSourceForSlot`, passes/chunk pins only,
+  idempotent). Verify the existing suite is behaviour-neutral and the target build is unchanged in RAM1.
+- [ ] 9.2 Acceptance fixture (RED): `test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root` —
+  committed passes, no root, `TRACK_PLAYING`, no fixture-side retention; require a serving window with
+  `root_rev = 0`. Verify it fails before 9.3 and passes after.
+- [ ] 9.3 Name the transient role refusal (`gate_no_role` during the first turns, available later) with the same
+  one-enum/one-row pattern, then fix only that term, identity-scoped: an invalidated/unqualified demand retires only
+  the role it owns, never a current build/generation. Negative control: an unrelated role survives.
+- [ ] 9.4 Rolling handoff: prove the second and third windows are built and adopted without a whole-root publication,
+  with the same reader.
+- [ ] 9.5 Scaling property: 4-bar vs 40-bar first window in the same cost class (cost proportional to the content
+  intersecting the requested window, not bars × passes × events).
+- [ ] 9.6 Keep DEC-192 whole-root publication as background only; verify enabling/disabling it cannot gate playback.

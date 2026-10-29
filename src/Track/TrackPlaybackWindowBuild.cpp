@@ -4452,6 +4452,19 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
   if (playbackWindowReadinessForSlot(slot) == PlaybackWindowReadiness::Ready) {
     return PlaybackViewRequestResult::NotServable;
   }
+  // **DEC-194 — the committed passes are enough for the first bounded window.** A rootless slot that is being asked for
+  // playback retains its committed source here: pass/chunk pins only, no event gather and no root, so the window lane can
+  // build the first window while whole-root publication remains optional background work. Retention is idempotent
+  // (`AlreadyRetained` refreshes the role and never re-owns a body), so the per-turn demand costs a lookup, not a pin.
+  if (!loop.publishedSnapshotIsCurrent() &&
+      servingRetainedRevisionForSlot(slot) != loop.playbackRevision) {
+    const PlaybackSourceRetainResult retained =
+        retainPlaybackSourceForSlot(slot, loop.playbackRevision, playbackGeneration);
+    if (retained != PlaybackSourceRetainResult::Admitted &&
+        retained != PlaybackSourceRetainResult::AlreadyRetained) {
+      return PlaybackViewRequestResult::SourceUnavailable;
+    }
+  }
   PlaybackCoverageInterval coverage{};
   if (!playbackWindowInterval(loop.loopLengthTicks, demoted, playheadPhase, coverage)) {
     return PlaybackViewRequestResult::NotServable;

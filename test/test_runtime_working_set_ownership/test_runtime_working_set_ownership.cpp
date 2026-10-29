@@ -8617,6 +8617,37 @@ void test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_ser
   TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "and the slot is still rootless afterwards");
 }
 
+/// **DEC-194 — a rootless, pass-backed playing slot must build its first window without a whole-root publication.**
+///
+/// The device shape (`session_20261029_032402.log`): restored passes, `root_rev 0`, `TRACK_PLAYING`, no whole-root
+/// publication yet. The device's only producer today is the ~38 s root republish; the claim here is that the
+/// **committed passes** are enough for the first bounded window, exactly as they already are for the display's first
+/// frame. No fixture-side retention: the production demand itself must establish the source.
+void test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t revision = loop.playbackRevision;
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture is the rootless restored shape");
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the authoritative source is the committed passes");
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval coverage{};
+  bool served = false;
+  for (unsigned turn = 0; turn < 256 && !served; ++turn) {
+    nativePlaybackDeadlineClock.tick = 64ull * (turn + 1u);
+    const uint32_t phase = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick % loop.loopLengthTicks);
+    (void)track.requestCommittedPlaybackWindowForSlot(0, phase, nativePlaybackDeadlineClock);
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, false, nativePlaybackDeadlineClock);
+    (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    served = track.publishedPlaybackWindowForSlot(0, identity, coverage);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(served, "the rootless playing slot must reach a serving window from the committed passes");
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                            "and that first window must not require a whole-root publication");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision, identity.playbackRevision,
+                                   "the window carries the committed revision it was built from");
+}
+
 /// **Blocker 3, increment 28 — a promise that completes at/after its deadline is still judged.**
 ///
 /// Dispatch and completion have separate controlled clocks. Crossing D in the final
@@ -18347,6 +18378,7 @@ int main() {
   RUN_TEST(test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_history);
   RUN_TEST(test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance);
   RUN_TEST(test_dec193_a_restarted_rootless_slot_keeps_owing_a_build_that_is_never_served);
+  RUN_TEST(test_dec194_a_rootless_playing_slot_builds_its_first_window_without_a_root);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
   RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
   RUN_TEST(test_invalidated_successor_preserves_serving_content_until_boundary_revalidation);
