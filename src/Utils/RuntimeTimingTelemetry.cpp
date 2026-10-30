@@ -176,6 +176,9 @@ struct State {
   Accumulator noterecon;
   Accumulator notepair;
   Accumulator idleMaint;
+  uint32_t idleChildUs = 0;
+  uint8_t idleChildMask = 0;
+  uint32_t idleBreakdownLastMs = 0;
   Accumulator loadFrame;
   Accumulator persistSave;
   Accumulator lateOn;
@@ -1325,6 +1328,37 @@ RT_FLASHMEM_FN StopBoundaryTiming captureStopGrainBoundary(uint32_t& startUs) {
 
 RT_FLASHMEM_FN void noteIdleMaint(uint32_t durationUs) {
   recordSample(state().idleMaint, durationUs);
+}
+
+RT_FLASHMEM_FN void beginIdleMaintBreakdown() {
+  State& s = state();
+  s.idleChildUs = 0;
+  s.idleChildMask = 0;
+}
+
+RT_FLASHMEM_FN void addIdleMaintChild(uint8_t child, uint32_t durationUs) {
+  State& s = state();
+  s.idleChildUs += durationUs;
+  if (child < 8) {
+    s.idleChildMask = static_cast<uint8_t>(s.idleChildMask | (1u << child));
+  }
+}
+
+RT_FLASHMEM_FN uint32_t idleMaintChildUs() {
+  return state().idleChildUs;
+}
+
+RT_FLASHMEM_FN uint8_t idleMaintChildMask() {
+  return state().idleChildMask;
+}
+
+RT_FLASHMEM_FN bool idleMaintBreakdownShouldEmit(uint32_t nowMs) {
+  State& s = state();
+  if (s.idleBreakdownLastMs != 0 && nowMs - s.idleBreakdownLastMs < 100u) {
+    return false;
+  }
+  s.idleBreakdownLastMs = nowMs;
+  return true;
 }
 
 RT_FLASHMEM_FN void noteLoadFrame(uint32_t durationUs) {

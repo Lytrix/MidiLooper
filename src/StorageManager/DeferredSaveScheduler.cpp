@@ -140,7 +140,21 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             storageSession.revisionCommit.sdIoActive = true;
             const bool revStepOk = stepRevisionCommitJob();
             storageSession.revisionCommit.sdIoActive = false;
-            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+            const uint32_t measuredStepUs = micros() - ioStartUs;
+            uint32_t reportedStepUs = measuredStepUs;
+#if defined(PIO_UNIT_TEST_NATIVE)
+            // Task 3.3: report an artificially expensive step without making the fixture sleep. The
+            // measured duration still drives the display-block accounting below.
+            const uint32_t overrideUs = PersistenceDiagnostics::persistenceStepDurationOverrideUsForTest(
+                PersistenceDiagnostics::PersistenceStep::RevisionCommit);
+            if (overrideUs != 0) {
+                reportedStepUs = overrideUs;
+            }
+#endif
+            PersistenceDiagnostics::onPersistenceStep(
+                PersistenceDiagnostics::PersistenceStep::RevisionCommit, reportedStepUs,
+                sliceBudgetUs, true);
+            storageSession.currentWorkspaceSave.displayBlockUs += measuredStepUs;
 
             if (!revStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision commit failed at stage ");
@@ -190,7 +204,19 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             const bool revLoadStepOk =
                 stepRevisionLoadJob(const_cast<LooperState&>(state));
             storageSession.revisionLoad.sdIoActive = false;
-            storageSession.currentWorkspaceSave.displayBlockUs += micros() - ioStartUs;
+            const uint32_t measuredStepUs = micros() - ioStartUs;
+            uint32_t reportedStepUs = measuredStepUs;
+#if defined(PIO_UNIT_TEST_NATIVE)
+            const uint32_t overrideUs = PersistenceDiagnostics::persistenceStepDurationOverrideUsForTest(
+                PersistenceDiagnostics::PersistenceStep::RevisionLoad);
+            if (overrideUs != 0) {
+                reportedStepUs = overrideUs;
+            }
+#endif
+            PersistenceDiagnostics::onPersistenceStep(
+                PersistenceDiagnostics::PersistenceStep::RevisionLoad, reportedStepUs,
+                sliceBudgetUs, true);
+            storageSession.currentWorkspaceSave.displayBlockUs += measuredStepUs;
 
             if (!revLoadStepOk) {
                 Serial.print("[StorageManager] ERROR: Revision load failed at stage ");
@@ -246,6 +272,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if defined(SESSION_CAPTURE)
             const uint32_t sliceLatencyUs = micros() - ioStartUs;
             PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+            PersistenceDiagnostics::onPersistenceStep(
+                PersistenceDiagnostics::PersistenceStep::MidPassChunk, sliceLatencyUs,
+                sliceBudgetUs, true);
 #endif
             if (!midOk) {
 #if defined(SESSION_CAPTURE)
@@ -282,6 +311,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if defined(SESSION_CAPTURE)
             const uint32_t sliceLatencyUs = micros() - ioStartUs;
             PersistenceDiagnostics::onSliceCompleted(sliceLatencyUs);
+            PersistenceDiagnostics::onPersistenceStep(
+                PersistenceDiagnostics::PersistenceStep::WorkItem, sliceLatencyUs, sliceBudgetUs,
+                true);
 #endif
             if (!workOk) {
 #if defined(SESSION_CAPTURE)

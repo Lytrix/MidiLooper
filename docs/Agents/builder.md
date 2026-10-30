@@ -37,9 +37,10 @@ Implementation role for coding agents after **user-approved** plan or explicit s
 - DEC-### IDs consulted: ...
 
 ## Tests
-- [ ] pio test -e native
-- [ ] HITL (if applicable)
+- [ ] Start `pio test -e native` in the background; keep it running while building/flashing
 - [ ] Build teensy41-capture-serial
+- [ ] HITL (if applicable) while the native suite continues
+- [ ] Collect both native and device results before checkoff
 ```
 
 ## Inputs required

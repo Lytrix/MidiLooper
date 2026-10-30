@@ -28,6 +28,8 @@
 #include "VisualCache.h"
 #include "TrackState.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/CoveragePrerequisite.h"
+#include "LoopContentResolution.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "CaptureAppendResult.h"
@@ -489,6 +491,33 @@ struct Loop {
   SessionClose::Phase stepCloseOverdubSession(SessionClose& work, size_t quantum);
   void syncNextOverdubSessionIndexFromPasses();
   bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
+  /// --- Touched coverage (design D3, task 4.7): **marks only**, no derivation, no allocation. --------
+  /// NoteOn marks the pressed tile. Held advancement marks each newly crossed tile. A completed span
+  /// seals every tile it touches, including the wrap case. All three are O(tiles touched) and return the
+  /// number of newly required tiles (0 in the common "already required" case).
+  uint8_t markOverdubCoverageNoteOn(uint32_t phaseTick);
+  uint8_t markOverdubCoverageHeldAdvance(uint32_t phaseTick);
+  /// `endTick` is exclusive-in-loop: a wrapped note (end before start) is measured through the loop end.
+  uint8_t markOverdubCoverageSpan(uint32_t startTick, uint32_t endTick);
+  bool overdubCoverageSessionActive() const { return overdubCoverage_.sessionActive; }
+  /// True when the tile holding `phaseTick` is prepared for the current source generation.
+  bool overdubCoveragePhasePrepared(uint32_t phaseTick) const;
+  /// True when every tile the span touches is prepared for the current source generation.
+  bool overdubCoverageSpanPrepared(uint32_t startTick, uint32_t lengthTicks) const;
+
+  /// **Worker turn** (task 4.6/4.7): advance one declared grain of the next owed tile and publish it
+  /// atomically when its derive completes. Returns what the turn did, so a caller can report "nothing
+  /// owed" separately from "advanced" and "published". Derives nothing else and allocates nothing.
+  enum class OverdubCoverageTurn : uint8_t { Idle, Advanced, Completed };
+  OverdubCoverageTurn serviceOverdubCoverageTurn(size_t eventBudget);
+  uint16_t overdubCoveragePreparedCountForTest() const {
+    return static_cast<uint16_t>(CoveragePrerequisite::popcount64(overdubCoverage_.prepared));
+  }
+  uint8_t overdubCoverageOwedCountForTest() const { return overdubCoverage_.owedCount(); }
+  uint8_t overdubCoverageDeferredCompletionsForTest() const {
+    return overdubCoverageDeferredCount_;
+  }
+  uint32_t overdubCoverageClosureTicksForTest() const { return overdubCoverageClosureTicks_; }
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
 #if defined(PIO_UNIT_TEST_NATIVE)
   /// Test-only witnesses for the wrap diagnostic; no target path reads them.
@@ -618,6 +647,10 @@ struct Loop {
   /// Append candidates missing from `visualCache.notes` by valid `NoteId`
   /// (pitch+start only for invalid-ID rows). Same-ID geometry is replaced.
   void mergeDisplayNotesIntoVisualCache(const NoteUtils::DisplayNoteVec& candidates);
+  /// Task 7.1: bounded effective-display derive for the stored-content verification dump. Resolves
+  /// one requested window through the same one-bar padded source window the session view uses.
+  void resolveEffectiveDisplayNotesInWindow(uint32_t requestedStart, uint32_t requestedLength,
+                                            NoteUtils::DisplayNoteVec& out) const;
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
   /// Skips noteIds already present. Optional `newlyMergedPitchNotes` receives
@@ -658,12 +691,15 @@ struct Loop {
   /// whose NoteOn is absent are dropped from the source-view copy only.
   void replaceCommittedPlaybackNoteOnIdentities(const PlaybackMergedMidiEvents& merged);
   void clearCommittedPlaybackNoteOnIdentities();
-  bool overdubSourceSpanCacheReady() const;
-  /// Ready storage that may be reused for the current committed source.
+  bool overdubSourceSpanCacheReady() const;  /// Ready storage that may be reused for the current committed source.
   /// A current published snapshot requires matching published-revision **and**
   /// published-identity stamps (OpenSpec 4.6 Stage 3).
   bool overdubSourceSpanCacheReusable() const;
-  /// CONTRACTS.md C3.1 -- the qualified origins of the overdub source span cache. Exactly one
+  /// **Window-aware reuse** (design D3/D4). Authoritative for `windowStart..+windowLength` only while
+  /// the cache's own coverage contains that interval and its identity is current. Both consumers -- the
+  /// wrap/idle refresh and the note-hold merge -- ask this, so neither re-derives content it holds nor
+  /// serves content it does not.
+  bool overdubSourceSpanCacheCoversWindow(uint32_t windowStart, uint32_t windowLength) const;  /// CONTRACTS.md C3.1 -- the qualified origins of the overdub source span cache. Exactly one
   /// origin is **non-committed**: `PrivatePredecessor` is a sealed Record custody extent that has
   /// not published. Its rows may satisfy the overlap/hold participant query, and they must never be
   /// read as committed currency: no root or `pass` reader, no save, no `Snapshot`/`Prepared`
@@ -763,11 +799,44 @@ struct Loop {
   }
   const char* rebuildOverdubSourceSpanCacheForTest(uint32_t requestedWindowStart = 0,
                                                    uint32_t requestedWindowLength = 0) {
-    return rebuildOverdubSourceSpanCache(requestedWindowStart, requestedWindowLength);
+    const char* result =
+        rebuildOverdubSourceSpanCache(requestedWindowStart, requestedWindowLength);
+    // Touched coverage (tasks 4.7/4.8): the production writer is the tile worker. This seam stands in
+    // for the worker having published every tile of a **whole-loop** rebuild, so older fixtures that ask
+    // for a ready full-loop source keep testing their own subject.
+    if (overdubCoverage_.sessionActive && loopLengthTicks > 0 &&
+        requestedWindowLength >= loopLengthTicks) {
+      uint32_t maxSpan = 0;
+      for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
+        const uint32_t span = overdubSourceSpanOfNote(note);
+        if (span > maxSpan) {
+          maxSpan = span;
+        }
+      }
+      overdubCoverageClosureTicks_ = maxSpan;
+      advanceOverdubCoverageClosure(CoveragePrerequisite::tileLengthTicks());
+      const uint16_t tiles = CoveragePrerequisite::tileCount(loopLengthTicks);
+      for (uint16_t tile = 0; tile < tiles; ++tile) {
+        overdubCoverage_.publishPrepared(tile);
+      }
+      overdubSourceSpanCacheFullLoop_ = true;
+      overdubSourceSpanCacheCoverageStart_ = 0;
+      overdubSourceSpanCacheCoverageLength_ = loopLengthTicks;
+      recutOverdubSourceView();
+    }
+    return result;
   }
   const NoteUtils::DisplayNoteVec& overdubSourceSpanCacheNotesForTest() const {
     return overdubSourceSpanCacheNotes_;
   }
+  /// Task 4.4: the touched-coverage state for this slot's overdub session.
+  CoveragePrerequisite::CoverageState& overdubCoverageForTest() { return overdubCoverage_; }
+  /// Task 4.4 seam: drive the committed-content edge so a fixture can assert that a generation change
+  /// keeps required coverage and re-owes prepared coverage.
+  void notifyCommittedContentChangedForTest() { notifyCommittedContentChanged(); }
+  /// Task 4.3 seam: arm/read the span-cache derive's cost. Observation only.
+  static void beginOverdubSpanDeriveMeasureForTest();
+  static uint32_t overdubSpanDeriveOpsForTest();
   /// The live session's own pending set, not the admitted job's borrowed view. A fixture that runs
   /// two intervals in one slot needs to read the newer session's decisions.
   const PendingNoteChangeVec& livePendingNoteChangesForTest() const { return pendingNoteChanges_; }
@@ -1543,7 +1612,10 @@ struct Loop {
   /// Appends only when `deferredVisualCacheWrapAppendFromRevision_` still equals
   /// `playbackRevision`. A mismatch obtains the current-source frame instead of
   /// appending an earlier last pass (`203406`).
-  void applyDeferredVisualCacheWrapAppend();
+  /// Completes a deferred wrap append. `allowWholeLoopResolve` is the owner's admission for the
+  /// unbounded `resolveDisplayNotes(passes, ...)` fallback: false keeps the append pending (lossless
+  /// deferral) instead of rebuilding the whole cache on a timing-critical turn.
+  void applyDeferredVisualCacheWrapAppend(bool allowWholeLoopResolve = true);
   bool hasDeferredVisualCacheWrapAppend() const {
     return deferredVisualCacheWrapAppendPending_;
   }
@@ -1842,10 +1914,79 @@ struct Loop {
   void notifyCommittedContentChanged();
   const char* rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
                                              uint32_t requestedWindowLength = 0);
+  /// **Touched-coverage producer** (tasks 4.7/4.8). The worker is the span cache's *only* writer while a
+  /// session is active: the grain that completes a tile publishes that tile's candidate notes **and** its
+  /// prepared bit in one step, so "prepared" and "has content" cannot diverge. `derived` is the
+  /// closure-padded derive for the tile's lookup window; rows that do not intersect the tile are not
+  /// published. Never publishes a partial tile.
+  void publishPreparedOverdubCoverageTile(uint16_t tile, const NoteUtils::DisplayNoteVec& derived,
+                                          const SessionMidiEventVec& committedEvents,
+                                          uint32_t tileStart, uint32_t tileLength);
+  /// The view is a **read-only cut** of the cache: it never derives and never writes the cache. A private
+  /// predecessor scan keep the cache whole; otherwise the cache holds exactly the published tiles.
+  void recutOverdubSourceView();
+  /// Seed the closure from the committed content at the session-open edge. The derive needs the maximum
+  /// committed note span to pad both sides of a tile; without it, a note whose Off lies beyond its own
+  /// tile's window is omitted by every tile. One committed-event pass, no derive.
+  void seedOverdubCoverageClosureFromCommittedContent();
+  /// Conservative closure (design D3, task 4.3): the maximum committed note span this slot has observed.
+  /// Never shrinks inside a session, saturates to the loop, and is seeded from the full-loop prewarm when
+  /// one exists at the session-open edge.
+  void advanceOverdubCoverageClosure(uint32_t noteSpanTicks);
+  /// Seed prepared coverage from a current full-loop prewarm at the session-open edge: the cache already
+  /// describes the committed source for this generation, so no tile needs deriving. Content and provenance
+  /// are the prewarm's own (C3.2/C3.5 stay intact for a private-origin cache, which is never adopted).
+  void adoptPrewarmedOverdubCoverage();
+  /// One deferred overlap completion (design D3's `SpanFinalization` / `OccupancyAtPhase` obligations).
+  /// Parameters live here because the consequence is applied later, on the worker lane; the source data is
+  /// re-derived from the prepared tiles rather than stored per obligation.
+  struct DeferredOverdubCompletion {
+    uint32_t startTick = 0;
+    uint32_t endTick = 0;
+    NoteId noteId = kInvalidNoteId;
+    uint8_t channel = 0;
+    uint8_t pitch = 0;
+    uint8_t velocity = 0;
+    bool occupancyOwed = false;
+    bool spanOwed = false;
+  };
+  static constexpr uint8_t kDeferredOverdubCompletionCapacity = 16;
+  /// Record (or merge into) the bounded deferred completion for a note. False on a full set: the caller
+  /// then answers synchronously against a bounded local window rather than dropping the decision.
+  bool retainDeferredOverdubCompletion(const DeferredOverdubCompletion& completion);
+  /// Apply every deferred completion whose tiles are now prepared, in obligation order (occupancy before
+  /// its own span), exactly once. Runs on the worker/turn lane, never on the MIDI path.
+  uint8_t dischargeDeferredOverdubCompletions();
+  /// The seal/deadline edge: a completion still owed when the interval ends is answered synchronously
+  /// from a windowed derive of its own span, so no decision is dropped and none is applied twice.
+  void materializeDeferredOverdubCompletionsAtDeadline();
+  bool applyDeferredOverdubCompletion(const DeferredOverdubCompletion& completion);
+  /// Apply the overlap consequence for one completed note against an explicit candidate source. Shared by
+  /// the immediate note-off path, the discharge lane and the deadline fallback, so all three decisions
+  /// have one implementation.
+  bool applyOverlapConsequenceForCompletedNote(uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                               uint32_t startTick, uint32_t endTick,
+                                               NoteId incomingNoteId,
+                                               const OverlapNoteIdSet& overlapNoteIds,
+                                               const OverlapNoteIdSet* occupancyResolvedNoteIds,
+                                               bool pushAddChange,
+                                               const NoteUtils::DisplayNoteVec* candidates = nullptr);
+  uint32_t overdubSourceSpanOfNote(const NoteUtils::DisplayNote& note) const;
   uint32_t overdubSourceWindowLengthTicks() const;
   void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
                                   uint32_t& windowLength) const;
+  /// Widen a requested source window to the interval the windowed derive actually reads: one bar of
+  /// **loop-aware** pad on each side, capped at the whole loop. A clamped pad loses a wrap note whose
+  /// note-on lies outside the window (measured: a wrap window resolved 0 of 3 notes), so the pad is
+  /// taken modulo the loop.
+  void resolvePaddedOverdubSourceWindow(uint32_t requestedStart, uint32_t requestedLength,
+                                       uint32_t& deriveStart, uint32_t& deriveLength) const;
   void mergeDisplayNotesIntoOverdubSourceView(const NoteUtils::DisplayNoteVec& candidates);
+  /// Merge committed `NoteOn` identities that pass-local pairing omitted for this window (a duplicate On
+  /// at one tick, or an On whose Off is outside its own pass layer). The source view must carry the same
+  /// identities playback and undo use, so the worker applies this per published tile.
+  void mergeOmittedCommittedNoteOnIdentitiesForNotes(NoteUtils::DisplayNoteVec& dest,
+                                                     const SessionMidiEventVec& events) const;
   bool committedPlaybackNoteOnIdentityValid(NoteId noteId) const;
   void retainValidOverdubSourceViewIdentities();
   /// --- CONTRACTS.md C3.2/C3.4: the private-predecessor source cursor -------------------------
@@ -1944,6 +2085,26 @@ struct Loop {
   const void* overdubSourceSpanCachePublishedIdentity_ = nullptr;
   bool overdubSourceSpanCacheValid_ = false;
   bool overdubSourceSpanCacheFullLoop_ = false;
+  /// The interval the span cache's notes actually cover (the padded derive, not the request). Reuse is
+  /// judged against this: an established cache is authoritative only while its coverage contains the
+  /// interval the caller will evaluate. `fullLoop` still means "covers the whole loop" for the prewarm
+  /// and the canonical-preparation gate.
+  uint32_t overdubSourceSpanCacheCoverageStart_ = 0;
+  uint32_t overdubSourceSpanCacheCoverageLength_ = 0;
+  /// Touched-coverage tiles for this slot's overdub session (design D3, task 4.4). Required is session
+  /// state and survives a source-generation change; prepared is invalidated with it. Lives here -- the
+  /// session is per loop -- and never in `Track`, whose 384-byte DTCM pin forbids a member.
+  CoveragePrerequisite::CoverageState overdubCoverage_;
+  /// Worker cursor: the tile currently being prepared and its resumable per-pass traversal.
+  LoopContentResolution::TilePrepCursor overdubCoverageCursor_{};
+  uint16_t overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+  uint32_t overdubCoverageCursorGeneration_ = 0;
+  /// Conservative closure pad for a tile's lookup window (design D3). Seeded from the session-open
+  /// prewarm when one exists, grown by published notes, never shrunk inside a session.
+  uint32_t overdubCoverageClosureTicks_ = 0;
+  /// Bounded deferred overlap completions (one per note, coalesced by note identity).
+  DeferredOverdubCompletion deferredOverdubCompletions_[kDeferredOverdubCompletionCapacity]{};
+  uint8_t overdubCoverageDeferredCount_ = 0;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   bool fallbackGatherSessionActive_ = false;

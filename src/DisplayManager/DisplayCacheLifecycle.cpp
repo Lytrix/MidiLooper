@@ -263,6 +263,9 @@ DISP_COLD_MEM void DisplayManager::refreshViewportAfterOverdubStop(Track& track,
 }
 
 void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
+    // The committed display base lives beside the live buffer: dropping the buffer without its key would
+    // leave a "qualified" base with no notes behind it.
+    committedDisplayBase_ = CommittedDisplayBase{};
     const bool frameInProgress =
         DisplayWindowUtils::displayFramePhaseIsPending(pendingPaintPhase_);
     if (frameInProgress) {
@@ -304,7 +307,6 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     // Clearing the key alone lets auto-follow paint a new interval with old rows.
     if (!preserveDisplayNotes || liveDisplayNotes.empty()) liveDrawSourceKey_ = {};
     liveCommittedLayerHeldForDirtyCache_ = false;
-    liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
     liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);
     editManager.invalidateProjectedNoteEditDisplayCache();
 }

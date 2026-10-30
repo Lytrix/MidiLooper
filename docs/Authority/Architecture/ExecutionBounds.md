@@ -197,17 +197,17 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 6 | Fallback gather sort | `sortSessionEventsByTick` | none | **Unbounded** |
 | 7 | Fallback gather edit projection | `applyNoteEditPassSequence` | none | **Unbounded** |
 | 8 | `NoteUtils::reconstructDisplayNotes` in slice | `rebuildVisualCacheIdleSlice` | none | **Unbounded** — residual **4b.1b** is Stage 2 of [#41](https://github.com/Lytrix/MidiLooper/issues/41) / [`display_visual_cache_snapshot_reuse_refinement.md`](../../Plans/display_visual_cache_snapshot_reuse_refinement.md); inventory note remains in [`playback_window_build_owner_boundary_refinement.md`](../../Plans/playback_window_build_owner_boundary_refinement.md) § *4b.1b*; Ring B/RC2 closed without bounding this row |
-| 9 | `Loop::appendOverdubPassWrapPairedNotes` | `LoopVisualCache.cpp` | none | **Unbounded** |
+| 9 | `Loop::appendOverdubPassWrapPairedNotes` | `LoopVisualCache.cpp` | none | **Unbounded** — never reached from a timing-critical idle turn: the deferred wrap append's revision-moved fallback is lossless-deferred (see row 19 / `applyDeferredVisualCacheWrapAppend(false)`). |
 | 10 | `removeDisplayNotesOverlappingBars` | `rebuildVisualCacheIdleSlice` | none | **Unbounded** |
 | 11 | `Loop::materializeEditViewFromPasses` | STOPPED idle | none | **Unbounded** |
-| 12 | `Loop::prewarmOverdubSourceSpanCache` | STOPPED idle | gated, not bounded | **Unbounded** |
+| 12 | `Loop::prewarmOverdubSourceSpanCache` | STOPPED idle | gated, not bounded; **never dispatched while timing-critical** | **Unbounded** — **STOPPED-only and optional**: no session-path consumer depends on it. The session source is now produced by row 36. Denied by name (`DIAG,idle_owner,defer,child=overdub_span_prewarm`) on a timing-critical turn. |
 | 13 | `validateAndCleanupMidiEvents` | deferred, 60 s policy | none | **Unbounded** |
-| 14 | `StorageManager::processDeferredSaveState` | `DeferredSaveScheduler` | 300 µs / 3000 µs between steps | **Empirically bounded** |
+| 14 | `StorageManager::processDeferredSaveState` | `DeferredSaveScheduler` | 300 µs / 3000 µs between steps | **Coarse/empirical; owner-accepted indivisible commit (DEC-215).** The residual is the LoopPersist `VerifyAndRename` atomic SD rename: 21-28 ms after the redundant-lookup removal, with rare card stalls; it blocks the main loop, and deferring it under transport was declined. Row 14 is **not** reclassified. The step is named on a breach by the report-only `#CAP,...,DIAG,persist_save,step,<name>,us=...,budget=...,bar=...,indivisible=1` row (one per step per 5 s); naming is not a bound (DEC-043 point 4). |
 | 15 | `DeferredJobScheduler::runFrame` | `LoadLoopJob` | 250 / 1200 / 5000 µs between steps | **Empirically bounded** |
 | 16 | `enqueueRemainingLoopSlotRestores` | boot fill | 4 entries per turn | **Structurally bounded** |
 | 17 | `reclaimUnreferencedDisabledPasses` | `loop()` at Critical pressure | none | **Unbounded**, not resumable |
 | 18 | `processHitlSerialCommands` | capture builds only | Overall command set remains unbounded. `!TRACK_STATUS` snapshots selected-track/active-slot/state/transport under a saved/restored IRQ mask and offers one <=96-byte direct response. `!OVERLAY_STATUS` snapshots main-owned open/mode/row/drilled-or-dirty-target Set/revision/phase and offers one <128-byte direct response. Both refuse TX pressure without ring fallback, allocation, content/SD access, ring drain or deferred work. Main playing <=8 no-USB flush and stopped-only TRACE_DRAIN remain unchanged (DEC-119 — request-only live overlay observation). Capture-journal first-use initialization resets four metadata scalars once per boot; append/replay checks the existing32-row bound and rejects invalid indices before access (DEC-121 — boot-local capture journal initialization). These bounded children do not guarantee timing for the serial command owner, whole capture drain or USB backend. | **Unbounded** |
-| 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
+| 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only; unbounded children named-deferred | **Unbounded** in aggregate for the remaining children, but the class that made it unbounded is now gated: the whole-loop span prewarm (row 12), the stored-MIDI/SEVT dump (`stored_midi_verification`), and the deferred wrap append's whole-pass fallback (row 9) never run on a timing-critical turn — `unboundedIdleOwnerChildMayRun` keeps their request and emits one Tier-A `DIAG,idle_owner,defer,child=...,reason=timing_critical_unbounded` row per child per 5 s. The touched-coverage child is row 36 (one declared event grain); the old whole-pass `rebuildOverdubSourceView` resolve is gone. |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. Per-bar membership is bounded by the explicit `kSnapshotMembershipMaxRefsPerBar` design envelope, applied equally to event-bar and note-bar membership; pages stay lazily allocated. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. A failed incorporation discards the partial candidate and leaves authoritative pass-change progress unchanged, so the exact fragment retries. | **Structurally bounded** (page count per unit); bar capacity is the `kSnapshotMembershipMaxRefsPerBar` envelope |
 | 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits two units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit is one fragment start or one row-21 step. Pass-change progress becomes authoritative only after successful fragment incorporation; a failed fragment retains its exact checkpoint and discards any partially constructed candidate before retry. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root, does not publish a prefix, and emits a diagnostic for a persistent representability failure instead of retrying silently. | **Structurally bounded** |
@@ -224,6 +224,9 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 33 | `MidiHandler::processDroidUsbHostOutbound` (drain half; timing-path review, items 2 and 3) | `main.cpp::loop()` at the top of the frame, and once more inside the deferred display frame | At most `MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP` (**4**) USB-host packets plus 4 LED packets per call, and the fader-state coalescing scan is one forward pass of the **published** region (≤ the ring's 256-entry capacity) per sent state entry. The **producer** (`queueDeferredDroidHostEvent`, ISR-reachable) is O(1): one struct store, one masked index publish, no scan, no logging, no telemetry. | **Structurally bounded** (per-call packet cap; the scan is bounded by the ring capacity and runs only for a state entry being sent) |
 | 34 | `Track::serviceOverdubOverlayWindow` (task 3.15e) | `main.cpp` per-track `PlaybackViewMaintenance` visit, the same shape as the NOTE_EDIT preview service | One turn performs fixed boundary/retirement/borrow-release checks and then at most one borrowed-base fill, order, or append-stable extension grain through the slot's existing builder. It never advances canonical preparation (the committed owner does), never takes a `ready` role/`current`, and returns the named deferral when another owner holds the builder. The live-source edge selection is read-only; the `ActiveCaptureOverdub` echo runs only where the lane does not serve. | **Structurally bounded per turn** (one grain + fixed checks); the underlying window-build service remains row 27's unadmitted class |
 | 35 | `Track::serviceDeferredCanonicalConvergence` (DEC-172, deferred-canonical-convergence 4.1) | The Snapshot deferred idle-owner turn in `Track::processDeferredIdleMaintenance`, before the publication gates and never inside `processDeferredOverdubStopGrain` | One turn services **at most one slot** of the fixed eight: a bounded scan for an active obligation, universal coalescing (arithmetic only), and then one transition — bind, one `stepCanonicalBase` grain at `kDeferredStopPreparationQuantum` (**32** events, the same quantum the stop's canonical preparation declares in row 28), a discard, or a discharge. No allocation; the same canonical builders `RuntimeCanonicalPassInputs::step(Q)` already bounds (row 30's machinery). The turn defers entirely while the slot's capture-stop owner is non-null, so it never contends with a live inline build, and it cannot hold the capture-stop FIFO. | **Structurally bounded per turn** (fixed eight-slot scan + one Q=32 canonical grain); the underlying canonical builder class is row 28/30's, and device cadence is unmeasured |
+| 36 | `Loop::serviceOverdubCoverageTurn` (touched-coverage producer, tasks 4.7/4.8) | Deferred idle owner (VisualCache turn) and the session-open path; never the MIDI edge | One declared grain per turn: up to `kGrainEventsPerTurn` = 64 inspected events, advancing a resumable per-pass cursor inside one tile's closure-padded lookup window. The grain that completes the tile publishes its candidate notes **and** its prepared bit together; no partial tile is published. It yields entirely while a private-predecessor scan owns the cache. A completion whose span is unprepared is a coalesced owed obligation discharged on the completing grain; the seal deadline answers any remainder from a bounded window of the note's own span. | **Structurally bounded per turn** (declared event grain + one tile); device cost unmeasured |
+| 37 | `DisplayManager::buildCommittedDisplayBase` (display-base split, 2026-10-30) | Live-capture draw source, only on a base miss (commit/publication, loop-length change, or paint-window move outside the base) | One bounded window gather of the paint window plus the standard margin, capped at `DisplayWindowUtils::kMaxDetailedWindowBars` (16 bars); it never resolves the whole loop. The base is keyed by immutable committed generation (`playbackRevision` + current published identity) × window; live overdub activity and overlap tile preparation do not invalidate it. The visual-cache branch remains the faster committed source when it covers. | **Structurally bounded** (window); the gather is the display owner's existing window gather, paid on a miss only |
+| 38 | `Track::processDeferredIdleMaintenance`'s unbounded-child gate (`unboundedIdleOwnerChildMayRun`, tasks 2.3/2.5) | The deferred idle-owner turn, at the three call sites this slice wires: the span prewarm, the stored-MIDI verification/SEVT dump, and the deferred wrap append's revision-moved whole-pass fallback | Owed unbounded children are not dispatched; the child keeps its queue/cursor and is served on a later non-timing-critical turn. One rate-limited named deferral row per child per 5 s. No allocation, no cursor reset, no order change. | **Structurally bounded** (a decision + one row); the child's own class stays as declared (unbounded) |
 
 ### Publication-gap display-source continuation
 
@@ -1088,6 +1091,29 @@ require an already published parent; they do not invent content from
 `materializeToEventVector()`. Playback uses the stale-snapshot fallback until
 idle publish stores a current root.
 
+### Chunk span is a conservative content extent (admission contract, not a bound class)
+
+`LoopEventStore::chunkTickSpan` publishes a chunk's **conservative content extent**
+(`EventChunk::minTick`/`maxTick`, maintained on append and on every content rewrite). It is the only
+bound `CommittedEventRange::inWindow` may use to admit or skip a chunk, and the contract is:
+
+> A chunk's advertised span is a superset of its contained event ticks. Window admission may return
+> extra events, but must never exclude a chunk containing an event in the requested interval.
+
+`firstTick`/`lastTick` are **not** that contract: they are append-order endpoints, kept for chronology
+(`lastAppendedTick_`, the sorted `lowerBoundIndex` fast path). A capture pass stops being
+tick-monotonic at its first wrap, so using the endpoints as the admission bound produced a **false
+negative** — a pass that started and ended near the loop top advertised a four-tick span for content
+reaching the loop end, and every mid-loop window returned nothing from it
+([evidence](../../../openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-29-CHUNK-SPAN-4.1a.md)).
+A chunk holding events on both sides of the wrap deliberately advertises nearly the whole loop; that is
+conservative by design and must not be "optimised" back to the endpoint pair.
+
+Cost consequence, measured: a 256-event chunk spans roughly ten bars at the capture's density, so a
+**16-bar window admits every chunk** (3 of 3, 320 of 622 events appended) while a 4-bar window filters
+(2 of 3, 80 of 622). A window is a scope for *what* is derived, not by itself a bound on *how much* is
+copied; sub-window grains provide that.
+
 ### Playback snapshot read (row 2)
 
 Phase 3 playback preparation uses the existing row 2 owner.
@@ -1109,7 +1135,10 @@ short-loop full gather and the no-snapshot fallback remain content-sized.
 `stepDeferredLoopPersist` (and synchronous `writeLoopPersisted` /
 `measureLoopSlotFileBytes`) advance one deferred slice per turn under the
 existing **300 µs / 3000 µs** between-step caps. LSV1 does not add a new bound
-class.
+class. **Task 3.1 (2026-10-30):** each scheduler-grain step (`revision_commit`,
+`revision_load`, `mid_pass_chunk`, `work_item`) is timed and, when it exceeds the active budget or the
+declared 50 ms bar, named in one rate-limited `DIAG,persist_save,step,...` row. This is attribution only:
+the budget is still checked between steps, so the row names the indivisible step without bounding it.
 
 | Substep | Owner | When | Indivisible unit |
 |---------|-------|------|------------------|

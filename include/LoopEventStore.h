@@ -44,8 +44,20 @@ constexpr uint32_t kCaptureIndexBars = 64;
 struct EventChunk {
   MidiEvent events[LoopEventStoreConfig::CHUNK_CAPACITY];
   uint16_t used = 0;
+  /// **Append-order endpoints.** `firstTick` is the first event appended to this chunk and `lastTick`
+  /// the last, in arrival order. These are chronology (used to carry `lastAppendedTick_` and for the
+  /// sorted fast paths) and are NOT a bound on the chunk's content when appends are not tick-monotonic
+  /// -- which happens at every capture wrap.
   uint32_t firstTick = 0;
   uint32_t lastTick = 0;
+  /// **Conservative content extent.** `minTick`/`maxTick` are the minimum and maximum tick of any event
+  /// the chunk contains, so `[minTick, maxTick]` is always a superset of the content. Window admission
+  /// reads THESE, through `chunkTickSpan`: over-admission costs a copy, under-admission loses content.
+  /// A chunk holding events on both sides of the loop wrap deliberately advertises nearly the whole
+  /// loop here; that is conservative by design, not "the chunk's span" in the chronology sense. Do not
+  /// "optimise" these back to the endpoint pair.
+  uint32_t minTick = 0;
+  uint32_t maxTick = 0;
   uint64_t captureBarMask[LoopEventStoreConfig::CHUNK_CAPACITY / kCaptureIndexRows] = {};
   uint8_t captureIndexValid = 0;
   uint8_t captureOverflow = 0;
@@ -451,7 +463,10 @@ class LoopEventStore {
   static void appendChunkRefEvents(
       const CommittedChunkIdList& ids,
       std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
-  /// Read firstTick/lastTick for a live pool chunk (false if id unused / out of range).
+  /// Read the chunk's **conservative content extent** (`minTick`..`maxTick`, an inclusive superset of
+  /// every event tick in the chunk). This is the admission bound: window traversal may over-admit on
+  /// it, but must never exclude a chunk that contains an event in the requested interval. It is not
+  /// the append-order endpoint pair -- see `EventChunk::minTick` for why.
   static bool chunkTickSpan(uint16_t id, uint32_t& firstTick, uint32_t& lastTick);
   /// Count events referenced by chunk ids without copyEventsTo.
   static size_t countEventsInChunkIds(const CaptureChunkIdList& ids);

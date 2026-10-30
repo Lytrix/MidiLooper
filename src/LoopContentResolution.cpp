@@ -1831,6 +1831,81 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(
 #endif
 }
 
+TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
+    const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
+    size_t eventBudget, TilePrepCursor& cursor) {
+  if (cursor.complete) {
+    return true;
+  }
+  if (loopLengthTicks == 0 || windowLength == 0) {
+    cursor.complete = true;
+    return true;
+  }
+
+  // Ordered pass list: record first, then active overdubs by `mergeSequence` -- the same order the
+  // single-shot windowed resolve uses, which is what makes grain-stepped parity possible.
+  const CommittedChunkIdList* lists[kTilePrepMaxPasses] = {};
+  uint8_t listCount = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    lists[listCount++] = &passes.recordPass.committedChunkIds;
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      activeOverdubs.push_back(&pass);
+    }
+  }
+  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
+            [](const OverdubPass* a, const OverdubPass* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const OverdubPass* pass : activeOverdubs) {
+    if (listCount >= kTilePrepMaxPasses) {
+      break;
+    }
+    lists[listCount++] = &pass->committedChunkIds;
+  }
+  if (listCount == 0) {
+    cursor.complete = true;
+    return true;
+  }
+  if (!cursor.started) {
+    cursor.started = true;
+    cursor.passCursor = 0;
+    cursor.visitedPasses = 0;
+    CommittedEventRange::resetWindowTraversalCursor(cursor.windowCursor);
+    cursor.layer.clear();
+    cursor.notes.clear();
+    cursor.rawEvents.clear();
+  }
+
+  size_t remaining = eventBudget;
+  while (remaining > 0 && cursor.passCursor < listCount) {
+    const CommittedEventRange::WindowTraversalResult result =
+        CommittedEventRange::appendWindowBudgeted(&lists[cursor.passCursor], 1, loopLengthTicks,
+                                                  windowStart, windowLength, remaining,
+                                                  cursor.windowCursor, cursor.layer);
+    remaining = result.eventsAppended >= remaining ? 0 : remaining - result.eventsAppended;
+    if (!result.complete) {
+      return false;
+    }
+    // The pass's window is fully traversed: apply its edit rows, then keep the **edited** events for the
+    // identity merge. Keeping pre-edit events would resurrect a committed Delete target that pass-local
+    // pairing had correctly removed (the merge's own rule is "recover an omitted identity", not "undo an
+    // edit"), and then pair it locally. Bounded by this pass's window content.
+    applyActiveEdits(cursor.layer, passes, loopLengthTicks);
+    cursor.rawEvents.insert(cursor.rawEvents.end(), cursor.layer.begin(), cursor.layer.end());
+    appendPassLocalDisplayNotes(cursor.layer, loopLengthTicks, false, cursor.notes);
+    cursor.layer.clear();
+    CommittedEventRange::resetWindowTraversalCursor(cursor.windowCursor);
+    ++cursor.passCursor;
+    ++cursor.visitedPasses;
+  }
+  cursor.complete = cursor.passCursor >= listCount;
+  return cursor.complete;
+}
+
 TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
                                          uint32_t windowStart, uint32_t windowLength,
                                          NoteUtils::DisplayNoteVec& out,

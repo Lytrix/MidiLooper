@@ -10,6 +10,27 @@ void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
 }
 
 void Loop::notifyCommittedContentChanged() {
+  // The committed source generation moved. Touched coverage is session state describing *what this
+  // overdub touched*, so it survives; prepared coverage for the old generation is no longer
+  // authoritative, so every required tile becomes owed again (task 4.4).
+  overdubCoverage_.changeGeneration(playbackRevision);
+  // Touched-coverage producer (task 4.8): the cache holds the old generation's tile content, so it is not
+  // a source for the new one. The worker republishes the required tiles, content and bit together. The
+  // view is a read-only cut of the cache and goes with it; the next session/capture edge recuts it.
+  overdubSourceSpanCacheNotes_.clear();
+  overdubSourceSpanCacheValid_ = false;
+  overdubSourceSpanCacheFullLoop_ = false;
+  overdubSourceSpanCacheCoverageStart_ = 0;
+  overdubSourceSpanCacheCoverageLength_ = 0;
+  overdubSourceSpanCachePublishedRevision_ = 0;
+  overdubSourceSpanCachePublishedIdentity_ = nullptr;
+  overdubSourceViewNotes_.clear();
+  overdubSourceViewEvents_.clear();
+  // The view stays **established** (an empty prepared source is a legitimate state, and the session is
+  // still live): a note-off then defers by name instead of silently returning "no source".
+  overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
+  // A completion owed for the old generation is re-owed by `changeGeneration` (its tiles are unprepared
+  // again); the retained parameters stay valid because the note's span did not move.
   // CONTRACTS.md C3.5: the committed revision moved, so a private-predecessor scan that is running
   // (or finished) is stale. Drop the scan and the rows it staged; a private prefix is never
   // completed by -- or mixed with -- committed content. Retained hold intents survive: the

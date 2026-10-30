@@ -33,6 +33,41 @@
 
 extern TrackManager trackManager;
 
+namespace {
+#if defined(__IMXRT1062__)
+DMAMEM uint32_t gIdleOwnerDeferNextLogMs[3];
+#else
+uint32_t gIdleOwnerDeferNextLogMs[3];
+#endif
+
+/// **Named deferral row** (tasks 2.3/2.4). One row per child per 5 s interval, emitted as Tier-A through
+/// the registered `DIAG,idle_owner,` literal so the reduced timing-critical capture flush cannot shed it.
+/// The child keeps its request/cursor: the deferral is state, not a retry. `slot` is a small local index
+/// (not the registry) so this hot-cold TU does not ODR-use the registry array in `.data`.
+void emitIdleOwnerDeferral(uint8_t slot, const char* childName, uint32_t nowMs) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  // The capture emitter exists only on a capture build. Native fixtures exercise the admission decision and
+  // the tier literal (`test_capture_line_tier`); the row itself is device evidence.
+  if (slot >= 3) {
+    return;
+  }
+  if (gIdleOwnerDeferNextLogMs[slot] != 0 && nowMs < gIdleOwnerDeferNextLogMs[slot]) {
+    return;
+  }
+  gIdleOwnerDeferNextLogMs[slot] = nowMs + 5000u;
+  char line[160];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,idle_owner,defer,child=%s,reason=timing_critical_unbounded",
+           static_cast<unsigned long>(micros()), childName);
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)slot;
+  (void)childName;
+  (void)nowMs;
+#endif
+}
+}  // namespace
+
 #if defined(SESSION_CAPTURE)
 namespace {
 
@@ -346,7 +381,8 @@ enum StoredVerificationPhase : uint8_t {
   kStoredVerificationWrapPairs = 1,
   kStoredVerificationDisplayNotes = 2,
   kStoredVerificationEffectiveNotes = 3,
-  kStoredVerificationFrameNotes = 4,
+  kStoredVerificationEffectiveRows = 4,
+  kStoredVerificationFrameNotes = 5,
 };
 
 }  // namespace
@@ -587,6 +623,7 @@ uint32_t Track::deferredStoredVerificationOpportunityCountForTest() const {
 #endif
 
 TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEventsPerSlice) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(1);
 #if !defined(SESSION_CAPTURE)
   (void)maxEventsPerSlice;
   return;
@@ -712,23 +749,45 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
   }
 
   if (deferredStoredVerificationPhase == kStoredVerificationEffectiveNotes) {
-    if (deferredStoredVerificationNotes.empty() && deferredStoredVerificationCursor == 0) {
+    if (deferredStoredVerificationCursor == 0 && deferredStoredVerificationNotes.empty()) {
       // Raw reconstruct used mergeActiveCapturePasses (no EditPass replay).
       // Effective dump pairs each capture pass, then applies companions, so
       // occupancy convergence does not LIFO-steal another pass's Off (`211440`).
+      //
+      // Task 7.1: the former whole-pass `resolveDisplayNotes` ran here, and the
+      // `copyEffectiveCommittedEvents` result was not consumed by either the resolve or the SEVT
+      // rows (the vector is cleared after this phase). The copy is removed; the resolve is now one
+      // bar per owner turn, merged by `upsertResolvedDisplayNotes` with the standard one-bar pad.
+      // The cursor doubles as the window start until every window is merged.
       deferredStoredVerificationEvents.clear();
-      loop.copyEffectiveCommittedEvents(deferredStoredVerificationEvents);
-      // Match STOPPED paint: LCR passes + wrap-held append (`180916` parity).
-      LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks,
-                                                 deferredStoredVerificationNotes);
-      loop.appendOverdubPassDisplayNotes(deferredStoredVerificationNotes);
-      char header[128];
-      snprintf(header, sizeof(header),
-               "#CAP,%lu,DIAG,dnte,src,effective,count,%u",
-               static_cast<unsigned long>(micros()),
-               static_cast<unsigned>(deferredStoredVerificationNotes.size()));
-      DebugSessionCapture::appendCaptureTextLine(header);
     }
+    if (deferredStoredVerificationCursor < loop.loopLengthTicks) {
+      const uint32_t windowStart = static_cast<uint32_t>(deferredStoredVerificationCursor);
+      const uint32_t remaining = loop.loopLengthTicks - windowStart;
+      const uint32_t windowLength =
+          remaining < Config::TICKS_PER_BAR ? remaining : Config::TICKS_PER_BAR;
+      NoteUtils::DisplayNoteVec windowNotes;
+      loop.resolveEffectiveDisplayNotesInWindow(windowStart, windowLength, windowNotes);
+      LoopContentResolution::upsertResolvedDisplayNotes(deferredStoredVerificationNotes,
+                                                        windowNotes);
+      deferredStoredVerificationCursor = windowStart + windowLength;
+      return;
+    }
+    // Match STOPPED paint: LCR passes + wrap-held append (`180916` parity). One whole-loop append
+    // after the bounded window derives; it only adds wrap-paired overdub rows.
+    loop.appendOverdubPassDisplayNotes(deferredStoredVerificationNotes);
+    char header[128];
+    snprintf(header, sizeof(header),
+             "#CAP,%lu,DIAG,dnte,src,effective,count,%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned>(deferredStoredVerificationNotes.size()));
+    DebugSessionCapture::appendCaptureTextLine(header);
+    deferredStoredVerificationCursor = 0;
+    deferredStoredVerificationPhase = kStoredVerificationEffectiveRows;
+    return;
+  }
+
+  if (deferredStoredVerificationPhase == kStoredVerificationEffectiveRows) {
     size_t emitted = 0;
     while (deferredStoredVerificationCursor < deferredStoredVerificationNotes.size() &&
            emitted < maxEventsPerSlice) {
@@ -1053,7 +1112,8 @@ uint8_t stopGrainBurstLastTurnGrains() { return gStopGrainBurstLastTurnGrains; }
 
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
-    MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
+    MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits,
+    bool timingCritical) {
   // The producer is single/global. Preserve the selected display's gap source
   // before either maintenance branch can ask for unrelated cache backfill.
   const Track& displayTrack = trackManager.getSelectedTrack();
@@ -1063,6 +1123,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       displayTrack.getActiveLoop().isPlaybackSessionExitPublicationGap() &&
       !displayTrack.getActiveLoop().privateSourceOwedForSeal();
   const bool deferBackgroundVisualSource = displayGapSourceOwed && &displayTrack != this;
+  // Touched-coverage worker (task 4.6/4.7): one declared grain of the next owed tile, published atomically
+  // when that tile's derive completes. It runs **before** every early return below, because the demand was
+  // created by an accepted note rather than by this turn, and a turn that returns early would otherwise
+  // never serve it. Marks on the capture path derive nothing; this is the only place that does.
+  if (isOverdubbing() && deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+    (void)getActiveLoop().serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+  }
   // DEC-194: the passes-backed stream is built on demand by the playback path (`rebuildPlaybackOrder`), which is
   // where a missing stream is noticed. An unconditional re-attempt from this lane was tried and **removed**: it ran a
   // multi-bar gather every idle turn for every playing track without a stream and starved the boot restore sweep
@@ -1335,13 +1402,23 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording();
   if (transportFullyIdle) {
     size_t revtSlice = 64;
-    size_t verificationSlice = 64;
+    size_t verificationSlice = timingCritical ? 4 : 64;
     if (StorageManager::hasDeferredSaveWork()) {
       revtSlice = 8;
-      verificationSlice = 16;
+      verificationSlice = timingCritical ? 4 : 16;
     }
     processDeferredRecordRevts(revtSlice, /*allowMerge=*/true);
-    processDeferredStoredMidiVerification(verificationSlice);
+    // Task 7.1/7.2: the effective notes derive one bar per turn and the SEVT rows emit four notes per
+    // timing-critical turn (the measured 54-row burst cost 44 ms). The bounded child may still be
+    // denied by the owner gate if its grain cannot fit; its queue survives for a later turn.
+    if (MidiServiceDrain::boundedIdleOwnerChildMayRun(
+            true, timingCritical, MidiServiceDrain::kStoredVerificationMaxUs,
+            MidiServiceDrain::kOwnerWorkBudgetUs,
+            MidiServiceDrain::kStoredVerificationFineGrainUs)) {
+      processDeferredStoredMidiVerification(verificationSlice);
+    } else {
+      emitIdleOwnerDeferral(1, "stored_midi_verification", nowMs);
+    }
     processDeferredContentResolutionDeviceGate();
   } else if (playbackIdleOwner) {
     processDeferredRecordRevts(32, /*allowMerge=*/false);
@@ -1375,21 +1452,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     const bool allowVisualMaintenanceSlice =
         (!postOverdubDrainWindow || overdubDrainOwnerTrack) &&
         !constrainedFallbackCooldownActive;
-    if (allowVisualMaintenanceSlice && isOverdubbing() && !loop.overdubSourceSpanCacheReady()) {
-      PassId lastWrapPassId = kInvalidPassId;
-      EditPassIdList lastWrapCompanionIds;
-      if (loop.collectLastOverdubSessionPass(lastWrapPassId, lastWrapCompanionIds)) {
-        for (const OverdubPass& pass : loop.passes.overdubPasses) {
-          if (pass.id == lastWrapPassId) {
-            LoopContentResolution::publishPreparedOverdubPass(
-                pass, loop.playbackRevision, loop.loopLengthTicks, loop.passes.editPasses,
-                lastWrapCompanionIds);
-            break;
-          }
-        }
-      }
-      // CONTRACTS.md C3.3: the one contracted wakeup. One grain per turn, before the rebuild, so
-      // the view this turn filters already carries whatever the grain completed.
+    if (allowVisualMaintenanceSlice && isOverdubbing() && loop.privatePredecessorSourcePending()) {
+      // CONTRACTS.md C3.3: the one contracted wakeup, one grain per turn. Tasks 4.7/4.8 retired the
+      // moving-window producer that used to live here: the coverage worker publishes tile content and its
+      // prepared bit together, and the view is recut there, so this lane adds no second source writer.
       (void)stepPrivatePredecessorSourceGrain(loop);
       const uint32_t refreshTick =
           loop.lastTickInLoop != UINT32_MAX ? loop.lastTickInLoop : loop.playheadPhaseTick;
@@ -1476,6 +1542,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     }
   }
 
+  // Touched-coverage worker (task 4.6/4.7): one declared grain of the next owed tile, published atomically
+  // when that tile's derive completes. Marked demand is served here and nowhere else; the mark sites on
+  // the capture path derive nothing. Runs on the same admitted VisualCache turn as the derived-view work.
   emitOverdubStopDebtProbeIfArmed(activeLoop, idleVisualSliceRan, idleVisualBarsPerSlice,
                                   idleVisualDirtyBefore, idleVisualDirtyAfter);
 
@@ -1507,7 +1576,14 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       }
       bool ranDeferredWrapAppend = false;
       if (!loop.visualCacheDirty && loop.hasDeferredVisualCacheWrapAppend()) {
-        loop.applyDeferredVisualCacheWrapAppend();
+        // The append itself is bounded; its revision-moved fallback is the unbounded whole-pass resolve.
+        // Admit that fallback separately so a timing-critical turn keeps the append pending (lossless).
+        const bool allowWholeLoopResolve =
+            MidiServiceDrain::unboundedIdleOwnerChildMayRun(true, timingCritical);
+        if (!allowWholeLoopResolve) {
+          emitIdleOwnerDeferral(2, "whole_loop_resolve", nowMs);
+        }
+        loop.applyDeferredVisualCacheWrapAppend(allowWholeLoopResolve);
         ranDeferredWrapAppend = true;
       }
       // After boot_commit and on a later clean-cache turn only. Same-turn
@@ -1515,7 +1591,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       // any caller.
       if (visualCacheCleanAtTurnStart && !loop.visualCacheDirty && !ranDeferredWrapAppend &&
           !StorageManager::isBootTitleLoadDrain()) {
-        loop.prewarmOverdubSourceSpanCache();
+        // Task 2.3: the whole-loop span prewarm is unbounded and optional; it is never dispatched on a
+        // timing-critical turn. No consumer may depend on it (D3: per-region readiness is the contract).
+        if (MidiServiceDrain::unboundedIdleOwnerChildMayRun(true, timingCritical)) {
+          loop.prewarmOverdubSourceSpanCache();
+        } else {
+          emitIdleOwnerDeferral(0, "overdub_span_prewarm", nowMs);
+        }
       }
       maybeLogStoredNoteCount();
       maybeQueueContentResolutionDeviceGate();
@@ -1595,6 +1677,7 @@ void Track::queueDeferredRecordRevts(uint8_t slot) {
 }
 
 void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(6);
   // The interval that queued this scan names itself; the active slot may have moved (and may hold
   // a successor take) by the time the idle owner runs.
   const uint8_t slot = deferredRecordRevtsSlot;
@@ -1694,6 +1777,7 @@ PublicationIdentityRefusal sLastPublicationIdentityRefusal = PublicationIdentity
 #endif
 
 void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstructionUnits) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(0);
   // Rootless committed playback has neither the sealed Record reader nor a root
   // for the merged fallback. Reuse launch's on-demand publisher on this deferred
   // owner, once, without resetting any publication/capture/receipt owner.

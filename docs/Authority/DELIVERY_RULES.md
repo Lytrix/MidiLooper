@@ -141,6 +141,13 @@ also apply this rule. This refines the existing G2/G3 and verification gates, wi
 | **HITL baseline** | Record/overdub/undo regressions | `.cursor/rules/HITL-Test-Flow.mdc` |
 | **HITL edit** | Note edit / overlap regressions | `.cursor/rules/HITL-Edit-Test-Flow.mdc` |
 
+**Parallel default for device slices.** When a slice needs both native and device verification, run
+them concurrently: start `pio test -e native` in the background, build and flash, then run the HITL
+while the native suite continues. Native is the cheap gate and is usually green; it is not a reason to
+delay the device path. A native failure (or an `[ERRORED]` suite / lower count) still blocks acceptance
+unless it is the deliberate RED of the slice. The ordering and PlatformIO lock caveat are owned by
+[`Testing-Workflow.mdc`](../../.cursor/rules/Testing-Workflow.mdc).
+
 ### Verification by change domain
 
 | Domain | Typical gates |

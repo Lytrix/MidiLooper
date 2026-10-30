@@ -68,6 +68,11 @@ SECTIONS
 		*CurrentSetBootLoad*.o(.text .text.*)
 		*RevisionCommit*.o(.text .text.*)
 		*CurrentWorkspaceStorage*.o(.text .text.*)
+		/* The deferred workspace bundle stages are cold SD serialization (footer/undo
+		   headers), never the MIDI tick or capture append. The one-header-per-slice
+		   split added 256 B of non-FLASHMEM code to this TU and crossed the ITCM
+		   padding floor; keep the whole TU in FLASH. */
+		*DeferredSaveJobStages*.o(.text .text.*)
 		*RevisionLoad*.o(.text .text.*)
 		*LoopInternalColdHelpers*.o(.text .text.*)
 		*SetBrowserRead*.o(.text .text.*)
@@ -163,6 +168,12 @@ SECTIONS
 		   invariant 36 holds. Same whole-TU caveat as the row above: a future change that needs this
 		   TU's literals back in DTCM must remove this row and re-base `scripts/ram1_budget.json`. */
 		*LoopPreparedCompanionHistory.cpp.o(.rodata.str* .rodata.*.str*)
+		/* Task 3.1 persistence named-step row: the new format literals in
+		   `PersistenceDiagnostics.cpp` cross the same `_VectorsRam`/periodictable align edge
+		   (`variables` 96,192 -> 100,288 measured by removing this line; ITCM +128 B for the
+		   cold `onPersistenceStep` function, padding 968 >= 840). Only read-only literals move;
+		   the rate-limit array is DMAMEM, so no mutable state is hidden here. */
+		*PersistenceDiagnostics.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

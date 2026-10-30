@@ -145,7 +145,12 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,usbtrans,", 14) == 0 || strncmp(tag, "DIAG,noteappend,", 16) == 0 ||
          strncmp(tag, "DIAG,notechg,", 13) == 0 || strncmp(tag, "DIAG,noterecon,", 15) == 0 ||
          strncmp(tag, "DIAG,notepair,", 14) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0 ||
-         strncmp(tag, "DIAG,idle_maint,", 16) == 0 || strncmp(tag, "DIAG,load_frame,", 16) == 0 ||
+         strncmp(tag, "DIAG,idle_maint,", 16) == 0 ||
+         // Task 2.4: the owner-admission **named deferral**. One row per child per 5 s interval, produced
+         // exactly under the reduced timing-critical flush (8), where non-Tier-A diagnostics are shed
+         // silently by design; the row is the only evidence that a child was deferred rather than idle.
+         strncmp(tag, "DIAG,idle_owner,", strlen("DIAG,idle_owner,")) == 0 ||
+         strncmp(tag, "DIAG,load_frame,", 16) == 0 ||
          strncmp(tag, "DIAG,persist_save,", 18) == 0 || strncmp(tag, "DIAG,loop_rem,", 14) == 0 ||
          strncmp(tag, "DIAG,disp_", 10) == 0 || strncmp(tag, "DIAG,lframe_", 12) == 0 ||
          strncmp(tag, "DIAG,cer_", 9) == 0 ||

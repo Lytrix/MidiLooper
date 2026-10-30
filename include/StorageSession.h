@@ -56,6 +56,7 @@ enum class DeferredFooterWriteStage : uint8_t {
   SelectedSlotExtensionToken,
   SelectedSlotIndex,
   GlobalUndoStackToken,
+  GlobalUndoStackHeader,
 };
 
 enum class DeferredCompletionWriteStage : uint8_t {

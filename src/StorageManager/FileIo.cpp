@@ -124,6 +124,8 @@ STORAGE_PERSIST_MEM const char* deferredFooterWriteStageName(DeferredFooterWrite
             return "selected_slot_index";
         case DeferredFooterWriteStage::GlobalUndoStackToken:
             return "global_undo_stack_token";
+        case DeferredFooterWriteStage::GlobalUndoStackHeader:
+            return "global_undo_stack_header";
     }
     return "unknown";
 }

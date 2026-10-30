@@ -334,18 +334,49 @@ STORAGE_PERSIST_MEM bool stepFinalizeDeferredLoopSlotTemp(uint8_t trackIndex, ui
             job.loopFinalizeStage = DeferredLoopFinalizeStage::VerifyAndRename;
             return true;
 
-        case DeferredLoopFinalizeStage::VerifyAndRename:
+        case DeferredLoopFinalizeStage::VerifyAndRename: {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+            const uint32_t verifyStartUs = micros();
+#endif
             if (!CurrentSetStorage::verifySaveFileTokenAtPath(tempPath)) {
                 return false;
             }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+            const uint32_t verifyUs = micros() - verifyStartUs;
+            const uint32_t renameStartUs = micros();
+#endif
             if (!CurrentSetStorage::atomicRenameTempFile(tempPath, finalPath)) {
                 return false;
             }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+            const uint32_t renameUs = micros() - renameStartUs;
+            const uint32_t journalStartUs = micros();
+#endif
             (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
             StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, true);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+            const uint32_t journalUs = micros() - journalStartUs;
+            char splitLine[128];
+            snprintf_P(splitLine, sizeof(splitLine),
+                       PSTR("#CAP,%lu,DIAG,persist_save,finalize,stage=VerifyToken,us=%lu"),
+                       static_cast<unsigned long>(micros()),
+                       static_cast<unsigned long>(verifyUs));
+            DebugSessionCapture::appendCaptureTextLine(splitLine);
+            snprintf_P(splitLine, sizeof(splitLine),
+                       PSTR("#CAP,%lu,DIAG,persist_save,finalize,stage=AtomicRename,us=%lu"),
+                       static_cast<unsigned long>(micros()),
+                       static_cast<unsigned long>(renameUs));
+            DebugSessionCapture::appendCaptureTextLine(splitLine);
+            snprintf_P(splitLine, sizeof(splitLine),
+                       PSTR("#CAP,%lu,DIAG,persist_save,finalize,stage=SealJournal,us=%lu"),
+                       static_cast<unsigned long>(micros()),
+                       static_cast<unsigned long>(journalUs));
+            DebugSessionCapture::appendCaptureTextLine(splitLine);
+#endif
             resetDeferredLoopFinalizeState();
             finalizeDoneOut = true;
             return true;
+        }
     }
     return false;
 }

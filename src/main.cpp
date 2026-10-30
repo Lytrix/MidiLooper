@@ -574,7 +574,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 // Keep STOPPED idle-maintenance admission policy out of ITCM.
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint32_t now, bool postOverdubPlayingMidiDrain,
-    MidiServiceDrain::DeferredIdleOwner deferredOwner) {
+    MidiServiceDrain::DeferredIdleOwner deferredOwner, bool timingCritical) {
   // S4b.7 (Rev 20.3/21.7): the `SlotProvision` turn is served **before** the all-stopped guard below and
   // returns through it -- the contract exempts it, because a queued switch is retained exactly while the
   // track's state is unsettled. It takes the pending switch's inbound occupancy off-clock and builds that
@@ -699,7 +699,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       const uint8_t trackIndex = MidiServiceDrain::selectStoppedSnapshotTrack(
           sStoppedIdleTrackCursor, trackCount, pendingSnapshotByTrack);
       trackManager.getTrack(trackIndex)
-          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                               MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                               timingCritical);
       sStoppedIdleTrackCursor = static_cast<uint8_t>((trackIndex + 1) % trackCount);
       return;
     }
@@ -709,7 +711,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
             static_cast<uint8_t>((sStoppedIdleTrackCursor + offset) % trackCount);
         Track& track = trackManager.getTrack(trackIndex);
         if (track.loopsAllocated() && track.getActiveLoop().hasDeferredVisualCacheWrapAppend()) {
-          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                               MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                               timingCritical);
           sStoppedIdleTrackCursor = static_cast<uint8_t>((trackIndex + 1) % trackCount);
           return;
         }
@@ -736,11 +740,15 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     }
     if (StorageManager::isBootTitleLoadDrain() || focusVisualCacheNeedsFirstPaint) {
       focusTrackRef.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain,
-                                                   deferredOwner);
+                                                   deferredOwner,
+                                                   MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                                   timingCritical);
       return;
     }
     trackManager.getTrack(sStoppedIdleTrackCursor)
-        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                               MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                               timingCritical);
     sStoppedIdleTrackCursor = static_cast<uint8_t>((sStoppedIdleTrackCursor + 1) % trackCount);
     return;
   }
@@ -757,7 +765,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       // the current interaction target, including its live-record path.
       if (selectedTrackIsRealtime) {
         selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain,
-                                                      deferredOwner);
+                                                      deferredOwner,
+                                                      MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                                      timingCritical);
       }
     }
 
@@ -781,8 +791,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           if (!backgroundTrackEligible) {
             continue;
           }
-          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
-                                               1);
+          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner, 1,
+                                               timingCritical);
           sBackgroundSnapshotTrackCursor =
               static_cast<uint8_t>((trackIndex + 1) % realtimeTrackCount);
           break;
@@ -814,7 +824,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   if (selectedRealtimeTrack < realtimeTrackCount) {
     Track& selectedTrack = trackManager.getTrack(selectedRealtimeTrack);
     if (hasRealtimeIdleWork(selectedTrack)) {
-      selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+      selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                               MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                               timingCritical);
     }
   }
   for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
@@ -824,7 +836,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     // track here stacked 120–281 ms turns into the first recording bars.
     if (!hasRealtimeIdleWork(track)) continue;
     track.processDeferredIdleMaintenance(
-        now, postOverdubPlayingMidiDrain, deferredOwner);
+        now, postOverdubPlayingMidiDrain, deferredOwner,
+        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn, timingCritical);
   }
 }
 
@@ -1110,12 +1123,29 @@ void loop() {
   uint32_t remainderStartUs = micros();
 #endif
   if (deferredIdleOwnerAllowed) {
-    runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredIdleOwner);
+    RuntimeTimingTelemetry::beginIdleMaintBreakdown();
+    runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredIdleOwner,
+                              timingCriticalTrackActive);
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - remainderStartUs;
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
   DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
+  // Task 5.4: near-bar turns only (3x the owner budget), one row per 100 ms. The row names the
+  // admitted child sum and the residual; `mask` is the child bitmap (0 snapshot, 1 verification,
+  // 2 source view, 3 visual-cache slice, 4 wrap append, 5 prewarm, 6 record revts).
+  if (deferredIdleOwnerAllowed && idleMaintUs >= 24000u &&
+      RuntimeTimingTelemetry::idleMaintBreakdownShouldEmit(static_cast<uint32_t>(now))) {
+    const uint32_t childUs = RuntimeTimingTelemetry::idleMaintChildUs();
+    char breakdownLine[144];
+    snprintf_P(breakdownLine, sizeof(breakdownLine),
+               PSTR("#CAP,%lu,DIAG,idle_maint,breakdown,total=%lu,child=%lu,residual=%lu,mask=0x%x"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(idleMaintUs),
+               static_cast<unsigned long>(childUs),
+               static_cast<unsigned long>(idleMaintUs > childUs ? idleMaintUs - childUs : 0),
+               static_cast<unsigned>(RuntimeTimingTelemetry::idleMaintChildMask()));
+    DebugSessionCapture::appendCaptureTextLine(breakdownLine);
+  }
 #endif
   if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain,
                                               overdubStoppingForMidiDrain)) {

@@ -191,12 +191,12 @@ bool atomicRenameTempFile(const char* tempPath, const char* finalPath) {
   if (tempPath == nullptr || finalPath == nullptr) {
     return false;
   }
-  if (!SD.exists(tempPath)) {
-    return false;
-  }
-  if (SD.exists(finalPath)) {
-    SD.remove(finalPath);
-  }
+  // The caller has just written/verified the temp file; a missing temp fails at rename anyway, so
+  // the extra exists() lookup only buys an earlier failure. The destination may or may not exist:
+  // remove() is one directory operation either way and is safe when absent, while exists()+remove()
+  // paid two lookups on every overwrite. Measured on the 6.3 finalize probe: the old sequence spent
+  // 26-36 ms in these lookups plus rename; this removes two of the three lookups.
+  (void)SD.remove(finalPath);
   return SD.rename(tempPath, finalPath);
 }
 

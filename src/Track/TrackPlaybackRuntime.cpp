@@ -3372,10 +3372,20 @@ static_assert(sizeof(LoopPlaybackRuntime) == 7832,
 // lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
 // (120 B) and `Track::placementPins` pins `sizeof(CaptureStopJobs)`. Shells are `extmem_malloc`ed, so
 // this is external-pool bytes (eight shells per allocated Track), not RAM1.
-static_assert(sizeof(Loop) == 1848,
-              "I5/C3: LoopPool shell 1,848 B including the private-predecessor source cursor "
+static_assert(sizeof(Loop) == 2288,
+              "I5/C3: LoopPool shell 1,888 B including the private-predecessor source cursor "
               "(external-first, eight shells per allocated Track); 1,784 -> 1,848 in the review's "
-              "bound-cost fix: the open-pair table carries each pair's staged index (+64)");
+              "bound-cost fix: the open-pair table carries each pair's staged index (+64); "
+              "1,848 -> 1,856 in `realtime-idle-owner-admission-bound` 4.3: the span cache records the "
+              "interval its notes actually cover (`coverageStart`/`coverageLength`, +8), which is what "
+              "lets the windowed derive be reused instead of re-derived and prevents stale coverage "
+              "from being served; 1,856 -> 1,888 in task 4.4: the per-slot touched-coverage tile state "
+              "(`CoverageState`, +32 with alignment), which cannot live in `Track` (its 384-byte DTCM pin "
+              "forbids a member); 1,888 -> 1,944 in task 4.6/4.7: the worker's own resumable cursor "
+              "(`TilePrepCursor` + tile + generation, +56 by the compiler's measurement), which is "
+              "per-slot worker state and must survive turns; 1,944 -> 2,288 in tasks 4.7/4.8: the bounded "
+              "deferred overlap completions (16 x 20 B = 320) and the closure pad (+4, with alignment), "
+              "both per-slot worker state. Shells are extmem_malloc'ed, so this is external-pool bytes, not RAM1.");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");

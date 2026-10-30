@@ -88,6 +88,18 @@ void acceptB(Track& track, uint8_t pitch = 72) {
   TEST_ASSERT_EQUAL_UINT32(2, track.getActiveLoop().capture.store.size());
 }
 
+
+// Tasks 4.7/4.8: the worker is the session source's only writer. Fixtures that need the committed
+// source after a generation change drive the same worker the deferred owner drives, then cut the view.
+void driveSourceCoverage(Loop& loop, unsigned maxTurns = 4096) {
+  for (unsigned turn = 0; turn < maxTurns && loop.overdubCoverageOwedCountForTest() > 0; ++turn) {
+    if (loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+        Loop::OverdubCoverageTurn::Idle) {
+      break;
+    }
+  }
+}
+
 void drainRecordPublication(Track& track) {
   unsigned turn = 0;
   for (; turn < kDrainLimit && TrackCaptureStopTestAccess::jobs(track) != 0; ++turn)
@@ -95,6 +107,29 @@ void drainRecordPublication(Track& track) {
   report("A_worker_drain", track);
   TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kDrainLimit, turn, "Record worker drain exhausted");
   TEST_ASSERT_EQUAL_UINT32(0, TrackCaptureStopTestAccess::jobs(track));
+}
+
+// Task 4.7 — touched coverage is marked on the **production** capture path: a real overdub session
+// accepts a real note and the loop's coverage requires the pressed tile, with nothing prepared (no worker
+// exists yet). This is the mark-not-derive contract at the entry point that used to do source work.
+void test_riao4_7_live_overdub_marks_touched_coverage() {
+  Track& track = privateRecord();
+  startDirectB(track);
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE_MESSAGE(loop.overdubCoverageSessionActive(), "the session opened its coverage state");
+
+  acceptB(track, 72);
+
+  const uint32_t pressed = loop.playheadPhaseTick == UINT32_MAX ? 0 : loop.playheadPhaseTick;
+  for (unsigned turn = 0; turn < 64 && loop.overdubCoverageOwedCountForTest() > 0; ++turn) {
+    track.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, loop.overdubCoverageOwedCountForTest(),
+                                  "the deferred owner prepared every owed tile");
+  TEST_ASSERT_TRUE_MESSAGE(loop.overdubCoveragePhasePrepared(pressed),
+                           "the accepted note's pressed tile is prepared");
+  TEST_ASSERT_GREATER_THAN_UINT16_MESSAGE(0, loop.overdubCoveragePreparedCountForTest(),
+                                          "a prepared tile is published");
 }
 
 void test_control_record_extent_is_immutable_and_live_admission_is_separate() {
@@ -755,6 +790,20 @@ void test_predecessor_publication_mid_scan_discards_the_private_prefix() {
   TEST_ASSERT_LESS_THAN_UINT32(64, partialRows);
   TEST_ASSERT_EQUAL(Loop::SourceOrigin::PrivatePredecessor,
                     track.getActiveLoop().overdubSourceOrigin());
+  // RIAO-3.5 (scan ownership): while the private scan owns the cache the worker yields, so no committed
+  // tile can be published over the private prefix and the tile stays owed.
+  {
+    Loop& ownerLoop = track.getActiveLoop();
+    const size_t cacheBeforeWorker = ownerLoop.overdubSourceSpanCacheNotesForTest().size();
+    const uint8_t owedBeforeWorker = ownerLoop.overdubCoverageOwedCountForTest();
+    TEST_ASSERT_EQUAL(Loop::OverdubCoverageTurn::Idle,
+                      ownerLoop.serviceOverdubCoverageTurn(
+                          CoveragePrerequisite::kGrainEventsPerTurn));
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(cacheBeforeWorker),
+                             static_cast<uint32_t>(
+                                 ownerLoop.overdubSourceSpanCacheNotesForTest().size()));
+    TEST_ASSERT_EQUAL_UINT8(owedBeforeWorker, ownerLoop.overdubCoverageOwedCountForTest());
+  }
   // Publish A. The Snapshot owner's turn advances the record job and nothing else, so the scan stays
   // exactly where that one grain left it until publication supersedes it.
   unsigned turns = 0;
@@ -769,6 +818,7 @@ void test_predecessor_publication_mid_scan_discards_the_private_prefix() {
                                    "the private partial must be discarded, not continued");
   TEST_ASSERT_NOT_EQUAL(Loop::SourceOrigin::PrivatePredecessor,
                         track.getActiveLoop().overdubSourceOrigin());
+  driveSourceCoverage(track.getActiveLoop());
   track.getActiveLoop().rebuildOverdubSourceView(48, "native_after_publication");
   TEST_ASSERT_NOT_EQUAL_MESSAGE(Loop::SourceOrigin::PrivatePredecessor,
                                 track.getActiveLoop().overdubSourceOrigin(),
@@ -1059,6 +1109,7 @@ void test_control_canonical_predecessor_is_visible_to_same_source_query() {
   startDirectB(track);
   drainRecordPublication(track);
   Loop& loop = track.getActiveLoop();
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(48, "native_canonical_control");
   OverlapNoteIdSet participants;
   loop.collectOverdubSourceHoldParticipantIds(48, 60, participants);
@@ -1174,6 +1225,7 @@ int main() {
     RUN_TEST(test_immediate_start_accepts_input_before_record_publication);
     RUN_TEST(test_button_starts_later_overdubs_while_record_is_still_private);
     RUN_TEST(test_control_record_extent_is_immutable_and_live_admission_is_separate);
+    RUN_TEST(test_riao4_7_live_overdub_marks_touched_coverage);
     RUN_TEST(test_control_late_record_publication_preserves_live_successor_rows);
     RUN_TEST(test_control_clear_supersedes_A_and_rejects_stale_range_receipt);
     RUN_TEST(test_early_stop_ends_B_without_reusing_A_custody);

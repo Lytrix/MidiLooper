@@ -216,6 +216,9 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   // only: (lastTickInLoop, occupyPhase] via catchUpCommittedPlaybackLedgerToPhase.
   const uint32_t holdStart =
       IntervalProjection::tickPhaseInLoop(pending.startNoteTick, 0, loopLength);
+  // Touched coverage (task 4.7): NoteOn marks the pressed tile. A mark, never a derive -- the pressure
+  // this removes is exactly the inline source work that used to follow.
+  (void)loop.markOverdubCoverageNoteOn(holdStart);
   catchUpCommittedPlaybackLedgerToPhase(holdStart);
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   if (runtime == nullptr) {
@@ -366,6 +369,9 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
                                    : IntervalProjection::tickPhaseInLoop(
                                          pending.startNoteTick, 0,
                                          loop.overdubSourceViewLoopLengthTicks());
+    // Touched coverage (task 4.7): a held key crossing a playback note-on has advanced into a new phase.
+    // Mark it; the source work that consumes prepared coverage is not done here.
+    (void)loop.markOverdubCoverageHeldAdvance(holdStart);
     loop.resolveOccupancyAtNoteOn(pending.channel, pending.note, pending.velocity, crossed,
                                   holdStart, &pending.occupancyResolvedNoteIds);
   }
@@ -739,6 +745,7 @@ TRACK_CAPTURE_ADMISSION_MEM void Track::finalizePendingNotes(uint32_t offAbsTick
               prior.data.noteData.note != note) {
             continue;
           }
+          (void)loop.markOverdubCoverageSpan(prior.tick, phaseTick);
           (void)loop.accumulatePendingNoteChangesForIncomingNote(
               channel, note, velocity, prior.tick, phaseTick, prior.noteId, overlapNoteIds,
               occupancyResolvedNoteIds);
@@ -1122,6 +1129,9 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
         const OverlapNoteIdSet* occupancyResolvedNoteIds =
             (pendingIt != pendingNotes.end()) ? &pendingIt->second.occupancyResolvedNoteIds
                                               : nullptr;
+        // Touched coverage (task 4.7): the completed span seals every tile it touches. Marked before the
+        // delta is computed, and it derives nothing.
+        (void)loop.markOverdubCoverageSpan(prior.tick, newEvt.tick);
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
             channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId,
             overlapNoteIds, occupancyResolvedNoteIds);

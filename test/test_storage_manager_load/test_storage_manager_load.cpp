@@ -59,6 +59,13 @@ void EditManager::scheduleDeferredNoteEditDisplayRefresh() { LOAD_HARNESS_OFF_PA
 #include "../../src/StorageManager/SlotLoadSession.cpp"
 #include "../../src/StorageManager/LoadLoopJob.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
+// RIAO-3: the deferred overlap consequence keeps `accumulatePendingNoteChangesFromSourceNotes` alive,
+// which needs the edit-session interaction closure. Same TUs the source-view suite links.
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 #include "../../src/StorageManager/RestoreRequestState.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"

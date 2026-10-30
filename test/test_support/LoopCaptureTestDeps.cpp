@@ -55,4 +55,36 @@ Loop::PrivateSourceStep Loop::stepPrivatePredecessorHolds(size_t quantum) {
   (void)quantum;
   return PrivateSourceStep::Idle;
 }
+
+/// Touched-coverage consequences belong to the pending-change owner. A suite that links the tile worker
+/// without that owner can never open an overdub session, so the obligation path fails closed here.
+void Loop::resolveOccupancyAtNoteOn(uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                    const OverlapNoteIdSet& overlapNoteIds,
+                                    uint32_t holdPhaseTick,
+                                    OverlapNoteIdSet* occupancyResolvedNoteIds) {
+  (void)channel;
+  (void)pitch;
+  (void)velocity;
+  (void)overlapNoteIds;
+  (void)holdPhaseTick;
+  (void)occupancyResolvedNoteIds;
+}
+
+bool Loop::applyOverlapConsequenceForCompletedNote(
+    uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t startTick, uint32_t endTick,
+    NoteId incomingNoteId, const OverlapNoteIdSet& overlapNoteIds,
+    const OverlapNoteIdSet* occupancyResolvedNoteIds, bool pushAddChange,
+    const NoteUtils::DisplayNoteVec* candidates) {
+  (void)channel;
+  (void)pitch;
+  (void)velocity;
+  (void)startTick;
+  (void)endTick;
+  (void)incomingNoteId;
+  (void)overlapNoteIds;
+  (void)occupancyResolvedNoteIds;
+  (void)pushAddChange;
+  (void)candidates;
+  return false;
+}
 #endif

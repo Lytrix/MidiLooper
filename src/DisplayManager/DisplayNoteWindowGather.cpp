@@ -708,12 +708,9 @@ DISP_CAPTURE_MEM bool lookupAuthoritativeCommittedShortenRow(
             return true;
         }
     }
-    for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
-        if (note.noteId == noteId) {
-            out = note;
-            return true;
-        }
-    }
+    // The overlap domain (`overdubSourceViewNotes_`) is not a display source: it is touched coverage and
+    // may legitimately omit a committed note. The snapshot is authoritative when current; otherwise the
+    // bounded two-bar committed reconstruct below answers without reading the overlap view.
     if (visualHint == nullptr || loop.loopLengthTicks == 0 || Config::TICKS_PER_BAR == 0) {
         return false;
     }

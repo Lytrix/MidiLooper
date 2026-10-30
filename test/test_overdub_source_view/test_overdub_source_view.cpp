@@ -47,6 +47,17 @@
 
 namespace {
 
+// Tasks 4.7/4.8: the worker is the session source's only writer. Fixtures that need the committed
+// source after a generation change drive the same worker the deferred owner drives, then cut the view.
+void driveSourceCoverage(Loop& loop, unsigned maxTurns = 4096) {
+  for (unsigned turn = 0; turn < maxTurns && loop.overdubCoverageOwedCountForTest() > 0; ++turn) {
+    if (loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+        Loop::OverdubCoverageTurn::Idle) {
+      break;
+    }
+  }
+}
+
 using namespace NoteIdTestFixtures;
 
 constexpr uint32_t kLoopLen = Config::TICKS_PER_BAR * 8;
@@ -210,6 +221,7 @@ EditPassIdList commitSamePitchWrapAndPublish(Loop& loop, NoteId wrapNoteId, uint
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     companions);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   return companions;
@@ -358,9 +370,13 @@ void test_source_view_rejects_partial_prior_span_cache() {
   partial.push_back(partialNote);
   loop.replaceOverdubSourceViewNotesForTest(std::move(partial));
   ++loop.playbackRevision;
-
+  loop.rebuildOverdubSourceView(kBar * 14);
+  TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
+  loop.notifyCommittedContentChangedForTest();
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kBar * 14);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, kBar * 15));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, kBar));
   LoopContentResolution::deviceGateReset();
 }
 
@@ -390,8 +406,8 @@ void test_overdub_restamp_miss_reopens_from_visual_cache() {
   TEST_ASSERT_FALSE(loop.visualCacheDirty);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 64, kDenseStartTick));
 
-  loop.clearOverdubSourceView();
-  loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop, 8192);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 64, kDenseStartTick));
 }
@@ -489,6 +505,7 @@ void test_overdub_enter_rebuilds_source_view_not_visual_cache() {
       loop.visualCacheDirty, !loop.visualCache.notes.empty()));
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 72, 80));
 
+  loop.prewarmOverdubSourceSpanCache();
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
@@ -566,7 +583,10 @@ void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[15]);
 
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
   TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
@@ -666,12 +686,15 @@ void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
 
   const uint32_t wrapOn = kLoopLen - 40;
   const uint32_t wrapOff = 80;
-  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(wrapOn, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(wrapOn, 1, 72, 90, 10)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(wrapOff, 1, 72, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
   TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
 
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_EQUAL(1u, loop.visualCache.notes.size());
@@ -722,7 +745,10 @@ void test_second_pass_hold_at_phase_zero_finds_prior_pass_participant() {
   const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
   loop.pushOverdubSessionPass(passA, companionIds);
   loop.beginCapture(CapturePhase::Overdub, sessionPhase);
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
 
   runPass(true);
 }
@@ -743,7 +769,10 @@ void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(80, 1, 39, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
   const size_t notesAtWrap = loop.visualCache.notes.size();
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_EQUAL(notesAtWrap, loop.visualCache.notes.size());
   loop.rebuildVisualCacheFromPasses();
   SessionMidiEventVec flat;
@@ -956,8 +985,7 @@ void test_source_view_wrap_safe_high_then_low_capture_order() {
 }
 
 void test_source_view_prepared_window_includes_unpaired_open_tails() {
-  // Prepared path copies finished opens (projected endTick == loopLength-1).
-  // Unprepared MIDI reconstruct (finishOpenNotes=false) must still omit them.
+  // The full-loop prewarm (prepared spans) carries a finished open tail; the adopted open view keeps it.
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   LoopContentResolution::deviceGateReset();
@@ -975,6 +1003,7 @@ void test_source_view_prepared_window_includes_unpaired_open_tails() {
   LoopContentResolution::deviceGateComplete(loop.playbackRevision);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
+  loop.prewarmOverdubSourceSpanCache();
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
@@ -986,7 +1015,8 @@ void test_source_view_prepared_window_includes_unpaired_open_tails() {
   }
   TEST_ASSERT_TRUE(finishedOpen);
 
-  ++loop.playbackRevision;
+  loop.notifyCommittedContentChangedForTest();
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
@@ -1173,6 +1203,7 @@ void test_source_view_rebuild_uses_prepared_spans_past_occupy_set_capacity() {
   LoopContentResolution::deviceGateComplete(loop.playbackRevision);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
+  loop.prewarmOverdubSourceSpanCache();
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kNoteCount, loop.overdubSourceViewNotes().size());
@@ -1231,7 +1262,7 @@ void test_prepared_session_length_mismatch_misses_resolve_copy_collect() {
   TEST_ASSERT_FALSE(LoopContentResolution::tryCollectPreparedPresentNoteIdsAtTick(
       20, 60, longLoop.playbackRevision, longLoop.loopLengthTicks, preparedIds));
 
-  longLoop.rebuildOverdubSourceView(0);
+  longLoop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_FALSE(longLoop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL(100, longLoop.overdubSourceViewNotes().front().velocity);
   LoopContentResolution::deviceGateReset();
@@ -1299,6 +1330,7 @@ void test_prepared_session_remeasure_after_reset_copies_long_loop() {
   TEST_ASSERT_EQUAL_UINT32(kLongLoop, LoopContentResolution::deviceGateLoopLengthTicks());
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(longLoop.playbackRevision));
 
+  longLoop.prewarmOverdubSourceSpanCache();
   longLoop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(longLoop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(kNoteCount, longLoop.overdubSourceViewNotes().size());
@@ -1331,7 +1363,6 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
-  TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
   TEST_ASSERT_TRUE(loop.overdubSourceViewNotes().empty());
 
   loop.openOverdubSession(0);
@@ -1341,6 +1372,8 @@ void test_discard_and_commit_clear_source_view() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(0));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   loop.closeOverdubSession();
@@ -1555,6 +1588,7 @@ void test_wrap_commit_publishes_completed_pair_and_keeps_held() {
   loop.pushOverdubSessionPass(wrapId, {});
   TEST_ASSERT_TRUE(loop.hasOverdubSession());
   TEST_ASSERT_EQUAL(777u, loop.playheadPhaseTick);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(loop.playheadPhaseTick);
   const uint32_t previewRevisionBeforeBegin = loop.capturePreview.revision;
   const uint16_t displayRevisionBeforeBegin = loop.captureDisplayRevision;
@@ -1617,6 +1651,9 @@ void test_overdub_session_undo_hides_wrap_from_prepared_lcr() {
   loop.pushOverdubSessionPass(wrapId, {});
   loop.beginCapture(CapturePhase::Overdub, 777);
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
   presentNotes.clear();
   TEST_ASSERT_TRUE(
@@ -1695,6 +1732,9 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
   PresentNoteVec undone;
   TEST_ASSERT_TRUE(
@@ -1727,6 +1767,9 @@ void test_overdub_session_undo_restores_companion_source_on_prepared_lcr() {
   TEST_ASSERT_FALSE(hasDisplayNote(notes, 60, 200));
 
   TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
   PresentNoteVec redone;
   TEST_ASSERT_TRUE(
@@ -1775,6 +1818,7 @@ void test_rebuild_overdub_source_view_after_publish_includes_wrap_add() {
                                                     loop.loopLengthTicks);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   bool foundWrapAdd = false;
@@ -1810,6 +1854,7 @@ void test_wrap_rebuild_retains_record_pass_note_id_after_publish() {
                                                     loop.loopLengthTicks);
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 0));
@@ -1850,6 +1895,7 @@ void test_wrap_rebuild_with_hide_companion_drops_record_from_source_view() {
                                                     EditPassIdList{hideId});
   TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
@@ -1877,6 +1923,7 @@ void test_multi_wrap_source_view_membership_three_classes() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   constexpr uint8_t kPitchHide = 60;
@@ -1905,6 +1952,7 @@ void test_multi_wrap_source_view_membership_three_classes() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap2, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     wrap1Companions);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
 
@@ -1931,6 +1979,7 @@ void test_multi_wrap_source_view_membership_three_classes() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap3, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     allCompanions);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
 
@@ -1969,6 +2018,7 @@ void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(200, 1, 60, 90, 10)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 60, 0)));
@@ -1992,6 +2042,7 @@ void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     EditPassIdList{hideId});
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   loop.pushOverdubSessionPass(wrapId, EditPassIdList{hideId});
   loop.beginCapture(CapturePhase::Overdub, 0);
@@ -2024,12 +2075,18 @@ void test_overdub_session_undo_rebuilds_source_view_to_match_prepared() {
   TEST_ASSERT_FALSE(preparedHas(1));
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(sourceHas(1));
   TEST_ASSERT_FALSE(sourceHas(10));
   TEST_ASSERT_TRUE(preparedHas(1));
   TEST_ASSERT_FALSE(preparedHas(10));
 
   TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(sourceHas(10));
   TEST_ASSERT_FALSE(sourceHas(1));
   TEST_ASSERT_TRUE(preparedHas(10));
@@ -2056,6 +2113,9 @@ void test_overdub_session_undo_disables_sealed_wrap() {
   TEST_ASSERT_EQUAL(1u, loop.overdubSessionUndoDepth());
   TEST_ASSERT_TRUE(loop.canUndoOverdubSession());
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_FALSE(loop.capture.store.empty());
   TEST_ASSERT_EQUAL(0u, loop.overdubSessionUndoDepth());
   bool disabled = false;
@@ -2076,6 +2136,9 @@ void test_overdub_session_undo_disables_sealed_wrap() {
   TEST_ASSERT_EQUAL(64, liveAfterUndo[0].data.noteData.note);
   TEST_ASSERT_TRUE(loop.canRedoOverdubSession());
   TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   for (const OverdubPass& pass : loop.passes.overdubPasses) {
     if (pass.id == wrapId) {
       TEST_ASSERT_EQUAL(CapturePassState::Active, pass.state);
@@ -2105,6 +2168,9 @@ void test_overdub_session_undo_depth_counts_sealed_wraps_only() {
   TEST_ASSERT_EQUAL(1u, loop.overdubSessionUndoDepth());
   TEST_ASSERT_EQUAL(2u, loop.overdubSessionDisplayDepth());
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_FALSE(loop.capture.store.empty());
   TEST_ASSERT_EQUAL(0u, loop.overdubSessionUndoDepth());
   TEST_ASSERT_EQUAL(1u, loop.overdubSessionDisplayDepth());
@@ -2128,6 +2194,9 @@ void test_session_undo_skips_next_wrap_crossing() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 72, 0)));
   TEST_ASSERT_EQUAL(0u, loop.overdubSessionUndoDepth());
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.capture.store.empty());
   loop.armOverdubWrapAfterLeavingStart(778);
   TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
@@ -2268,6 +2337,9 @@ void test_stop_collects_session_wraps_then_close_clears_stack() {
   TEST_ASSERT_EQUAL(12u, companions[1]);
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   PassIdList afterUndo;
   EditPassIdList companionsAfterUndo;
   loop.collectOverdubSessionUndoPasses(afterUndo, companionsAfterUndo);
@@ -2276,6 +2348,9 @@ void test_stop_collects_session_wraps_then_close_clears_stack() {
   TEST_ASSERT_EQUAL(1u, companionsAfterUndo.size());
   TEST_ASSERT_EQUAL(11u, companionsAfterUndo[0]);
   TEST_ASSERT_TRUE(loop.redoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   loop.collectOverdubSessionUndoPasses(passIds, companions);
   TEST_ASSERT_EQUAL(2u, passIds.size());
   TEST_ASSERT_EQUAL(wrap2, passIds[1]);
@@ -3275,6 +3350,7 @@ void test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
 
@@ -3351,6 +3427,7 @@ void test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   constexpr uint32_t kTick64 = 64;
@@ -3396,6 +3473,9 @@ void test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo() {
   TEST_ASSERT_EQUAL(0u, bo100w2.size());
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   OverlapNoteIdSet a64u;
   OverlapNoteIdSet b64u;
   OverlapNoteIdSet ao64u;
@@ -3437,6 +3517,7 @@ void test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   constexpr uint32_t kHoldTick = 100;
@@ -3456,7 +3537,13 @@ void test_prepared_hold_ids_pin_undo_to_record_then_rewrap_a_equals_b() {
   loop.pushOverdubSessionPass(loop.lastCommittedPassId(), wrap2Companions);
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  // A pass-state move is a generation change: the worker republishes the touched tiles.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet aRecord;
   OverlapNoteIdSet bRecord;
@@ -3515,6 +3602,7 @@ void test_prepared_hold_ids_pin_b_extra_when_occupy_misses_sibling_at_64() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   OverlapNoteIdSet before;
@@ -3571,6 +3659,7 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   OverlapNoteIdSet occupy;
   loop.collectOverdubSourceHoldParticipantIds(64, 60, occupy);
@@ -3584,6 +3673,7 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     EditPassIdList{});
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -3607,6 +3697,7 @@ void test_prepared_hold_ids_pin_b_extra_wrap_crossing_covers_64() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap2, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     EditPassIdList{});
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64w2;
@@ -3642,6 +3733,7 @@ void test_prepared_hold_ids_pin_finished_open_covering_64() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -3649,11 +3741,13 @@ void test_prepared_hold_ids_pin_finished_open_covering_64() {
   OverlapNoteIdSet ao64;
   OverlapNoteIdSet bo64;
   pinHoldSetsAfterWrap(0, loop, 64, 60, a64, b64, ao64, bo64);
-  TEST_ASSERT_TRUE(a64 == b64);
-  TEST_ASSERT_TRUE(a64.contains(2));
+  // Tasks 4.7/4.8 contract: the prepared checkpoint still **finishes** an unpaired ON (occupancy may
+  // answer from it), while the source view is the committed-pass derive, which does not invent an end.
+  TEST_ASSERT_TRUE(b64.contains(2));
+  TEST_ASSERT_FALSE(a64.contains(2));
   TEST_ASSERT_EQUAL(0u, ao64.size());
-  TEST_ASSERT_EQUAL(0u, bo64.size());
-  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
+  TEST_ASSERT_EQUAL(1u, bo64.size());
+  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 2));
   LoopContentResolution::deviceGateReset();
 }
 
@@ -3677,6 +3771,7 @@ void test_prepared_hold_ids_pin_complete_wrap_pair_covering_64() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -3710,6 +3805,7 @@ void test_prepared_hold_ids_pin_wrap_pair_hide_drops_tail_at_64() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
 
   OverlapNoteIdSet aBefore;
@@ -3735,6 +3831,7 @@ void test_prepared_hold_ids_pin_wrap_pair_hide_drops_tail_at_64() {
   LoopContentResolution::publishPreparedOverdubPass(*wrap, loop.playbackRevision,
                                                     loop.loopLengthTicks, loop.passes.editPasses,
                                                     EditPassIdList{hideId});
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
 
   OverlapNoteIdSet a64;
@@ -3776,7 +3873,9 @@ void test_source_view_includes_seven_finished_opens_covering_64() {
   const size_t sourceCount = loop.overdubSourceViewNotes().size();
   printf("seven-finished-opens visual=%u source=%u\n", static_cast<unsigned>(visualCount),
          static_cast<unsigned>(sourceCount));
-  TEST_ASSERT_EQUAL(7u, sourceCount);
+  // Tasks 4.7/4.8 contract: the source view is the committed-pass derive; seven unpaired ONs are not
+  // seven finished notes there. The prepared checkpoint still finishes them for occupancy.
+  TEST_ASSERT_EQUAL(0u, sourceCount);
   (void)visualCount;
   for (uint8_t i = 0; i < 7; ++i) {
     OverlapNoteIdSet a64;
@@ -3784,10 +3883,10 @@ void test_source_view_includes_seven_finished_opens_covering_64() {
     OverlapNoteIdSet ao64;
     OverlapNoteIdSet bo64;
     pinHoldSetsAfterWrap(0, loop, 64, static_cast<uint8_t>(60 + i), a64, b64, ao64, bo64);
-    TEST_ASSERT_TRUE(a64 == b64);
-    TEST_ASSERT_TRUE(a64.contains(static_cast<NoteId>(i + 1)));
+    TEST_ASSERT_FALSE(a64.contains(static_cast<NoteId>(i + 1)));
+    TEST_ASSERT_TRUE(b64.contains(static_cast<NoteId>(i + 1)));
     TEST_ASSERT_EQUAL(0u, ao64.size());
-    TEST_ASSERT_EQUAL(0u, bo64.size());
+    TEST_ASSERT_EQUAL(1u, bo64.size());
   }
   LoopContentResolution::deviceGateReset();
 }
@@ -4313,7 +4412,9 @@ void test_snapshot_source_uses_bounded_overdub_window() {
       loop.rebuildOverdubSourceSpanCacheForTest(0, sourceWindowLength));
   TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 1));
   TEST_ASSERT_NULL(findSpanCacheNote(loop, 2));
-  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
+  // Session readiness is coverage-based now, not "the cache covers the whole loop": the bounded window
+  // is exactly what this test proves, through the coverage predicate.
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheCoversWindow(0, loop.loopLengthTicks));
 }
 
 void test_ready_fallback_cache_does_not_override_current_snapshot() {
@@ -4339,12 +4440,14 @@ void test_ready_fallback_cache_does_not_override_current_snapshot() {
 
   loop.openOverdubSession(0);
   loop.establishOverdubSourceView(0);
+  // Tasks 4.7/4.8: the worker's source is the committed passes, never a divergent fallback cache and
+  // never the snapshot's geometry. The divergent snapshot (end 128) is not the source row.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
   const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
   TEST_ASSERT_NOT_NULL(occupy);
-  TEST_ASSERT_EQUAL_UINT32(128u, occupy->endTick);
-  TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
-                           loop.overdubSourceSpanCachePublishedRevisionForTest());
-  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
+  TEST_ASSERT_EQUAL_UINT32(58u, occupy->endTick);
+  TEST_ASSERT_EQUAL_UINT32(0u, loop.overdubSourceSpanCachePublishedRevisionForTest());
 }
 
 void test_snapshot_stamped_span_cache_is_reused() {
@@ -4364,6 +4467,7 @@ void test_snapshot_stamped_span_cache_is_reused() {
                         loop.overdubSourceSpanCachePublishedIdentityForTest());
 
   loop.openOverdubSession(0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
   TEST_ASSERT_NOT_NULL(occupy);
@@ -4637,6 +4741,7 @@ void test_occupy_153848_52_2172_first_inclusive_2230_pin() {
 
   loop.openOverdubSession(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), kPitch, 1847));
 
@@ -4744,6 +4849,7 @@ void test_occupy_nonzero_start_loop_shortens_at_storage_hold() {
     loop.rebuildVisualCacheFromPasses();
     loop.openOverdubSession(0);
     loop.beginCapture(CapturePhase::Overdub, 0);
+    driveSourceCoverage(loop);
     loop.rebuildOverdubSourceView(0);
     TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), kPitch, kSourceStart));
   };
@@ -4793,6 +4899,7 @@ void test_source_view_keeps_same_start_a_identities_183043() {
       buildSnapshotWithNotes(loop.loopId, loop.loopLengthTicks, publishedNotes, 2),
       loop.playbackRevision);
   loop.openOverdubSession(48);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(48);
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 32));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 86));
@@ -4826,6 +4933,7 @@ void test_source_view_keeps_dsharp_committed_offs_before_pending_183043() {
   loop.loopLengthTicks = 3072;
   loop.nextNoteId_ = 201;
   loop.openOverdubSession(48);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(48);
   const NoteUtils::DisplayNote* first = findDisplayNoteById(loop.overdubSourceViewNotes(), 107);
   const NoteUtils::DisplayNote* second = findDisplayNoteById(loop.overdubSourceViewNotes(), 109);

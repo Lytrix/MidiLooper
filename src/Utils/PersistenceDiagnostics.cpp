@@ -30,6 +30,14 @@ struct State {
 
 State state;
 
+#if defined(__IMXRT1062__)
+/// Task 3.1's per-step row rate limit. RAM2 (DMAMEM) so the named-step report cannot cross the DTCM
+/// align edge; 4 entries, one per indivisible step.
+DMAMEM uint32_t sLastStepRowMs[static_cast<uint8_t>(PersistenceStep::Count)] = {};
+#else
+uint32_t sLastStepRowMs[static_cast<uint8_t>(PersistenceStep::Count)] = {};
+#endif
+
 uint32_t dirtySaveAgeMs() {
   const uint32_t queuedAgeMs = PersistenceQueue::oldestQueuedChunkAgeMs();
   if (state.dirtySaveRequestedAtMs == 0) {
@@ -110,6 +118,41 @@ void maybeEmitPoolPressureWarning() {
   } else if (!underWarn && state.poolPressureWarnActive) {
     state.poolPressureWarnActive = false;
   }
+}
+
+const char* persistenceStepName(PersistenceStep step) {
+  switch (step) {
+    case PersistenceStep::RevisionCommit:
+      return "revision_commit";
+    case PersistenceStep::RevisionLoad:
+      return "revision_load";
+    case PersistenceStep::MidPassChunk:
+      return "mid_pass_chunk";
+    case PersistenceStep::WorkItem:
+      return "work_item";
+    default:
+      return "none";
+  }
+}
+
+// Task 3.1: name the **indivisible** step when it breaches the active budget or the declared bar. One row
+// per step per 5 s; report-only (no allocation, no admission/budget/order change, never the stop path).
+TRACK_COLD_MEM void onPersistenceStep(PersistenceStep step, uint32_t stepUs, uint32_t budgetUs,
+                                      bool indivisible) {
+  const uint8_t index = static_cast<uint8_t>(step);
+  if (index >= static_cast<uint8_t>(PersistenceStep::Count)) {
+    return;
+  }
+  if (!persistenceStepShouldEmit(stepUs, budgetUs, millis(), sLastStepRowMs[index])) {
+    return;
+  }
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,persist_save,step,%s,us=%lu,budget=%lu,bar=%lu,indivisible=%u",
+           static_cast<unsigned long>(micros()), persistenceStepName(step),
+           static_cast<unsigned long>(stepUs), static_cast<unsigned long>(budgetUs),
+           static_cast<unsigned long>(kPersistenceStepBarUs), indivisible ? 1u : 0u);
+  DebugSessionCapture::appendCaptureTextLine(line);
 }
 
 // FLASHMEM: periodic idle diagnostic, called from the deferred save scheduler, never from

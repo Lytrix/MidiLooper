@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "CommittedEventRange.h"
 #include "EditPass.h"
 #include "LoopPasses.h"
 #include "LoopSnapshot.h"
@@ -297,6 +298,43 @@ struct LoopContentResolution {
   /// pairing/NoteIds as `resolveDisplayNotes(passes, ...)`, but each pass layer is filled through the
   /// chunk-range window (`CommittedEventRange::inWindow`) so events outside the window are never read.
   /// First paint for a rootless slot walks only what the viewport asks for.
+  /// **Execution grain for touched-coverage preparation** (`realtime-idle-owner-admission-bound` 4.6).
+  ///
+  /// The single-shot `resolveDisplayNotesInWindow` above is exact but indivisible: a dense tile can cost
+  /// far more than one owner turn may execute, and a tile is a *correctness/publication* unit, not an
+  /// execution bound. This steps the **same** derivation over a declared event budget, one pass at a
+  /// time, and publishes nothing until every pass of the window is complete.
+  ///
+  /// Parity is part of the contract: for any budget, the accumulated notes equal the single-shot
+  /// windowed result for the same window (same per-pass local pairing and `NoteId`s, same wrap pairing).
+  struct TilePrepCursor {
+    /// Ordered pass index: record first, then active overdubs by `mergeSequence`.
+    uint32_t passCursor = 0;
+    /// Per-pass resumable window traversal.
+    CommittedEventRange::WindowTraversalCursor windowCursor{};
+    /// The current pass's events for this window (complete when its traversal completes).
+    SessionMidiEventVec layer;
+    /// Notes accumulated from completed passes, in pass order.
+    NoteUtils::DisplayNoteVec notes;
+    /// The window's **raw** committed events, in the same pass order. Kept because pass-local pairing can
+    /// omit a committed NoteOn identity (a duplicate On at one tick, or an On without its own Off in the
+    /// window); the publication merges those identities back by `NoteId` so the source view carries the
+    /// same identities playback and undo use. Bounded by the window's events, not by the pass.
+    SessionMidiEventVec rawEvents;
+    bool started = false;
+    bool complete = false;
+    /// Passes actually visited, for the caller's envelope check.
+    uint16_t visitedPasses = 0;
+  };
+  /// Envelope: above this many passes the caller takes the single-shot path (named fallback).
+  static constexpr uint8_t kTilePrepMaxPasses = 32;
+
+  /// Advance one grain. Returns true when the window's derivation is complete; `cursor.notes` then holds
+  /// the result. Consumes at most `eventBudget` events from the window traversal.
+  static bool stepTilePreparation(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                  uint32_t windowStart, uint32_t windowLength, size_t eventBudget,
+                                  TilePrepCursor& cursor);
+
   static void resolveDisplayNotesInWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,
                                           NoteUtils::DisplayNoteVec& out,

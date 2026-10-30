@@ -56,6 +56,14 @@ path and confidence when alternatives exist; do not block on vagueness.
   firmware has no restore command, so quarantine is one-way in practice — see
   [`Destructive-SD-Operations.mdc`](.cursor/rules/Destructive-SD-Operations.mdc).
 - **Host tests:** run `pio test -e native` before push, merge, or finishing a PR.
+  **Always run it in parallel with the target build and HITL when the slice needs a
+  device gate:** start the native suite in the background, build/flash, then run
+  the HITL while it continues; collect both results before checkoff. Native is the
+  cheap gate and is usually green, so the device path is the critical path. A
+  native failure (or an `[ERRORED]` suite / lower count) still blocks acceptance
+  unless it is the deliberate RED of the current slice. If PlatformIO's project
+  lock serializes the commands, build first, then start native before flashing.
+  Detailed order and caveats: [`.cursor/rules/Testing-Workflow.mdc`](.cursor/rules/Testing-Workflow.mdc).
 - **HITL:** a firmware change observable over serial needs a **registered or
   reused stimulus** (`scripts/hitl/stimuli/`). List before adding:
   `.venv/bin/python scripts/host_midi_hitl.py stimulus list`. Never edit a

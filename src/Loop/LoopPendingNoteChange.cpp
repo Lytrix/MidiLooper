@@ -471,66 +471,24 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
     return;
   }
-  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
-  uint32_t windowStart = 0;
-  uint32_t windowLength = 0;
-  resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
-  if (!overdubSourceSpanCacheReusable()) {
-    rebuildOverdubSourceSpanCache(windowStart, windowLength);
-  }
-  if (overdubSourceSpanCacheNotes_.empty()) {
+  // **Read-only** (tasks 4.7/4.8): the view is already the published source, composed by `NoteId` from
+  // the worker's completed tiles. A hold either has prepared coverage -- in which case the view answers --
+  // or its consequence is an owed prerequisite discharged when the tile completes. Nothing derives here,
+  // and the old JIT window merge is not a second producer.
+  if (newlyMergedPitchNotes == nullptr) {
     return;
   }
-
-  auto filterAndMergeCandidates = [&](const NoteUtils::DisplayNoteVec& candidates,
-                                      NoteUtils::DisplayNoteVec& toMerge) {
-    toMerge.clear();
-    for (const NoteUtils::DisplayNote& note : candidates) {
-      if (note.note != pitch || note.noteId == kInvalidNoteId) {
-        continue;
-      }
-      if (presentAtHoldOnly) {
-        if (!displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
-          continue;
-        }
-      } else if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick,
-                                                            windowStart, windowLength,
-                                                            loopLen)) {
-        continue;
-      }
-      if (!committedPlaybackNoteOnIdentityValid(note.noteId)) {
-        continue;
-      }
-      bool already = false;
-      for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
-        if (existing.noteId == note.noteId) {
-          already = true;
-          break;
-        }
-      }
-      if (!already) {
-        toMerge.push_back(note);
-      }
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    if (note.note != pitch || note.noteId == kInvalidNoteId) {
+      continue;
     }
-  };
-  NoteUtils::DisplayNoteVec toMerge;
-  filterAndMergeCandidates(overdubSourceSpanCacheNotes_, toMerge);
-  mergeDisplayNotesIntoOverdubSourceView(toMerge);
-  if (newlyMergedPitchNotes != nullptr) {
-    *newlyMergedPitchNotes = toMerge;
+    if (presentAtHoldOnly &&
+        !displayNotePresentAtHold(note.startTick, note.endTick, holdPhaseTick, loopLen)) {
+      continue;
+    }
+    newlyMergedPitchNotes->push_back(note);
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
-  char line[224];
-  snprintf(line, sizeof(line),
-           LOOP_NOTECHANGE_DIAG_FMT("#CAP,%lu,DIAG,lcr,src,why=hold,from=cache,pitch=%u,merged=%u,"
-                                    "notes=%u,cache=%u,bars=%u"),
-           static_cast<unsigned long>(micros()), static_cast<unsigned>(pitch),
-           static_cast<unsigned>(toMerge.size()),
-           static_cast<unsigned>(overdubSourceViewNotes_.size()),
-           static_cast<unsigned>(overdubSourceSpanCacheNotes_.size()),
-           static_cast<unsigned>(kOverdubSourceWindowBars));
-  DebugSessionCapture::appendCaptureTextLine(line);
-#endif
 }
 
 LOOP_COLD_MEM void Loop::collectOverdubSourceHoldParticipantIds(uint32_t holdPhaseTick, uint8_t pitch,
@@ -702,7 +660,6 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (endTick == startTick || loopLen == 0) {
     return false;
   }
-
   const bool wrapCrossing = endTick < startTick;
   if (!wrapCrossing && startTick >= endTick) {
     return false;
@@ -710,6 +667,70 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   if (wrapCrossing && startTick >= loopLen) {
     return false;
   }
+
+  // Touched coverage (task 4.7): the completed span marks every tile it touches. Marking derives
+  // nothing; it is what makes the span answerable by the worker and by the deadline fallback.
+  (void)markOverdubCoverageSpan(startTick, endTick);
+  const uint32_t spanLength = wrapCrossing ? (loopLen - startTick + endTick) : (endTick - startTick);
+  if (overdubCoverage_.sessionActive && !overdubCoverage_.spanPrepared(startTick, spanLength)) {
+    // The note is accepted now; the overlap consequence is deferred **by name** and discharged when the
+    // tile that carries the span has been published. Never compute against partial coverage.
+    DeferredOverdubCompletion completion{};
+    completion.startTick = startTick;
+    completion.endTick = endTick;
+    completion.noteId = incomingNoteId;
+    completion.channel = channel;
+    completion.pitch = pitch;
+    completion.velocity = velocity;
+    completion.spanOwed = true;
+    if (retainDeferredOverdubCompletion(completion)) {
+      // The interval's own Add row is not an overlap decision: it is recorded now so the note is part of
+      // the session's pending set exactly once, whether or not its consequence is still owed.
+      PendingNoteChange addChange{};
+      addChange.kind = PendingNoteChangeKind::Add;
+      addChange.noteId = incomingNoteId != kInvalidNoteId ? incomingNoteId : allocateNoteId();
+      addChange.channel = channel;
+      addChange.pitch = pitch;
+      addChange.velocity = velocity;
+      addChange.startTick = startTick;
+      addChange.endTick = endTick;
+      pendingNoteChanges_.push_back(addChange);
+      recountOverlapHoldTotalsFromPending();
+      return true;
+    }
+    // The bounded obligation set is full: answer synchronously against the note's own closure window
+    // instead of dropping the decision. A window, never a pass walk.
+    NoteUtils::DisplayNoteVec local;
+    uint32_t lookupStart = 0;
+    uint32_t lookupLength = 0;
+    CoveragePrerequisite::closureWindow(startTick, spanLength, overdubCoverageClosureTicks_, loopLen,
+                                        lookupStart, lookupLength);
+    LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLen, lookupStart, lookupLength,
+                                                       local);
+    return applyOverlapConsequenceForCompletedNote(
+        channel, pitch, velocity, startTick, endTick, incomingNoteId, overlapNoteIds,
+        occupancyResolvedNoteIds, true, &local);
+  }
+  return applyOverlapConsequenceForCompletedNote(channel, pitch, velocity, startTick, endTick,
+                                                 incomingNoteId, overlapNoteIds,
+                                                 occupancyResolvedNoteIds, true);
+}
+
+/// One overlap consequence against an explicit candidate source. Shared by the immediate note-off path,
+/// the discharge lane (prepared tiles) and the seal deadline (a bounded local window), so all three
+/// decisions have one implementation and the only difference is **which source answers**.
+LOOP_COLD_MEM bool Loop::applyOverlapConsequenceForCompletedNote(
+    uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t startTick, uint32_t endTick,
+    NoteId incomingNoteId, const OverlapNoteIdSet& overlapNoteIds,
+    const OverlapNoteIdSet* occupancyResolvedNoteIds, bool pushAddChange,
+    const NoteUtils::DisplayNoteVec* candidates) {
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  if (loopLen == 0 || endTick == startTick) {
+    return false;
+  }
+  const bool wrapCrossing = endTick < startTick;
+  const NoteUtils::DisplayNoteVec& source =
+      candidates != nullptr ? *candidates : overdubSourceViewNotes_;
 
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   ++overlapHoldTotals_.noteOffs;
@@ -743,7 +764,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     if (segStart >= segEnd) {
       return;
     }
-    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    for (const NoteUtils::DisplayNote& note : source) {
       if (note.note != pitch || note.noteId == kInvalidNoteId) {
         continue;
       }
@@ -764,49 +785,14 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       (void)effectiveOverlapNoteIds.insert(note.noteId);
     }
   };
-
-  const bool longLoop = loopLen > overdubSourceWindowLengthTicks();
-  auto sourceViewHasNoteId = [&](NoteId id) -> bool {
-    for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
-      if (note.noteId == id) {
-        return true;
-      }
+  if (wrapCrossing) {
+    collectGeometricIdsForSegment(startTick, loopLen);
+    if (endTick > 0) {
+      collectGeometricIdsForSegment(0, endTick);
     }
-    return false;
-  };
-  auto occupyIdsLackSourceRows = [&]() -> bool {
-    for (size_t i = 0; i < overlapNoteIds.size(); ++i) {
-      if (!sourceViewHasNoteId(overlapNoteIds.at(i))) {
-        return true;
-      }
-    }
-    return false;
-  };
-  auto maybeEnsureHoldSegmentInSourceView = [&](uint32_t holdPhaseTick) {
-    if (!longLoop) {
-      return;
-    }
-    if (overlapNoteIds.size() > 0 && !occupyIdsLackSourceRows()) {
-      return;
-    }
-    ensureOverdubSourceNotesForHold(holdPhaseTick, pitch, nullptr, false);
-  };
-  auto completeConsumeParticipantIds = [&]() {
-    if (wrapCrossing) {
-      maybeEnsureHoldSegmentInSourceView(startTick);
-      if (endTick > 0) {
-        maybeEnsureHoldSegmentInSourceView(0);
-      }
-      collectGeometricIdsForSegment(startTick, loopLen);
-      if (endTick > 0) {
-        collectGeometricIdsForSegment(0, endTick);
-      }
-    } else {
-      maybeEnsureHoldSegmentInSourceView(startTick);
-      collectGeometricIdsForSegment(startTick, endTick);
-    }
-  };
-  completeConsumeParticipantIds();
+  } else {
+    collectGeometricIdsForSegment(startTick, endTick);
+  }
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   if (effectiveOverlapNoteIds.overflowed()) {
     ++overlapHoldTotals_.overflows;
@@ -819,8 +805,8 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupStartUs = micros();
 #endif
-    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, effectiveOverlapNoteIds,
-                                              selected, &notesExamined);
+    OverlapCandidateLookup::appendNotesForIds(source, effectiveOverlapNoteIds, selected,
+                                              &notesExamined);
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
     const uint32_t lookupUs = micros() - lookupStartUs;
 #endif
@@ -948,8 +934,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     noteOffSelected.push_back(note);
   }
 
-  const NoteId causingId =
-      (incomingNoteId != kInvalidNoteId) ? incomingNoteId : allocateNoteId();
+  const NoteId causingId = (incomingNoteId != kInvalidNoteId)
+                               ? incomingNoteId
+                               : (pushAddChange ? allocateNoteId() : kInvalidNoteId);
   if (wrapCrossing) {
     accumulatePendingNoteChangesFromSourceNotes(noteOffSelected, channel, pitch, velocity, startTick,
                                                 loopLen, causingId);
@@ -962,15 +949,17 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
                                                 endTick, causingId);
   }
 
-  PendingNoteChange addChange{};
-  addChange.kind = PendingNoteChangeKind::Add;
-  addChange.noteId = causingId;
-  addChange.channel = channel;
-  addChange.pitch = pitch;
-  addChange.velocity = velocity;
-  addChange.startTick = startTick;
-  addChange.endTick = endTick;
-  pendingNoteChanges_.push_back(addChange);
+  if (pushAddChange) {
+    PendingNoteChange addChange{};
+    addChange.kind = PendingNoteChangeKind::Add;
+    addChange.noteId = causingId;
+    addChange.channel = channel;
+    addChange.pitch = pitch;
+    addChange.velocity = velocity;
+    addChange.startTick = startTick;
+    addChange.endTick = endTick;
+    pendingNoteChanges_.push_back(addChange);
+  }
 
   recountOverlapHoldTotalsFromPending();
   return true;
@@ -990,6 +979,23 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
   }
   if (!overdubSourceViewEstablished_) {
     return;
+  }
+  // Touched coverage (task 4.7): occupancy at the **pressed phase** is a named prerequisite. The MIDI
+  // note is already accepted; the pressed tile is already marked required. If that tile is not prepared,
+  // the source-view half of the decision is owed -- recording it here is what makes the deadline
+  // semantic. Ledger authority is still applied immediately below; the discharge re-runs the same
+  // decision against the completed tile and a repeated transform is a same-`NoteId` upsert.
+  if (overdubCoverage_.sessionActive &&
+      !overdubCoverage_.tilePrepared(
+          CoveragePrerequisite::tileIndexForPhase(holdPhaseTick, loopLengthTicks))) {
+    DeferredOverdubCompletion completion{};
+    completion.startTick = holdPhaseTick;
+    completion.channel = channel;
+    completion.pitch = pitch;
+    completion.velocity = velocity;
+    completion.noteId = kInvalidNoteId;  // assigned from the capture store at note-off
+    completion.occupancyOwed = true;
+    (void)retainDeferredOverdubCompletion(completion);
   }
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
@@ -1435,6 +1441,10 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   // The deadline's own materialization first, then the denial: a decision that is still reachable is
   // taken here (against whatever source answers now) and only the unreachable one is denied.
   materializeDeferredPrivateHoldsAtDeadline();
+  // The same deadline rule for touched coverage: a note whose span was completed before its tile was
+  // published is answered now from a bounded window of its own span. Nothing is dropped and nothing is
+  // applied twice (the discharge removes its obligation).
+  materializeDeferredOverdubCompletionsAtDeadline();
   if (privateSourceOwedForSeal()) {
     privateSourceSealDenied_ = true;
     notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);

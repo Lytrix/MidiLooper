@@ -438,6 +438,8 @@ void LoopEventStore::tryFreeChunk(uint16_t id) {
     retired.used = 0;
     retired.firstTick = 0;
     retired.lastTick = 0;
+    retired.minTick = 0;
+    retired.maxTick = 0;
     retired.captureIndexValid = 0;
     retired.captureOverflow = 0;
   }
@@ -475,6 +477,8 @@ uint16_t LoopEventStore::allocChunk() {
       opened.used = 0;
       opened.firstTick = 0;
       opened.lastTick = 0;
+      opened.minTick = 0;
+      opened.maxTick = 0;
       opened.captureIndexValid = 0;
       opened.captureOverflow = 0;
       poolLifecycle_[i] = ChunkLifecycleState::Recording;
@@ -646,6 +650,17 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
   tail.events[tail.used] = evt;
   if (tail.used == 0) {
     tail.firstTick = evt.tick;
+    tail.minTick = evt.tick;
+    tail.maxTick = evt.tick;
+  } else {
+    // Conservative content extent: an append may arrive out of tick order (a capture wrap, or a
+    // reconciled rewrite), so the bound is min/max, never the endpoint pair.
+    if (evt.tick < tail.minTick) {
+      tail.minTick = evt.tick;
+    }
+    if (evt.tick > tail.maxTick) {
+      tail.maxTick = evt.tick;
+    }
   }
   tail.lastTick = evt.tick;
   ++tail.used;
@@ -855,6 +870,8 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
         auto& ch = chunk(chunkIds_[c.chunk_++]);
         ch.firstTick = ch.used ? ch.events[0].tick : 0;
         ch.lastTick = ch.used ? ch.events[ch.used - 1].tick : 0;
+        ch.minTick = ch.firstTick;
+        ch.maxTick = ch.lastTick;
       } else {
         lastAppendedTick_ = c.count_ ? chunk(chunkIds_.back()).lastTick : 0;
         markBarIndexDirty(); c.phase_ = Phase::Complete; c.complete_ = true;
@@ -1009,6 +1026,8 @@ LoopEventStoreFilterResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivate
             size_t(LoopEventStoreConfig::CHUNK_CAPACITY)));
         ch.firstTick = ch.events[0].tick;
         ch.lastTick = ch.events[ch.used - 1].tick;
+        ch.minTick = ch.firstTick;
+        ch.maxTick = ch.lastTick;
         ++c.chunk_;
       } else {
         if (c.chunks_ && !privateFilterChunkReady(c, c.chunks_ - 1)) return deny();
@@ -1081,6 +1100,8 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewrit
     if (cursor.trimRemaining != 0) {
       destination.used = static_cast<uint16_t>(cursor.trimRemaining);
       destination.lastTick = destination.events[destination.used - 1].tick;
+      destination.minTick = destination.events[0].tick;
+      destination.maxTick = destination.lastTick;
       cursor.trimRemaining = 0;
       ++cursor.chunkIndex;
       return LoopEventStoreRewriteResult::Pending;
@@ -1113,8 +1134,10 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewrit
     destination.events[cursor.eventIndexInChunk] = replacement;
     if (cursor.eventIndexInChunk == 0) {
       destination.firstTick = replacement.tick;
+      destination.minTick = replacement.tick;
     }
     destination.lastTick = replacement.tick;
+    destination.maxTick = replacement.tick;
     ++cursor.sourceIndex;
     ++cursor.eventIndexInChunk;
     --remaining;
@@ -1602,8 +1625,10 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::chunkTickSpan(uint16_t id, uint32
   if (c.used == 0) {
     return false;
   }
-  firstTick = c.firstTick;
-  lastTick = c.lastTick;
+  // Conservative content extent, NOT the append-order endpoint pair. Window admission may over-admit
+  // on this bound; it must never exclude a chunk holding an event in the requested interval.
+  firstTick = c.minTick;
+  lastTick = c.maxTick;
   return true;
 }
 
@@ -1679,6 +1704,10 @@ void LoopEventStore::shiftAllTicks(int64_t delta) {
     if (c.used > 0) {
       c.firstTick = c.events[0].tick;
       c.lastTick = c.events[c.used - 1].tick;
+      c.minTick = c.firstTick;
+      c.maxTick = c.lastTick;
+      c.minTick = c.firstTick;
+      c.maxTick = c.lastTick;
     }
   }
   markBarIndexDirty();
@@ -1768,6 +1797,10 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
     c.used = write;
     c.firstTick = c.events[0].tick;
     c.lastTick = c.events[write - 1].tick;
+    c.minTick = c.firstTick;
+    c.maxTick = c.lastTick;
+    c.minTick = c.firstTick;
+    c.maxTick = c.lastTick;
     kept.push_back(id);
   }
 

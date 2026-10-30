@@ -31,6 +31,14 @@ own programming/boot evidence, not just the PlatformIO exit code.
 2. After a successful build and budget checks, **ask before flashing**, except
    for the existing dedicated-HITL exception. Hash the exact built HEX. Resolve
    its path from the selected build directory, not an assumed `.pio/build` path.
+   **Run the native suite in parallel when this slice needs the host gate:** start
+   `pio test -e native` in the background before or while building, then continue
+   through flash, boot verification and HITL while it runs; collect the native
+   result before checkoff. If PlatformIO's project lock serializes the commands,
+   build first and start native before flashing. A native failure (or an
+   `[ERRORED]` suite / lower count) still blocks acceptance unless it is the
+   deliberate RED of the slice. Ordering and caveats:
+   [`Testing-Workflow.mdc`](../../.cursor/rules/Testing-Workflow.mdc).
 3. Disable Auto in any open Teensy Loader GUI. Use **one uploader at a time**.
    This uploader choice also applies to dedicated HITL evaluation. If a runner's
    `--build-upload` invokes the old `pio ... -t upload` path, build and flash

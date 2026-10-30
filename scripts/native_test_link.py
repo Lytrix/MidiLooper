@@ -50,6 +50,10 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_note_edit_entry_boundary",
     "test_live_capture_display_boundary",
     "test_reboot_undo_redo",
+    # realtime-idle-owner-admission-bound slice 2: the windowed/whole-loop source parity oracle reuses
+    # the live-capture display boundary closure so it exercises production `LoopContentResolution` over
+    # production `Loop` state rather than a model.
+    "test_overdub_source_window_parity",
     # runtime-working-set-ownership I4 (Set browser index ownership): the suite links the catalog SD
     # owners (`SetRevisionCatalog`, the legacy reconcile and the boot ensure) against the in-memory
     # card, so it needs the same Arduino/SD hardware boundaries.
@@ -62,7 +66,7 @@ if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])
     env.Append(CCFLAGS=["-ffunction-sections", "-fdata-sections"])
     env.Append(LINKFLAGS=["-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"])
-    if env.get("PIOTEST_RUNNING_NAME") in {"test_live_capture_display_boundary", "test_immediate_visual_cache_probe", "test_reboot_undo_redo"}:
+    if env.get("PIOTEST_RUNNING_NAME") in {"test_live_capture_display_boundary", "test_immediate_visual_cache_probe", "test_reboot_undo_redo", "test_overdub_source_window_parity"}:
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_live_capture_display_boundary/firmware"])
     if env.get("PIOTEST_RUNNING_NAME") == "test_midi_input_clock_integration":
         env.Prepend(CPPPATH=["$PROJECT_DIR/test/test_midi_input_clock_integration/firmware"])

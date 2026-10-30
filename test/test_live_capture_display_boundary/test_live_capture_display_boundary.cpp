@@ -60,6 +60,22 @@ struct DisplayCaptureTestAccess {
   static const DisplayNoteVec& resolveCommitted(const Track& track, uint8_t slot, uint32_t tick) {
     return displayManager.resolveDisplayNotesByDrawSource(track, slot, tick, 0, 127);
   }
+  static const DisplayNoteVec& liveCapture(const Track& track, uint8_t slot, uint32_t tick) {
+    return displayManager.resolveDisplayNotesLiveCapture(track, slot, tick);
+  }
+  /// Build/qualify the display's committed base directly, for the ownership contract test.
+  static bool buildCommittedBase(const Track& track, uint8_t slot, uint32_t tick) {
+    Loop& mutLoop = const_cast<Loop&>(track.getLoop(slot));
+    const Loop& loop = track.getLoop(slot);
+    const uint32_t loopLen = displayManager.resolveDisplayLoopLength(track, slot, tick);
+    uint32_t start = 0;
+    uint32_t len = 0;
+    uint8_t bars = 0;
+    displayManager.syncDetailedPaintWindow(track, slot, tick, loopLen, start, len, bars);
+    displayManager.buildCommittedDisplayBase(loop, mutLoop, slot, loopLen, tick, true, start, len);
+    return displayManager.committedDisplayBaseMatches(loop, slot, loopLen, true, start, len);
+  }
+  static const DisplayNoteVec& committedBaseNotes() { return displayManager.liveDisplayNotes; }
   static uint8_t track() { return displayManager.paintTrackIndex_; }
   static uint8_t slot() { return displayManager.paintSlot_; }
   static uint32_t rectangles() { return displayManager._display.gfx.rectangles; }
@@ -2020,6 +2036,99 @@ void test_rootless_restored_slot_gains_a_published_root_on_the_publication_lane(
   completeFrame();
 }
 
+
+// Tasks 4.7/4.8 prerequisite repair (CommittedDisplayBase): a tile-scoped overlap view must not change
+// what the live-capture frame draws. This is the RED that fixes the ownership split: before the split the
+// committed base was the overlap view, so shrinking the view lost committed notes from the frame.
+void test_committed_display_base_is_independent_of_the_overlap_view() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
+  Track& t = beginRecord();
+  for (uint32_t b = 0; b < 24; ++b) {
+    (void)acceptPair(t, static_cast<uint8_t>(60 + b % 8), b * bar + 12, b * bar + 40);
+  }
+  growRecordGeometry(t, length + 200);
+  submitFrame(length + 184);
+  completeFrame();
+  (void)acceptPair(t, 95, length + 12, length + 80);  // pin 24 complete bars
+  clockManager.assignCurrentTickSilently(length + 200);
+  t.stopRecording(length + 200);
+  Loop& loop = t.getActiveLoop();
+  submitFrame(clockManager.getCurrentTick());
+  completeFrame();
+  clockManager.assignCurrentTickSilently(256);
+  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
+  t.startOverdubbing(256);
+  for (unsigned turn = 0; turn < 4096 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+
+  const uint32_t tick = 17 * bar + 32;
+  clockManager.assignCurrentTickSilently(tick);
+  loop.markDisplayCachesStale();
+  loop.visualCache.notes.clear();
+  const NoteUtils::DisplayNoteVec baseline =
+      DisplayCaptureTestAccess::liveCapture(t, 0, tick);
+  TEST_ASSERT_FALSE(baseline.empty());
+
+  // The overlap domain becomes one row (a tile-scoped view). A full committed-layer rebuild is forced by
+  // dropping the live display cache: the split base re-gathers from the committed content, while a
+  // source-view base would rebuild from the one row.
+  NoteUtils::DisplayNoteVec oneTile;
+  if (!loop.overdubSourceViewNotes().empty()) {
+    oneTile.push_back(loop.overdubSourceViewNotes().front());
+  }
+  loop.replaceOverdubSourceViewNotesForTest(std::move(oneTile));
+  displayManager.invalidateLiveDisplayCache();
+  const NoteUtils::DisplayNoteVec after =
+      DisplayCaptureTestAccess::liveCapture(t, 0, tick);
+
+  const uint32_t winStart = DisplayCaptureTestAccess::drawnViewStart();
+  const uint32_t winLength = DisplayCaptureTestAccess::drawnViewLength();
+  size_t compared = 0;
+  for (const auto& note : baseline) {
+    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, winStart, winLength,
+                                                  loop.loopLengthTicks)) {
+      continue;
+    }
+    bool overlay = false;
+    for (const auto& preview : loop.capturePreviewView().notes) {
+      if (preview.noteId == note.noteId) {
+        overlay = true;
+        break;
+      }
+    }
+    if (overlay) {
+      continue;
+    }
+    ++compared;
+    bool found = false;
+    for (const auto& painted : after) {
+      if (painted.noteId == note.noteId) {
+        found = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found,
+                             "a committed note must remain drawable without the overlap view");
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(compared));
+
+  // Direct contract of the new abstraction: a miss gathers from the committed content, never from the
+  // overlap view. The view is still one row here, so a view-backed base cannot carry the record rows.
+  displayManager.invalidateLiveDisplayCache();
+  TEST_ASSERT_TRUE(DisplayCaptureTestAccess::buildCommittedBase(t, 0, tick));
+  TEST_ASSERT_FALSE(DisplayCaptureTestAccess::committedBaseNotes().empty());
+  bool directRecordRow = false;
+  for (const auto& note : DisplayCaptureTestAccess::committedBaseNotes()) {
+    if (note.note == 60) {
+      directRecordRow = true;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(directRecordRow,
+                           "the committed base must gather committed content, not the overlap view");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
@@ -2040,6 +2149,7 @@ int main() {
   RUN_TEST(test_closed_overdub_note_survives_truncated_record_publication_gap);
   RUN_TEST(test_closed_overdub_note_survives_painted_stop_and_gradual_finalization);
   RUN_TEST(test_selected_gap_display_source_survives_competing_audible_track);
+  RUN_TEST(test_committed_display_base_is_independent_of_the_overlap_view);
   RUN_TEST(test_late_record_window_and_closed_overdub_progress_before_root_publication);
   RUN_TEST(test_display_source_progresses_with_pending_successor_stop_and_across_wrap);
   RUN_TEST(test_capture_undo_refuses_the_retained_display_source);

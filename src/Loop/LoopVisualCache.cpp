@@ -441,6 +441,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
                                                      bool allowOverdubWrapAppend,
                                                      bool constrainFallbackGather,
                                                      size_t fallbackGatherEventBudget) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(3);
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
@@ -792,7 +793,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 
 // Deferred wrap-append completes cache reuse. Missing append is latency, not
 // an empty committed representation — paint must keep sealed/prepared content.
-LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
+LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend(bool allowWholeLoopResolve) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(4);
   if (!deferredVisualCacheWrapAppendPending_) {
     return;
   }
@@ -810,6 +812,12 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
     if (!DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
             visualCache.builtFromRevision, playbackRevision,
             visualCache.builtFromSnapshotIdentity, publishedSnapshotIdentity())) {
+      if (!allowWholeLoopResolve) {
+        // Lossless deferral (tasks 2.3/2.5): the unbounded whole-pass resolve is not admitted on this
+        // turn, so the pending append and the existing cache are kept for a later non-critical turn.
+        // Nothing is cleared and no partial cache is published.
+        return;
+      }
       rebuildVisualCacheFromPasses();
     } else {
       clearDeferredVisualCacheWrapAppend(*this);

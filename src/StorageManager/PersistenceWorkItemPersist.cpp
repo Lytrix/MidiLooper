@@ -385,9 +385,28 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
   }
 
   bool finalizeDone = false;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  const DeferredLoopFinalizeStage finalizeStage =
+      storageSession.currentWorkspaceSave.loopFinalizeStage;
+  const uint32_t finalizeStartUs = micros();
+#endif
   if (!stepFinalizeDeferredLoopSlotTemp(job.trackIndex, job.slotIndex, finalizeDone)) {
     return completePersistenceWorkItem(job, "finalize", false);
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  // Task 6.3 instrumentation: name the LoopPersist finalize sub-step that spends the time. The
+  // deferred scheduler's named-step row covers the whole work_item; this row splits it.
+  const uint32_t finalizeUs = micros() - finalizeStartUs;
+  if (finalizeUs >= 1000u) {
+    char finalizeLine[112];
+    snprintf_P(finalizeLine, sizeof(finalizeLine),
+               PSTR("#CAP,%lu,DIAG,persist_save,finalize,stage=%s,us=%lu,done=%u"),
+               static_cast<unsigned long>(micros()),
+               deferredLoopFinalizeStageName(finalizeStage),
+               static_cast<unsigned long>(finalizeUs), finalizeDone ? 1u : 0u);
+    DebugSessionCapture::appendCaptureTextLine(finalizeLine);
+  }
+#endif
   if (!finalizeDone) {
     emitLoopPersistSliceTelemetry(job.item, "finalize_slice", loopPersistFinalizeSliceLog);
     return true;

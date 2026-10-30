@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <array>
 #include "Utils/PlaybackPhysicalDeadline.h"
+#include "Utils/WindowCoverage.h"
 
 /// Gated MIDI polls around deferred remainder. Not a scheduler and not all-PLAYING drain.
 /// Capture uses the existing after-display poll (RC-C C). Post-overdub PLAYING adds polls
@@ -439,6 +440,241 @@ inline bool aroundDeferredLoadFrame(bool postOverdubPlayingDrain, bool overdubSt
 inline bool allowVisualCacheReconstructSlice(bool isOverdubbing) {
   return !isOverdubbing;
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Realtime idle-owner admission (`realtime-idle-owner-admission-bound`, DEC-043).
+//
+// While a track is timing-critical, the deferred idle-owner turn may dispatch only work whose per-turn
+// cost is **declared and enforced**. This is the owner-boundary predicate for that rule; it is not a
+// scheduler, a work class, or interval reservation (DEC-043 point 3 keeps `admit(WorkClass)` rejected).
+//
+// Two quantities that must not be conflated:
+//
+//   * `kIdleMaintBreachThresholdUs` (50 ms) is the **alarm** — the same number as
+//     `kRuntimeTimingTelemetry::kLoopRemainderOneShotUs`, which is what makes every `loop_rem,idle_maint`
+//     row a declared-bar breach. It is an acceptance criterion and a backstop, never the work budget.
+//   * `kOwnerWorkBudgetUs` is the amount of **child work** a turn may admit. It is strictly smaller than
+//     the alarm because the turn also carries its own scans (track walk, pending-snapshot scan, visual
+//     wrap-append scan), the `handleMidiInput()` polls around it, telemetry and the breach record. Giving
+//     the children the whole 50 ms guarantees that some turn lands at 50 ms + overhead and breaches.
+//
+// `kOwnerWorkBudgetUs` is derived from the **fastest supported MIDI clock interval**, not from the alarm
+// and not from a measured 120 BPM sample. A child that runs longer than one clock interval guarantees a
+// delayed clock edge, which is the tempo wobble this change exists to remove.
+//
+// The enforced playback tempo range is 1-300 BPM (`ClockManager::setBpmFloat`,
+// `MidiConfig::TEMPO_MAX_BPM`), and MIDI clock is 24 PPQN, so the **minimum supported interval** is
+// `60e6 / (300 * 24) = 8333 us`. The declared contract is therefore:
+//
+//   kOwnerWorkBudgetUs + worstCaseOwnerResidualUs <= kMinimumSupportedClockIntervalUs
+//
+// A 25 ms draft failed this (it exceeded even the 120 BPM interval); an 8 ms draft still leaves only
+// ~333 us of residual at 300 BPM, which no measurement would defend. 4 ms leaves 4333 us, where
+// `kOwnerWorkResidualUs` starts until the device measures it (task 5.4) **at the fastest supported
+// tempo**, not at 120 BPM. A measured 120 BPM interval is not the safety proof.
+//
+// Do not size coverage tiles or worker grains against this number. A tile is a correctness/publication
+// unit; a grain is an execution unit bounded by its own event/operation cursor.
+//
+// Admission **reserves a child's declared maximum before dispatch**: a child whose maximum does not fit
+// the remaining budget is deferred by name rather than dispatched into a budget it can only overshoot.
+// A child may take a smaller remaining deadline only when it declares a finer resumable grain.
+constexpr uint32_t kIdleMaintBreachThresholdUs = 50000u;
+/// Enforced maximum tempo 300 BPM at 24 PPQN -> the shortest interval a clock edge can arrive on.
+constexpr uint32_t kMinimumSupportedClockIntervalUs = 8333u;
+/// Provisional worst-case cost of a turn that is not admitted child work (owner scans, MIDI polls,
+/// telemetry, the breach record). Measured on device at the fastest supported tempo in task 5.4.
+constexpr uint32_t kOwnerWorkResidualUs = 4000u;
+constexpr uint32_t kOwnerWorkBudgetUs = 4000u;
+
+/// One dispatchable unit of work on the deferred idle-owner turn. A *child* is a named unit, not a
+/// function: the registry below is closed over these names, and the enumeration test asserts every
+/// reachable call site maps to exactly one of them (an unregistered child is a red suite, not a silent
+/// overrun).
+enum class IdleOwnerChild : uint8_t {
+  OverdubSourceView = 0,   // windowed derive of the interval the view serves
+  VisualCacheSlice,        // 1..N dirty bars
+  PlaybackWindowGrain,     // one declared window-build grain
+  CanonicalPrefixGrain,    // one normalisation child (Q = 32)
+  SnapshotUnit,            // one fragment start or one construction step
+  DeferredStopGrain,       // one stop-finalisation grain
+  WrapAppend,              // one deferred visual wrap append
+  SlotProvision,           // one pending slot's inbound occupancy
+  OverdubSourceSpanPrewarm,// whole-loop span cache: unbounded, prewarm only
+  WholeLoopDisplayResolve, // whole-pass `resolveDisplayNotes(passes, ...)` fallback
+  StoredMidiVerification,  // capture-only effective-notes dump
+  SevtDump,                // capture-only stopped-event dump
+  Count
+};
+constexpr uint8_t kIdleOwnerChildCount = static_cast<uint8_t>(IdleOwnerChild::Count);
+
+/// Declared bound for one child. `maxUs` is the device claim (the microsecond ceiling a turn may spend);
+/// `maxUnits` is the deterministic work-unit claim the native fixtures assert, so a fixture never
+/// depends on host timing. `fineGrainUs == 0` means "not resumable finer" -- such a child may never be
+/// dispatched with a deadline smaller than `maxUs`.
+struct IdleOwnerChildBound {
+  const char* name;
+  uint16_t maxUs;
+  uint16_t fineGrainUs;
+  bool unbounded;
+};
+
+/// The registry. `unbounded` children are never dispatched while timing-critical; they return a named
+/// deferral. Every entry here must be reachable from exactly one call site, and every call site must
+/// appear here -- `test_realtime_idle_owner_admission` pins both directions.
+constexpr IdleOwnerChildBound kIdleOwnerChildBounds[kIdleOwnerChildCount] = {
+    // Bounded children declare the quantum the code already enforces; this slice declares them, it does
+    // not invent a bound for them.
+    {"overdub_source_view", 4000, 1000, false},   // windowed derive, sub-window resumable
+    {"visual_cache_slice", 3000, 0, false},       // 1..4 bars
+    {"playback_window", 2000, 0, false},          // row 27 grain (measured 0.175-0.684 ms)
+    {"canonical_prefix", 3000, 0, false},         // Q = 32
+    {"snapshot_unit", 3000, 0, false},            // one fragment/step
+    {"deferred_stop_grain", 4000, 0, false},      // DEC-178 grain (measured max 3.77 ms)
+    {"wrap_append", 4000, 0, false},              // one append
+    {"slot_provision", 4000, 0, false},           // one inbound occupancy
+    // Unbounded children: whole-loop work with no declared, enforced slice.
+    {"overdub_span_prewarm", 0, 0, true},
+    {"whole_loop_resolve", 0, 0, true},
+    // Task 7.1/7.2: the verification dump is one bar / one event slice per turn. The declared max is
+    // the owner budget; the fine grain is the resumable one-bar derive. The device grain measurement
+    // is still owed (section 7), so the max is a declared claim, not a measured one.
+    {"stored_midi_verification", 4000, 1000, false},
+    {"sevt_dump", 4000, 1000, false},
+};
+
+enum class IdleOwnerChildDecision : uint8_t {
+  /// Owed and admitted for this turn.
+  Run,
+  /// Owed, not admitted. `reason` names the child and why.
+  Defer,
+  /// Nothing owed; the turn costs nothing for this child.
+  NotOwed,
+};
+
+struct IdleOwnerAdmission {
+  IdleOwnerChildDecision decision = IdleOwnerChildDecision::NotOwed;
+  /// Microseconds this child may spend. `0` unless `decision == Run`.
+  uint32_t grantedUs = 0;
+  /// Stable name of the registry entry, for the deferral row.
+  const char* name = "";
+};
+
+inline const IdleOwnerChildBound& idleOwnerChildBound(IdleOwnerChild child) {
+  const uint8_t index = static_cast<uint8_t>(child);
+  return kIdleOwnerChildBounds[index < kIdleOwnerChildCount ? index : 0];
+}
+
+/// The one admission decision. Reserve-before-dispatch: a child is admitted only when its declared
+/// maximum fits the remaining owner work budget, or when it can resume at a finer grain that does.
+/// While no track is timing-critical the budget does not apply -- the stopped lane keeps today's
+/// admission exactly (`grantedUs` is unbounded there).
+inline IdleOwnerAdmission admitIdleOwnerChild(IdleOwnerChild child, bool owed, bool timingCritical,
+                                              uint32_t remainingOwnerWorkBudgetUs) {
+  IdleOwnerAdmission out{};
+  out.name = idleOwnerChildBound(child).name;
+  if (!owed) {
+    out.decision = IdleOwnerChildDecision::NotOwed;
+    return out;
+  }
+  if (!timingCritical) {
+    out.decision = IdleOwnerChildDecision::Run;
+    out.grantedUs = 0xFFFFFFFFu;
+    return out;
+  }
+  const IdleOwnerChildBound& bound = idleOwnerChildBound(child);
+  if (bound.unbounded) {
+    // No declared, enforceable per-turn bound: never dispatched on a timing-critical turn. The child
+    // keeps its own cursor/request and is owed again on a non-timing-critical turn.
+    out.decision = IdleOwnerChildDecision::Defer;
+    return out;
+  }
+  if (static_cast<uint32_t>(bound.maxUs) <= remainingOwnerWorkBudgetUs) {
+    out.decision = IdleOwnerChildDecision::Run;
+    out.grantedUs = bound.maxUs;
+    return out;
+  }
+  // Does not fit whole. A finer resumable grain may take the remaining deadline; anything else is
+  // deferred rather than dispatched into a budget it can only overshoot.
+  if (bound.fineGrainUs != 0 && static_cast<uint32_t>(bound.fineGrainUs) <= remainingOwnerWorkBudgetUs) {
+    out.decision = IdleOwnerChildDecision::Run;
+    out.grantedUs = remainingOwnerWorkBudgetUs;
+    return out;
+  }
+  out.decision = IdleOwnerChildDecision::Defer;
+  return out;
+}
+
+/// Production gate for an **unbounded** child (tasks 2.3/2.5). An owed unbounded child never runs on a
+/// timing-critical turn; it keeps its request/cursor and is served later. This is the same rule as
+/// `admitIdleOwnerChild`'s unbounded branch, expressed without ODR-using the registry array: a new
+/// production caller's copy of that array is `.data` and crossed the DTCM align edge (+4 KB RAM1
+/// variables). The full reserve-before-dispatch contract remains `admitIdleOwnerChild` for the bounded
+/// children; the registry/enumeration test still pins the unbounded set.
+inline bool unboundedIdleOwnerChildMayRun(bool owed, bool timingCritical) {
+  return !owed || !timingCritical;
+}
+
+/// Task 7.1/7.2: the bounded production gate for the stored-MIDI verification/SEVT dump. Header-only
+/// for the same reason as `unboundedIdleOwnerChildMayRun`: reaching the registry array from the hot
+/// Track TU ODR-used it into `.data` and snapped DTCM by 4 KB. The constants mirror the registry and
+/// are pinned by `test_realtime_idle_owner_admission`.
+constexpr uint32_t kStoredVerificationMaxUs = 4000;
+constexpr uint32_t kStoredVerificationFineGrainUs = 1000;
+inline bool boundedIdleOwnerChildMayRun(bool owed, bool timingCritical, uint32_t declaredMaxUs,
+                                        uint32_t remainingBudgetUs, uint32_t fineGrainUs = 0) {
+  if (!owed) {
+    return false;
+  }
+  if (!timingCritical) {
+    return true;
+  }
+  if (declaredMaxUs != 0 && declaredMaxUs <= remainingBudgetUs) {
+    return true;
+  }
+  return fineGrainUs != 0 && fineGrainUs <= remainingBudgetUs;
+}
+
+/// Budget arithmetic for one turn, in dispatch order. `remaining` starts at `kOwnerWorkBudgetUs` and is
+/// reduced by each admitted child's *declared maximum* (not its actual cost), so a later child cannot be
+/// admitted on the strength of an earlier child's early exit.
+struct IdleOwnerTurnBudget {
+  uint32_t remainingUs = kOwnerWorkBudgetUs;
+  uint8_t admitted = 0;
+
+  IdleOwnerAdmission admit(IdleOwnerChild child, bool owed, bool timingCritical) {
+    const IdleOwnerAdmission admission = admitIdleOwnerChild(child, owed, timingCritical, remainingUs);
+    if (admission.decision == IdleOwnerChildDecision::Run && timingCritical) {
+      const IdleOwnerChildBound& bound = idleOwnerChildBound(child);
+      // Charge what was granted. A whole-maximum admission charges the maximum; a finer-grain child that
+      // took the remaining deadline charges that remainder, so the plan can never over-charge past the
+      // budget it was judged against.
+      const uint32_t charged = bound.maxUs != 0 && admission.grantedUs >= bound.maxUs
+                                   ? bound.maxUs
+                                   : admission.grantedUs;
+      remainingUs = remainingUs > charged ? remainingUs - charged : 0;
+      ++admitted;
+    }
+    return admission;
+  }
+};
+
+/// **Coverage currency** (design D3). The `overdubSourceView` is load-bearing for overlap correctness, so
+/// its refresh is the one child that may not simply be deferred: an established view is authoritative
+/// only while its coverage still contains the interval the overlap path will evaluate. Outside that
+/// coverage the bounded refresh must run (at a finer grain if necessary) before the interval is
+/// consumed -- stale geometry is never served as though it were current.
+///
+/// `coveredStartTick`/`coveredLengthTicks` describe what the established view holds; the required pair
+/// is the interval now owed. Wrap is handled implicitly: the offset is taken modulo the loop, so a
+/// window that straddles the loop end is covered by a window that straddles it too.
+inline bool idleOwnerSourceViewCovers(uint32_t coveredStartTick, uint32_t coveredLengthTicks,
+                                      uint32_t requiredStartTick, uint32_t requiredLengthTicks,
+                                      uint32_t loopLengthTicks) {
+  return WindowCoverage::windowCoversWindow(coveredStartTick, coveredLengthTicks, requiredStartTick,
+                                            requiredLengthTicks, loopLengthTicks);
+}
+
 
 inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending,
                                bool overdubStopping = false) {

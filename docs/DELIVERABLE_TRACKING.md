@@ -1,3 +1,17 @@
+**2026-10-30 — realtime idle-owner admission bound: live-window device oracle accepted and ARCHIVED (2026-10-30).**
+The deferred idle-owner turn now dispatches only declared, enforced children while a track is timing-critical;
+the overdub source is one touched-coverage producer with a read-only overlap cut, the display has a separate
+committed base, and the stored-MIDI verification dump is bounded (one bar per turn, four SEVT rows per
+timing-critical turn). Device live window on a 33-bar / 1,024-note take: **zero live `idle_maint`**, zero
+transport-running `win_gap_overrun`, overdub `midi_gap` **72.7 ms** (was 332 ms), 12 named `persist_save` steps.
+5.4 breakdown: max residual **1,668 us** (3.3 % of the bar), all near-bar turns are child work at boot/record
+start. Accepted limits: boot/load 135 ms, the 22-28 ms atomic-rename commit (DEC-215), and the stopped-lane
+visual-cache/wrap-append child-max note. Native **3706 / 7 skipped / 3699 / 0**, image `5318f204…`. Evidence:
+[oracle live](../openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-ORACLE-LIVE.md),
+[idle breakdown 5.4](../openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-IDLE-BREAKDOWN-5.4.md),
+[stored verify bound](../openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-STORED-VERIFY-BOUND.md).
+No commit or archive performed.
+
 **2026-10-29 — boot visual caches prewarmed and preserved across track focus (DEC-210; owner-confirmed).**
 The boot playback set now prepares each active slot's first 16-bar visual window before the restore sweep
 (bounded 3 s), and a track focus change no longer takes the slot-change cache clear. Device

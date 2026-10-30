@@ -378,20 +378,27 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobFooter() {
                         Serial.println("[StorageManager] ERROR: Deferred save failed writing global undo stack token");
                         return false;
                     }
+                    storageSession.currentWorkspaceSave.footerTrackCursor = 0;
+                    storageSession.currentWorkspaceSave.footerWriteStage =
+                        DeferredFooterWriteStage::GlobalUndoStackHeader;
+                    return true;
+
+                case DeferredFooterWriteStage::GlobalUndoStackHeader: {
                     // Stage 3: persist empty GUS headers only. Load fills GUS from Loop content.
-                    {
+                    // One header per slice: the former eight-header loop was measured as a 61,973 us
+                    // work_item slice. Bytes and order are unchanged.
+                    if (storageSession.currentWorkspaceSave.footerTrackCursor <
+                        storageSession.currentWorkspaceSave.numTracks) {
                         GlobalUndoStack emptyUndoStack{};
                         emptyUndoStack.clear();
-                        for (uint8_t trackIndex = 0;
-                             trackIndex < storageSession.currentWorkspaceSave.numTracks;
-                             ++trackIndex) {
-                            if (!writeGlobalUndoStackToFile(
-                                    storageSession.currentWorkspaceSave.file, emptyUndoStack)) {
-                                Serial.println(
-                                    "[StorageManager] ERROR: Deferred save failed writing empty undo stack");
-                                return false;
-                            }
+                        if (!writeGlobalUndoStackToFile(storageSession.currentWorkspaceSave.file,
+                                                        emptyUndoStack)) {
+                            Serial.println(
+                                "[StorageManager] ERROR: Deferred save failed writing empty undo stack");
+                            return false;
                         }
+                        ++storageSession.currentWorkspaceSave.footerTrackCursor;
+                        return true;
                     }
                     if (!finalizeDeferredMetaTempFile()) {
                         Serial.println("[StorageManager] ERROR: Deferred save failed finalizing CurrentSet meta");
@@ -403,6 +410,7 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobFooter() {
                     }
                     beginCurrentSetCompletion();
                     return true;
+                }
             }
             return false;
         

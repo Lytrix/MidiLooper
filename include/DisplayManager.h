@@ -310,11 +310,37 @@ private:
     uint32_t paintDrawUs_ = 0;
     uint32_t paintTransferUs_ = 0;
 
+    /// **CommittedDisplayBase** (2026-10-30) — the display's committed source, explicitly separate from
+    /// the overlap domain (`Loop::overdubSourceViewNotes_`). Key: immutable committed generation
+    /// (`playbackRevision` + current published identity) × the display window the base was gathered for.
+    /// It is rebuilt only by a commit/publication, a loop-length change, or a window move outside its
+    /// coverage; live overdub activity and overlap tile preparation never invalidate it.
+    struct CommittedDisplayBase {
+        bool valid = false;
+        uint8_t displaySlot = 255;
+        LoopId loopId = kInvalidLoopId;
+        uint32_t playbackRevision = 0;
+        uint32_t loopLengthTicks = 0;
+        const void* publishedIdentity = nullptr;
+        uint32_t windowStart = 0;
+        uint32_t windowLength = 0;
+        size_t noteCount = 0;
+        bool snapshotCurrent = false;
+    };
+    CommittedDisplayBase committedDisplayBase_;
+    /// A miss gathers at most this many bars; never a whole-loop resolve on the timing-critical lane.
+    static constexpr uint32_t kCommittedDisplayBaseMaxBars = DisplayWindowUtils::kMaxDetailedWindowBars;
+    bool committedDisplayBaseMatches(const Loop& loop, uint8_t displaySlot, uint32_t loopLength,
+                                     bool havePaintWindow, uint32_t paintWindowStart,
+                                     uint32_t paintWindowLength) const;
+    /// Build the base for the paint window plus the standard margin, capped at
+    /// `kCommittedDisplayBaseMaxBars`. The notes land in `liveDisplayNotes`' committed prefix.
+    void buildCommittedDisplayBase(const Loop& loop, Loop& mutLoop, uint8_t displaySlot,
+                                   uint32_t loopLength, uint32_t currentTick, bool havePaintWindow,
+                                   uint32_t paintWindowStart, uint32_t paintWindowLength);
     /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
     /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.
     bool liveCommittedLayerHeldForDirtyCache_ = false;
-    /// RC12: invalidate committed layer when overdub source-view note count changes (JIT merge).
-    size_t liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
 
 #if defined(SESSION_CAPTURE)
     DisplayNoteVec stoppedFrameNoteDump_;

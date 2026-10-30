@@ -202,7 +202,10 @@ public:
   void processDeferredIdleMaintenance(
       uint32_t nowMs, bool postOverdubDrainWindowActive,
       MidiServiceDrain::DeferredIdleOwner deferredOwner,
-      uint8_t snapshotConstructionUnits = MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn);
+      uint8_t snapshotConstructionUnits = MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+      /// True while any track is recording or audibly playing (the same predicate `main.cpp` uses for
+      /// the load/save gates). Unbounded children are named-deferred on such a turn (tasks 2.3-2.5).
+      bool timingCritical = false);
   /// CONTRACTS.md C3.1: qualify the active overdub session's private predecessor at the session-open
   /// edge. Binds the identity only; performs no content work, so it costs nothing on the start edge
   /// and the deferred grain still owns every unit.

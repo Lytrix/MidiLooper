@@ -1909,6 +1909,110 @@ void test_a_rootless_saved_body_is_rewritten_with_its_root_once_the_publication_
                                        "A after the root re-write");
 }
 
+// RIAO-3.3 — drive the real revision-commit step with an artificially expensive report and verify the
+// named-step rule: one report per executed step, at most one row per step per 5 s interval, and none
+// when the step is within budget. The measured duration still drives display-block accounting — only
+// the reported step duration is forced.
+void test_riao3_3_forced_slow_step_names_exactly_one_row_per_interval() {
+  prepareRevisionOnlyCurrent();
+  StorageManager::beginOverlaySaveRowCommit();
+  TEST_ASSERT_TRUE(StorageManager::hasRevisionCommitWork());
+
+  PersistenceDiagnostics::resetPersistenceStepReportsForTest();
+  PersistenceDiagnostics::persistenceStepDurationOverrideUsForTest(
+      PersistenceDiagnostics::PersistenceStep::RevisionCommit) = 60000;
+  TEST_ASSERT_TRUE(revisionOwnerTurn());
+  PersistenceDiagnostics::persistenceStepDurationOverrideUsForTest(
+      PersistenceDiagnostics::PersistenceStep::RevisionCommit) = 0;
+
+  TEST_ASSERT_EQUAL_UINT8(1, PersistenceDiagnostics::persistenceStepReportCountForTest());
+  const auto& report = PersistenceDiagnostics::persistenceStepReportForTest(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistenceDiagnostics::PersistenceStep::RevisionCommit),
+                    static_cast<int>(report.step));
+  TEST_ASSERT_EQUAL_UINT32(60000, report.stepUs);
+  TEST_ASSERT_TRUE(report.indivisible);
+  TEST_ASSERT_TRUE(
+      PersistenceDiagnostics::persistenceStepBreachExceeded(report.stepUs, report.budgetUs));
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.displayBlockUs < 50000,
+                           "the forced report must not leak into display-block accounting");
+
+  // Exactly one row for the step's interval; a within-budget step never emits.
+  uint32_t lastMs = 0;
+  TEST_ASSERT_TRUE(
+      PersistenceDiagnostics::persistenceStepShouldEmit(report.stepUs, report.budgetUs, 1000, lastMs));
+  TEST_ASSERT_FALSE(
+      PersistenceDiagnostics::persistenceStepShouldEmit(report.stepUs, report.budgetUs, 2000, lastMs));
+  TEST_ASSERT_FALSE(
+      PersistenceDiagnostics::persistenceStepShouldEmit(report.stepUs, report.budgetUs, 5999, lastMs));
+  TEST_ASSERT_TRUE(
+      PersistenceDiagnostics::persistenceStepShouldEmit(report.stepUs, report.budgetUs, 6000, lastMs));
+  uint32_t withinBudgetLastMs = 0;
+  TEST_ASSERT_FALSE(PersistenceDiagnostics::persistenceStepShouldEmit(
+      report.budgetUs, report.budgetUs, 1000, withinBudgetLastMs));
+  TEST_ASSERT_EQUAL_UINT32(0, withinBudgetLastMs);
+
+  // Drain the commit so the suite leaves no work behind.
+  unsigned turns = 0;
+  while (StorageManager::hasRevisionCommitWork() && turns++ < 4096) {
+    TEST_ASSERT_TRUE(revisionOwnerTurn());
+  }
+  TEST_ASSERT_FALSE(StorageManager::hasRevisionCommitWork());
+}
+
+// RIAO-6.2 — the footer's empty-GUS headers are written one per slice, and the bytes are identical
+// to the former eight-header burst. Mutation-red if the burst is restored (the first call would jump
+// straight to the finalize and the cursor would never advance).
+void test_riao6_2_footer_writes_one_empty_undo_header_per_slice() {
+  SD.reset();
+  TEST_ASSERT_TRUE(CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot));
+  TEST_ASSERT_TRUE(CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir));
+
+  auto& job = storageSession.currentWorkspaceSave;
+  job = CurrentWorkspaceSaveJob{};
+  job.file = CurrentSetStorage::openForRewrite(CurrentSetStorage::kCurrentMetaTempPath);
+  TEST_ASSERT_TRUE(job.file);
+  job.numTracks = 4;
+  job.footerWriteStage = DeferredFooterWriteStage::GlobalUndoStackToken;
+  job.footerTrackCursor = 0;
+  job.stage = DeferredSaveStage::Footer;
+  storageSession.persistenceWorkItem.bundleWriteActive = true;
+
+  // The token is its own slice; every header is one slice.
+  TEST_ASSERT_TRUE(StorageManagerInternal::stepDeferredSaveJob());
+  TEST_ASSERT_EQUAL(static_cast<int>(DeferredFooterWriteStage::GlobalUndoStackHeader),
+                    static_cast<int>(job.footerWriteStage));
+  TEST_ASSERT_EQUAL_UINT8(0, job.footerTrackCursor);
+  for (uint8_t i = 0; i < job.numTracks; ++i) {
+    TEST_ASSERT_TRUE(StorageManagerInternal::stepDeferredSaveJob());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(i + 1), job.footerTrackCursor);
+    TEST_ASSERT_EQUAL(static_cast<int>(DeferredFooterWriteStage::GlobalUndoStackHeader),
+                      static_cast<int>(job.footerWriteStage));
+  }
+  job.file.close();
+  job = CurrentWorkspaceSaveJob{};
+  storageSession.persistenceWorkItem.bundleWriteActive = false;
+
+  // Reference: the former single-call burst, same writes in the same order.
+  File reference = CurrentSetStorage::openForRewrite("/MidiLooper/riao62_ref.bin");
+  TEST_ASSERT_TRUE(reference);
+  TEST_ASSERT_TRUE(StorageManagerInternal::writeRaw(reference,
+                                                   &kGlobalUndoStackToken,
+                                                   sizeof(kGlobalUndoStackToken)));
+  for (uint8_t i = 0; i < 4; ++i) {
+    GlobalUndoStack emptyUndoStack{};
+    emptyUndoStack.clear();
+    TEST_ASSERT_TRUE(StorageManagerInternal::writeGlobalUndoStackToFile(reference,
+                                                                       emptyUndoStack));
+  }
+  reference.close();
+
+  const auto& actual = SD.files.at(CurrentSetStorage::kCurrentMetaTempPath);
+  const auto& expected = SD.files.at("/MidiLooper/riao62_ref.bin");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expected.size()),
+                           static_cast<uint32_t>(actual.size()));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(expected.data(), actual.data(), expected.size());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_drain_suite_links_the_closed_import_set);
@@ -1932,6 +2036,8 @@ int main(int, char**) {
   // F4 / DEC-091 -- a failed workspace completion must not hold the queue.
   RUN_TEST(test_f4_a_failed_completion_is_discharged_and_releases_the_queue);
   RUN_TEST(test_i4_revision_only_save_dispatches_and_completes_through_main_admission);
+  RUN_TEST(test_riao3_3_forced_slow_step_names_exactly_one_row_per_interval);
+  RUN_TEST(test_riao6_2_footer_writes_one_empty_undo_header_per_slice);
   RUN_TEST(test_i4_revision_only_request_survives_denial_and_worker_holdoff);
   RUN_TEST(test_i4_revision_body_header_patch_failure_does_not_publish_and_retries);
   RUN_TEST(test_i4_a_clobbered_catalog_index_still_lists_the_set_in_the_browser);

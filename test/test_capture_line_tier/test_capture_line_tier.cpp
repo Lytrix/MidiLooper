@@ -380,6 +380,24 @@ void test_note_and_display_traffic_is_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,329501020,BPM,119.637,119.303"));
 }
 
+// Task 3.2 — the persistence named-step row rides the already-registered `DIAG,persist_save,` prefix.
+void test_persistence_named_step_row_is_tier_a() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,39819493,DIAG,persist_save,step,work_item,us=213500,budget=300,bar=50000,indivisible=1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,1,DIAG,persist_save,step,revision_load,us=51000,budget=3000,bar=50000,indivisible=1"));
+}
+
+// Task 2.4 — the owner-admission named deferral survives the reduced timing-critical flush.
+void test_idle_owner_deferral_row_is_tier_a_and_its_boundary_is_exact() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,39819493,DIAG,idle_owner,defer,child=overdub_span_prewarm,reason=timing_critical_unbounded"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,1,DIAG,idle_owner,defer,child=stored_midi_verification,reason=timing_critical_unbounded"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
+      "#CAP,1,DIAG,idle_owner_x,defer,child=overdub_span_prewarm"));
+}
+
 void test_other_diag_subtags_are_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,100,DIAG,counter,appendDeny,4"));
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,100,DIAG,reclaim,1,2,3,4,5,ok,6"));
@@ -541,6 +559,8 @@ int main() {
   RUN_TEST(test_library_observation_lines_fit_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
+  RUN_TEST(test_persistence_named_step_row_is_tier_a);
+  RUN_TEST(test_idle_owner_deferral_row_is_tier_a_and_its_boundary_is_exact);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
   RUN_TEST(test_deferred_stop_identity_edges_are_tier_a);
   RUN_TEST(test_s4_5_finalization_busy_owner_vocabulary_is_tier_a);

@@ -11845,3 +11845,216 @@ DEC-196 makes every track's active slot playable from the first Play, but it say
 
 DEC-182 (sweep waits for the focus first paint), DEC-184/196 (boot release and playback set), DEC-188 (visual-cache
 undo invariants). Evidence capture: `captures/session_20261029_174940.log` (boot 2, switches 185.94/187.37 s).
+
+## DEC-211 — One producer for the overdub source, and a committed display base split from the overlap view
+
+**Date:** 2026-10-30
+**Owner:** `Loop::serviceOverdubCoverageTurn` / `Loop::publishPreparedOverdubCoverageTile` (touched-coverage producer),
+`Loop::rebuildOverdubSourceView` (read-only overlap cut), `Loop::accumulatePendingNoteChangesForIncomingNote` /
+`Loop::resolveOccupancyAtNoteOn` / `Loop::dischargeDeferredOverdubCompletions` (prerequisites and discharge), and
+`DisplayManager::buildCommittedDisplayBase` / `committedDisplayBaseMatches` (the display's committed source).
+**Status:** Implemented; native and target build green; device acceptance **open**.
+
+### Problem / evidence
+
+`rebuildOverdubSourceView` derived the whole committed pass on the realtime lane: the device capture
+`captures/session_20261029_190227.log` attributes a 332 ms idle-owner turn to a 201 ms
+`lcr,pairrows,at=passes,count=610` resolve inside it. The view also served two different roles: the overlap
+candidate domain (touched regions) and the display's committed base (the whole committed content). Design D3
+makes the former touched-region scoped, so one representation cannot serve both.
+
+The atomic slice (tasks 4.7/4.8) was first implemented with the view as the only source and regressed four
+`test_live_capture_display_boundary` cases: a live overdub note vanished from the submitted frame once the view
+was tile-scoped. The cause was the shared role: `DisplayNoteResolveLiveCapture` used `overdubSourceViewNotes_`
+as the committed display base, so a partial overlap view was a partial display source.
+
+### Decision
+
+1. **One producer, two drivers.** The span cache has exactly one writer while a session is active:
+   `serviceOverdubCoverageTurn`, one declared event grain per turn, deriving a tile's closure-padded lookup
+   window and publishing the tile's candidate notes **and** its prepared bit on the completing grain. The
+   deferred idle owner and the session-open path are its only drivers. The old moving-window producer
+   (`appendLastCommittedOverdubPassToSourceView`'s merge and the idle `publishPreparedOverdubPass`+rebuild) is
+   retired from the session path.
+2. **The overlap view is a read-only cut** of the published tiles, composed by `NoteId`, plus the private
+   predecessor prefix while that scan owns the cache. It has no playhead window and no display role. A pending
+   **Add** is not merged at the cut (only Hide/Shorten are): the interval's own note is not a committed overlap
+   candidate, and merging it made a later consequence target the session's own row.
+3. **Conservative closure on both sides.** A tile's lookup window is widened by the committed maximum note span
+   in both directions; the maximum is seeded once per session from a committed-event scan and grown from
+   published rows. Without the forward pad, a note whose Off lies beyond its own tile was published by no tile
+   (measured: On@0/Off@5000 on a 6144-tick loop vanished).
+4. **CommittedDisplayBase.** The display's committed source is `immutable committed generation
+   (playbackRevision + current published identity) × display window`. A miss gathers the paint window plus the
+   standard margin, capped at `kMaxDetailedWindowBars` (16 bars); it never falls back to a whole-loop resolve.
+   The base is invalidated by a commit/publication, a loop-length change, or a window move outside its
+   coverage; **not** by live overdub activity and **not** by overlap tile preparation. Frame composition is
+   `CommittedDisplayBase + LiveCaptureOverlay`. The visual cache may later implement the same abstraction.
+5. **Prerequisites defer by name.** Occupancy at the pressed phase and span finalization are owed when their
+   tiles are not prepared; the obligation is coalesced per note, discharged exactly once when the worker
+   publishes, and answered at the seal deadline from a bounded window of the note's own span.
+6. **The open edge requires the window around the playhead**, not the whole loop. Viewport movement does not
+   enlarge overlap coverage.
+
+### Consequences and limits
+
+- `overdubSourceSpanCacheReady()` now means "no required tile is owed" during a session; an empty required set
+  is ready. This is the scheduling side effect D3 anticipated (`canonicalPreparationHasPriorityWork` usually
+  reports ready during a session).
+- A stopped-slot `prewarmOverdubSourceSpanCache` remains an optional STOPPED-only prewarm; no session-path
+  consumer depends on it. It is not a whole-loop preparation mechanism for a session.
+- Closure saturates to the whole loop when a committed note spans at least the loop; such a slot pays a
+  whole-loop window copy per tile (not a whole-pass resolve in one turn). This is the declared conservative
+  cost, not a bound.
+- The display base gathers up to 16 bars on a miss; the first frame after a commit/window move pays that
+  bounded gather. The existing visual-cache branch remains the faster committed source when it covers.
+- Device acceptance is open: the oracle still needs zero `loop_rem,idle_maint`, the MIDI/clock gap maxima, and
+  the `persist_save` step attribution.
+
+### Evidence
+
+`openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-RIAO3-LANDED.md` and
+`captures/riao3-attempt-20261029/README.md`. Related: DEC-181 (windowed display resolve), DEC-043 (bound
+class), the change's `design.md` D1–D7.
+
+## DEC-212 — The realtime turn owns an 8 ms child budget derived from the fastest supported clock interval
+
+**Date:** 2026-10-30
+**Owner:** `MidiServiceDrain` turn helpers (`admitIdleOwnerChild`, `IdleOwnerTurnBudget`,
+`unboundedIdleOwnerChildMayRun`) and `Track::processDeferredIdleMaintenance`.
+**Status:** Implemented; native and target build green; device acceptance **open**.
+
+### Problem / evidence
+
+The idle owner could run whole-loop resolves, the source-span prewarm, the stored-MIDI verification and the
+SEVT dump in one turn. `captures/session_20261029_190227.log` attributes a 332 ms `loop_rem,idle_maint`
+turn to a 201 ms whole-pass resolve. A first 25 ms draft of the child budget also left too little residual:
+at 300 BPM a MIDI clock edge arrives every 8,333 µs, so a 25 ms child budget alone overshoots one edge.
+
+### Decision
+
+1. `kOwnerWorkBudgetUs = 8,000` for admitted child work and `kOwnerWorkResidualUs = 4,000` for the turn's own
+   cost; `budget + residual <= 8,333 µs`, the fastest supported clock interval (300 BPM, 24 PPQN).
+2. The dispatch rule is `min(declaredChildMax, remainingOwnerWorkBudget)`; a child whose declared maximum
+   cannot fit is **deferred**, except a finer-grained resumable child, which may take the remaining deadline
+   at `fineGrainUs`. A zero remaining budget admits nothing.
+3. Unbounded children are never dispatched while the turn is timing-critical; they emit one named deferral
+   per child per 5 s and keep their request/cursor for the next non-critical turn.
+4. The 50 ms `kIdleMaintBreachThresholdUs` stays the alarm threshold; it is not the scheduling budget. No
+   new scheduler or owner is introduced.
+
+### Consequences and limits
+
+The aggregate turn is bounded, but the budget is not a measurement of the turn's residual; section 5.4
+records the measured residual. The 8 ms number is not used to size tiles or grains.
+
+### Evidence
+
+`test_riao1_budget_fits_inside_the_fastest_supported_clock_interval`, RIAO-1.A/B/C/D/E in
+`test_realtime_idle_owner_admission`, and `session_20261029_190227.log`. Design D1/D2.
+
+## DEC-213 — Whole-loop parity is a convergence gate, not a construction gate
+
+**Date:** 2026-10-30
+**Owner:** `Loop::serviceOverdubCoverageTurn` / `publishPreparedOverdubCoverageTile` (touched coverage) and
+`Loop::rebuildOverdubSourceView` (read-only cut).
+**Status:** Implemented; native and target build green; device acceptance **open**.
+
+### Problem / evidence
+
+The earlier windowed derive proved whole-loop parity on the timing-critical lane by building the whole loop.
+The 201 ms resolve in `session_20261029_190227.log` is that construction cost. Parity is still required, but
+it must not be paid per turn.
+
+### Decision
+
+1. The construction unit is a touched-coverage tile (4 bars, closure-widened on both sides from the committed
+   maximum note span), published content+bit atomically by the one session writer.
+2. Whole-loop equality is a **convergence/parity test**, not a construction step: the same committed content
+   must produce the same displayed/source notes when derived whole or through the tile set.
+3. A two-bar touch derives the covering tile at a cost independent of loop length; the whole-loop derive is
+   allowed only as the named convergence comparison, never as a per-turn fallback.
+
+### Consequences and limits
+
+A display-base miss gathers the bounded paint window (16 bars), not the whole loop. Convergence is proven by
+the parity suite; the per-region readiness contract is DEC-211.
+
+### Evidence
+
+`test_overdub_source_window_parity` (RIAO-3.1–3.4 and 4.13: 8-bar and 31-bar loops both derive the covering
+tile for 3 ops / 2 notes; whole-loop 7/6 vs 30/29). Design D3a.
+
+## DEC-214 — Persistence step naming is report-only until the step is split
+
+**Date:** 2026-10-30
+**Owner:** `DeferredSaveScheduler` (the four timing points) and `PersistenceDiagnostics`.
+**Status:** Implemented; native green; device acceptance **open**.
+
+### Problem / evidence
+
+`processDeferredSaveState` is an indivisible step with a nominal budget that is not enforced inside it; a
+single expensive SD operation can exceed the 50 ms bar without the between-step budget seeing it. Naming the
+step is needed before it can be split, but naming must not change admission, budget or order.
+
+### Decision
+
+1. Each executed step reports `(step, stepUs, budgetUs, indivisible)`; a row is emitted only when the step
+   exceeds the active budget or the 50 ms bar, at most once per step per 5 s.
+2. The report does not allocate, does not run on the stop path, and changes no persistence behaviour.
+3. Row 14 in `ExecutionBounds.md` stays coarse/empirical ("nominal budget not enforced within an indivisible
+   step") until section 6 splits the step from two-run device evidence (5.3/5.5).
+
+### Consequences and limits
+
+Naming is not bounding. The split is a later, measurement-sequenced change, and only then may row 14 be
+reclassified.
+
+### Evidence
+
+`test_persistence_step_is_named_only_on_a_breach`,
+`test_riao3_3_forced_slow_step_names_exactly_one_row_per_interval` (real revision-commit FSM with a forced
+60,000 µs report; one row per step per 5 s), and the capture-only `DIAG,persist_save,step,...` row. Design D5.
+
+## DEC-215 — The atomic SD rename is an indivisible blocking commit; accepted on the live lane
+
+**Date:** 2026-10-30
+**Owner:** `CurrentSetStorage::atomicRenameTempFile` / `Loop::stepFinalizeDeferredLoopSlotTemp` (`VerifyAndRename` stage).
+**Status:** Implemented; owner-accepted 2026-10-30; row 14 stays coarse/empirical.
+
+### Problem / evidence
+
+The 6.3 finalize probe split the LoopPersist finalize: `VerifyToken` 2.1-5.2 ms, `AtomicRename`
+26.4-35.8 ms, `SealJournal` 4.8-6.4 ms. Removing two redundant SD lookups (`exists(temp)` after the
+token verify; `exists(final)` before `remove`) cut the median rename from **28.4 ms to 22.0 ms**. A
+second consistency probe measured 12 renames at **21.3-28.3 ms, none over 50 ms**; the single 161 ms
+sample in the first probe did **not** recur and is treated as a one-off card stall. The 161 ms
+`persist_save` row that recurs at ~80 s is a **post-stop aggregate save turn**, not one rename.
+
+The rename is a synchronous SD call: the main loop cannot serve MIDI or the windowed lane while it
+runs. The second probe's live window contains three transport-running `win_gap_overrun` rows
+(overruns 7/1/8, max 78/90/81 ticks) coinciding with the 22-28 ms renames. The owner reviewed the
+blocking-versus-waiting distinction and chose to **accept the blocking commit**: deferring the rename
+under transport was offered and declined.
+
+### Decision
+
+1. Keep the temp-file -> final-file atomic rename as the persistence commit; do not remove or replace
+   it with an in-place write.
+2. Keep the redundant-lookup removal (one `remove(final)` + `rename`); it saved ~6-7 ms per save.
+3. The live lane may block for the 22-28 ms rename, and a rare card stall may exceed that. This is an
+   accepted limit, not a claim that the step is bounded. An asynchronous/non-blocking SD rename is
+   future work if the limit becomes unacceptable.
+4. Row 14 remains **coarse/empirical**. The named-step row stays report-only and the "nominal budget
+   not enforced within an indivisible step" note is not removed. No reclassification.
+
+### Consequences and limits
+
+`persist_save` can still breach (the post-stop 161 ms aggregate and the rare stall). The mid-pass
+capture-chunk flush remains the safety net. The windowed lane can overrun during a live rename; that
+is the accepted cost of the atomic commit.
+
+### Evidence
+
+`captures/riao-rename-probe/`, `captures/riao-rename-probe2/`,
+`openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-ORACLE-FINALIZE.md`.

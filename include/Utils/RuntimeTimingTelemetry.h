@@ -20,6 +20,10 @@
 
 #include <cstdint>
 
+#if defined(SESSION_CAPTURE)
+#include <Arduino.h>
+#endif
+
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 #define RUNTIME_TIMING_ENABLED 1
 #else
@@ -502,6 +506,30 @@ void recordLoadFrameChildRem(uint8_t child, uint32_t startUs);
  * FLASHMEM + PSTR so span strings stay out of DTCM.
  */
 void recordIdleMaintChildRem(uint8_t child, uint32_t startUs);
+
+/// Task 5.4: per-turn idle-owner child accounting. `begin` resets the accumulator; `add` sums a
+/// child's duration; the main loop subtracts the sum from the measured `idle_maint` span. The state
+/// lives in the existing telemetry `State` (EXTMEM on target), so no DTCM is spent.
+void beginIdleMaintBreakdown();
+void addIdleMaintChild(uint8_t child, uint32_t durationUs);
+uint32_t idleMaintChildUs();
+uint8_t idleMaintChildMask();
+bool idleMaintBreakdownShouldEmit(uint32_t nowMs);
+
+#if defined(SESSION_CAPTURE)
+struct IdleMaintChildScope {
+  uint8_t child;
+  uint32_t startUs;
+  explicit IdleMaintChildScope(uint8_t childIndex) : child(childIndex), startUs(micros()) {}
+  ~IdleMaintChildScope() { addIdleMaintChild(child, micros() - startUs); }
+  IdleMaintChildScope(const IdleMaintChildScope&) = delete;
+  IdleMaintChildScope& operator=(const IdleMaintChildScope&) = delete;
+};
+#else
+struct IdleMaintChildScope {
+  explicit IdleMaintChildScope(uint8_t) {}
+};
+#endif
 
 /**
  * Emit Tier-A DIAG lines if the emit interval has elapsed.

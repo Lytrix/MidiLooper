@@ -231,6 +231,31 @@ static void test_current_characterization_revision_supersession_between_slices()
   TEST_ASSERT_EQUAL_UINT32(input, recording.getActiveLoop().capture.store.at(0).noteId);
   TEST_ASSERT_TRUE(recording.isRecording());
 }
+// Tasks 2.3/2.5 — the owner admission's lossless deferral at the one unbounded idle child that this
+// suite can drive directly: a deferred wrap append whose revision moved would rebuild the whole cache.
+// Denied (`allowWholeLoopResolve=false`), it must keep the pending append and the existing cache; admitted
+// on the next turn, it completes.
+static void test_owner_admission_defers_the_unbounded_wrap_fallback_losslessly() {
+  Track& recording = beginRecord();
+  Loop& loop = seedBackground();
+  slice(loop, 0, /*append=*/false);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasDeferredVisualCacheWrapAppend(),
+                           "the slice must leave a deferred wrap append for this contract");
+  const uint32_t revision = loop.visualCache.revision;
+  const size_t notesBefore = loop.visualCache.notes.size();
+  ++loop.playbackRevision; // the append's revision moved: the fallback is the whole-cache rebuild
+
+  loop.applyDeferredVisualCacheWrapAppend(false);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasDeferredVisualCacheWrapAppend(),
+                           "a denied whole-loop resolve must not clear the pending append");
+  TEST_ASSERT_EQUAL_UINT32(revision, loop.visualCache.revision);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(notesBefore),
+                           static_cast<uint32_t>(loop.visualCache.notes.size()));
+
+  loop.applyDeferredVisualCacheWrapAppend(true);
+  TEST_ASSERT_FALSE(loop.hasDeferredVisualCacheWrapAppend());
+}
+
 static void test_desired_bound_source_miss_must_not_resolve_whole_passes() {
   beginRecord();
   Loop& loop = seedBackground();
@@ -847,6 +872,7 @@ int main() {
     std::puts("CURRENT CHARACTERIZATION ONLY: green does not establish the new visual bound");
     RUN_TEST(test_current_characterization_background_miss_exact_content);
     RUN_TEST(test_current_characterization_revision_supersession_between_slices);
+  RUN_TEST(test_owner_admission_defers_the_unbounded_wrap_fallback_losslessly);
   RUN_TEST(test_dec181_windowed_first_paint_4_bars);
   RUN_TEST(test_dec181_windowed_first_paint_does_not_scale_with_loop_length);
   RUN_TEST(test_dec181_a_note_straddling_the_visible_edge_still_resolves);

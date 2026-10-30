@@ -4,11 +4,19 @@
 #include "Loop.h"
 
 #include "LoopInternal.h"
+#include "OverlapNoteIdObservation.h"
 #include "LoopSnapshotBoxes.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include <algorithm>
+
+namespace {
+/// Empty participant set for a completion whose candidates come from the geometric scan. File-local so the
+/// per-note path does not depend on a Track translation unit's constant.
+const OverlapNoteIdSet kNoOverlapIds{};
+}  // namespace
 
 LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
   uint8_t maxIndex = kUngroupedOverdubSessionIndex;
@@ -25,6 +33,333 @@ LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
 }
 
+Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
+  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    return OverdubCoverageTurn::Idle;
+  }
+  // CONTRACTS.md C3.1/C3.5: a private-predecessor scan owns this cache from its first grain until its
+  // deferred holds are materialized, and publishing a committed tile over it would mix a private prefix
+  // with committed content in either direction. The worker yields; the tile stays owed.
+  if (privatePredecessorSourcePending()) {
+    return OverdubCoverageTurn::Idle;
+  }
+  const uint16_t from = overdubCoverageCursorTile_ >= CoveragePrerequisite::kMaxTiles
+                            ? 0
+                            : overdubCoverageCursorTile_;
+  const uint16_t tile = overdubCoverage_.nextOwedTile(from);
+  if (tile >= CoveragePrerequisite::kMaxTiles) {
+    overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+    return OverdubCoverageTurn::Idle;
+  }
+  // A different tile, or a generation move, starts that tile from its own beginning: progress is never
+  // carried across tiles or across source generations.
+  if (tile != overdubCoverageCursorTile_ ||
+      overdubCoverageCursorGeneration_ != overdubCoverage_.generation) {
+    overdubCoverageCursorTile_ = tile;
+    overdubCoverageCursorGeneration_ = overdubCoverage_.generation;
+    overdubCoverageCursor_ = LoopContentResolution::TilePrepCursor{};
+  }
+  const uint32_t tileLength = CoveragePrerequisite::tileLengthTicks();
+  const uint32_t windowStart = static_cast<uint32_t>(tile) * tileLength;
+  if (windowStart >= loopLengthTicks) {
+    // A tile beyond the loop (an envelope edge) cannot be prepared; mark it so it is not re-selected.
+    overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+    return OverdubCoverageTurn::Idle;
+  }
+  const uint32_t windowLength = std::min(tileLength, loopLengthTicks - windowStart);
+  // Conservative closure (design D3): the tile's derive reads backward by the maximum committed note span,
+  // so a note that starts before the tile and sustains into it is paired with its real geometry. The tile
+  // is the *publication* unit; this lookup window is only what the derive reads.
+  uint32_t lookupStart = windowStart;
+  uint32_t lookupLength = windowLength;
+  CoveragePrerequisite::closureWindowAround(windowStart, windowLength, overdubCoverageClosureTicks_,
+                                             loopLengthTicks, lookupStart, lookupLength);
+  if (!LoopContentResolution::stepTilePreparation(passes, loopLengthTicks, lookupStart, lookupLength,
+                                                 eventBudget, overdubCoverageCursor_)) {
+    return OverdubCoverageTurn::Advanced;
+  }
+  // Atomic publication (task 4.8): the grain that completes the tile publishes its content **and** its
+  // prepared bit together. The worker is the span cache's only writer while a session is active.
+  publishPreparedOverdubCoverageTile(tile, overdubCoverageCursor_.notes,
+                                     overdubCoverageCursor_.rawEvents, windowStart, windowLength);
+  overdubCoverage_.publishPrepared(tile);
+  overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+  // Consequences that were owed for a tile now prepared are discharged on the same turn that made their
+  // coverage available, then the view is recut from the published tiles.
+  (void)dischargeDeferredOverdubCompletions();
+  recutOverdubSourceView();
+  return OverdubCoverageTurn::Completed;
+}
+
+bool Loop::overdubCoveragePhasePrepared(uint32_t phaseTick) const {
+  if (!overdubCoverage_.sessionActive) {
+    return false;
+  }
+  return overdubCoverage_.tilePrepared(
+      CoveragePrerequisite::tileIndexForPhase(phaseTick, loopLengthTicks));
+}
+
+bool Loop::overdubCoverageSpanPrepared(uint32_t startTick, uint32_t lengthTicks) const {
+  if (!overdubCoverage_.sessionActive) {
+    return false;
+  }
+  return overdubCoverage_.spanPrepared(startTick, lengthTicks);
+}
+
+uint32_t Loop::overdubSourceSpanOfNote(const NoteUtils::DisplayNote& note) const {
+  if (loopLengthTicks == 0) {
+    return 0;
+  }
+  if (note.endTick >= note.startTick) {
+    return note.endTick - note.startTick;
+  }
+  return loopLengthTicks - note.startTick + note.endTick;
+}
+
+void Loop::adoptPrewarmedOverdubCoverage() {
+  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    return;
+  }
+  // A private-prefix cache is never adopted as a committed source (C3.1/C3.5).
+  bool usable = overdubSourceSpanCacheOrigin_ != SourceOrigin::PrivatePredecessor &&
+                overdubSourceSpanCacheValid_ &&
+                overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
+                overdubSourceSpanCachePlaybackRevision_ == playbackRevision &&
+                overdubSourceSpanCacheFullLoop_;
+  if (usable && publishedSnapshotIsCurrent()) {
+    usable = overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision() &&
+             overdubSourceSpanCachePublishedIdentity_ != nullptr &&
+             overdubSourceSpanCachePublishedIdentity_ == publishedSnapshotIdentity();
+  }
+  if (!usable) {
+    // No current full-loop cache: the session starts from empty coverage and the worker publishes the
+    // tiles the player touches. An old generation's content is never served.
+    overdubSourceSpanCacheNotes_.clear();
+    overdubSourceSpanCacheValid_ = false;
+    overdubSourceSpanCacheFullLoop_ = false;
+    overdubSourceSpanCacheOrigin_ = SourceOrigin::None;
+    return;
+  }
+  // The prewarm already describes the committed source for this generation, so the whole loop is
+  // prepared without a derive. Its maximum note span seeds closure for the tiles published later.
+  uint32_t maxSpan = 0;
+  for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
+    const uint32_t span = overdubSourceSpanOfNote(note);
+    if (span > maxSpan) {
+      maxSpan = span;
+    }
+  }
+  overdubCoverageClosureTicks_ = maxSpan;
+  advanceOverdubCoverageClosure(CoveragePrerequisite::tileLengthTicks());
+  const uint16_t count = CoveragePrerequisite::tileCount(loopLengthTicks);
+  for (uint16_t tile = 0; tile < count; ++tile) {
+    overdubCoverage_.publishPrepared(tile);
+  }
+  overdubSourceSpanCacheCoverageStart_ = 0;
+  overdubSourceSpanCacheCoverageLength_ = loopLengthTicks;
+}
+
+void Loop::advanceOverdubCoverageClosure(uint32_t noteSpanTicks) {
+  if (noteSpanTicks == 0) {
+    return;
+  }
+  if (noteSpanTicks >= loopLengthTicks) {
+    overdubCoverageClosureTicks_ = loopLengthTicks;
+    return;
+  }
+  if (noteSpanTicks > overdubCoverageClosureTicks_) {
+    overdubCoverageClosureTicks_ = noteSpanTicks;
+  }
+}
+
+void Loop::publishPreparedOverdubCoverageTile(uint16_t tile, const NoteUtils::DisplayNoteVec& derived,
+                                              const SessionMidiEventVec& committedEvents,
+                                              uint32_t tileStart, uint32_t tileLength) {
+  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    return;
+  }
+  overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
+  overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  overdubSourceSpanCacheOrigin_ = SourceOrigin::Passes;
+  overdubSourceSpanCacheValid_ = true;
+  // This tile's rows: the derive's notes that intersect the tile, plus the committed identities the
+  // pass-local pairing omitted. Closure rows outside the tile are read for pairing only: they belong to
+  // their own tile's publication, and publishing them here would make this grain publish content it does
+  // not own.
+  NoteUtils::DisplayNoteVec tileNotes;
+  tileNotes.reserve(derived.size());
+  for (const NoteUtils::DisplayNote& note : derived) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, tileStart, tileLength,
+                                                  loopLengthTicks)) {
+      continue;
+    }
+    tileNotes.push_back(note);
+  }
+  mergeOmittedCommittedNoteOnIdentitiesForNotes(tileNotes, committedEvents);
+  for (const NoteUtils::DisplayNote& note : tileNotes) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, tileStart, tileLength,
+                                                  loopLengthTicks)) {
+      continue;
+    }
+    LoopContentResolution::upsertResolvedDisplayNotes(overdubSourceSpanCacheNotes_, {note});
+    advanceOverdubCoverageClosure(overdubSourceSpanOfNote(note));
+  }
+  // The cache's extent is the prepared tile set, not a contiguous pair.
+  const uint16_t count = CoveragePrerequisite::tileCount(loopLengthTicks);
+  uint64_t allTiles = count >= 64 ? ~uint64_t(0) : ((uint64_t(1) << count) - 1u);
+  const bool fullLoop = count != 0 && (overdubCoverage_.prepared & allTiles) == allTiles;
+  overdubSourceSpanCacheFullLoop_ = fullLoop;
+  overdubSourceSpanCacheCoverageStart_ = 0;
+  overdubSourceSpanCacheCoverageLength_ = fullLoop ? loopLengthTicks : 0;
+  (void)tile;
+}
+
+bool Loop::retainDeferredOverdubCompletion(const DeferredOverdubCompletion& completion) {
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+    DeferredOverdubCompletion& existing = deferredOverdubCompletions_[i];
+    if (existing.channel == completion.channel && existing.pitch == completion.pitch &&
+        existing.startTick == completion.startTick) {
+      existing.endTick = completion.endTick != 0 ? completion.endTick : existing.endTick;
+      existing.velocity = completion.velocity;
+      existing.occupancyOwed = existing.occupancyOwed || completion.occupancyOwed;
+      existing.spanOwed = existing.spanOwed || completion.spanOwed;
+      if (existing.noteId == kInvalidNoteId) {
+        existing.noteId = completion.noteId;
+      }
+      return true;
+    }
+  }
+  if (overdubCoverageDeferredCount_ >= kDeferredOverdubCompletionCapacity) {
+    return false;
+  }
+  deferredOverdubCompletions_[overdubCoverageDeferredCount_++] = completion;
+  return true;
+}
+
+uint8_t Loop::dischargeDeferredOverdubCompletions() {
+  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    return 0;
+  }
+  uint8_t discharged = 0;
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_;) {
+    DeferredOverdubCompletion& completion = deferredOverdubCompletions_[i];
+    const bool occupancyReady =
+        !completion.occupancyOwed ||
+        overdubCoverage_.tilePrepared(CoveragePrerequisite::tileIndexForPhase(completion.startTick,
+                                                                             loopLengthTicks));
+    const bool spanLengthReady = completion.endTick != completion.startTick;
+    const uint32_t spanLength =
+        spanLengthReady
+            ? (completion.endTick >= completion.startTick
+                   ? completion.endTick - completion.startTick
+                   : loopLengthTicks - completion.startTick + completion.endTick)
+            : 0;
+    const bool spanReady =
+        !completion.spanOwed || overdubCoverage_.spanPrepared(completion.startTick, spanLength);
+    if (!occupancyReady || !spanReady) {
+      ++i;
+      continue;
+    }
+    (void)applyDeferredOverdubCompletion(completion);
+    // Remove by swap-and-pop: the order of independent completions does not carry meaning, and a note's
+    // occupancy is always applied before its own span inside `applyDeferredOverdubCompletion`.
+    if (i + 1 < overdubCoverageDeferredCount_) {
+      deferredOverdubCompletions_[i] =
+          deferredOverdubCompletions_[overdubCoverageDeferredCount_ - 1];
+    }
+    --overdubCoverageDeferredCount_;
+    ++discharged;
+  }
+  return discharged;
+}
+
+void Loop::materializeDeferredOverdubCompletionsAtDeadline() {
+  // The interval is ending. Every completion still owed is answered from a *windowed* derive of its own
+  // span, never from a partial view: a decision is not dropped at the deadline, and it is applied once.
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+    (void)applyDeferredOverdubCompletion(deferredOverdubCompletions_[i]);
+  }
+  overdubCoverageDeferredCount_ = 0;
+}
+
+bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& completion) {
+  if (loopLengthTicks == 0 || completion.endTick == completion.startTick) {
+    return false;
+  }
+  NoteUtils::DisplayNoteVec local;
+  // The discharge lane answers from the **committed tile content** (the cache), which is what the worker
+  // published for this generation; the view is a display cut and may not have been recut yet on the same
+  // turn. If the span's tiles are still not all prepared, the deadline/discharge derives exactly the
+  // span's closure window -- a bounded window, never a pass walk.
+  const NoteUtils::DisplayNoteVec* candidates = &overdubSourceSpanCacheNotes_;
+  const uint32_t spanLength =
+      completion.endTick >= completion.startTick
+          ? completion.endTick - completion.startTick
+          : loopLengthTicks - completion.startTick + completion.endTick;
+  if (!overdubCoverage_.spanPrepared(completion.startTick, spanLength)) {
+    uint32_t lookupStart = 0;
+    uint32_t lookupLength = 0;
+    CoveragePrerequisite::closureWindowAround(completion.startTick, spanLength,
+                                               overdubCoverageClosureTicks_, loopLengthTicks,
+                                               lookupStart, lookupLength);
+    LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, lookupStart,
+                                                       lookupLength, local);
+    candidates = &local;
+  }
+  OverlapNoteIdSet resolved;
+  if (completion.occupancyOwed) {
+    OverlapNoteIdSet participants;
+    for (const NoteUtils::DisplayNote& note : *candidates) {
+      if (note.note != completion.pitch || note.noteId == kInvalidNoteId) {
+        continue;
+      }
+      if (!OverlapNoteIdObservation::displayNotePresentAtHold(note.startTick, note.endTick,
+                                                              completion.startTick,
+                                                              loopLengthTicks)) {
+        continue;
+      }
+      (void)participants.insert(note.noteId);
+    }
+    resolveOccupancyAtNoteOn(completion.channel, completion.pitch, completion.velocity, participants,
+                             completion.startTick, &resolved);
+  }
+  return applyOverlapConsequenceForCompletedNote(
+      completion.channel, completion.pitch, completion.velocity, completion.startTick,
+      completion.endTick, completion.noteId, kNoOverlapIds,
+      completion.occupancyOwed ? &resolved : nullptr, false, candidates);
+}
+
+uint8_t Loop::markOverdubCoverageNoteOn(uint32_t phaseTick) {
+  if (!overdubCoverage_.sessionActive) {
+    return 0;
+  }
+  return overdubCoverage_.markNoteOn(phaseTick);
+}
+
+uint8_t Loop::markOverdubCoverageHeldAdvance(uint32_t phaseTick) {
+  if (!overdubCoverage_.sessionActive) {
+    return 0;
+  }
+  return overdubCoverage_.markHeldAdvance(phaseTick);
+}
+
+uint8_t Loop::markOverdubCoverageSpan(uint32_t startTick, uint32_t endTick) {
+  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    return 0;
+  }
+  const uint32_t start = startTick % loopLengthTicks;
+  const uint32_t end = endTick % loopLengthTicks;
+  // A note that closes before its own start wrapped the loop; its span runs through the loop end.
+  const uint32_t length = end > start ? (end - start) : (loopLengthTicks - start + end);
+  return overdubCoverage_.markSpanSealed(start, length == 0 ? 1u : length);
+}
+
 LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, bool forceNew) {
   if (hasOverdubSession() && !forceNew) {
     return;
@@ -37,6 +372,13 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
   // one leaves a 336→336 hold beside the occupy suffix (`001647`).
   clearSealedCapturePreview();
   playheadPhaseTick = sessionPlayheadPhaseTick;
+  // Touched coverage is per overdub session (design D3): a new session starts with no required tiles for
+  // its source generation. Nothing is derived here -- acceptance marks demand later.
+  overdubCoverage_.beginSession(loopLengthTicks, playbackRevision);
+  overdubCoverageDeferredCount_ = 0;
+  overdubCoverageClosureTicks_ = 0;
+  seedOverdubCoverageClosureFromCommittedContent();
+  adoptPrewarmedOverdubCoverage();
   currentOverdubSessionIndex_ = nextOverdubSessionIndex_;
   if (nextOverdubSessionIndex_ == 255) {
     nextOverdubSessionIndex_ = 1;
@@ -98,6 +440,9 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
   overdubSessionLiveUndoEvents_.clear();
+  overdubCoverage_.endSession();
+  overdubCoverageDeferredCount_ = 0;
+  overdubCoverageClosureTicks_ = 0;
   clearOverdubSourceView();
   discardUnpublishedSnapshotIfNotSessionExit();
 }

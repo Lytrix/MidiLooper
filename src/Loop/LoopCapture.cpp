@@ -10,6 +10,7 @@
 #include "LoopPasses.h"
 #include "Utils/CaptureIncrementalSanity.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
@@ -17,6 +18,7 @@
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/WindowCoverage.h"
 #include "EditApply.h"
 #include "PlaybackMergedMidiEvents.h"
 
@@ -24,6 +26,37 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+
+// Task 4.3 seam: the production span-cache derive reports its own cost so a fixture can assert that the
+// realtime path is the **windowed** resolve and not the whole-pass one. Observation only -- reset/read
+// from a test, never consulted by production logic. RAM2 so it cannot move the RAM1 line.
+#if defined(__IMXRT1062__)
+DMAMEM static uint32_t sOverdubSpanDeriveOps;
+DMAMEM static uint8_t sOverdubSpanDeriveMeasuring;
+#else
+static uint32_t sOverdubSpanDeriveOps;
+static uint8_t sOverdubSpanDeriveMeasuring;
+#endif
+
+namespace {
+void noteOverdubSpanDeriveOps(const ResolutionCostCounters& counters) {
+  if (sOverdubSpanDeriveMeasuring != 0) {
+    sOverdubSpanDeriveOps = static_cast<uint32_t>(counters.resolutionOperations);
+  }
+}
+}  // namespace
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+void Loop::beginOverdubSpanDeriveMeasureForTest() {
+  sOverdubSpanDeriveOps = 0;
+  sOverdubSpanDeriveMeasuring = 1;
+}
+
+uint32_t Loop::overdubSpanDeriveOpsForTest() {
+  sOverdubSpanDeriveMeasuring = 0;
+  return sOverdubSpanDeriveOps;
+}
+#endif
 
 bool Loop::hasCommittedPasses() const {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
@@ -616,6 +649,42 @@ uint32_t Loop::overdubSourceWindowLengthTicks() const {
   return kOverdubSourceWindowBars * Config::TICKS_PER_BAR;
 }
 
+void Loop::resolveEffectiveDisplayNotesInWindow(uint32_t requestedStart, uint32_t requestedLength,
+                                                NoteUtils::DisplayNoteVec& out) const {
+  uint32_t deriveStart = 0;
+  uint32_t deriveLength = 0;
+  resolvePaddedOverdubSourceWindow(requestedStart, requestedLength, deriveStart, deriveLength);
+  LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, deriveStart,
+                                                     deriveLength, out);
+}
+
+void Loop::resolvePaddedOverdubSourceWindow(uint32_t requestedStart, uint32_t requestedLength,
+                                            uint32_t& deriveStart, uint32_t& deriveLength) const {
+  const uint32_t loopLen = loopLengthTicks;
+  if (loopLen == 0) {
+    deriveStart = 0;
+    deriveLength = 0;
+    return;
+  }
+  // A whole-loop request is already the whole loop: no pad can widen it.
+  if (requestedLength == 0 || requestedLength >= loopLen) {
+    deriveStart = 0;
+    deriveLength = loopLen;
+    return;
+  }
+  const uint32_t pad = Config::TICKS_PER_BAR;
+  const uint32_t padded = requestedLength + 2 * pad;
+  if (padded >= loopLen) {
+    deriveStart = 0;
+    deriveLength = loopLen;
+    return;
+  }
+  // Loop-aware: the pad wraps rather than clamping at 0, so a window near either edge can read the
+  // fragment on the other side of the wrap.
+  deriveStart = (requestedStart + loopLen - (pad % loopLen)) % loopLen;
+  deriveLength = padded;
+}
+
 void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
                                       uint32_t& windowLength) const {
   const uint32_t loopLen = loopLengthTicks;
@@ -950,6 +1019,49 @@ LOOP_COLD_MEM void mergeOmittedCommittedNoteOnIdentities(NoteUtils::DisplayNoteV
 
 }  // namespace
 
+LOOP_COLD_MEM void Loop::seedOverdubCoverageClosureFromCommittedContent() {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  // The minimum pad is one tile: it covers an ordinary note that starts inside one tile and ends inside
+  // the next, so a session always has a usable forward pad even before it learns the real maximum.
+  advanceOverdubCoverageClosure(CoveragePrerequisite::tileLengthTicks());
+  SessionMidiEventVec events;
+  if (!gatherConstructionCommittedEvents(*this, events) || events.empty()) {
+    return;
+  }
+  ActiveNoteLedger pairing;
+  uint32_t maxSpan = 0;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn()) {
+      pairing.applyPlaybackEvent(evt.channel, evt);
+      continue;
+    }
+    if (!evt.isNoteOff()) {
+      continue;
+    }
+    uint32_t startTick = 0;
+    pairing.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry& entry) {
+      if (channel != evt.channel || note != evt.data.noteData.note) {
+        return;
+      }
+      if (evt.noteId != kInvalidNoteId && entry.noteId != evt.noteId) {
+        return;
+      }
+      startTick = entry.startTick;
+    });
+    if (!pairing.applyPlaybackEvent(evt.channel, evt)) {
+      continue;
+    }
+    const uint32_t span =
+        evt.tick >= startTick ? (evt.tick - startTick) : (loopLengthTicks - startTick + evt.tick);
+    if (span > maxSpan) {
+      maxSpan = span;
+    }
+  }
+  advanceOverdubCoverageClosure(maxSpan);
+}
+
 LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
     NoteUtils::DisplayNoteVec& dest) const {
   if (loopLengthTicks == 0) {
@@ -964,45 +1076,38 @@ LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
   applyPendingNoteChangesToDisplayNotes(dest, dest.size());
 }
 
+LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesForNotes(
+    NoteUtils::DisplayNoteVec& dest, const SessionMidiEventVec& events) const {
+  if (loopLengthTicks == 0 || events.empty()) {
+    return;
+  }
+  mergeOmittedCommittedNoteOnIdentities(dest, events);
+}
+
 LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
-  if (!overdubSourceViewEstablished_ || lastCommittedPassId_ == kInvalidPassId ||
-      loopLengthTicks == 0) {
+  if (lastCommittedPassId_ == kInvalidPassId || loopLengthTicks == 0) {
     return;
   }
-  const OverdubPass* wrapPass = nullptr;
+  // Tasks 4.7/4.8: this used to be a **second writer** of the session source -- it merged the just
+  // committed pass into the view *and* restamped the span cache whole-loop, beside the worker that is now
+  // the only writer. The commit already invalidated the generation, so the worker republishes the
+  // required tiles, content and bit together. What this edge still owes is closure: the pass's own note
+  // spans widen the tile lookup pad so a long note that starts outside a touched tile is still paired.
   for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.id == lastCommittedPassId_) {
-      wrapPass = &pass;
-      break;
+    if (pass.id != lastCommittedPassId_ || pass.committedChunkIds.empty()) {
+      continue;
     }
-  }
-  if (wrapPass == nullptr || wrapPass->committedChunkIds.empty()) {
+    SessionMidiEventVec passEvents;
+    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, passEvents);
+    if (passEvents.empty()) {
+      return;
+    }
+    NoteUtils::DisplayNoteVec passNotes =
+        NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
+    for (const NoteUtils::DisplayNote& note : passNotes) {
+      advanceOverdubCoverageClosure(overdubSourceSpanOfNote(note));
+    }
     return;
-  }
-  SessionMidiEventVec passEvents;
-  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
-  if (passEvents.empty()) {
-    return;
-  }
-  NoteUtils::DisplayNoteVec passNotes =
-      NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
-  mergeOmittedCommittedNoteOnIdentities(passNotes, passEvents);
-  collapseSplitHeadTailToWrapHeld(passNotes, loopLengthTicks);
-  mergeDisplayNotesIntoOverdubSourceView(passNotes);
-  // Do not merge this pass's isolated reconstruct into visualCache. Per-pass
-  // pairing omits record Offs and lengthens body notes (205138: 205 → 271 at
-  // wrap 2; idle slice then 260; STOPPED is short). New wrap notes enter
-  // visualCache from idle slice / wrap-held display append.
-  // Wrap restamp can clear readiness (wrap-pair / missing id) while leaving notes.
-  // Idle then rebuildOverdubSourceView("idle") from=passes (200434). Merge the
-  // same wrap-pass notes into the existing span cache and restamp so ready()
-  // holds. O(pass) only — not a full-loop reconstruct.
-  if (overdubSourceSpanCacheValid_ || !overdubSourceSpanCacheNotes_.empty()) {
-    mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, passNotes);
-    overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
-    overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
-    overdubSourceSpanCacheValid_ = true;
-    overdubSourceSpanCacheFullLoop_ = true;
   }
 }
 
@@ -1095,8 +1200,37 @@ LOOP_COLD_MEM void Loop::establishOverdubSourceView(uint32_t playheadPhaseTick) 
   // the previous interval's private prefix.
   discardPrivatePredecessorSource();
   overlapHoldTotals_ = {};
+  // **One producer, two drivers** (tasks 4.7/4.8). The open path requires the window it is about to
+  // expose and drives the same worker the deferred owner drives, under a declared grain cap. It does not
+  // run a second derive: every tile it prepares is published content + prepared bit together.
+  if (overdubCoverage_.sessionActive && loopLengthTicks > 0) {
+    // **Overlap coverage only** (design D3). The display has its own committed base
+    // (`CommittedDisplayBase`), so the open edge does not prewarm the whole loop here: it requires the
+    // window around the playhead and lets acceptance/hold marks widen coverage as the player touches
+    // regions. Viewport movement never enlarges this set.
+    uint32_t openStart = 0;
+    uint32_t openLength = 0;
+    resolveOverdubSourceWindow(playheadPhaseTick, openStart, openLength);
+    if (openLength > 0) {
+      overdubCoverage_.markSpanSealed(openStart, openLength);
+      constexpr uint8_t kOpenCoverageMaxGrains = 8;
+      for (uint8_t grain = 0;
+           grain < kOpenCoverageMaxGrains && overdubCoverage_.owedCount() > 0; ++grain) {
+        if (serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+            OverdubCoverageTurn::Idle) {
+          break;
+        }
+      }
+    }
+  }
   rebuildOverdubSourceView(playheadPhaseTick, "open");
   clearPendingNoteChanges();
+}
+
+LOOP_COLD_MEM void Loop::recutOverdubSourceView() {
+  // The view is a read-only cut of the cache; recutting after a publication is the only "refresh" the
+  // session needs. The playhead is only the diagnostic's label -- the cut is tile-scoped, not windowed.
+  rebuildOverdubSourceView(lastTickInLoop == UINT32_MAX ? 0 : lastTickInLoop, "tile");
 }
 
 LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
@@ -1105,6 +1239,12 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
   // private prefix as a complete span.
   if (privatePredecessorSourcePending()) {
     return false;
+  }
+  // Touched coverage (tasks 4.7/4.8): during a session the source is ready when **no required tile is
+  // owed** -- an empty required set is a complete answer. There is no whole-loop requirement any more;
+  // every tile the player touched has been published atomically by the worker.
+  if (overdubCoverage_.sessionActive) {
+    return overdubCoverage_.owedCount() == 0;
   }
   if (!overdubSourceSpanCacheValid_) {
     return false;
@@ -1119,15 +1259,64 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
 }
 
 LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReusable() const {
-  if (!overdubSourceSpanCacheReady()) {
+  return overdubSourceSpanCacheCoversWindow(0, loopLengthTicks);
+}
+
+/// Window-aware reuse: the cache is authoritative for `windowStart..+windowLength` only while its own
+/// coverage contains that interval **and** its identity is current. This is the predicate both consumers
+/// use — the wrap/idle refresh and the note-hold merge — so neither re-derives content it already holds,
+/// and neither serves content it does not.
+///
+/// Under touched coverage the coverage unit is the **tile**: a window is servable when every tile it
+/// touches is prepared for the current generation (design D3). A private-predecessor prefix answers as a
+/// whole cache while the scan owns it (C3.1/C3.5).
+LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheCoversWindow(uint32_t windowStart,
+                                                            uint32_t windowLength) const {
+  if (!overdubSourceSpanCacheValid_ || loopLengthTicks == 0) {
     return false;
   }
-  if (!publishedSnapshotIsCurrent()) {
+  if (overdubSourceSpanCacheLoopLengthTicks_ != loopLengthTicks) {
+    return false;
+  }
+  if (overdubSourceSpanCachePlaybackRevision_ != playbackRevision) {
+    return false;
+  }
+  if (publishedSnapshotIsCurrent()) {
+    if (overdubSourceSpanCachePublishedRevision_ != publishedSnapshotRevision() ||
+        overdubSourceSpanCachePublishedIdentity_ == nullptr ||
+        overdubSourceSpanCachePublishedIdentity_ != publishedSnapshotIdentity()) {
+      return false;
+    }
+  }
+  if (overdubSourceSpanCacheOrigin_ == SourceOrigin::PrivatePredecessor) {
+    return overdubSourceSpanCacheFullLoop_;
+  }
+  if (overdubCoverage_.sessionActive) {
+    if (windowLength == 0) {
+      return false;
+    }
+    const uint16_t count = CoveragePrerequisite::tileCount(loopLengthTicks);
+    if (count == 0) {
+      return false;
+    }
+    const uint16_t first =
+        CoveragePrerequisite::tileIndexForPhase(windowStart, loopLengthTicks);
+    const uint16_t last = CoveragePrerequisite::tileIndexForPhase(
+        windowStart + windowLength - 1u, loopLengthTicks);
+    for (uint16_t steps = 0; steps < count; ++steps) {
+      const uint16_t tile = static_cast<uint16_t>((first + steps) % count);
+      if (!overdubCoverage_.tilePrepared(tile)) {
+        return false;
+      }
+      if (tile == last) {
+        break;
+      }
+    }
     return true;
   }
-  return overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision() &&
-         overdubSourceSpanCachePublishedIdentity_ != nullptr &&
-         overdubSourceSpanCachePublishedIdentity_ == publishedSnapshotIdentity();
+  return WindowCoverage::windowCoversWindow(overdubSourceSpanCacheCoverageStart_,
+                                            overdubSourceSpanCacheCoverageLength_, windowStart,
+                                            windowLength, loopLengthTicks);
 }
 
 LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart,
@@ -1171,6 +1360,11 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     requestedWindowLength = loopLengthTicks;
   }
   SourceOrigin sourceOrigin = SourceOrigin::Passes;
+  // What this cache's notes actually cover. Reuse is judged against it (see `overdubSourceSpanCacheReusable`):
+  // an established cache is authoritative only while its coverage contains the interval the caller will
+  // evaluate. Never claim more than was derived.
+  uint32_t coverageStart = requestedWindowStart;
+  uint32_t coverageLength = requestedWindowLength;
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
   const bool usePublishedSnapshot = !privateCacheOwned && snapshot &&
                                     publishedSnapshotIsCurrent();
@@ -1193,6 +1387,8 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
                                      overdubSourceSpanCacheNotes_);
     }
     overdubSourceSpanCacheFullLoop_ = requestedWindowLength >= loopLengthTicks;
+    coverageStart = overdubSourceSpanCacheFullLoop_ ? 0u : requestedWindowStart;
+    coverageLength = overdubSourceSpanCacheFullLoop_ ? loopLengthTicks : requestedWindowLength;
     sourceOrigin = SourceOrigin::Snapshot;
   } else {
     const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
@@ -1205,12 +1401,16 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   );
   if (copiedPreparedSpans) {
     overdubSourceSpanCacheFullLoop_ = true;
+    coverageStart = 0;
+    coverageLength = loopLengthTicks;
     sourceOrigin = SourceOrigin::Prepared;
   } else if (hasOverdubSession() && !priorSpanCacheNotes.empty()) {
     // A prior cache is reusable only when it was proven to cover the full loop. A
     // nonempty partial seed is not a valid answer for a later source window.
     overdubSourceSpanCacheNotes_.swap(priorSpanCacheNotes);
     overdubSourceSpanCacheFullLoop_ = true;
+    coverageStart = 0;
+    coverageLength = loopLengthTicks;
     sourceOrigin = SourceOrigin::Prior;
   } else if (hasOverdubSession() &&
              !visualCache.notes.empty() &&
@@ -1221,14 +1421,36 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     // display list only when it covers the requested source interval.
     overdubSourceSpanCacheNotes_ = visualCache.notes;
     overdubSourceSpanCacheFullLoop_ = !visualCacheDirty;
+    coverageStart = overdubSourceSpanCacheFullLoop_ ? 0u : requestedWindowStart;
+    coverageLength = overdubSourceSpanCacheFullLoop_ ? loopLengthTicks : requestedWindowLength;
     sourceOrigin = SourceOrigin::Visual;
   } else {
-    // An uncovered visual cache is not a valid overlap source. Reconstruct from
-    // committed passes so overlap resolution never receives a partial span.
-    LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks,
-                                               overdubSourceSpanCacheNotes_);
+    // An uncovered visual cache is not a valid overlap source. Reconstruct from committed passes so
+    // overlap resolution never receives a partial span.
+    //
+    // **Windowed, not whole-loop** (task 4.2/4.3): the callers of this cache evaluate one *window*
+    // (`resolveOverdubSourceWindow`, 16 bars), and both consumers filter by that window anyway. Deriving
+    // the whole pass here was the 201 ms `lcr,pairrows,at=passes` span inside the idle owner turn.
+    //
+    // The pad is **loop-aware**: a window near either loop edge must be able to read the fragment on the
+    // other side, or a wrap note whose note-on lies outside the window can never be paired (measured:
+    // a clamped pad resolved 0 of 3 notes for a wrap window). A clamped pad -- the visual-cache slice's
+    // shape -- is not sufficient here.
+    const uint32_t padTicks = Config::TICKS_PER_BAR;
+    uint32_t deriveStart = 0;
+    uint32_t deriveLength = 0;
+    resolvePaddedOverdubSourceWindow(requestedWindowStart, requestedWindowLength, deriveStart,
+                                     deriveLength);
+    ResolutionCostCounters deriveCounters;
+    LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, deriveStart,
+                                                       deriveLength,
+                                                       overdubSourceSpanCacheNotes_,
+                                                       &deriveCounters);
+    noteOverdubSpanDeriveOps(deriveCounters);
     appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
-    overdubSourceSpanCacheFullLoop_ = true;
+    overdubSourceSpanCacheFullLoop_ = deriveLength >= loopLengthTicks;
+    coverageStart = overdubSourceSpanCacheFullLoop_ ? 0u : deriveStart;
+    coverageLength = overdubSourceSpanCacheFullLoop_ ? loopLengthTicks : deriveLength;
     sourceOrigin = SourceOrigin::Passes;
   }
   }
@@ -1245,7 +1467,18 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
         // not raw reconstruct — reconstruct re-admits Hidden shorts (`202713`).
         if (sourceOrigin != SourceOrigin::Passes) {
           NoteUtils::DisplayNoteVec committedNotes;
-          LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, committedNotes);
+          // Windowed for the same reason as the seed above: this merge recovers committed `NoteId`s for
+          // the interval the caller will evaluate, and deriving the whole pass here was the second
+          // whole-loop resolve on the idle owner turn.
+          uint32_t mergeStart = 0;
+          uint32_t mergeLength = 0;
+          resolvePaddedOverdubSourceWindow(requestedWindowStart, requestedWindowLength, mergeStart,
+                                           mergeLength);
+          ResolutionCostCounters mergeCounters;
+          LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, mergeStart,
+                                                             mergeLength, committedNotes,
+                                                             &mergeCounters);
+          noteOverdubSpanDeriveOps(mergeCounters);
           appendOverdubPassWrapPairedNotes(committedNotes);
           mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
         }
@@ -1311,6 +1544,8 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   // The origin is recorded, not inferred from the notes: a private predecessor's rows are visibly
   // non-committed even though they sit in the same full-loop cache.
   overdubSourceSpanCacheOrigin_ = sourceOrigin;
+  overdubSourceSpanCacheCoverageStart_ = loopLengthTicks == 0 ? 0u : (coverageStart % loopLengthTicks);
+  overdubSourceSpanCacheCoverageLength_ = coverageLength;
   return sourceOriginName(sourceOrigin);
 }
 
@@ -1403,6 +1638,7 @@ LOOP_COLD_MEM void Loop::applyPendingSnapshotCompanionsToDisplayNotes(
 }
 
 LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why) {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(2);
   if (why == nullptr || why[0] == '\0') {
     why = "wrap";
   }
@@ -1436,41 +1672,41 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     overdubSourceViewEstablished_ = true;
     return;
   }
-  uint32_t windowStart = 0;
-  uint32_t windowLength = 0;
-  resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
-  const char* from = "cache";
-  if (!overdubSourceSpanCacheReusable()) {
-    from = rebuildOverdubSourceSpanCache(windowStart, windowLength);
-  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   const uint32_t filterStartUs = micros();
 #endif
-  auto noteOnTickInWindow = [&](uint32_t tick) {
-    if (windowLength >= loopLengthTicks) {
-      return true;
-    }
-    const uint32_t windowEnd = windowStart + windowLength;
-    if (windowEnd <= loopLengthTicks) {
-      return tick >= windowStart && tick < windowEnd;
-    }
-    const uint32_t wrappedEnd = windowEnd % loopLengthTicks;
-    return tick >= windowStart || tick < wrappedEnd;
-  };
+  // **Read-only cut** (tasks 4.7/4.8). The worker is the span cache's only writer while a session is
+  // active, so the view is exactly what has been published: the prepared tiles' candidates composed by
+  // `NoteId`, or the private-predecessor prefix while that scan owns the cache. Nothing here derives and
+  // nothing here writes the cache; the moving playhead window is no longer a correctness mechanism.
+  //
+  // A cache stamped for another generation is not a source: the commit edge clears it, and this guard
+  // catches any revision move that bypassed that edge (a raw bump, a load, an undo). Serving it would be
+  // exactly the stale-geometry failure the generation stamp exists to prevent.
+  const bool cacheCurrent = overdubSourceSpanCacheValid_ &&
+                            overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks &&
+                            overdubSourceSpanCachePlaybackRevision_ == playbackRevision;
+  if (!cacheCurrent) {
+    overdubSourceViewEstablished_ = true;
+    return;
+  }
+  // **Overlap domain only** (design D3): the union of the tiles the worker has published for this
+  // generation, composed by `NoteId`. There is no playhead window and no display role here; the display's
+  // committed base is `CommittedDisplayBase`, so viewport movement cannot enlarge overlap coverage and
+  // overlap coverage movement cannot change what is drawable.
   for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
     if (note.noteId == kInvalidNoteId) {
-      continue;
-    }
-    if (!noteOnTickInWindow(note.startTick)) {
       continue;
     }
     overdubSourceViewNotes_.push_back(note);
   }
   collapseSplitHeadTailToWrapHeld(overdubSourceViewNotes_, loopLengthTicks);
 #if defined(PIO_UNIT_TEST_NATIVE)
-  copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
+  copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, 0, loopLengthTicks);
 #endif
   overdubSourceViewEstablished_ = true;
+  const char* from = overdubSourceSpanCacheOrigin_ == SourceOrigin::PrivatePredecessor ? "private"
+                                                                                      : "tiles";
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   const uint32_t filterUs = micros() - filterStartUs;
   NoteId beforeRetainIds[kSrcDiagMaxIds];
@@ -1495,6 +1731,12 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   }
 #endif
   retainValidOverdubSourceViewIdentities();
+  // This interval's Hide/Shorten decisions ride on top of the committed cut; the interval's own **Add**
+  // rows do not. A pending Add is the note being recorded, not a committed overlap source: putting it in
+  // the candidate domain makes a later consequence target the session's own note (measured: a live row
+  // disappeared from the display frame because a pending Hide removed it). The seal still merges Adds
+  // through `applyPendingNoteChangesToOverdubSourceView` when the interval becomes committed content.
+  applyPendingNoteChangesToDisplayNotes(overdubSourceViewNotes_, static_cast<size_t>(-1));
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   if (logSrcWrapDiag) {
     auto sourceViewHasId = [this](NoteId id) {
@@ -1612,6 +1854,7 @@ LOOP_COLD_MEM void Loop::clearOverdubSourceView() {
 }
 
 LOOP_COLD_MEM void Loop::prewarmOverdubSourceSpanCache() {
+  RuntimeTimingTelemetry::IdleMaintChildScope idleChild(5);
   if (captureActive() || hasPendingCapturePass_ || hasOverdubSession()) {
     return;
   }
@@ -1791,6 +2034,14 @@ LOOP_COLD_MEM void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhase
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
+    // Touched coverage is per overdub session. Production always opens the session first; a capture
+    // edge that reaches here without one (a direct capture-entry fixture, or a legacy caller) opens the
+    // coverage state for this loop length rather than running without a source model.
+    if (!overdubCoverage_.sessionActive && loopLengthTicks > 0) {
+      overdubCoverage_.beginSession(loopLengthTicks, playbackRevision);
+      seedOverdubCoverageClosureFromCommittedContent();
+      adoptPrewarmedOverdubCoverage();
+    }
     // Wrap beginCapture must keep the session source view. Re-establish after
     // invalidateCaches drops this-session notes (235407 inner / same-start-longer).
     if (!overdubSourceViewEstablished_) {

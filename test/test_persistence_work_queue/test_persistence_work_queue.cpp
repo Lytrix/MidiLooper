@@ -6,6 +6,7 @@
 #include "../../src/StorageManager/PersistenceWorkQueue.cpp"
 
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
+#include "Utils/PersistenceDiagnostics.h"
 
 namespace {
 
@@ -20,6 +21,30 @@ PersistWorkItem trackMetaItem(uint8_t trackIndex) {
 }
 
 }  // namespace
+
+// Task 3.3 — a single step is named only when it breaches the active budget or the declared bar. The row
+// is report-only: this pins the decision, and the scheduler call sites pass each indivisible step.
+void test_persistence_step_is_named_only_on_a_breach() {
+  namespace PD = PersistenceDiagnostics;
+  TEST_ASSERT_FALSE(PD::persistenceStepBreachExceeded(300, 300));      // at budget, under the bar
+  TEST_ASSERT_FALSE(PD::persistenceStepBreachExceeded(3000, 3000));    // at budget, under the bar
+  TEST_ASSERT_TRUE(PD::persistenceStepBreachExceeded(301, 300));       // over the active budget
+  TEST_ASSERT_TRUE(PD::persistenceStepBreachExceeded(3001, 3000));     // over the active budget
+  TEST_ASSERT_FALSE(PD::persistenceStepBreachExceeded(49999, 50000));  // under the declared bar
+  TEST_ASSERT_TRUE(PD::persistenceStepBreachExceeded(50001, 50000));   // over the declared bar
+  TEST_ASSERT_TRUE(PD::persistenceStepBreachExceeded(213500, 300));    // the measured 213 ms step
+
+  // Cadence: one row per step per 5 s, not per step; a within-budget step never emits.
+  uint32_t last[4] = {};
+  TEST_ASSERT_FALSE(PD::persistenceStepShouldEmit(100, 300, 1000, last[0]));   // within budget
+  TEST_ASSERT_TRUE(PD::persistenceStepShouldEmit(213500, 300, 1000, last[0])); // first breach
+  TEST_ASSERT_FALSE(PD::persistenceStepShouldEmit(213500, 300, 2000, last[0])); // same interval
+  TEST_ASSERT_FALSE(PD::persistenceStepShouldEmit(213500, 300, 5999, last[0])); // same interval
+  TEST_ASSERT_TRUE(PD::persistenceStepShouldEmit(213500, 300, 6000, last[0]));  // next interval
+  // A second step has its own interval.
+  TEST_ASSERT_TRUE(PD::persistenceStepShouldEmit(51000, 3000, 1000, last[1]));
+  TEST_ASSERT_FALSE(PD::persistenceStepShouldEmit(51000, 3000, 2000, last[1]));
+}
 
 void test_persist_key_equality() {
   TEST_ASSERT_TRUE(persistKeysEqual(persistKeySingleton(), persistKeySingleton()));
@@ -288,6 +313,7 @@ void test_loop_undo_history_slot_key_is_distinct_per_track() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_persistence_step_is_named_only_on_a_breach);
   RUN_TEST(test_persist_key_equality);
   RUN_TEST(test_admit_dedup_while_queued_or_writing);
   RUN_TEST(test_fifo_re_admit_does_not_reorder);

@@ -52,6 +52,17 @@
 
 namespace {
 
+// Tasks 4.7/4.8: the worker is the session source's only writer. Fixtures that need the committed
+// source after a generation change drive the same worker the deferred owner drives, then cut the view.
+void driveSourceCoverage(Loop& loop, unsigned maxTurns = 4096) {
+  for (unsigned turn = 0; turn < maxTurns && loop.overdubCoverageOwedCountForTest() > 0; ++turn) {
+    if (loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+        Loop::OverdubCoverageTurn::Idle) {
+      break;
+    }
+  }
+}
+
 using namespace NoteIdTestFixtures;
 
 constexpr uint32_t kLoopLen = Config::TICKS_PER_BAR * 8;
@@ -305,22 +316,23 @@ void test_empty_ids_resolve_jit_ahead_note_on_64_bar_loop() {
   loop.nextNoteId_ = 66;
   loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
 
+  // The ahead note is outside prepared coverage: the view does not inject it inline (no JIT merge), and
+  // the hold's participation is owed. Touching the region lets the worker publish it.
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
   const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
   TEST_ASSERT_TRUE(notesAtEnter > 0);
-  TEST_ASSERT_LESS_THAN(64u, notesAtEnter);
 
   loop.ensureOverdubSourceNotesForHold(64, 60, nullptr, true);
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
   TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
-
   NoteUtils::DisplayNoteVec merged;
   loop.ensureOverdubSourceNotesForHold(64, 60, &merged);
-  TEST_ASSERT_EQUAL(1, merged.size());
-  TEST_ASSERT_EQUAL(60, merged[0].note);
-  TEST_ASSERT_EQUAL_UINT32(224u, merged[0].startTick);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(merged.size()));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
+  loop.markOverdubCoverageSpan(224, 64);
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(64, "tile");
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
-  TEST_ASSERT_EQUAL(notesAtEnter + 1, loop.overdubSourceViewNotes().size());
 }
 
 void test_note_off_skips_hold_fill_when_source_view_covers_loop() {
@@ -362,6 +374,10 @@ void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
                                                                    overlapIds({})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, loop.overdubCoverageDeferredCompletionsForTest(),
+                                  "the ahead source is owed, not injected inline");
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(64, "tile");
   TEST_ASSERT_TRUE(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
                        countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide) >=
                    1);
@@ -378,17 +394,15 @@ void test_consume_attribution_counts_late_note_for_jit_ahead_candidate() {
   seedLongSourceNote(loop, 1, 224, 288, 60, kLongLoop);
   loop.beginCapture(CapturePhase::Overdub, kLongLoop - 80);
   TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
-  TEST_ASSERT_TRUE(loop.loopLengthTicks >
-                   Loop::kOverdubSourceWindowBars * Config::TICKS_PER_BAR);
 
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
                                                                    overlapIds({1})));
-
-  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().emptySets);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lateNoteCandidates);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, loop.overdubCoverageDeferredCompletionsForTest(),
+                                  "the completion is owed by name, not answered from a partial view");
+  TEST_ASSERT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(64, "tile");
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
 }
 
@@ -434,9 +448,11 @@ void test_consume_id_resolution_norow_repaired_by_hold_fill() {
 
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
                                                                    overlapIds({1})));
+  TEST_ASSERT_FALSE_MESSAGE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224),
+                            "no inline hold fill: the ahead row is not injected");
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(64, "tile");
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 224));
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
-  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().scanOnlyCandidates);
   TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
 }
 
@@ -535,7 +551,8 @@ void test_occupy_shorter_note_off_seals_length_not_delete() {
                     static_cast<int>(companion->propertyType));
   TEST_ASSERT_EQUAL_UINT32(64u, companion->startTick);
   TEST_ASSERT_EQUAL_UINT32(159u, companion->endTick);
-
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0, "tile");
   const NoteUtils::DisplayNote* remnant = findDisplayNoteById(loop.overdubSourceViewNotes(), 1);
   TEST_ASSERT_NOT_NULL(remnant);
   TEST_ASSERT_EQUAL_UINT32(64u, remnant->startTick);
@@ -815,6 +832,7 @@ void test_occupancy_five_sibling_convergence() {
   TEST_ASSERT_EQUAL_UINT32(768u, added->startTick);
   TEST_ASSERT_EQUAL_UINT32(912u, added->endTick);
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(768, "test");
   loop.applyPendingNoteChangesToOverdubSourceView();
   TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(loop.overdubSourceViewNotes(), 64, 768));
@@ -833,6 +851,7 @@ void test_occupancy_five_sibling_convergence() {
       NoteUtils::reconstructDisplayNotes(sealedFlat, loop.loopLengthTicks, false);
   TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(sealedNotes, 64, 768));
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(768, "test-sealed");
   TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(loop.overdubSourceViewNotes(), 64, 768));
 }
@@ -1187,6 +1206,7 @@ void test_wrap_commit_keeps_source_view_same_start_longer_hides_prior_add() {
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   (void)loop.sealPendingNoteChangesToEditPasses();
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
@@ -1352,6 +1372,7 @@ void test_establish_resets_overlap_hold_totals() {
                                                                    overlapIds({1})));
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().lookedUp);
   TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().shorten);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().noteOffs);
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().lookedUp);
@@ -1527,6 +1548,7 @@ void test_121141_three_point_resolver_seal_rebuild_handoff() {
                     static_cast<int>(sealedA->propertyType));
   TEST_ASSERT_EQUAL_UINT32(167u, sealedA->endTick);
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   const NoteUtils::DisplayNote* viewA = findDisplayNoteById(loop.overdubSourceViewNotes(), kIdA);
@@ -1650,7 +1672,6 @@ void test_note_on_occupy_reads_ledger_note_id() {
   prepareLoopContent(loop);
   loop.beginCapture(CapturePhase::Overdub, kHoldTick);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
 
   ActiveNoteLedger ledger;
@@ -1660,7 +1681,6 @@ void test_note_on_occupy_reads_ledger_note_id() {
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
   TEST_ASSERT_TRUE(occupyIds.contains(1));
   TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
-  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   LoopContentResolution::deviceGateReset();
 }
 
@@ -1676,7 +1696,6 @@ void test_note_on_occupy_empty_when_ledger_inactive() {
   prepareLoopContent(loop);
   loop.beginCapture(CapturePhase::Overdub, kHoldTick);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
-  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   const size_t notesAtEnter = loop.overdubSourceViewNotes().size();
 
   OverlapNoteIdSet preparedIds;
@@ -1689,7 +1708,6 @@ void test_note_on_occupy_empty_when_ledger_inactive() {
   loop.collectOverdubNoteOnParticipantIds(60, 1, ledger, occupyIds);
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
   TEST_ASSERT_EQUAL(notesAtEnter, loop.overdubSourceViewNotes().size());
-  TEST_ASSERT_FALSE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   LoopContentResolution::deviceGateReset();
 }
 
@@ -1710,6 +1728,7 @@ void test_wrap_committed_note_at_s_occupies_ledger_same_tick() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kS);
 
   SessionMidiEventVec merged;
@@ -1875,6 +1894,7 @@ void test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_reb
   constexpr NoteId kWrapNoteId = 9;
   seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
   loop.openOverdubSession(kS);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(kS);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), kSourceId));
@@ -1884,7 +1904,10 @@ void test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_reb
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles, content and bit together, and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
 
   uint32_t wrapNoteCount = 0;
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
@@ -1953,6 +1976,7 @@ void test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_reb
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(holdIds.size()));
   TEST_ASSERT_TRUE(holdIds.contains(kWrapNoteId));
 
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kS);
   wrapNoteCount = 0;
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
@@ -1977,6 +2001,7 @@ void test_incremental_overdub_seal_preserves_coincident_control_changes() {
   const auto before = merged.mergedEvents.size();
   const uint32_t priorRevision = loop.playbackRevision;
   loop.openOverdubSession(96);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(96);
   loop.beginCapture(CapturePhase::Overdub, 96);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 74, 68)));
@@ -2014,6 +2039,7 @@ void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather(
   const uint32_t priorRevision = loop.playbackRevision;
 
   loop.openOverdubSession(kS);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(kS);
   loop.beginCapture(CapturePhase::Overdub, kS);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
@@ -2060,6 +2086,7 @@ void test_incremental_overdub_seal_applies_companion_shorten() {
   const uint32_t priorRevision = loop.playbackRevision;
 
   loop.openOverdubSession(0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, kOverdubId,
@@ -2095,6 +2122,7 @@ void test_overdub_stop_reanchor_preserves_merged_then_admits_seal() {
   const uint32_t priorRevision = loop.playbackRevision;
 
   loop.openOverdubSession(0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(96, 1, 64, 90, kStopNoteId)));
@@ -2133,6 +2161,7 @@ void test_overdub_stop_shaped_receipt_admits_without_duplication() {
   const uint32_t priorRevision = loop.playbackRevision;
 
   loop.openOverdubSession(0);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(0);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, kStopNoteId,
@@ -2359,6 +2388,7 @@ void test_wrap_pass_on_at_96_occupies_after_s_interval() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kOccupy, 1, kPitch, 90, kOnAt96Id)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kOccupy);
 
   OverlapNoteIdSet sourceViewIds;
@@ -2454,6 +2484,7 @@ void test_wrap_pass_spanning_on_at_0_occupies_at_96() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(0, 1, kPitch, 90, kOnAtZeroId)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kOccupy);
 
   OverlapNoteIdSet sourceViewIds;
@@ -2607,6 +2638,7 @@ void test_capture_off_does_not_clear_committed_occupy() {
   seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kOccupy);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kCaptureOff, 1, kPitch, 0)));
 
@@ -2649,6 +2681,7 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kOccupy);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kOccupy, 1, kPitch, 90, kCaptureId)));
 
@@ -2690,6 +2723,7 @@ void test_occupy_ledger_catchup_on_at_192_after_last_tick_184() {
   seedLongSourceNote(loop, kCommittedId, kOn, kOff, kPitch, kLoopLenTicks);
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(kOccupy);
   loop.lastTickInLoop = kLastTick;
   loop.nextEventIndex = 7;
@@ -4532,7 +4566,10 @@ void test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2496, 1, 64, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::OverdubWrap, 2496));
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles, content and bit together, and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
 
   const NoteUtils::DisplayNote* row = findDisplayNoteById(loop.overdubSourceViewNotes(), 85);
   TEST_ASSERT_NOT_NULL(row);
@@ -4560,7 +4597,10 @@ void test_wrap_held_source_row_occupies_hold_zero() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(432, 1, 64, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::OverdubWrap, 432));
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles, content and bit together, and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
 
   bool idInView = false;
   bool wrapHeldInView = false;
@@ -4658,6 +4698,8 @@ void test_wrap_seal_keeps_painted_shorten_233150() {
   TEST_ASSERT_NOT_NULL(sealedPaint);
   TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
 
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0, "tile");
   NoteUtils::DisplayNoteVec missingCompose;
   NoteUtils::DisplayNoteVec authoritative;
   for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
@@ -4817,7 +4859,11 @@ void test_wrap_held_record_row_occupies_head_225200() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(288, 1, 72, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::OverdubWrap, 0));
-  loop.appendLastCommittedOverdubPassToSourceView();
+  // Tasks 4.7/4.8: the wrap edge no longer writes the session source; the worker republishes the
+  // re-owed tiles, content and bit together, and the cut serves them.
+  driveSourceCoverage(loop);
+  loop.rebuildOverdubSourceView(0);
+  driveSourceCoverage(loop);
   loop.rebuildOverdubSourceView(48, "test-225200");
 
   const NoteUtils::DisplayNote* sourceRow =
@@ -4896,6 +4942,7 @@ void test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151() {
   loop.seedRecordPassFromStore(store);
   loop.nextNoteId_ = 113;
   loop.openOverdubSession(48);
+  driveSourceCoverage(loop);
   loop.establishOverdubSourceView(48);
   ActiveNoteLedger ledger;
   ledger.noteOn(1, 69, 112, 5328, 100);

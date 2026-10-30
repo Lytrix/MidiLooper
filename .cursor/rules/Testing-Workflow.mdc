@@ -21,6 +21,31 @@ The `[env:native]` block in `platformio.ini` runs **host-only** suites (Unity, n
 
 If the native env is misconfigured, fix `platformio.ini` first.
 
+## Parallel device workflow (always when a device gate exists)
+
+Native is the cheap gate and is usually green, so it must not sit on the critical
+path of a firmware slice that also needs a target build and HITL run. **Always run
+the native suite in parallel with the build/flash/HITL sequence:**
+
+1. Start the native suite in the background and log to a temp file:
+   `pio test -e native > /tmp/<slice>-native.log 2>&1 &`.
+2. Build the target env concurrently (separate build dir). If PlatformIO's project
+   lock serializes the two commands, build first and start the native suite
+   immediately after; never run two commands against the same build env.
+3. Ask for upload, flash the checked HEX, and verify boot.
+4. Run the authoritative HITL entry point while the native suite continues.
+5. Collect both results before checkoff. Record the exact commands, counts and
+   capture paths in the evidence.
+
+A native failure (or an `[ERRORED]` suite / lower case count) still blocks
+acceptance even when the HITL passed; it is not "cancelled" by a green device run.
+The exception is the deliberate RED of the current slice: record it as the expected
+failure, then rerun the full native suite after the fix. If the native suite fails
+unexpectedly, stop the device interpretation, fix, rebuild and rerun both gates.
+
+This is a scheduling default, not permission to skip the native run or to treat a
+green HITL as a substitute for it.
+
 ## Read the count, not only the failures
 
 The final line (`N test cases: 1 skipped, M succeeded`) and the per-suite lines carry different
