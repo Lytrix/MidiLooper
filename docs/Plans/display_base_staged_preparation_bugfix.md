@@ -432,3 +432,17 @@ The follow-phase windows are reported separately and are **not** acceptance for 
   finished slot 4 (`LoopPersist,slot:7:3,done` 54.175 s). Record started at 54.407 s (232 ms margin), and the first
   write followed at 54.49 s. `admit_refused=0` throughout. The next stalled session names what happens when Record
   wins that race, alongside the `order_deny` term.
+- **2026-10-31 21:36 — A/B on the valid runs; the wedge is named (`order_deny reason=5`) and is not the 3c1 timing regression.**
+  The arbitration-on side is **chain-51** (`captures/session_20261031_212428.log`, image `0ebccccc…`, valid 12 overdubs,
+  `disp_base_prep` 2, `midi_gap` max 40,434 µs, 0 `disp_base`, 17 slow). The off side is `2c7bb5d3…`
+  (`captures/session_20261031_213255.log`, valid 12 overdubs, `disp_base_prep=0`, `midi_gap` max 408,669 µs at the 11.6 s
+  boot/restore edge, later 38,343–43,745 µs, 33 `disp_base`, 98 slow). The later-chain MIDI gaps are similar; there is no
+  evidence the arbitration itself caused the later MIDI regression. The **last** B2 run (`captures/session_20261031_213624.log`,
+  `captures/ab-arbitration-on`, image `1bd8a99e…`) is invalid for timing: `Overdubbing started: 0`, 11,520
+  `preparation_denied`, audio gaps to 1.13 s, and the Record stop wedged — that is the source of the "overdubs not recorded /
+  audio dropping" observation. It named the preflight term: `DIAG,order_deny,reason=5,phase=1,canon=1,chunk=0,id=87,ref=1,
+  persist=3,inuse=1,used=256,expected=256,count=632,chunks=3` — persistence **3 = Persisted** while the preflight requires
+  `NotScheduled`; ref/used are correct. The same invalid run measured `disp_base_prep,steps=40,wrap=13,max_step_us=117,844`:
+  the per-pass wrap staging exceeded the 4 ms child bound by a wide margin, so the producer needs a boundary-windowed or
+  resumable wrap step — **not** a larger grain. Stop-edge repair (`reason=5`) and the wrap-staging bound come first; 3c2
+  stays blocked.

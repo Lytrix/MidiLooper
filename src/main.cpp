@@ -643,11 +643,16 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     sVisualCacheCadence.lastEmitMs = now;
   }
 #endif
-  // DEC-237 Slice 3a: the staged display base's producer is a declared idle-owner child. It is served
-  // only when the coverage worker has no owed tile (coverage correctness never waits behind display),
-  // and only under the idle-child admission gate. One bounded grain per VisualCache owner turn; the
-  // frame adoption is the next Slice 3 sub-slice.
-  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+  // DEC-237 Slice 3a/3c1: the staged display base's producer is a declared idle-owner child. It is
+  // served only when coverage has no consumer due tick inside the owner lead, and only under the
+  // idle-child admission gate. One bounded grain owns the VisualCache turn when selected; the frame
+  // adoption is Slice 3c2.
+  // DEC-237 3c1 A/B diagnostic gate: the shipping value is true. The false build is the byte-near
+  // baseline used to test whether the new arbitration changed the real-time owner schedule; it must be
+  // restored to true before any non-diagnostic image is kept.
+  constexpr bool kDisplayBaseArbitrationEnabled = true;
+  if (kDisplayBaseArbitrationEnabled &&
+      deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
     const uint8_t selectedTrackIndex = trackManager.getSelectedTrackIndex();
     if (selectedTrackIndex < trackManager.getTrackCount()) {
       Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
