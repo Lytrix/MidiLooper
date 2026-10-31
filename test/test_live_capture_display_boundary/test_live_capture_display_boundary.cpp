@@ -2543,6 +2543,66 @@ void test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives()
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest(), msg);
 }
 
+/// Device 155235 (a bar-stable follow origin, since reverted): on every one-bar follow slide during an open
+/// overdub, the first frame lacked about one bar of notes and recovered a beat later. Origin-agnostic guard:
+/// every committed note inside the window the frame was actually built for must be present on that frame,
+/// whichever way the follow origin moves.
+static void exerciseFollowSlideKeepsTheEnteringBar(bool staleRoot) {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  std::array<NoteId, kStaleRootBars> perBar{};
+  for (uint32_t b = 0; b < kStaleRootBars; ++b)
+    perBar[b] = acceptPair(t, static_cast<uint8_t>(40 + b), b * kStaleRootBar + 100, b * kStaleRootBar + 220);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  commitOverdubPassAt(t, loop, kStaleRootLength, 72, 4 * kStaleRootBar + 300, 4 * kStaleRootBar + 420);
+  if (staleRoot) {
+    auto stale = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.startLoopTick,
+                                           loop.peekNextNoteId(), 1);
+    loop.storePublishedSnapshotForTest(stale, 1);
+    TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+    loop.visualCacheDirty = true;
+  } else {
+    for (unsigned turn = 0; turn < 8192 && !loop.publishedSnapshotIsCurrent(); ++turn)
+      loop.stepPendingSnapshotPublish(4, true, 0);
+    TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  }
+  const uint32_t odStart = 2 * kStaleRootLength;
+  clockManager.assignCurrentTickSilently(odStart);
+  t.startOverdubbing(odStart);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  // Playhead in bar 10 (window bars 1..16), then bar 11 (window bars 2..17): one follow slide.
+  for (uint32_t playBar : {9u, 10u, 11u}) {
+    const uint32_t tick = odStart + playBar * kStaleRootBar + 400;
+    clockManager.assignCurrentTickSilently(tick);
+    const DisplayNoteVec& notes = DisplayCaptureTestAccess::resolveCommitted(t, 0, tick);
+    const auto key = DisplayCaptureTestAccess::key();
+    TEST_ASSERT_TRUE(key.valid != 0 && key.windowLength > 0);
+    uint32_t inside = 0;
+    for (uint32_t b = 0; b < kStaleRootBars; ++b) {
+      const uint32_t on = b * kStaleRootBar + 100, off = b * kStaleRootBar + 220;
+      if (!DisplayWindowUtils::noteIntersectsWindow(on, off, key.windowStart, key.windowLength, kStaleRootLength))
+        continue;
+      ++inside;
+      char msg[112];
+      snprintf(msg, sizeof(msg), "%s root: playhead bar %u, window start %u: bar %u missing",
+               staleRoot ? "stale" : "current", static_cast<unsigned>(playBar),
+               static_cast<unsigned>(key.windowStart), static_cast<unsigned>(b));
+      TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(notes, perBar[b]), msg);
+    }
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(15, inside);
+  }
+}
+void test_follow_slide_keeps_the_entering_bar_with_a_stale_root() { exerciseFollowSlideKeepsTheEnteringBar(true); }
+void test_follow_slide_keeps_the_entering_bar_with_a_current_root() { exerciseFollowSlideKeepsTheEnteringBar(false); }
+
 /// Negative control: a **current** root is the authority. The committed pass walk must not run, and the
 /// root's content (here an empty root) is what the draw source serves.
 void test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes() {
@@ -2662,6 +2722,8 @@ int main() {
   RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
   RUN_TEST(test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window);
   RUN_TEST(test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives);
+  RUN_TEST(test_follow_slide_keeps_the_entering_bar_with_a_stale_root);
+  RUN_TEST(test_follow_slide_keeps_the_entering_bar_with_a_current_root);
   RUN_TEST(test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes);
   RUN_TEST(test_stationary_viewport_counts_real_completed_frames_without_transition_receipts);
   RUN_TEST(test_chain_oracle_separates_missing_service_from_missing_content);

@@ -13414,4 +13414,7 @@ display frames to 155 ms, MIDI timing degraded).
 the committed reuse key ignores `captureDisplayRevision`. Live rows remain an overlay, re-applied on every
 compose. All other committed sources keep the key unchanged.
 
-**Open.** The remaining long frames and the median MIDI gap above baseline are unattributed.
+**Open.** The remaining long frames are the per-tick centred follow origin, which rebuilds on each frame of the
+middle-bar follow phase. A bar-stable snap was tried and reverted: it blanked the entering bar until the windowed
+visual-cache tiles caught up. The bar-stable origin from DEC-232 therefore also needs next-bar tile preparation
+ahead of the slide. The median MIDI gap above baseline is still unattributed.

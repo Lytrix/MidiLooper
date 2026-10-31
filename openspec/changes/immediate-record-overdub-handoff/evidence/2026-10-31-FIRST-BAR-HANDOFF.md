@@ -230,3 +230,25 @@ with 25 earlier rig sessions (scripts in the session scratchpad; method only, no
   Worst lateness is back at baseline, and long frames and pass walks fall by 85–90%. **Not fully closed:** 22 frames
   > 50 ms and the median gap remain above the 10-30 baseline. Painted-note drops ≥ 10: one temporary (−32), against
   four before.
+
+### Residual slow frames after DEC-236 — the per-tick follow origin (attributed; a bar-stable attempt was reverted)
+
+- **Attribution** (`session_20261031_153427.log`): the 22 remaining frames > 50 ms are one burst, 119.6–123.2 s.
+  `disp_turn` shows the auto-follow window start moving every frame, off the bar grid (`req=16, 80, 160, 280, …, 784`).
+  Reuse covers only "same start" or "exactly one bar", so each frame is a full committed rebuild (one `cer_win`
+  each). The cause is `resolveDetailedPaintWindow` → `resolveCenteredWindowStart` (per-tick centred, clamped),
+  which moves only while the playhead crosses the middle bars of a 20-bar loop. Unaligned starts occur at the same
+  rate in every session since 10-30: the policy is old, and only its rebuild cost is new.
+- **Bar-stable attempt (DEC-232's bar half), reverted.** Snapping the centred start to whole bars (end clamp kept)
+  ran on image `1f21af3f…` (`captures/bar-stable-origin-1f21af3f8423/`; rig chain `captures/midifile-chain-50/`,
+  serial `captures/session_20261031_155235.log`). It cut frames > 50 ms 22 → 8 and `cer_win` 27 → 17, but at
+  **every one-bar slide** the first frame lacked ~60 notes (one bar) for ~1 s (`disp_turn req=768 … n=314` at
+  125.895 s; the bar returns only when the tile owner publishes the new window at 127.198 s,
+  `idle_turn,cov=tile` 63 ms). During an overdub the committed source is the windowed visual cache, which holds only
+  the window it was built for. A whole-bar jump exposes a bar it lacks; the per-tick origin hid this as a leading-edge
+  sliver. A blank bar per slide is worse than the frames saved, so the snap is **reverted**. Prerequisite for any
+  bar-stable origin: prepare the next bar's tile ahead of the slide.
+- **Kept:** `test_follow_slide_keeps_the_entering_bar_with_{stale,current}_root`, origin-agnostic guards (every
+  committed note inside the built window present on the slide frame). They pass with the centred origin and do not
+  exercise the visual-cache tile path, so they cannot prove the tile gap.
+- The board is back on the committed image `e7f134a5…` (byte-identical rebuild, boot verified).
