@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "DisplayManager.h"
 #include "DisplayManagerInternal.h"
 
@@ -370,6 +371,10 @@ DISP_CAPTURE_MEM bool DisplayManager::committedDisplayBaseMatches(
 DISP_CAPTURE_MEM void DisplayManager::buildCommittedDisplayBase(
     const Loop& loop, Loop& mutLoop, uint8_t displaySlot, uint32_t loopLength, uint32_t currentTick,
     bool havePaintWindow, uint32_t paintWindowStart, uint32_t paintWindowLength) {
+  // DEC-239 profile scope (long: 16-bar window, content-sized rows; the shipped path while DEC-238 keeps
+  // the staged DisplayBaseGrain off).
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::DisplayBase_gather);
+  profileScope.setContext(RuntimeProfiler::kNoContext, displaySlot);
     if (loopLength == 0) {
         committedDisplayBase_ = CommittedDisplayBase{};
         return;

@@ -282,6 +282,7 @@ RP_FLASH uint32_t ceilingUs(ProfileId id) {
       return kColdCeilingUs;
     case ProfileId::ViewPrewarm_unit:
     case ProfileId::PlaybackViewService_grain:
+    case ProfileId::Display_frame_phase:  // draw/resolve routinely ~3 ms: FRAME would flood the ring
     case ProfileId::SnapshotPublish_step:
     case ProfileId::SaveWorkItem_step:
     case ProfileId::LoadStep:
@@ -290,7 +291,6 @@ RP_FLASH uint32_t ceilingUs(ProfileId id) {
       return kOwnerTurnCeilingUs;
     case ProfileId::PlaybackWindow_build:
     case ProfileId::DisplayBase_gather:
-    case ProfileId::Display_frame_phase:
     case ProfileId::SelfTest:
       return kFrameCeilingUs;
     case ProfileId::Calibration:

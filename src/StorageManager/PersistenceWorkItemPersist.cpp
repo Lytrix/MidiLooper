@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "StorageManagerInternal.h"
 
 #include "LoadLoopBudget.h"
@@ -571,6 +572,8 @@ STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
 }
 
 STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
+  // DEC-239 profile scope (long: SD write). Reached only when the writer is admitted to run.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::SaveWorkItem_step);
 #if BYPASS_STOP_UNDO_SAVE
   (void)state;
   return true;

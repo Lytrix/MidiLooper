@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "StorageManager.h"
 #include "StorageManagerInternal.h"
 
@@ -804,6 +805,8 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
     if (!loadLoopJob_.active || loadLoopJob_.session == nullptr) {
         return SlotLoadAdvanceResult::Failed;
     }
+    // DEC-239 profile scope (long: SD read), after the no-job gate.
+    PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::LoadStep);
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
         return commitLoadLoopJobPublish();
     }

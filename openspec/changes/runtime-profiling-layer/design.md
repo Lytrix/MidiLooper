@@ -275,13 +275,13 @@ closes before the row so the two numbers are comparable.
 | `PlaybackPrewarm_slot` | `Track::prewarmPlaybackForSlot` body | long | COLD 25 ms | composes seven reserves; unbounded at boot/load | `capture_prewarm_split` |
 | `PlaybackPrewarm_views` | `LoopPlaybackRuntime::prewarmViews` body | long | COLD 25 ms | monolithic pool allocation (boot/load, overdub start); skipped on the prepared edge | none |
 | `ViewPrewarm_unit` | `runtime->stepViewPrewarm(...)` call in `Track::stepViewPrewarmForSlot`, closed before `viewPrewarmStep` | long | DEFERRED 5 ms (= the site's 5,000 µs guard) | one unit, but a unit is one external allocation measured at 17,350 µs and the time guard is secondary (DEC-231) — no hard cap | none (row after scope) |
-| `PlaybackWindow_build` | free function `ensurePlaybackMergedMidiEventsBuilt(Track&, …)` body | long | FRAME 2 ms | content-sized window, no hard event cap | none known |
+| `PlaybackWindow_build` | free function `ensurePlaybackMergedMidiEventsBuilt(Track&, …)`, after its reuse return | long | FRAME 2 ms | content-sized window, no hard event cap | none known |
 | `PlaybackViewService_grain` | `Track::stepPlaybackViewMaintenance` admitted grain | **short** | DEFERRED 5 ms | one declared grain, ≤ 64 inspected / ≤ 48 order / ≤ 64 retirement units (row 27) | verify in 1.5 |
 | `SnapshotPublish_step` | `Loop::stepPendingSnapshotPublish` call in `TrackDeferredMaintenance.cpp` | long | DEFERRED 5 ms | row 21 bounds construction only; the same call can publish (`publishedSnapshotRevision` moves) | qualification rows are outside the call |
 | `SaveWorkItem_step` | deferred-save work-item step | long | DEFERRED 5 ms | SD write | `persist_save,step` (state per site) |
-| `IdleOwner_unit` | `Track::processDeferredIdleMaintenance` admitted unit body | long | `kOwnerWorkBudgetUs` | composes several children | `idle_turn` (state per site) |
+| ~~`IdleOwner_unit`~~ | **removed by decision (slice 4):** the turn measured 6.16 M calls at ~6 µs per chain — it is the poll (D11); id 10 stays reserved | — | — | — | — |
 | `DisplayBase_gather` | `DisplayManager::buildCommittedDisplayBase` | long | FRAME 2 ms | 16-bar window, content-sized rows; the shipped path while DEC-238 keeps `DisplayBaseGrain` off | verify in 1.5 |
-| `Display_frame_phase` | `DisplayManager::update` phase work after the pending-phase gate | long | FRAME 2 ms | row 4: includes the **blocking** `_display.api.display()` transfer | `disp_src`/paint rows (state per site) |
+| `Display_frame_phase` | `DisplayManager::update`, one scope per running phase case (never Idle) | long | DEFERRED 5 ms (draw/resolve ~3 ms routinely; FRAME flooded the ring) | row 4: includes the **blocking** `_display.api.display()` transfer | `disp_src`/paint rows (state per site) |
 | `LoadStep` | deferred `LoadLoopJob` step | long | DEFERRED 5 ms | SD read | verify in 1.5 |
 | `OverdubStart_body` | `Track::startOverdubbing` body after the refusal admission | long | COLD 25 ms | composes `prewarmViews`/allocation | none known |
 

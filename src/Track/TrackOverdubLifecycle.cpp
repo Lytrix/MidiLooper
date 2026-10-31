@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "TrackInternal.h"
 
 #include <Arduino.h>
@@ -4325,6 +4326,10 @@ TRACK_COLD_MEM bool Track::handleNoteEditFold(bool endInPlaying, uint32_t curren
   return true;
 }
 void Track::startOverdubbing(uint32_t currentTick) {
+  // DEC-239 profile scope (long: composes staging prewarm and working-set allocation; synchronous).
+  // Whole body: each refusal below is a short timed exit, like the Record edge's.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::OverdubStart_body);
+  profileScope.setContext(RuntimeProfiler::kNoContext, activeLoopIndex);
   // A pending predecessor is not by itself a reason to refuse live ingress: its
   // frozen stop candidate owns the *frozen* admission role, while this interval
   // only ever resets the *live* role below. The predecessor-pending refusal that

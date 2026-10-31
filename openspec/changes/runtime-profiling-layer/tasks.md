@@ -157,13 +157,13 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
 
 ## 5. Slice 4 — remaining nine bodies, coverage and overhead proof
 
-- [ ] 5.1 Write `evidence/EXECUTION_PACKET-slice4.md` pinning the nine bodies, variants and ceilings
+- [x] 5.1 Write `evidence/EXECUTION_PACKET-slice4.md` pinning the nine bodies, variants and ceilings
       from D12, the domain list and the A/B tolerance.
-- [ ] 5.2 Add one scope each to `PlaybackWindow_build`, `PlaybackViewService_grain`,
+- [x] 5.2 Add one scope each to `PlaybackWindow_build`, `PlaybackViewService_grain`,
       `SnapshotPublish_step`, `SaveWorkItem_step`, `IdleOwner_unit`, `DisplayBase_gather`,
       `Display_frame_phase`, `LoadStep` and `OverdubStart_body`, each after its no-work gate; verify the
       diff is instrumentation-only and the short site's guarantee still holds.
-- [ ] 5.3 Add native aggregate-count assertions for those nine paths; verify the full native suite
+- [x] 5.3 Add native aggregate-count assertions for those nine paths; verify the full native suite
       (`pio test -e native`) has no new failure against the 0.3 counts.
 - [ ] 5.4 Coverage gate on device: one run exercising record, overdub, playback, a save and a slot
       load, then `!PROFILE_STATS` until `resume=0`; verify one identity per declared domain has a
@@ -172,7 +172,9 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
 - [ ] 5.5 Overhead A/B: profile image (thirteen scopes) vs the 0.3 default image, same stimulus;
       record both calibrations, `midi_gap`/`late_on` maxima and `win_gap_overrun`, and each site's
       legacy timers (R7); verify no new overrun and maxima within the 0.8 spread, or remove the
-      offending site and record the decision. Append the same runs' `DIAG,timing`/`timing_max`,
+      offending site and record the decision. *(BLOCKED 2026-11-01: the open stop-edge wedge reproduces on the
+      pre-change default image `909c930d…`, so no valid chain exists on either side; `IdleOwner_unit` was
+      removed by decision after it measured as the poll.)* Append the same runs' `DIAG,timing`/`timing_max`,
       `idle_turn` and `persist_save,step` values beside their identities to
       `evidence/<date>-retirement-equivalence.md`, and record the TBD-4 promotion recommendation.
 - [ ] 5.6 Record ring capacity use, `seq` gaps and batch counts from two real captures and close

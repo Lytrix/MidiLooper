@@ -660,6 +660,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       return false;
     }
   }
+  // DEC-239 profile scope (long: window-shaped but content-sized, no hard event cap; synchronous). After the
+  // reuse return above: on device that cheap path was ~32,000 calls per chain at ~17 us, i.e. the poll.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::PlaybackWindow_build);
 
   // The admission decides by **coverage** (`isFullLoopMergedPlaybackWindow` inside), never by length: a seal that fits
   // the window being served is folded in; one that does not takes the ordinary rebuild below.
@@ -6812,10 +6815,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
                           frontier, orderedPrefix, candidate.storage.capacity);
       grain = runtime->viewBuild.nextGrain();
     }
-    const auto result = grain == RuntimePlaybackViewBuildGrain::Fill
-        ? runtime->viewBuild.stepFill(kPlaybackViewFillQuantum)
-        : grain == RuntimePlaybackViewBuildGrain::Order
-            ? runtime->viewBuild.stepOrder(kPlaybackViewOrderQuantum) : grain;
+    RuntimePlaybackViewBuildGrain result;
+    {
+      // DEC-239 profile scope (short: one declared grain, <= 64 fill / <= 48 order units, ExecutionBounds
+      // row 27 -- a structural cap far below one cycle-counter period). Only the grain, never the sweep.
+      PROFILE_SCOPE_SHORT(profileScope, RuntimeProfiler::ProfileId::PlaybackViewService_grain);
+      result = grain == RuntimePlaybackViewBuildGrain::Fill
+          ? runtime->viewBuild.stepFill(kPlaybackViewFillQuantum)
+          : grain == RuntimePlaybackViewBuildGrain::Order
+              ? runtime->viewBuild.stepOrder(kPlaybackViewOrderQuantum) : grain;
+      profileScope.setResult(static_cast<uint8_t>(result));
+    }
     if (result == RuntimePlaybackViewBuildGrain::Denied) {
       runtime->viewBuild.discard();
       return PlaybackViewTurnResult::GrainDenied;

@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "TrackInternal.h"
 
 #include <Arduino.h>
@@ -1931,6 +1932,8 @@ void Track::processSnapshotOwnerTurn(Loop& snapshotLoop, uint8_t snapshotConstru
 #if SC_QUALIFICATION_ROWS_ENABLED
   const uint32_t publishedRevisionBeforeStep = snapshotLoop.publishedSnapshotRevision();
 #endif
+  // DEC-239 profile scope (long: row 21 bounds construction only and this call may also publish).
+  PROFILE_SCOPE_LONG(snapshotProfileScope, RuntimeProfiler::ProfileId::SnapshotPublish_step);
   snapshotLoop.stepPendingSnapshotPublish(
       snapshotConstructionUnits,
       MidiServiceDrain::allowSnapshotConstructionStart(

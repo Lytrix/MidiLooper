@@ -34,7 +34,13 @@
     },
     "teensy41-capture-serial-ingress": "teensy41-capture-serial",
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
-    "teensy41-capture-serial-profile": "teensy41-capture-serial",
+    "teensy41-capture-serial-profile": {
+      "itcm_bytes": 393216,
+      "ram1_variables": 96192,
+      "locals_free": 34880,
+      "padding": 1208,
+      "note": "Runtime profiler env (DEC-239, openspec/changes/runtime-profiling-layer, 2026-11-01): the default capture contract plus -D RUNTIME_PROFILE_SCOPES=1. All profiler state is DMAMEM and every profiler literal/switch table is carved to FLASH, so RAM1 variables equal the default env. ITCM code 391,928 -> 392,008 (+80 B) from the scope call sites in the two ITCM-resident owners (the three phase cases of DisplayManager::update, and Track::startOverdubbing); padding 1,288 -> 1,208, floor 840 unchanged. The default env is unchanged."
+    },
     "teensy41-capture-serial-investigation-diag": {
       "itcm_bytes": 393216,
       "ram1_variables": 100480,

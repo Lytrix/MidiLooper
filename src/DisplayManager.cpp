@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 // DisplayManager.cpp
+#include "Utils/RuntimeProfiler.h"
 #include "DisplayManager.h"
 #include "TrackManager.h"
 #include "ClockManager.h"
@@ -450,15 +451,26 @@ void DisplayManager::update() {
     const DisplayWindowUtils::DisplayFramePhase ran =
         DisplayWindowUtils::displayFramePhaseToRun(pendingPaintPhase_);
     switch (ran) {
-        case DisplayWindowUtils::DisplayFramePhase::Resolve:
+        // DEC-239 profile scope per running phase (long: the transfer phase includes the display
+        // transport, ExecutionBounds row 4); never on the Idle turn, which is the poll.
+        case DisplayWindowUtils::DisplayFramePhase::Resolve: {
+            PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::Display_frame_phase);
+            profileScope.setResult(0);
             runPaintResolvePhase(now);
             break;
-        case DisplayWindowUtils::DisplayFramePhase::Draw:
+        }
+        case DisplayWindowUtils::DisplayFramePhase::Draw: {
+            PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::Display_frame_phase);
+            profileScope.setResult(1);
             runPaintDrawPhase();
             break;
-        case DisplayWindowUtils::DisplayFramePhase::Transfer:
+        }
+        case DisplayWindowUtils::DisplayFramePhase::Transfer: {
+            PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::Display_frame_phase);
+            profileScope.setResult(2);
             runPaintTransferPhase();
             break;
+        }
         case DisplayWindowUtils::DisplayFramePhase::Idle:
             break;
     }
