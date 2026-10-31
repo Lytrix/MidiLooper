@@ -40,6 +40,12 @@ constexpr uint32_t kMaxWrapRowsStagedPerStep = 256;
 /// Two indexed merges per body note (candidate + wrap-prefill) plus the wrap upserts.
 constexpr uint32_t kMaxMergeComparisonsPerStep = 512;
 
+#if defined(__IMXRT1062__)
+#define DISPLAY_BASE_PREP_FLASH __attribute__((noinline, section(".flashmem")))
+#else
+#define DISPLAY_BASE_PREP_FLASH
+#endif
+
 struct Key {
   uint8_t trackIndex = 255;
   uint8_t displaySlot = 255;
@@ -166,6 +172,14 @@ inline bool beginTile(Prep& prep) {
   prep.tileNoteIndex.clear();
   return true;
 }
+
+/// Flash-resident wrappers used by the firmware service. The producer's inline tile/index code must not
+/// be instantiated in an ITCM TU; these definitions live in `LoopContentResolution.cpp` (flash).
+DISPLAY_BASE_PREP_FLASH Prep& constructFlash(void* storage);
+DISPLAY_BASE_PREP_FLASH bool startFlash(Prep& prep, const Loop& loop, const Key& key,
+                                        uint32_t closureTicks);
+DISPLAY_BASE_PREP_FLASH bool stepFlash(Prep& prep, const Loop& loop, size_t eventBudget);
+DISPLAY_BASE_PREP_FLASH void cancelFlash(Prep& prep);
 
 /// Start a candidate for `key` over `key.rangeStart..key.rangeLength` in 4-bar tiles. `closureTicks`
 /// is the committed maximum note span used to widen each tile's lookup; the caller owns that value.

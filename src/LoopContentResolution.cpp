@@ -16,6 +16,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/SnapshotNoteConversion.h"
 #include "Utils/TrackMem.h"
+#include "Utils/DisplayBasePreparation.h"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -26,6 +27,7 @@
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <new>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -4255,3 +4257,25 @@ TRACK_COLD_MEM void LoopContentResolution::measureDeviceGate(const LoopPasses& p
   }
   out = sDeviceGateSession.sample_;
 }
+
+// DEC-237 Slice 3b — flash-resident producer wrappers. This TU is linked by
+// `linker/imxrt1062_t41_lcr.ld` into flash, so the producer's inline tile/index code and its identity
+// indexes are instantiated here, never in the ITCM `DisplayManager` service TU.
+namespace DisplayBasePreparation {
+
+DISPLAY_BASE_PREP_FLASH Prep& constructFlash(void* storage) {
+  return *new (storage) Prep();
+}
+
+DISPLAY_BASE_PREP_FLASH bool startFlash(Prep& prep, const Loop& loop, const Key& key,
+                                        uint32_t closureTicks) {
+  return start(prep, loop, key, closureTicks);
+}
+
+DISPLAY_BASE_PREP_FLASH bool stepFlash(Prep& prep, const Loop& loop, size_t eventBudget) {
+  return step(prep, loop, eventBudget);
+}
+
+DISPLAY_BASE_PREP_FLASH void cancelFlash(Prep& prep) { cancel(prep); }
+
+}  // namespace DisplayBasePreparation

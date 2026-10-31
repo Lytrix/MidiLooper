@@ -31,7 +31,7 @@ DMAMEM DisplayBasePreparation::Prep* gStagedDisplayBasePrep = nullptr;
 
 DISP_COLD_MEM DisplayBasePreparation::Prep& stagedDisplayBasePrepStorage() {
     if (gStagedDisplayBasePrep == nullptr) {
-        gStagedDisplayBasePrep = new (gStagedDisplayBaseStorage) DisplayBasePreparation::Prep();
+        gStagedDisplayBasePrep = &DisplayBasePreparation::constructFlash(gStagedDisplayBaseStorage);
     }
     return *gStagedDisplayBasePrep;
 }
@@ -83,14 +83,14 @@ DISP_COLD_MEM bool DisplayManager::serviceStagedDisplayBaseTurn(const Track& tra
     }
     DisplayBasePreparation::Prep& prep = stagedDisplayBasePrepStorage();
     if (!prep.active || !DisplayBasePreparation::keyMatches(prep.key, key)) {
-        if (!DisplayBasePreparation::start(prep, loop, key, Config::TICKS_PER_BAR)) {
+        if (!DisplayBasePreparation::startFlash(prep, loop, key, Config::TICKS_PER_BAR)) {
             return false;
         }
     }
     if (prep.ready) {
         return true;
     }
-    return DisplayBasePreparation::step(prep, loop, eventBudget);
+    return DisplayBasePreparation::stepFlash(prep, loop, eventBudget);
 }
 
 DISP_COLD_MEM bool DisplayManager::stagedDisplayBaseReady() const {
@@ -103,5 +103,5 @@ DISP_COLD_MEM const DisplayBasePreparation::Prep& DisplayManager::stagedDisplayB
 }
 
 DISP_COLD_MEM void DisplayManager::cancelStagedDisplayBase() {
-    DisplayBasePreparation::cancel(stagedDisplayBasePrepStorage());
+    DisplayBasePreparation::cancelFlash(stagedDisplayBasePrepStorage());
 }

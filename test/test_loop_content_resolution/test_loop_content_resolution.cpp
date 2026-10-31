@@ -34,6 +34,14 @@
 #include "PendingNoteChange.h"
 #include "ResolveConstrainedGeometry.h"
 #include "../../src/LoopContentResolution.cpp"
+
+// DEC-237: the shared `LoopContentResolution.cpp` TU carries the display-base producer's flash
+// wrappers, which reference these `Loop` methods. This focused resolver suite does not link
+// `LoopVisualCache.cpp` and never calls the producer; link-only stubs keep the unit suite isolated.
+uint16_t Loop::activeCommittedPassCount() const { return 0; }
+bool Loop::activeCommittedPassHasWrapContent(uint16_t, uint32_t) const { return false; }
+bool Loop::appendOverdubWrapNotesForPass(uint16_t, NoteUtils::DisplayNoteVec&) const { return false; }
+
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/NoteEditCurrentState.cpp"
 #include "../../src/EditManager/EditSessionInteraction.cpp"

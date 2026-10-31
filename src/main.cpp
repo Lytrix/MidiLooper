@@ -643,6 +643,33 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     sVisualCacheCadence.lastEmitMs = now;
   }
 #endif
+  // DEC-237 Slice 3a: the staged display base's producer is a declared idle-owner child. It is served
+  // only when the coverage worker has no owed tile (coverage correctness never waits behind display),
+  // and only under the idle-child admission gate. One bounded grain per VisualCache owner turn; the
+  // frame adoption is the next Slice 3 sub-slice.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+    const uint8_t selectedTrackIndex = trackManager.getSelectedTrackIndex();
+    if (selectedTrackIndex < trackManager.getTrackCount()) {
+      Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
+      if (selectedTrack.loopsAllocated()) {
+        const uint8_t displaySlot = selectedTrack.getActiveLoopIndex();
+        if (!selectedTrack.getLoop(displaySlot).hasOwedOverdubCoverage() &&
+            displayManager.stagedDisplayBaseOwed(selectedTrack, displaySlot)) {
+          const uint32_t spentUs = micros() - turnStartUs;
+          const uint32_t remainingUs =
+              spentUs < MidiServiceDrain::kOwnerWorkBudgetUs
+                  ? MidiServiceDrain::kOwnerWorkBudgetUs - spentUs
+                  : 0;
+          if (MidiServiceDrain::boundedIdleOwnerChildMayRun(
+                  true, timingCritical, 4000, remainingUs, 1000)) {
+            (void)displayManager.serviceStagedDisplayBaseTurn(
+                selectedTrack, displaySlot, 0,
+                DisplayBasePreparation::kMaxEventsAppendedPerStep);
+          }
+        }
+      }
+    }
+  }
   // S4b.7 (Rev 20.3/21.7): the `SlotProvision` turn is served **before** the all-stopped guard below and
   // returns through it -- the contract exempts it, because a queued switch is retained exactly while the
   // track's state is unsettled. It takes the pending switch's inbound occupancy off-clock and builds that
