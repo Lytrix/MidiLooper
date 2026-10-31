@@ -87,6 +87,9 @@ struct Prep {
   Phase phase = Phase::Tiles;
   uint16_t wrapPassIndex = 0;
   uint16_t wrapPassCount = 0;
+  /// Active pass indices that can produce a wrap-held row (or every active pass when an active Note
+  /// edit may move a note across the boundary). Built once at `start`; the wrap phase iterates this.
+  std::vector<uint16_t> wrapPasses;
   uint32_t steps = 0;
   StepWork lastWork;
   StepWork maxWork;
@@ -136,6 +139,7 @@ inline void resetPrep(Prep& prep) {
   prep.phase = Phase::Tiles;
   prep.wrapPassIndex = 0;
   prep.wrapPassCount = 0;
+  prep.wrapPasses.clear();
   prep.steps = 0;
   prep.lastWork = StepWork{};
   prep.maxWork = StepWork{};
@@ -183,7 +187,23 @@ inline bool start(Prep& prep, const Loop& loop, const Key& key, uint32_t closure
   prep.closureTicks = closureTicks;
   prep.tileCount = static_cast<uint16_t>(count);
   prep.tiles.assign(prep.tileCount, NoteUtils::DisplayNoteVec{});
-  prep.wrapPassCount = loop.activeCommittedPassCount();
+  // Skip wrap staging for passes that cannot produce a wrap-held row. An active Note edit may move a
+  // note across the boundary, so an edited slot stages every active pass (the conservative fallback).
+  bool editMayMoveBoundary = false;
+  for (const EditPass& editPass : loop.passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      editMayMoveBoundary = true;
+      break;
+    }
+  }
+  prep.wrapPasses.clear();
+  const uint16_t activePasses = loop.activeCommittedPassCount();
+  for (uint16_t passIndex = 0; passIndex < activePasses; ++passIndex) {
+    if (editMayMoveBoundary || loop.activeCommittedPassHasWrapContent(passIndex, closureTicks)) {
+      prep.wrapPasses.push_back(passIndex);
+    }
+  }
+  prep.wrapPassCount = static_cast<uint16_t>(prep.wrapPasses.size());
   prep.phase = Phase::Tiles;
   prep.active = true;
   prep.ready = false;
@@ -260,7 +280,8 @@ inline bool step(Prep& prep, const Loop& loop, size_t eventBudget) {
     case Phase::WrapStaging: {
       prep.wrapScratch.clear();
       const size_t wrapBefore = prep.wrapIndex.comparisons();
-      if (!loop.appendOverdubWrapNotesForPass(prep.wrapPassIndex, prep.wrapScratch)) {
+      const uint16_t passIndex = prep.wrapPasses[prep.wrapPassIndex];
+      if (!loop.appendOverdubWrapNotesForPass(passIndex, prep.wrapScratch)) {
         // The active pass inventory changed under the candidate. Slice 3 owns cancellation/admission;
         // here the candidate simply stops being publishable.
         prep.active = false;

@@ -1557,6 +1557,10 @@ struct Loop {
   /// DEC-237 Slice 2 — active committed passes in display order (record first, then active overdubs
   /// with content). The staged display producer uses this as its per-pass staging count.
   uint16_t activeCommittedPassCount() const;
+  /// DEC-237 Slice 2 — true when this active pass has a committed chunk whose span intersects the loop
+  /// boundary window (`closureTicks` on each side). Passes that cannot produce a wrap-held row are
+  /// skipped by the producer, so an unedited chain stages only the passes that actually wrap.
+  bool activeCommittedPassHasWrapContent(uint16_t passIndex, uint32_t closureTicks) const;
   /// DEC-237 Slice 2 — stage the wrap-held rows of exactly one active committed pass, in the same display
   /// order. One pass per call; the producer iterates so a candidate never re-reads every pass per tile.
   /// Returns false when `passIndex` is outside the active committed inventory.

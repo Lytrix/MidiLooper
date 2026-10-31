@@ -1096,6 +1096,55 @@ LOOP_COLD_MEM uint16_t Loop::activeCommittedPassCount() const {
   return count;
 }
 
+LOOP_COLD_MEM bool Loop::activeCommittedPassHasWrapContent(uint16_t passIndex,
+                                                           uint32_t closureTicks) const {
+  if (loopLengthTicks == 0 || closureTicks == 0) {
+    return false;
+  }
+  const CommittedChunkIdList* chunks = nullptr;
+  uint16_t index = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    if (index == passIndex) {
+      chunks = &passes.recordPass.committedChunkIds;
+    }
+    ++index;
+  }
+  if (chunks == nullptr) {
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+        continue;
+      }
+      if (index == passIndex) {
+        chunks = &pass.committedChunkIds;
+        break;
+      }
+      ++index;
+    }
+  }
+  if (chunks == nullptr) {
+    return false;
+  }
+  uint32_t closure = closureTicks;
+  if (closure > loopLengthTicks) {
+    closure = loopLengthTicks;
+  }
+  const uint32_t windowStart = loopLengthTicks - closure;
+  const uint32_t windowLength = closure >= (loopLengthTicks / 2) ? loopLengthTicks : closure * 2;
+  for (uint16_t chunkId : *chunks) {
+    uint32_t firstTick = 0;
+    uint32_t lastTick = 0;
+    if (!LoopEventStore::chunkTickSpan(chunkId, firstTick, lastTick)) {
+      continue;
+    }
+    if (CommittedEventRange::chunkIntersectsWindow(firstTick, lastTick, windowStart, windowLength,
+                                                   loopLengthTicks)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 LOOP_COLD_MEM bool Loop::appendOverdubWrapNotesForPass(uint16_t passIndex,
                                                        NoteUtils::DisplayNoteVec& notes) const {
   if (loopLengthTicks == 0) {

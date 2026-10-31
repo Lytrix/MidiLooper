@@ -1313,10 +1313,11 @@ void test_dec237_slice2_producer_steps_stay_within_the_declared_work_bound() {
   std::printf("%s\n", msg);
   TEST_ASSERT_TRUE(prep.ready);
   TEST_ASSERT_EQUAL_UINT16(5, prep.tileCount);
-  TEST_ASSERT_EQUAL_UINT16(14, prep.wrapPassCount);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(3, prep.wrapPassCount,
+                                   "the record and the two last-bar overdub passes stage wrap rows");
   TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
       prep.tileCount + prep.wrapPassCount, prep.steps,
-      "every tile and every active pass needs at least one bounded grain");
+      "every tile and every staged pass needs at least one bounded grain");
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxChunksInspectedPerStep,
                                    prep.maxWork.chunksInspected);
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxEventsAppendedPerStep,
@@ -1502,11 +1503,12 @@ void test_dec237_slice2_producer_inspects_at_most_the_declared_chunks() {
   std::printf("%s\n", msg);
   TEST_ASSERT_TRUE(prep.ready);
   TEST_ASSERT_EQUAL_UINT16(1, prep.tileCount);
-  TEST_ASSERT_EQUAL_UINT16(1, prep.wrapPassCount);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, prep.wrapPassCount,
+                                   "the NoteOn-only record pass has no boundary content");
   TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxChunksInspectedPerStep,
                                    prep.maxWork.chunksInspected);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(3, prep.steps,
-                                   "one wrap layer + two tile grains for the capped 65-chunk pass");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, prep.steps,
+                                   "two tile grains for the capped 65-chunk pass, no wrap layer");
 }
 
 /// DEC-237 Slice 2 — the two identity scopes are deliberate: the resolver replaces by bare NoteId, while
@@ -1562,6 +1564,50 @@ void test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes() {
                                    "the first wrap-held row wins at the same pitch+start");
 }
 
+/// DEC-237 Slice 2 — an active Note edit may move a note across the loop boundary, so the wrap-pass
+/// precheck must not skip any active pass. The edited fallback stages every pass and keeps parity.
+void test_dec237_slice2_active_note_edit_stages_every_wrap_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  (void)seedDenseCommittedLoop(loop, 13, 32, kStaleRootLength, true);
+
+  EditPass del{};
+  del.id = 9001;
+  del.passType = EditPassType::Note;
+  del.actionType = EditActionType::Delete;
+  del.state = EditPassState::Active;
+  del.targetNoteId = 20000;
+  loop.passes.editPasses.push_back(del);
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kStaleRootLength;
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(loop.activeCommittedPassCount(), prep.wrapPassCount,
+                                   "an active Note edit disables the wrap-pass skip");
+  for (uint32_t turns = 0; !prep.ready && turns < 200000; ++turns) {
+    (void)DisplayBasePreparation::step(prep, loop,
+                                       DisplayBasePreparation::kMaxEventsAppendedPerStep);
+  }
+  TEST_ASSERT_TRUE(prep.ready);
+
+  NoteUtils::DisplayNoteVec whole;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0,
+                                                     kStaleRootLength, whole);
+  loop.appendOverdubPassDisplayNotes(whole);
+  assertSameNoteSet(whole, prep.stagedNotes, "DEC-237 edited fallback parity");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao2_a_ordinary_window_matches_whole_loop);
@@ -1593,6 +1639,7 @@ int main(int, char**) {
   RUN_TEST(test_dec237_slice2_staged_base_parity_per_tile_and_whole_range);
   RUN_TEST(test_dec237_slice2_wrap_identity_survives_candidate_assembly);
   RUN_TEST(test_dec237_slice2_producer_inspects_at_most_the_declared_chunks);
+  RUN_TEST(test_dec237_slice2_active_note_edit_stages_every_wrap_pass);
   RUN_TEST(test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes);
   return UNITY_END();
 }
