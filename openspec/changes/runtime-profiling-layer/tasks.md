@@ -43,19 +43,20 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
       the `StopDiagRows`/`EnvelopeDistRows` lines in `linker/imxrt1062_t41_lcr.ld`, with a comment
       naming this change; verify both envs still link at the 0.3 figures (a rule matching no object
       is inert).
-- [ ] 0.7 **P7 — HITL stimulus and recipe.** Read `docs/Agents/hitl_authoring_traps.md`, run
+- [x] 0.7 **P7 — HITL stimulus and recipe.** Read `docs/Agents/hitl_authoring_traps.md`, run
       `.venv/bin/python scripts/host_midi_hitl.py stimulus list`, and fill `HITL_TEST_RECIPE.md` into
       `evidence/HITL_TEST_RECIPE.md` for the slice-2/3/4 device legs. The chain rig
       (`scripts/hitl_midifile_chain.py`, used for DEC-230/231) is not a registered stimulus: register a
       temporary variant `STIM-PROFILE-CHAIN-TEMP-01` (record + idle preparation + playback, then
       `!PROFILE_STATS`/`!PROFILE_RING` drains), or record the owner's acceptance of the rig as a reuse.
       Verify the recipe names tier registration, RAM1 headroom and reused `scripts/hitl/actions/`.
-- [ ] 0.8 **P8 — same-day reference capture.** On the 0.3 default image, run the 0.7 stimulus once
+- [x] 0.8 **P8 — same-day reference capture.** On the 0.3 default image, run the 0.7 stimulus once
       and record in `evidence/<date>-baseline-device.md`: the Record edge (`capture_prewarm_split`
       `views`/`total`), every `view_prewarm_step` unit (`unit`, `us`), `midi_gap`/`late_on` maxima and
       `win_gap_overrun` count, plus a second run for run-to-run spread. Verify boot proof
       (`boot_reset,crash=0`, `BOOT,load,ok`) and the HEX hash. These numbers replace the DEC-230
-      image `79aa5b7f…` figures as the slice-3 oracle.
+      image `79aa5b7f…` figures as the slice-3 oracle. *(Done 2026-10-31:
+      `evidence/2026-10-31-baseline-device.md`, image `909c930d…`, two valid runs.)*
 
 ## 1. Contract review (no firmware edit)
 

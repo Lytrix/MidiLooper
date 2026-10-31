@@ -15,7 +15,7 @@ button helpers, not hand-rolled bytes.
 **Decision:** reuse the owner rig unchanged (no new stimulus, no edit to a canonical one). Rationale: the
 profiler adds no gesture; its device legs must run the *same* stimulus as the timing work they explain,
 so profile and legacy rows can be compared run-to-run. Profile dumps are sent **after** the rig exits,
-over the capture session, not from inside a flow. **Owner acceptance of this reuse is pending** (asked 2026-10-31, task 0.7); if the owner prefers a
+over the capture session, not from inside a flow. **Owner accepted the reuse and the scratch-slot clear on 2026-10-31** (task 0.7/0.8); if the owner prefers a
 registered variant, scaffold
 `STIM-PROFILE-CHAIN-TEMP-01` from `STIM-BASE-2-2-01` with `--marker` for every `DIAG,profile_` prefix.
 
