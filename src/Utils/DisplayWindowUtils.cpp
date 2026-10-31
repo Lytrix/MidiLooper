@@ -32,7 +32,9 @@ TickInterval displayNoteSpanInLoop(const NoteUtils::DisplayNote& note, uint32_t 
   const uint32_t noteStart = normalizeTick(note.startTick, loopLength);
   uint32_t noteEndInclusive = normalizeTick(note.endTick, loopLength);
   int32_t exclusiveEnd = static_cast<int32_t>(noteEndInclusive) + 1;
-  if (noteEndInclusive <= noteStart) {
+  // Inclusive endpoints: equal is a one-tick note at `noteStart` (e.g. the tail of a boundary pair,
+  // `[loopLength - 1, loopLength - 1]`); only an end strictly before the start wraps the loop head.
+  if (noteEndInclusive < noteStart) {
     exclusiveEnd += static_cast<int32_t>(loopLength);
   }
   return TickInterval{static_cast<int32_t>(noteStart), exclusiveEnd};
@@ -117,18 +119,21 @@ bool noteIntersectsWindow(uint32_t startTick, uint32_t endTick, uint32_t windowS
   if (loopLength == 0 || windowLength == 0) {
     return false;
   }
+  if (windowLength >= loopLength) {
+    return true;
+  }
+  // Exact circular-arc intersection. The note covers the inclusive ticks [start, end]: equal
+  // endpoints are one tick, and only end < start wraps the loop head. (The former 16th-step probe
+  // walk treated equal endpoints as a whole-loop note and could step over a window narrower than a
+  // 16th lying between probes.)
   const uint32_t noteStart = normalizeTick(startTick, loopLength);
-  uint32_t noteEnd = normalizeTick(endTick, loopLength);
-  if (noteEnd <= noteStart) {
-    noteEnd += loopLength;
-  }
-  for (uint32_t probe = noteStart; probe < noteEnd; probe += Config::TICKS_PER_16TH_STEP) {
-    if (tickInHalfOpenWindow(probe, windowStart, windowLength, loopLength)) {
-      return true;
-    }
-  }
-  return tickInHalfOpenWindow(noteStart, windowStart, windowLength, loopLength) ||
-         tickInHalfOpenWindow(endTick, windowStart, windowLength, loopLength);
+  const uint32_t noteEnd = normalizeTick(endTick, loopLength);
+  const uint32_t noteTicks = noteEnd >= noteStart ? noteEnd - noteStart + 1u
+                                                  : noteEnd + loopLength - noteStart + 1u;
+  const uint32_t winStart = normalizeTick(windowStart, loopLength);
+  // Two arcs intersect iff either one contains the other's first tick.
+  return (winStart + loopLength - noteStart) % loopLength < noteTicks ||
+         (noteStart + loopLength - winStart) % loopLength < windowLength;
 }
 
 DWU_COLD DisplayNoteVec filterDisplayNotesToWindow(const DisplayNoteVec& notes, const TickInterval& viewport,
@@ -237,6 +242,25 @@ uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength
   return start;
 }
 
+uint32_t resolveCircularBarWindowStart(uint32_t playheadTick, uint32_t windowLength,
+                                       uint32_t loopLength, uint32_t ticksPerBar) {
+  if (loopLength == 0 || windowLength == 0 || ticksPerBar == 0) {
+    return 0;
+  }
+  if (windowLength >= loopLength) {
+    return 0;
+  }
+  const uint32_t playhead = IntervalProjection::tickPhaseInLoop(playheadTick, 0, loopLength);
+  const uint32_t half = windowLength / 2;
+  // Head floor: a playhead in the first half window keeps the loop's start visible (the take reads
+  // from bar 0, which is what a rewound viewport means). Past it the origin steps by whole bars.
+  if (playhead < half) {
+    return 0;
+  }
+  const uint32_t centred = playhead - half;
+  return centred - (centred % ticksPerBar);
+}
+
 bool resolveDetailedPaintWindow(uint32_t loopLength, uint8_t requestedBars,
                                 uint32_t storedWindowStart, uint32_t playheadTick,
                                 bool autoFollow, uint32_t& outWindowStart,
@@ -276,6 +300,9 @@ bool resolveDetailedPaintWindow(uint32_t loopLength, uint8_t requestedBars,
   }
   uint32_t start = storedWindowStart;
   if (autoFollow) {
+    // The bar-stable circular origin (`resolveCircularBarWindowStart`) is the target for the wrap;
+    // wiring it requires the committed-base gather to compose two spans, so the paint origin stays
+    // on the centred/clamped resolver until that lands (2026-10-30 handoff, step 2).
     start = resolveCenteredWindowStart(playheadTick, length, loopLength);
   }
   if (start + length > loopLength) {

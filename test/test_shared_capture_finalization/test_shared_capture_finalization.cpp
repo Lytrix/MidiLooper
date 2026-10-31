@@ -219,6 +219,55 @@ struct TrackCaptureStopTestAccess {
     auto* rt = t.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr ? (rt->captureStagingsAdmitted() ? 1 : 0) : -1;
   }
+  /// DEC-233: the retained, accepted Stop's own musical boundary (stamped at the press).
+  static uint32_t acceptedStopPhaseTick(const Track& t) {
+    const auto* latch = t.interactionLatch();
+    return latch != nullptr ? latch->phaseTick : 0;
+  }
+  /// DEC-233: the retained obligation's destination (a transport stop retargets it, never consumes it).
+  static PendingStopDestination latchDestination(const Track& t) {
+    const auto* latch = t.interactionLatch();
+    TEST_ASSERT_NOT_NULL(latch);
+    return latch->destination;
+  }
+  /// DEC-233 decision 2: is the canonical worker actually bound to a job for `slot`?
+  static bool canonicalWorkerBound(Track& t, uint8_t slot) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->captureStopOwner != nullptr;
+  }
+  /// DEC-233 decision 2: is the slot's canonical worker bound to the FIFO head's own admission?
+  static bool canonicalWorkerBoundToHead(Track& t, uint8_t slot) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    auto* job = t.captureStopJobHead();
+    return rt != nullptr && job != nullptr && rt->captureStopOwner == &job->admission;
+  }
+  static uint64_t acceptedStopInterval(const Track& t) {
+    const auto* latch = t.interactionLatch();
+    return latch != nullptr ? latch->interval : 0u;
+  }
+  /// DEC-233: latch the interval's Stop through its production owner, for identity-focused cases whose
+  /// subject is the drive's supersession check rather than a particular capacity route.
+  static void acceptStop(Track& t, uint8_t slot) {
+    t.latchAcceptedStop(PendingStopDestination::Playing, slot, t.captureInterval_);
+  }
+  /// DEC-233 decision 3: the successor Start intent retained beside a Stop.
+  static bool successorStartIntent(const Track& t) {
+    const auto* latch = t.interactionLatch();
+    return latch != nullptr && latch->successorStart;
+  }
+  /// DEC-233 decision 1: run the production press closure for a retained Stop.
+  static void closeInput(Track& t) { t.closeOverdubInputForRetainedStop(); }
+  /// DEC-233: re-arm the physical capture destinations a withheld-cut fixture released. This is the
+  /// production cold admission (`prewarmCaptureStopJobs`), not a fixture-only reservation.
+  static bool reserveCutDestinations(Track& t) { return t.prewarmCaptureStopJobs(); }
+  /// DEC-233: held-note capture state the interval still owns while its Stop waits.
+  static size_t pendingNoteCount(const Track& t) { return t.pendingNotes.size(); }
+  /// DEC-233: the live role's open note reservations (closure credits the job must take over).
+  static size_t liveOpenReservations(Track& t, uint8_t slot) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(slot);
+    auto* staging = rt != nullptr ? rt->liveCaptureStagingIfPrewarmed() : nullptr;
+    return staging != nullptr ? staging->openReservationCount() : static_cast<size_t>(-1);
+  }
   static auto& bindRecordClosure(Track& t, uint8_t slot, uint32_t phaseTick, uint32_t length,
                                  bool presentationRetiring = true) {
     TEST_ASSERT_TRUE(t.prewarmCaptureStopJobs());
@@ -663,9 +712,39 @@ struct TrackCaptureStopTestAccess {
     auto* rt = t.playbackRuntime.slotIfAllocated(0);
     if (rt) rt->canonicalWindowPhase = LoopPlaybackRuntime::CanonicalWindowPhase::Denied;
   }
+  /// The live successor's capture **bridge** owns the slot's shared canonical/companion machinery; while
+  /// it is not `Idle`, `beginFrozenCanonicalTail` refuses (`BridgeActive` is the same term the prefix
+  /// reporter names). The fixture never steps the bridge build, so this is a stable manufactured cause.
+  static void forceCaptureBridgeBusy(Track& t) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    if (rt) rt->captureBridgePhase = LoopPlaybackRuntime::CaptureBridgePhase::Fill;
+  }
+  /// The tail **began** and then its frozen generations stopped matching (`stepFrozenCanonicalTail`'s
+  /// terminal latch). Nothing clears it before the job's commit discards the tail, so a job that reaches
+  /// `CanonicalTail` with this state can never advance.
+  static void forceCanonicalTailDenied(Track& t) {
+    auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    if (rt) rt->canonicalTailPhase = LoopPlaybackRuntime::CanonicalTailPhase::Denied;
+  }
+  /// Manufacture the Slice 4 total-budget elapsed state (the production timer is 65.536 ms-quantized).
+  static void forceCompanionWorkBudgetExpired(Track& t) {
+    companionWorkBudgetUsForTest() = 1;  // native default is disabled
+    t.companionWorkStartUnit_ = static_cast<uint8_t>((micros() >> 18) - 8);  // ~2.1 s ago
+  }
+  static void clearCompanionWorkBudgetForTest() { companionWorkBudgetUsForTest() = UINT32_MAX; }
   static RuntimeCanonicalPassInputs::ProgressState canonicalProgress(const Track& t) {
     const auto* rt = t.playbackRuntime.slotIfAllocated(0);
     return rt ? rt->canonicalPassInputs.progressState() : RuntimeCanonicalPassInputs::ProgressState{};
+  }
+  static unsigned canonicalPrefixPhase(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt ? static_cast<unsigned>(rt->canonicalPrefixPhase) : 255u;
+  }
+  /// The frozen canonical tail's own child state: `Idle` means the tail has never begun (it can
+  /// still start), `Denied` is the terminal latch nothing clears before a runtime reset.
+  static unsigned canonicalTailPhase(const Track& t) {
+    const auto* rt = t.playbackRuntime.slotIfAllocated(0);
+    return rt ? static_cast<unsigned>(rt->canonicalTailPhase) : 255u;
   }
   static unsigned canonicalWindowPhase(const Track& t) {
     const auto* rt = t.playbackRuntime.slotIfAllocated(0);
@@ -734,6 +813,8 @@ void setUp() {
   nativeMillisSet(0);
   A34aBoundary::resetSlotFlags();
   for (auto& row : StorageManagerInternal::currentSetLoopSlotDirty) row.fill(false);
+  Track::viewPrewarmStrictForTest() = false;
+  monolithicViewPrewarmCallsForTest() = 0;
 }
 void tearDown() {}
 
@@ -1006,8 +1087,11 @@ void staleAcceptedStop(bool replaceLoop) {
   prepareSlot(t, 0, true);
   t.forceSetState(TRACK_PLAYING);
   start(t, 0, true, 0, 60);
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::occupyCanonicalOutput(t));
-  stop(t, true, 768);
+  // DEC-233: this case is about the retained request's **identity** check, not about which resource
+  // denies. A canonical-output reservation no longer denies admission (decision 2), so the accepted
+  // Stop is latched through its own production owner; the interval stays live because the drive has
+  // not run yet, which is the shape the supersession check judges.
+  TrackCaptureStopTestAccess::acceptStop(t, 0);
   TEST_ASSERT_TRUE(t.hasAcceptedUnexecutedInteraction());
   TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::jobs(t));
   Loop& loop = t.getLoop(0);
@@ -7096,6 +7180,168 @@ void test_window_denied_stop_publishes_its_prepared_companions() {
                            "the companion horizon must be back on its prewarmed state after the commit");
 }
 
+/// 6.2 (item 2 of the 2026-10-30 stall list) — a destination-Playing overdub stop whose canonical
+/// tail cannot **start** must retire bounded instead of parking in `CanonicalTail`.
+///
+/// Device shape (`session_20261030_143745.log`, 12-window rig): the stop press at 60.99 s admits the
+/// job, the rig's next window starts a same-slot successor overdub at 61.99 s, and the stop's base
+/// keeps its prefix but loses the canonical **window** at 62.37 s. The job then enters `CanonicalTail`
+/// at 63.0 s and stays there for **51 s** (`#STOP_TRACE,phase=5`, untouched) until the transport stop
+/// retargets it at 113.8 s; only then does it retire raw. Nothing names the refusal and nothing bounds
+/// it: `beginFrozenCanonicalTail` requires a ready prefix **and** the shared canonical inputs, and the
+/// live successor holds them for the whole chain. The 12 windows the run was recorded for never open.
+///
+/// RED: pre-fix the job spends the whole fixture watchdog at `CanonicalTail` (same phase, tail never
+/// starts, no report). Acceptance: it leaves the phase within a bounded number of owner turns, commits
+/// its raw pass exactly once, and -- because it is a Playing-destination interval -- leaves the slot
+/// owing the derived representation through that commit (DEC-172's obligation).
+void test_6_2_window_denied_first_record_stop_retires_bounded() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 61, 100, 12);
+  t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);                       // job A, destination PLAYING (the device press shape)
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  // The measured successor: a same-slot overdub starts one beat after the stop press and keeps the
+  // shared canonical machinery for the rest of the chain.
+  start(t, 0, true, 768, 62);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(),
+                           "the device admitted a same-slot successor while the stop was pending");
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  TrackCaptureStopTestAccess::forceCanonicalWindowDenied(t);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::head(t).admission.canonicalBridgeUnavailable,
+                           "the window denial must be recorded as a bridge unavailability");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::head(t).admission.canonicalBaseAbandoned,
+                            "a window-only denial must not abandon the base");
+  advanceToPhase(t, PendingStopPhase::CanonicalTail);
+  // The device's blocking term: the successor's capture bridge owns the slot's canonical machinery, so
+  // the tail can never begin while the successor chain keeps capturing. Nothing else moves the bridge
+  // in this fixture, so the refusal is stable (the device's 51 s park, reduced to owner turns).
+  TrackCaptureStopTestAccess::forceCaptureBridgeBusy(t);
+  const uint32_t revision = loop.playbackRevision;
+  const size_t passes = loop.passes.overdubPasses.size();
+  uint64_t turns = 0;
+  bool abandonedSeen = false;
+  while (TrackCaptureStopTestAccess::jobs(t) > 0 && turns < 512) {
+    abandonedSeen = abandonedSeen || TrackCaptureStopTestAccess::head(t).admission.canonicalBaseAbandoned;
+    TrackCaptureStopTestAccess::step(t);
+    ++turns;
+  }
+  char msg[224];
+  snprintf(msg, sizeof(msg),
+           "the successor-starved stop must retire bounded: turns=%llu phase=%u tail=%u prefix=%u "
+           "abandoned=%u edits=%zu passes=%zu",
+           static_cast<unsigned long long>(turns),
+           static_cast<unsigned>(TrackCaptureStopTestAccess::jobs(t)
+                                     ? TrackCaptureStopTestAccess::phase(t)
+                                     : PendingStopPhase::RecordPublished),
+           TrackCaptureStopTestAccess::canonicalTailPhase(t),
+           TrackCaptureStopTestAccess::canonicalPrefixPhase(t), abandonedSeen ? 1u : 0u,
+           loop.passes.editPasses.size(), loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), msg);
+  // The liveness oracle: the phase may not be revisited past the declared no-start budget (the rest of
+  // the tail is three short phases). This is the number the 51 s device park violated by orders of
+  // magnitude.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT_MESSAGE(
+      static_cast<unsigned>(kCanonicalTailStartStallGrains + 64), turns, msg);
+  TEST_ASSERT_TRUE_MESSAGE(abandonedSeen,
+                           "the escape must record the job's canonical derivation as unavailable");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(passes + 1, loop.passes.overdubPasses.size(), msg);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision + 1, loop.playbackRevision, msg);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "a raw retire must leave the slot owing its derived representation");
+}
+
+/// 6.2b — the same job shape, but the tail **did** begin and latched `Denied` before completing (a frozen
+/// generation moved under it). That latch is terminal: `beginFrozenCanonicalTail` requires `Idle`, and
+/// `stepReservedFrozenCanonicalTail` refuses `Denied`, so pre-fix the job parks in `CanonicalTail` forever
+/// with no row naming it. Acceptance: the first grain at the phase takes the raw-only route (no 32-grain
+/// wait is needed -- the cause is already known), commits the pass once and owes the derived
+/// representation.
+void test_6_2b_denied_canonical_tail_retires_immediately() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 61, 100, 12);
+  t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  start(t, 0, true, 768, 62);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  advanceToPhase(t, PendingStopPhase::CanonicalPrefix);
+  TrackCaptureStopTestAccess::forceCanonicalWindowDenied(t);
+  for (unsigned grain = 0; grain < 20000 && TrackCaptureStopTestAccess::phase(t) ==
+           PendingStopPhase::CanonicalPrefix; ++grain) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  advanceToPhase(t, PendingStopPhase::CanonicalTail);
+  TrackCaptureStopTestAccess::forceCanonicalTailDenied(t);
+  const uint32_t revision = loop.playbackRevision;
+  const size_t passes = loop.passes.overdubPasses.size();
+  uint64_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) > 0 && turns < 64) {
+    TrackCaptureStopTestAccess::step(t);
+    ++turns;
+  }
+  char msg[192];
+  snprintf(msg, sizeof(msg),
+           "a denied canonical tail must escape at once: turns=%llu phase=%u tail=%u",
+           static_cast<unsigned long long>(turns),
+           static_cast<unsigned>(TrackCaptureStopTestAccess::jobs(t)
+                                     ? TrackCaptureStopTestAccess::phase(t)
+                                     : PendingStopPhase::RecordPublished),
+           TrackCaptureStopTestAccess::canonicalTailPhase(t));
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, TrackCaptureStopTestAccess::jobs(t), msg);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT_MESSAGE(8u, turns, msg);
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(passes + 1, loop.passes.overdubPasses.size(), msg);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision + 1, loop.playbackRevision, msg);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "the denied tail must owe the derived representation through the commit");
+}
+
+/// Slice 4 of the 2026-10-30 plan — a stop job that has spent its total companion-work budget commits
+/// the authoritative raw pass and hands the remaining derived work to the DEC-172 obligation, instead
+/// of holding the stop FIFO head (and the display's committed base) for the 5-14 s the device measured.
+void test_slice4_companion_work_budget_retires_raw_and_owes_convergence() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  Loop& loop = t.getLoop(0);
+  installCurrentRootForDeferredConvergence(loop);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 61, 100, 12);
+  t.noteOff(1, 61, 0, 96);
+  stop(t, true, 768);                       // Playing overdub stop
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  advanceToPhase(t, PendingStopPhase::CanonicalTail);
+  const uint32_t revision = loop.playbackRevision;
+  const size_t passes = loop.passes.overdubPasses.size();
+  TrackCaptureStopTestAccess::forceCompanionWorkBudgetExpired(t);
+  driveOverdubStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(passes + 1, loop.passes.overdubPasses.size(),
+                                 "the raw pass must commit when the companion budget expires");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision + 1, loop.playbackRevision,
+                                   "exactly one publication: the raw commit");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredIdle(t),
+                            "the derived representation must be owed through the commit");
+  TrackCaptureStopTestAccess::clearCompanionWorkBudgetForTest();
+}
+
 /// 1.13 — an owner-superseded base must still publish the interval's **prepared companion**
 /// representation. On device (`session_20261027_235228.log`) a record-return pass commit moves
 /// `playbackRevision` while the stop's companion derivation is completing, so `causalBaseCurrent`
@@ -10412,7 +10658,10 @@ void test_6_4_outstanding_stops_never_share_the_last_transfer_row() {
   cycleStart(i++);
   cycleStart(i++);
   cycleStart(i++);
-  const bool thirdRetained = t.isOverdubbing() && t.hasAcceptedUnexecutedInteraction();
+  // DEC-233: the third Stop is still **retained, not lost** -- but the press now closes its input, so
+  // the retained shape is "Playing + accepted latch + no job", not "still Overdubbing".
+  const bool thirdRetained = !t.isOverdubbing() && t.hasAcceptedUnexecutedInteraction() &&
+                             loop.capture.phase == CapturePhase::Overdub;
   driveOwnerRotationUntilStopsRetire(t);
   std::snprintf(ctx, sizeof(ctx),
                 "thirdRetained=%d jobs=%zu headPhase=%u latch=%d overdubbing=%d passes=%zu rows=%zu",
@@ -10874,6 +11123,663 @@ void test_6_4_control_a_paused_chain_drains_the_receipt_ring() {
   TEST_ASSERT_EQUAL_UINT_MESSAGE(0, maxReceipts, ctx);
 }
 
+/// DEC-231: a prepared Record edge performs no view construction; the progress counter is the
+/// proof, and `okmask` is the single admission predicate.
+void test_dec231_prepared_edge_adopts_without_view_progress() {
+  Track& t = trackManager.getTrack(0);
+  TEST_ASSERT_TRUE(t.prewarmPlaybackForSlot(0, false));
+  t.setActiveLoopIndex(0);
+  Track::viewPrewarmStrictForTest() = true;
+  t.requestViewPrewarmForSlot(0);
+  for (uint16_t unit = 0; unit < 256 && !t.viewPrewarmReadyForSlot(0); ++unit) {
+    (void)t.stepViewPrewarmForSlot(0, 1, 5000);
+  }
+  TEST_ASSERT_TRUE(t.viewPrewarmReadyForSlot(0));
+  const uint16_t progress = t.viewPrewarmProgressForSlot(0);
+  const uint32_t monolithicCalls = monolithicViewPrewarmCallsForTest();
+  TEST_ASSERT_TRUE(t.startRecording(100));
+  TEST_ASSERT_TRUE(t.isRecording());
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(progress, t.viewPrewarmProgressForSlot(0),
+                                   "the Record edge must not advance view preparation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(monolithicCalls, monolithicViewPrewarmCallsForTest(),
+                                   "the Record edge must not call the monolithic prewarmViews");
+  Track::viewPrewarmStrictForTest() = false;
+}
+
+/// DEC-231: a cold Record edge stays armed; it neither synchronously finishes preparation nor
+/// resets a preparation already in progress on repeated attempts.
+void test_dec231_cold_edge_stays_armed_and_does_not_reset() {
+  Track& t = trackManager.getTrack(0);
+  TEST_ASSERT_TRUE(t.prewarmPlaybackForSlot(0, false));
+  t.setActiveLoopIndex(0);
+  Track::viewPrewarmStrictForTest() = true;
+  TEST_ASSERT_FALSE(t.startRecording(100));
+  TEST_ASSERT_FALSE(t.isRecording());
+  TEST_ASSERT_EQUAL_UINT16(0, t.viewPrewarmProgressForSlot(0));
+  TEST_ASSERT_FALSE(t.startRecording(200));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, t.viewPrewarmProgressForSlot(0),
+                                   "repeated Record requests must not reset preparation");
+  TEST_ASSERT_FALSE(t.stepViewPrewarmForSlot(0, 1, 5000));
+  TEST_ASSERT_EQUAL_UINT16(1, t.viewPrewarmProgressForSlot(0));
+  TEST_ASSERT_FALSE(t.startRecording(300));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, t.viewPrewarmProgressForSlot(0),
+                                   "the cold edge must retain the in-progress cursor");
+  Track::viewPrewarmStrictForTest() = false;
+}
+
+/// DEC-231: progress is monotonic across owner turns and one bounded step advances exactly one
+/// natural unit (the caller can service MIDI between units).
+void test_dec231_view_prewarm_progress_is_monotonic() {
+  Track& t = trackManager.getTrack(0);
+  TEST_ASSERT_TRUE(t.prewarmPlaybackForSlot(0, false));
+  t.setActiveLoopIndex(0);
+  t.requestViewPrewarmForSlot(0);
+  uint16_t last = t.viewPrewarmProgressForSlot(0);
+  for (uint16_t turn = 0; turn < 128 && !t.viewPrewarmReadyForSlot(0); ++turn) {
+    (void)t.stepViewPrewarmForSlot(0, 1, 5000);
+    const uint16_t now = t.viewPrewarmProgressForSlot(0);
+    TEST_ASSERT_TRUE_MESSAGE(now == last || now == last + 1, "progress must be monotonic");
+    last = now;
+  }
+  TEST_ASSERT_TRUE(t.viewPrewarmReadyForSlot(0));
+}
+
+/// DEC-231: an identity move invalidates the prepared state and restarts preparation; the stale
+/// cursor is not reused.
+void test_dec231_view_prewarm_identity_change_restarts() {
+  Track& t = trackManager.getTrack(0);
+  TEST_ASSERT_TRUE(t.prewarmPlaybackForSlot(0, false));
+  t.setActiveLoopIndex(0);
+  Track::viewPrewarmStrictForTest() = true;
+  t.requestViewPrewarmForSlot(0);
+  TEST_ASSERT_FALSE(t.stepViewPrewarmForSlot(0, 1, 5000));
+  TEST_ASSERT_EQUAL_UINT16(1, t.viewPrewarmProgressForSlot(0));
+  t.getLoop(0).loopLengthTicks = 1920;
+  TEST_ASSERT_FALSE(t.viewPrewarmReadyForSlot(0));
+  TEST_ASSERT_FALSE(t.startRecording(100));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, t.viewPrewarmProgressForSlot(0),
+                                   "identity move must clear the stale cursor");
+  TEST_ASSERT_FALSE(t.stepViewPrewarmForSlot(0, 1, 5000));
+  TEST_ASSERT_EQUAL_UINT16(1, t.viewPrewarmProgressForSlot(0));
+  Track::viewPrewarmStrictForTest() = false;
+}
+
+// ---------------------------------------------------------------------------
+// DEC-233 / overdub-stop-edge-closure — input closure is independent of finalization.
+// ---------------------------------------------------------------------------
+
+/// 1.1 — the principal capacity-wait fixture. The canonical copy **reservation** is withheld (an
+/// empty, unowned output), so the stopped interval can own its cut but must not bind a worker. The
+/// press still closes the interval's input: state leaves OVERDUBBING, the first phase and the capture
+/// identity stay immutable, rows/reservations/held notes/session claim are untouched, and late
+/// NoteOn/NoteOff/CC cannot join. Ordinary deferred turns replenish the empty output and bind the
+/// worker exactly once, closing at the stored phase.
+void test_stop_edge_closes_input_while_the_canonical_output_waits() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  Loop& loop = t.getLoop(0);
+  t.noteOn(1, 62, 100, 200);  // held across the stop edge
+  const uint64_t intervalA = TrackCaptureStopTestAccess::interval(t);
+  const size_t rowsBeforeStop = loop.capture.store.size();
+  const size_t pendingBeforeStop = TrackCaptureStopTestAccess::pendingNoteCount(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const size_t openReservationsBeforeStop = TrackCaptureStopTestAccess::liveOpenReservations(t, 0);
+  TEST_ASSERT_EQUAL_UINT(1, pendingBeforeStop);
+  TEST_ASSERT_EQUAL_UINT(1, openReservationsBeforeStop);
+
+  // Withhold the canonical copy **reservation** only: every descriptor/cut resource stays available.
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureOutputAdmitted());
+  TEST_ASSERT_TRUE(runtime.releaseCanonicalCaptureReservation());
+  TEST_ASSERT_FALSE(runtime.canonicalCaptureOutputAdmitted());
+
+  constexpr uint32_t phaseP = 320;
+  clockManager.assignCurrentTickSilently(phaseP);
+  t.stopOverdubbing();
+
+  // The press closes the interval immediately, although no worker can bind yet.
+  TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(),
+                            "the Stop press must leave OVERDUBBING even when finalization waits");
+  TEST_ASSERT_EQUAL_MESSAGE(TRACK_PLAYING, t.getState(),
+                            "a capacity-waiting Stop still publishes PLAYING while transport runs");
+  TEST_ASSERT_TRUE_MESSAGE(t.hasStopInFlight(),
+                           "the accepted Stop obligation must stay owned by this interval");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+                                 "the cut is admitted; only the canonical worker is withheld");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalWorkerBound(t, 0),
+                            "a withheld canonical output must not bind the finalizer");
+  const auto& queued = TrackCaptureStopTestAccess::head(t);
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(intervalA, queued.interval,
+                                   "the job owns the interval the press closed, not a later one");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(phaseP, queued.phaseTick,
+                                   "the first Stop's musical boundary is stamped once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<unsigned>(rowsBeforeStop),
+      static_cast<unsigned>(TrackCaptureStopTestAccess::presentation(t, 0)->rawRange.size()),
+      "the cut keeps every captured row under the interval's own presentation");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      pendingBeforeStop, static_cast<unsigned>(queued.pendingNotes.size()),
+      "the held note moves with the interval into its job-owned receipt");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      openReservationsBeforeStop,
+      static_cast<unsigned>(queued.admission.remainingClosureGrains),
+      "the open-note closure credit the interval owed is carried by its own admission");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<size_t>(Loop::kInvalidSessionExitReceipt),
+                                queued.admission.sessionExitReceiptRing,
+                                "the interval's session-exit obligation moved with it, not lost");
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, loop.capture.phase);
+
+  // Late input on the closed interval adds nothing: NoteOn, NoteOff and a routed CC.
+  t.noteOn(1, 64, 100, 340);
+  t.noteOff(1, 64, 0, 360);
+  (void)t.recordMidiEvents(midi::ControlChange, 1, 2, 64, 380);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<unsigned>(rowsBeforeStop),
+      static_cast<unsigned>(TrackCaptureStopTestAccess::presentation(t, 0)->rawRange.size()),
+      "no post-Stop row may join the closed interval");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      pendingBeforeStop, static_cast<unsigned>(queued.pendingNotes.size()),
+      "a late NoteOn must not create or replace a held note for the closed interval");
+
+  // Ordinary deferred turns replenish the empty, unowned output and bind exactly once.
+  size_t turns = 0;
+  while (!TrackCaptureStopTestAccess::canonicalWorkerBound(t, 0) && turns++ < 64) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalWorkerBoundToHead(t, 0),
+                           "ordinary deferred turns must bind the queued interval's worker");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+                                 "exactly one canonical finalizer may own the interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(phaseP, TrackCaptureStopTestAccess::head(t).phaseTick,
+                                   "binding never restamps the stored phase");
+  TEST_ASSERT_EQUAL_UINT64(intervalA, TrackCaptureStopTestAccess::head(t).interval);
+
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.overdubPasses.size());
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+  TEST_ASSERT_EQUAL_UINT32(4, rows.size());
+  TEST_ASSERT_EQUAL_UINT32(12, rows[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(96, rows[1].tick);
+  TEST_ASSERT_EQUAL_UINT8(62, rows[2].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(200, rows[2].tick);
+  TEST_ASSERT_TRUE(rows[3].isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      phaseP, rows[3].tick, "the held note closes at the first Stop's phase, not the retry tick");
+  TEST_ASSERT_EQUAL_UINT(1, t.getGlobalUndoStack().undoCount());
+}
+
+/// 1.2 — successor-overlap legs (manager and direct Start). A's Stop is retained behind genuine
+/// physical cut exhaustion; a successor Start may not reset that interval's producer. Only then does
+/// the released cut let A hand off, and B opens while A is still finalizing. Both intervals keep
+/// independent events, NoteIds, reservations and exactly one publication each.
+void stopEdgeSuccessorOverlap(bool viaManager) {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);  // A: note 60 on@12 off@96
+  Loop& loop = t.getLoop(0);
+  const uint64_t intervalA = TrackCaptureStopTestAccess::interval(t);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopOverdubbing();  // A binds immediately: descriptor/cut resources are free
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+
+  // B opens on the same slot while A still finalizes: A owns the frozen role, B the live one.
+  const auto startB = [&](uint32_t tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    if (viaManager) trackManager.startOverdubbingTrack(0);
+    else t.startOverdubbing(tick);
+  };
+  startB(768);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "a predecessor's pending job must not refuse a successor");
+  const uint64_t intervalB = TrackCaptureStopTestAccess::interval(t);
+  TEST_ASSERT_TRUE(intervalB > intervalA);
+  t.noteOn(1, 62, 100, 800);   // closed inside B
+  t.noteOff(1, 62, 0, 860);
+  t.noteOn(1, 64, 100, 900);   // held across B's Stop
+  const size_t rowsB = loop.capture.store.size();
+  const size_t pendingB = TrackCaptureStopTestAccess::pendingNoteCount(t);
+  const size_t reservationsB = TrackCaptureStopTestAccess::liveOpenReservations(t, 0);
+  TEST_ASSERT_EQUAL_UINT(1, pendingB);
+  TEST_ASSERT_EQUAL_UINT(1, reservationsB);
+
+  // Genuine physical cut exhaustion: B's own raw destination cannot be reserved. A's pending job is
+  // what makes this a *retained capacity wait* rather than the synchronous fault fallback.
+  TrackCaptureStopTestAccess::withholdStopDestinations(t);
+  constexpr uint32_t phaseB = 192;
+  clockManager.assignCurrentTickSilently(960);
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(),
+                            "a cut-exhausted Stop still closes its interval's input on the press");
+  TEST_ASSERT_TRUE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                           "the cut-exhausted Stop must be retained, never dropped");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(intervalB, TrackCaptureStopTestAccess::acceptedStopInterval(t),
+                                   "retention keeps the interval's own identity");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(phaseB, TrackCaptureStopTestAccess::acceptedStopPhaseTick(t),
+                                   "the retained Stop keeps its first phase");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(rowsB, loop.capture.store.size(),
+                                 "a retained Stop may not reset the producer's rows");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(pendingB, TrackCaptureStopTestAccess::pendingNoteCount(t),
+                                 "a retained Stop may not reset the held-note state");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(reservationsB, TrackCaptureStopTestAccess::liveOpenReservations(t, 0),
+                                 "a retained Stop may not reset the interval's reservations");
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, loop.capture.phase);
+
+  // Successor Start over the exhausted cut: retained as intent, and it must not reset B's producer.
+  startB(1024);
+  TEST_ASSERT_FALSE_MESSAGE(t.isOverdubbing(),
+                            "a successor may not open over an exhausted physical cut");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::successorStartIntent(t),
+                           "the successor intent is retained beside the Stop, not stacked");
+  TEST_ASSERT_EQUAL_UINT64(intervalB, TrackCaptureStopTestAccess::acceptedStopInterval(t));
+  TEST_ASSERT_EQUAL_UINT32(phaseB, TrackCaptureStopTestAccess::acceptedStopPhaseTick(t));
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(rowsB, loop.capture.store.size(),
+                                 "a retained successor Start may not reset the predecessor's rows");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(pendingB, TrackCaptureStopTestAccess::pendingNoteCount(t),
+                                 "a retained successor Start may not reset held notes");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(reservationsB, TrackCaptureStopTestAccess::liveOpenReservations(t, 0),
+                                 "a retained successor Start may not reset reservations");
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, loop.capture.phase);
+
+  // Release the specific holder, then ordinary turns bind B, transfer the Start intent and open the
+  // successor **before** its predecessor job retires.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::reserveCutDestinations(t));
+  size_t turns = 0;
+  while (!t.isOverdubbing() && turns++ < 20000) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "the retained Start must execute once its cut is free");
+  TEST_ASSERT_TRUE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                           "the successor opens while its predecessor still finalizes");
+  const uint64_t intervalC = TrackCaptureStopTestAccess::interval(t);
+  TEST_ASSERT_TRUE(intervalC > intervalB);
+  t.noteOn(1, 66, 100, 1040);
+  t.noteOff(1, 66, 0, 1100);
+  const size_t rowsC = loop.capture.store.size();
+  TEST_ASSERT_EQUAL_UINT(2, rowsC);
+
+  // B's later completion must leave C Overdubbing with exactly its own input.
+  turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) > 1 && turns++ < 20000) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "the predecessor's retirement must not close its successor");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(rowsC, loop.capture.store.size(),
+                                 "the predecessor's retirement must not touch the successor's input");
+
+  clockManager.assignCurrentTickSilently(1200);
+  t.stopOverdubbing();
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_FALSE(t.hasAcceptedUnexecutedInteraction());
+
+  TEST_ASSERT_EQUAL_UINT32(3, loop.passes.overdubPasses.size());
+  SessionMidiEventVec aRows, bRows, cRows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[0].committedChunkIds, aRows);
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[1].committedChunkIds, bRows);
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[2].committedChunkIds, cRows);
+  TEST_ASSERT_EQUAL_UINT32(2, aRows.size());
+  TEST_ASSERT_EQUAL_UINT32(4, bRows.size());
+  TEST_ASSERT_EQUAL_UINT32(2, cRows.size());
+  TEST_ASSERT_EQUAL_UINT32(12, aRows[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(96, aRows[1].tick);
+  TEST_ASSERT_EQUAL_UINT8(62, bRows[0].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(32, bRows[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(92, bRows[1].tick);
+  TEST_ASSERT_EQUAL_UINT8(64, bRows[2].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(132, bRows[2].tick);
+  TEST_ASSERT_TRUE(bRows[3].isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(phaseB, bRows[3].tick,
+                                   "the held note closes at the retained Stop's phase");
+  TEST_ASSERT_EQUAL_UINT8(66, cRows[0].data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(272, cRows[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(332, cRows[1].tick);
+  // Independent identity: every pass owns its own NoteIds, so no interval can reuse another's rows.
+  for (const auto& row : bRows) {
+    for (const auto& other : aRows) TEST_ASSERT_NOT_EQUAL(other.noteId, row.noteId);
+    for (const auto& other : cRows) TEST_ASSERT_NOT_EQUAL(other.noteId, row.noteId);
+  }
+  for (const auto& row : cRows) {
+    for (const auto& other : aRows) TEST_ASSERT_NOT_EQUAL(other.noteId, row.noteId);
+  }
+  TEST_ASSERT_EQUAL_UINT(3, t.getGlobalUndoStack().undoCount());
+}
+
+void test_stop_edge_successor_overlap_via_manager() { stopEdgeSuccessorOverlap(true); }
+void test_stop_edge_successor_overlap_via_direct_track_start() { stopEdgeSuccessorOverlap(false); }
+
+/// 1.3 — the uncontended admitted-stop control. With every finalization resource free the press keeps
+/// the existing semantics: immediate input closure, one seal, one publication and one undo unit, and
+/// no later owner turn may republish or duplicate. A following overdub stays admissible.
+void test_stop_edge_uncontended_admitted_stop_seals_and_publishes_once() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  Loop& loop = t.getLoop(0);
+  t.noteOn(1, 62, 100, 200);  // held across the stop edge
+  clockManager.assignCurrentTickSilently(320);
+  t.stopOverdubbing();
+
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_EQUAL(TRACK_PLAYING, t.getState());
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_FALSE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                            "an admitted Stop consumes its obligation on the press");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalWorkerBoundToHead(t, 0));
+  TEST_ASSERT_EQUAL_UINT32(320, TrackCaptureStopTestAccess::head(t).phaseTick);
+
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT(1, t.getGlobalUndoStack().undoCount());
+  const uint32_t revisionAfterSeal = loop.committedPassRevision();
+  const size_t passCountAfterSeal = loop.passes.capturePassCount();
+  const size_t undoAfterSeal = t.getGlobalUndoStack().undoCount();
+  // Duplicate-drain control: ordinary owner turns must not republish, re-seal or re-push undo.
+  for (unsigned turn = 0; turn < 32; ++turn) TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT32(revisionAfterSeal, loop.committedPassRevision());
+  TEST_ASSERT_EQUAL_UINT(passCountAfterSeal, loop.passes.capturePassCount());
+  TEST_ASSERT_EQUAL_UINT(undoAfterSeal, t.getGlobalUndoStack().undoCount());
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+  TEST_ASSERT_EQUAL_UINT32(4, rows.size());
+  TEST_ASSERT_TRUE(rows[3].isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32(320, rows[3].tick);
+
+  // A following overdub remains admissible under the same bounded capture resources.
+  start(t, 0, true, 384, 64);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  clockManager.assignCurrentTickSilently(640);
+  t.stopOverdubbing();
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT32(2, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT(2, t.getGlobalUndoStack().undoCount());
+}
+
+/// 1.4a — transport Stop retargets a retained, input-closed Stop instead of consuming it, preserves
+/// its first phase, and never resurrects PLAYING when a stopped-destination job completes. The
+/// interval's held-note state survives the transport CC sweep.
+void test_stop_edge_transport_stop_retargets_the_retained_interval() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  Loop& loop = t.getLoop(0);
+  t.noteOn(1, 62, 100, 200);  // held across the stop edge
+  const size_t rowsB = loop.capture.store.size();
+  const size_t pendingB = TrackCaptureStopTestAccess::pendingNoteCount(t);
+
+  // The production retained shape: accept the Stop, close its input, then withhold the physical cut
+  // so the transport edge cannot bind it either.
+  clockManager.assignCurrentTickSilently(320);
+  TrackCaptureStopTestAccess::acceptStop(t, 0);
+  TrackCaptureStopTestAccess::closeInput(t);
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_EQUAL(TRACK_PLAYING, t.getState());
+  TrackCaptureStopTestAccess::withholdStopDestinations(t);
+
+  clockManager.assignCurrentTickSilently(768);
+  t.stopOverdubbingToStopped();
+  TEST_ASSERT_EQUAL_MESSAGE(TRACK_STOPPED, t.getState(), "transport Stop owns the state");
+  TEST_ASSERT_TRUE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                           "a transport stop retargets the retained obligation, never consumes it");
+  TEST_ASSERT_EQUAL_MESSAGE(PendingStopDestination::Stopped,
+                            TrackCaptureStopTestAccess::latchDestination(t),
+                            "the retained Stop resolves to the STOPPED destination");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      320, TrackCaptureStopTestAccess::acceptedStopPhaseTick(t),
+      "the transport epoch must not restamp the first Stop's musical boundary");
+  TEST_ASSERT_EQUAL_UINT(rowsB, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT(pendingB, TrackCaptureStopTestAccess::pendingNoteCount(t));
+
+  // Release the cut: ordinary turns bind the interval for the STOPPED destination and close the held
+  // note at its stored phase. The stop itself may survive the transport CC sweep.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::reserveCutDestinations(t));
+  size_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) == 0 && turns++ < 64) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_EQUAL(PendingStopDestination::Stopped,
+                    TrackCaptureStopTestAccess::head(t).admission.destination);
+  TEST_ASSERT_EQUAL_UINT32(320, TrackCaptureStopTestAccess::head(t).phaseTick);
+  t.sendAllNotesOff();
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      pendingB, TrackCaptureStopTestAccess::head(t).pendingNotes.size(),
+      "the job's held-note closure state must survive the transport CC sweep");
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_MESSAGE(TRACK_STOPPED, t.getState(),
+                            "a stopped-destination job may complete without resurrecting PLAYING");
+  TEST_ASSERT_EQUAL_UINT32(1, loop.passes.overdubPasses.size());
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+  TEST_ASSERT_EQUAL_UINT32(4, rows.size());
+  TEST_ASSERT_TRUE(rows[3].isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32(320, rows[3].tick);
+}
+
+/// 1.4b — transport Stop with a queued predecessor: every pending job is retargeted to STOPPED and a
+/// retained successor obligation keeps its own phase. No job may be consumed by the transport edge.
+void test_stop_edge_transport_stop_retargets_a_queued_predecessor_and_the_retained_successor() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopOverdubbing();  // A binds; job pending
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  const uint64_t intervalA = TrackCaptureStopTestAccess::headInterval(t);
+
+  clockManager.assignCurrentTickSilently(768);
+  t.startOverdubbing(768);  // B opens while A finalizes
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  t.noteOn(1, 64, 100, 800);
+  t.noteOff(1, 64, 0, 860);
+  TrackCaptureStopTestAccess::withholdStopDestinations(t);
+  clockManager.assignCurrentTickSilently(960);
+  t.stopOverdubbing();  // B's cut is exhausted: retained beside A's queued job
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_TRUE(t.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT32(192, TrackCaptureStopTestAccess::acceptedStopPhaseTick(t));
+
+  clockManager.assignCurrentTickSilently(1024);
+  t.stopOverdubbingToStopped();
+  TEST_ASSERT_EQUAL(TRACK_STOPPED, t.getState());
+  TEST_ASSERT_EQUAL(PendingStopDestination::Stopped,
+                    TrackCaptureStopTestAccess::head(t).admission.destination);
+  TEST_ASSERT_EQUAL_UINT64(intervalA, TrackCaptureStopTestAccess::headInterval(t));
+  TEST_ASSERT_EQUAL(PendingStopDestination::Stopped,
+                    TrackCaptureStopTestAccess::latchDestination(t));
+  TEST_ASSERT_EQUAL_UINT32(192, TrackCaptureStopTestAccess::acceptedStopPhaseTick(t));
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL(TRACK_STOPPED, t.getState());
+  TEST_ASSERT_EQUAL_UINT32(2, t.getLoop(0).passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT(2, t.getGlobalUndoStack().undoCount());
+}
+
+/// 1.4c — a slot switch is refused while this slot's Stop is input-closed but unbound, and commits
+/// once the interval binds. It is never held merely because another slot has a predecessor.
+void test_stop_edge_slot_switch_waits_for_the_unbound_stop_to_bind() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  prepareSlot(t, 1, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  t.noteOn(1, 62, 100, 200);
+  clockManager.assignCurrentTickSilently(320);
+  TrackCaptureStopTestAccess::acceptStop(t, 0);
+  TrackCaptureStopTestAccess::closeInput(t);
+  TrackCaptureStopTestAccess::withholdStopDestinations(t);
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.finalizeCaptureAndSelectSlot(0, 1, 768),
+                            "the switch must wait for this slot's unbound Stop");
+  TEST_ASSERT_EQUAL_UINT8(0, t.getActiveLoopIndex());
+
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::reserveCutDestinations(t));
+  size_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) == 0 && turns++ < 64) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  // The blocker is the **unbound** Stop itself, so binding it clears the refusal while the interval
+  // still finalizes. (The commit half of the switch is owned by
+  // `test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits`; this suite does
+  // not link the manager's UI/playback commit path.)
+  TEST_ASSERT_FALSE_MESSAGE(t.hasRetainedInputClosedStop(0),
+                            "binding this interval's Stop must clear the switch refusal");
+  TEST_ASSERT_EQUAL_UINT8(0, t.getActiveLoopIndex());
+}
+
+/// 1.4d — populated canonical-output control: the queued interval never binds, never clears and never
+/// re-owns the populated target. Only an empty (owner-released) output lets the worker bind.
+void test_stop_edge_populated_canonical_output_is_preserved_until_the_owner_releases_it() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::occupyCanonicalOutput(t));
+  TEST_ASSERT_FALSE(runtime.canonicalCaptureOutputAdmitted());
+  const size_t populated = runtime.canonicalCaptureOutput.store.size();
+  TEST_ASSERT_GREATER_THAN_UINT32(0, populated);
+  clockManager.assignCurrentTickSilently(320);
+  t.stopOverdubbing();
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalWorkerBound(t, 0));
+
+  for (unsigned turn = 0; turn < 16; ++turn) TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalWorkerBound(t, 0),
+                            "a populated output must remain an observable wait");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      populated, runtime.canonicalCaptureOutput.store.size(),
+      "the wait must never clear, drain or re-own a populated canonical target");
+  TEST_ASSERT_EQUAL_UINT32(320, TrackCaptureStopTestAccess::head(t).phaseTick);
+
+  runtime.canonicalCaptureOutput.store.clear();
+  size_t turns = 0;
+  while (!TrackCaptureStopTestAccess::canonicalWorkerBound(t, 0) && turns++ < 64) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalWorkerBoundToHead(t, 0));
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT32(1, t.getLoop(0).passes.overdubPasses.size());
+}
+
+/// 1.5 — the stopped-preview source contract across a wrap. An input-closed Stop exposes its producer
+/// as a **closed** source with the immutable closure phase: the same (preview, closure tick) pair is
+/// read at two different playhead positions and again after the handoff, so no playhead motion and no
+/// bind edge can re-geometry the row. Already-closed NoteOffs stay authoritative, the held note stays
+/// open in the source and is frozen at the closure phase by the display's frozen composition, its
+/// pending Shorten survives, and a successor's own preview stays a live source.
+void test_stop_edge_stopped_preview_is_closed_and_playhead_independent_across_wrap() {
+  LoopEventStore::initPool();
+  Track& t = trackManager.getSelectedTrack();
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);  // closed note 60 on@12 off@96
+  Loop& loop = t.getLoop(0);
+  t.noteOn(1, 62, 100, 700);  // held across the wrap
+  t.noteOn(1, 64, 100, 720);  // already-closed note inside the wrap window
+  t.noteOff(1, 64, 0, 760);
+  loop.pushPendingNoteChangeForTest(
+      PendingNoteChange{PendingNoteChangeKind::Shorten, kInvalidNoteId, 1, 60, 100, 12, 40});
+  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+
+  // The Stop lands **after** the wrap: phase 100 of the next cycle, while the held note started at 700.
+  TEST_ASSERT_TRUE(t.getLoop(0).capturePreviewView().openNoteIndices.size() >= 1);
+  clockManager.assignCurrentTickSilently(768 + 100);
+  TrackCaptureStopTestAccess::acceptStop(t, 0);
+  TrackCaptureStopTestAccess::closeInput(t);
+  TEST_ASSERT_FALSE(t.isOverdubbing());
+
+  uint32_t closureTick = 0;
+  const CapturePreview* closed = t.inputClosedOverdubPreviewForSlot(0, &closureTick);
+  TEST_ASSERT_NOT_NULL_MESSAGE(closed, "the input-closed producer must stay readable while it waits");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(100, closureTick,
+                                   "the closed source's boundary is the first Stop's phase");
+  const size_t previewNotes = closed->notes.size();
+  uint32_t heldIndex = UINT32_MAX;
+  for (size_t i = 0; i < closed->notes.size() && i < closed->noteStates.size(); ++i) {
+    if (closed->notes[i].note == 62 && closed->noteStates[i].open) heldIndex = static_cast<uint32_t>(i);
+  }
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(UINT32_MAX, heldIndex,
+                                "the held note stays an open row of the closed source");
+
+  // Moving the playhead must not change the source or its boundary.
+  clockManager.assignCurrentTickSilently(768 + 600);
+  uint32_t closureAfterMove = 0;
+  const CapturePreview* stillClosed = t.inputClosedOverdubPreviewForSlot(0, &closureAfterMove);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(closed, stillClosed, "the closed source is the interval's, not the playhead's");
+  TEST_ASSERT_EQUAL_UINT32(closureTick, closureAfterMove);
+  TEST_ASSERT_EQUAL_UINT(previewNotes, stillClosed->notes.size());
+  TEST_ASSERT_TRUE(stillClosed->noteStates[heldIndex].open);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      760, stillClosed->notes[heldIndex + 1].endTick,
+      "an already-closed NoteOff keeps its authoritative geometry");
+
+  // Handoff: the job preview owns the same source and the same boundary, so the paint cannot change
+  // geometry at the bind edge. The pending transform travels with the interval.
+  size_t turns = 0;
+  while (TrackCaptureStopTestAccess::jobs(t) == 0 && turns++ < 64) {
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  uint32_t jobClosureTick = 0;
+  const CapturePreview* jobPreview = t.captureStopPreviewForSlot(0, 0, &jobClosureTick);
+  TEST_ASSERT_NOT_NULL(jobPreview);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(closureTick, jobClosureTick,
+                                   "the bind edge must not re-geometry the stopped preview");
+  bool shortenTraveled = false;
+  for (const auto& change : TrackCaptureStopTestAccess::head(t).pendingChanges) {
+    if (change.kind == PendingNoteChangeKind::Shorten && change.pitch == 60) shortenTraveled = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(shortenTraveled,
+                           "the interval's pending transform travels with it into the job");
+  TEST_ASSERT_NULL_MESSAGE(t.inputClosedOverdubPreviewForSlot(0, &closureAfterMove),
+                           "the job tier owns the stopped source once the interval binds");
+
+  // A successor is a **live** source of its own: its open note keeps its own identity and follows the
+  // playhead through the live path instead of inheriting the closed boundary.
+  driveStopToRetirement(t);
+  start(t, 0, true, 1024, 66);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  t.noteOn(1, 68, 100, 1100);
+  const Loop& liveLoop = t.getLoop(0);
+  bool successorOpen = false;
+  for (size_t i = 0; i < liveLoop.capturePreviewView().notes.size(); ++i) {
+    if (liveLoop.capturePreviewView().notes[i].note == 68 &&
+        liveLoop.capturePreviewView().noteStates[i].open) {
+      successorOpen = true;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(successorOpen, "the successor's open note stays a live source");
+  uint32_t successorClosure = 0;
+  TEST_ASSERT_NULL(t.inputClosedOverdubPreviewForSlot(0, &successorClosure));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_4_20_overdub_session_retention_plateaus_until_the_transfer_pool_refuses);
@@ -10922,7 +11828,14 @@ RUN_TEST(test_deferred_convergence_serves_a_second_obligation_after_a_completed_
 RUN_TEST(test_deferred_convergence_coalesces_a_newer_raw_commit);
 RUN_TEST(test_window_denied_base_keeps_the_companion_path);
 RUN_TEST(test_window_denied_stop_publishes_its_prepared_companions);
+RUN_TEST(test_6_2_window_denied_first_record_stop_retires_bounded);
+RUN_TEST(test_6_2b_denied_canonical_tail_retires_immediately);
 RUN_TEST(test_superseded_base_publishes_prepared_companions);
+RUN_TEST(test_slice4_companion_work_budget_retires_raw_and_owes_convergence);
+RUN_TEST(test_dec231_prepared_edge_adopts_without_view_progress);
+RUN_TEST(test_dec231_cold_edge_stays_armed_and_does_not_reset);
+RUN_TEST(test_dec231_view_prewarm_progress_is_monotonic);
+RUN_TEST(test_dec231_view_prewarm_identity_change_restarts);
 RUN_TEST(test_deferred_convergence_abandonment_is_per_job);
 RUN_TEST(test_deferred_convergence_keeps_the_stop_fifo_draining);
 RUN_TEST(test_deferred_convergence_discards_a_candidate_on_a_committed_state_mutation);
@@ -11033,5 +11946,14 @@ RUN_TEST(test_deferred_convergence_is_cancelled_by_slot_reset);
   RUN_TEST(test_record_to_overdub);
   RUN_TEST(test_overdub_to_record);
   RUN_TEST(test_overdub_to_overdub);
+  RUN_TEST(test_stop_edge_closes_input_while_the_canonical_output_waits);
+  RUN_TEST(test_stop_edge_successor_overlap_via_manager);
+  RUN_TEST(test_stop_edge_successor_overlap_via_direct_track_start);
+  RUN_TEST(test_stop_edge_uncontended_admitted_stop_seals_and_publishes_once);
+  RUN_TEST(test_stop_edge_transport_stop_retargets_the_retained_interval);
+  RUN_TEST(test_stop_edge_transport_stop_retargets_a_queued_predecessor_and_the_retained_successor);
+  RUN_TEST(test_stop_edge_slot_switch_waits_for_the_unbound_stop_to_bind);
+  RUN_TEST(test_stop_edge_populated_canonical_output_is_preserved_until_the_owner_releases_it);
+  RUN_TEST(test_stop_edge_stopped_preview_is_closed_and_playhead_independent_across_wrap);
   return UNITY_END();
 }

@@ -127,12 +127,15 @@ def main() -> int:
         if not lo < t < hi or msg.get("channel") != channel - 1:
             continue
         typ = msg["type"]
+        # The served channel is the track's output channel; the dump rows keep the channel the notes were
+        # captured on. Normalize the served rows to the dump channel so a track that transposes its output
+        # (e.g. track 8 serving channel 8 while the take was recorded on channel 1) compares by content.
         if typ in ("note_on", "note_off"):
             on = typ == "note_on" and msg["velocity"]
-            actual.append((NOTE_ON if on else NOTE_OFF, channel, msg["note"],
+            actual.append((NOTE_ON if on else NOTE_OFF, dump_channel, msg["note"],
                            msg["velocity"] if on else 0))
         elif typ == "control_change" and msg["control"] == args.cc:
-            actual.append((CONTROL_CHANGE, channel, args.cc, msg["value"]))
+            actual.append((CONTROL_CHANGE, dump_channel, args.cc, msg["value"]))
 
     exp_counts = collections.Counter(sig for sig, _t, _n in expected_full)
     act_counts = collections.Counter(actual)

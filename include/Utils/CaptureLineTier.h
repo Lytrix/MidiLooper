@@ -130,7 +130,7 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "RECA,", 5) == 0 ||
          strncmp(tag, "RID,", 4) == 0 ||
          strncmp(tag, "HDR,", 4) == 0 ||
-         strncmp(tag, "ODUB,stop,", 10) == 0 ||
+         strncmp(tag, "ODUB,", 5) == 0 ||
          strncmp(tag, "VCACHE,", 7) == 0 ||
          strncmp(tag, "DIAG,timing_max,", 16) == 0 || strncmp(tag, "DIAG,midi_gap,", 14) == 0 ||
          strncmp(tag, "DIAG,midi_input,", 16) == 0 ||
@@ -146,6 +146,10 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,notechg,", 13) == 0 || strncmp(tag, "DIAG,noterecon,", 15) == 0 ||
          strncmp(tag, "DIAG,notepair,", 14) == 0 || strncmp(tag, "DIAG,clockrate,", 15) == 0 ||
          strncmp(tag, "DIAG,idle_maint,", 16) == 0 ||
+         // DEC-216's `DIAG,idle_turn,` is Tier-A, but its prefix is classified in
+         // `DebugSessionCapture::isTierATextLine` (pinned in `test_capture_ring`): a 16-byte literal in this
+         // header is instantiated in every including TU and crossed the RAM1 `_VectorsRam` align edge
+         // (variables 96,192 -> 100,288). Do not move it back here.
          // Task 2.4: the owner-admission **named deferral**. One row per child per 5 s interval, produced
          // exactly under the reduced timing-critical flush (8), where non-Tier-A diagnostics are shed
          // silently by design; the row is the only evidence that a child was deferred rather than idle.

@@ -625,6 +625,12 @@ struct FixedPlaybackBridgeStorage {
   ~FixedPlaybackBridgeStorage();
 
   bool prewarm(size_t requestedCapacity);
+  /// DEC-231: resumable sub-prewarm. `stage`/`cursor` live in the owning runtime so the bridge
+  /// object itself does not grow. Returns true only when the bridge is fully prewarmed; each call
+  /// performs one sub-unit (records allocation, a record chunk, one backing array, or the insertion
+  /// storage). A failure releases and resets the stage so the next owner turn retries.
+  enum class PrewarmStepResult : int8_t { Failed = -1, Progress = 0, Complete = 1 };
+  PrewarmStepResult stepPrewarm(size_t requestedCapacity, uint8_t& stage, uint16_t& cursor);
   void release();
   void resetMetadata();
   bool append(const PlaybackBridgeRecord& record);

@@ -427,6 +427,154 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::prewarm(size_t r
   return true;
 }
 
+RUNTIME_PLAYBACK_VIEW_COLD_MEM FixedPlaybackBridgeStorage::PrewarmStepResult
+FixedPlaybackBridgeStorage::stepPrewarm(size_t requestedCapacity, uint8_t& stage,
+                                        uint16_t& cursor) {
+  if (requestedCapacity == 0 || requestedCapacity > UINT16_MAX) {
+    return PrewarmStepResult::Failed;
+  }
+  if (records != nullptr && capacity == requestedCapacity && insertions.isPrewarmed()) {
+    return PrewarmStepResult::Complete;  // already complete (the restamp path)
+  }
+  if (stage == 0) {
+    if (records == nullptr) {
+      records = static_cast<PlaybackBridgeRecord*>(
+          allocateExternalMemoryFirst(requestedCapacity * sizeof(PlaybackBridgeRecord)));
+      if (records == nullptr) {
+        return PrewarmStepResult::Failed;
+      }
+    }
+    stage = 1;
+    cursor = 0;
+    return PrewarmStepResult::Progress;
+  }
+  if (stage == 1) {
+    constexpr uint16_t kRecordChunk = 256;
+    const size_t end = static_cast<size_t>(cursor) + kRecordChunk < requestedCapacity
+                           ? static_cast<size_t>(cursor) + kRecordChunk
+                           : requestedCapacity;
+    for (; cursor < end; ++cursor) {
+      new (&records[cursor]) PlaybackBridgeRecord();
+    }
+    if (cursor >= requestedCapacity) {
+      stage = 2;
+      cursor = 0;
+    }
+    return PrewarmStepResult::Progress;
+  }
+  if (stage == 2) {
+    constexpr size_t kBaseCapacity = RuntimePlaybackViewConfig::kEventsPerView;
+    if (cursor >= 15) {
+      stage = 3;
+      cursor = 0;
+      return PrewarmStepResult::Progress;
+    }
+    bool ok = true;
+    switch (cursor) {
+      case 0:
+        baseOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = baseOrder != nullptr;
+        break;
+      case 1:
+        nextCycleBaseOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = nextCycleBaseOrder != nullptr;
+        break;
+      case 2:
+        secondCycleBaseOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = secondCycleBaseOrder != nullptr;
+        break;
+      case 3:
+        steadyBaseOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = steadyBaseOrder != nullptr;
+        break;
+      case 4:
+        currentCycleInsertionOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(requestedCapacity * sizeof(uint16_t)));
+        ok = currentCycleInsertionOrder != nullptr;
+        break;
+      case 5:
+        nextCycleInsertionOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(requestedCapacity * sizeof(uint16_t)));
+        ok = nextCycleInsertionOrder != nullptr;
+        break;
+      case 6:
+        secondCycleInsertionOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(requestedCapacity * sizeof(uint16_t)));
+        ok = secondCycleInsertionOrder != nullptr;
+        break;
+      case 7:
+        insertionCycleMask = static_cast<uint8_t*>(
+            allocateExternalMemoryFirst(requestedCapacity));
+        ok = insertionCycleMask != nullptr;
+        break;
+      case 8:
+        baseRetained = static_cast<uint8_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity));
+        ok = baseRetained != nullptr;
+        break;
+      case 9:
+        canonicalCycleMasks = static_cast<uint8_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity));
+        ok = canonicalCycleMasks != nullptr;
+        break;
+      case 10:
+        insertionProvenance = static_cast<uint32_t*>(
+            allocateExternalMemoryFirst(requestedCapacity * sizeof(uint32_t)));
+        ok = insertionProvenance != nullptr;
+        break;
+      case 11:
+        insertionRanks = static_cast<uint32_t*>(
+            allocateExternalMemoryFirst(requestedCapacity * sizeof(uint32_t)));
+        ok = insertionRanks != nullptr;
+        break;
+      case 12:
+        baseRanks = static_cast<uint32_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint32_t)));
+        ok = baseRanks != nullptr;
+        break;
+      case 13:
+        rankedBaseOrder = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = rankedBaseOrder != nullptr;
+        break;
+      case 14:
+        baseOrderScratch = static_cast<uint16_t*>(
+            allocateExternalMemoryFirst(kBaseCapacity * sizeof(uint16_t)));
+        ok = baseOrderScratch != nullptr;
+        break;
+      default:
+        ok = false;
+        break;
+    }
+    if (!ok) {
+      release();
+      stage = 0;
+      cursor = 0;
+      return PrewarmStepResult::Failed;
+    }
+    ++cursor;
+    return PrewarmStepResult::Progress;
+  }
+  if (stage == 3) {
+    if (!insertions.prewarm(requestedCapacity)) {
+      release();
+      stage = 0;
+      cursor = 0;
+      return PrewarmStepResult::Failed;
+    }
+    stage = 4;
+    return PrewarmStepResult::Progress;
+  }
+  baseCapacity = RuntimePlaybackViewConfig::kEventsPerView;
+  capacity = requestedCapacity;
+  resetMetadata();
+  return PrewarmStepResult::Complete;
+}
+
 RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::release() {
   if (records != nullptr) {
     for (size_t index = 0; index < capacity; ++index) {

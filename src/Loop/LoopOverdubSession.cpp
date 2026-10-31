@@ -10,12 +10,21 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#if defined(SESSION_CAPTURE)
+#include "Utils/DebugSessionCapture.h"
+#endif
 #include <algorithm>
 
 namespace {
 /// Empty participant set for a completion whose candidates come from the geometric scan. File-local so the
 /// per-note path does not depend on a Track translation unit's constant.
 const OverlapNoteIdSet kNoOverlapIds{};
+/// DEC-217: how many owed overdub completions one worker turn may discharge. One publication makes every
+/// span inside its tile ready at once and each discharge may derive its own closure window, so draining the
+/// queue on that turn stacked them (measured 513,812 us of a 546,958 us turn). The rest stay owed and drain
+/// on later turns; the spec requires persistence and exactly-once, not same-turn completion, and
+/// `materializeDeferredOverdubCompletionsAtDeadline()` answers any remainder at the seal.
+constexpr uint8_t kDeferredDischargePerTurn = 1;
 }  // namespace
 
 LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
@@ -34,6 +43,10 @@ LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
 }
 
 Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
+#if defined(SESSION_CAPTURE)
+  // DEC-216 follow-up: total cost of this worker turn, including the tile derive below.
+  const uint32_t coverageStartUs = micros();
+#endif
   if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return OverdubCoverageTurn::Idle;
   }
@@ -49,6 +62,13 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
   const uint16_t tile = overdubCoverage_.nextOwedTile(from);
   if (tile >= CoveragePrerequisite::kMaxTiles) {
     overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+    // DEC-217: the publication turn is not the only turn that may discharge. A queue that is still owed
+    // after its tile published must keep draining on the following turns, or the one-per-turn bound would
+    // turn into "one per publication". Recut only when a consequence actually landed.
+    if (dischargeDeferredOverdubCompletions(kDeferredDischargePerTurn) != 0) {
+      recutOverdubSourceView();
+      return OverdubCoverageTurn::Completed;
+    }
     return OverdubCoverageTurn::Idle;
   }
   // A different tile, or a generation move, starts that tile from its own beginning: progress is never
@@ -80,14 +100,42 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
   }
   // Atomic publication (task 4.8): the grain that completes the tile publishes its content **and** its
   // prepared bit together. The worker is the span cache's only writer while a session is active.
+#if defined(SESSION_CAPTURE)
+  const uint32_t prepareUs = micros() - coverageStartUs;
+#endif
   publishPreparedOverdubCoverageTile(tile, overdubCoverageCursor_.notes,
                                      overdubCoverageCursor_.rawEvents, windowStart, windowLength);
   overdubCoverage_.publishPrepared(tile);
   overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
+#if defined(SESSION_CAPTURE)
+  const uint32_t publishUs = micros() - coverageStartUs - prepareUs;
+#endif
   // Consequences that were owed for a tile now prepared are discharged on the same turn that made their
   // coverage available, then the view is recut from the published tiles.
-  (void)dischargeDeferredOverdubCompletions();
+  (void)dischargeDeferredOverdubCompletions(kDeferredDischargePerTurn);
+#if defined(SESSION_CAPTURE)
+  const uint32_t dischargeUs = micros() - coverageStartUs - prepareUs - publishUs;
+#endif
   recutOverdubSourceView();
+#if defined(SESSION_CAPTURE)
+  // DEC-216 follow-up: name the step that makes a tile-completion turn expensive. Measured shape before this
+  // row: every `loop_rem,idle_maint` above 50 ms in the live overdub chain coincides with `lcr,src,why=tile`,
+  // and the same turn is one `idle_turn` unit of up to 262,727 us while `lcr,src` itself reports only 2,570 us.
+  // Tier-A (`DIAG,idle_turn,`) so it survives the timing-critical flush; one row per expensive completion.
+  const uint32_t coverageUs = micros() - coverageStartUs;
+  if (coverageUs >= 8000u) {
+    const uint32_t recutUs = coverageUs - prepareUs - publishUs - dischargeUs;
+    char coverageLine[128];
+    snprintf_P(coverageLine, sizeof(coverageLine),
+               PSTR("#CAP,%lu,DIAG,idle_turn,cov=tile,total=%lu,prep=%lu,pub=%lu,disch=%lu,recut=%lu,"
+                    "notes=%u,ev=%u"),
+               (unsigned long)micros(), (unsigned long)coverageUs, (unsigned long)prepareUs,
+               (unsigned long)publishUs, (unsigned long)dischargeUs, (unsigned long)recutUs,
+               static_cast<unsigned>(overdubCoverageCursor_.notes.size()),
+               static_cast<unsigned>(overdubCoverageCursor_.rawEvents.size()));
+    DebugSessionCapture::appendCaptureTextLine(coverageLine);
+  }
+#endif
   return OverdubCoverageTurn::Completed;
 }
 
@@ -242,7 +290,7 @@ bool Loop::retainDeferredOverdubCompletion(const DeferredOverdubCompletion& comp
   return true;
 }
 
-uint8_t Loop::dischargeDeferredOverdubCompletions() {
+uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {
   if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return 0;
   }
@@ -275,6 +323,12 @@ uint8_t Loop::dischargeDeferredOverdubCompletions() {
     }
     --overdubCoverageDeferredCount_;
     ++discharged;
+    // DEC-217: the queue is the grain boundary. One publication makes *every* span inside its tile
+    // ready at once, and each discharge may derive its own closure window, so draining the queue on that
+    // turn stacked them: measured `disch=513,812 us` of a 546,958 us turn
+    // (`session_20261030_122722.log`). The rest stay owed and drain on later turns; the spec requires
+    // persistence and exactly-once, never same-turn completion, and the seal deadline is the backstop.
+    if (maxDischarge != 0 && discharged >= maxDischarge) break;
   }
   return discharged;
 }

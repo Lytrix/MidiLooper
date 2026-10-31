@@ -149,6 +149,30 @@ def parse_command_request(line: str):
     return start, end, command
 
 
+def _request_final_stats(ser, log) -> None:
+    """Ask for a final drain and the ring/capture stats before the port is closed.
+
+    The absence rule for a decisive row is only usable when the capture's own loss counters are in the
+    log (`hitl_absence_check.py` reads `RING,stats`). Without this, a run that ends before the periodic
+    stats can never distinguish "not emitted" from "lost in the ring".
+    """
+    if ser is None or not ser.is_open:
+        return
+    try:
+        ser.write(b"!TRACE_DRAIN\n")
+        ser.flush()
+        time.sleep(0.3)
+        ser.write(b"!CAP_IDENTITY_STATS\n")
+        ser.flush()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            data = ser.read(4096)
+            if data:
+                log.write(data)
+    except (OSError, serial.SerialException):
+        return
+
+
 def _service_command_requests(ser, *, enabled: bool) -> None:
     """Forward at most one allowlisted request, fenced so the host can detect loss.
 
@@ -595,6 +619,7 @@ def main() -> int:
                 else:
                     time.sleep(0.05)
         finally:
+            _request_final_stats(ser, log)
             _sync_log(log)
             if ser is not None and ser.is_open:
                 ser.close()

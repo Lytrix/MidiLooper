@@ -227,7 +227,23 @@ public:
   /// Establish every reserve that keeps the later deferred stop grains allocation-free.
   /// Returns false when any required reserve failed, which is capture-admission denial:
   /// the caller must not enter RECORDING. Boot/load callers may ignore the result.
-  bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
+  bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true, bool restamp = false,
+                              bool skipViews = false);
+  /// DEC-231: identity-qualified resumable view preparation. The Record edge may only validate/adopt
+  /// (`viewPrewarmReadyForSlot`); `stepViewPrewarmForIdle` is the off-edge owner that advances one
+  /// natural unit per idle turn.
+  uint32_t viewPrewarmIdentityForSlot(uint8_t slotIndex) const;
+  bool viewPrewarmReadyForSlot(uint8_t slotIndex);
+  void requestViewPrewarmForSlot(uint8_t slotIndex);
+  bool stepViewPrewarmForSlot(uint8_t slotIndex, uint8_t maxUnits = 1, uint32_t budgetUs = 5000);
+  bool stepViewPrewarmForIdle();
+  bool hasViewPrewarmPending() const;
+  uint16_t viewPrewarmProgressForSlot(uint8_t slotIndex) const;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Host-only seam: existing fixtures drive the state machine synchronously in `startRecording`.
+  /// The edge REDs set this to true to exercise the production strict path (no fallback).
+  static bool& viewPrewarmStrictForTest();
+#endif
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the **window-build/publication owner**. These are the
@@ -529,6 +545,11 @@ public:
   void reportRootReturnAdoptionForSlot(uint8_t slotIndex, const Loop& loop, uint32_t phase,
                                        uint64_t frozenCaptureToken, bool attempted, bool adopted, uint8_t why,
                                        bool fromRetirementHold = false);
+  /// 5.2 — first-bar handoff diagnostic (session capture only): the selected track's active-slot serving route
+  /// for this tick, on the `win_frozen_readiness` family as `route`. Route: 0 none, 1 bridge, 2 view, 3 paged,
+  /// 4 merged, 7 no audible source, 8 stale-runtime reset. One row per change of bar/route/view/ready/rolling.
+  void reportFirstBarRouteForSlot(uint8_t slotIndex, uint32_t currentTick, uint8_t route,
+                                  const RuntimePlaybackView* view);
   /// The retirement hold's own observation: same receipt family, one-argument call.
   void reportRootReturnHoldForSlot(uint8_t slotIndex);
   /// Session-capture observation after a completed immutable-view cursor turn; no serial on the edge.
@@ -1048,9 +1069,20 @@ public:
   /// Identity-qualified private Record base; never claims committed currency.
   bool hasPrivateRecordPredecessorForOverdub() const;
   /// Immediate, non-owning preview reads from the bounded live stop-ring window. Never retain.
+  /// DEC-172 convergence service and obligation probe, public for the all-stopped idle owner: the
+  /// service call takes at most one slot's obligation per invocation, and the probe is read-only.
+  bool serviceDeferredCanonicalConvergence();
+  bool hasDeferredConvergenceObligation() const;
   size_t captureStopPreviewCount() const;
+  /// True when this slot has any admitted stop preview (Record or Overdub) the display may compose.
+  /// The display content hold uses this to keep an accepted preview paint while the committed source
+  /// publication is still pending.
+  bool hasCaptureStopPreviewForSlot(uint8_t slot) const;
   const CapturePreview* captureStopPreviewForSlot(uint8_t slot, size_t ordinal,
                                                   uint32_t* closureTick = nullptr) const;
+  /// DEC-233 decision 5: the input-closed producer's preview with its immutable closure phase, so the
+  /// display can compose a stopped source instead of a live playhead tail. Display-only; never retained.
+  const CapturePreview* inputClosedOverdubPreviewForSlot(uint8_t slot, uint32_t* closureTick) const;
   /// Complete stopped Record preview, qualified by the live job's slot/LoopId. Display only.
   const CapturePreview* recordStopPreviewForSlot(uint8_t slot, uint32_t* closureTick = nullptr) const;
   /// Retain/coalesce intent only after ordinary admission against the private base is denied.
@@ -1397,6 +1429,25 @@ void resetPlaybackMergedRebuildCountForTest();
   /// "a stop is in flight" must consult this alongside `hasPendingDeferredOverdubStop`,
   /// because the accepted request exists before any job does.
   bool hasAcceptedUnexecutedInteraction() const;
+  /// Read-only identity of the head deferred stop job, for display-source attribution. The display must
+  /// not need the private job type to say whether the committed base is lagging behind a pending pass.
+  struct PendingDeferredStopIdentity {
+    bool active = false;
+    uint8_t slot = 0;
+    uint8_t phase = 0;
+    uint32_t generation = 0;
+  };
+  PendingDeferredStopIdentity pendingDeferredStopIdentity() const {
+    const CaptureStopJob* job = captureStopJobHead();
+    PendingDeferredStopIdentity id{};
+    if (job != nullptr) {
+      id.active = true;
+      id.slot = job->slot;
+      id.phase = static_cast<uint8_t>(job->admission.phase);
+      id.generation = job->admission.frozenGeneration;
+    }
+    return id;
+  }
   /// S4f.5: the interval is still capturing (RECORDING or OVERDUBBING).
   bool hasLiveCaptureInterval() const;
   /// S4f.2/B06: does this track have realtime deferred work worth an idle turn? The scheduler uses this to
@@ -1417,6 +1468,10 @@ void resetPlaybackMergedRebuildCountForTest();
   /// blocking a *different* target: after a switch handoff the successor on another slot must be able
   /// to start while the predecessor finalizes.
   bool hasStopInFlightForSlot(uint8_t slot) const;
+  /// DEC-233: a matching overdub Stop owns `slot` with its input already closed but no job bound yet.
+  /// The interval is still the latch's own identity (the press does not advance `captureInterval_`), so
+  /// the switch/recovery/orphan owners can treat it as a live obligation without a job.
+  bool hasRetainedInputClosedStop(uint8_t slot) const;
   /// S4f.21: the geometry result of an interval's Record stop, qualified by the job that owns it.
   /// The stop edge stamps the interval's **predicted** length from the maintained maximum-tick
   /// summary; an all-filtered take publishes zero instead. A caller that latches a master length or
@@ -1670,6 +1725,11 @@ private:
   /// preparation, so a path that cannot complete falls back to the raw pass instead of parking.
   uint16_t retargetStallGrains_ = 0;
   uint8_t retargetStallPhase_ = 0;
+  /// DEC-227 (Slice 4 of the 2026-10-30 plan): the current stop job's companion-family start, in
+  /// 262.144 ms units (`micros() >> 18`), or 0 when the job is not in the family. One byte fills the
+  /// existing padding before the next 32-bit member, so `sizeof(Track)` is unchanged (build pin).
+  /// A job that exceeds `kCompanionWorkBudgetUs` retires raw and owes DEC-172 convergence.
+  uint8_t companionWorkStartUnit_ = 0;
   uint32_t overdubStopDebtProbeArmedUs_ = 0;
   bool overdubStopVisualDirtyBefore_ = false;
   bool overdubStopVisualDirtyAfter_ = false;
@@ -1869,18 +1929,26 @@ private:
     LoopId loopId = kInvalidLoopId;
     uint64_t interval = 0;
     uint32_t phaseTick = 0;
-    /// NO transport epoch (architect decision 2026-09-23). The drive re-derives the destination from
-    /// live transport state, re-derives the boundary tick from the live clock, and validates
-    /// `(kind, slot, interval)` before acting, so a stored counter would never be compared and would
-    /// add no protection. Transport *history* is covered by **consumption plus identity validation**,
-    /// not by an epoch: an accepted stop is consumed by the admission that binds it, by the
-    /// transport-stop entry that retargets or completes it, or by a synchronous completion -- so a stop
-    /// accepted before a transport stop can never later be driven with a PLAYING destination.
+    /// NO transport epoch (architect decision 2026-09-23). The drive re-derives the *destination* from
+    /// live transport state and validates `(kind, slot, interval)` before acting, so a stored counter
+    /// would never be compared and would add no protection. Transport *history* is covered by
+    /// **consumption plus identity validation**, not by an epoch: an accepted stop is consumed by the
+    /// admission that binds it, by the transport-stop entry that retargets or completes it, or by a
+    /// synchronous completion -- so a stop accepted before a transport stop can never later be driven
+    /// with a PLAYING destination.
+    /// DEC-233 amends the boundary half: an overdub Stop closes input on its press and stamps
+    /// `phaseTick` there, and every retry closes at that stored musical phase rather than re-deriving
+    /// it from the retry clock (the current absolute tick is scheduling/diagnostic only).
     /// S4f.8: the accepted stop's waits are counted as scheduling, never as refusals.
     uint32_t waitCount = 0;
     /// S4f.2/S2b.6: report the wait once per episode rather than once per deferred turn.
     bool waitReported = false;
     CapturePhase mode = CapturePhase::None;
+    /// DEC-233 decision 3: a successor Start arrived while this Stop was retained on genuinely
+    /// exhausted physical capture storage. One bounded bit of continuation metadata -- never a
+    /// second interval, reservation or worker. The Stop stays authoritative; the intent transfers
+    /// into the existing Start carrier only after the Stop binds, using the post-binding identity.
+    bool successorStart = false;
     bool isSet() const { return kind != Kind::None; }
     /// A repeat of the same accepted interaction is a no-op (S4f.1). A distinct operation is
     /// not a duplicate merely because the interval matches.
@@ -2106,6 +2174,25 @@ private:
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
   void latchAcceptedStop(PendingStopDestination destination, uint8_t slot, uint64_t interval);
+  /// DEC-233 decision 1: close the retained interval's input on the Stop press -- state only. It never
+  /// seals, transfers, closes the session, clears held notes/pending changes/preview or moves the interval
+  /// identity; admission still advances the identity exactly once when it binds.
+  void closeOverdubInputForRetainedStop();
+  /// DEC-233 decision 4: retarget the retained Stop to STOPPED for a transport stop, preserving its
+  /// first phase. Returns true when a retained Stop was retargeted (the obligation stays owned).
+  bool retargetRetainedStopToStopped();
+  /// DEC-233 decision 3: hand the retained Stop off before a successor Start mutates the live role
+  /// (staging reset, preview, session-exit claim). True means the Stop bound and the Start may proceed.
+  bool handOffRetainedStopBeforeSuccessorStart(uint32_t currentTick);
+  /// DEC-233 decision 3: bounded successor intent retained beside a Stop whose physical handoff is
+  /// genuinely exhausted. It never replaces the Stop and stacks nothing.
+  void retainSuccessorStartIntent();
+  /// DEC-233 decision 3: transfer a retained successor intent into the existing Start carrier once the
+  /// Stop has bound, using the post-binding interval identity.
+  void transferSuccessorStartIntent(uint8_t slot);
+  /// DEC-233 decision 2: reserve an **empty, unowned** canonical worker output. A populated store or a
+  /// foreign owner is left untouched (the wait stays observable); never clears content.
+  bool replenishEmptyCanonicalCaptureOutput(uint8_t slot);
   /// Consume the stop obligation of a successfully admitted (or synchronously completed) stop.
   /// `reason` is the consumption edge's own outcome literal (`admitted`, `superseded`, `sync_stop`,
   /// `transport_stop`, …), reported by the latch's sequenced evidence (task 2.2 of
@@ -2146,7 +2233,7 @@ private:
   /// `processDeferredOverdubStopGrain`, so convergence can never hold the capture-stop FIFO head.
   /// Returns true when this turn took the obligation slot (bound, stepped, discarded or discharged);
   /// "still owed, no authority" is also reported as taken because it ends the scan for this turn.
-  bool serviceDeferredCanonicalConvergence();
+
   bool publishRecordPresentation(CaptureStopJob& job);
   CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot);
   const CaptureStopPresentation* captureStopPresentationForSlot(uint8_t slot) const;
@@ -2258,8 +2345,13 @@ private:
   /// interval's own slot and interval, never whatever `activeLoopIndex` happens to be at drive
   /// time, so the DEC-067 guard chain, the staging, the canonical output and `job.slot` all
   /// resolve the interval's slot.
+  /// DEC-233: `phaseTick` is the interval's stored musical close boundary (`UINT32_MAX` derives it
+  /// from `currentTick`), and `inputClosedRetry` marks a retry of an already input-closed interval:
+  /// it bypasses only the completed input-state transition, never resource or identity preflight.
   bool beginDeferredOverdubStopForSlot(PendingStopDestination destination, uint32_t currentTick,
-                                       uint8_t slot, uint64_t interval);
+                                       uint8_t slot, uint64_t interval,
+                                       uint32_t phaseTick = UINT32_MAX,
+                                       bool inputClosedRetry = false);
   /// Live-edge wrapper: admits against the currently active slot and live interval.
   bool beginDeferredOverdubStop(PendingStopDestination destination, uint32_t currentTick);
   /// S4f.17: admit a **Record** stop through the same ring/latch drive. Binds the interval's

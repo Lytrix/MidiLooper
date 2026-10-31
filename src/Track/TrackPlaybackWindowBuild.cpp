@@ -1926,11 +1926,26 @@ TRACK_COLD_MEM void Track::prewarmBootPlaybackRuntimeSlots() {
   }
 }
 
-TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture) {
+TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture,
+                                                  bool restamp, bool skipViews) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return false;
   }
+  // Local cycle/us counters, emitted as **one** row after the whole call: serial work inside the
+  // prewarm would perturb the very pause being measured. `other` is the non-reserve remainder
+  // (lease, accounting tags, the existing mid-call `capture_prewarm` row).
+  const uint32_t prewarmStartUs = micros();
+  uint32_t stopJobsUs = 0;
+  uint32_t viewsUs = 0;
+  uint32_t canonicalUs = 0;
+  uint32_t horizonUs = 0;
+  uint32_t companionUs = 0;
+  uint32_t orderUs = 0;
+  // Resource-completeness bits for the eventual prepared-state adoption: bit0 stop-jobs, bit1 views,
+  // bit2 canonical output, bit3 transfer horizon, bit4 companion history. A false reserve leaves its
+  // bit clear; the Record edge must then stay armed rather than re-running the reserve synchronously.
+  uint8_t okMask = 0;
   // `ok` is the capture-admission answer: every reserve that exists to keep the later
   // deferred stop grains allocation-free must have been established. Callers that are
   // admitting a take must act on it; the boot/load caller may ignore it.
@@ -1943,25 +1958,34 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
                                     WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
   }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
-  ok = prewarmCaptureStopJobs(prepareCapture ? slotIndex : Config::MAX_LOOPS_PER_TRACK) && ok;
+  const uint32_t stopJobsStartUs = micros();
+  const bool stopJobsOk = prewarmCaptureStopJobs(
+      prepareCapture ? slotIndex : Config::MAX_LOOPS_PER_TRACK);
+  stopJobsUs = micros() - stopJobsStartUs;
+  ok = stopJobsOk && ok;
+  if (stopJobsOk) okMask = static_cast<uint8_t>(okMask | 0x01u);
   ExternalPoolAccounting::endTag();
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
   if (runtime != nullptr) {
     // This is a boot/load or pre-transport path. The hot MIDI path deliberately
     // has no equivalent allocation call.
-    if (prepareCapture) {
+    if (prepareCapture && !skipViews) {
       // Derived companion-row reserve for this slot (DEC-066): a loop whose canonical
       // payloads are sparse does not reserve the full row horizon, while a dense loop
       // still reaches the ceiling. The clamp lives in the owner.
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
+      const uint32_t viewsStartUs = micros();
       // RC-MEM-2: reserve the whole-take representation only when this loop can actually
       // publish one. Past `kMaxDetailedWindowBars` the windowed policy is the only
       // authoritative representation, so the bridges and the prepared pair are dead
       // reservation; the three views and both capture stagings stay (capture admission and
       // the live-record/handoff lanes need them).
-      ok = runtime->prewarmViews(loop.companionRowHorizonBound(),
-                                 loop.fullTakePlaybackViewAdmissible()) && ok;
+      const bool viewsOk = runtime->prewarmViews(loop.companionRowHorizonBound(),
+                                                 loop.fullTakePlaybackViewAdmissible());
+      viewsUs = micros() - viewsStartUs;
+      ok = viewsOk && ok;
+      if (viewsOk) okMask = static_cast<uint8_t>(okMask | 0x02u);
       ExternalPoolAccounting::endTag();
     }
     // Boot reserves no capture staging (DEC-065). Staging is provisioned by capture
@@ -1980,7 +2004,11 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
     // O(1) on the hot path.
     if (prepareCapture) {
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
-      ok = runtime->prewarmCanonicalCaptureOutput() && ok;
+      const uint32_t canonicalStartUs = micros();
+      const bool canonicalOk = runtime->prewarmCanonicalCaptureOutput();
+      canonicalUs = micros() - canonicalStartUs;
+      ok = canonicalOk && ok;
+      if (canonicalOk) okMask = static_cast<uint8_t>(okMask | 0x04u);
       ExternalPoolAccounting::endTag();
     }
   } else if (prepareCapture) {
@@ -2007,7 +2035,11 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // this one.
   if (prepareCapture) {
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
-    ok = loop.prewarmActiveOverdubTransferHorizon() && ok;
+    const uint32_t horizonStartUs = micros();
+    const bool horizonOk = loop.prewarmActiveOverdubTransferHorizon();
+    horizonUs = micros() - horizonStartUs;
+    ok = horizonOk && ok;
+    if (horizonOk) okMask = static_cast<uint8_t>(okMask | 0x08u);
     ExternalPoolAccounting::endTag();
     // Companion rows are part of the same deferred stop admission. Reserve
     // the complete fixed row horizon while the loop is cold so stop grains
@@ -2022,12 +2054,18 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
           std::min(RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows,
                    loop.companionRowHorizonBound());
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
-      ok = loop.prewarmPreparedCompanionHistory(companionCapacity) && ok;
+      const uint32_t companionStartUs = micros();
+      const bool companionOk = loop.prewarmPreparedCompanionHistory(companionCapacity);
+      companionUs = micros() - companionStartUs;
+      ok = companionOk && ok;
+      if (companionOk) okMask = static_cast<uint8_t>(okMask | 0x10u);
       ExternalPoolAccounting::endTag();
     }
   }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
+  const uint32_t orderStartUs = micros();
   (void)loop.getPlaybackOrder();
+  orderUs = micros() - orderStartUs;
   ExternalPoolAccounting::endTag();
   // S3.1: express the ownership this admission just established. `ok` is the admission answer, so
   // a lease is recorded only when the working set is actually usable; the record arm is the
@@ -2036,7 +2074,112 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   if (ok && runtime != nullptr && prepareCapture) {
     runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
   }
+  if (runtime != nullptr && prepareCapture) {
+    // Preserve the view bit owned by the resumable state machine; this call owns the four cheap
+    // reserves. The Record edge admits only when all five bits are present.
+    runtime->viewPrewarmResourceMask = static_cast<uint8_t>(
+        (runtime->viewPrewarmResourceMask & 0x02u) | (okMask & static_cast<uint8_t>(~0x02u)));
+  }
+#if defined(SESSION_CAPTURE)
+  {
+    const uint32_t totalUs = micros() - prewarmStartUs;
+    const uint32_t accountedUs = stopJobsUs + viewsUs + canonicalUs + horizonUs + companionUs +
+                                 orderUs;
+    const uint32_t otherUs = totalUs > accountedUs ? totalUs - accountedUs : 0;
+    const uint8_t reportMask =
+        (runtime != nullptr && prepareCapture) ? runtime->viewPrewarmResourceMask : okMask;
+    DebugSessionCapture::capturePrewarmSplit(
+        resolveTrackIndexForPersistence(*this), slotIndex, restamp, reportMask, viewsUs, canonicalUs,
+        horizonUs, stopJobsUs, companionUs, orderUs, otherUs, totalUs);
+  }
+#endif
   return ok;
+}
+
+TRACK_COLD_MEM uint32_t Track::viewPrewarmIdentityForSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return 0;
+  }
+  const Loop& loop = getLoop(slotIndex);
+  // Capacity identity, not content identity: the storage reserve depends on the slot incarnation,
+  // the loop geometry, whole-take admissibility and the companion-row bound. Playback/capture content
+  // revisions do not change the allocation, so they are deliberately not mixed in.
+  uint32_t hash = 2166136261u;
+  const auto mix = [&hash](uint32_t value) {
+    hash ^= value;
+    hash *= 16777619u;
+  };
+  mix(static_cast<uint32_t>(loop.loopId));
+  mix(loop.loopLengthTicks);
+  mix(loop.startLoopTick);
+  mix(loop.loopStartTick);
+  mix(loop.fullTakePlaybackViewAdmissible() ? 1u : 0u);
+  mix(static_cast<uint32_t>(loop.companionRowHorizonBound()));
+  return hash;
+}
+
+TRACK_COLD_MEM bool Track::viewPrewarmReadyForSlot(uint8_t slotIndex) {
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->viewPrewarmReady(viewPrewarmIdentityForSlot(slotIndex));
+}
+
+TRACK_COLD_MEM void Track::requestViewPrewarmForSlot(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  auto* runtime = playbackRuntime.trySlot(slotIndex);
+  if (runtime != nullptr) {
+    runtime->requestViewPrewarm(viewPrewarmIdentityForSlot(slotIndex));
+  }
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::viewPrewarmRequest(
+      resolveTrackIndexForPersistence(*this), slotIndex, runtime != nullptr,
+      runtime != nullptr ? static_cast<uint8_t>(runtime->viewPrewarmPhase) : 0xFFu);
+#endif
+}
+
+TRACK_COLD_MEM bool Track::stepViewPrewarmForSlot(uint8_t slotIndex, uint8_t maxUnits, uint32_t budgetUs) {
+  auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  const Loop& loop = getLoop(slotIndex);
+  const uint32_t startUs = micros();
+  const bool ready = runtime->stepViewPrewarm(
+      viewPrewarmIdentityForSlot(slotIndex), loop.fullTakePlaybackViewAdmissible(),
+      loop.companionRowHorizonBound(), maxUnits, budgetUs);
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::viewPrewarmStep(
+      resolveTrackIndexForPersistence(*this), slotIndex, runtime->viewPrewarmProgress(),
+      micros() - startUs, ready);
+#endif
+  return ready;
+}
+
+TRACK_COLD_MEM TRACK_COLD_MEM bool Track::hasViewPrewarmPending() const {
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime != nullptr && runtime->viewPrewarmPreparing()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM bool Track::stepViewPrewarmForIdle() {
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime != nullptr && runtime->viewPrewarmPreparing()) {
+      (void)stepViewPrewarmForSlot(slot, 1, 5000);
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM uint16_t Track::viewPrewarmProgressForSlot(uint8_t slotIndex) const {
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr ? runtime->viewPrewarmProgress() : 0;
 }
 
 TRACK_COLD_MEM bool Track::hasPlaybackOccupancyForSlot(uint8_t slotIndex) const {
@@ -6954,7 +7097,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       runtime->hasBoundRecordReturnWindowForPendingJob() && !runtime->viewBuild.coverageOwned()) {
     const Loop& recordLoop = loopForSlot(slot);
     if (recordLoop.loopLengthTicks == 0) return PlaybackViewTurnResult::GrainDenied;
-    const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+    // A STOPPED take resumes at phase zero: every Start from STOPPED re-anchors the projection
+    // (`reanchorPlaybackProjection`), so the window owed while stopped is bar 1, not the stop phase's bar.
+    // Preparing the stop-phase bar left bar 1 to be built after Start and adopted mid-window (121645).
+    const uint32_t phase = isStopped() ? 0u : IntervalProjection::tickPhaseInProjectionCycle(
         currentPhase, projectionCycleStartTick, recordLoop.loopLengthTicks);
     const auto* returnSet = runtime->viewSetIfPrewarmed();
     const auto* returnCurrent = returnSet && returnSet->lifecycle.current < returnSet->views.size()
@@ -8106,6 +8252,67 @@ TRACK_COLD_MEM void Track::reportRootReturnAdoptionForSlot(uint8_t slotIndex, co
                              ready != nullptr ? ready->coverage.startPhase : 0u,
                              ready != nullptr ? ready->coverage.lengthTicks : 0u, loop.loopLengthTicks, mask,
                              adopted ? 1u : (attempted ? 2u : 0u), reasonCode);
+}
+
+#if defined(SESSION_CAPTURE)
+DMAMEM static uint32_t sFirstBarRouteSignature[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK];
+DMAMEM static bool sFirstBarRouteInitialised = false;
+#endif
+
+TRACK_COLD_MEM void Track::reportFirstBarRouteForSlot(uint8_t slotIndex, uint32_t currentTick, uint8_t route,
+                                                      const RuntimePlaybackView* view) {
+#if defined(SESSION_CAPTURE)
+  if (slotIndex != activeLoopIndex || slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated() ||
+      !trackManager.isSelectedTrack(*this)) return;
+  const Loop& loop = loopForSlot(slotIndex);
+  if (loop.loopLengthTicks == 0) return;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+  uint8_t viewIndex = 0x0Fu;
+  if (set != nullptr && view != nullptr)
+    for (uint8_t i = 0; i < set->views.size(); ++i)
+      if (&set->views[i] == view) viewIndex = i;
+  const RuntimePlaybackView* ready = set != nullptr && set->lifecycle.ready < set->views.size()
+      ? &set->views[set->lifecycle.ready] : nullptr;
+  const uint8_t rolling = runtime != nullptr ? static_cast<uint8_t>(runtime->rolling.phase) & 0x7u : 0x7u;
+  const uint32_t signature = ((phase / Config::TICKS_PER_BAR) & 0xFFu) | (static_cast<uint32_t>(route & 0xFu) << 8) |
+      (static_cast<uint32_t>(viewIndex) << 12) |
+      ((view != nullptr && view->storage.eventCount == 0) ? (1u << 16) : 0u) |
+      (static_cast<uint32_t>(set != nullptr ? set->lifecycle.ready & 0xFu : 0xFu) << 17) |
+      ((ready != nullptr && ready->complete) ? (1u << 21) : 0u) | (static_cast<uint32_t>(rolling) << 22);
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  if (trackIndex >= Config::NUM_TRACKS) return;
+  if (!sFirstBarRouteInitialised) {
+    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t)
+      for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) sFirstBarRouteSignature[t][s] = 0xFFFFFFFFu;
+    sFirstBarRouteInitialised = true;
+  }
+  if (sFirstBarRouteSignature[trackIndex][slotIndex] == signature) return;
+  sFirstBarRouteSignature[trackIndex][slotIndex] = signature;
+  uint8_t mask = 0;
+  if (view != nullptr && view->firstRecordReturnWindow) mask |= 1u << 0;
+  if (view != nullptr && view->source.origin == PlaybackWindowOrigin::Capture) mask |= 1u << 1;
+  if (view != nullptr && view->published) mask |= 1u << 2;
+  if (view != nullptr && view->rawCoveragePrepared) mask |= 1u << 3;
+  if (ready != nullptr && ready->complete) mask |= 1u << 4;
+  if (runtime != nullptr && runtime->hasBoundRecordReturnWindowForPendingJob()) mask |= 1u << 5;
+  if (captureStopPresentationForSlot(slotIndex) != nullptr) mask |= 1u << 6;
+  if (loop.hasCommittedPasses()) mask |= 1u << 7;
+  // start = served view's start (or the ready's | 0x80000000 when no view), length = served view's event count.
+  const uint32_t start = view != nullptr ? view->coverage.startPhase
+      : ready != nullptr ? (0x80000000u | ready->coverage.startPhase) : 0xFFFFFFFFu;
+  SC_FROZEN_WINDOW_READINESS(trackIndex, slotIndex, "route", "turn", loop.playbackRevision, phase,
+                             playbackGeneration, view != nullptr ? view->source.captureContentGeneration : 0u, start,
+                             view != nullptr ? static_cast<uint32_t>(view->storage.eventCount) : 0u,
+                             loop.loopLengthTicks, mask, route, (viewIndex << 4) | rolling);
+#else
+  (void)slotIndex;
+  (void)currentTick;
+  (void)route;
+  (void)view;
+#endif
 }
 
 TRACK_COLD_MEM void Track::reportRootReturnHoldForSlot(uint8_t slotIndex) {

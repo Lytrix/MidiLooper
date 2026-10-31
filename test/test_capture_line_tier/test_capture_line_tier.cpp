@@ -403,6 +403,19 @@ void test_other_diag_subtags_are_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,100,DIAG,reclaim,1,2,3,4,5,ok,6"));
 }
 
+// DEC-216 — the aggregate turn row names the track unit that spent more than twice the owner budget, in the
+// timing-critical regime whose flush budget is 8 and which sheds non-Tier-A rows silently. Its tier is
+// load-bearing, but its prefix is **not** in this header list: the header's literals are instantiated in every
+// including TU, and one more 16-byte literal here crossed the RAM1 `_VectorsRam` align edge (`variables`
+// 96,192 -> 100,288 with ITCM code byte-identical). `DebugSessionCapture::isTierATextLine` classifies it from
+// `StopDiagRows.cpp`, and `test_capture_ring` (the suite that asks the production predicate) pins both
+// boundaries. This suite owns the header list, so it pins that the entry must not come back here.
+void test_dec216_idle_turn_tier_stays_outside_the_header_classifier() {
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
+      "#CAP,105246493,DIAG,idle_turn,track=7,us=186383,turn=283622,units=2"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,idle_turn_x,track=7,us=9000"));
+}
+
 // DEC-108 §13b / task 3.9. The window lane's readiness receipt is produced **under transport** -- the regime whose
 // flush budget is 8 (`src/main.cpp`, `timingCriticalTrackActive ? 8 : 64`) and whose shed path drops non-Tier-A head
 // records **silently, by design**. Its delivery rule is direct-when-there-is-room with the ring as the fallback, so
@@ -562,6 +575,7 @@ int main() {
   RUN_TEST(test_persistence_named_step_row_is_tier_a);
   RUN_TEST(test_idle_owner_deferral_row_is_tier_a_and_its_boundary_is_exact);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
+  RUN_TEST(test_dec216_idle_turn_tier_stays_outside_the_header_classifier);
   RUN_TEST(test_deferred_stop_identity_edges_are_tier_a);
   RUN_TEST(test_s4_5_finalization_busy_owner_vocabulary_is_tier_a);
   RUN_TEST(test_deferred_stop_identity_match_has_no_length_boundary_gap);

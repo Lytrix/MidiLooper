@@ -451,6 +451,18 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
     NoteUtils::DisplayNote revised = note;
     revised.startTick = transform->startTick;
     revised.endTick = transform->endTick;
+    // A committed row stays authoritative until the pending replacement is a valid span.
+    // Publishing a degenerate/tiny surrogate (e.g. 1536..1536 for a committed 63@1536..2208)
+    // makes the overlap layer release the row before the replacement is complete. Serve the
+    // committed row until the operation can be switched atomically.
+    const bool replacementTooShort =
+        revised.endTick <= revised.startTick ||
+        (noteMinLengthRemoveEnabled &&
+         (revised.endTick - revised.startTick) < noteMinLengthTicks);
+    if (replacementTooShort) {
+      updated.push_back(note);
+      continue;
+    }
     updated.push_back(revised);
   }
   notes.swap(updated);
@@ -1310,8 +1322,13 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
                                         capturePreview.notes);
     }
   }
-  if (!pendingNoteChanges_.empty()) {
-    applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin,
+  // Use the borrow-aware accessor: an admitted stop swaps this session's changes into the
+  // CaptureStopJob and lends them back for display (`borrowPendingNoteChanges`). Reading
+  // `pendingNoteChanges_` here applied the committed base's Shorten but not the frozen stop
+  // preview's, leaving the preview at the stop closure (the 2304-vs-2296 6th-stop row).
+  const PendingNoteChangeVec& thisLap = pendingNoteChanges();
+  if (!thisLap.empty()) {
+    applyPendingHideAndShortenToNotes(notes, thisLap, loopLen, true, liveCaptureBegin,
                                       true, capturePreview.notes);
   }
 }

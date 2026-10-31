@@ -1,5 +1,5 @@
 ---
-description: Ask after successful Teensy builds; use the checked macOS uploader, not the bundled 1 MiB-limited CLI
+description: Upload is pre-authorized after a successful Teensy build; use the checked macOS uploader and prove boot separately
 alwaysApply: true
 ---
 
@@ -8,27 +8,33 @@ alwaysApply: true
 Use **`teensy41-capture-serial`** unless another env is explicitly authorized:
 [default env rule](Teensy-Capture-Serial-Default-Build.mdc).
 
-After a **successful** firmware build and budget checks, **ask before flashing**.
-Example: “Build succeeded. Upload this checked `firmware.hex` to the Teensy now?”
-Exception: evaluation with a dedicated HITL preset follows
-[HITL evaluation](HITL-Implementation-Evaluation.mdc).
-Never upload after a failed build or when the user requested build-only/host tests.
+After a **successful** firmware build and budget checks, uploading is
+**pre-authorized** (owner instruction, 2026-10-30): upload and run without asking.
+Never upload after a failed build, or when the user asked for build-only/host tests.
+Record the exact HEX hash and verify boot separately over serial
+(`boot_reset,crash=0`, `BOOT,load,ok`); PlatformIO `SUCCESS` is not programming
+or boot proof.
 
 ## Approved upload
 
 Follow [the canonical macOS upload guide](../../docs/Guides/TEENSY_FIRMWARE_UPLOAD.md).
 
-- Prefer explicitly selected **Homebrew `teensy_loader_cli` 2.3+**
-  (`/opt/homebrew/bin/teensy_loader_cli` on this host); check its version.
-- **Do not use installed PlatformIO bundled CLI 2.2**: its parser rejects data
-  reaching 1 MiB (`HEX parse error line 65553` in the recorded image).
-- Do not default to `pio run ... -t upload`: this currently selects `teensy-gui`,
-  whose PlatformIO `SUCCESS` is not programming or boot evidence.
-- Hash the exact selected build's HEX. Disable GUI Auto; use one uploader.
-- macOS CLI `-s` is unsupported here. Ask for a short PROGRAM press if needed;
-  never a 15-second factory erase. Keep waiting bounded; do not abort mid-write.
+- **No-press default on this host:** `pio run -e teensy41-capture-serial -t upload`
+  (`upload_protocol = teensy-gui`, Teensyduino's tool, which reboots the board
+  itself). Exit `SUCCESS` still needs the separate boot check.
+- The standalone Homebrew `teensy_loader_cli` 2.3+ only works when the board is
+  already in HalfKay on macOS (`-r` -> `Unable to find rebootor`, `-s`
+  unimplemented). PlatformIO's bundled CLI 2.2 rejects images reaching 1 MiB
+  (`HEX parse error line 65553`). Use the Homebrew CLI only for the HalfKay case.
+- Hash the exact selected build's HEX. Disable GUI Auto; use one uploader at a time.
+- If a short PROGRAM press is needed, use a short press, never a 15-second factory
+  erase. Keep waiting bounded; do not abort mid-write.
 
 ```bash
+# no-press path (default)
+pio run -e teensy41-capture-serial -t upload
+
+# HalfKay path, only when the board is already in the bootloader
 uploader=/opt/homebrew/bin/teensy_loader_cli
 hex="/absolute/path/to/the/approved/build/firmware.hex"
 shasum -a 256 "$hex"

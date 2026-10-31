@@ -381,7 +381,7 @@ class ManagedCaptureSession:
             self.complete_command(nonce)
 
     def identity_stat_lines(self, *, timeout_s: float = 6.0) -> Optional[list[str]]:
-        """The stopped-only per-family counter read-back rows, or None when the session cannot answer.
+        """The read-only per-family counter read-back rows, or None when the session cannot answer.
 
         The single owner of this conversation: the request, its fence and the decode stay with the serial
         owner (`hitl.serial.protocol`), because neither a flow nor a scenario may import that layer and two

@@ -32,6 +32,7 @@ struct CaptureSerial {
 // S7.5a distribution instrument: the two sink rows (and the Tier-A prefixes the classifier above asks them for) live
 // in their own DTCM-carved translation unit, so the suite that includes the sink includes them too.
 #include "../../src/Utils/EnvelopeDistRows.cpp"
+#include "../../src/Utils/StopDiagRows.cpp"
 #undef Serial
 #include "../../include/Utils/TelemetryCadence.h"
 #include "../../src/StorageManager/HitlLiveObservationCommands.h"
@@ -487,6 +488,22 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                       "edit=104,undo=8,ib=131072,eb=32768,ub=4096,xb=65536"),
       "the allocation census survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,alloc_censusx,1"),
+                            "and a longer subtag is not swept in");
+  // Deferred-stop **tail liveness**: one row per job whose canonical tail could not begin (or latched
+  // `Denied`) under transport. That is exactly the budget-8 regime, and the row is the only evidence that
+  // the 51 s `CanonicalTail` park (`session_20261030_143745.log`) was a refusal rather than work. It is
+  // classified in `isTierATextLine`, not the header, for the DTCM reason above; pinned by its boundary.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,stop_tail,7,3,5,no_start,32"),
+                           "the canonical-tail liveness row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,stop_tailx,1"),
+                            "and a longer subtag is not swept in");
+  // DEC-216's aggregate owner-turn row moved out of the header classifier into this predicate for the same
+  // DTCM reason (`StopDiagRows.cpp`). Its tier is load-bearing, so it is pinned here, the suite that asks the
+  // production predicate; `test_capture_line_tier` pins that it stays out of the header list.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,105246493,DIAG,idle_turn,track=7,us=186383,turn=283622,units=2"),
+      "the aggregate owner-turn row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,idle_turn_x,track=7,us=9000"),
                             "and a longer subtag is not swept in");
   // Task 4.20 allocatability probe: on demand from the host (`!HEAP_PROBE`) but it has to survive the same
   // timing-critical flush, because the denial it explains is felt while a transport runs.

@@ -1954,12 +1954,33 @@ struct Loop {
   /// Record (or merge into) the bounded deferred completion for a note. False on a full set: the caller
   /// then answers synchronously against a bounded local window rather than dropping the decision.
   bool retainDeferredOverdubCompletion(const DeferredOverdubCompletion& completion);
-  /// Apply every deferred completion whose tiles are now prepared, in obligation order (occupancy before
-  /// its own span), exactly once. Runs on the worker/turn lane, never on the MIDI path.
-  uint8_t dischargeDeferredOverdubCompletions();
+  /// Apply deferred completions whose tiles are now prepared, in obligation order (occupancy before its
+  /// own span), exactly once. Runs on the worker/turn lane, never on the MIDI path. `maxDischarge` 0 means
+  /// "drain everything ready"; a non-zero value bounds one turn (DEC-217) and leaves the rest owed.
+  uint8_t dischargeDeferredOverdubCompletions(uint8_t maxDischarge = 0);
   /// The seal/deadline edge: a completion still owed when the interval ends is answered synchronously
   /// from a windowed derive of its own span, so no decision is dropped and none is applied twice.
   void materializeDeferredOverdubCompletionsAtDeadline();
+#if defined(PIO_UNIT_TEST_NATIVE)
+ public:
+  /// DEC-217 witness: queue one owed completion with no prerequisite, so the per-turn bound can be
+  /// asserted without replaying a full note hold across an unprepared tile.
+  bool retainDeferredOverdubCompletionForTest(uint8_t channel, uint8_t pitch, uint32_t startTick,
+                                              uint32_t endTick) {
+    DeferredOverdubCompletion completion{};
+    completion.channel = channel;
+    completion.pitch = pitch;
+    completion.startTick = startTick;
+    completion.endTick = endTick;
+    completion.noteId = kInvalidNoteId;
+    return retainDeferredOverdubCompletion(completion);
+  }
+  uint8_t dischargeDeferredOverdubCompletionsForTest(uint8_t maxDischarge) {
+    return dischargeDeferredOverdubCompletions(maxDischarge);
+  }
+
+ private:
+#endif
   bool applyDeferredOverdubCompletion(const DeferredOverdubCompletion& completion);
   /// Apply the overlap consequence for one completed note against an explicit candidate source. Shared by
   /// the immediate note-off path, the discharge lane and the deadline fallback, so all three decisions

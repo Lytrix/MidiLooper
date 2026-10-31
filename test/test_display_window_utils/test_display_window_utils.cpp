@@ -110,6 +110,29 @@ void test_in_place_window_filter_matches_existing_wrap_and_zero_semantics() {
   }
 }
 
+void test_equal_inclusive_note_endpoints_are_one_tick_not_a_full_loop() {
+  for (uint32_t bars : {20u, 128u}) {
+    const uint32_t length = bars * Config::TICKS_PER_BAR;
+    const uint32_t last = length - 1;
+    TEST_ASSERT_FALSE(DisplayWindowUtils::noteIntersectsWindow(last, last, 5 * Config::TICKS_PER_BAR,
+                                                              Config::TICKS_PER_BAR, length));
+    TEST_ASSERT_TRUE(DisplayWindowUtils::noteIntersectsWindow(last, last, last, 1, length));
+    TEST_ASSERT_FALSE(DisplayWindowUtils::noteIntersectsWindow(last, last, 0, 1, length));
+    NoteUtils::DisplayNoteVec notes{{910, 70, 100, last, last}};
+    DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(
+        notes, 5 * Config::TICKS_PER_BAR, Config::TICKS_PER_BAR, length);
+    TEST_ASSERT_TRUE_MESSAGE(notes.empty(), "a one-tick tail is not a full-loop held note");
+    notes.push_back({910, 70, 100, last, last});
+    DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(notes, last, 2, length);
+    TEST_ASSERT_EQUAL_UINT32(1, notes.size());
+    TEST_ASSERT_EQUAL_UINT32(last, notes[0].startTick);
+    TEST_ASSERT_EQUAL_UINT32(last, notes[0].endTick);
+    TEST_ASSERT_TRUE(DisplayWindowUtils::noteIntersectsWindow(last - 8, 8, 0, 4, length));
+    TEST_ASSERT_FALSE(DisplayWindowUtils::noteIntersectsWindow(last - 8, 8,
+        5 * Config::TICKS_PER_BAR, Config::TICKS_PER_BAR, length));
+  }
+}
+
 void test_make_viewport_interval() {
   const TickInterval viewport = DisplayWindowUtils::makeViewportInterval(16u * Config::TICKS_PER_BAR,
                                                                          4u * Config::TICKS_PER_BAR);
@@ -212,6 +235,157 @@ void test_resolve_centered_window_start() {
                            DisplayWindowUtils::resolveCenteredWindowStart(16u * bar, windowLength, loopLength));
   TEST_ASSERT_EQUAL_UINT32(16u * bar,
                            DisplayWindowUtils::resolveCenteredWindowStart(31u * bar, windowLength, loopLength));
+}
+
+// 2026-10-30 display-source handoff, binding: coverage is circular over the loop, so a window whose
+// end passes the loop end is ONE generation with two physical spans. Geometry only -- the bar counts
+// are the fixture's, not a constant the production code may assume (the 128-bar case pins that).
+void test_circular_window_coverage_twenty_bar_crosses_the_loop_end() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const auto coverage =
+      DisplayWindowUtils::makeCircularWindowCoverage(8u * bar, 16u * bar, 20u * bar);
+  TEST_ASSERT_TRUE(coverage.valid());
+  TEST_ASSERT_EQUAL_UINT8(2, DisplayWindowUtils::windowCoverageSpanCount(coverage));
+  const auto tail = DisplayWindowUtils::windowCoverageSpan(coverage, 0);
+  TEST_ASSERT_EQUAL_UINT32(8u * bar, tail.start);
+  TEST_ASSERT_EQUAL_UINT32(12u * bar, tail.length);
+  const auto head = DisplayWindowUtils::windowCoverageSpan(coverage, 1);
+  TEST_ASSERT_EQUAL_UINT32(0u, head.start);
+  TEST_ASSERT_EQUAL_UINT32(4u * bar, head.length);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(8u * bar, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(20u * bar - 1u, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(0u, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(4u * bar - 1u, coverage));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(4u * bar, coverage));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(8u * bar - 1u, coverage));
+  TEST_ASSERT_EQUAL_UINT32(12u * bar, DisplayWindowUtils::windowCoverageRelativeTick(0u, coverage));
+  TEST_ASSERT_EQUAL_UINT32(0u, DisplayWindowUtils::windowCoverageLoopBar(20u, 20u));
+  TEST_ASSERT_EQUAL_UINT32(7u, DisplayWindowUtils::windowCoverageLoopBar(27u, 20u));
+}
+
+void test_circular_window_coverage_hundred_twenty_eight_bar_geometry() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopBars = 128u;
+  const auto crossing = DisplayWindowUtils::makeCircularWindowCoverage(120u * bar, 16u * bar,
+                                                                      loopBars * bar);
+  TEST_ASSERT_EQUAL_UINT8(2, DisplayWindowUtils::windowCoverageSpanCount(crossing));
+  const auto tail = DisplayWindowUtils::windowCoverageSpan(crossing, 0);
+  TEST_ASSERT_EQUAL_UINT32(120u * bar, tail.start);
+  TEST_ASSERT_EQUAL_UINT32(8u * bar, tail.length);
+  const auto head = DisplayWindowUtils::windowCoverageSpan(crossing, 1);
+  TEST_ASSERT_EQUAL_UINT32(0u, head.start);
+  TEST_ASSERT_EQUAL_UINT32(8u * bar, head.length);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(120u * bar, crossing));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(loopBars * bar - 1u, crossing));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(0u, crossing));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(8u * bar - 1u, crossing));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(8u * bar, crossing));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(120u * bar - 1u, crossing));
+
+  const auto inside = DisplayWindowUtils::makeCircularWindowCoverage(40u * bar, 16u * bar,
+                                                                     loopBars * bar);
+  TEST_ASSERT_EQUAL_UINT8(1, DisplayWindowUtils::windowCoverageSpanCount(inside));
+  TEST_ASSERT_EQUAL_UINT32(16u * bar, DisplayWindowUtils::windowCoverageSpan(inside, 0).length);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(40u * bar - 1u, inside));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(40u * bar, inside));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(56u * bar - 1u, inside));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(56u * bar, inside));
+  // A coverage that spans the whole loop is one span and contains every tick.
+  const auto wholeLoop = DisplayWindowUtils::makeCircularWindowCoverage(0u, loopBars * bar,
+                                                                        loopBars * bar);
+  TEST_ASSERT_EQUAL_UINT8(1, DisplayWindowUtils::windowCoverageSpanCount(wholeLoop));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(127u * bar, wholeLoop));
+}
+
+void test_circular_bar_window_start_is_bar_stable_and_wraps() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loop = 20u * bar;
+  const uint32_t length = 16u * bar;
+  // Head floor: a playhead in the first half window keeps bar 0 visible (a rewound take reads from
+  // its start), and the origin does not move within a bar.
+  TEST_ASSERT_EQUAL_UINT32(0u, DisplayWindowUtils::resolveCircularBarWindowStart(0u, length, loop, bar));
+  TEST_ASSERT_EQUAL_UINT32(
+      0u, DisplayWindowUtils::resolveCircularBarWindowStart(1u * bar, length, loop, bar));
+  // Past the half window it steps exactly one bar per bar, never per tick.
+  TEST_ASSERT_EQUAL_UINT32(
+      1u * bar, DisplayWindowUtils::resolveCircularBarWindowStart(9u * bar, length, loop, bar));
+  TEST_ASSERT_EQUAL_UINT32(
+      1u * bar,
+      DisplayWindowUtils::resolveCircularBarWindowStart(9u * bar + bar / 2u, length, loop, bar));
+  TEST_ASSERT_EQUAL_UINT32(
+      2u * bar, DisplayWindowUtils::resolveCircularBarWindowStart(10u * bar, length, loop, bar));
+  // The tail origin crosses the loop end, so the window stays one generation with two spans and the
+  // playhead is inside it all the way to the loop end.
+  const uint32_t tail = DisplayWindowUtils::resolveCircularBarWindowStart(19u * bar, length, loop, bar);
+  TEST_ASSERT_EQUAL_UINT32(11u * bar, tail);
+  TEST_ASSERT_EQUAL_UINT32(
+      tail, DisplayWindowUtils::resolveCircularBarWindowStart(19u * bar + 17u, length, loop, bar));
+  const auto coverage = DisplayWindowUtils::makeCircularWindowCoverage(tail, length, loop);
+  TEST_ASSERT_EQUAL_UINT8(2, DisplayWindowUtils::windowCoverageSpanCount(coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(19u * bar, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(loop - 1u, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(0u, coverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(7u * bar - 1u, coverage));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoverageContains(7u * bar, coverage));
+  // 128-bar geometry: the same shape, so nothing here is hard-coded to a 20-bar loop.
+  const uint32_t bigLoop = 128u * bar;
+  const uint32_t bigTail =
+      DisplayWindowUtils::resolveCircularBarWindowStart(127u * bar, length, bigLoop, bar);
+  TEST_ASSERT_EQUAL_UINT32(119u * bar, bigTail);
+  const auto bigCoverage = DisplayWindowUtils::makeCircularWindowCoverage(bigTail, length, bigLoop);
+  TEST_ASSERT_EQUAL_UINT8(2, DisplayWindowUtils::windowCoverageSpanCount(bigCoverage));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoverageContains(127u * bar, bigCoverage));
+}
+
+// Deliberate pin for the current tree: the paint resolver still clamps the window end to the loop.
+// Wiring `resolveCircularBarWindowStart` into it is step 2 of the 2026-10-30 handoff and requires
+// the committed-base gather to compose two spans first; this test is what makes that dependency
+// explicit instead of letting a half-wired origin ship.
+void test_resolve_detailed_paint_window_keeps_the_clamped_centred_origin() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loop = 20u * bar;
+  uint32_t start = 0;
+  uint32_t length = 0;
+  uint8_t bars = 0;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loop, 16, 0, 0, true, start, length, bars));
+  TEST_ASSERT_EQUAL_UINT32(0u, start);
+  TEST_ASSERT_EQUAL_UINT32(16u * bar, length);
+  TEST_ASSERT_EQUAL_UINT8(16, bars);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loop, 16, 0, 19u * bar, true, start, length, bars));
+  TEST_ASSERT_EQUAL_UINT32(4u * bar, start);
+  TEST_ASSERT_EQUAL_UINT8(
+      1, DisplayWindowUtils::windowCoverageSpanCount(
+             DisplayWindowUtils::makeCircularWindowCoverage(start, length, loop)));
+}
+
+void test_select_draw_source_reuse_kind_slides_across_the_wrap() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loop = 20u * bar;
+  DisplayWindowUtils::DrawSourceGatherKey last{};
+  last.valid = 1;
+  last.windowStart = 19u * bar;
+  last.windowLength = 16u * bar;
+  DisplayWindowUtils::DrawSourceGatherKey current{};
+  current.valid = 1;
+  current.windowStart = 0u;
+  current.windowLength = 16u * bar;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::drawSourceCommittedSourceKeysMatch(last, current));
+  // Last bar -> bar 0 is one bar circularly, so it still owes exactly one newly exposed bar.
+  TEST_ASSERT_EQUAL(DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource,
+                    DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar, loop));
+  current.windowStart = 1u * bar;
+  TEST_ASSERT_EQUAL(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource,
+                    DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar, loop));
+  current.windowStart = 18u * bar;
+  TEST_ASSERT_EQUAL(DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource,
+                    DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar, 0u));
+  current.windowStart = 0u;
+  last.windowStart = 0u;
+  current.windowStart = 1u * bar;
+  TEST_ASSERT_EQUAL(DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource,
+                    DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar, loop));
 }
 
 void test_clamp_preserved_display_note_count_drops_capture_suffix() {
@@ -2411,6 +2585,7 @@ void test_window_filter_refuses_the_frame_instead_of_allocating_when_denied() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_equal_inclusive_note_endpoints_are_one_tick_not_a_full_loop);
   RUN_TEST(test_draw_source_reuses_two_buffers_without_paint_mutating_compose);
   RUN_TEST(test_paint_growth_retires_obsolete_frame_before_allocating_replacement);
   RUN_TEST(test_draw_source_handoff_and_early_exit_return_scratch);
@@ -2423,6 +2598,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_intersects_window_inside_and_outside);
   RUN_TEST(test_filter_display_notes_to_window);
   RUN_TEST(test_resolve_centered_window_start);
+  RUN_TEST(test_circular_window_coverage_twenty_bar_crosses_the_loop_end);
+  RUN_TEST(test_circular_window_coverage_hundred_twenty_eight_bar_geometry);
+  RUN_TEST(test_circular_bar_window_start_is_bar_stable_and_wraps);
+  RUN_TEST(test_resolve_detailed_paint_window_keeps_the_clamped_centred_origin);
+  RUN_TEST(test_select_draw_source_reuse_kind_slides_across_the_wrap);
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_capture_playhead_tails_are_paint_only);

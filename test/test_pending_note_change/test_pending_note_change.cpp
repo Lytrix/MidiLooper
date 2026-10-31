@@ -3929,6 +3929,25 @@ void seedOccupyOpenHoldPreview(Loop& loop, NoteId holdId) {
 /// Host stand-in ids label layer shapes only — not the device id.
 /// Sequence matches `resolveDisplayNotesByDrawSource`: prefix + overlays stay
 /// on compose; pending paints a copy before overdub tails.
+void test_committed_pitch63_start1536_survives_degenerate_pending_shorten() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Overdub);
+  // Device-shaped incomplete replacement: the pending Shorten has no valid span yet.
+  loop.pushPendingNoteChangeForTest(shortenChange(40, 63, 1536, 1536));
+
+  NoteUtils::DisplayNoteVec committed;
+  committed.push_back(displayNote(40, 63, 1536, 2208));
+  loop.applyPendingNoteChangesToDisplayNotes(committed, 1);
+
+  TEST_ASSERT_EQUAL(1u, committed.size());
+  TEST_ASSERT_EQUAL(40, committed[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, committed[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, committed[0].endTick);
+}
+
 void test_draw_source_compose_193815_63_1536_forks() {
   constexpr uint32_t kLoopLength = 3072;
   constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
@@ -5455,6 +5474,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_drops_same_start_longer_sibling);
   RUN_TEST(test_pending_shorten_172734_open_hold_eligibility_matrix);
   RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
+  RUN_TEST(test_committed_pitch63_start1536_survives_degenerate_pending_shorten);
   RUN_TEST(test_draw_source_compose_193815_63_1536_forks);
   RUN_TEST(test_noteon_shorten_paint_keeps_compose_original_end_215658);
   RUN_TEST(test_noteon_pending_paint_copy_shortens_before_stop_202821);

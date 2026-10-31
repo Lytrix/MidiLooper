@@ -752,9 +752,27 @@ void test_two_sessions_over_one_private_predecessor_do_not_leak_intervals() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(privateRun.bStagedRows, privateRun.cStagedRows,
                                    "C must re-read the predecessor, not append to B's prefix");
   TEST_ASSERT_EQUAL_UINT32(privateRun.bStagedRows / 2, privateRun.cStagedNotes);
-  // C's decisions are its own hold's: one per A note present at C's hold tick, each shortened to the
-  // hold. B's were shortened at B's hold, so no row may carry B's end tick.
-  TEST_ASSERT_EQUAL_UINT32(2, privateRun.c.size());
+  // C's decisions are its own hold's: the A pair present under C's hold, shortened to the hold.
+  // B's were shortened at B's hold, so no row may carry B's end tick.
+  // The clean 32-bar predecessor has exactly one pair under C's hold: A's bar-1 note (780..864),
+  // shortened to 811. The previous 31-bar trim wrapped the 32nd bar's orphan NoteOn into tick 12 and
+  // surfaced it here as a phantom [12..811] pair; that pair is the corruption this change removes, not an
+  // expectation to preserve.
+  {
+    char detail[500];
+    size_t used = 0;
+    used += static_cast<size_t>(std::snprintf(detail + used, sizeof(detail) - used, "c=%zu",
+                                              privateRun.c.size()));
+    for (const SourceDecision& decision : privateRun.c) {
+      if (used >= sizeof(detail)) break;
+      used += static_cast<size_t>(std::snprintf(detail + used, sizeof(detail) - used,
+          " [%u..%u kind=%u]", decision.startTick, decision.endTick,
+          static_cast<unsigned>(decision.kind)));
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, privateRun.c.size(), detail);
+  }
+  TEST_ASSERT_EQUAL_UINT32(780, privateRun.c[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(811, privateRun.c[0].endTick);
   bool foundSecondPair = false;
   for (const SourceDecision& decision : privateRun.c) {
     TEST_ASSERT_EQUAL_MESSAGE(PendingNoteChangeKind::Shorten, decision.kind,

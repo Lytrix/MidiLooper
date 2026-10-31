@@ -243,6 +243,28 @@ void test_riao1_f_source_view_deferral_requires_coverage() {
   TEST_ASSERT_FALSE(idleOwnerSourceViewCovers(0, 0, 0, kWindow, kLoop));
 }
 
+// DEC-216 — the **aggregate** realtime walk. `kOwnerWorkBudgetUs` bounds one child, never the sum of the
+// tracks one deferred turn visits: on device one turn spent 283,622 us across that walk
+// (`session_20261030_114009.log`) while playback notes went 294-326 ms late. The walk asks this predicate
+// before starting another track unit, so a turn yields once its budget is spent.
+void test_dec216_realtime_walk_starts_no_unit_after_the_turn_budget() {
+  // Fresh turn: another unit may start.
+  TEST_ASSERT_TRUE(idleOwnerTurnMayStartAnotherUnit(0));
+  TEST_ASSERT_TRUE(idleOwnerTurnMayStartAnotherUnit(kOwnerWorkBudgetUs - 1));
+  // Budget spent: the walk stops starting units (the current unit is never interrupted).
+  TEST_ASSERT_FALSE(idleOwnerTurnMayStartAnotherUnit(kOwnerWorkBudgetUs));
+  TEST_ASSERT_FALSE(idleOwnerTurnMayStartAnotherUnit(kOwnerWorkBudgetUs + 1));
+  // The measured device turn is far past the bound, and stays a stop.
+  TEST_ASSERT_FALSE(idleOwnerTurnMayStartAnotherUnit(283622));
+}
+
+// DEC-216 control — the aggregate ceiling is the *declared* budget and is strictly tighter than both the
+// 50 ms alarm and the shortest supported clock interval, so a complying turn always leaves a MIDI edge.
+void test_dec216_turn_budget_is_tighter_than_the_alarm_and_one_clock_interval() {
+  TEST_ASSERT_TRUE(kOwnerWorkBudgetUs < kIdleMaintBreachThresholdUs);
+  TEST_ASSERT_TRUE(kOwnerWorkBudgetUs + kOwnerWorkResidualUs <= kMinimumSupportedClockIntervalUs);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao1_a_unbounded_child_defers_while_timing_critical);
@@ -256,5 +278,7 @@ int main(int, char**) {
   RUN_TEST(test_riao1_e_registry_is_total_and_coherent);
   RUN_TEST(test_riao1_e_deferral_is_lossless_and_resumable);
   RUN_TEST(test_riao1_f_source_view_deferral_requires_coverage);
+  RUN_TEST(test_dec216_realtime_walk_starts_no_unit_after_the_turn_budget);
+  RUN_TEST(test_dec216_turn_budget_is_tighter_than_the_alarm_and_one_clock_interval);
   return UNITY_END();
 }

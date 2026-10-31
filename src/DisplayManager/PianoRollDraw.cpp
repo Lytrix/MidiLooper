@@ -168,23 +168,24 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
     const uint32_t ticksPerBeat = Config::TICKS_PER_QUARTER_NOTE;
     const uint32_t ticksPerSixteenth = Config::TICKS_PER_QUARTER_NOTE / 4;
-    const uint32_t windowEnd = windowStartTick + lengthLoop;
     const int rollWidth = pianoRollWidth();
-
-    auto tickToColumn = [&](uint32_t absTick) -> int {
-        if (absTick < windowStartTick || absTick >= windowEnd) {
+    // The window is one logical interval that may cross the loop end, so the grid is drawn in
+    // **window-relative** ticks: the origin is bar-stable and the spacing never depends on where the
+    // loop end falls inside the window.
+    auto columnForRelative = [&](uint32_t relTick) -> int {
+        if (relTick >= lengthLoop) {
             return -1;
         }
-        const uint32_t relTick = absTick - windowStartTick;
         return TRACK_MARGIN + map(relTick, 0, lengthLoop, 0, rollWidth);
     };
-
-    const uint32_t firstBarTick = (windowStartTick / ticksPerBar) * ticksPerBar;
-    for (uint32_t absTick = firstBarTick; absTick < windowEnd; absTick += ticksPerBar) {
-        if (absTick < windowStartTick) {
+    const uint32_t barPhase = ticksPerBar > 0 ? windowStartTick % ticksPerBar : 0;
+    const uint32_t firstBarRel = barPhase == 0 ? 0 : ticksPerBar - barPhase;
+    for (uint32_t relTick = firstBarRel; relTick < lengthLoop; relTick += ticksPerBar) {
+        const uint32_t absTick = windowStartTick + relTick;
+        if (absTick % ticksPerBar != 0) {
             continue;
         }
-        const int x = tickToColumn(absTick);
+        const int x = columnForRelative(relTick);
         if (x >= 0) {
             _display.gfx.draw_vline(_display.api.getFrameBuffer(), x, pianoRollY0, pianoRollY1,
                                     barBrightness);
@@ -193,13 +194,14 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 
     const bool showBeat = (lengthLoop <= 9 * ticksPerBar);
     if (showBeat) {
-        const uint32_t firstBeatTick =
-            windowStartTick - (windowStartTick % ticksPerBeat);
-        for (uint32_t absTick = firstBeatTick; absTick < windowEnd; absTick += ticksPerBeat) {
-            if (absTick < windowStartTick || absTick % ticksPerBar == 0) {
+        const uint32_t beatPhase = ticksPerBeat > 0 ? windowStartTick % ticksPerBeat : 0;
+        const uint32_t firstBeatRel = beatPhase == 0 ? 0 : ticksPerBeat - beatPhase;
+        for (uint32_t relTick = firstBeatRel; relTick < lengthLoop; relTick += ticksPerBeat) {
+            const uint32_t absTick = windowStartTick + relTick;
+            if (absTick % ticksPerBar == 0) {
                 continue;
             }
-            const int x = tickToColumn(absTick);
+            const int x = columnForRelative(relTick);
             if (x >= 0) {
                 for (int y = pianoRollY0; y <= pianoRollY1; y += 2) {
                     _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, beatBrightness);
@@ -210,15 +212,17 @@ void DisplayManager::drawGridLines(uint32_t lengthLoop, int pianoRollY0, int pia
 
     const bool showSixteenth = (lengthLoop <= 5 * ticksPerBar);
     if (showSixteenth) {
-        const uint32_t firstSixteenthTick =
-            windowStartTick - (windowStartTick % ticksPerSixteenth);
-        for (uint32_t absTick = firstSixteenthTick; absTick < windowEnd;
-             absTick += ticksPerSixteenth) {
-            if (absTick < windowStartTick || absTick % ticksPerBar == 0 ||
-                absTick % ticksPerBeat == 0) {
+        const uint32_t sixteenthPhase =
+            ticksPerSixteenth > 0 ? windowStartTick % ticksPerSixteenth : 0;
+        const uint32_t firstSixteenthRel =
+            sixteenthPhase == 0 ? 0 : ticksPerSixteenth - sixteenthPhase;
+        for (uint32_t relTick = firstSixteenthRel; relTick < lengthLoop;
+             relTick += ticksPerSixteenth) {
+            const uint32_t absTick = windowStartTick + relTick;
+            if (absTick % ticksPerBar == 0 || absTick % ticksPerBeat == 0) {
                 continue;
             }
-            const int x = tickToColumn(absTick);
+            const int x = columnForRelative(relTick);
             if (x >= 0) {
                 for (int y = pianoRollY0; y <= pianoRollY1; y += 4) {
                     _display.gfx.draw_pixel(_display.api.getFrameBuffer(), x, y, sixteenthBrightness);
@@ -336,6 +340,8 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
     constexpr uint8_t kOverviewWindowEdgeBrightness = 2;
 
     const uint32_t windowEnd = windowStart + windowLength;
+    const auto windowCoverage =
+        DisplayWindowUtils::makeCircularWindowCoverage(windowStart, windowLength, fullLoopLength);
     const int boxX0 = TRACK_MARGIN + map(windowStart % fullLoopLength, 0, fullLoopLength, 0, width);
     const int boxX1 =
         TRACK_MARGIN + map(std::min(windowEnd, fullLoopLength), 0, fullLoopLength, 0, width);
@@ -344,6 +350,15 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
                                   TRACK_MARGIN + width, y1, kOverviewRestOutsideBrightness);
     _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), boxX0, y0, boxX1, y1,
                                   kOverviewRestInsideBrightness);
+    if (windowEnd > fullLoopLength) {
+        // A crossing window is one generation with two physical spans: draw the head span too.
+        const int headX1 =
+            TRACK_MARGIN + map(windowEnd - fullLoopLength, 0, fullLoopLength, 0, width);
+        if (headX1 > TRACK_MARGIN) {
+            _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), TRACK_MARGIN, y0, headX1,
+                                          y1, kOverviewRestInsideBrightness);
+        }
+    }
 
     auto drawNoteInsideWindow = [&](const DisplayNote& note, int y, uint32_t startTick,
                                     uint32_t endTick, int noteBrightness) {
@@ -354,8 +369,17 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
             if (segEnd <= segStart) {
                 return;
             }
+            if (windowEnd > fullLoopLength) {
+                // Head span of a crossing window: [0..windowEnd - loopLength).
+                const uint32_t headEnd = windowEnd - fullLoopLength;
+                const uint32_t headStop = std::min(segEnd, headEnd);
+                if (segStart < headStop) {
+                    drawNoteBar(note, y, segStart, headStop, fullLoopLength, noteBrightness);
+                }
+            }
             const uint32_t insideStart = std::max(segStart, windowStart);
-            const uint32_t insideEnd = std::min(segEnd, windowEnd);
+            const uint32_t tailEnd = std::min(windowEnd, fullLoopLength);
+            const uint32_t insideEnd = std::min(segEnd, tailEnd);
             if (insideStart < insideEnd) {
                 drawNoteBar(note, y, insideStart, insideEnd, fullLoopLength, noteBrightness);
             }
@@ -395,7 +419,9 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
             if (x1 < x0) {
                 x1 = x0;
             }
-            const bool insideWindow = barEnd > windowStart && barStart < windowEnd;
+            const bool insideWindow =
+                DisplayWindowUtils::windowCoverageContains(barStart, windowCoverage) ||
+                DisplayWindowUtils::windowCoverageContains(barEnd - 1u, windowCoverage);
             const int brightness =
                 insideWindow ? kOverviewNoteInsideBrightness : kOverviewNoteOutsideBrightness;
             for (uint8_t band = 0; band < DisplayWindowUtils::kOverviewBandCount; ++band) {
@@ -438,6 +464,17 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
                                   kOverviewWindowEdgeBrightness);
     _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), boxX0, y1, boxX1, y1,
                                   kOverviewWindowEdgeBrightness);
+    if (windowEnd > fullLoopLength) {
+        // Head span edges of a crossing window.
+        const int headX1 =
+            TRACK_MARGIN + map(windowEnd - fullLoopLength, 0, fullLoopLength, 0, width);
+        if (headX1 > TRACK_MARGIN) {
+            _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), TRACK_MARGIN, y0, headX1,
+                                          y0, kOverviewWindowEdgeBrightness);
+            _display.gfx.draw_rect_filled(_display.api.getFrameBuffer(), TRACK_MARGIN, y1, headX1,
+                                          y1, kOverviewWindowEdgeBrightness);
+        }
+    }
 
     const float displayPlayhead = resolveDisplayPlayheadInLoop(playheadTick, fullLoopLength);
     const int playX = mapPlayheadTickToScreenX(displayPlayhead, fullLoopLength);
@@ -663,11 +700,14 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         drawAllNotes(track, displaySlot, currentTick, detailedLength, minPitch, maxPitch, pianoRollY0,
                      pianoRollY1, movingWindow, windowStart, *detailedNotes);
 
+        const auto detailedCoverage =
+            DisplayWindowUtils::makeCircularWindowCoverage(windowStart, windowLength, loopLength);
         uint32_t relativeBracketTick = resolveBracketDisplayTick(jamStartTick, loopLength);
         if (movingWindow) {
-            if (relativeBracketTick >= windowStart &&
-                relativeBracketTick < windowStart + windowLength) {
-                relativeBracketTick -= windowStart;
+            if (DisplayWindowUtils::windowCoverageContains(relativeBracketTick, detailedCoverage)) {
+                relativeBracketTick =
+                    DisplayWindowUtils::windowCoverageRelativeTick(relativeBracketTick,
+                                                                   detailedCoverage);
                 drawBracket(relativeBracketTick, detailedLength, pianoRollY1);
             }
         } else if (relativeBracketTick < jamLength) {
@@ -684,10 +724,13 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
                               maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1,
                               overviewBandMask);
-            if (drawPlayhead && jamPos >= windowStart && jamPos < windowStart + windowLength) {
+            if (drawPlayhead &&
+                DisplayWindowUtils::windowCoverageContains(jamPos, detailedCoverage)) {
                 const float phase = previewPlayheadPending ? 0.0f : displayPlayheadPhase();
-                const float relativePlayhead =
-                    static_cast<float>(jamPos - windowStart) + phase;
+                const float relativePlayhead = static_cast<float>(
+                                                   DisplayWindowUtils::windowCoverageRelativeTick(
+                                                       jamPos, detailedCoverage)) +
+                                               phase;
                 const int cx = mapPlayheadTickToScreenX(relativePlayhead, detailedLength);
                 _display.gfx.draw_vline(_display.api.getFrameBuffer(), cx, pianoRollY0, pianoRollY1,
                                         PLAYHEAD_COLOR);

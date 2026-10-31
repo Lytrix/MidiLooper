@@ -30,7 +30,13 @@ uint32_t computeLoopLengthTicks(uint32_t lastEventTick) {
   const uint32_t grace = ticksPerBar / 6;
 
   if (rem <= grace) {
-    return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+    // Only a row exactly on the bar line belongs to the bar it closes. A row strictly inside the bar is
+    // content in that bar: trimming it to `fullBars` loses a recorded bar, and the stop projection then
+    // wraps its NoteOn into the loop start without the NoteOff.
+    if (rem == 0) {
+      return (fullBars > 0 ? fullBars : 1) * ticksPerBar;
+    }
+    return (fullBars + 1) * ticksPerBar;
   }
 
   if (lastEventTick < ticksPerBar / 2) {

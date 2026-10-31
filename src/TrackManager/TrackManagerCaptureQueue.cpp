@@ -466,6 +466,12 @@ bool TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   // Slot that holds the in-progress capture (before stop moves state / active index).
   const uint8_t captureSlot = t.getActiveLoopIndex();
 
+  // DEC-233 decision 4: an **input-closed** Stop that has not bound yet still owns this slot's interval.
+  // Moving the active slot now would advance the capture identity under the retained interval, so the
+  // switch waits -- and only for this slot's own unbound Stop, never merely because another slot has an
+  // admitted predecessor.
+  if (t.hasRetainedInputClosedStop(captureSlot)) return false;
+
   // S4f.3: switching away from `captureSlot` **explicitly supersedes** a queued start for that slot --
   // and nothing else. This used to clear the whole track's pending-start state here, *before* it knew
   // whether the switch would commit, which discarded the very request the switch may have been carrying

@@ -134,9 +134,9 @@ DISP_COLD_MEM bool DisplayManager::syncDetailedPaintWindow(const Track& track, u
     detailedWindowViewportLengthTicks_ = detailedWindowRequestedLengthTicks_;
     detailedWindowViewportSlot_ = detailedWindowRequestedSlot_;
     if (sameHeldScope && displaySourcePublicationPending(track, loop, displaySlot) &&
-        track.recordStopPreviewForSlot(displaySlot) == nullptr &&
+        !track.hasCaptureStopPreviewForSlot(displaySlot) &&
         liveDrawSourceKey_.windowStart < loopLength && liveDrawSourceKey_.windowLength > 0 &&
-        liveDrawSourceKey_.windowLength <= loopLength - liveDrawSourceKey_.windowStart) {
+        liveDrawSourceKey_.windowLength <= loopLength) {
         // The **content** stays the retained frame's qualified interval: it is not re-gathered, not advanced and
         // never presented as the requested interval's content. Only the viewport above follows the request.
         if (outHeldRetainedContent != nullptr) *outHeldRetainedContent = true;
@@ -244,6 +244,11 @@ constexpr uint32_t kDisplayTurnArmedMagic = 0x44545731u;  // 'DTW1'
 /// that tracks its request emits nothing, so the normal case costs no rows at all.
 constexpr uint32_t kDisplayTurnReceiptSampleMs = 100;
 
+/// Slice 3 source-identity row floor (2026-10-30 plan): one row per 200 ms even when the frame key changes
+/// faster. RAM2 so the display TU's DTCM is unchanged.
+constexpr uint32_t kDisplaySourceIdentitySampleMs = 200;
+DMAMEM uint32_t lastDisplaySourceIdentityMs = 0;
+
 inline bool displayTurnReceiptArmed() {
     return lastDisplayTurnReceipt.armedMagic == kDisplayTurnArmedMagic;
 }
@@ -300,6 +305,43 @@ DISP_COLD_MEM void DisplayManager::observeDetailedWindowTransition() {
 #endif
 }
 
+/// Slice 3 source identity (2026-10-30 plan) plus a 1 s read-only mode heartbeat (K3): the committed
+/// generation, the live/sealed/stop-preview overlays, the pending stop job, and the edit session. The
+/// heartbeat is emitted even when the `disp_turn` key is unchanged, so a HITL rig can assert LOOP_EDIT
+/// before the clear without sending a mode-changing gesture.
+DISP_COLD_MEM void emitDisplaySourceRow(const Track& track, uint8_t displaySlot, bool retained,
+                                        uint32_t minIntervalMs) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t nowMs = millis();
+    if (nowMs - lastDisplaySourceIdentityMs < minIntervalMs) {
+        return;
+    }
+    lastDisplaySourceIdentityMs = nowMs;
+    const uint8_t trackIndex = resolveTrackIndex(track);
+    const Loop& loop = track.getLoop(displaySlot);
+    const auto pending = track.pendingDeferredStopIdentity();
+    const auto& preview = loop.capturePreviewView();
+    const size_t stopPreviews = track.captureStopPreviewCount();
+    size_t stopPreviewNotes = 0;
+    for (size_t i = 0; i < stopPreviews; ++i) {
+        if (const CapturePreview* stopPreview = track.captureStopPreviewForSlot(displaySlot, i)) {
+            stopPreviewNotes += stopPreview->notes.size();
+        }
+    }
+    DebugSessionCapture::displaySourceIdentity(
+        trackIndex, displaySlot, loop.playbackRevision, loop.committedPassRevision(),
+        preview.revision, static_cast<uint32_t>(preview.notes.size()),
+        static_cast<uint32_t>(loop.sealedCapturePreviewNotes().size()),
+        static_cast<uint32_t>(stopPreviews), static_cast<uint32_t>(stopPreviewNotes), pending.active,
+        pending.phase, pending.generation, editManager.isLoopEditSession(), retained);
+#else
+    (void)track;
+    (void)displaySlot;
+    (void)retained;
+    (void)minIntervalMs;
+#endif
+}
+
 /// Bounded `DIAG,disp_turn` emitter: one row per visual turn that changes what the display publishes, and at most
 /// one row per `kDisplayTurnReceiptSampleMs` while the requested interval stays diverged from the published one.
 /// `requested`/`published` are tick intervals; `retained` says which of the two the drawn frame carries,
@@ -316,6 +358,8 @@ DISP_COLD_MEM void emitDisplayTurnReceipt(const Track& track, uint8_t displaySlo
 #if defined(SESSION_CAPTURE)
     const uint8_t trackIndex = resolveTrackIndex(track);
     const uint8_t retainedFlag = retained ? 1u : 0u;
+    // K3: a 1 s heartbeat even when the key is unchanged; the transition path below refreshes at 200 ms.
+    emitDisplaySourceRow(track, displaySlot, retained, 1000u);
     const bool diverged = requestedStart != publishedStart || requestedLength != publishedLength;
     const bool transition = !displayTurnReceiptArmed() ||
         lastDisplayTurnReceipt.track != trackIndex || lastDisplayTurnReceipt.slot != displaySlot ||
@@ -344,6 +388,7 @@ DISP_COLD_MEM void emitDisplayTurnReceipt(const Track& track, uint8_t displaySlo
                         publishedLength, drawnNotes, retained ? "ret" : "fresh",
                         discardReason != nullptr ? discardReason : "-", keyStartTick,
                         keyLengthTicks);
+    emitDisplaySourceRow(track, displaySlot, retained, kDisplaySourceIdentitySampleMs);
 #else
     (void)track;
     (void)displaySlot;
@@ -680,7 +725,8 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, 
     // Between overdub passes, capture has been closed while the session still
     // owns its preview rows. Keep composing that tier until session close;
     // otherwise a current snapshot alone can erase the just-recorded row.
-    if (!captureActive && !loop.hasOverdubSession() && track.captureStopPreviewCount() == 0) {
+    if (!captureActive && !loop.hasOverdubSession() && track.captureStopPreviewCount() == 0 &&
+        track.inputClosedOverdubPreviewForSlot(slot, nullptr) == nullptr) {
       return;
     }
     const auto appendPreview = [&](const CapturePreview& preview, bool frozen, uint32_t closureTick) {
@@ -715,9 +761,19 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, 
             if (preview != track.recordStopPreviewForSlot(slot)) appendPreview(*preview, true, closureTick);
         }
     }
-    appendPreview(loop.capturePreview, false, 0);
-    if (count == 0 && &loop.capturePreviewView() != &loop.capturePreview)
-        appendPreview(loop.capturePreviewView(), false, 0);
+    // DEC-233 decision 5: an input-closed Stop that has not bound yet keeps its producer preview as a
+    // **closed** source -- original geometry, its own closure phase, pending transforms intact -- never a
+    // live playhead tail. Once the job owns the preview the tier above serves it, so the handoff cannot
+    // change what the panel shows.
+    uint32_t inputClosedClosureTick = 0;
+    if (const CapturePreview* closedPreview =
+            track.inputClosedOverdubPreviewForSlot(slot, &inputClosedClosureTick)) {
+        appendPreview(*closedPreview, true, inputClosedClosureTick);
+    } else {
+        appendPreview(loop.capturePreview, false, 0);
+        if (count == 0 && &loop.capturePreviewView() != &loop.capturePreview)
+            appendPreview(loop.capturePreviewView(), false, 0);
+    }
 }
 
 uint32_t fingerprintPendingNoteChanges(const PendingNoteChangeVec& changes) {
@@ -968,6 +1024,49 @@ DISP_CAPTURE_MEM void emitPaintedOccupy193815Row(const char* stage,
 }
 #endif
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+/// Painted open-tail attribution (2026-10-30): names the branch that produced an open preview row's
+/// painted end, so the wrap-split (`tailEnd = loopLength - 1`) and the window-slide shapes are read
+/// from the device instead of inferred. Rate-limited; at most four open rows per emission.
+void emitPaintedOpenTailRows(const Loop& loop, uint32_t closeTick, uint32_t windowStart,
+                             const NoteUtils::DisplayNoteVec& painted) {
+    if (loop.capturePreview.openNoteIndices.empty() || loop.loopLengthTicks == 0) {
+        return;
+    }
+    static uint32_t lastOpenTailRowMs = 0;
+    const uint32_t nowMs = millis();
+    if (lastOpenTailRowMs != 0 && nowMs - lastOpenTailRowMs < 100u) {
+        return;
+    }
+    lastOpenTailRowMs = nowMs;
+    uint32_t emitted = 0;
+    for (const uint32_t index : loop.capturePreview.openNoteIndices) {
+        if (index >= loop.capturePreview.notes.size() || emitted >= 4u) {
+            break;
+        }
+        const NoteUtils::DisplayNote& open = loop.capturePreview.notes[index];
+        uint32_t paintedEnd = open.endTick;
+        for (const NoteUtils::DisplayNote& row : painted) {
+            if (row.noteId == open.noteId) {
+                paintedEnd = row.endTick;
+                break;
+            }
+        }
+        const bool split = NoteUtils::isLiveWrapHeadContinuationDisplay(
+            open.startTick, closeTick, loop.loopLengthTicks, true);
+        char line[192];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,draw_src,tail,id,%u,s,%u,e,%u,close,%lu,win,%lu,split,%u,len,%lu",
+                 (unsigned long)micros(), static_cast<unsigned>(open.noteId),
+                 static_cast<unsigned>(open.startTick), static_cast<unsigned>(paintedEnd),
+                 (unsigned long)closeTick, (unsigned long)windowStart, split ? 1u : 0u,
+                 (unsigned long)loop.loopLengthTicks);
+        DebugSessionCapture::appendCaptureTextLine(line);
+        ++emitted;
+    }
+}
+#endif
+
 DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     const Track& track, const Loop& loop, uint8_t displaySlot, uint32_t windowStart,
     uint32_t windowLength, uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh) {
@@ -1050,7 +1149,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
 
     DisplayWindowUtils::DrawSourceReuseKind reuseKind =
         DisplayWindowUtils::selectDrawSourceReuseKind(liveDrawSourceKey_, currentKey,
-                                                      Config::TICKS_PER_BAR);
+                                                      Config::TICKS_PER_BAR, loopLength);
     const bool canReuseCommittedPrefix = !liveDisplayCommittedPrefix_.empty();
     const bool canSlideCommittedPrefix =
         reuseKind == DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource &&
@@ -1272,6 +1371,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                                  liveDisplayPendingPaintNotes_);
         }
         if (applyLiveCaptureTails) {
+            // Withdrawn 2026-10-30: freezing this at the accepted stop's closure tick made open
+            // notes in the wrap window hit the wrap-split branch (`tailEnd = loopLength - 1`), which
+            // the owner saw as notes lengthened to the end of the piano roll. The tail follows the
+            // playhead until the wrap-split policy itself is reworked.
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
             const bool allowWrapContinuation =
@@ -1281,6 +1384,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+            emitPaintedOpenTailRows(loop, playheadCloseTick, windowStart,
+                                    liveDisplayPendingPaintNotes_);
+#endif
         }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
         emitPaintedOccupy193815Row("after_pending", loop, liveDisplayPendingPaintNotes_);

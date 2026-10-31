@@ -39,11 +39,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
 def read_identity_path_stats(port: str, *, attempts: int = 3) -> list[str]:
-    """Read the bounded identity-path counters over the stopped-only HITL command.
+    """Read the bounded identity-path counters over the read-only HITL command.
 
-    Read-only: `!CAP_IDENTITY_STATS` neither records nor writes, and the device ignores it while the
-    transport runs. It is issued after the record run (which ends stopped), so the counters describe
-    the take that just finished. This is what separates "the emit branch was never reached" from
+    Read-only: `!CAP_IDENTITY_STATS` neither records nor writes, and since DEC-228 the device answers
+    it even while the transport runs (the row is direct, not ring-buffered). It is normally issued
+    after the record run, so the counters describe the take that just finished. This is what separates "the emit branch was never reached" from
     "capture disabled", "enqueue rejected", "evicted" and "delivered but not parsed".
     """
     if not port:

@@ -135,6 +135,274 @@ void test_frozen_record_reader_still_cancels_clock_epoch_change() {
 void test_record_reader_survives_gradual_finalization_and_successor_reentry() {
   exerciseFrozenReaderMainClockSurvival(0, true);
 }
+// 121645 first-bar handoff: Record stops to STOPPED just before the wrap and transport Start resumes at the same
+// tick. Start re-anchors the projection (`reanchorPlaybackProjection`), so phase zero is the Start tick and the
+// take's bar 0 is owed at once, while the Record job is still private. Unlike the survival oracle above, this
+// asserts the take's bar-0 events: they must sound once at their original phases, and nothing may repeat at the
+// following boundary. No stop drain or pre-admitted window before the clock.
+// `heldClockTicks`: the host clock keeps arriving while the transport is stopped (the owner rig's
+// `--hold-clock-on-settle`), so the device tick runs on with owner turns. `clockResetOnStart`: an external
+// Start resets the device tick to 0 with a new deadline epoch before the tracks start (121645 / rig run 2).
+// `replaceClearedTake`: the slot first held a published, played take of the same length (pitches 90+),
+// which the production `Track::clear` removed before this take was recorded (rig run 1 replayed it).
+// `advanceStopJob`: each owner turn also gives the Record job one grain (Snapshot owner when publication is
+// backlogged, else one stop-worker step), so the take publishes mid-scenario as it does on the device.
+static void exerciseFirstBarAfterStopToStoppedRestart(uint32_t stopBeforeWrap, unsigned ownerTurnsPerTick = 1,
+                                                      uint32_t heldClockTicks = 0, bool clockResetOnStart = false,
+                                                      bool replaceClearedTake = false, bool advanceStopJob = false,
+                                                      uint32_t jobGrainsBeforeStart = UINT32_MAX,
+                                                      uint32_t notePhase = 12) {
+  const uint32_t offPhase = notePhase + 84;
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 20 * bar;
+  std::array<NoteId, 20> recordIds{};
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  if (replaceClearedTake) {
+    t.forceSetState(TRACK_STOPPED);
+    start(t, 0, false, 0, 90);
+    for (uint32_t b = 1; b < 20; ++b) {
+      t.noteOn(1, static_cast<uint8_t>(90 + b % 8), 100, b * bar + 12);
+      t.noteOff(1, static_cast<uint8_t>(90 + b % 8), 0, b * bar + 96);
+    }
+    clockManager.assignCurrentTickSilently(length - 24);
+    t.stopRecording(length - 24);
+    TEST_ASSERT_TRUE(t.isPlaying());
+    nativePlaybackDeadlineClock = {length - 24, 1};
+    // Production playback ticks until the take is published and its stop retired, then two more bars.
+    uint32_t settled = UINT32_MAX;
+    for (uint32_t tick = length - 23; tick < 4 * length && (settled == UINT32_MAX || tick < settled); ++tick) {
+      if (settled == UINT32_MAX && t.getLoop(0).publishedSnapshotIsCurrent() && !t.hasStopInFlight() &&
+          !TrackCaptureStopTestAccess::recordWorkPending(t))
+        settled = tick + 2 * bar;
+      if (t.hasSnapshotPublicationBacklogOnAnySlot())
+        t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+      else if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t))
+        TrackCaptureStopTestAccess::step(t);
+      nativePlaybackDeadlineClock.tick = tick;
+      clockManager.assignCurrentTickSilently(tick);
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+      (void)t.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+      (void)t.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+      t.playMidiEvents(tick, true);
+    }
+    char setup[160];
+    snprintf(setup, sizeof(setup), "cleared-take setup never settled: published=%d stop=%d work=%d",
+        t.getLoop(0).publishedSnapshotIsCurrent(), t.hasStopInFlight(), TrackCaptureStopTestAccess::recordWorkPending(t));
+    TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(UINT32_MAX, settled, setup);
+    t.stopPlaying();
+    t.clear();
+    TEST_ASSERT_EQUAL_UINT32(0, t.getLoop(0).loopLengthTicks);
+    nativePlaybackDeadlineClock = {0, 2};
+    clockManager.assignCurrentTickSilently(0);
+  }
+  t.forceSetState(TRACK_STOPPED);
+  t.setActiveLoopIndex(0);
+  t.startRecording(0);
+  TEST_ASSERT_TRUE(t.isRecording());
+  for (uint32_t b = 0; b < 20; ++b) {
+    t.noteOn(1, static_cast<uint8_t>(60 + b), 100, b * bar + notePhase);
+    recordIds[b] = t.getLoop(0).capture.store.at(2 * b).noteId;
+    t.noteOff(1, static_cast<uint8_t>(60 + b), 0, b * bar + offPhase);
+  }
+  Loop& loop = t.getLoop(0);
+  clockManager.assignCurrentTickSilently(bar);
+  for (unsigned turn = 0; turn < 64; ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  const uint32_t stopTick = length - stopBeforeWrap;
+  stop(t, false, stopTick);
+  TEST_ASSERT_TRUE(t.isStopped());
+  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  nativePlaybackDeadlineClock = {stopTick, 1};
+  bool started = false;
+  uint32_t stoppedJobGrains = 0;
+  const auto turn = [&](uint32_t tick) {
+    const bool jobGrain = advanceStopJob && (started || stoppedJobGrains < jobGrainsBeforeStart);
+    if (jobGrain && !started) ++stoppedJobGrains;
+    if (jobGrain) {
+      if (t.hasSnapshotPublicationBacklogOnAnySlot())
+        t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+      else if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t))
+        TrackCaptureStopTestAccess::step(t);
+    }
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    (void)t.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    (void)t.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+  };
+  // The stopped interval before Start: owner turns at a frozen clock, then any held host clock.
+  for (unsigned i = 0; i < 16; ++i) turn(stopTick);
+  for (uint32_t tick = stopTick + 1; tick <= stopTick + heldClockTicks; ++tick) {
+    nativePlaybackDeadlineClock.tick = tick;
+    clockManager.assignCurrentTickSilently(tick);
+    for (unsigned i = 0; i < ownerTurnsPerTick; ++i) turn(tick);
+    t.playMidiEvents(tick, true);
+  }
+  const uint32_t startTick = clockResetOnStart ? 0u : stopTick + heldClockTicks;
+  if (clockResetOnStart) nativePlaybackDeadlineClock = {0, nativePlaybackDeadlineClock.epoch + 1};
+  clockManager.assignCurrentTickSilently(startTick);
+  t.startPlaying(startTick);
+  started = true;
+  TEST_ASSERT_TRUE(t.isPlaying());
+  const uint32_t origin = static_cast<uint32_t>(t.getProjectionCycleStartTick());
+  TEST_ASSERT_EQUAL_UINT32(startTick, origin);
+  MidiSendCapture::reset();
+  t.playMidiEvents(startTick, true);
+  for (uint32_t tick = startTick + 1; tick < origin + 2 * bar; ++tick) {
+    nativePlaybackDeadlineClock.tick = tick;
+    clockManager.assignCurrentTickSilently(tick);
+    // The device's idle owner can take several turns inside one MIDI tick.
+    for (unsigned i = 0; i < ownerTurnsPerTick; ++i) turn(tick);
+    t.playMidiEvents(tick, true);
+    {
+      const uint32_t b = (tick - origin) / bar;
+      const uint32_t phase = (tick - origin) % bar;
+      const size_t count = b * 2 + (phase >= notePhase) + (phase >= offPhase);
+      char detail[240];
+      const auto* views = runtime.viewSetIfPrewarmed();
+      const auto role = [&](uint8_t i, uint32_t& start, uint32_t& flags) {
+        start = UINT32_MAX;
+        flags = 0;
+        if (i >= views->views.size()) return;
+        const auto& v = views->views[i];
+        start = v.coverage.startPhase;
+        flags = (v.complete ? 1u : 0u) | (v.published ? 2u : 0u) | (v.rawCoveragePrepared ? 4u : 0u) |
+            (v.firstRecordReturnWindow ? 8u : 0u) | (v.source.origin == PlaybackWindowOrigin::Capture ? 16u : 0u);
+      };
+      uint32_t curStart = 0, curFlags = 0, readyStart = 0, readyFlags = 0;
+      role(views->lifecycle.current, curStart, curFlags);
+      role(views->lifecycle.ready, readyStart, readyFlags);
+      snprintf(detail, sizeof(detail),
+          "jobGrains=%u stopBeforeWrap=%u tick=%u roll=%u current=%u@%u/%u ready=%u@%u/%u bound=%u boundReturn=%u",
+          stoppedJobGrains, stopBeforeWrap, tick, unsigned(runtime.rolling.phase), views->lifecycle.current, curStart, curFlags,
+          views->lifecycle.ready, readyStart, readyFlags, runtime.rolling.boundView,
+          runtime.hasBoundRecordReturnWindowForPendingJob());
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(count, MidiSendCapture::count(), detail);
+    }
+  }
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i)
+    TEST_ASSERT_LESS_THAN_UINT8_MESSAGE(90, MidiSendCapture::at(i).data.noteData.note, "cleared take replayed");
+  TEST_ASSERT_EQUAL_UINT32(4, MidiSendCapture::count());
+  for (uint32_t b = 0; b < 2; ++b) {
+    const auto& on = MidiSendCapture::at(b * 2);
+    const auto& off = MidiSendCapture::at(b * 2 + 1);
+    TEST_ASSERT_TRUE(on.isNoteOn() && off.isNoteOff());
+    TEST_ASSERT_EQUAL_UINT32(b * bar + notePhase, on.tick);
+    TEST_ASSERT_EQUAL_UINT32(b * bar + offPhase, off.tick);
+    TEST_ASSERT_EQUAL_UINT8(1, on.channel);
+    TEST_ASSERT_EQUAL_UINT8(1, off.channel);
+    TEST_ASSERT_EQUAL_UINT8(60 + b, on.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(60 + b, off.data.noteData.note);
+    TEST_ASSERT_EQUAL(recordIds[b], on.noteId);
+    TEST_ASSERT_EQUAL(recordIds[b], off.noteId);
+    TEST_ASSERT_EQUAL_UINT8(100, on.data.noteData.velocity);
+    TEST_ASSERT_EQUAL_UINT8(0, off.data.noteData.velocity);
+  }
+}
+void test_first_record_bar_sounds_after_stop_to_stopped_restart_near_the_wrap() {
+  exerciseFirstBarAfterStopToStoppedRestart(24);
+}
+void test_first_record_bar_sounds_after_stop_to_stopped_restart_at_the_wrap_edge() {
+  exerciseFirstBarAfterStopToStoppedRestart(2);
+}
+void test_first_record_bar_sounds_after_restart_with_several_owner_turns_per_tick() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 3);
+}
+// Owner rig shape: the host clock is held for ~3.4 bars while stopped (the bar-0 window is prepared then),
+// and the external Start resets the device tick to 0.
+void test_first_record_bar_sounds_after_held_clock_and_start_clock_reset() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true);
+}
+void test_first_record_bar_sounds_after_held_clock_without_clock_reset() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, false);
+}
+// Rig run 1 / run 2: the same flows over a slot whose previous same-length take was played and cleared.
+void test_first_record_bar_sounds_over_a_cleared_take() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 0, false, true);
+}
+void test_first_record_bar_sounds_over_a_cleared_take_with_held_clock_and_reset() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, true);
+}
+// The device's Record job advances while stopped and publishes around Start; the native owner turns above
+// never publish it. These give the job one grain per owner turn.
+void test_first_record_bar_sounds_while_the_record_job_publishes() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 0, false, false, true);
+}
+void test_first_record_bar_sounds_rig_shape_with_publishing_job() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, true, true);
+}
+void test_first_record_bar_sounds_rig_shape_with_publishing_job_no_cleared_take() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, false, true);
+}
+// Sweep the Record job's progress at the Start edge: exactly `k` job grains while stopped, then one per
+// owner turn. The device met Start with the job mid-finalization; this covers every phase it can be in.
+// Rig run 3 (121645 sequence on the fixed image): the bar-1 window was prepared only after Start, so an
+// event in the first ticks of bar 1 was missed (device: first NoteOn at phase 24). A note at phase 2 pins it.
+void test_first_record_bar_early_event_sounds_after_stop_to_stopped_restart() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 0, false, false, false, UINT32_MAX, 2);
+}
+void test_first_record_bar_early_event_sounds_rig_shape() {
+  exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, false, true, UINT32_MAX, 2);
+}
+void test_first_record_bar_sounds_for_every_stop_job_phase_at_start() {
+  for (uint32_t k = 0; k <= 400; k += 1) {
+    if (k != 0) { tearDown(); setUp(); }
+    exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, false, true, k);
+  }
+}
+// Review control for the mid-window Capture fallback: a PLAYING stop with a note held across it (so the
+// inline live handoff is refused) and input after bar 1 (so the raw bar is stale). A live rolling view
+// can carry the frozen token; it must never be served after the stop. Bars 1-2 sound once each and
+// nothing is left sounding.
+void test_held_note_playing_stop_never_serves_the_live_capture_view() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 20 * bar;
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  for (uint32_t b = 1; b < 20; ++b) {
+    t.noteOn(1, static_cast<uint8_t>(60 + b), 100, b * bar + 12);
+    t.noteOff(1, static_cast<uint8_t>(60 + b), 0, b * bar + 96);
+  }
+  Loop& loop = t.getLoop(0);
+  clockManager.assignCurrentTickSilently(bar);
+  for (unsigned turn = 0; turn < 64; ++turn)
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  t.noteOn(1, 100, 100, length - 60);
+  const uint32_t stopTick = length - 24;
+  clockManager.assignCurrentTickSilently(stopTick);
+  t.stopRecording(stopTick);
+  TEST_ASSERT_TRUE(t.isPlaying());
+  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  nativePlaybackDeadlineClock = {stopTick, 1};
+  MidiSendCapture::reset();
+  t.playMidiEvents(stopTick, true);
+  for (uint32_t tick = stopTick + 1; tick < length + 2 * bar; ++tick) {
+    nativePlaybackDeadlineClock.tick = tick;
+    clockManager.assignCurrentTickSilently(tick);
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+    (void)t.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    (void)t.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+    t.playMidiEvents(tick, true);
+  }
+  unsigned ons[2] = {0, 0};
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const auto& e = MidiSendCapture::at(i);
+    if (!e.isNoteOn()) continue;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(100, e.data.noteData.note, "held-at-stop note re-triggered");
+    if (e.data.noteData.note == 60 || e.data.noteData.note == 61) {
+      ++ons[e.data.noteData.note - 60];
+      TEST_ASSERT_EQUAL_UINT32((e.data.noteData.note - 60) * bar + 12, e.tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, ons[0]);
+  TEST_ASSERT_EQUAL_UINT32(1, ons[1]);
+  unsigned sounding = 0;
+  runtime.ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry&) { ++sounding; });
+  TEST_ASSERT_EQUAL_UINT32(0, sounding);
+}
 static void exerciseRecordPublicationAfterOverdubStop(bool restartOverdub) {
   constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 24 * bar;
   Track& t = trackManager.getTrack(0);
@@ -419,6 +687,20 @@ int main(int, char**) {
   RUN_TEST(test_record_note_stream_survives_four_stops_before_predecessor_publication);
   RUN_TEST(test_frozen_record_reader_still_cancels_clock_epoch_change);
   RUN_TEST(test_record_reader_survives_gradual_finalization_and_successor_reentry);
+  RUN_TEST(test_first_record_bar_sounds_after_stop_to_stopped_restart_near_the_wrap);
+  RUN_TEST(test_first_record_bar_sounds_after_stop_to_stopped_restart_at_the_wrap_edge);
+  RUN_TEST(test_first_record_bar_sounds_after_restart_with_several_owner_turns_per_tick);
+  RUN_TEST(test_first_record_bar_sounds_after_held_clock_and_start_clock_reset);
+  RUN_TEST(test_first_record_bar_sounds_after_held_clock_without_clock_reset);
+  RUN_TEST(test_first_record_bar_sounds_over_a_cleared_take);
+  RUN_TEST(test_first_record_bar_sounds_over_a_cleared_take_with_held_clock_and_reset);
+  RUN_TEST(test_first_record_bar_sounds_while_the_record_job_publishes);
+  RUN_TEST(test_first_record_bar_sounds_rig_shape_with_publishing_job);
+  RUN_TEST(test_first_record_bar_sounds_rig_shape_with_publishing_job_no_cleared_take);
+  RUN_TEST(test_first_record_bar_sounds_for_every_stop_job_phase_at_start);
+  RUN_TEST(test_first_record_bar_early_event_sounds_after_stop_to_stopped_restart);
+  RUN_TEST(test_first_record_bar_early_event_sounds_rig_shape);
+  RUN_TEST(test_held_note_playing_stop_never_serves_the_live_capture_view);
   return UNITY_END();
 }
 #else

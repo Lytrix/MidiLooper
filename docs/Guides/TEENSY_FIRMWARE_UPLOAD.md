@@ -28,9 +28,11 @@ own programming/boot evidence, not just the PlatformIO exit code.
    For device diagnosis, clean-build first; do not assume incremental artifacts
    have identical provenance. Use separate worktree/build directories for a
    historical commit; preserve the current branch and dependency revisions.
-2. After a successful build and budget checks, **ask before flashing**, except
-   for the existing dedicated-HITL exception. Hash the exact built HEX. Resolve
-   its path from the selected build directory, not an assumed `.pio/build` path.
+2. After a successful build and budget checks, uploading is **pre-authorized**
+   (owner instruction, 2026-10-30): flash and run without asking. Never upload
+   after a failed build or when the user asked build-only. Hash the exact built
+   HEX. Resolve its path from the selected build directory, not an assumed
+   `.pio/build` path.
    **Run the native suite in parallel when this slice needs the host gate:** start
    `pio test -e native` in the background before or while building, then continue
    through flash, boot verification and HITL while it runs; collect the native
@@ -46,9 +48,28 @@ own programming/boot evidence, not just the PlatformIO exit code.
    without `--build-upload` and verify its pinned hash matches the flashed HEX.
    A build-env selection alone does not flash an image.
 4. Start the preferred CLI with the exact HEX path. On macOS do not rely on CLI
-   `-s`: version 2.3 reports `Soft reboot is not implemented for OSX`. Ask for a
-   **short PROGRAM press** if HalfKay is absent. Never request a 15-second hold
-   (factory erase) as routine recovery. Bound waiting; avoid aborting mid-write.
+   `-s`: version 2.3 reports `Soft reboot is not implemented for OSX`, and `-r`
+   reports `Unable to find rebootor` because the running sketch's rebootor
+   interface is claimed by macOS HID/MIDIServer. So the standalone loader only
+   works when the board is **already in HalfKay**; asking for a **short PROGRAM
+   press** is the fallback, never a 15-second hold (factory erase) as routine
+   recovery. Bound waiting; avoid aborting mid-write.
+
+   **No-press path (default on macOS): PlatformIO's `teensy-gui` uploader.** It
+   drives Teensyduino's own tool (`~/.platformio/packages/tool-teensy`), which
+   reboots a running board by itself — no button press:
+
+   ```bash
+   pio run -e teensy41-capture-serial -t upload
+   ```
+
+   This is the only path that reboots on this host, and it is why the bundled
+   `teensy-cli` protocol is not used: the repo's image is above 1 MiB and the
+   bundled CLI 2.2 rejects that size (`HEX parse error line 65553`).
+   Its `SUCCESS` is still **not** programming or boot proof — step 6 is
+   mandatory either way. The standalone Homebrew loader stays available for the
+   case where the board is already in HalfKay (for example after a failed
+   attempt).
 
 ```bash
 uploader=/opt/homebrew/bin/teensy_loader_cli

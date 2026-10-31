@@ -1,3 +1,14 @@
+## 5. Owner-authorized 121645 regression repair (2026-10-31)
+
+User authorized starting repair of the three reported display/playback regressions.
+Work remains in the existing display-source / loop-wrap scope; earlier acceptance is
+not reused as proof for this capture. [Packet](evidence/2026-10-31-CIRCULAR-GATHER.md).
+
+- [ ] 5.1 **Circular committed gather:** RED/GREEN rootless and current-root crossing-window identity/span fixtures; reuse circular intersection in both final filters without clipped-note pairing or source/lifetime changes; focused/full native, target RAM1, review and device evidence recorded separately.
+- [ ] 5.2 **First-bar playback handoff:** reproduce the actual late phase-zero preparation/main-clock interleaving and repair within the frozen reader contract; exact original first-bar event oracle before checkoff. **2026-10-31: implemented, native-verified, flashed (`04fe9948…`), device content gate not run.** Reproduced as Record → transport Stop → Start: a stale pre-input raw bar 1 was bound as the return window on the STOPPED route, and a mid-window Capture adoption served one tick. Both repaired; exact bar-1/bar-2 oracle RED → GREEN, each fix mutation-proven. A third defect was found on the device: while STOPPED the owner prepared the stop phase’s bar, so bar 1 was built after Start and lost its first events. It is fixed (DEC-235 — STOPPED take owes bar 1); native RED → GREEN. **Device rig (owner sequence, `16ths.mid`) PASSES twice on `f761c65d…`: bar 1 16/16 at the recorded phases, no extras.** Full native 3,760 / 7 / 3,753 / 0. Not checked off; open: a fixture that discriminates review F1, and run 1’s replay of a cleared slot’s old take before publication. [Evidence](evidence/2026-10-31-FIRST-BAR-HANDOFF.md).
+- [ ] 5.3 **Successive-overdub continuity and geometry:** pin exact NoteIds/spans across live successor, raw-only predecessor retirement, pending transforms and window movement; repair the demonstrated cause and retain legitimate overlap semantics.
+- [ ] 5.4 **20-bar device acceptance and MIDI timing:** matched image, authorized scratch target, exact content/output/geometry and timing evidence without capture-loss inference. Do not close from native ordering alone.
+
 ## 1. P1 — controlled custody source and visual evidence
 
 Scope: test/measurement/readiness artifacts only, using existing Track/Loop/runtime owners and native clock/allocator/I/O boundaries. Preserve current firmware and installed image. These tasks are the next executable packet, not permission to patch behavior around unresolved lifetime/resource contracts. See [design — P1](design.md#p1--custody-and-source-proof-testmeasurement-only).

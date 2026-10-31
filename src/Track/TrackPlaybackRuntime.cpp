@@ -23,6 +23,8 @@
 #define TRACK_PLAYBACK_RUNTIME_COLD_MEM
 #endif
 
+static inline uint32_t replenishNowUs();
+
 namespace {
 size_t recordingCaptureSize(const void* context) {
   return static_cast<const Loop*>(context)->capture.store.size();
@@ -518,8 +520,160 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
   return viewSet != nullptr && viewSet->prewarmCaptureStagings();
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::ensureViewSet() {
+  if (viewSet == nullptr) {
+    viewSet = allocateRuntimePlaybackViewSet();
+  }
+  return viewSet != nullptr;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepViewPrewarm(
+    uint32_t identity, bool fullTakeAdmissible, size_t companionRowCapacity, uint8_t maxUnits,
+    uint32_t budgetUs) {
+  if (viewPrewarmPhase == ViewPrewarmPhase::Prepared && viewPrewarmIdentity == identity) {
+    return true;
+  }
+  if (viewPrewarmPhase == ViewPrewarmPhase::NotPrepared || viewPrewarmIdentity != identity) {
+    viewPrewarmIdentity = identity;
+    viewPrewarmPhase = ViewPrewarmPhase::Preparing;
+    viewPrewarmCursor = 0;
+    viewPrewarmResourceMask = 0;
+    viewPrewarmSteps = 0;
+  }
+  if (!ensureViewSet()) {
+    return false;
+  }
+  // Upgrading must never reset an admitted interval (the same guard as `prewarmViews`).
+  if (!viewSet->prewarmed) {
+    for (const auto& staging : viewSet->captureStagings) {
+      if (staging.frozen || staging.storage.eventCount || staging.openReservationCount()) {
+        return false;
+      }
+    }
+  }
+  const uint32_t startUs = replenishNowUs();
+  const uint8_t units = maxUnits == 0 ? 1u : maxUnits;
+  for (uint8_t unit = 0; unit < units; ++unit) {
+    bool ok = true;
+    const uint8_t cursor = viewPrewarmCursor;
+    if (cursor < 10) {
+      ok = viewSet->captureStagings[cursor].prewarm();
+    } else if (cursor < 13) {
+      ok = viewSet->views[cursor - 10].prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+    } else if (cursor < 15) {
+      if (fullTakeAdmissible) {
+        ok = viewSet->bridgeBases[cursor - 13].prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+      }
+    } else if (cursor < 17) {
+      if (fullTakeAdmissible) {
+        const uint8_t bridgeIndex = static_cast<uint8_t>(cursor - 15);
+        if (prewarmSubOwner != cursor) {
+          prewarmSubOwner = cursor;
+          prewarmSubStage = 0;
+          prewarmSubCursor = 0;
+        }
+        auto bridgeResult = FixedPlaybackBridgeStorage::PrewarmStepResult::Progress;
+        do {
+          bridgeResult = viewSet->bridges[bridgeIndex].stepPrewarm(
+              RuntimePlaybackViewConfig::kRecordsPerBridge, prewarmSubStage,
+              prewarmSubCursor);
+          if (bridgeResult == FixedPlaybackBridgeStorage::PrewarmStepResult::Failed) {
+            ok = false;
+            break;
+          }
+        } while (bridgeResult != FixedPlaybackBridgeStorage::PrewarmStepResult::Complete &&
+                 replenishNowUs() - startUs < budgetUs);
+        if (bridgeResult != FixedPlaybackBridgeStorage::PrewarmStepResult::Complete) {
+          // A sub-unit advanced (or the allocation was retried); stay on this top cursor.
+          return false;
+        }
+      }
+    } else if (cursor == 17) {
+      if (fullTakeAdmissible) {
+        viewSet->wholeTakeReserved = true;
+      } else if (!viewSet->releaseWholeTakeViews()) {
+        ok = false;
+      }
+      if (ok) {
+        viewSet->resetMetadata();
+        viewSet->prewarmed = true;
+      }
+    } else if (cursor == 18) {
+      ok = prewarmCanonicalCaptureOutput();
+      if (ok) viewPrewarmResourceMask = static_cast<uint8_t>(viewPrewarmResourceMask | 0x04u);
+    } else if (cursor == 19) {
+      ok = frozenCaptureCompanions.ensureCapacity(companionRowCapacity);
+    } else if (cursor < 27) {
+      switch (static_cast<uint8_t>(cursor - 20)) {
+        case 0:
+          ok = frozenCompanionPairLookup.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+          break;
+        case 1:
+          ok = frozenCompanionSpans.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+          break;
+        case 2:
+          ok = frozenCompanionReconstruction.prewarm(2 * RuntimePlaybackViewConfig::kEventsPerView);
+          break;
+        case 3:
+          ok = frozenCompanionApply.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+          break;
+        case 4:
+          ok = frozenCompanionBridgeMap.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge);
+          break;
+        case 5:
+          ok = frozenCompanionPasses.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+          break;
+        case 6: {
+          if (prewarmSubOwner != cursor) {
+            prewarmSubOwner = cursor;
+            prewarmSubStage = 0;
+            prewarmSubCursor = 0;
+          }
+          auto canonicalResult = RuntimeCanonicalPassInputs::PrewarmStepResult::Progress;
+          do {
+            canonicalResult = canonicalPassInputs.stepPrewarm(
+                RuntimePlaybackViewConfig::kEventsPerView, prewarmSubStage, prewarmSubCursor);
+            if (canonicalResult == RuntimeCanonicalPassInputs::PrewarmStepResult::Failed) {
+              ok = false;
+              break;
+            }
+          } while (canonicalResult != RuntimeCanonicalPassInputs::PrewarmStepResult::Complete &&
+                   replenishNowUs() - startUs < budgetUs);
+          if (canonicalResult != RuntimeCanonicalPassInputs::PrewarmStepResult::Complete) {
+            return false;
+          }
+          break;
+        }
+        default:
+          ok = false;
+          break;
+      }
+    } else if (cursor == 27) {
+      viewPrewarmResourceMask = static_cast<uint8_t>(viewPrewarmResourceMask | 0x02u);
+      viewPrewarmPhase = ViewPrewarmPhase::Prepared;
+      return true;
+    } else {
+      return false;
+    }
+    if (!ok) {
+      // The cursor stays on the failed unit: the next owner turn retries while the Record edge
+      // remains armed. No hidden "finish everything now" path.
+      return false;
+    }
+    ++viewPrewarmCursor;
+    ++viewPrewarmSteps;
+    if (budgetUs != 0 && replenishNowUs() - startUs >= budgetUs) {
+      break;
+    }
+  }
+  return viewPrewarmPhase == ViewPrewarmPhase::Prepared;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
     size_t companionRowCapacity, bool fullTakeAdmissible) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++monolithicViewPrewarmCallsForTest();
+#endif
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
   const bool stagingReady = prewarmCaptureStaging();
   ExternalPoolAccounting::endTag();
@@ -2458,18 +2612,27 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
       set->lifecycle.retained >= set->views.size()) {
     return false;
   }
-  RuntimePlaybackView& retained = set->views[set->lifecycle.retained];
-  if (recordedLoop != nullptr && retained.complete && retained.rawCoveragePrepared &&
-      (!recordingWindowGenerationValid ||
-       recordingWindowGeneration != recordedLoop->captureDisplayRevision)) {
-    // The unpublished raw bar predates accepted Capture input. Never publish it
-    // as current; the existing frozen-range owner builds the complete bar idle.
-    viewBuild.discard();
-    retained.complete = false;
-    return false;
-  }
-  if (!retained.bindRawCoverage(loopLengthTicks)) return false;
+  if (recordedLoop != nullptr && discardStaleFirstRecordingBar(*recordedLoop)) return false;
+  if (!set->views[set->lifecycle.retained].bindRawCoverage(loopLengthTicks)) return false;
   return set->lifecycle.handoffToRetained(set->views);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::discardStaleFirstRecordingBar(
+    const Loop& recordedLoop) {
+  if (viewBuild.callInProgress() || bridgeWindowBuild.callInProgress() ||
+      viewBuild.preparationInProgress() || bridgeWindowBuild.preparationInProgress()) return false;
+  PlaybackSourceReadGuard guard;
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.retained >= set->views.size()) return false;
+  RuntimePlaybackView& retained = set->views[set->lifecycle.retained];
+  if (!retained.complete || !retained.rawCoveragePrepared ||
+      (recordingWindowGenerationValid &&
+       recordingWindowGeneration == recordedLoop.captureDisplayRevision)) return false;
+  // The unpublished raw bar predates accepted Capture input. Never publish it
+  // as current; the existing frozen-range owner builds the complete bar idle.
+  viewBuild.discard();
+  retained.complete = false;
+  return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordReturnWindow(
@@ -3365,7 +3528,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // identity, and adds 16 B on this ABI (7,808 -> 7,824; compiler measured): two counts + the certified flag + a
 // report-only resume counter. The runtime is extmem-allocated per slot, so no `Track` field and no RAM1 byte grows;
 // the cost is external-pool bytes, re-based here explicitly as the architectural price.
-static_assert(sizeof(LoopPlaybackRuntime) == 7832,
+static_assert(sizeof(LoopPlaybackRuntime) == 7848,
               "I5: target per-slot runtime measured after the committed-history certification");
 // CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
 // (compiler measured on `teensy41-capture-serial`). The cursor is interval-qualified state, and it
@@ -3425,7 +3588,7 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // (9,896 -> 9,944 host; compiler measured). The runtime is extmem-allocated per slot, so RAM1 is
 // unchanged and no `Track` field grows.
 // task 6.4c (DEC-177): 9,944 -> 9,960 host (+16 B), compiler measured; extmem per slot, RAM1 unchanged.
-static_assert(sizeof(LoopPlaybackRuntime) == 9968,
+static_assert(sizeof(LoopPlaybackRuntime) == 9984,
               "I5: host per-slot runtime measured after the committed-history certification");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

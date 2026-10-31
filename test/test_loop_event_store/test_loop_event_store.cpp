@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../../src/LoopEventStore.cpp"
+#include "../../src/Utils/RecordStopLength.cpp"
 #include "../../src/Loop/LoopSnapshot.cpp"
 #include "LoopEventStore.h"
 #include "LoopEventBuffer.h"
@@ -221,6 +222,49 @@ void test_map_overflow_note_on_keeps_in_loop_stop_off() {
   TEST_ASSERT_EQUAL(153u, store.at(0).tick);
   TEST_ASSERT_TRUE(store.at(1).isNoteOff());
   TEST_ASSERT_EQUAL(192u, store.at(1).tick);
+}
+
+/// DEC-234 boundary invariant: when the chosen Record loop length is **greater** than the maximum captured
+/// event tick, the stop projection may not change the captured semantic row vector at all. The old
+/// trailing-bar trim chose a length below the last bar's pair, so the projection wrapped its NoteOn into the
+/// loop start and dropped the NoteOff. This oracle is independent of any NoteId witness: every tuple must
+/// survive when the chosen geometry already covers the content.
+void test_record_stop_projection_preserves_rows_when_length_covers_max_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  for (uint32_t barIndex = 0; barIndex < 4; ++barIndex) {
+    MidiEvent on = MidiEvent::NoteOn(barIndex * bar + 12, 1, 60, 100);
+    on.noteId = 100 + barIndex;
+    MidiEvent off = MidiEvent::NoteOff(barIndex * bar + 48, 1, 60, 0);
+    off.noteId = 100 + barIndex;
+    TEST_ASSERT_TRUE(store.append(on));
+    TEST_ASSERT_TRUE(store.append(off));
+  }
+  const uint32_t maxTick = 3 * bar + 48;  // last NoteOff, strictly inside the final bar
+  const uint32_t length = RecordStopLength::computeRecordStopLengthTicks(4 * bar, maxTick);
+  char detail[160];
+  std::snprintf(detail, sizeof(detail), "maxTick=%lu chosenLength=%lu", static_cast<unsigned long>(maxTick),
+                static_cast<unsigned long>(length));
+  TEST_ASSERT_GREATER_THAN_MESSAGE(maxTick, length, detail);
+
+  std::vector<MidiEvent> before;
+  store.copyEventsTo(before);
+  store.mapNoteOnsAtOrBeyondTickIntoLoop(length);
+  std::vector<MidiEvent> after;
+  store.copyEventsTo(after);
+  TEST_ASSERT_EQUAL_UINT32(before.size(), after.size());
+  for (size_t i = 0; i < before.size(); ++i) {
+    const MidiEvent& a = before[i];
+    const MidiEvent& b = after[i];
+    TEST_ASSERT_EQUAL(a.type, b.type);
+    TEST_ASSERT_EQUAL_UINT32(a.tick, b.tick);
+    TEST_ASSERT_EQUAL_UINT32(a.noteId, b.noteId);
+    TEST_ASSERT_EQUAL(a.channel, b.channel);
+    TEST_ASSERT_EQUAL(a.data.noteData.note, b.data.noteData.note);
+    TEST_ASSERT_EQUAL(a.data.noteData.velocity, b.data.noteData.velocity);
+  }
 }
 
 void test_first_index_for_bar_uses_bar_index() {
@@ -1439,6 +1483,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_undo_snapshot_ref_isolated_by_cow);
   RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
   RUN_TEST(test_map_overflow_note_on_keeps_in_loop_stop_off);
+  RUN_TEST(test_record_stop_projection_preserves_rows_when_length_covers_max_tick);
   RUN_TEST(test_first_index_for_bar_uses_bar_index);
   RUN_TEST(test_out_of_range_tick_cannot_size_the_bar_index);
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);

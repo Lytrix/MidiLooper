@@ -108,6 +108,15 @@ def main() -> int:
              "so a populated slot can be inspected without pressing its loop button (a record toggle).",
     )
     parser.add_argument(
+        "--solo-track",
+        type=int,
+        choices=range(1, 9),
+        default=None,
+        metavar="N",
+        help="Long-press track N's button (exclusive SOLO) around the playback capture, so other tracks do "
+             "not sound into the served-content capture. Toggled off after the capture. Non-destructive.",
+    )
+    parser.add_argument(
         "--select-settle-s",
         type=float,
         default=0.6,
@@ -169,6 +178,13 @@ def main() -> int:
                     print(f"Dumped content -> {out}")
                     (out / "actions.jsonl").write_text("")
                     return 0
+                soloed = False
+                if args.solo_track is not None:
+                    # Exclusive solo: only the target track sounds, so other restored tracks cannot appear
+                    # in the served-content capture. Cleared after playback below.
+                    slots.press_track_solo(_Ctx(port), args.solo_track)
+                    observe(0.4)
+                    soloed = True
                 actions.append({"event": "start", "host_ns": time.monotonic_ns()})
                 port.send(mido.Message("start"))
                 try:
@@ -177,6 +193,9 @@ def main() -> int:
                     port.send(mido.Message("stop"))
                     actions.append({"event": "stop", "host_ns": time.monotonic_ns()})
                     observe(3.0)
+                    if soloed:
+                        slots.press_track_solo(_Ctx(port), args.solo_track)
+                        observe(0.4)
 
     (out / "actions.jsonl").write_text("".join(json.dumps(a) + "\n" for a in actions))
     print(f"Dumped content and captured playback -> {out}")

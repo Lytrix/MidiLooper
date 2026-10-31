@@ -84,6 +84,13 @@ namespace Config {
   /// pass-local pair decision or one pending-change upsert. Defined once here; the stop lane's
   /// `kDeferredStopPreparationQuantum` and the private-predecessor source cursor's
   /// `kPrivateSourceQuantum` are both this number, so they cannot drift apart.
+  ///
+  /// DEC-224 (reverted the same day): lowering this to 8 did **not** shorten the observed stop: the
+  /// 96 ms `idle_maint` grain sat on phase 5 (`CanonicalTail`) of a job that was already being denied
+  /// and retried (`session_20261030_142445.log`). With 8 the same record stop produced only 4 grains in
+  /// 60 s and stayed pending in `AtomicTransfer` to 122 s (`session_20261030_143745.log`), because the
+  /// all-stopped idle branch refuses every turn while the host clock keeps arriving. The cost is the
+  /// companion-bridge denial, not the grain size; keep 32 until that denial is addressed.
   constexpr uint16_t DEFERRED_STOP_PREPARATION_QUANTUM = 32;
   /// Target undo depth per track when memory is not under pressure.
   constexpr uint16_t PREFERRED_UNDO_DEPTH = 99;

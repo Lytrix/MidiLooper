@@ -52,24 +52,38 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     resetRevisionLoadJobState();
     return;
 #endif
-    // Never start or advance SD persistence while RECORDING, OVERDUBBING, or
-    // PLAYING. An earlier workspace-save priority exception let multi-frame
-    // bundle writes run in these windows (session_20260912_213530), producing
-    // 90–598 ms display gaps. Keeping the work item parked is safe: its queue
-    // ownership and state remain intact until transport is idle again.
+    // A **live capture interval or an accepted stop/finalization still in flight** owns the
+    // timing-sensitive interval: park every multi-frame workspace/slot/bundle writer at this
+    // admission boundary. Ordinary `PLAYING` alone is **not** a gate (DEC-081) -- a playing track with
+    // no capture and no stop in flight falls through to the normal writer below.
     //
-    // **One deliberate exception: mid-pass capture-chunk persistence.** Every sealed capture chunk
-    // is already admitted to `PersistenceQueue` as it seals (`LoopEventStore::admitSealedChunk`),
-    // and flushing one chunk per turn is what lets a take survive a hang or a power loss *during*
-    // recording instead of existing only in RAM until the stop. The exclusion above is about the
-    // multi-frame workspace/bundle writers, and those stay parked here. Two guards are kept: a slot
-    // load owns the SD session while it is active (`LoadLoopJob` parse overlapped with a write hung
-    // once, 235129), and a workspace save that is itself parked must not starve the flush -- that is
-    // exactly the state that made a take unrecoverable.
-    if (isCaptureRecordingForPersistence()) {
+    // The one exception is the mid-pass capture-chunk durability flush. Every sealed capture chunk is
+    // already admitted to `PersistenceQueue` as it seals (`LoopEventStore::admitSealedChunk`), and
+    // flushing one chunk per turn is what lets a take survive a hang or a power loss *during* the
+    // interval. It yields after one `stepMidPassChunkPersist()` and never enters the multi-frame
+    // workspace writers. Two guards are kept: a slot load owns the SD session while it is active
+    // (`LoadLoopJob` parse overlapped with a write hung once, 235129), and a workspace save that is
+    // itself parked must not starve the flush -- that is exactly the state that made a take
+    // unrecoverable.
+    //
+    // Why the check is *here* and not only after a step: the scheduler used to run one multi-frame
+    // step per turn and break afterwards, which let a step admitted at a stopped edge cross into the
+    // resumed transport (measured: two 144 ms `CapturePassChunk` slices at 899.4 s in
+    // `session_20261030_154306.log`, with a live `win_gap_overrun`). Admission must precede the step,
+    // so the blocking primitive cannot start once capture/stop owns the interval.
+    //
+    // `PERSISTENCE_ADMISSION_GATE=0` is a **diagnostic build only** (Slice 2 of the 2026-10-30 plan):
+    // it restores the old one-step-per-turn behavior so the physical `PERS,sd_write` row can attribute
+    // the 144 ms (extension vs overwrite) under the exact contended workload. Production is 1.
+#ifndef PERSISTENCE_ADMISSION_GATE
+#define PERSISTENCE_ADMISSION_GATE 1
+#endif
+#if PERSISTENCE_ADMISSION_GATE
+    if (isCaptureActiveForPersistence()) {
         flushOneQueuedCaptureChunkDuringTransport();
         return;
     }
+#endif
     // LoadLoopJob owns the SD session through Parsing/Committing (file may be closed
     // between grains). Catalog sync / revision / work-item must not run until Commit
     // finishes — overlapping SD during parse hung after edits grain (235129).

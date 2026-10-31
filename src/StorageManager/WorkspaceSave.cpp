@@ -27,6 +27,12 @@ namespace StorageManagerInternal {
 /// is emitted only in a capture build; the counter exists in both so the reset site needs no guard.
 DMAMEM uint32_t loopSnapshotTailWriteStepRows = 0;
 
+/// Physical capture-pass write sampling (`PERS,sd_write`): overruns (>= 4 ms) and failures are always
+/// emitted; normal writes are sampled at most once per 200 ms. RAM2 so RAM1's `variables` is unchanged.
+DMAMEM uint32_t sdWriteSampleLastMs = 0;
+constexpr uint32_t kSdWriteOverrunUs = 4000;
+constexpr uint32_t kSdWriteSampleIntervalMs = 200;
+
 /// `root-bearing-loop-persist`: bounded settle wait per loop body write. A publication owed for the
 /// loop's current committed state is transient (the publisher re-enumerates that same state on its own
 /// lane), so the save waits for it -- at most this long -- before committing to the passes-authoritative
@@ -639,9 +645,28 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chun
     const size_t writeBytes = remainingBytes < kCapturePassPayloadWriteQuantumBytes
                                   ? remainingBytes : kCapturePassPayloadWriteQuantumBytes;
     const uint8_t* payload = reinterpret_cast<const uint8_t*>(job.midiBatch.data());
-    if (!persistenceWriteRaw(file, payload + job.chunkWriteOffset, writeBytes, crcMode)) {
-        return false;
+#if defined(SESSION_CAPTURE)
+    // Phase B (2026-10-30 plan): time the physical 512-byte write itself, below the save step, and
+    // record whether it extended the file (`file_pos == file_size`) or overwrote an allocated range.
+    const uint32_t writeStartUs = micros();
+    const int32_t filePositionBefore = file.position();
+    const uint32_t fileSizeBefore = static_cast<uint32_t>(file.size());
+#endif
+    const bool writeOk = persistenceWriteRaw(file, payload + job.chunkWriteOffset, writeBytes, crcMode);
+#if defined(SESSION_CAPTURE)
+    const uint32_t writeUs = micros() - writeStartUs;
+    if (!writeOk || writeUs >= kSdWriteOverrunUs ||
+        millis() - sdWriteSampleLastMs >= kSdWriteSampleIntervalMs) {
+      sdWriteSampleLastMs = millis();
+      DebugSessionCapture::persistenceSdWriteImmediate(
+          "CapturePassChunk", static_cast<uint32_t>(writeBytes),
+          writeOk ? static_cast<uint32_t>(writeBytes) : 0u,
+          static_cast<uint32_t>(job.chunkWriteOffset),
+          filePositionBefore < 0 ? 0u : static_cast<uint32_t>(filePositionBefore),
+          fileSizeBefore, writeUs);
     }
+#endif
+    if (!writeOk) return false;
     job.chunkWriteOffset = static_cast<uint16_t>(job.chunkWriteOffset + writeBytes);
     if (job.chunkWriteOffset == payloadBytes) {
         job.chunkWriteOffset = 0;

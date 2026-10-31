@@ -210,6 +210,31 @@ void filterMidiEventsToTickWindow(const MidiEventVector& events, MidiEventVector
 
 }  // namespace
 
+// DEC-218: `VCACHE,idle_src` is a per-slice row, and DEC-216 made a slice cheap enough that the idle lane
+// runs ~87 slices/s. Unbounded, that row filled the 1 MiB capture ring (`RING,shed,104853`). Emit on a
+// change of source/identity plus one heartbeat per interval. RAM2 so RAM1 `variables` is unchanged; the
+// magic makes a garbage `.bss.dma` value cost at most one suppressed heartbeat window.
+namespace {
+constexpr uint32_t kVisualCacheIdleSrcHeartbeatMs = 5000;
+constexpr uint32_t kVisualCacheIdleSrcMinIntervalMs = 200;
+constexpr uint8_t kVisualCacheIdleSrcMagic = 0x5Au;
+#if defined(__IMXRT1062__)
+DMAMEM uint8_t sIdleSrcMagic;
+DMAMEM uint8_t sIdleSrcSource;
+DMAMEM uint8_t sIdleSrcRejected;
+DMAMEM uint32_t sIdleSrcRootRev;
+DMAMEM uint32_t sIdleSrcPlayRev;
+DMAMEM uint32_t sIdleSrcLastMs;
+#else
+uint8_t sIdleSrcMagic;
+uint8_t sIdleSrcSource;
+uint8_t sIdleSrcRejected;
+uint32_t sIdleSrcRootRev;
+uint32_t sIdleSrcPlayRev;
+uint32_t sIdleSrcLastMs;
+#endif
+}  // namespace
+
 size_t Loop::displayEventCountHint() const {
   size_t count = materializedEventCount_;
   if (captureActive()) {
@@ -254,12 +279,41 @@ LOOP_COLD_MEM void Loop::emitVisualCacheIdleGatherPath() const {
       break;
   }
   const char* path = lastVisualCacheIdleOverlayRejected_ ? "OverlayRejected" : source;
+  const uint32_t rootRev = publishedSnapshotRevision();
+  const uint32_t playRev = playbackRevision;
+  // DEC-218: this row is per idle slice, and a slice is cheap. Before DEC-216 one turn paid for up to eight
+  // tracks, so slices were rare; now the lane runs ~87 slices/s, and an unconditional row filled the 1 MiB
+  // capture ring -- `session_20261030_124353.log` logged `RING,tier_a_evicted,20` then
+  // `RING,shed,104853` at 130.178 s and lost the whole overdub chain the owner had just recorded. Emit on a
+  // **change** of the served source or identity, plus one heartbeat per `kIdleSrcHeartbeatMs`, so "the lane
+  // is still slicing" stays observable without owning the ring. RAM2 (`DMAMEM`) keeps RAM1 unchanged; a
+  // garbage stamp is bounded by the magic below to at most one suppressed heartbeat window.
+  constexpr uint8_t kIdleSrcTrusted = 0x5Au;
+  const bool trusted = sIdleSrcMagic == kIdleSrcTrusted;
+  const bool changed =
+      !trusted || sIdleSrcSource != static_cast<uint8_t>(lastVisualCacheIdleGatherSource_) ||
+      sIdleSrcRejected != (lastVisualCacheIdleOverlayRejected_ ? 1u : 0u) ||
+      sIdleSrcRootRev != rootRev || sIdleSrcPlayRev != playRev;
+  const uint32_t nowMs = millis();
+  // Hard floor: a state that flips between two values must not recreate the flood the change test alone
+  // cannot bound. 200 ms keeps a real flip visible while capping the row at 5/s.
+  if (trusted && nowMs - sIdleSrcLastMs < kVisualCacheIdleSrcMinIntervalMs) {
+    return;
+  }
+  if (!changed && trusted && nowMs - sIdleSrcLastMs < kVisualCacheIdleSrcHeartbeatMs) {
+    return;
+  }
+  sIdleSrcMagic = kIdleSrcTrusted;
+  sIdleSrcSource = static_cast<uint8_t>(lastVisualCacheIdleGatherSource_);
+  sIdleSrcRejected = lastVisualCacheIdleOverlayRejected_ ? 1u : 0u;
+  sIdleSrcRootRev = rootRev;
+  sIdleSrcPlayRev = playRev;
+  sIdleSrcLastMs = nowMs;
   char line[192];
   snprintf(line, sizeof(line),
            LOOP_VCACHE_DIAG_FMT("#CAP,%lu,VCACHE,idle_src,%s,src,%s,root_rev,%lu,playback_rev,%lu"),
            static_cast<unsigned long>(micros()), path, source,
-           static_cast<unsigned long>(publishedSnapshotRevision()),
-           static_cast<unsigned long>(playbackRevision));
+           static_cast<unsigned long>(rootRev), static_cast<unsigned long>(playRev));
   DebugSessionCapture::appendCaptureTextLine(line);
 #endif
 }

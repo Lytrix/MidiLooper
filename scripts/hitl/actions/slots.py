@@ -60,6 +60,21 @@ def press_track(action_ctx: ActionContext, track_number: int, *, press_ms: int |
                 before_device_us=before_device_us)
 
 
+def press_track_solo(action_ctx: ActionContext, track_number: int, *,
+                     press_ms: int = DEFAULT_LONG_PRESS_MS,
+                     correlate: CorrelatedGesture | None = None,
+                     before_device_us: int | None = None) -> None:
+    """Long-press a track button: `SOLO_TRACK` (exclusive; any other track becomes inaudible).
+
+    The same gesture on the already-soloed track clears solo (the firmware's `toggleSoloTrack`), so callers
+    pair the two sends around a playback capture.
+    """
+    _send_long_press(action_ctx.out_port, note=_track_note(track_number),
+                     channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+    record_send(correlate, note=_track_note(track_number), kind="long",
+                before_device_us=before_device_us)
+
+
 def press_slot_record(action_ctx: ActionContext, slot_number: int, *,
                       press_ms: int | None = None,
                       correlate: CorrelatedGesture | None = None,

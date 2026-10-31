@@ -109,6 +109,11 @@ SECTIONS
 		   mutable state and non-string capture lookup data retain their placement. */
 		*TrackCaptureInput.cpp.o(.rodata.str* .rodata.*.str*)
 		*TrackOverdubLifecycle.cpp.o(.rodata.str* .rodata.*.str*)
+		/* DEC-233's overdub-press / stop-latched button rows added ~190 B of string
+		   literals to MidiButtonActions.cpp, which had no rodata carve-out; they
+		   crossed the same _VectorsRam/periodictable align edge. Only read-only
+		   literals move. */
+		*MidiButtonActions*.o(.rodata.str* .rodata.*.str*)
 		/* windowed-playback-generation slice 3.5: the readiness-holder names are the
 		   same shape as the two entries above -- their ~100 B crossed the
 		   _VectorsRam/periodictable align edge and cost 4 KB of RAM1 locals
@@ -174,6 +179,13 @@ SECTIONS
 		   cold `onPersistenceStep` function, padding 968 >= 840). Only read-only literals move;
 		   the rate-limit array is DMAMEM, so no mutable state is hidden here. */
 		*PersistenceDiagnostics.cpp.o(.rodata.str* .rodata.*.str*)
+		/* Deferred-stop tail liveness (`DIAG,stop_tail,`) and the aggregate owner-turn row
+		   (`DIAG,idle_turn,`): their Tier-A prefixes live in `StopDiagRows.cpp`, because one more
+		   16-byte literal in `DebugSessionCapture.cpp`'s classifier or in `CaptureLineTier.h` crossed
+		   the same `_VectorsRam`/periodictable align edge (`variables` 96,192 -> 100,288 measured by
+		   removing this line; ITCM `code` byte-identical). Prefixes moved here instead of re-basing the
+		   budget. Read-only; the TU owns no mutable state. */
+		*StopDiagRows.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

@@ -411,12 +411,10 @@ LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotDisplayNotesInWindow(
     const uint32_t lastBar = (windowStart + windowLength - 1u) / barTicks;
     appendSnapshotNotesForBarRange(*snapshot, firstBar, lastBar, out);
   }
-  const uint32_t windowEnd = windowStart + windowLength;
-  out.erase(std::remove_if(out.begin(), out.end(),
-                           [windowStart, windowEnd](const NoteUtils::DisplayNote& note) {
-                             return note.endTick < windowStart || note.startTick >= windowEnd;
-                           }),
-            out.end());
+  // Membership above can include both physical halves of one circular window.
+  // A linear final filter would erase its head after gathering it successfully.
+  DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(
+      out, windowStart, windowLength, loopLengthTicks);
   return true;
 }
 

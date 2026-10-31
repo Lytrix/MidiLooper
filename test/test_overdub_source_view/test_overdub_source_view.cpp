@@ -5034,6 +5034,56 @@ void test_visual_cache_keeps_same_start_a_identities_183043() {
   TEST_ASSERT_EQUAL_UINT32(1528u, second->endTick);
 }
 
+// DEC-217 — a publication makes every span inside its tile ready at once, and each discharge may derive
+// its own closure window. Draining the whole queue on that turn stacked them: measured `disch=513,812 us`
+// of a 546,958 us turn on device (`session_20261030_122722.log`). The queue is now the grain: one
+// completion per turn, the rest stay owed and drain later, and the seal deadline remains the backstop.
+void test_dec217_deferred_discharge_is_one_completion_per_turn() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
+
+  // Three consequences with no prerequisite: each is ready as soon as it is retained.
+  for (uint8_t i = 0; i < 3; ++i) {
+    TEST_ASSERT_TRUE(loop.retainDeferredOverdubCompletionForTest(
+        static_cast<uint8_t>(1 + i), static_cast<uint8_t>(60 + i), static_cast<uint32_t>(10 + i),
+        static_cast<uint32_t>(40 + i)));
+  }
+  TEST_ASSERT_EQUAL_UINT8(3, loop.overdubCoverageDeferredCompletionsForTest());
+
+  // Bounded turns: exactly one is discharged, the others are still owed (never dropped).
+  TEST_ASSERT_EQUAL_UINT8(1, loop.dischargeDeferredOverdubCompletionsForTest(1));
+  TEST_ASSERT_EQUAL_UINT8(2, loop.overdubCoverageDeferredCompletionsForTest());
+  TEST_ASSERT_EQUAL_UINT8(1, loop.dischargeDeferredOverdubCompletionsForTest(1));
+  TEST_ASSERT_EQUAL_UINT8(1, loop.overdubCoverageDeferredCompletionsForTest());
+  TEST_ASSERT_EQUAL_UINT8(1, loop.dischargeDeferredOverdubCompletionsForTest(1));
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
+  TEST_ASSERT_EQUAL_UINT8(0, loop.dischargeDeferredOverdubCompletionsForTest(1));
+}
+
+// The deadline/seal path stays unbounded: `maxDischarge = 0` drains everything ready in one call, so no
+// obligation can be left owed when the interval ends.
+void test_dec217_unbounded_discharge_drains_every_ready_completion() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  for (uint8_t i = 0; i < 3; ++i) {
+    TEST_ASSERT_TRUE(loop.retainDeferredOverdubCompletionForTest(
+        static_cast<uint8_t>(1 + i), static_cast<uint8_t>(60 + i), static_cast<uint32_t>(10 + i),
+        static_cast<uint32_t>(40 + i)));
+  }
+  TEST_ASSERT_EQUAL_UINT8(3, loop.overdubCoverageDeferredCompletionsForTest());
+  TEST_ASSERT_EQUAL_UINT8(3, loop.dischargeDeferredOverdubCompletionsForTest(0));
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
@@ -5149,5 +5199,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_keeps_dsharp_committed_offs_before_pending_183043);
   RUN_TEST(test_visual_cache_keeps_dsharp_committed_offs_after_rebuild_211440);
   RUN_TEST(test_visual_cache_keeps_same_start_a_identities_183043);
+  RUN_TEST(test_dec217_deferred_discharge_is_one_completion_per_turn);
+  RUN_TEST(test_dec217_unbounded_discharge_drains_every_ready_completion);
   return UNITY_END();
 }

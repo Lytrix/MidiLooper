@@ -94,6 +94,85 @@ inline bool windowCoversLoop(uint32_t windowLength, uint32_t loopLength) {
     return loopLength > 0 && windowLength >= loopLength;
 }
 
+/// **Circular window coverage** (2026-10-30 display-source handoff, binding for the draw source).
+/// A detailed window is ONE logical interval `[start, start + length)` on a loop of `loopLength`
+/// ticks. Membership is the modular coordinate
+/// `relative = (tick + loopLength - start) % loopLength`, `inside = relative < length`, so a window
+/// whose end passes the loop end is one generation with two physical spans:
+/// `[start..loopEnd)` plus `[0..remainder)`.
+///
+/// This covers *coverage only*. No caller may advance a paint origin per tick from it: the origin
+/// stays bar-stable, which is what makes a one-bar advance owe exactly one newly exposed bar.
+struct CircularWindowCoverage {
+    uint32_t start = 0;
+    uint32_t length = 0;
+    uint32_t loopLength = 0;
+    inline bool valid() const { return loopLength > 0 && length > 0; }
+};
+
+inline CircularWindowCoverage makeCircularWindowCoverage(uint32_t start, uint32_t length,
+                                                         uint32_t loopLength) {
+    return CircularWindowCoverage{start, length, loopLength};
+}
+
+/// `(tick + loopLength - start) % loopLength`; 0 for an empty coverage.
+inline uint32_t windowCoverageRelativeTick(uint32_t tick, const CircularWindowCoverage& coverage) {
+    if (!coverage.valid()) {
+        return 0;
+    }
+    const uint32_t tickInLoop = tick % coverage.loopLength;
+    const uint32_t startInLoop = coverage.start % coverage.loopLength;
+    const uint32_t offset = tickInLoop >= startInLoop
+                                ? tickInLoop - startInLoop
+                                : tickInLoop + coverage.loopLength - startInLoop;
+    return offset % coverage.loopLength;
+}
+
+inline bool windowCoverageContains(uint32_t tick, const CircularWindowCoverage& coverage) {
+    if (!coverage.valid()) {
+        return false;
+    }
+    return windowCoverageRelativeTick(tick, coverage) < coverage.length;
+}
+
+/// 1 for a window that ends at or before the loop end, 2 when it crosses (tail + head span).
+inline uint8_t windowCoverageSpanCount(const CircularWindowCoverage& coverage) {
+    if (!coverage.valid()) {
+        return 0;
+    }
+    if (coverage.length >= coverage.loopLength) {
+        return 1;
+    }
+    const uint32_t startInLoop = coverage.start % coverage.loopLength;
+    return startInLoop + coverage.length > coverage.loopLength ? 2 : 1;
+}
+
+/// The physical span at `index` (0 = `[start..loopEnd)`, 1 = `[0..remainder)`), returned as
+/// absolute loop coordinates with a physical (non-wrapping) length.
+inline CircularWindowCoverage windowCoverageSpan(const CircularWindowCoverage& coverage,
+                                                 uint8_t index) {
+    if (!coverage.valid() || index >= windowCoverageSpanCount(coverage)) {
+        return CircularWindowCoverage{};
+    }
+    const uint32_t startInLoop = coverage.start % coverage.loopLength;
+    if (coverage.length >= coverage.loopLength) {
+        return CircularWindowCoverage{0, coverage.loopLength, coverage.loopLength};
+    }
+    if (index == 0) {
+        const uint32_t tailLength = coverage.loopLength - startInLoop;
+        const uint32_t firstLength = coverage.length < tailLength ? coverage.length : tailLength;
+        return CircularWindowCoverage{startInLoop, firstLength, coverage.loopLength};
+    }
+    return CircularWindowCoverage{0, coverage.length - (coverage.loopLength - startInLoop),
+                                  coverage.loopLength};
+}
+
+/// Physical loop bar for a bar index taken from the logical (possibly crossing) window. The gather
+/// walks `firstBar..lastBar` linearly; every per-bar lookup must resolve through this.
+inline uint32_t windowCoverageLoopBar(uint32_t logicalBar, uint32_t loopBars) {
+    return loopBars == 0 ? 0 : logicalBar % loopBars;
+}
+
 /// Compute a detailed paint window. Returns false only when `TICKS_PER_BAR` is 0.
 /// The window may cover the entire loop. Does not classify loop size.
 /// `requestedBars` of 0 uses `kMaxDetailedWindowBars`.
@@ -101,6 +180,14 @@ bool resolveDetailedPaintWindow(uint32_t loopLength, uint8_t requestedBars,
                                 uint32_t storedWindowStart, uint32_t playheadTick,
                                 bool autoFollow, uint32_t& outWindowStart,
                                 uint32_t& outWindowLength, uint8_t& outWindowBars);
+
+/// **Bar-stable circular follow origin** for the detailed window. A playhead in the first half window
+/// keeps bar 0 visible (a rewound take reads from its start); past it the origin is the bar-aligned
+/// centre-relative start. It moves by whole bars only (one newly exposed bar per advance) and near the
+/// loop end it crosses the end instead of clamping, so the interval stays one generation with two
+/// physical spans (`windowCoverageSpanCount` / `windowCoverageSpan`). Never advanced per tick.
+uint32_t resolveCircularBarWindowStart(uint32_t playheadTick, uint32_t windowLength,
+                                       uint32_t loopLength, uint32_t ticksPerBar);
 
 /// Post-stop handoff: keep only the committed compose prefix (drop capture suffix / tails).
 inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t committedBaseCount) {
@@ -295,8 +382,7 @@ inline bool shouldApplyLiveCapturePlayheadTails(bool recording, bool overdubbing
     return recording && !reuseLastValidFrame && !budgetExceeded;
 }
 
-/// Capture-preview playhead wrap-continuation policy for `applyCapturePlayheadTails`.
-/// From capture state only — not a generic wrap switch. Pinned truth table
+/// Capture-preview playhead wrap-continuation policy for `applyCapturePlayheadTails`./// From capture state only — not a generic wrap switch. Pinned truth table
 /// (`overdub_live_wrap_playhead_tail_display_bugfix`):
 ///   RECORDING (any playing) → NO
 ///   OVERDUBBING + PLAYING → YES
@@ -1302,10 +1388,12 @@ inline bool drawSourceGatherContentKeysMatch(const DrawSourceGatherKey& last,
 /// match. Playhead-bar motion and overlay-key motion do not force
 /// `RebuildCommittedDrawSource` (`151552`). Overlays and pending still re-apply
 /// on a frame-local copy of the untransformed prefix. One-bar slide only when
-/// committed keys match and `windowStart` moves by exactly one bar.
+/// committed keys match and `windowStart` moves by exactly one bar -- circularly,
+/// so the step from the last bar to bar 0 is still one bar and owes one bar.
 inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& last,
                                                      const DrawSourceGatherKey& current,
-                                                     uint32_t ticksPerBar) {
+                                                     uint32_t ticksPerBar,
+                                                     uint32_t loopLength = 0) {
     if (last.valid == 0 || current.valid == 0) {
         return DrawSourceReuseKind::RebuildCommittedDrawSource;
     }
@@ -1318,9 +1406,19 @@ inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& 
     if (ticksPerBar == 0) {
         return DrawSourceReuseKind::RebuildCommittedDrawSource;
     }
-    const uint32_t delta = last.windowStart > current.windowStart
-                               ? last.windowStart - current.windowStart
-                               : current.windowStart - last.windowStart;
+    uint32_t delta = 0;
+    if (loopLength > ticksPerBar) {
+        const uint32_t loopBars = (loopLength + ticksPerBar - 1u) / ticksPerBar;
+        const uint32_t lastBar = (last.windowStart / ticksPerBar) % loopBars;
+        const uint32_t currentBar = (current.windowStart / ticksPerBar) % loopBars;
+        const uint32_t barDelta =
+            currentBar >= lastBar ? currentBar - lastBar : currentBar + loopBars - lastBar;
+        delta = barDelta * ticksPerBar;
+    } else {
+        delta = last.windowStart > current.windowStart
+                    ? last.windowStart - current.windowStart
+                    : current.windowStart - last.windowStart;
+    }
     if (delta == ticksPerBar) {
         return DrawSourceReuseKind::SlideCommittedDrawSource;
     }

@@ -61,6 +61,22 @@ void test_growing_record_lengthens_to_two_bars_past_half_bar_grace() {
       2 * ticksPerBar, RecordStopLength::computeRecordStopLengthTicks(rawLength, lastEvent));
 }
 
+/// committed-pass-identity-corruption: a stop whose transport covers bar N and whose last event is strictly
+/// inside bar N must keep N+1 bars. Only an event exactly on the bar line belongs to the bar it closes.
+void test_record_stop_keeps_the_bar_containing_the_last_event() {
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  TEST_ASSERT_EQUAL_UINT32(
+      24 * ticksPerBar,
+      RecordStopLength::computeRecordStopLengthTicks(24 * ticksPerBar, 23 * ticksPerBar + 48));
+}
+
+void test_record_stop_trims_at_an_exact_bar_line() {
+  constexpr uint32_t ticksPerBar = Config::TICKS_PER_BAR;
+  TEST_ASSERT_EQUAL_UINT32(
+      23 * ticksPerBar,
+      RecordStopLength::computeRecordStopLengthTicks(24 * ticksPerBar, 23 * ticksPerBar));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_stop_uses_content_length_when_shorter_than_transport);
@@ -70,5 +86,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_truncation_rewind_zero_when_final_zero);
   RUN_TEST(test_growing_record_reaches_one_bar_from_stop_quantize);
   RUN_TEST(test_growing_record_lengthens_to_two_bars_past_half_bar_grace);
+  RUN_TEST(test_record_stop_keeps_the_bar_containing_the_last_event);
+  RUN_TEST(test_record_stop_trims_at_an_exact_bar_line);
   return UNITY_END();
 }

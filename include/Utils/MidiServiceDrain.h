@@ -635,6 +635,19 @@ inline bool boundedIdleOwnerChildMayRun(bool owed, bool timingCritical, uint32_t
   return fineGrainUs != 0 && fineGrainUs <= remainingBudgetUs;
 }
 
+/// **Aggregate turn arithmetic** (ExecutionBounds row 19). `kOwnerWorkBudgetUs` bounds one *child*; it never
+/// bounded the sum of the tracks one turn visits, because the realtime walk dispatches
+/// `Track::processDeferredIdleMaintenance` for every eligible track in the same turn. Measured on device
+/// (`session_20261030_114009.log`): one turn spent 283,622 us and the next 285,832 us -- 71x the declared
+/// child budget and 5.7x the 50 ms alarm -- while the playback note lane went 294-326 ms late. The walk
+/// therefore asks this before **starting another track unit**: once the turn has spent its budget it
+/// yields to the MIDI/display lanes and the next turn resumes at the following track (the caller keeps the
+/// rotating cursor). One unit always runs, so a single expensive unit cannot starve the rotation; it is
+/// named instead (the caller reports any unit above this bound).
+inline bool idleOwnerTurnMayStartAnotherUnit(uint32_t elapsedTurnUs) {
+  return elapsedTurnUs < kOwnerWorkBudgetUs;
+}
+
 /// Budget arithmetic for one turn, in dispatch order. `remaining` starts at `kOwnerWorkBudgetUs` and is
 /// reduced by each admitted child's *declared maximum* (not its actual cost), so a later child cannot be
 /// admitted on the strength of an earlier child's early exit.

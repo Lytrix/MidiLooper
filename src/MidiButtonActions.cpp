@@ -20,6 +20,8 @@
 #include "DisplayManager.h"
 #include "SetBrowserOverlayPolicy.h"
 #include "Utils/PressTiming.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/MidiButtonGesturePolicy.h"
 
 namespace {
 
@@ -310,10 +312,16 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 // only a persisted body. A cleared slot keeps an empty payload on the card, and the library
                 // observation counts a verified payload as populated, so a slot whose content lives only on the
                 // card is not "empty" for the user -- the same gesture must be able to remove it (DEC-110).
-                if (!slotHasData && !StorageManager::loopSlotHasPayloadOnSd(tidx, slot)) {
+                if (MidiButtonGesturePolicy::classifyClearSlotOutcome(
+                        slotHasData, StorageManager::loopSlotHasPayloadOnSd(tidx, slot)) ==
+                    MidiButtonGesturePolicy::ClearSlotOutcome::AlreadyEmpty) {
                     if (track.isRecording() || track.isOverdubbing()) {
                         trackManager.cancelSlotSelectionHold(tidx);
                     }
+                    // A named outcome, not a silent no-op: the HITL verified-clear path accepts an
+                    // already-empty slot from this row (`midifile-chain-43`, 2026-10-30).
+                    logger.debug(MidiButtonGesturePolicy::kClearIgnoredEmptySlotLogFormat,
+                                 static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
                     return;
                 }
                 handleClearTrack();
@@ -602,20 +610,47 @@ void MidiButtonActions::endSlotLayerHold(uint8_t slotIndex) {
 }
 
 // Core actions that match your current 3-button system
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && defined(SESSION_CAPTURE_INVESTIGATION_DIAG)
+namespace {
+/// One direct row per Record press on the overdub-start edge. The first `ODUB,stage` row only exists
+/// inside a successful start, so a refused/never-reached start is silent; this row names the state the
+/// handler saw and which branch it took (`2026-10-30`: 12 windows, 0 overdubs, no row to attribute it).
+void emitOdubPressRow(Track& track, uint8_t trackIndex, uint8_t slot, const char* edge) {
+  Serial.printf("#CAP,%lu,DIAG,odub_press,%s,t=%u,s=%u,st=%u,pending_stop=%u,priv=%u,passes=%u,play=%u,"
+                "armed=%u\r\n",
+                (unsigned long)micros(), edge, static_cast<unsigned>(trackIndex),
+                static_cast<unsigned>(slot), static_cast<unsigned>(track.getState()),
+                track.hasPendingDeferredOverdubStop() ? 1u : 0u,
+                track.hasPrivateRecordPredecessorForOverdub() ? 1u : 0u,
+                track.hasCommittedPassesInSlot(slot) ? 1u : 0u,
+                track.isPlaying() ? 1u : 0u,
+                track.hasAcceptedUnexecutedInteraction() ? 1u : 0u);
+}
+}  // namespace
+#define SC_ODUB_PRESS_ROW(track, tidx, slot, edge) emitOdubPressRow((track), (tidx), (slot), (edge))
+#else
+#define SC_ODUB_PRESS_ROW(track, tidx, slot, edge) ((void)0)
+#endif
+
 void MidiButtonActions::handleToggleRecord() {
     Track& track = getCurrentTrack();
     uint8_t idx = trackManager.getSelectedTrackIndex();
-    
+    const uint8_t pressedSlot = trackManager.getSelectedSlotIndex(idx);
+    SC_ODUB_PRESS_ROW(track, idx, pressedSlot, "enter");
+
     if (handleArmedRecordPress(idx)) {
+        SC_ODUB_PRESS_ROW(track, idx, pressedSlot, "armed");
         return;
     }
 
     if (track.isRecording()) {
+        SC_ODUB_PRESS_ROW(track, idx, pressedSlot, "stop_record");
         logger.info("MIDI Button A: Stop Recording");
         trackManager.stopRecordingTrack(idx);
         return;
     }
     if (track.isOverdubbing()) {
+        SC_ODUB_PRESS_ROW(track, idx, pressedSlot, "stop_overdub");
         logger.info("MIDI Button A: Stop Overdub");
         track.stopOverdubbing();
         return;
@@ -631,14 +666,18 @@ void MidiButtonActions::handleToggleRecord() {
     const bool privateRecordBase = slot == track.getActiveLoopIndex() &&
         track.hasPrivateRecordPredecessorForOverdub();
     if (!privateRecordBase && !track.hasCommittedPassesInSlot(slot)) {
+        SC_ODUB_PRESS_ROW(track, idx, slot, "slot_fallback");
         handleToggleRecordForSlot(slot);
         return;
     }
 
     if (track.isPlaying()) {
+        SC_ODUB_PRESS_ROW(track, idx, slot, "start");
         logger.info("MIDI Button A: Live Overdub");
         trackManager.startOverdubbingTrack(idx);
+        SC_ODUB_PRESS_ROW(track, idx, slot, "start_return");
     } else {
+        SC_ODUB_PRESS_ROW(track, idx, slot, "toggle_play");
         logger.info("MIDI Button A: Toggle Play/Stop");
         enableOnlySlot(idx, slot);
         track.togglePlayStop();
@@ -828,6 +867,11 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
                 track.startPlaying(now);
             }
             if (action == SyncDrainCallerAction::RefuseBlocked) {
+#if defined(SESSION_CAPTURE)
+                // J2: name the gate immediately and deterministically; the logger row is queued.
+                DebugSessionCapture::clearRefusedImmediate(static_cast<uint8_t>(slot + 1),
+                                                           drainResult.reason);
+#endif
                 logger.error("Clear refused: deferred save temporarily blocked by %s; slot left "
                              "untouched, save still owed",
                              drainResult.reason);
@@ -839,6 +883,9 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
         }
     }
 
+    // DEC-231: start the cleared/selected slot's bounded view preparation before the Record edge.
+    // This is harmless when the slot is already empty; the off-edge owner does the work.
+    track.requestViewPrewarmForSlot(slot);
     if (!track.hasDataInSlot(slot)) {
         // No RAM content. If a persisted payload exists it **is** this slot's content, so the explicit clear
         // removes it through the persistence owner: the slot then reports as genuinely empty (payload absent)
@@ -858,6 +905,7 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
                 track.setState(TRACK_EMPTY);
             }
             restorePlaybackAfterSlotClear(tidx, track, now);
+            track.requestViewPrewarmForSlot(slot);
             return;
         }
         if (!track.hasAnySlotData()) {
@@ -869,7 +917,7 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
                              static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
             }
         } else {
-            logger.debug("Clear ignored — selected slot is empty (track %u slot %u)",
+            logger.debug(MidiButtonGesturePolicy::kClearIgnoredEmptySlotLogFormat,
                          static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
         }
         return;
@@ -904,6 +952,9 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
     logger.info("MIDI: Clear selected slot %u", static_cast<unsigned>(slot) + 1u);
 
     restorePlaybackAfterSlotClear(tidx, track, now);
+    // DEC-231: the cleared slot is the Record target; start the bounded view preparation now,
+    // using the idle time before the Record edge.
+    track.requestViewPrewarmForSlot(slot);
 }
 
 void MidiButtonActions::handleSoloTrack(uint8_t trackNumber) {

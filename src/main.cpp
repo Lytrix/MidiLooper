@@ -266,6 +266,9 @@ DMAMEM uint8_t gBootVisualCacheReported;
 DMAMEM uint32_t gPaintGateLastMs;
 // DEC-189: `#STOP_TRACE` rate stamp. RAM2 because a new plain static costs DTCM and the budget gate refuses it.
 DMAMEM uint32_t gStopTraceLastMs;
+// DEC-216: realtime idle-walk rotation. Bit 7 is the priority phase, bits 0-6 the next background track;
+// RAM2 like the gates above, because one DTCM section byte costs 32 and the budget refuses growth.
+DMAMEM uint8_t gRealtimeIdleRotation;
 // DEC-196: deadline for the playback-set boot hold (see `runDeferredLoadAndDisplayFrame`). RAM2 like the sweep gate.
 DMAMEM uint32_t gBootPlaybackSetHoldDeadlineMs;
 #else
@@ -274,6 +277,7 @@ uint8_t gBootSweepEnqueued;
 uint8_t gBootVisualCacheReported;
 uint32_t gPaintGateLastMs;
 uint32_t gBootPlaybackSetHoldDeadlineMs;
+uint8_t gRealtimeIdleRotation;
 #endif
 
 // DEC-196: the longest the boot panel waits for every track's playback slot. The measured playback set is ~2-3 s of
@@ -572,9 +576,27 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 }
 
 // Keep STOPPED idle-maintenance admission policy out of ITCM.
+#if defined(SESSION_CAPTURE)
+/// DEC-216: the realtime walk is bounded per **turn**, not only per child. When one track unit alone
+/// exceeds twice the declared owner budget (8 ms), the residual that used to hide inside
+/// `idle_maint,breakdown`'s `residual` field is named here with the track that spent it. Flash-resident
+/// and `PSTR`-formatted so no literal or buffer lands in DTCM (the `idle_maint,breakdown` rule).
+FLASHMEM __attribute__((noinline)) static void reportSlowIdleTurnUnit(uint8_t trackIndex, uint32_t unitUs,
+                                                                     uint32_t turnUs, uint8_t units) {
+  if (unitUs < 2u * MidiServiceDrain::kOwnerWorkBudgetUs) return;
+  char line[96];
+  snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,idle_turn,track=%u,us=%lu,turn=%lu,units=%u"),
+             (unsigned long)micros(), static_cast<unsigned>(trackIndex), (unsigned long)unitUs,
+             (unsigned long)turnUs, static_cast<unsigned>(units));
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#else
+#define reportSlowIdleTurnUnit(trackIndex, unitUs, turnUs, units) ((void)0)
+#endif
+
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint32_t now, bool postOverdubPlayingMidiDrain,
-    MidiServiceDrain::DeferredIdleOwner deferredOwner, bool timingCritical) {
+    MidiServiceDrain::DeferredIdleOwner deferredOwner, bool timingCritical, uint32_t turnStartUs) {
   // S4b.7 (Rev 20.3/21.7): the `SlotProvision` turn is served **before** the all-stopped guard below and
   // returns through it -- the contract exempts it, because a queued switch is retained exactly while the
   // track's state is unsettled. It takes the pending switch's inbound occupancy off-clock and builds that
@@ -660,7 +682,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   }
   bool anyRealtimeTrackActive = false;
   bool anyPendingSnapshotPublish = false;
+  bool anyPendingStop = false;
+  bool anyConvergenceOwed = false;
+  bool anyViewPrewarmPending = false;
   bool pendingSnapshotByTrack[Config::NUM_TRACKS] = {};
+  uint8_t pendingStopMask = 0;
+  uint8_t convergenceMask = 0;
+  uint8_t viewPrewarmMask = 0;
   const uint8_t scannedTrackCount = trackManager.getTrackCount();
   for (uint8_t i = 0; i < scannedTrackCount; ++i) {
     const Track& t = trackManager.getTrack(i);
@@ -672,8 +700,92 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       pendingSnapshotByTrack[i] = pendingSnapshot;
     }
     anyPendingSnapshotPublish = anyPendingSnapshotPublish || pendingSnapshot;
+    const bool pendingStop = t.hasPendingDeferredOverdubStop();
+    if (i < Config::NUM_TRACKS && pendingStop) {
+      pendingStopMask = static_cast<uint8_t>(pendingStopMask | (1u << i));
+    }
+    anyPendingStop = anyPendingStop || pendingStop;
+    const bool convergenceOwed = t.hasDeferredConvergenceObligation();
+    if (i < Config::NUM_TRACKS && convergenceOwed) {
+      convergenceMask = static_cast<uint8_t>(convergenceMask | (1u << i));
+    }
+    anyConvergenceOwed = anyConvergenceOwed || convergenceOwed;
+    const bool viewPrewarmPending = t.hasViewPrewarmPending();
+    if (i < Config::NUM_TRACKS && viewPrewarmPending) {
+      viewPrewarmMask = static_cast<uint8_t>(viewPrewarmMask | (1u << i));
+    }
+    anyViewPrewarmPending = anyViewPrewarmPending || viewPrewarmPending;
   }
   const bool allTracksStopped = !anyRealtimeTrackActive;
+  // I1 (2026-10-30 plan): a pending deferred stop is authoritative work even while every track is stopped
+  // and the host keeps clocking. The old all-stopped refusal below starved the stop lane until the host
+  // released the clock (DEC-224 measured 4 grains in 60 s; the rig still carries that workaround). Service
+  // one bounded stop-lane turn per idle pass, on the track that owns the job, before any other stopped-
+  // state policy. The stop grain path is bounded by its own burst budget; this does not admit snapshot or
+  // visual construction under a running host clock.
+  static uint8_t sStoppedIdleTrackCursor = 0;
+  if (allTracksStopped && clockManager.isClockRunning() && anyPendingStop) {
+    if (sStoppedIdleTrackCursor >= scannedTrackCount) {
+      sStoppedIdleTrackCursor = 0;
+    }
+    uint8_t trackIndex = sStoppedIdleTrackCursor;
+    for (uint8_t offset = 0; offset < scannedTrackCount; ++offset) {
+      const uint8_t candidate =
+          static_cast<uint8_t>((sStoppedIdleTrackCursor + offset) % scannedTrackCount);
+      if ((pendingStopMask & (1u << candidate)) != 0) {
+        trackIndex = candidate;
+        break;
+      }
+    }
+    trackManager.getTrack(trackIndex)
+        .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                        timingCritical);
+    sStoppedIdleTrackCursor = static_cast<uint8_t>((trackIndex + 1) % scannedTrackCount);
+    return;
+  }
+  // A held host clock must not starve the DEC-172 obligation either: once no stop job is pending, the
+  // same all-stopped pass admits **one** bounded convergence grain (the service call is at most one
+  // slot per invocation). Without this, a 4 s companion budget retired raw and the owed companions
+  // never rebuilt while the rig kept the clock running (`midifile-chain-22/23`, edit 11/7).
+  if (allTracksStopped && clockManager.isClockRunning() && anyConvergenceOwed) {
+    if (sStoppedIdleTrackCursor >= scannedTrackCount) {
+      sStoppedIdleTrackCursor = 0;
+    }
+    for (uint8_t offset = 0; offset < scannedTrackCount; ++offset) {
+      const uint8_t candidate =
+          static_cast<uint8_t>((sStoppedIdleTrackCursor + offset) % scannedTrackCount);
+      if ((convergenceMask & (1u << candidate)) != 0) {
+        (void)trackManager.getTrack(candidate).serviceDeferredCanonicalConvergence();
+        sStoppedIdleTrackCursor = static_cast<uint8_t>((candidate + 1) % scannedTrackCount);
+        // Do not let the obligation monopolize the all-stopped pass: a pending Record-target
+        // preparation must get one step per pass too. Fall through to the view-prewarm branch
+        // below when one is owed; otherwise the convergence keeps its previous exclusive turn.
+        if (!anyViewPrewarmPending) {
+          return;
+        }
+        break;
+      }
+    }
+  }
+  // DEC-231: the Record target's view preparation is admitted under the same all-stopped/host-clock
+  // condition as the stop lane and convergence above. Without this branch the clear's preparation request
+  // never advances, the Record edge correctly stays pending, and no recording can start
+  // (`midifile-chain-29`: RECA entered=0). One natural unit per pass; no content work at the edge.
+  if (allTracksStopped && clockManager.isClockRunning() && anyViewPrewarmPending) {
+    if (sStoppedIdleTrackCursor >= scannedTrackCount) {
+      sStoppedIdleTrackCursor = 0;
+    }
+    for (uint8_t offset = 0; offset < scannedTrackCount; ++offset) {
+      const uint8_t candidate =
+          static_cast<uint8_t>((sStoppedIdleTrackCursor + offset) % scannedTrackCount);
+      if ((viewPrewarmMask & (1u << candidate)) != 0) {
+        (void)trackManager.getTrack(candidate).stepViewPrewarmForIdle();
+        sStoppedIdleTrackCursor = static_cast<uint8_t>((candidate + 1) % scannedTrackCount);
+        return;
+      }
+    }
+  }
   if (allTracksStopped && clockManager.isClockRunning() &&
       deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend &&
       !(deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
@@ -686,7 +798,6 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     if (trackCount == 0) {
       return;
     }
-    static uint8_t sStoppedIdleTrackCursor = 0;
     if (sStoppedIdleTrackCursor >= trackCount) {
       sStoppedIdleTrackCursor = 0;
     }
@@ -820,25 +931,88 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   // The selected track is the interaction and paint target, so it gets the realtime idle opportunity before
   // the background walk (the same priority the stopped lane gives the focus slot). Without this the panel's
   // own slot waited behind every other loaded track's maintenance.
+  //
+  // DEC-216 (ExecutionBounds row 19): the walk is bounded by the **turn**. `kOwnerWorkBudgetUs` bounded one
+  // child, never the sum of the tracks this loop visits, so one turn could spend 283 ms of deferred work on
+  // the thread that also emits playback MIDI and drives the panel (measured: `late_on`/`late_off` 294-326 ms
+  // and ~300 late events per 5 s in `session_20261030_114009.log`). One unit always runs and every *further*
+  // unit must fit the turn budget, so the turn is bounded to one unit's own cost plus the budget.
+  //
+  // The **first** unit alternates between the selected track and the rotating background cursor. Without the
+  // alternation a selected track that alone spends the budget would consume the turn every time and the
+  // background walk would never reach its tail -- the starvation the old unconditional walk avoided by
+  // paying for all of it. At the loop's turn rate one skipped turn is sub-millisecond, so the selected
+  // track's priority is preserved in practice.
+  //
+  // RAM2: `.bss.dma` is NOLOAD, so the value may start as garbage; the modulo below makes any index valid and
+  // either phase is correct. Deliberately not DTCM: RAM1 has no growth allowance
+  // (`scripts/ram1_budget.json`), and one section byte costs 32.
+  const bool selectedFirst = (gRealtimeIdleRotation & 0x80u) != 0;
+  uint8_t cursor = static_cast<uint8_t>(gRealtimeIdleRotation & 0x7Fu);
+  if (realtimeTrackCount != 0) {
+    cursor = static_cast<uint8_t>(cursor % realtimeTrackCount);
+  }
   const uint8_t selectedRealtimeTrack = trackManager.getSelectedTrackIndex();
-  if (selectedRealtimeTrack < realtimeTrackCount) {
-    Track& selectedTrack = trackManager.getTrack(selectedRealtimeTrack);
-    if (hasRealtimeIdleWork(selectedTrack)) {
-      selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
-                                               MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
-                                               timingCritical);
+  uint8_t turnUnits = 0;
+  const auto runRealtimeUnit = [&](uint8_t index) {
+    Track& track = trackManager.getTrack(index);
+    if (!hasRealtimeIdleWork(track)) return false;
+    const uint32_t unitStartUs = micros();
+    track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                         MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+                                         timingCritical);
+    ++turnUnits;
+    reportSlowIdleTurnUnit(index, micros() - unitStartUs, micros() - turnStartUs, turnUnits);
+    return true;
+  };
+  const auto turnStartSelected = [&]() {
+    return selectedRealtimeTrack < realtimeTrackCount && runRealtimeUnit(selectedRealtimeTrack);
+  };
+  // One background unit, resuming at the cursor. Stopped-slot reconstruction is background work: running
+  // every loaded track here stacked 120-281 ms turns into the first recording bars.
+  const auto runOneBackgroundUnit = [&]() {
+    for (uint8_t offset = 0; offset < realtimeTrackCount; ++offset) {
+      const uint8_t index = static_cast<uint8_t>((cursor + offset) % realtimeTrackCount);
+      if (index == selectedRealtimeTrack) continue;
+      if (runRealtimeUnit(index)) {
+        cursor = static_cast<uint8_t>((index + 1) % realtimeTrackCount);
+        return true;
+      }
+    }
+    return false;
+  };
+  // DEC-219: a pending deferred stop is served **first inside the walk**, not before the owner dispatch.
+  // Ordering it ahead of every owner (the first attempt) preempted `LoadAndDisplay`/`Persistence`, and one
+  // stop press then froze the panel: `session_20261030_133920.log` has `disp_turn` holes of 16.2 / 16.1 /
+  // **34.1 s** and the owner was starved. The stop lane lives inside `processDeferredIdleMaintenance`, so it
+  // only needs to win the *rotation* -- the owner rotation keeps its own turns, which is what the display
+  // and save lanes depend on. Measured before any priority: 113 `stop_grain` rows in 100 s (mean gap
+  // 962 ms) and a head parked 75 s. Its own branch stays bounded (one to four grains, 600 us).
+  uint8_t pendingStopTrack = 0xFF;
+  for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
+    if (trackManager.getTrack(i).hasPendingDeferredOverdubStop()) {
+      pendingStopTrack = i;
+      break;
     }
   }
-  for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
-    if (i == selectedRealtimeTrack) continue;
-    Track& track = trackManager.getTrack(i);
-    // Stopped-slot reconstruction is background work. Running every loaded
-    // track here stacked 120–281 ms turns into the first recording bars.
-    if (!hasRealtimeIdleWork(track)) continue;
-    track.processDeferredIdleMaintenance(
-        now, postOverdubPlayingMidiDrain, deferredOwner,
-        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn, timingCritical);
+  if (pendingStopTrack != 0xFF) {
+    (void)runRealtimeUnit(pendingStopTrack);
   }
+  if (selectedFirst) {
+    if (pendingStopTrack != selectedRealtimeTrack) turnStartSelected();
+    if (MidiServiceDrain::idleOwnerTurnMayStartAnotherUnit(micros() - turnStartUs)) {
+      (void)runOneBackgroundUnit();
+    }
+  } else {
+    (void)runOneBackgroundUnit();
+    if (MidiServiceDrain::idleOwnerTurnMayStartAnotherUnit(micros() - turnStartUs)) {
+      if (pendingStopTrack != selectedRealtimeTrack) turnStartSelected();
+    }
+  }
+  while (MidiServiceDrain::idleOwnerTurnMayStartAnotherUnit(micros() - turnStartUs)) {
+    if (!runOneBackgroundUnit()) break;
+  }
+  gRealtimeIdleRotation = static_cast<uint8_t>(cursor | (selectedFirst ? 0u : 0x80u));
 }
 
 #if defined(SESSION_CAPTURE)
@@ -1119,21 +1293,22 @@ void loop() {
                                               overdubStoppingForMidiDrain)) {
     midiHandler.handleMidiInput();
   }
-#if defined(SESSION_CAPTURE)
-  uint32_t remainderStartUs = micros();
-#endif
+  // DEC-216: the turn start is taken in **every** build. The realtime walk bounds itself against it, so the
+  // aggregate ceiling must not depend on `SESSION_CAPTURE` being compiled in.
+  const uint32_t idleTurnStartUs = micros();
   if (deferredIdleOwnerAllowed) {
     RuntimeTimingTelemetry::beginIdleMaintBreakdown();
     runDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredIdleOwner,
-                              timingCriticalTrackActive);
+                              timingCriticalTrackActive, idleTurnStartUs);
   }
 #if defined(SESSION_CAPTURE)
-  const uint32_t idleMaintUs = micros() - remainderStartUs;
+  const uint32_t idleMaintUs = micros() - idleTurnStartUs;
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
   DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
   // Task 5.4: near-bar turns only (3x the owner budget), one row per 100 ms. The row names the
   // admitted child sum and the residual; `mask` is the child bitmap (0 snapshot, 1 verification,
-  // 2 source view, 3 visual-cache slice, 4 wrap append, 5 prewarm, 6 record revts).
+  // 2 source view, 3 visual-cache slice, 4 wrap append, 5 prewarm, 6 record revts, 7 stop/session
+  // obligation -- DEC-216).
   if (deferredIdleOwnerAllowed && idleMaintUs >= 24000u &&
       RuntimeTimingTelemetry::idleMaintBreakdownShouldEmit(static_cast<uint32_t>(now))) {
     const uint32_t childUs = RuntimeTimingTelemetry::idleMaintChildUs();
@@ -1157,9 +1332,6 @@ void loop() {
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     trackManager.getTrack(i).notePlayingMidiDrainAfterOverdubStopIdle();
   }
-#endif
-#if defined(SESSION_CAPTURE)
-  remainderStartUs = micros();
 #endif
 
   // Load/Commit/prewarm before pressure reclaim — reclaim after a 64-bar Commit raced the
@@ -1213,7 +1385,7 @@ void loop() {
                       MemoryMonitor::getInternalHeapMinEverFreeBytes(),
                       LoopEventStore::freeChunkCount(), census.capturePasses, census.editPasses,
                       census.undoEntries, census.internalBytes, census.editPassBytes,
-                      census.undoIdBytes, census.externalBytes);
+                      census.undoIdBytes, census.externalBytes, editManager.isLoopEditSession());
       HeapPeakTrace::emitPending(6);
     }
     // DEC-189: one direct-serial row per second while a stop job or a publication is pending. `#CAP` rows for
@@ -1246,7 +1418,10 @@ void loop() {
     // Policy: Critical reclaims disabled-pass chunks (memory_pressure_reclaim_refinement §Policy).
     // Idle-only reclaim at line ~114 misses chunk pressure during RECORDING/PLAYING/OVERDUBBING
     // (session_20260811_021117: append failures with heap headroom, pool at CHUNK_RESERVE).
-    trackManager.reclaimUnreferencedDisabledPasses(nullptr, true);
+    // Do **not** force the reclaim row here: this branch runs every loop while pressure is Critical,
+    // and `true` wrote 10k identical `DIAG,reclaim` rows (`session_20261030_181524.log`), evicting
+    // Tier-A evidence. The emitter's change gate still names pin/reclaim events.
+    trackManager.reclaimUnreferencedDisabledPasses(nullptr, false);
   }
 
 #if defined(SESSION_CAPTURE)

@@ -55,18 +55,21 @@ inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& d
     return false;
   }
   const uint32_t extraTicks = lookaheadBars * ticksPerBar;
-  uint32_t checkEnd = windowStart + windowLength + extraTicks;
-  if (checkEnd > loopLength) {
-    checkEnd = loopLength;
+  // Circular coverage: the window may cross the loop end, so the bar walk wraps instead of
+  // truncating at the loop (a crossing window's head span is checked too).
+  uint32_t checkLength = windowLength + extraTicks;
+  if (checkLength > loopLength) {
+    checkLength = loopLength;
   }
-  if (checkEnd <= windowStart) {
+  if (checkLength == 0) {
     return false;
   }
-  const uint32_t startBar = visualBarForTick(windowStart, ticksPerBar);
-  const uint32_t lastBar = visualBarForTick(checkEnd - 1u, ticksPerBar);
   const uint32_t totalBars = static_cast<uint32_t>(dirtyBars.size());
-  for (uint32_t bar = startBar; bar <= lastBar; ++bar) {
-    if (bar >= totalBars || dirtyBars[bar] != 0) {
+  const uint32_t startBar = visualBarForTick(windowStart, ticksPerBar);
+  const uint32_t barCount = (checkLength + ticksPerBar - 1u) / ticksPerBar;
+  for (uint32_t offset = 0; offset < barCount; ++offset) {
+    const uint32_t bar = (startBar + offset) % totalBars;
+    if (dirtyBars[bar] != 0) {
       return false;
     }
   }

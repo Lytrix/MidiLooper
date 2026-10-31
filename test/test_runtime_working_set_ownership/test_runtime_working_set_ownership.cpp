@@ -2900,8 +2900,12 @@ void test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start
                            "the occupant's finalization must not be disturbed to admit the stop");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kOccupant),
                            "the occupant's working set must survive");
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
-                           "the predecessor must still be capturing after the uncommitted switch");
+  // DEC-233: the denied switch press closes the predecessor's input on the edge and retains its stop;
+  // the interval still owns its rows and the switch still must not commit.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                            "the denied press closes the predecessor's input (DEC-233)");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, kDenied),
+                           "the predecessor's stop stays retained after the uncommitted switch");
 
   // (4) Let the occupant's finalization retire, then turn the lanes: the retained start executes with no
   // further gesture, so the user never presses twice (DEC-078 item 1).

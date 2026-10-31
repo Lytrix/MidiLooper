@@ -393,6 +393,17 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          // Task 4.20 allocation census: rate-limited (one row per diagnostics interval) and raised regardless of
          // transport state — including while a transport runs, which is exactly the budget-8 regime that sheds
          // non-Tier-A head records. Its own boundary is pinned in `test_capture_ring`.
+         // Stop-finalization **liveness**: one row per job whose canonical tail could not begin (or
+         // latched `Denied`) while a same-slot successor held the shared canonical machinery. It is
+         // raised under transport, in the budget-8 regime whose shed path drops non-Tier-A head records
+         // silently -- the regime where the 51 s `CanonicalTail` park was measured
+         // (`session_20261030_143745.log`). Classified here rather than in `CaptureLineTier.h` for the
+         // DTCM reason stated above; pinned in `test_capture_ring`.
+         CaptureLineTier::tagStartsWith(line, stopTailTagPrefix()) ||
+         // DEC-216's aggregate owner-turn row: classified here rather than in `CaptureLineTier.h` because the
+         // header list's literal crossed the RAM1 align edge (see `StopDiagRows.cpp`). Pinned in
+         // `test_capture_ring` beside `stop_tail`.
+         CaptureLineTier::tagStartsWith(line, idleTurnTagPrefix()) ||
          CaptureLineTier::tagStartsWith(line, "DIAG,alloc_census,") ||
          // Task 4.20 allocatability probe: host-requested, but it can only answer where the denial is felt — under
          // transport, the budget-8 regime that sheds non-Tier-A head records. Pinned in `test_capture_ring`. The
@@ -1400,6 +1411,14 @@ SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
 }
 
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount) {
+  // K1 (2026-10-30 plan): the 5 s family is delivered directly when USB has room and only falls back to
+  // the ring otherwise. Under a capture chain the ring's Tier-A population evicted these rows
+  // (`RING,tier_a_evicted,485`), so the latency maxima were unreadable exactly where they mattered.
+  if (serialWriteRoom(64)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,%s,%lu,%lu\r\n"), (unsigned long)micros(), tag,
+                  (unsigned long)maxUs, (unsigned long)overCount);
+    return;
+  }
   emitCapPrintf("#CAP,%lu,DIAG,%s,%lu,%lu\r\n", (unsigned long)micros(), tag,
                 (unsigned long)maxUs, (unsigned long)overCount);
 }
@@ -1449,10 +1468,10 @@ SC_MEM_ATTR void allocationCensusRow(uint32_t heapFreeBytes, uint32_t heapMinFre
                                      uint16_t chunksFree, uint16_t capturePasses, uint16_t editPasses,
                                      uint16_t undoEntries, uint32_t internalBytes,
                                      uint32_t editPassBytes, uint32_t undoIdBytes,
-                                     uint32_t externalBytes) {
-  if (serialWriteRoom(160)) {
+                                     uint32_t externalBytes, bool loopEdit) {
+  if (serialWriteRoom(176)) {
     Serial.printf(SC_FMT("#CAP,%lu,DIAG,alloc_census,heap=%lu,hmin=%lu,chunks=%u,cap=%u,edit=%u,"
-                         "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu\r\n"),
+                         "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu,mode=%u\r\n"),
                   static_cast<unsigned long>(micros()),
                   static_cast<unsigned long>(heapFreeBytes),
                   static_cast<unsigned long>(heapMinFreeBytes), static_cast<unsigned>(chunksFree),
@@ -1460,18 +1479,20 @@ SC_MEM_ATTR void allocationCensusRow(uint32_t heapFreeBytes, uint32_t heapMinFre
                   static_cast<unsigned>(undoEntries), static_cast<unsigned long>(internalBytes),
                   static_cast<unsigned long>(editPassBytes),
                   static_cast<unsigned long>(undoIdBytes),
-                  static_cast<unsigned long>(externalBytes));
+                  static_cast<unsigned long>(externalBytes),
+                  static_cast<unsigned>(loopEdit ? 0u : 1u));
     return;
   }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,alloc_census,heap=%lu,hmin=%lu,chunks=%u,cap=%u,edit=%u,"
-                       "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu\r\n"),
+                       "undo=%u,ib=%lu,eb=%lu,ub=%lu,xb=%lu,mode=%u\r\n"),
                 static_cast<unsigned long>(micros()), static_cast<unsigned long>(heapFreeBytes),
                 static_cast<unsigned long>(heapMinFreeBytes), static_cast<unsigned>(chunksFree),
                 static_cast<unsigned>(capturePasses), static_cast<unsigned>(editPasses),
                 static_cast<unsigned>(undoEntries), static_cast<unsigned long>(internalBytes),
                 static_cast<unsigned long>(editPassBytes),
                 static_cast<unsigned long>(undoIdBytes),
-                static_cast<unsigned long>(externalBytes));
+                static_cast<unsigned long>(externalBytes),
+                static_cast<unsigned>(loopEdit ? 0u : 1u));
 }
 
 // Task 4.20 allocatability probe — on demand only (`!HEAP_PROBE`), never per turn: each row costs a real allocation,
@@ -1574,6 +1595,20 @@ SC_MEM_ATTR void stopGrainTiming(uint8_t track, uint8_t slot, uint8_t phase,
     uint32_t grainStartUs, uint32_t grainEndUs, uint32_t serviceActualUs,
     uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs,
     uint32_t slackUs, uint8_t finishedPhase) {
+  // K1: the companion-family grains (CanonicalTail=5..CompanionBridge=9, `PendingStopPhase`) and any
+  // grain >= 4 ms are the decisive stop evidence; deliver them directly when USB has room, ring otherwise.
+  // The sampler already bounds the rate (1/16), so this cannot become a stream.
+  const bool decisive = (phase >= 5u && phase <= 9u) || (grainEndUs - grainStartUs) >= 4000u;
+  if (decisive && serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,stop_grain,%u,%u,%u,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u\r\n"),
+        (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)phase,
+        (unsigned long)generation, (unsigned long)epoch, (unsigned)destination,
+        (unsigned long)serviceSequence, (unsigned long)grainStartUs, (unsigned long)grainEndUs,
+        (unsigned long)serviceActualUs, (unsigned long)serviceDueUs,
+        (unsigned long)serviceDeadlineUs, (unsigned long)servicePeriodUs,
+        (unsigned long)slackUs, (unsigned)finishedPhase);
+    return;
+  }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_grain,%u,%u,%u,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u\r\n"),
       (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)phase,
       (unsigned long)generation, (unsigned long)epoch, (unsigned)destination,
@@ -1593,14 +1628,35 @@ SC_MEM_ATTR void stopStateTiming(uint8_t track, uint8_t slot, uint8_t fromState,
   } else if (fromState == 7 && toState == 5) {
     // The control boundary releases the prepared playback window immediately;
     // keep the same occurrence-timed protocol edge for host/HITL observers.
-    emitCapPrintf(SC_FMT("#CAP,%lu,ST,Track,OVERDUB_STOPPING,PLAYING\r\n"),
-                  (unsigned long)atUs);
+    if (serialWriteRoom(64)) {
+      Serial.printf(SC_FMT("#CAP,%lu,ST,Track,OVERDUB_STOPPING,PLAYING\r\n"),
+                    (unsigned long)atUs);
+    } else {
+      emitCapPrintf(SC_FMT("#CAP,%lu,ST,Track,OVERDUB_STOPPING,PLAYING\r\n"),
+                    (unsigned long)atUs);
+    }
   }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_state,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),
       (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)fromState,
       (unsigned)toState, (unsigned long)tick, (unsigned long)atUs,
       (unsigned long)serviceSequence, (unsigned long)serviceDueUs,
       (unsigned long)serviceDeadlineUs, (unsigned long)servicePeriodUs);
+}
+
+SC_MEM_ATTR void stopTailBlockedImmediate(uint8_t track, uint8_t slot, uint8_t phase,
+                                          const char* cause, uint16_t grains) {
+  // `cause` is always one of this row's own tokens ("denied" / "no_start"), owned by the caller's carved TU.
+  if (serialWriteRoom(80)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,stop_tail,%u,%u,%u,%s,%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(slot), static_cast<unsigned>(phase), cause,
+                  static_cast<unsigned>(grains));
+    return;
+  }
+  emitCapPrintf("#CAP,%lu,DIAG,stop_tail,%u,%u,%u,%s,%u\r\n",
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), static_cast<unsigned>(phase), cause,
+                static_cast<unsigned>(grains));
 }
 
 SC_MEM_ATTR void stopServiceTiming(uint32_t serviceSequence, uint32_t actualUs,
@@ -1997,6 +2053,63 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
   emitCapPrintf("#CAP,%lu,PERS,result,%lu,%lu,%lu,%s\r\n", (static_cast<unsigned long>(micros())),
                 static_cast<unsigned long>(durationUs), static_cast<unsigned long>(heapBefore),
                 static_cast<unsigned long>(heapAfter), outcome == nullptr ? "?" : outcome);
+}
+
+SC_MEM_ATTR void displaySourceIdentity(uint8_t track, uint8_t slot, uint32_t committedRevision,
+                                       uint32_t committedPassRevision, uint32_t previewRevision,
+                                       uint32_t previewNotes, uint32_t sealedNotes,
+                                       uint32_t stopPreviews, uint32_t stopPreviewNotes, bool pending,
+                                       uint8_t pendingPhase, uint32_t pendingGeneration,
+                                       bool loopEdit, bool retained) {
+  if (serialWriteRoom(224)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,disp_src,t=%u,s=%u,crev=%lu,cpass=%lu,preview=%lu,pnotes=%lu,"
+                         "sealed=%lu,stops=%lu,stopnotes=%lu,pending=%u,phase=%u,pgen=%lu,mode=%u,ret=%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(slot), static_cast<unsigned long>(committedRevision),
+                  static_cast<unsigned long>(committedPassRevision),
+                  static_cast<unsigned long>(previewRevision), static_cast<unsigned long>(previewNotes),
+                  static_cast<unsigned long>(sealedNotes), static_cast<unsigned long>(stopPreviews),
+                  static_cast<unsigned long>(stopPreviewNotes), static_cast<unsigned>(pending ? 1u : 0u),
+                  static_cast<unsigned>(pendingPhase), static_cast<unsigned long>(pendingGeneration),
+                  static_cast<unsigned>(loopEdit ? 0u : 1u), static_cast<unsigned>(retained ? 1u : 0u));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,disp_src,t=%u,s=%u,crev=%lu,cpass=%lu,preview=%lu,pnotes=%lu,"
+                       "sealed=%lu,stops=%lu,stopnotes=%lu,pending=%u,phase=%u,pgen=%lu,mode=%u,ret=%u\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), static_cast<unsigned long>(committedRevision),
+                static_cast<unsigned long>(committedPassRevision),
+                static_cast<unsigned long>(previewRevision), static_cast<unsigned long>(previewNotes),
+                static_cast<unsigned long>(sealedNotes), static_cast<unsigned long>(stopPreviews),
+                static_cast<unsigned long>(stopPreviewNotes), static_cast<unsigned>(pending ? 1u : 0u),
+                static_cast<unsigned>(pendingPhase), static_cast<unsigned long>(pendingGeneration),
+                static_cast<unsigned>(loopEdit ? 0u : 1u), static_cast<unsigned>(retained ? 1u : 0u));
+}
+
+SC_MEM_ATTR void persistenceSdWriteImmediate(const char* stage, uint32_t requestedBytes,
+                                             uint32_t acknowledgedBytes, uint32_t chunkOffset,
+                                             uint32_t filePosition, uint32_t fileSize,
+                                             uint32_t durationUs) {
+  // Direct when USB has room (the overrun can land under transport); ring fallback is Tier-A via `PERS,`.
+  if (serialWriteRoom(96)) {
+    Serial.printf(SC_FMT("#CAP,%lu,PERS,sd_write,%s,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),
+                  static_cast<unsigned long>(micros()), stage == nullptr ? "?" : stage,
+                  static_cast<unsigned long>(requestedBytes),
+                  static_cast<unsigned long>(acknowledgedBytes),
+                  static_cast<unsigned long>(chunkOffset),
+                  static_cast<unsigned long>(filePosition),
+                  static_cast<unsigned long>(fileSize),
+                  static_cast<unsigned long>(durationUs));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,PERS,sd_write,%s,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),
+                static_cast<unsigned long>(micros()), stage == nullptr ? "?" : stage,
+                static_cast<unsigned long>(requestedBytes),
+                static_cast<unsigned long>(acknowledgedBytes),
+                static_cast<unsigned long>(chunkOffset),
+                static_cast<unsigned long>(filePosition),
+                static_cast<unsigned long>(fileSize),
+                static_cast<unsigned long>(durationUs));
 }
 
 /// The window lane's **readiness receipt** (DEC-108 §13b / task 3.9), delivered by the two rules the save-completion

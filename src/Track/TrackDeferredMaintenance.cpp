@@ -1005,6 +1005,15 @@ TRACK_COLD_MEM Loop::PrivateSourceStep Track::stepPrivatePredecessorSourceGrain(
   }
   return step;
 }
+TRACK_COLD_MEM bool Track::hasDeferredConvergenceObligation() const {
+  if (!loopsAllocated()) return false;
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const auto* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime != nullptr && runtime->deferredConvergenceActive()) return true;
+  }
+  return false;
+}
+
 TRACK_COLD_MEM bool Track::serviceDeferredCanonicalConvergence() {
   if (!loopsAllocated()) return false;
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
@@ -1123,6 +1132,17 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       displayTrack.getActiveLoop().isPlaybackSessionExitPublicationGap() &&
       !displayTrack.getActiveLoop().privateSourceOwedForSeal();
   const bool deferBackgroundVisualSource = displayGapSourceOwed && &displayTrack != this;
+  // DEC-231: one off-edge view-prewarm unit per idle turn. Never while another track is timing-
+  // critical; the Record edge stays armed/pending until the state reaches Prepared.
+  // DEC-233: an accepted **Stop** obligation is capacity-blocking work and must not be starved by a
+  // preparation request that returns every turn while it is pending. A retained Start latch keeps the
+  // preparation-first order: preparation is exactly what readies that edge.
+  const PendingInteractionLatch* prewarmOrderLatch = interactionLatch();
+  const bool stopObligationAheadOfPrewarm =
+      prewarmOrderLatch != nullptr && prewarmOrderLatch->kind == PendingInteractionLatch::Kind::Stop;
+  if (!timingCritical && !stopObligationAheadOfPrewarm && stepViewPrewarmForIdle()) {
+    return;
+  }
   // Touched-coverage worker (task 4.6/4.7): one declared grain of the next owed tile, published atomically
   // when that tile's derive completes. It runs **before** every early return below, because the demand was
   // created by an accepted note rather than by this turn, and a turn that returns early would otherwise
@@ -1227,6 +1247,20 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     }
     gStopGrainBurstLastTurnGrains = grainsThisTurn;
+    // DEC-233 decision 3: a successor Start retained behind this interval's Stop must not wait for
+    // publication or cleanup. It is driven **after** the job's own grain, so the successor opens while
+    // the predecessor is still queued and the predecessor keeps its progress. A Stop request is never
+    // driven here (it would stack a second stop job). Scope is the **overdub** lane: a Record job's
+    // geometry/filtering is still provisional, and starting over it was measured to open an overdub on
+    // a take that later publishes empty.
+    const CaptureStopJob* successorOwner = captureStopJobHead();
+    if (hasAcceptedUnexecutedInteraction() && successorOwner != nullptr &&
+        successorOwner->mode == CapturePhase::Overdub) {
+      const PendingInteractionLatch* successor = interactionLatch();
+      if (successor != nullptr && successor->kind == PendingInteractionLatch::Kind::Start) {
+        (void)driveAcceptedInteraction();
+      }
+    }
     // The pending-stop branch also owns a VisualCache source opportunity. It
     // must not exclude the committed display source for the entire Stop FIFO.
     // Use one source grain: private work first, otherwise the gap display source.
@@ -1274,18 +1308,28 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // Record finalization is complete once the interaction job is promoted. Its frozen reader
   // obligation is a presentation-owned descriptor and must be serviced independently of the
   // FIFO interaction ring, so a successor stop can take the next ring head.
-  if (serviceCaptureStopPresentations()) return;
-  // Active-role lease return: after the last custody of this Track retires, the surplus
-  // frozen roles go back to the pool. Bounded and refused while any interval still owes
-  // rows, so this never shortens an admitted overlap.
-  releaseSurplusCaptureStaging();
-  // DEC-160 item 1: an empty Record take whose geometry policy a successor blocked applies it
-  // here once this Track owes no capture and no custody. Same admission gate as the role return
-  // above, so it can never rewrite a live or sealed successor's geometry.
-  settleEmptyRecordGeometry();
-  // Task 6.4: before the accepted-interaction re-drive, because a stop retained on a lapsed transfer
-  // horizon can only be served once this turn has restored the row it waits for.
-  if (replenishLiveOverdubTransferHorizon()) return;
+  //
+  // DEC-216 (mask bit 7, `obligation`): this block is the one class of per-track work that is neither a
+  // visual-cache nor a snapshot child and can run a long indivisible step when it fires -- a stop
+  // presentation retirement, a staging lease release, or a transfer-horizon top-up (which may grow the
+  // pass vector). It was invisible in `idle_maint,breakdown`'s `residual`, which is how a 283,622 us live
+  // turn (session_20261030_114009) could be reported with only 2 us of admitted child work. One scope, one
+  // bit, no behavioural change.
+  {
+    RuntimeTimingTelemetry::IdleMaintChildScope obligationChild(7);
+    if (serviceCaptureStopPresentations()) return;
+    // Active-role lease return: after the last custody of this Track retires, the surplus
+    // frozen roles go back to the pool. Bounded and refused while any interval still owes
+    // rows, so this never shortens an admitted overlap.
+    releaseSurplusCaptureStaging();
+    // DEC-160 item 1: an empty Record take whose geometry policy a successor blocked applies it
+    // here once this Track owes no capture and no custody. Same admission gate as the role return
+    // above, so it can never rewrite a live or sealed successor's geometry.
+    settleEmptyRecordGeometry();
+    // Task 6.4: before the accepted-interaction re-drive, because a stop retained on a lapsed transfer
+    // horizon can only be served once this turn has restored the row it waits for.
+    if (replenishLiveOverdubTransferHorizon()) return;
+  }
   // sits immediately after the admitted stop's grain -- which owns the turn whenever a job
   // exists -- and before the owner-specific branches, so the latch is reachable on every
   // deferred owner lane (the VisualCache branch below is focus-track-only).

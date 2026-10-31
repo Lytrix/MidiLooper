@@ -34,7 +34,13 @@
     },
     "teensy41-capture-serial-ingress": "teensy41-capture-serial",
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
-    "teensy41-capture-serial-investigation-diag": "teensy41-capture-serial",
+    "teensy41-capture-serial-investigation-diag": {
+      "itcm_bytes": 393216,
+      "ram1_variables": 100480,
+      "locals_free": 30592,
+      "padding": 1944,
+      "note": "Diagnostic-only draw_src env (DEC-232 display investigation, 2026-10-30): SESSION_CAPTURE_DRAW_SRC=1 and the investigation families add their literals to DTCM, triggering the documented 4 KB align transfer. RAM1 variables 96,192 -> 100,480 and locals free 34,880 -> 30,592 are the same 131,072 B total; ITCM 391,272 code + 1,944 padding (floor 840) within 12 banks. The default capture env is unchanged."
+    },
     "teensy41": {
       "itcm_bytes": 393216,
       "ram1_variables": 79168,

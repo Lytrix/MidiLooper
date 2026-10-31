@@ -1030,3 +1030,29 @@ destination and MIDI output barrier; an ordinary cache/playhead reset does not
 request transport Stop. Explicit transport Stop still retargets the Record job
 through `requestDeferredOverdubStopToStopped`, silences output and resolves the
 stopped state. The existing overdub invalidation recovery is unchanged.
+
+### Overdub Stop edge and deferred finalization (DEC-233)
+
+An accepted overdub Stop closes that interval's input on the press, independently of finalization
+availability. `Track::stopOverdubbing` leaves `TRACK_OVERDUBBING` for PLAYING (STOPPED when transport
+Stop wins) and keeps the interval's own slot/interval/LoopId/phase, producer rows, open-note
+reservations, held notes, pending changes, preview and session-exit claim. The accepted latch's
+`phaseTick` is the musical boundary: `driveAcceptedInteraction` passes it to `job.phaseTick`, so a
+retry clock never re-derives the close. A repeated Stop is a no-op and never restamps it.
+
+The canonical copy target is **not** a condition for owning the stopped input. Descriptor/cut
+resources (custody destination, capture staging role, transfer row, session-exit destination, signed
+credits) are still proved at admission; `bindCaptureStopWorker` requires an empty, unowned canonical
+output and is retried on ordinary deferred turns through `replenishEmptyCanonicalCaptureOutput`. A
+populated output or a foreign owner is left intact and stays an observable wait -- never cleared to
+force a pass.
+
+`Track::startOverdubbing` hands a retained Stop off before it resets staging, preview or the
+session-exit claim. Only genuine physical exhaustion retains a distinct successor Start beside the
+Stop (the latch's `successorStart` bit); after the Stop binds, that intent transfers into the existing
+Start carrier against the post-binding interval identity and is driven while the predecessor job is
+still queued. Slot switches wait for this slot's own unbound Stop; transport Stop retargets it to
+STOPPED while preserving its first phase and its held-note closure state across `sendAllNotesOff`.
+The display composes the input-closed producer as a frozen source at the closure phase
+(`Track::inputClosedOverdubPreviewForSlot`), never as a live playhead tail; a successor's own open
+notes keep growing.

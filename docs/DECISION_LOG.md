@@ -12058,3 +12058,1343 @@ is the accepted cost of the atomic commit.
 
 `captures/riao-rename-probe/`, `captures/riao-rename-probe2/`,
 `openspec/changes/archive/2026-10-30-realtime-idle-owner-admission-bound/evidence/2026-10-30-ORACLE-FINALIZE.md`.
+
+## DEC-216 — The deferred idle-owner turn is bounded in aggregate, not only per child
+
+**Date:** 2026-10-30
+**Owner:** `main.cpp::runDeferredIdleMaintenance` realtime walk; `MidiServiceDrain::idleOwnerTurnMayStartAnotherUnit`;
+`Track::processDeferredIdleMaintenance` obligation scope (breakdown mask bit 7).
+**Status:** Implemented (native + target build green); device verification owed.
+
+### Problem / evidence
+
+`session_20261030_114009.log` (owner capture, `teensy41-capture-serial`, 32-bar loop, live overdub chain
+75-115 s, external MIDI clock at 47 pulses/s) measures the reported stall precisely:
+
+| Row | Value |
+|---|---|
+| `loop_rem,idle_maint` | **283,622 us** (103.069 s) and **285,832 us** (106.342 s) |
+| `idle_maint,breakdown` (the 285.8 ms turn) | `child=5005, residual=280827, mask=0x44` |
+| `late_on` / `late_off` | max **294,278 / 294,264 us**, ~298 late events per 5 s window |
+| `late_route` ch 2/4/5/8 | 294,005-325,310 us |
+| `midi_input` / `clk` / `tracks` / `usbclk` | 187,112 / 187,040 / 187,035 / 187,040 us (one turn) |
+| `track_order` (track 7 slot 3, overdubbing) | 174,255 us inside `track_update[7]` 186,383 us |
+| `persist_save` / `PERS,work` | 143,399 us / 143,065 us |
+| main-loop gaps > 50 ms in the 40 s chain | **147**; only 11 are named by any `loop_rem` span |
+| after the transport stops | `midi_gap` 5.35 ms, `idle_maint` 0.75 ms -- every symptom is transport-bound |
+
+`ExecutionBounds.md` row 19 already recorded the class as **"Unbounded in aggregate"**. The measured
+283.6 ms is 71x the declared 4 ms child budget (`kOwnerWorkBudgetUs`) and 5.7x the 50 ms alarm. The
+budget object (`IdleOwnerTurnBudget`, `admitIdleOwnerChild`) existed only in tests: production wired a
+single header-only gate for three *named unbounded* children and nothing bounded the **sum** of the up
+to eight tracks the realtime walk visits in one turn. The 5 s periodic `idle_maint` maxima in the live
+window were 27-29 ms even without an outlier, i.e. the standing aggregate was already ~1 clock interval.
+
+### Decision
+
+1. The realtime walk asks `idleOwnerTurnMayStartAnotherUnit(elapsedTurnUs)` before **starting another
+   track unit**. One unit always runs; every further unit must fit `kOwnerWorkBudgetUs`. The turn is
+   therefore bounded to one unit's own cost plus the budget, and the rest resumes on the next turn.
+2. The **first** unit alternates between the selected track and a rotating background cursor (RAM2,
+   `.bss.dma`, NOLOAD; any value is a valid index or phase). The old unconditional walk paid for all
+   eight tracks precisely so no tail track starved; alternation keeps that guarantee without the cost.
+3. Any single unit that alone exceeds 2x the budget is **named** (`DIAG,idle_turn,track=,us=,turn=,units=`,
+   Tier-A) instead of hiding in `idle_maint,breakdown`'s `residual`. The residual is not claimed to be
+   explained by this change.
+4. `serviceCaptureStopPresentations` / `releaseSurplusCaptureStaging` / `settleEmptyRecordGeometry` /
+   `replenishLiveOverdubTransferHorizon` are wrapped in one `IdleMaintChildScope` (mask bit **7**,
+   `obligation`) -- the remaining per-track class that is neither a visual-cache nor a snapshot child.
+5. Persistence is **not** touched: DEC-215 accepted the blocking atomic rename, and deferring the lane
+   under transport was offered and declined. The 143 ms payload slice therefore remains a named,
+   accepted contributor.
+
+### Consequences and limits
+
+The aggregate is bounded; a single unit that is itself 280 ms is **named, not bounded** -- it was
+invisible before, and the next capture's `DIAG,idle_turn` row will identify it (track, duration, and
+whether mask bit 7 is set). Until then, no claim is made that the 283 ms outlier is gone; the claim is
+that it can no longer be *summed* with other tracks' work in the same turn, and that it can no longer be
+anonymous. `persist_save` (143 ms) and the 22-28 ms accepted rename remain separate contributing
+owners. RAM1 is unchanged (`variables 96,192`, ITCM `391,976 + 1,240`); the rotation state is RAM2.
+
+### Evidence
+
+`captures/session_20261030_114009.log`; native **3,709 cases / 7 skipped / 3,702 succeeded / 0 failed**;
+`teensy41-capture-serial` SUCCESS at RAM1 `96,192`; fixtures
+`test_dec216_realtime_walk_starts_no_unit_after_the_turn_budget`,
+`test_dec216_turn_budget_is_tighter_than_the_alarm_and_one_clock_interval`,
+`test_dec216_idle_turn_row_is_tier_a_and_its_boundary_is_exact`.
+
+## DEC-217 — Deferred overdub completions discharge one per turn; the queue is the grain
+
+**Date:** 2026-10-30
+**Owner:** `Loop::dischargeDeferredOverdubCompletions` (`maxDischarge`) and `Loop::serviceOverdubCoverageTurn`.
+**Status:** Implemented (native + target build green); device verification owed.
+
+### Problem / evidence
+
+DEC-216 bounded the deferred idle-owner turn in aggregate, which removed the multi-track stacking
+(`idle_turn` rows then report `units=1` everywhere). The remaining stall was one unit on the odub
+track, and it is always the **touched-coverage tile-completion turn**: every turn above 50 ms in
+`session_20261030_121511.log` coincides with `lcr,src,why=tile`, and `idle_maint,breakdown` reported
+`child=3669 residual=259194 mask=0x4` -- the recut is only 2.6 ms, so 259 ms sat inside the worker.
+
+A capture-only split of that turn named the step (`session_20261030_122722.log`, same behaviour):
+
+| Time | total | prep | pub | **disch** | recut | notes |
+|---|---|---|---|---|---|---|
+| 105.06 | 196,363 | 41,187 | 6,849 | **146,735** | 1,592 | 216 |
+| 117.00 | 239,670 | 32,741 | 12,918 | **192,514** | 1,497 | 202 |
+| 139.03 | 546,958 | 10,321 | 18,165 | **513,812** | 4,660 | 269 |
+| 143.06 | 534,213 | 14,317 | 19,891 | **492,491** | 7,514 | 263 |
+
+`dischargeDeferredOverdubCompletions()` drained **every** completion whose prerequisites had just become
+ready. One publication makes all spans inside its tile ready at once, and each discharge may derive its
+own closure window, so the queue stacked: 93-94 % of the turn. Consequence in the same run: `midi_gap`
+547.7 ms, `late_on`/`late_off` **195.5 ms** (over=1) at the 143 s turn, and `tracks` 331.9 ms.
+`ExecutionBounds` row 36 had declared the worker "structurally bounded per turn (declared event grain +
+one tile); device cost unmeasured" -- the per-*event* grain was bounded, the per-*tile* consequences were
+not.
+
+### Decision
+
+1. `dischargeDeferredOverdubCompletions(uint8_t maxDischarge)`; `0` keeps "drain everything ready" and is
+   the deadline/seal semantic. The worker passes `kDeferredDischargePerTurn = 1`.
+2. A turn that owes no tile also drains one completion, so the queue cannot only advance on publication
+   turns. `recutOverdubSourceView()` runs only when a consequence actually landed.
+3. `materializeDeferredOverdubCompletionsAtDeadline()` is unchanged: the seal still answers any remainder
+   synchronously, so nothing is dropped and nothing is applied twice.
+
+This is compliant with `overdub-pass-overlap-resolution`: obligations "persist until discharged or the
+overdub session ends", execute exactly once, and are coalesced. Same-turn discharge was never required.
+
+### Consequences and limits
+
+The completion turn is now `prep + pub + one discharge + recut` -- worst measured `prep` is **48,633 us**
+and `pub` 22,124 us, so the turn can still reach ~80 ms, and the remaining queue drains over the
+following turns at roughly one derive each. Those are the next named owners, not claimed as bounded
+here. Persistence (123-163 ms `persist_save`) remains DEC-215's accepted blocking commit.
+
+### Evidence
+
+`captures/session_20261030_121511.log`, `captures/session_20261030_122722.log`; fixtures
+`test_dec217_deferred_discharge_is_one_completion_per_turn` (mutation-red: removing the bound discharges
+(3 instead of 1) and `test_dec217_unbounded_discharge_drains_every_ready_completion`; full native 3,711 / 7 skipped / 3,704 succeeded / 0 failed; build SUCCESS at RAM1 `96,192`, HEX `f6e0f0a5...`.
+
+## DEC-218 — `VCACHE,idle_src` is cadence-bounded; DEC-216 made the idle lane cheap enough to flood the ring
+
+**Date:** 2026-10-30
+**Owner:** `Loop::emitVisualCacheIdleGatherPath` (`src/Loop/LoopVisualCache.cpp`).
+**Status:** Implemented (target build green); device verification owed.
+
+### Problem / evidence
+
+DEC-216 bounded the deferred idle-owner turn to one unit plus the turn budget. A turn became cheap, so
+the visual-cache idle lane runs far more often than before — and `VCACHE,idle_src` was emitted once per
+slice with no cadence. The result is a capture-ring flood that destroyed the run it was recording:
+
+```
+#CAP,130178154,RING,tier_a_evicted,20,first=47328168
+#CAP,130178163,RING,shed,104853
+```
+
+`session_20261030_124353.log`: **12,782 of 12,784** `VCACHE,idle_src` rows were byte-identical
+`None,src,None,root_rev,0,playback_rev,<n>` (median inter-row gap 0.1 ms), ~160 rows/s. That one family
+owned the 1 MiB ring and shed **104,853** records at 130.18 s, including the owner's 12-overdub chain and
+20 Tier-A rows. Comparable runs before DEC-216 (`121511`, `122722`) had 0-19 such rows.
+
+This is a regression of observability introduced by DEC-216, not a device fault: no reader crash, no
+reboot, no `CrashReport`.
+
+### Decision
+
+1. Emit only on a **change** of the served source/identity (`lastVisualCacheIdleGatherSource_`,
+   `lastVisualCacheIdleOverlayRejected_`, `publishedSnapshotRevision()`, `playbackRevision`) **or** one
+   heartbeat per 5 s.
+2. Hard **200 ms floor**, so a state that flips between two values cannot recreate the flood; worst case
+   5 rows/s against ~160/s.
+3. State lives in `DMAMEM` (RAM2) with a magic guard, because `.bss.dma` is NOLOAD and RAM1 has no growth
+   allowance; one DTCM section byte costs 32 B. `variables` stays `96,192`.
+4. The row keeps its meaning: the first slice of a new source still logs immediately, so the "which
+   source served the cache" question is answered without a per-slice trace.
+
+### Consequences and limits
+
+Retry storms are no longer *counted* by this row. A repeated identical source is visible only once per 5 s
+heartbeat, so a future investigation that needs retry-rate evidence must use `DIAG,idle_turn` (per-unit
+duration, Tier-A) rather than the count of `idle_src` rows. Recorded deliberately: ring survival wins over
+per-slice cardinality.
+
+### Evidence
+
+`captures/session_20261030_124353.log` (`RING,shed`); `captures/session_20261030_121511.log` and
+`captures/session_20261030_122722.log` as the pre-DEC-216 controls; image `dadccf6b...`.
+
+## DEC-219 — A pending deferred stop owns the idle-owner turn, ahead of the owner rotation
+
+**Date:** 2026-10-30
+**Owner:** `main.cpp::runDeferredIdleMaintenance` (priority turn), next to the `SlotProvision` exemption.
+**Status:** Implemented (target build green); device verification owed.
+
+### Problem / evidence
+
+DEC-216 rationed the realtime idle walk to one unit plus the budget. The pending-stop lane lives inside
+`Track::processDeferredIdleMaintenance`, so it is only reached on the owner turns that dispatch that walk.
+On `session_20261030_125159.log` (fresh 41 s Record + 8 overdubs at ~3 s cadence) that lane was starved:
+
+| Measurement | Value |
+|---|---|
+| `stop_grain` rows in 100 s | **113** (mean gap **962 ms**, **7 holes > 5 s**) |
+| `ODUB,stop,admission` | `queue_full` at 81.7-88.3 s, then `retained (capacity): stop_job_pending slot=3 interval=17 phase=2` |
+| stop FIFO | full (8) from 81.7 s |
+| head retirement | **80.0 s -> 155.2 s (75 s)**, released only by the transport stop at 155.2 s |
+
+Controls on the same walk (`121511`, `122722`) have 635 / 917 `stop_grain` rows and **0** retained stops,
+so the aggregate bound alone is not the trigger; the 8-deep FIFO plus a snapshot backlog is what exposed
+the ordering. The lane's own branch is already bounded (one to four grains, 600 us); the defect was **who
+gets the turn**, not how much a grain costs.
+
+### Decision
+
+Before the `PlaybackViewMaintenance` / `Persistence` / `LoadAndDisplay` early returns, and before the
+stopped/playing split, a pending deferred stop is served first and owns the turn. This is the contract the
+code already states for an admitted stop ("the admitted stop's grain owns the turn whenever a job exists");
+it is now enforced at the dispatch point instead of depending on the owner rotation.
+
+### Consequences and limits
+
+A pending stop delays the other owner turns (snapshot, window build, persistence, load/display) by that
+turn. The stop branch's own bound is unchanged. This is a priority ordering, not a rate fix: if the head
+needs more grains than the FIFO can absorb at the producer's cadence, the retained-stop path still applies.
+
+### Evidence
+
+`captures/session_20261030_125159.log`; controls `session_20261030_121511.log`, `session_20261030_122722.log`.
+
+### Correction (2026-10-30, same day) — the priority belongs inside the walk, not ahead of the owner dispatch
+
+The first implementation served the pending stop **before every owner**, at the top of
+`runDeferredIdleMaintenance`. That preempted `LoadAndDisplay` and `Persistence`, and one stop press froze the
+panel: `session_20261030_133920.log` shows `disp_turn` holes of 2.8 / 6.4 / 6.7 / 16.2 / 16.1 / **34.1 s**
+and the owner never recovered. The stop lane lives inside `processDeferredIdleMaintenance`, so it only has
+to win the **rotation**; starving the other owners is not part of its contract.
+
+**Landed instead:** the pending-stop scan runs at the head of the realtime walk, before the
+selected/background choice, and the selected track is skipped that turn when it was already served as the
+stop track. The owner rotation keeps its own turns, which is what the display and save lanes depend on.
+Image `39abbfed...`, RAM1 `96,192` unchanged. Device verification owed: `disp_turn` must show no hole above
+the coverage-turn cost, and the stop must retire without `Overdub stop retained`.
+
+## DEC-221 — HITL accepts MIDI files as note patterns, and an overdub slices a continuous stream
+
+**Date:** 2026-10-30
+**Owner:** `scripts/hitl/midi_pattern.py` (parser), `scripts/hitl_midifile_chain.py` (run rig).
+**Status:** Implemented and exercised on device; the musical run is blocked by a device defect (below).
+
+### Problem / evidence
+
+Every HITL recipe so far generates notes from a fixture (pitch range, step, gate), so a musical check
+the owner actually plays -- a 16th line recorded for 20 bars, then chord overdubs of different
+durations -- could not be reproduced. Two run shapes were also wrong in the first rig:
+
+1. **The overdub pattern restarted at every pass.** Slicing the file per window put the same downbeat
+   in every overdub, so the passes were not musically distinct and did not reproduce playing over a
+   running phrase. Owner direction: *"the record/overdub button must be timed to slice a continuously
+   playing overdub midi file."*
+2. **A retry stacked on the old take.** Owner direction: *"ensure to clear the loop if you retry the
+   hitl pass."*
+
+### Decision
+
+1. `hitl.midi_pattern.load_midi_pattern(path, loop_bars=None)` parses one loop of a standard MIDI file
+   into 24 PPQN clock positions: bar-rounded length by default, event-at-the-bar-line wrapping
+   (note-offs before the next note-ons at the same pulse), velocity-0 `note_on` treated as note-off,
+   tempo/CC ignored (the host drives the clock), and an explicit refusal when `loop_bars` is shorter
+   than the file.
+2. `hitl_midifile_chain.py` streams the **overdub pattern continuously** and schedules each Record
+   press on the same pulse timeline, with the press released on the window edge, so each pass captures
+   a coherent slice. Windows are `--overdub-beats` long (default 1, 4, 8) with `--overdub-gap-beats`
+   between them (default 1, refused above 4).
+3. The rig **clears the scratch slot** (long-press loop button, `--slot`) before recording unless
+   `--no-clear`, so a retry never stacks on the previous take.
+4. The record stop releases **before the loop boundary**: a stop scheduled at the boundary wraps and
+   produced an 8-tick take (`Recording stopped @ tick 136 (recStart=128 length=15360)`). With the lead
+   the same take reports `tick 15448 (recStart=120 length=15360)` -- a full 20-bar take.
+
+### Consequences and limits
+
+Unit tests pin the parser and the beat plan (`scripts/test_hitl_midi_pattern.py`, 8 cases). The rig
+speaks MIDI only; it never uploads, and the capture reader is the caller's business.
+
+**Device finding from the same runs (open, not this decision):** a 20-bar take drives the device into
+the heap floor and the record-stop lane blocks MIDI input:
+
+| Run | Observation |
+|---|---|
+| `session_20261030_140339.log` | `heap=32768` from the first census, **541** `#MEM_DENIED op=overdub_start`, 599 `snapshot_reserve`, `late_on` 513 ms -> 143-155 ms with ~300 late/5 s. Every overdub start refused. |
+| `session_20261030_140819.log` (fresh boot, `heap=192512`) | record stop correct (`tick 15448`, 20 bars), `midi_gap` 378 ms, `idle_maint` 155 ms, then the host clock pump **blocked**: the device stopped draining MIDI IN during the record-stop finalization, so the rig's pulse 2017 never went out. |
+
+That is the existing "overdub start denied at the heap floor" family (task 4.20) plus a record-phase
+input stall; neither is caused by the rig, and both must be fixed before a 20-bar musical run can
+complete.
+
+### Evidence
+
+`captures/midifile-chain-05`, `captures/midifile-chain-06`, `captures/session_20261030_140339.log`,
+`captures/session_20261030_140819.log`.
+
+### Device finding #2 (2026-10-30, run `midifile-chain-07`) — a cleared slot + 20-bar first record stalls its stop
+
+The rig completed cleanly (`clear`, `record` 1,914 clocks, `overdub_stream` 744 clocks with
+`capture_windows [[0,24],[48,96],[168,192]]`, 172 note events + 12 control edges, `behind_pulses 0`,
+exit 0). The device did not follow:
+
+| Observation | Value |
+|---|---|
+| record stop | `Recording stopped @ tick 15448 (recStart=120 length=15360)` — a full 20-bar take |
+| track state | stuck in `STOPPED_RECORDING` (`PAINT_BEAT state=5`) for the rest of the capture (85 s) |
+| stop lane | `Deferred stop stalled: canonical bridge window denied; companion path kept` (67.0 / 69.6 s) |
+| window lane | `win_frozen_readiness,...,build_drop,completed_unpublished` repeatedly |
+| cost | `late_on` **276,220 us**, `midi_gap` **411,955 us** |
+| overdubs | **zero** `ODUB,stage,manager_enter` — every window press landed on a track that never returned to PLAYING |
+
+This is the first-record shape on a **cleared** slot, so the clear the owner asked for (correctly) is
+what exposes it: the earlier 20-bar run recorded over populated content. The record stop's companion
+route reports "kept" but the track never leaves `STOPPED_RECORDING`, and the window lane drops every
+completed build as unpublished. Next slice is that publication handoff; the rig needs no change.
+
+### Evidence (finding #2)
+
+`captures/session_20261030_141122.log`, `captures/midifile-chain-07/midifile-chain.json`.
+
+### Owner run spec (2026-10-30) — 12 overdubs from 1/4 bar to 2 bars
+
+The rig now defaults to **12** overdub windows evenly spaced from **1 beat (1/4 bar) to 8 beats (2 bars)**
+with a 1-beat gap (`--overdub-count/--overdub-min-beats/--overdub-max-beats`, or an explicit
+`--overdub-beats`), and the take is ended with the **global transport stop** (`--record-stop-mode
+transport`), which does retire the record lane, instead of pressing Record again.
+
+Windows for the owner run (`midifile-chain-08`):
+`[0,24] [48,39] [111,55] [190,70] [284,85] [393,100] [517,116] [657,131] [812,146] [982,161]
+[1167,177] [1368,192]` clocks -- 12 passes, 1.0-8.0 beats, 1.0 beat gaps.
+
+**Device result:** `Recording stopped (to STOPPED) @ tick 15448 (recStart=120 length=15360)` (a correct
+20-bar take, no record-stop wedge on the transport path), then the take committed (`cap=7, edit=1`) but the
+track stayed in `STOPPED_RECORDING` (`PAINT_BEAT state=5`) for the rest of the capture (108 s). **Zero**
+`ODUB,stage,manager_enter` rows: no overdub press was accepted after the stop, so the 12 windows never ran.
+Cost in that window: `late_on` 239,233 us, `midi_gap` 376,208 us, and `Deferred stop stalled: canonical
+bridge window denied; companion path kept`. Evidence: `captures/session_20261030_141548.log`,
+`captures/midifile-chain-08/midifile-chain.json`.
+
+## DEC-222 — The overdub stop's two state transitions were invisible to the capture
+
+**Date:** 2026-10-30
+**Owner:** `Track::acceptOverdubStop` (`src/Track/TrackOverdubLifecycle.cpp`), `CaptureLineTier` (`ODUB,`).
+**Status:** Implemented (build green, flashed, exercised); observability fix incomplete.
+
+### Problem / evidence
+
+The owner reported that the track **does** leave the record state on the panel while the capture claimed it
+did not. The owner was right and the earlier claim in DEC-221 ("stuck in `STOPPED_RECORDING`") was my
+misreading: `PAINT_BEAT state=` prints `TrackState`, where **5 = TRACK_PLAYING** and 6 = OVERDUBBING
+(`include/TrackState.h`), not `STOPPED_RECORDING`. `session_20261030_142043.log` in fact shows the track
+recording (state 3) -> PLAYING (5) -> ten OVERDUBBING (6) episodes, and the take committed
+(`cap=11, edit=8`).
+
+The real defect is that the overdub lifecycle emitted **no** `ST,Track` row and **no** `ODUB,` row at all in
+that run (`grep -c 'ST,Track,OVERDUBBING'` = 0, `grep -c 'ODUB,'` = 0) even though ten overdub episodes ran.
+`Track::acceptOverdubStop` wrote `trackState` directly for `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING`,
+bypassing `transitionState`'s `logger.logStateTransition`. A capture could therefore not see the overdub
+schedule, which is exactly the evidence a musical run needs.
+
+### Decision
+
+1. `acceptOverdubStop` now emits the two `ST,Track` rows itself (it cannot call `transitionState`: that runs
+   the armed-pre-roll, telemetry and pending-start side effects this path must not re-run).
+2. `ODUB,` is Tier-A in `CaptureLineTier` (it was `ODUB,stop,` only), because gesture rows are what a musical
+   run correlates against and the timing-critical flush sheds non-Tier-A rows. No RAM1 cost: the `ODUB,stop,`
+   literal was replaced by the shorter `ODUB,`.
+
+### Consequences and limits
+
+The stop-side transitions are now visible. **The start side is still silent**: `session_20261030_142043.log`
+has zero `ST,Track,PLAYING,OVERDUBBING` and zero `ODUB,stage,manager_enter` rows while the device is
+verifiably overdubbing, so the start path still sets the state without a capture row (or the rows are
+produced by a carrier that does not log). That is the next observability item and it is **not claimed fixed**
+here.
+
+Device cost of the same run (measured, unchanged by this decision): `late_on` 258,751 us, `midi_gap`
+376,587 us, `idle_maint` 146,132 us, `tracks` 23,144 us -- the known stall family remains the performance
+blocker.
+
+### Evidence
+
+`captures/session_20261030_142043.log`, `captures/midifile-chain-09/midifile-chain.json`.
+
+### DEC-223 — every state write emits `ST,Track` (`forceSetState` was silent)
+
+`Track::forceSetState` wrote `trackState` without a capture row, so any path that reached a state through it
+(retained start, load, slot clear) left the log with no transition while the panel showed it. It now emits one
+`ST,Track` row per **real** change (a no-op set stays silent).
+
+Verified on device (`session_20261030_142445.log`, image with DEC-222 + DEC-223):
+
+| Row | Before | After |
+|---|---|---|
+| `ST,Track,PLAYING,OVERDUBBING` | 0 | **4** |
+| `ST,Track,OVERDUBBING,OVERDUB_STOPPING` | 0 | **6** |
+| `ST,Track,OVERDUB_STOPPING,PLAYING` | 0 | **6** |
+| `ODUB,` rows | 0 | **34** (`manager_enter`/`manager_done` 4 each) |
+
+**Known blemish, not fixed:** each stop edge is logged **twice** at the same microsecond (two emitters in the
+same turn: the explicit rows added by DEC-222 and the transition setter). The rows are correct, the duplication
+is cosmetic and is the next cleanup; it does not affect the correlation (first row per edge is the same
+transition). Cost in the same run is unchanged: `late_on` 247,782 us, `midi_gap` 375,900 us, `idle_maint`
+155,878 us. Evidence: `captures/session_20261030_142445.log`, `captures/midifile-chain-10/`.
+
+## DEC-224 — Stop-grain quantum 32 -> 8 was tried and reverted: the cost is a denial, not the grain size
+
+**Date:** 2026-10-30
+**Owner:** `Config::DEFERRED_STOP_PREPARATION_QUANTUM`, `Track::processDeferredOverdubStopGrain`.
+**Status:** Reverted; recorded so it is not retried blind.
+
+### What was measured
+
+`session_20261030_142445.log` has the last sustained block of the overdub chain: `loop_rem,idle_maint,96,1`
+landing on `stop_grain,7,3,5,...` -- **phase 5 = `CanonicalTail`** of a deferred overdub stop, i.e. ~3 ms per
+quantum unit at 32 units.
+
+### What was tried
+
+`DEFERRED_STOP_PREPARATION_QUANTUM` 32 -> 8 (a grain near 25 ms instead of 96 ms). Built, flashed and run on
+the 12-window rig (`session_20261030_143427.log`, `session_20261030_143745.log`).
+
+### Why it was reverted
+
+The 96 ms grain was not the job's *cost*, it was one step of a job that was **already being denied and
+retried**: the same runs log `Deferred stop stalled: canonical bridge window denied; companion path kept`
+followed by `retargeted stop has no canonical base; raw pass only`, and the job is still pending in
+`AtomicTransfer` at 122 s (`#STOP_TRACE,122172,stop=1,...,phase=10,...,pub=1,passes=1,len=15360`). Smaller
+grains make the *same* denial loop take four times as many turns: with 8 the record stop produced only **4**
+grains in 60 s and no overdub window opened.
+
+A second, independent finding from the same runs: while the transport is stopped but the host keeps sending
+clock, `runDeferredIdleMaintenance`'s all-stopped branch refuses **every** turn
+(`allTracksStopped && clockManager.isClockRunning()`), so the stop lane barely advances. The rig now releases
+the clock pump for the settle window (`hitl_midifile_chain.py`), which is correct regardless of the quantum.
+
+### Consequence
+
+Quantum stays **32**. The remaining item-2 work is the companion-bridge denial on a first-record stop
+(`canonical bridge window denied; companion path kept` -> parked job), which is the documented 6.1b/6.2 shape,
+not a grain-size problem. Items 1, 3 and 4 of the stall list are the same job: they all wait on that denial.
+
+### Evidence
+
+`captures/session_20261030_142445.log`, `session_20261030_143427.log`, `session_20261030_143745.log`,
+`captures/midifile-chain-11/`, `-12/`.
+
+## DEC-225 — A stop's canonical tail that never begins is a parked job, and it now retires bounded
+
+**Date:** 2026-10-30
+**Owner:** `Track::processDeferredOverdubStopGrain` (`CanonicalTail`), `LoopPlaybackRuntime::canonicalTailIdle`/`canonicalTailDenied`, `DebugSessionCapture::stopTailBlockedImmediate`.
+**Status:** Implemented (native + target build green; device leg `midifile-chain-15` with a verified clear — symptom gone, the liveness bound itself not triggered, see *Device leg*).
+
+### Problem / evidence
+
+DEC-224 measured a stop job sitting at `CanonicalTail` and concluded the cost was the companion-bridge denial.
+Re-reading the last 12-window run corrects the shape: **the tail never began.** `session_20261030_143745.log`
+has `#STOP_TRACE,...,phase=5` (CanonicalTail) from **63.0 s to 113.8 s**, and the only thing that moved it was the
+transport stop at 113.8 s retargeting the job (`retargeted stop has no canonical base; raw pass only`). The
+capture has **zero** `stop_grain` rows for the job (the phase never stepped), `canonicalTailPhase` stayed `Idle`,
+and no row named the refusal. The same run's shape is a **same-slot successor**: the rig presses Stop at 60.99 s
+and its next window starts an overdub at 61.99 s, so for the whole chain the slot's shared canonical machinery
+(capture bridge, frozen companion apply, and a predecessor's retained `canonicalPassInputs`) is owned by the
+successor. `beginFrozenCanonicalTail` refuses every grain, the job holds the FIFO head, the stop owner and the
+session-exit receipt, and none of the twelve windows the run was recorded for opens.
+
+The second reachable state is a **begun** tail that latches `Denied` (`stepFrozenCanonicalTail` when a frozen
+generation stopped matching). Nothing clears that latch before the job's commit, and `beginFrozenCanonicalTail`
+requires `Idle`, so that job can never advance either.
+
+Control: the stop lane measured **~48 grains/s** on the same rig (`session_20261030_142445.log`, service
+sequence deltas), so this is a park of thousands of grains, not the 96 ms per-grain cost DEC-224 bounded.
+
+### Decision
+
+1. `kCanonicalTailStartStallGrains = 32` (`include/TrackPlaybackRuntime.h`) bounds **no-start** grains at
+   `CanonicalTail`. A tail that **has** begun is legitimate work and is deliberately not counted; DEC-070's 512
+   remains the retargeted companion bound, and the tail's per-grain cost is still unbounded (handoff item 3).
+   The number is under a second at the measured cadence, longer than a 1-beat window gap.
+2. At `CanonicalTail`, if `canonicalTailIdle()` past that budget, or `canonicalTailDenied()` at any grain, the job
+   sets `canonicalBaseAbandoned` and takes the existing DEC-165 raw-only retirement: the staged pass commits once
+   through the superseded/no-bridge route and, for a `Playing` destination, `AtomicTransfer` records the DEC-172
+   slot-level convergence obligation. The inline companion publish is lost for that interval; the derived
+   representation is rebuilt by the obligation.
+3. One Tier-A row names the refusal: `#CAP,...,DIAG,stop_tail,<track>,<slot>,<phase>,<denied|no_start>,<grains>`
+   (`stopTailBlockedImmediate`, direct when USB has room, ring as the fallback). It is emitted once per blocked job;
+   the logger's `Deferred stop stalled:` note is once per **Track**, so a second episode would otherwise be silent.
+4. The row's prefix lives in a new DTCM-carved TU (`src/Utils/StopDiagRows.cpp`, `linker/imxrt1062_t41_lcr.ld`),
+   together with DEC-216's `DIAG,idle_turn,` prefix, which moved **out of** `CaptureLineTier.h`: the header list is
+   instantiated in every including TU and that 16-byte literal crossed the `_VectorsRam` align edge
+   (`variables` 96,192 -> 100,288, ITCM code byte-identical). Classification is unchanged; only placement moved.
+
+### Consequences and limits
+
+A Playing stop whose tail is starved now retires within ~32 grains and owes convergence instead of parking for the
+whole successor chain. A begun tail is untouched. **Not claimed:** the tail's own cost is still not bounded, and
+the successor contention itself (two intervals needing one slot-level canonical machinery) is not removed; the
+escape is the liveness answer. Device acceptance is the 12-window rig: `stop_tail` rows must appear for the
+blocked intervals, the FIFO head must retire before the next press, and `late_on`/`midi_gap` must fall with the
+windows actually opening.
+
+### Verification
+
+- `test_6_2_window_denied_first_record_stop_retires_bounded` (real start/stop, same-slot successor, window denied,
+  capture bridge held): retires within `kCanonicalTailStartStallGrains + 64` turns, one pass, one publication, slot
+  owed. Mutation (`#if 0` on the escape): **512 turns, phase 5, tail Idle, zero passes** -- exactly the device park.
+- `test_6_2b_denied_canonical_tail_retires_immediately`: terminal latch escapes on the first grain (<= 8 turns),
+  one pass, slot owed. Mutation: 64 turns, phase 5, tail `Denied`.
+- `test_capture_ring` pins `DIAG,stop_tail,` and `DIAG,idle_turn,` in the production predicate (positive and
+  boundary-negative); `test_capture_line_tier` pins that `idle_turn` stays out of the header list.
+- Full native **3,713 / 7 skipped / 3,706 succeeded / 0 failed**; `teensy41-capture-serial` SUCCESS, RAM1
+  `variables 96,192` (unchanged), ITCM `392,120 + 1,096` (floor 840).
+
+### Evidence
+
+`captures/session_20261030_143745.log`, `session_20261030_143427.log`, `session_20261030_142445.log`;
+`test/test_shared_capture_finalization/test_shared_capture_finalization.cpp`.
+
+### Device leg (2026-10-30, `midifile-chain-15` — verified clear, authoritative)
+
+**First attempt (`midifile-chain-13`) was invalid and exposed the tooling gap:** its clear was refused by
+`Clear refused: deferred save temporarily blocked by post_load_holdoff; slot left untouched` (a slot
+restore had committed 175 ms earlier), the rig did not check the outcome, and its Record press opened an
+overdub on the old take. The rig now verifies the clear against the device log (`MIDI: Clear selected
+slot N`), retries while the holdoff refuses, and refuses to record unless the requested slot is empty
+(`--capture-log` auto-discovers `captures/.current_session`; `scripts/test_hitl_midifile_chain_clear.py`
+pins the outcome/slot/appended-window contract).
+
+The authoritative run on image `52f35ee9…` (boot proved `boot_reset,crash=0`, `BOOT,load,ok`):
+
+- clear **verified on the first attempt** (`Clear selected slot 4`, attempts=1);
+- 20-bar fresh take (`Recording stopped @ tick 15336`), 12/12 windows, `behind_pulses 3`;
+- `cap=13`, `edit=124`, 480 display notes; heap min **61,440 B** (no floor), no `#MEM_DENIED`, no start
+  refusal, no retained stop, `RING,shed=2`, no overflow;
+- **no `stop_tail` row**: the tails began and worked. Job spans from the 1 Hz `#STOP_TRACE`: most retire in
+  1-3 s; two late jobs spent ~5 s and ~12 s in the companion phases (gen 20: 911→916 s; gen 38:
+  935→949 s, phase 5→7) — the remaining cost is **busy companion work**, not a park;
+- the record-start window is the one large latency sample (`midi_gap` 247,141 us, `late_on` 163,221 us,
+  `late_off` 165,781 us, `idle_maint` 37,860 us with 280 us residual); the following windows read
+  `midi_gap` 5-36 ms and `late_on`/`late_off` 28-38 ms;
+- one `loop_rem,persist_save,144,600` at the record stop and a live `win_gap_overrun`
+  (`permitted=64, overruns=6, overrunMax=134, running=1`) at 899.9 s — the accepted blocking save commit
+  (DEC-215), not the stop lane.
+
+**Capture limit:** the 5 s telemetry family (`midi_gap`, `late_on`/`late_off`, `win_gap`) and the
+`stop_grain` samples stop at ~899 s in this log; only the 1 Hz `#STOP_TRACE`, the `loop_rem` one-shot and
+the periodic `alloc_census` cover the overdub chain. There is no `RING,stats` row, so a late-ring
+delivery cannot be ruled out; the job spans above come from `#STOP_TRACE`, not from the missing 5 s rows.
+**Not claimed:** chain-time latency maxima (`midi_gap`/`late_on`) beyond the windows that were delivered,
+and that the liveness bound fires on a starved device tail (the fixture remains that proof).
+
+## DEC-226 — Multi-frame persistence is parked at admission while capture or an accepted stop owns the interval
+
+**Date:** 2026-10-30
+**Owner:** `StorageManager::processDeferredSaveState` (admission gate), `WorkspaceSave::writeDeferredCapturePassChunk` (physical write row), `capture_session.py` (final-stats request).
+**Status:** Implemented (native + target build green; device leg `midifile-chain-16` run — the 144 ms save step no longer crosses the chain).
+
+### Problem / evidence
+
+`session_20261030_154306.log` (`midifile-chain-15`) shows the record stop resuming PLAYING while its accepted stop job was
+still in flight, and the already-admitted workspace save running **two 144,208 us `CapturePassChunk` slices** into the
+resumed transport (`PERS,work,...LoopPersist,slot:7:3,payload_slice`, `loop_rem,persist_save,144600`, and a live
+`win_gap_overrun,permitted=64,overruns=6,overrunMax=134,running=1`). The scheduler's own comment said multi-frame work
+must never run while capture/stop is live, but the code only returned early for **recording**; during overdub and a
+stop in flight it ran one multi-frame step per turn and broke afterwards. A step in flight at the resume edge is not
+preemptible, so the 512-byte write blocked the main loop for its full SD latency.
+
+### Decision
+
+1. The early admission gate now tests `isCaptureActiveForPersistence()` — a live capture interval **or** an accepted
+   stop/finalization still in flight — **before** any multi-frame step, and returns after the durability flush. This
+   is the narrow boundary the plan asks for: the check and the potentially blocking step cannot be separated by
+   other scheduler work.
+2. The **mid-pass capture-chunk flush stays available** (`flushOneQueuedCaptureChunkDuringTransport`). Every sealed
+   capture chunk is admitted to `PersistenceQueue` regardless of record/overdub, so the flush remains the durability
+   path while the multi-frame writers are parked.
+3. **DEC-081 is preserved:** ordinary `PLAYING` with no capture and no stop in flight is not a gate and still runs
+   the multi-frame writer in bounded slices.
+4. The physical write is named: `PERS,sd_write,<stage>,<req>,<ack>,<chunk_off>,<file_pos>,<file_size>,<us>` — one row
+   for every failure and every write >= 4 ms, sampled at 200 ms otherwise. `file_pos == file_size` is an extension
+   (allocation/metadata in play); `file_pos < file_size` is an overwrite. This is the Phase B discriminator; the
+   sampled fields are in RAM2.
+5. `capture_session.py` requests `!TRACE_DRAIN` + `!CAP_IDENTITY_STATS` before closing, so a capture carries its own
+   `RING,stats` (the final-stats path is best-effort; see the limit below).
+
+### Consequences and limits
+
+The multi-frame save now stays owed through a capture/stop interval and completes in the quiet window after it (device:
+the slot-body writes ran at 142 s, after the chain, at 10-29 us each). The durability of an in-progress take is the
+sealed-chunk flush, not the workspace writer. A capture that keeps starting new windows can therefore keep the
+workspace save owed until the chain ends — accepted by the plan; the slot is dirty throughout.
+
+### Verification
+
+- **Native:** `test_storage_drain_restore` 28/28, including new `test_a1_an_overdub_interval_parks_the_multi_frame_writers`,
+  `test_a1_an_accepted_stop_in_flight_parks_the_multi_frame_writers`, the DEC-081 playback pin, and the existing
+  recording/mid-pass-flush guards. Full native **3,715 / 7 skipped / 3,708 succeeded / 0 failed** (storage suite 28/28; target build
+  green at RAM1 `96,192`, ITCM `392,120 + 1,096`).
+- **Device (`midifile-chain-16`, image `dfd4c842…`, boot `boot_reset,crash=0` / `BOOT,load,ok`):** clear verified on
+  the first attempt; 20-bar take, 12/12 windows, `behind_pulses 0`; `cap=13`, `edit=93`. **No multi-frame `PERS,` rows
+  during the chain** — only `PERS,mid_pass` chunk flushes at 77.0-80.2 s; **zero `win_gap_overrun`**; the single
+  `persist_save` row in the chain is 3,253 us. The only `PERS,sd_write` rows are the deferred slot-body writes at
+  142.2-143.6 s: 512 bytes each, **extension** (`file_pos == file_size`), **10-29 us**. The 144 ms step did not recur.
+- **DEC-225 also validated on device:** `DIAG,stop_tail,7,3,5,no_start,32` at 130.19 s (the tail could not begin for
+  the no-start budget), and the job retired by 131.21 s.
+- **Display:** `disp_turn` note count 362 -> 480 with **no drop > 20** in this run (the earlier 377->341/447->423
+  regressions did not recur), but the two ~16 s static intervals remain (96.8->112.7, 112.7->128.7); that is the
+  companion-tail/display handoff (plan Phase F, still owed).
+
+### Recorded limits
+
+- `RING,tier_a_evicted,485` at 129.88 s in the same capture, and no `RING,stats` row: absence of a `PERS` row during
+  the chain is not fully provable from this run (plan Phase K). The positive evidence is the mid-pass-only rows and
+  the zero overrun count.
+- All sampled `sd_write` rows are extensions at quiet time; the extension-vs-overwrite discriminator has not yet been
+  exercised on a slow write, because the gate removed the contended slow write.
+
+### Slice 2 measurement (same day) — the 144 ms is not a deterministic extension cost; preallocation not adopted
+
+The gate was temporarily compiled out for a diagnostic A/B (`-D PERSISTENCE_ADMISSION_GATE=0`; production
+default is 1) so the physical row could attribute the contended writes under the old schedule.
+
+- `midifile-chain-17` (image `0f3b9b15…`): 12 `PERS,sd_write` rows; one **5,621 us** overrun, **extension**
+  (`file_pos == file_size`); four `win_gap_overrun` at the record start (22-23 s); no `stop_tail`.
+- `midifile-chain-18` (same image): 12 rows; four overruns **5,121-5,428 us**, all **extension**; eight
+  `win_gap_overrun` at the record start; no `stop_tail`.
+- Neither run reproduced the 144 ms; the largest physical write is **5.6 ms**. Every sampled write is an
+  extension, and the normal rows are 11-30 us. There is no overwrite sample to compare.
+- Conclusion: the 144 ms is not a deterministic consequence of file extension/allocation or of the 512-byte
+  writer. It was a one-off (card state/contention) that the admission gate now keeps out of the capture
+  interval. **Preallocation (plan C1) was not implemented:** the residual max is 5.6 ms (below the 8 ms owner
+  budget), `preAllocate` requires an empty file and a truncate-to-final-size redesign of the body writer, and
+  the measurement does not prove value. The `PERS,sd_write` row remains for a future > 8 ms occurrence.
+- The gate-on image `83bcfdff…` was rebuilt and flashed after the experiment; boot `boot_reset,crash=0`,
+  `BOOT,load,ok`, RAM1 `96,192`.
+
+### Evidence
+
+`captures/session_20261030_162142.log`, `captures/midifile-chain-16/midifile-chain.json`,
+`test/test_storage_drain_restore/test_storage_drain_restore.cpp`; plan
+`/Users/eelkejager/Downloads/MidiLooper_persistence_stop_display_fix_plan.md`.
+
+## DEC-227 — A stop job's total companion work is budgeted, and the display names its source
+
+**Date:** 2026-10-30
+**Owner:** `Track::processDeferredOverdubStopGrain` (companion-family budget), `DisplayManager::emitDisplayTurnReceipt` / `Track::pendingDeferredStopIdentity` (`DIAG,disp_src`).
+**Status:** Implemented (native + target build green; device `midifile-chain-19`/`-20`).
+
+### Problem
+
+The plan's Slices 3-4: the 5-14 s stop jobs are not a grain problem (grains are sub-ms) but a **total** companion-work
+problem; and while a pass is pending the display serves the previous committed base, which is visible only as
+`disp_turn` gaps -- the correlation with the pending job had no row.
+
+### Decision
+
+1. **Companion-work budget (Slice 4).** A Playing stop job may spend at most `kCompanionWorkBudgetUs` in the
+   companion family (`CanonicalTail`..`CompanionBridge`). On expiry the job sets `canonicalBaseAbandoned`, discards
+   the tail/prepared candidate, and takes the DEC-165/DEC-225 raw-only route: the authoritative pass commits once
+   and, for a Playing destination, the DEC-172 obligation owns the remaining derived representation (serviced
+   outside the stop FIFO). The timer is one byte (`micros() >> 18`, 262 ms units) in existing `Track` padding, so
+   `sizeof(Track)` and RAM1 are unchanged. A native-only override keeps fixtures deterministic (disabled by default;
+   a fixture opts in).
+2. **Budget value measured, not guessed.** A 2 s budget (`midifile-chain-19`) fired on **every** window
+   (`stop_tail,...,work_budget,8` x12) and left `edit=0` after the chain -- the convergence had not caught up, a
+   content/display regression. At **4 s** (`midifile-chain-20`) only the one late outlier was cut
+   (`stop_tail,7,3,5,work_budget,16` at 123.21 s), the other 11 jobs published companions inline, `cap=13`,
+   `edit=13`, zero `win_gap_overrun`, no chain-time note drop. The 4 s value is the shipped bound; it is below the
+   measured 5-14 s jobs and above the 2-3 s healthy ones.
+3. **Display source identity (Slice 3, F2).** One `DIAG,disp_src` row pairs the frame's committed revision/pass,
+   the live/sealed preview identity, and the pending stop job (`pending`, `phase`, `pgen`), rate-limited to 200 ms
+   and emitted from the `disp_turn` receipt. `DIAG,disp_` was already Tier-A. `Track::pendingDeferredStopIdentity()`
+   is a read-only public accessor; the display never touches the private job type.
+4. **F1 (retain the stopped overlay) was not implemented** (see the DEC-228 follow-up: the stop-preview tier already does this; the row now names it). The current image already composes the sealed capture
+   preview and the raw pass; the measured chain had **no note drop >20** in `-20` (and `-16`), while `PAINT_BEAT`
+   notes grow through the 16 s `disp_turn` gaps. The `disp_src` row shows the pending job and the lagging committed
+   revision, which is exactly the "static committed base" shape; there is no evidence of a lost pass to retain. A
+   targeted reproducer is required before changing the display composition.
+
+### Consequences and limits
+
+- One late job's companions are deferred to convergence; the final census shows `edit=13` and the convergence had
+  not caught up by 141 s (the run ends at ~130 s; a longer settle is needed to see it). The 2 s run's `edit=0` is
+  why the budget was raised.
+- The `stop_tail,work_budget` row's measure field is 262 ms units (8/16), not grains; the `stop_tail` family now
+  carries both `no_start`/`denied` grains and the budget units. The row doc records this.
+- F1 remains open with a concrete trigger (a capture showing a dropped pass while `disp_src` has it in neither the
+  committed base nor the preview).
+- The budget is a wall-clock bound; the native override is the test seam, the device uses 4 s.
+
+### Verification
+
+- `test_slice4_companion_work_budget_retires_raw_and_owes_convergence` (mutation-red: with the budget disabled the
+  job completes companions and does not owe convergence); full `test_shared_capture_finalization` 146/146; the
+  existing 1.12/1.14 inline-companion controls still pass.
+- Target build SUCCESS at RAM1 `96,192`, ITCM `392,120 + 1,096`; `sizeof(Track)` pin unchanged.
+- Device `midifile-chain-20` (image `6f346b1c…`): verified clear, 12 windows, `behind_pulses 0`, `cap=13`,
+  `edit=13`, `stop_tail,work_budget,16` once, `win_gap_overrun` 0, `disp_src` pending rows present.
+- Full native: **3,716 cases, 7 skipped, 3,709 succeeded** (clean native build; `src/main.cpp` is excluded from the native env).
+
+### Evidence
+
+`captures/session_20261030_172750.log` (`-19`), `captures/session_20261030_173159.log` (`-20`),
+`captures/midifile-chain-19/`, `captures/midifile-chain-20/`; plan
+`/Users/eelkejager/Downloads/MidiLooper_persistence_stop_display_fix_plan.md`.
+
+## DEC-228 — Decisive telemetry survives, the close receipt is readable, and the stopped host-clock settle no longer parks the stop lane
+
+**Date:** 2026-10-30
+**Owner:** `DebugSessionCapture` (`runtimeTimingTelemetry`, `stopGrainTiming`, the `ST,Track` stop edge),
+`StorageManagerHitlSerial` (`!CAP_IDENTITY_STATS`), `runDeferredIdleMaintenance` (all-stopped stop-lane turn).
+**Status:** Implemented (target + full native green; device `midifile-chain-21` and `-22`).
+
+### Problem
+
+Slice 5 of the plan, three independent evidence holes found while closing DEC-225/226/227:
+
+1. **K1:** the 5 s `midi_gap`/`late_on`/`win_gap` family and the sampled `stop_grain` rows were ring-only. Under the
+   chain the ring held enough Tier-A rows to evict them (`RING,tier_a_evicted,485` in `-16`), so the stop latency
+   maxima and the companion-grain evidence were unreadable exactly where they mattered.
+2. **K4:** the reader's close-time `!CAP_IDENTITY_STATS` request produced no `RING,stats` row when the transport was
+   still running, so a capture could not prove absence (nor read the tier-A eviction counters).
+3. **I1:** `runDeferredIdleMaintenance` refused every turn while all tracks were stopped and the host clock was
+   still arriving (`allTracksStopped && clockManager.isClockRunning()`); DEC-224 measured 4 stop grains in 60 s. The
+   rig carried a workaround that stopped the clock pump for the settle.
+
+### Decision
+
+1. **K1 — decisive rows are delivered directly when USB has room, ring otherwise.** The 5 s telemetry family, the
+   `stop_grain` row for companion-family phases (5..9) or any grain >= 4 ms, and the
+   `OVERDUB_STOPPING -> PLAYING` edge use `serialWriteRoom` + `Serial.printf` first, with the existing ring as the
+   fallback. The sampler/burst bounds keep this from becoming a stream.
+2. **K4 — the read-only stats command is not transport-gated.** `!CAP_IDENTITY_STATS` reads counters and emits one
+   direct row; it neither records nor writes. The close-time request is now answered under a running transport.
+   `!TRACE_DRAIN` keeps its stopped-only gate (it flushes the timing-critical ring).
+3. **I1 — a pending deferred stop is serviced before the all-stopped/host-clock refusal.** The scan records a
+   pending-stop bitmask; when all tracks are stopped, the host clock runs, and any stop job is pending, the idle
+   pass runs **one bounded stop-lane turn** on the owning track (round-robin), then returns. Snapshot/visual
+   construction stay refused; only the authoritative stop work is admitted. The shared stopped cursor avoids a
+   second static, and the bitmask avoids a bool array, so RAM1 stays at the approved `96,192`.
+4. **F1 / Slice 6 — Option A, F1 deferred on evidence** (corrected in the follow-up below: the stop-preview tier already implements F1; the row now names it). `DIAG,disp_src` (DEC-227) shows the committed base lagging
+   a pending pass, but the device runs have **no chain-time note drop > 20**, `PAINT_BEAT` counts grow through the
+   16 s `disp_turn` intervals, and the pending pass keeps its display borrow through the job. The intervals are a
+   content-key cadence, not a frozen screen. A reproducer showing a pass in neither the committed base nor the
+   live/sealed preview is the trigger for changing the composition; no raw-first publication (Option B) is needed
+   while the 4 s companion budget bounds the stop lane.
+
+### Evidence
+
+- **K1 (`-21`, image `4ab8d07f…`):** `midi_gap` 26, `late_on` 27, `stop_grain` 565 (509 companion-family), no
+  truncation at the chain; `RING,stats` `tierA_evict=147`.
+- **K1/K4 (`-22`, image `4c14b096…`):** `midi_gap` 27, `late_on` 28, `stop_grain` 872, `stop_phase` 112, `ST` rows
+  71, `STOP_TRACE` to 141 s; close row
+  `RING,stats,attempts=29821,ok=29821,flush=55934,tx=23134,shed=3,tierA_evict=0,overflow=0,crit_rej=0`.
+  The eviction count fell from 485 (`-16`) to 147 (`-21`) to 0 (`-22`); the direct rows, not more ring space, are
+  what made the maxima survive.
+- **I1 (`-22`, `--hold-clock-on-settle`):** the rig kept the host pump running through the record settle. The
+  record stop accepted at 55.4 s retired at **59.95 s** (`#STOP_TRACE,59950…,stop=0,mode=0,phase=0,passes=1`) while
+  the host clock was still arriving; the overdub stream then opened all **12/12** windows with
+  `behind_pulses=0`, `cap=13`. Without I1 the same state stalled at 4 grains/60 s (DEC-224), so this settles the
+  all-stopped/clock interaction rather than relying on the pump release.
+- **Budget interaction:** `-22` cut two late jobs at the 4.19 s budget (`stop_tail,7,3,9,work_budget,16` at
+  113.8 s; `...,5,...,16` at 121.6 s), `edit=11` (vs 13 in `-21`). The stop bound holds; the deferred companions
+  are owed through DEC-172. The tradeoff is recorded, not hidden.
+- **Remaining latency cost:** the initial record start still shows the largest gap (`midi_gap` 326 ms /
+  `late_on` 244 ms at 20.5 s, and 378 ms at 10.5 s during boot). It is the record-start path, not the stop lane,
+  and is the next named cost.
+- **Gates:** target build SUCCESS, RAM1 `96,192`, ITCM `392,120 + 1,096`; full native **3,716 cases, 7 skipped,
+  3,709 succeeded** (the native env excludes `src/main.cpp`, so I1 is covered by the target build and the `-22`
+  device run; K1/K4 are covered by native capture/perf suites and the device rows).
+- **Host tooling:** `hitl_midifile_chain.py --hold-clock-on-settle` is the I1 gate; the old in-code comment that
+  documented the park is replaced. Default cadence still releases the pump for compatibility.
+
+### Limits
+
+- The `stop_tail,work_budget` row's measure is 262 ms units (16), not grains; the `stop_tail` family carries both.
+- The direct-when-room path falls back to the ring when USB is busy; a capture with a saturated host can still
+  drop the 5 s row, but the row is then not the only evidence (the ring counters are readable at close).
+- F1 remains open with the concrete trigger above; the 16 s `disp_turn` cadence is not itself a note-loss proof.
+
+### Evidence paths
+
+`captures/session_20261030_174202.log` (`-21`), `captures/session_20261030_174658.log` (`-22`),
+`captures/midifile-chain-21/`, `captures/midifile-chain-22/`; plan
+`/Users/eelkejager/Downloads/MidiLooper_persistence_stop_display_fix_plan.md`.
+
+### DEC-228 follow-up (same day) — the owed companions are admitted too, and F1 was already present
+
+Two corrections after the first `-22` pass:
+
+1. **The held-clock settle starved the DEC-172 obligation.** `-22` kept the 4 s budget but read `edit=11`
+   (and `-23` read `edit=7` with three cuts) at the capture end: the all-stopped/host-clock refusal also blocked
+   the Snapshot lane that services `serviceDeferredCanonicalConvergence`, so raw cuts stayed raw. The same
+   all-stopped branch now admits **one bounded convergence grain per pass** (`Track::hasDeferredConvergenceObligation`
+   probe + the public `serviceDeferredCanonicalConvergence` one-slot call) after the stop lane, before the refusal.
+   The probe is read-only; the service call takes at most one slot, so snapshot/visual construction stays refused.
+2. **F1 is already implemented by the stop-preview display tier.** `DisplayNoteWindowGather`/`PianoRollDraw` compose
+   `Track::captureStopPreviewForSlot` for the stopped session, so the pending pass is not hidden. The
+   `DIAG,disp_src` row was not naming that tier, which made F1 look absent. It now carries
+   `stops=<captureStopPreviewCount>` and `stopnotes=<sum of the slot's stop-preview notes>`; in `-23`/`-24`
+   **all 41** pending rows with a pending job have `stops=1` and `stopnotes>0` (e.g.
+   `crev=6,cpass=6,stops=1,stopnotes=16,pending=1,pgen=29`). The 16 s `disp_turn` intervals are the content-key
+   cadence; the painted stop-preview notes are present throughout. No F1 composition change is needed.
+
+**Device `-24` (image `0eea3987…`, `--hold-clock-on-settle --stop-bars 8`):** one late cut
+(`stop_tail,7,3,5,work_budget,16` at 120.85 s), no `no_start`, **cap=13, edit=13** (recovered by 122.3 s; the chain was
+still running, so that recovery is the **normal Snapshot convergence lane**, not proof of the all-stopped branch), zero `win_gap_overrun`, no chain-time note drop, close
+`RING,stats,attempts=30218,ok=30218,flush=59396,tx=22872,shed=12,tierA_evict=0,overflow=0,crit_rej=0`.
+The earlier `-23` (same 4 s budget, no convergence admission, three cuts, `edit=7`) is not a controlled comparison --
+it differs in cut count -- so it is reported as an observation. The all-stopped convergence admission is a bounded
+hardening for the settle (DEC-172 work must be admissible when the host clock is held); the observed `-24` recovery
+is the normal Snapshot lane.
+
+**Gates:** final full native after the convergence probe and row fields: **3,716 cases, 7 skipped, 3,709
+succeeded, 0 failed/errored**; `test_loop_content_resolution` and the budget fixture both ran. Target build
+SUCCESS at RAM1 `96,192`, ITCM `392,120 + 1,096`; the probe adds no RAM1 data.
+
+## DEC-229 — Clear refusals are named immediately, the clear mode is proven read-only, and the Critical reclaim row no longer floods the ring
+
+**Date:** 2026-10-30
+**Owner:** `MidiButtonActions::handleClearTrack` / `DebugSessionCapture::clearRefusedImmediate` (J2),
+`DisplayManager::emitDisplaySourceRow` + the HITL rig (K3), `main.cpp` Critical-pressure reclaim call.
+
+### Problem
+
+Three items from the plan's Phase J/K that surfaced while closing DEC-228:
+
+1. **J2:** a CLEAR refused by the blocking persistence drain named its reason only in the queued logger row;
+   the rig waited a fixed 1.5 s and retried, even though the `post_load_holdoff` is bounded at 100 ms
+   (`LoadLoopBudget::PostLoadCommitSaveHoldoffMs`).
+2. **K3:** the rig had no read-only proof of the edit mode the CLEAR requires. An early attempt proved
+   LOOP_EDIT by **cycling** the edit button and reading the device's program-change feedback. That is not an
+   assert: it changes the session. On `-25`/`-26` it caused a content regression -- `-25` ended with
+   `cap=1` (the 12 overdub windows did not commit) and `-26` with `cap=13, edit=0` -- while the no-cycle
+   run `-24` had `edit=13`. The mode-cycle K3 was rejected.
+3. **Reclaim flood:** the Critical-pressure branch in `main.cpp` called
+   `reclaimUnreferencedDisabledPasses(nullptr, true)`. `diagnosticVisibility=true` is a **force** term and
+   the branch runs every main-loop pass, so `-25` wrote **10,663** `DIAG,reclaim` rows in 60 s (most with
+   identical pins and zero reclaimed chunks) and pushed `tierA_evict` to 131, defeating the K1 direct-row
+   work. The force is removed; the emitter's change gate names the real reclaim/pin events.
+
+### Decision
+
+1. **J2 — direct refusal row, bounded retry, holdoff unchanged.** `handleClearTrack` emits
+   `#CAP,<us>,DIAG,clear_refused,<1-based slot>,<reason>` **directly** before the logger row when the drain
+   returns `RefuseBlocked`. The 100 ms holdoff is not shortened: the blocking drain must not wait it out by
+   contract, and 100 ms is already bounded. The rig's `_clear_retry_delay` retries after **200 ms** when the
+   row names `post_load_holdoff`, otherwise it keeps the conservative settle. This turns ~1.75 s of wasted
+   HITL time per refusal into ~0.45 s.
+2. **K3 — read-only mode heartbeat.** `DIAG,disp_src` now carries `mode=0` (LOOP_EDIT) / `mode=1`
+   (NOTE_EDIT) and is emitted on a **1 s heartbeat** even when the frame key is unchanged (the transition
+   path still refreshes at 200 ms). The rig reads the latest heartbeat from the capture log tail and refuses
+   the clear unless it says LOOP_EDIT; it sends **no** mode-changing gesture. A missing heartbeat or
+   NOTE_EDIT is a hard refusal, so the rig cannot clear a slot whose mode it cannot prove.
+3. **Reclaim force removed.** The Critical branch passes `false`; `DIAG,reclaim` is change-gated again. The
+   pressure transition row still names Critical, and every actual reclaim/pin change still emits.
+
+### Evidence
+
+- **K3 accepted (`-27`, image `9e5974d8…`):** report `mode: LOOP_EDIT, source: disp_src` (no presses), clear
+  **attempts=1, outcome=cleared**, 12/12 windows. The `disp_src` heartbeat is present at 7.9 s and the last
+  row at 147.8 s, always `mode=0`; no NOTE_EDIT rows.
+- **Rejected mode-cycle runs:** `-25` (10,663 reclaim rows, `tierA_evict=131`, final `cap=1` --
+  the windows did not commit) and `-26` (reclaim fixed to 22, `tierA_evict=0`, but `cap=13, edit=0`).
+  `-24` (no cycle, no reclaim force) was `cap=13, edit=13`. The mode cycle, not the reclaim row, is the
+  companion-publication regression; both are recorded, neither is used.
+- **`-27` content/latency:** `cap=13`, `edit=11` (two late jobs cut at the 4.19 s budget at 114.8/122.7 s;
+  DEC-227 tradeoff), zero `win_gap_overrun`, no chain-time note drop, `stop_grain` 874, 5 s family 27/28
+  through 141.5 s. Close `RING,stats,attempts=30532,ok=30532,flush=61146,tx=23015,shed=32,tierA_evict=0,
+  overflow=0,crit_rej=0`.
+- **Reclaim:** 17 rows (was 10,663), all real pin/reclaim events; no evidence loss.
+- **J2 device path:** `-27`'s clear was accepted on the first attempt, so the refusal row did not fire. The
+  emitter is covered by the host parser tests (`test_direct_refusal_row_is_not_success`,
+  `test_post_load_holdoff_retry_is_short_and_bounded`, `test_other_refusals_keep_the_conservative_settle`)
+  and the branch is a direct row; the refuser itself is the already-validated DEC-226/A3.4 path.
+
+### Gates
+
+- Host clear/mode suite **14/14**; final full native after the display/reclaim/main changes: **3,716 cases,
+  7 skipped, 3,709 succeeded, 0 failed/errored**.
+- Target SUCCESS, RAM1 `96,192`, ITCM `392,120 + 1,096`; the direct row lives in the carved
+  `src/Utils/StopDiagRows.cpp` TU, and the mode field adds no tier literal (the `DIAG,disp_` prefix is
+  already Tier-A).
+- Device image `9e5974d8…`, boot proved (`boot_reset,crash=0`, `BOOT,load,ok`).
+
+### Limits
+
+- The mode heartbeat proves the **edit session** the device reports, not the physical button wiring; a wiring
+  fault that leaves the session in LOOP_EDIT while the clear gesture is routed elsewhere is outside this row.
+- The J2 fast retry is only for the named `post_load_holdoff`; other drain refusals keep the 1.5 s settle
+  because the save may still be converging.
+- The budget's two late cuts in `-27` leave `edit=11` vs the `-24` 13 (different cut count); this is the
+  DEC-227 content tradeoff, not a K3/J2 regression.
+
+### Evidence paths
+
+`captures/session_20261030_181524.log` (`-25`), `captures/session_20261030_182022.log` (`-26`),
+`captures/session_20261030_182529.log` (`-27`), `captures/midifile-chain-25/`...`-27/`; host suite
+`scripts/test_hitl_midifile_chain_clear.py`.
+
+## DEC-230 — The Record-edge 299 ms block is `prewarmViews`: 270.8 ms of a 273.3 ms admission
+
+**Date:** 2026-10-30
+**Owner:** `Track::prewarmPlaybackForSlot` (split instrumentation); the repair is not implemented yet.
+**Status:** Measured on device (image `79aa5b7f…`); this entry fixes the target for the next slice.
+
+### Why
+
+DEC-229's device run showed the record-start `midi_gap` 329 ms / `late_on` 248 ms was a single synchronous
+`capture_prewarm` block, not display or SD. The plan's next step was an internal split before choosing a repair.
+
+### Instrumentation
+
+Local `micros()` counters around `prewarmCaptureStopJobs`, `prewarmViews`, `prewarmCanonicalCaptureOutput`,
+`prewarmActiveOverdubTransferHorizon`, plus the two remaining steps `prewarmPreparedCompanionHistory` and
+`getPlaybackOrder`. One **direct** row is emitted **after** the whole call (no serial work inside the measured
+pause); the post-reset second call is tagged `restamp=1`. The same row carries `okmask`, the per-reserve bools:
+
+```
+bit0 stopjobs   bit1 views   bit2 canonical   bit3 horizon   bit4 companion
+```
+
+`okmask` is the natural **prepared-resource predicate**; the timings are attribution only -- a bool cannot say
+whether a reserve cost 3 ms or 250 ms.
+
+### Device measurement (`midifile-chain-28`, `capture_prewarm_split`)
+
+```
+restamp=0 okmask=31  views=270842  canonical=69  horizon=2048  stopjobs=103  companion=90
+                     order=2       other=160    total=273314 us
+restamp=1 okmask=31  views=67      canonical=8   horizon=5     stopjobs=94   companion=82
+                     order=0       other=100    total=356 us
+```
+
+- The first admission is **273.3 ms**, of which **`prewarmViews` is 270.8 ms (99.1%)**. The other five
+  reserves total ~2.3 ms. The restamp is **356 us**, proving the structures are one-time establishment.
+- The enclosing no-row gap is **296.9 ms** (15.426 -> 15.723 s); the split total starts after
+  `ensureLoopsAllocated`, so ~24 ms is pre-function/edge/row overhead, named rather than guessed. The same
+  run reads `midi_gap` 327.2 ms and `late_on` 238.9 ms, consistent with the split.
+- `okmask=31` on both calls: every reserve succeeded; this is not a denial or partial-prepared case.
+
+### Repair direction (next slice, not implemented)
+
+1. **Prepared state is the existing bool mask + identity**, not a new resource model: `Prepared(slot,
+   generation..., okmask)`. The Record edge validates the mask and the generation-qualified identity and
+   **adopts** in O(cheap); it must never call `prewarmViews` synchronously.
+2. **Start the views prewarm off-edge** (slot selected/cleared/armed), driven by the same bounded owner turns.
+   `prewarmViews` must become **bounded/resumable** so a cold path cannot freeze MIDI; 5 ms-or-smaller
+   grains is the target order.
+3. **Generation qualification:** pin the subset that can invalidate the prepared resources -- slot identity,
+   playback revision, storage generation, loop length/geometry, capture generation. On mismatch, stay
+   armed/pending and let bounded preparation catch up; do not run the 299 ms path at the edge.
+4. **RED fixtures:** (a) target slot known + preparation serviced beforehand + Record => no first-time
+   reserves at the edge, edge below the RT threshold, `RECORDING` reached, MIDI/clock serviceable between
+   grains; (b) Record requested before preparation complete => no synchronous completion, remains
+   pending/armed while bounded preparation advances.
+5. The other reserves (canonical/horizon/stopjobs/companion) are cheap on this evidence; they can stay in the
+   edge admission or join the prepared state without being the first target. `prewarmViews` is the offender.
+
+### Gates
+
+- Target SUCCESS, RAM1 `96,192`, ITCM `392,120 + 1,096`; the direct split row lives in the carved
+  `src/Utils/StopDiagRows.cpp` TU and adds no DTCM literal.
+- Host clear/mode suite **14/14**; full native after the split pending at entry (run started).
+- Device image `79aa5b7f…`, boot proved (`boot_reset,crash=0`, `BOOT,load,ok`).
+
+### Evidence
+
+`captures/session_20261030_183820.log` (`-28`), `captures/midifile-chain-28/`; code
+`Track::prewarmPlaybackForSlot` split, `DebugSessionCapture::capturePrewarmSplit`.
+
+## DEC-231 — The Record edge now only adopts prepared views: the 270 ms constructor is an off-edge state machine
+
+**Date:** 2026-10-30
+**Owner:** `LoopPlaybackRuntime::stepViewPrewarm`, `Track::startRecording`/`prewarmPlaybackForSlot`,
+`MidiButtonActions::handleClearTrack`, `runDeferredIdleMaintenance`.
+**Status:** Implemented (device `midifile-chain-32`; native pending at entry).
+
+### Contract
+
+The Record edge must never perform content-sized/resource-sized preparation. `prewarmViews` is a
+preparatory owner/state machine; `startRecording()` may only validate and adopt its terminal state.
+
+```
+PreparedCaptureResources
+  slot
+  capacity identity (slot/loopId/geometry/fullTake/companion-row bound)
+  okmask
+  viewPrepState (NotPrepared -> Preparing -> Prepared)
+```
+
+The identity deliberately excludes playback/capture content revisions: the reserve is a **capacity**
+reservation, and a content revision does not change the allocation. A capacity move clears bit 1 and the
+stale cursor, and restarts preparation off-edge.
+
+### State machine
+
+`LoopPlaybackRuntime::stepViewPrewarm` advances **one natural unit per call**:
+
+- 10 capture staging storages;
+- 3 rolling views;
+- 2 bridge bases + 2 bridges;
+- view-set finalization;
+- canonical capture output;
+- the companion-row ensure + the 7 companion prewarms;
+- terminal mask/phase.
+
+It stops after one unit (the hard time guard is secondary; a unit is atomic). `Track::stepViewPrewarmForIdle`
+runs one unit on the owning track, and the all-stopped/host-clock idle pass admits it exactly like the stop
+lane and convergence (`runDeferredIdleMaintenance`). The clear long-press requests preparation for the
+cleared slot; the cold Record edge requests it and stays pending/armed if not prepared.
+
+The edge calls `prewarmPlaybackForSlot(..., skipViews=true)` for the four cheap reserves and admits only when
+the composed runtime mask is `okmask == 31`. `Track::startRecording` does **not** call `prewarmViews`; the
+native-only synchronous fallback for pre-existing fixtures is gated by `viewPrewarmStrictForTest()`, and the
+edge REDs set the strict path.
+
+### The failed `-29` run (why no recording started)
+
+The clear request set `Preparing`, but `runDeferredIdleMaintenance`'s all-stopped/host-clock guard returned
+before `processDeferredIdleMaintenance`; the preparation never advanced. The Record edge correctly stayed
+pending, so the press queued (`Loop 4: Start Recording`) but `RECA entered=0` — no recording. The all-stopped
+view-prewarm admission is the fix. This is recorded because it is the exact shape a future guard change can
+reintroduce.
+
+### Device measurement
+
+- **`-31` (intermediate):** preparation ready after 1.152 s; edge split `views=0,total=39,131 us`, of which
+  `canonical=35,940 us` — the canonical output was still a first-time edge reserve. Moved canonical into the
+  state machine (its measured preparation unit is 1.9 ms).
+- **`-32` (final):** preparation ready after **1.658 s**, 28 step rows, step sum **286,370 us**, **max step
+  28,695 us**; edge split
+  `restamp=0,okmask=31,views=0,canonical=17,horizon=2,055,stopjobs=99,companion=82,order=3,other=106,total=2,362 us`;
+  restamp `total=181 us`. The Record phase ran with `behind_pulses=0`; `cap=13`, `edit=11`; zero
+  `win_gap_overrun`; close `RING,stats` `tierA_evict=0,shed=3,overflow=0`. The record-start `midi_gap` is no
+  longer a max (377 ms is boot at 10.6 s; 201 ms is a chain event at 75.6 s).
+- **Native:** `test_shared_capture_finalization` **150/150** (four DEC-231 fixtures); the edge RED asserts
+  the progress counter and the monolithic `prewarmViews` call counter do not move; the cold RED asserts no
+  synchronous finish, repeated Record requests do not reset, one unit advances, progress is monotonic, and
+  an identity move restarts. `test_runtime_working_set_ownership` **257/257**.
+- **Gates:** target SUCCESS, RAM1 `96,192`, ITCM `391,064 + 2,152`; `sizeof(LoopPlaybackRuntime)` 7,832 ->
+  **7,840** target and 9,968 -> **9,976** host (extmem per slot; RAM1 unchanged). Full native pending at entry.
+
+### Limits
+
+- The preparation's largest natural unit is **28.7 ms**, above the earlier 5 ms ordering target. The Record
+  edge itself is 2.36 ms; the off-edge units are MIDI-serviceable between turns. If the preparation's own
+  stall matters, the next refinement subdivides the largest view/companion unit; it is not a Record-edge
+  regression.
+- The rig synchronizes on the `view_prewarm_step,...,ready=1` row before pressing Record (1.658 s in `-32`).
+  A manual/cold press remains pending; it does not receive the prepared latency.
+- The other cheap reserves (horizon 2.1 ms, stopjobs 0.1 ms, companion 0.1 ms) remain at the edge as the
+  user directed; the edge total is 2.36 ms.
+
+### Evidence
+
+`captures/session_20261030_185313.log` (`-29` failure), `captures/session_20261030_190018.log` (`-31`),
+`captures/session_20261030_190407.log` (`-32`); images `2fae1b2a…` (`-31`), `d52d4417…` (`-32`).
+
+### DEC-231 follow-up — the bridge unit is subdivided; the next largest is the canonical-pass-inputs companion
+
+The 28.7 ms unit was bridge 2 (`FixedPlaybackBridgeStorage::prewarm`); bridge 1 was 27.8 ms. `prewarm` is now a
+resumable `stepPrewarm(requestedCapacity, stage, cursor)` with natural sub-units:
+
+- records allocation;
+- record construction in 256-record chunks;
+- each of the 15 backing arrays as its own sub-unit;
+- the insertion event storage;
+- final metadata.
+
+The owner turn spends the **existing 5 ms budget** across these sub-units instead of one sub-unit per turn.
+
+- **`-33` (one sub-unit per turn):** preparation 4.696 s; bridge unit 15 split into 27 sub-steps, max 12.7 ms;
+  the largest remaining step was the `canonicalPassInputs` companion at 24.8 ms.
+- **`-34` (budgeted sub-steps, image `c6310a85…`):** preparation **2.255 s**, 36 step rows, step sum 313,958 us,
+  **largest step 24,881 us = the `canonicalPassInputs` companion** (`unit=27`); bridge unit 15/16 are now
+  ~13-15 ms. Edge split `okmask=31,views=0,canonical=17,horizon=2,126,stopjobs=111,companion=68,other=103,total=2,427 us`;
+  restamp 185 us. Record 12/12, `behind_pulses=0`, `cap=13`, `edit=10`, zero `win_gap_overrun`, close
+  `tierA_evict=0,shed=2`. `-34`'s stop lane cut three jobs and hit three `no_start`s; that is the DEC-227
+  budget/stop pattern, not the prewarm.
+- Runtime state grows 4 B (`bridgePrewarmStage/cursor/owner`): `sizeof(LoopPlaybackRuntime)` 7,840 -> **7,848**
+  target, 9,976 -> **9,984** host; extmem per slot, RAM1 unchanged.
+- The bridge is no longer the largest preparation unit. The next target, if the 5 ms ordering target matters, is
+  the `canonicalPassInputs.prewarm` companion (24.9 ms), then the first staging (17.5 ms) and the other
+  companions. The Record edge itself is unchanged at 2.4 ms.
+- Full native pending at the time of this note; focused 150/150 and runtime 257/257 remain green after the
+  bridge change.
+
+### DEC-231 follow-up 2 — the canonical-pass-inputs companion is subdivided; the remaining max is an allocation floor
+
+`RuntimeCanonicalPassInputs` now has a resumable `stepPrewarm(capacity, stage, cursor)`: eight allocation
+stages, 256-object constructor chunks (MidiEvent/Pass/SealedPass), and a history-pointer chunk. The state is
+shared with the bridge sub-prewarm in the runtime (`prewarmSubStage/cursor/owner`), so the runtime size does
+not grow again.
+
+- **`-35` (image `1d864202…`):** preparation **2.600 s**, 42 step rows, max step **17,350 us = the first
+  capture staging**; `canonicalPassInputs` fell from **24,881 us to 16,358 us**; views/bridges are 13.0-13.4 ms.
+  Edge split `okmask=31,views=0,canonical=18,horizon=2,054,stopjobs=106,companion=62,other=111,total=2,353 us`;
+  restamp 164 us. Record 12/12, `behind_pulses=0`, `cap=13`, `edit=11`, zero `win_gap_overrun`; close
+  `tierA_evict=0,shed=5`.
+- **Why this is the practical floor for this slice:** each remaining 13-17 ms maximum is one external
+  allocation (the event storage's `events`/arrays), not the constructor loop. Splitting a single
+  `extmem_malloc` is not possible in this owner. Going below it needs preallocation or an allocator change,
+  which is a different class than the Record-edge adoption; the edge itself is 2.353 ms and performs no view
+  construction.
+- The canonical companion is no longer the largest unit. The next named units are the first staging (17.35 ms)
+  and the views/bridges (~13 ms each); all are off-edge and each is one allocation.
+- Full native (clean, before this canonical change): **3,720 / 7 skipped / 3,713 succeeded / 0 failed**, the
+  expected count after the four DEC-231 fixtures. A final clean run on the canonical source is running.
+
+### DEC-231 follow-up 3 — canonical subdivision, and the active-transport capture was negative (no allocator evidence)
+
+**Canonical subdivision (implemented).** `RuntimeCanonicalPassInputs::stepPrewarm` now splits the 8
+allocations, 256-object constructor chunks and the history-pointer chunk. On `-35` (`1d864202…`) the
+`canonicalPassInputs` unit fell from **24,881 us to 16,358 us**; the new largest preparation step is the
+**first capture staging at 17,350 us**, views/bridges ~13.0-13.4 ms. The Record edge stayed **2,353 us**,
+`okmask=31, views=0`; 12/12 windows, `behind_pulses=0`, zero `win_gap_overrun`. The remaining 13-17 ms
+maxima are single external allocations, not constructor work; constructor chunking is at its floor.
+
+**Active-transport capture (requested precondition not satisfied).** Two attempts were made with the
+external clock pump running and the scratch loop playing, using the scratch slot's CLEAR as the preparation
+trigger:
+
+1. `session_20261030_193912.log`: the clear executed while playing and the request row appeared
+   (`view_prewarm_request,track=7,slot=3,runtime=1,phase=1`), but **no `view_prewarm_step` followed**. The
+   `midi_gap` in that window was 39 ms and `late_on` 0.
+2. `session_20261030_194716.log`: the clear long-press did not execute the clear while playing (the button
+   resolved as a multi-slot hold), so no request row and no preparation. The 111 ms `midi_gap`/`late_on`
+   in that window is the transport/clear transition, not the 17 ms preparation.
+
+The all-stopped scheduler's convergence branch initially returned before the view-prewarm branch; that was
+changed to fall through to one view-prewarm step when one is owed. The request still did not advance in
+the active run, so the preparation is currently **gated out of the active transport path** (or the clear
+trigger is not delivered while playing), not measured. There is therefore **no allocator-spike evidence**
+and **no justification for the preallocated-staging decision** from this capture.
+
+**Decision:** close DEC-230's Record-edge contract at **2,353 us**; do not do allocator work on the evidence
+available. The 13-17 ms preparation units remain off-edge and did not occur in the active windows. If the
+active-preparation execution itself is required, the next item is the scheduler/trigger admission (allow one
+preparation step while the transport is active, or make the clear trigger reliable while playing) — a
+different decision from preallocation. The full native clean run is **3,720 / 7 skipped / 3,713 succeeded /
+0 failed**. Board: `c9d530f9…`; scratch capture from `-37` remains; transport stopped.
+
+### Evidence
+
+`captures/session_20261030_193912.log`, `captures/session_20261030_194716.log`,
+`captures/session_20261030_194252.log` (`-36`), `captures/session_20261030_194716.log` (`-37` probe), images
+`7797bb57…` (request row), `c9d530f9…` (scheduler fall-through).
+
+## DEC-232 — The detailed display window's **coverage** is circular over the loop; the paint origin stays bar-stable
+
+The 2026-10-30 display investigation rejected a first circular attempt that advanced the stored window
+origin by the minimum tick step and removed the `loopLength - length` clamp
+([handoff](Runtime/2026-10-30-display-source-handoff.md)). That attempt moved the **paint coordinate** on
+every tick, which is why a record stop painted nothing until the end of bar 1, recorded notes were never
+drawn past bar 16, and overdub rows painted relative to the window origin instead of tick 0. It was
+reverted on device and must not be repeated.
+
+**Decision.** The detailed window is one logical interval `[start, start + length)` on a loop of
+`loopLength` ticks. Membership is the modular coordinate
+`relative = (tick + loopLength - start) % loopLength; inside = relative < length`, so a window whose end
+passes the loop end is **one generation with two physical spans** (`[start..loopEnd)` + `[0..remainder)`).
+The origin is **bar-stable**: it moves by whole bars only, so one advance owes exactly one newly exposed
+bar, and no caller advances a paint origin per tick.
+
+Landed in this slice as the prerequisite authority, with the origin **not yet wired**:
+
+- `DisplayWindowUtils::CircularWindowCoverage` (`windowCoverageRelativeTick`, `windowCoverageContains`,
+  `windowCoverageSpanCount`, `windowCoverageSpan`, `windowCoverageLoopBar`) and
+  `resolveCircularBarWindowStart` (head floor for a rewound take, then one bar per bar, crossing the tail).
+- `visualCacheCoversWindow` walks dirty bars circularly; the draw-source snapshot gather resolves the
+  logical bar to its physical loop bar; the one-bar reuse test is circular; the piano-roll grid is drawn
+  in window-relative ticks and the overview strip draws a crossing window's head span.
+- REDs: 20-bar crossing coverage, 128-bar geometry-only crossing coverage (no hard-coded 20),
+  bar-stable circular origin, circular one-bar slide, and a deliberate pin that the paint resolver stays
+  clamped until the committed-base gather can compose two spans.
+
+**Why the origin is not wired yet:** `DisplayManager::buildCommittedDisplayBase` /
+`rebuildDisplayNotesInWindow` / `paintWindowInsideGather` are linear, so a crossing paint window loses its
+head span; `test_live_capture_display_boundary`'s moving-window and committed-base fixtures fail on exactly
+that. Wiring order: circular committed-base gather -> wire the origin -> remove the content-interval
+substitution that pins the window while a publication is outstanding.
+
+**Evidence limits recorded with the decision:** `MO` is pressure-sampled 1-in-8 above a 768 KiB capture
+ring, and `DFRAME`/`draw_src` are ring records (`shed=25,320` in `-42`). Absence in those families is not
+evidence of missing playback or a frozen display; `#PAINT_BEAT` (direct serial) is the ground truth.
+
+Gates: focused `test_display_window_utils` **130/130**, boundary batch **203/203**, midi-button batch
+**23/23**; full native **3,726 / 7 skipped / 3,719 succeeded / 0 failed** on the coverage slice (the tail/clear follow-up re-ran its affected suites 180/180);
+`teensy41-capture-serial` SUCCESS at RAM1 `variables 96,192`, ITCM `391,064 + 2,152`; diag SUCCESS at
+`100,480 / 391,272 + 1,944`. Device: image `9b37dccb…` flashed and boot-proved, chain `-43` 12/12 windows
+with `behind_pulses=0`; it reproduces the 13.4 s `disp_window` pin and the `vcache=316, dirty=1`
+starvation. Follow-up on the owner's report: the closure-tick freeze was tried and **withdrawn** — it made
+open notes in the wrap window hit `applyCapturePlayheadTails`' split (`tailEnd = loopLength - 1`), which
+the owner saw as notes stretched to the end of the piano roll. Image `7203b624…` restores the playhead
+tail; the named next measurement is one painted-tail diag row before any wrap-split change. Also landed: an already-empty selected slot now names its CLEAR
+outcome (`kClearIgnoredEmptySlotLogFormat`), because the HITL verified-clear path could not confirm a
+successful clear of an already-cleared slot.
+
+## DEC-233 — Overdub Stop closes input independently of deferred finalization
+
+**Date:** 2026-10-30
+
+**Owner:** Track stop/start lifecycle; Loop capture/session storage; existing LoopPlaybackRuntime finalizer
+**Status:** Accepted behavioral direction and separate slice, explicitly authorized by the owner; planning only,
+not implemented, native-verified or device-verified.
+
+### Problem
+
+A capacity-retained Stop currently leaves the overdub input interval recording, and delayed admission
+recomputes the close phase from the retry clock. The owner requires input closure on the press and allows
+a new overdub while the predecessor is still stopping. The latest cited capture does **not** prove the
+original rollback diagnosis: `session_20261030_221346.log` shows Playing at 127.931 s and the next Start
+at 128.916 s. Attribution of temporary extension of already-closed display notes remains unproved.
+
+### Decision
+
+Separate input closure from finalization within existing owners. Preserve the first Stop's phase,
+identity, capture storage, reservations, held-note state, pending changes, preview and session claim until
+handoff. Reuse the existing FIFO/staging/custody roles for closed predecessors; serialize canonical work,
+not successor capture. A busy canonical finalizer alone must not delay the next overdub when capture
+resources can own both intervals. Hard physical exhaustion retains a distinct Start without overwriting
+the Stop or reopening its input; no unbounded interval queue is authorized.
+
+The exact owner methods, transition oracle, necessary start/switch/orphan/transport/recovery/display
+changes and fixtures are specified in the [stop-edge design](../openspec/changes/overdub-stop-edge-closure/design.md).
+
+### Rationale and superseded clauses
+
+This explicitly supersedes DEC-067's keep-recording-on-denial behavior for an accepted overdub Stop,
+and DEC-078 items 2–3 / its superseded-text paragraph insofar as they forbid retention of an input-closed
+producer or rederive its musical close boundary on retry. Those rules still govern unrelated interaction
+identity/cardinality. The active runtime-working-set-ownership delta's corresponding no-stopped-interval
+retention/boundary wording is amended for this overdub Stop by the new scoped delta; unconditional
+acceptance, explicit supersession and per-interval ownership remain required.
+
+Preserve DEC-072's job-owned pass isolation and DEC-204's real-orphan release, extending reservation
+ownership to include the input-closed retained interval. No second canonical working set, new Manager,
+storage schema, undo format, full validate or synchronous persistence is authorized.
+
+### Alternatives considered
+
+State-only patch is rejected: independent review names lost retry eligibility, retained-capture reset,
+orphan release, slot-switch bypass, disabled transfer recovery and transport held-note loss. Keeping
+recording preserves the defect. Waiting for predecessor publication before every Start contradicts the
+owner requirement. A second finalizer or FIFO growth is not justified by this transition change.
+
+### Affected modules and constraints
+
+Track lifecycle/worker/input-state and output-silencing boundaries; TrackManager start/switch/transport
+dispatch; existing display-source composition. Keep new metadata in existing external ownership,
+preserve RAM1 budgets and the finite capture-role envelope, test ordinary production recovery rather
+than a fixture-only reservation. A stopped preview stays visible but is not a live playhead tail.
+
+### Related OpenSpec and migration
+
+[`overdub-stop-edge-closure`](../openspec/changes/overdub-stop-edge-closure/) is a separate slice from
+display/window and host-rig work. Firmware-only behavior, no SD migration. The initial independent
+contract review was BLOCKED; its six concrete findings are incorporated in the design, not claimed
+verified. Fixtures, native, build, upload and HITL remain outstanding. No board or SD operation in this session.
+
+## DEC-234 — A record stop keeps the bar that contains the last event
+
+### Context
+
+The 24-bar chain sealed the Record pass with 47 rows: an orphan `NoteOn @tick 12 pitch 48 NoteId 24` and no
+bar-23 pair. The live capture store held the correct pair (`On@17676 Off@17712`) immediately before the stop.
+`RecordStopLength::computeRecordStopLengthTicks(18432, 17712)` returned 17664 because
+`computeLoopLengthTicks` treated the last event's 48-tick offset inside bar 23 as a bar-line row (grace =
+1/6 bar) and trimmed to 23 bars. `Loop::projectCaptureAtRecordStop(17664)` then wrapped the NoteOn
+(`17676 % 17664 = 12`) and dropped the NoteOff (not a NoteOn, `tick >= length`), sealing an unpaired row.
+A stale published root had masked the corruption in the display path; the display-source repair exposed it.
+The same shape produced a phantom `[12..811]` private-source pair in the 32-bar handoff fixture, where the
+old expectation encoded the corrupted pair.
+
+### Decision
+
+`computeLoopLengthTicks` closes a bar only for a row exactly on the bar line (`rem == 0`). A row strictly
+inside the bar (`0 < rem <= grace`) keeps that bar (`fullBars + 1`). `computeRecordStopLengthTicks` keeps its
+`min(quantizeTransportRecordLength(raw), contentLength)` contract; during growing record the transport term is
+the limiting one, so live length stepping is unchanged. The fix is budget-neutral: clean builds with and
+without it report the same RAM1 variables/code/padding.
+
+**Boundary invariant:** if the chosen Record loop length is greater than the maximum captured event tick, the
+Record-stop projection must preserve the captured semantic row vector tuple-for-tuple. Projection may only act
+on rows genuinely outside the chosen loop. A geometry decision must never turn an event that is still inside
+the final occupied bar into wrapped content.
+
+### Alternatives considered
+
+Projection-only dropping of the orphan pair is rejected: it still discards a bar the user recorded and the
+transport covered, and hides the length defect instead of fixing it. Wrapping both rows would invent a note at
+the loop start, which is the observed corruption. A NoteId-24 or display special case is outside the change
+contract. Re-basing the RAM1 budget is not part of this change: the default-env 4,096 B DTCM shift matches the
+DEC-232 display-investigation align transfer documented by the separate
+`teensy41-capture-serial-investigation-diag` budget entry, and clean builds with and without this fix are
+identical, so it is not caused here.
+
+### Affected modules and constraints
+
+`src/Utils/RecordStopLength.cpp` (pure helper). No real-time path, allocation, SD format or pass schema.
+The persisted loop length for the affected shape changes from N to N+1 bars (intended). The sealed pass is now
+paired at birth and stays immutable across later overdubs.
+
+### Related OpenSpec and migration
+
+`openspec/changes/committed-pass-identity-corruption/` tasks 1.1/1.2/1.3/2.1/2.2 are evidenced in
+`evidence/EXECUTION.md`; full native is green. The target build's RAM1 gate is blocked by the pre-existing
+display-investigation DTCM shift, so the device content/playback verdict remains open. No SD migration.
+
+## DEC-235 — A STOPPED Record take owes bar 1, and its stop edge refuses a stale raw bar
+
+**Date:** 2026-10-31 · **Status:** Accepted — native RED→GREEN, mutation-proven; device rig PASS (2 runs) on
+`f761c65d…`. Change: `immediate-record-overdub-handoff` § 5.2 —
+[evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-31-FIRST-BAR-HANDOFF.md).
+
+### Context
+
+Owner report 121645: after a Record stop the take sounds only from bar 2. The owner's rig ends the take with a
+global transport press plus a realtime Stop. The Stop ends the take at once (`stopToStopped`), and the press acts
+after its ~300 ms tap window, finds the transport stopped and restarts it. `startPlaying` re-anchors the
+projection, so playback resumes at **phase 0** while the Record job is still private. Three defects lost bar 1:
+
+1. The PLAYING stop route refuses a raw bar-1 view prepared before the take's input (`bindFirstRecordingBar`).
+   The STOPPED route did not, so the deferred closure's `bindDeferredRecordReturnWindow` bound that stale,
+   empty bar as the first return window.
+2. DEC-136 adopts a complete frozen Capture ready mid-window, but the hot path's "keep the already-served
+   current" fallback accepted only `Committed` origin. An adopted Capture window served one tick.
+3. While STOPPED, the frozen owner prepared the window at the **stop phase** (bar 20 for a stop 24 ticks before
+   the wrap). Bar 1 was built only after Start and adopted mid-window, so its first events were lost
+   (device: first NoteOn at phase 24 missing).
+
+### Decision
+
+- Every Record stop edge refuses a stale raw bar through one helper, `LoopPlaybackRuntime::discardStaleFirstRecordingBar`
+  (used by `bindFirstRecordingBar` and by the STOPPED destination). The frozen-range owner then builds bar 1.
+- The current fallback in `adoptOrServiceOnwardRecordWindow` accepts the token-qualified Capture identity, but
+  only for the exact window its ready branch adopted. `LoopPlaybackRuntime::frozenCaptureAdoptedStorage` holds
+  the low 16 bits of that window's `storageGeneration`, because a live rolling view can carry the same content
+  token. It sits in existing padding: host and target runtime size pins and RAM1 are unchanged.
+- **Progression refinement of DEC-136:** while the track is STOPPED, the frozen owner's phase is 0. Every Start
+  from STOPPED re-anchors to phase 0, so the owed window is bar 1, not the stop phase's bar. PLAYING
+  progression (current window first, then forward) is unchanged.
+
+### Exclusions and open items
+
+No new owner, allocation, queue or clock-edge work. A session-capture-only diagnostic row
+(`win_frozen_readiness,…,route,turn,…`, `Track::reportFirstBarRouteForSlot`) costs 336 B of ITCM
+(padding 1,880 → 1,544, floor 840). It is evaluation instrumentation and may be removed once 5.2 closes.
+Still open: a fixture that discriminates the live-view alias (review F1), and run 1's replay of a cleared
+slot's old take before publication (route unidentified).

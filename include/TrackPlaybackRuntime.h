@@ -112,6 +112,41 @@ enum class StopPreparationEscape : uint8_t {
 constexpr uint16_t kCanonicalBaseStallGrainLimit = 2048;
 constexpr uint16_t kRetargetedCompanionStallGrainLimit = 512;
 
+/// A canonical tail that **never begins** is a parked job, not legitimate work. `beginFrozenCanonicalTail`
+/// needs the slot's shared canonical machinery (a ready prefix, a free capture bridge and companion apply,
+/// and `canonicalPassInputs` not still attached to a predecessor's retained capture), and a live successor
+/// interval on the same slot keeps exactly those terms busy for the whole chain. The measured device shape
+/// (`session_20261030_143745.log`, 12-window rig) sat at `CanonicalTail` from 63.0 s to 113.8 s with the
+/// tail never starting and no row naming why; the successor windows never opened because the FIFO head never
+/// retired. The same rig measured the stop lane at ~48 grains/s (`session_20261030_142445.log`), so 32
+/// grains is under a second -- longer than a 1-beat window gap, far shorter than the 51 s park. A tail that
+/// **has** begun is real work and stays unbounded here: DEC-070's 512 remains the retargeted companion bound,
+/// and the productive tail's cost is a separate (unbounded) measurement, not this liveness budget.
+constexpr uint16_t kCanonicalTailStartStallGrains = 32;
+
+/// Slice 4 of the 2026-10-30 plan: a stop job may spend at most this long in the **companion family**
+/// (`CanonicalTail`..`CompanionBridge`) before the authoritative raw pass commits and the remaining
+/// derived work becomes DEC-172 convergence debt. The measured device jobs (`midifile-chain-16`) spanned
+/// 2-10 s in the family; 2 s keeps the early jobs (tail + companions typically 1-3 s) while cutting the
+/// late, denser ones. The raw pass is authoritative; the obligation is generation-qualified and resumes
+/// outside the stop FIFO, so the stop edge is no longer held hostage to derived work.
+constexpr uint32_t kCompanionWorkBudgetUs = 4000000u;
+
+/// The budget the stop lane reads. Native fixtures drive thousands of turns in wall-clock time, so the
+/// host default is **disabled** and a fixture opts in with a small value; the device always uses the
+/// measured 2 s constant.
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Host-only counter: monolithic `prewarmViews` calls. The prepared-edge RED asserts it does not move.
+inline uint32_t& monolithicViewPrewarmCallsForTest() {
+  static uint32_t calls = 0;
+  return calls;
+}
+uint32_t& companionWorkBudgetUsForTest();
+inline uint32_t companionWorkBudgetUs() { return companionWorkBudgetUsForTest(); }
+#else
+inline constexpr uint32_t companionWorkBudgetUs() { return kCompanionWorkBudgetUs; }
+#endif
+
 /// Is this phase one whose non-advance is bounded by a grain budget? Only the base and DEC-070's
 /// original retargeted companion range. The ordering/rewrite phases are excluded everywhere (they
 /// produce the rows); `PrepareTransfer`/`UndoCollection` are excluded for a PLAYING job (staging the
@@ -790,6 +825,11 @@ struct LoopPlaybackRuntime {
   /// fixture can read *why* the retained revision could not serve rather than inferring it.
   enum class RetainedGatherPhase : uint8_t { Idle, Gathering };
   RetainedGatherPhase retainedGatherPhase = RetainedGatherPhase::Idle;
+  // Low 16 bits of the `storageGeneration` of the Capture window `adoptOrServiceOnwardRecordWindow` last
+  // adopted from a Record job's frozen range (0 = none). A live rolling view can carry the same content
+  // token, so the token alone cannot keep a mid-window adoption serving; only this adopted window may.
+  // Fits existing padding on both ABIs: the host and target runtime size pins are unchanged.
+  uint16_t frozenCaptureAdoptedStorage = 0;
   CommittedEventRange::WindowTraversalCursor retainedGatherCursor{};
   SessionMidiEventVec retainedGatherEvents;
   /// Task 3.7a (I7): the caller's own scratch for the layer being resolved when the retained revision pins Active Note
@@ -1319,6 +1359,39 @@ struct LoopPlaybackRuntime {
   /// Boot reserves only capture staging. Full views/bridges/workers are a
   /// separate cold admission; a staging-only runtime cannot select a bridge.
   bool prewarmCaptureStaging();
+  // --- DEC-231: resumable, identity-qualified view preparation -------------------------------
+  // The Record edge may only validate/adopt this state; it must never advance view construction.
+  // `viewPrewarmResourceMask` carries the five admission bits (stopjobs/views/canonical/horizon/
+  // companion); bit 1 is set only when the resumable view state reaches Prepared for this identity.
+  enum class ViewPrewarmPhase : uint8_t { NotPrepared, Preparing, Prepared };
+  ViewPrewarmPhase viewPrewarmPhase = ViewPrewarmPhase::NotPrepared;
+  uint8_t viewPrewarmCursor = 0;
+  uint8_t viewPrewarmResourceMask = 0;
+  uint16_t viewPrewarmSteps = 0;
+  uint32_t viewPrewarmIdentity = 0;
+  uint8_t prewarmSubStage = 0;
+  uint16_t prewarmSubCursor = 0;
+  uint8_t prewarmSubOwner = 0xFF;
+  bool ensureViewSet();
+  void requestViewPrewarm(uint32_t identity) {
+    if (viewPrewarmPhase == ViewPrewarmPhase::NotPrepared || viewPrewarmIdentity != identity) {
+      viewPrewarmIdentity = identity;
+      viewPrewarmPhase = ViewPrewarmPhase::Preparing;
+      viewPrewarmCursor = 0;
+      viewPrewarmResourceMask = 0;
+      viewPrewarmSteps = 0;
+    }
+  }
+  bool viewPrewarmReady(uint32_t identity) const {
+    return viewPrewarmPhase == ViewPrewarmPhase::Prepared && viewPrewarmIdentity == identity;
+  }
+  bool viewPrewarmPreparing() const { return viewPrewarmPhase == ViewPrewarmPhase::Preparing; }
+  uint16_t viewPrewarmProgress() const { return viewPrewarmSteps; }
+  uint8_t viewPrewarmMask() const { return viewPrewarmResourceMask; }
+  /// Advance at most `maxUnits` natural prewarm units (staging/view/base/bridge/companion), stopping
+  /// after `budgetUs` as a secondary guard. Returns true only at terminal Prepared.
+  bool stepViewPrewarm(uint32_t identity, bool fullTakeAdmissible, size_t companionRowCapacity,
+                       uint8_t maxUnits, uint32_t budgetUs);
   /// Frozen role: the stop worker's immutable admission staging. A job owns this
   /// role from punch-out until its cleanup retires it.
   CaptureAdmissionStaging* captureStagingIfPrewarmed() {
@@ -1520,6 +1593,9 @@ struct LoopPlaybackRuntime {
   // older Capture revision is refused; standalone native fixtures may omit it.
   // No source copy or order rebuild occurs here.
   bool bindFirstRecordingBar(uint32_t loopLengthTicks, const Loop* recordedLoop = nullptr);
+  // Every Record stop edge: retire a retained raw bar-1 view that predates accepted Capture input, so no
+  // later bind can serve it. True when one was discarded. The frozen-range owner builds the bar instead.
+  bool discardStaleFirstRecordingBar(const Loop& recordedLoop);
   /// S4f.19: bind the retained first-record bar to a **deferred** Record job's
   /// frozen source and final geometry. Job-qualified: refuses a range that is not
   /// ready or whose generation is not `expectedGeneration`, and refuses a final
@@ -1620,6 +1696,12 @@ struct LoopPlaybackRuntime {
   bool canonicalBaseReady() const {
     return canonicalPrefixPhase == CanonicalPrefixPhase::Ready;
   }
+  /// `CanonicalTail`'s own child state, for the liveness bound above. `Idle` is "never began" (it can
+  /// still begin on a later grain); `Denied` is terminal -- `stepFrozenCanonicalTail` latches it when the
+  /// frozen generations stopped matching, and nothing clears it before the job's commit discards the tail.
+  /// A begun tail (`Normalize`..`Complete`) is legitimate work.
+  bool canonicalTailIdle() const { return canonicalTailPhase == CanonicalTailPhase::Idle; }
+  bool canonicalTailDenied() const { return canonicalTailPhase == CanonicalTailPhase::Denied; }
   RuntimePlaybackOrderBuildResult stepFrozenCaptureOrder(size_t entryQuantum);
   bool frozenCaptureOrderComplete() const { return frozenCaptureOrder.complete(); }
   /// Why `beginFrozenCaptureCanonicalOrder` refused. The `CanonicalOrder` stop phase had no

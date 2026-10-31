@@ -55,6 +55,132 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::prewarm(size_t capacity) {
   captureOrder_ = order; captureScratch_ = scratch;
   return true;
 }
+NOTE_EDIT_MEM RuntimeCanonicalPassInputs::PrewarmStepResult
+RuntimeCanonicalPassInputs::stepPrewarm(size_t capacity, uint8_t& stage, uint16_t& cursor) {
+  if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) {
+    return PrewarmStepResult::Failed;
+  }
+  if (capacity_ == capacity) {
+    return PrewarmStepResult::Complete;
+  }
+  if (capacity_ != 0 && capacity_ != capacity) {
+    return PrewarmStepResult::Failed;
+  }
+  const auto freeAll = [this]() {
+    canonicalInputFree(raw_); canonicalInputFree(effective_); canonicalInputFree(outputs_);
+    canonicalInputFree(nextOutputs_); canonicalInputFree(selectedPasses_);
+    canonicalInputFree(selectedHistory_); canonicalInputFree(captureOrder_);
+    canonicalInputFree(captureScratch_);
+    raw_ = nullptr; effective_ = nullptr; outputs_ = nullptr; nextOutputs_ = nullptr;
+    selectedPasses_ = nullptr; selectedHistory_ = nullptr; captureOrder_ = nullptr;
+    captureScratch_ = nullptr; capacity_ = 0;
+  };
+  if (stage <= 7) {
+    bool ok = true;
+    switch (stage) {
+      case 0:
+        if (raw_ == nullptr) {
+          raw_ = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
+        }
+        ok = raw_ != nullptr;
+        break;
+      case 1:
+        if (effective_ == nullptr) {
+          effective_ = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
+        }
+        ok = effective_ != nullptr;
+        break;
+      case 2:
+        if (outputs_ == nullptr) {
+          outputs_ = static_cast<RuntimeCompanionPasses::Pass*>(
+              canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+        }
+        ok = outputs_ != nullptr;
+        break;
+      case 3:
+        if (nextOutputs_ == nullptr) {
+          nextOutputs_ = static_cast<RuntimeCompanionPasses::Pass*>(
+              canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+        }
+        ok = nextOutputs_ != nullptr;
+        break;
+      case 4:
+        if (selectedPasses_ == nullptr) {
+          selectedPasses_ = static_cast<SealedPass*>(
+              canonicalInputAllocate(capacity * sizeof(SealedPass)));
+        }
+        ok = selectedPasses_ != nullptr;
+        break;
+      case 5:
+        if (selectedHistory_ == nullptr) {
+          selectedHistory_ = static_cast<const EditPass**>(canonicalInputAllocate(
+              RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
+        }
+        ok = selectedHistory_ != nullptr;
+        break;
+      case 6:
+        if (captureOrder_ == nullptr) {
+          captureOrder_ = static_cast<uint16_t*>(
+              canonicalInputAllocate(capacity * sizeof(uint16_t)));
+        }
+        ok = captureOrder_ != nullptr;
+        break;
+      case 7:
+        if (captureScratch_ == nullptr) {
+          captureScratch_ = static_cast<uint16_t*>(
+              canonicalInputAllocate(capacity * sizeof(uint16_t)));
+        }
+        ok = captureScratch_ != nullptr;
+        break;
+      default:
+        ok = false;
+        break;
+    }
+    if (!ok) {
+      freeAll();
+      stage = 0;
+      cursor = 0;
+      return PrewarmStepResult::Failed;
+    }
+    ++stage;
+    cursor = 0;
+    return PrewarmStepResult::Progress;
+  }
+  if (stage == 8) {
+    constexpr uint16_t kChunk = 256;
+    const size_t end = static_cast<size_t>(cursor) + kChunk < capacity
+                           ? static_cast<size_t>(cursor) + kChunk
+                           : capacity;
+    for (; cursor < end; ++cursor) {
+      new (&raw_[cursor]) MidiEvent();
+      new (&effective_[cursor]) MidiEvent();
+      new (&outputs_[cursor]) RuntimeCompanionPasses::Pass{};
+      new (&nextOutputs_[cursor]) RuntimeCompanionPasses::Pass{};
+      new (&selectedPasses_[cursor]) SealedPass{};
+    }
+    if (cursor >= capacity) {
+      stage = 9;
+      cursor = 0;
+    }
+    return PrewarmStepResult::Progress;
+  }
+  if (stage == 9) {
+    constexpr uint16_t kChunk = 256;
+    const size_t end = static_cast<size_t>(cursor) + kChunk < RuntimePlaybackViewConfig::kRecordsPerBridge
+                           ? static_cast<size_t>(cursor) + kChunk
+                           : RuntimePlaybackViewConfig::kRecordsPerBridge;
+    for (; cursor < end; ++cursor) {
+      new (&selectedHistory_[cursor]) const EditPass*(nullptr);
+    }
+    if (cursor >= RuntimePlaybackViewConfig::kRecordsPerBridge) {
+      stage = 10;
+    }
+    return PrewarmStepResult::Progress;
+  }
+  capacity_ = capacity;
+  return PrewarmStepResult::Complete;
+}
+
 NOTE_EDIT_MEM void RuntimeCanonicalPassInputs::releaseApply() {
   if (borrowed_ && apply_ && apply_->generation() == applyGeneration_) apply_->discard();
   borrowed_ = false;

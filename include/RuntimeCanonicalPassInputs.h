@@ -44,6 +44,10 @@ class RuntimeCanonicalPassInputs {
   RuntimeCanonicalPassInputs(const RuntimeCanonicalPassInputs&) = delete;
   RuntimeCanonicalPassInputs& operator=(const RuntimeCanonicalPassInputs&) = delete;
   bool prewarm(size_t capacity);
+  enum class PrewarmStepResult : int8_t { Failed = -1, Progress = 0, Complete = 1 };
+  /// DEC-231: resumable companion-input prewarm. `stage`/`cursor` live in the owning runtime.
+  /// One sub-unit per call: one allocation (8), one constructor chunk (256), or the history chunk.
+  PrewarmStepResult stepPrewarm(size_t capacity, uint8_t& stage, uint16_t& cursor);
   size_t fixedExternalBytes() const { return capacity_ * (2 * sizeof(MidiEvent) + 2 * sizeof(RuntimeCompanionPasses::Pass) + sizeof(SealedPass) + 2 * sizeof(uint16_t)) + (capacity_ ? RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*) : 0); }
   static uint64_t requiredGrainsUpperBound(size_t capacity, size_t passCount, size_t rowCount, size_t quantum);
   static uint64_t requiredSelectedGrainsUpperBound(size_t capacity, size_t rawHistoryCount, size_t quantum);

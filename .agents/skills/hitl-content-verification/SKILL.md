@@ -89,6 +89,22 @@ and 2 overdub bars. Then dump and verify:
 and records cycles. `verify_playback_content.py` writes `content-review.json`
 with inventory differences and per-bar counts.
 
+**Isolate the target track for playback.** Other enabled tracks sound into the
+same capture and appear as unexplained `extra` rows. `--solo-track N` long-presses
+track N's button (`SOLO_TRACK`, exclusive) before playback and clears it after;
+the target then alone supplies the served rows. If the track serves its output on
+a channel different from the channel the take was captured on (e.g. track 8
+serves MIDI channel 8 while the dump rows are channel 1), pass `--midi-channel 8`
+to the verifier: it normalizes the served channel to the dump channel for the
+content comparison. Example for track 8:
+
+```bash
+.venv/bin/python .agents/skills/hitl-content-verification/scripts/dump_and_capture.py \
+  --out-dir captures/<run>-playback --solo-track 8
+.venv/bin/python .agents/skills/hitl-content-verification/scripts/verify_playback_content.py \
+  captures/<run>-playback --midi-channel 8
+```
+
 To read a target that is **not** the selected track's active slot (a demoted
 windowed loop, or any named slot), add `--select-track N --dump-slot N`: the
 track button is a `SELECT_TRACK` and the slot is named in the dump request, so

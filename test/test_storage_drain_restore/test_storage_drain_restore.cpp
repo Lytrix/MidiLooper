@@ -128,6 +128,19 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/PersistenceDrainGuard.cpp"
 #include "../../src/StorageManager/RestoreRequestState.cpp"
 
+// The production latch is private; the capture suites use this friend name, and the scheduler test needs
+// to manufacture the exact device state ("accepted stop, finalization still in flight") without staging a
+// whole take.
+struct TrackCaptureStopTestAccess {
+  static bool ensureStopRing(Track& track) { return track.prewarmCaptureStopJobs(0); }
+  static void latchStop(Track& track, PendingStopDestination destination, uint8_t slot, uint64_t interval) {
+    track.latchAcceptedStop(destination, slot, interval);
+  }
+  static void consumeStop(Track& track, const char* reason) {
+    track.consumeAcceptedStopObligation(reason);
+  }
+};
+
 // The MIDI-service path reaches the transport/clock owners and the note-edit geometry owners. None is on
 // the asserted path (the fixture queues a transport message purely to observe that MIDI was serviced), so
 // each fails closed rather than pretending to act.
@@ -260,6 +273,8 @@ void test_a36_audible_playback_is_not_a_persistence_gate() {
   TEST_ASSERT_TRUE_MESSAGE(track.isPlaying(), "the fixture must leave the track playing");
   TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::isCaptureRecordingForPersistence(),
                             "audible playback alone must never satisfy the capture gate");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::isCaptureActiveForPersistence(),
+                            "audible playback alone must never satisfy the capture/stop gate either");
   // The pure classifier agrees: with playback and no capture, no gate denies the save.
   const PersistenceSyncDrainBudget::SyncDrainVerdict verdict =
       PersistenceSyncDrainBudget::classifySyncDrainVerdict(
@@ -294,7 +309,62 @@ void test_a36_a_recording_track_parks_the_multi_frame_writers() {
                            "the owed save must stay owed during a take");
 }
 
-/// **The mid-pass one-chunk flush runs during a take.** The recording branch is an early return, so the
+/// **An overdub interval parks the multi-frame writers too.** The gate is a *live capture interval*
+/// (`isRecording() || isOverdubbing()`), not recording alone: an overdub owns the same timing-sensitive
+/// interval and the scheduler may not start a blocking workspace/slot step inside it.
+void test_a1_an_overdub_interval_parks_the_multi_frame_writers() {
+  Track& track = trackManager.getTrack(0);
+  track.forceSetState(TRACK_OVERDUBBING);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "the fixture must leave the track overdubbing");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isCaptureActiveForPersistence(),
+                           "a live overdub must satisfy the capture gate");
+  storageSession.currentWorkspaceSave.pending = true;
+  const uint16_t queueBefore = PersistenceWorkQueue::queueDepth();
+
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
+
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(queueBefore, PersistenceWorkQueue::queueDepth(),
+                                   "no multi-frame work may be queued during an overdub");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, PersistenceWorkQueue::writingWorkItemCount(),
+                                   "no multi-frame work may be writing during an overdub");
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.pending,
+                           "the owed save must stay owed during an overdub");
+  track.forceSetState(TRACK_STOPPED);
+}
+
+/// **An accepted stop whose finalization is still in flight parks the writers.** This is the measured
+/// device race (`session_20261030_154306.log`): the record stop resumed PLAYING while the accepted stop
+/// job was still in flight, and a previously admitted workspace save ran two 144 ms `CapturePassChunk`
+/// slices into the resumed transport. The admission check must see the stop obligation, not only the
+/// track state.
+void test_a1_an_accepted_stop_in_flight_parks_the_multi_frame_writers() {
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TEST_ASSERT_TRUE_MESSAGE(track.loopsAllocated(), "the fixture needs an allocated slot for the latch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ensureStopRing(track),
+                           "the fixture needs the externally allocated stop ring for the latch");
+  TrackCaptureStopTestAccess::latchStop(track, PendingStopDestination::Playing, 0, 1);
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                           "the fixture must hold an accepted, not-yet-executed stop");
+  TEST_ASSERT_TRUE_MESSAGE(track.hasStopInFlight(), "the stop obligation must read as in flight");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isCaptureActiveForPersistence(),
+                           "the accepted stop must satisfy the scheduler gate");
+  storageSession.currentWorkspaceSave.pending = true;
+  const uint16_t queueBefore = PersistenceWorkQueue::queueDepth();
+
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
+
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(queueBefore, PersistenceWorkQueue::queueDepth(),
+                                   "no multi-frame work may be queued while a stop is in flight");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, PersistenceWorkQueue::writingWorkItemCount(),
+                                   "no multi-frame work may be writing while a stop is in flight");
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.pending,
+                           "the owed save must stay owed while a stop is in flight");
+  TrackCaptureStopTestAccess::consumeStop(track, "test_cleanup");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasStopInFlight(), "the fixture must clear its accepted stop");
+}
+
+/// **The mid-pass one-chunk flush runs during a take.** The capture-gate branch is an early return, so the
 /// flush is the *only* persistence that runs: with a sealed chunk queued it is serviced (any movement in
 /// the chunk queue/state), while a take with nothing sealed leaves both paths untouched.
 void test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take() {
@@ -343,7 +413,6 @@ void test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take() {
 
 // ---------------------------------------------------------------------------
 // S2b.7 / D4 — the blocking drain **advances** the restore it waits on.
-//
 // The archived `deferred-slot-restore-liveness` deferred this claim: the drain loop ran only
 // `processDeferredSaveState`, and the main loop is *inside* the drain, so a restore holding the SD
 // session could never release it. The earlier fixture in this file recorded the gap (the drain returned
@@ -2021,6 +2090,9 @@ int main(int, char**) {
   RUN_TEST(test_a36_audible_playback_is_not_a_persistence_gate);
   RUN_TEST(test_a36_a_recording_track_parks_the_multi_frame_writers);
   RUN_TEST(test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take);
+  // Slice 1 (2026-10-30 plan): the gate also covers overdub and an accepted stop in flight, while
+  // ordinary playback stays eligible (DEC-081) and the durability flush survives both.
+  RUN_TEST(test_a1_an_overdub_interval_parks_the_multi_frame_writers);
   // S2b.7 / D4 — the drain advances the restore it waits on.
   RUN_TEST(test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate);
   RUN_TEST(test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits);
@@ -2045,5 +2117,8 @@ int main(int, char**) {
   RUN_TEST(test_i4_a_completed_commit_publishes_one_catalog_change_for_the_display);
   RUN_TEST(test_i4_an_unreadable_index_is_not_an_empty_catalog);
   RUN_TEST(test_i4_revision_without_transport_restores_first_occupied_runtime_indices);
+  // Last: it allocates the external stop ring to manufacture an accepted stop, and the ring's
+  // prewarmed extents are not part of the later fixtures' reset surface.
+  RUN_TEST(test_a1_an_accepted_stop_in_flight_parks_the_multi_frame_writers);
   return UNITY_END();
 }

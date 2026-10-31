@@ -942,6 +942,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         }
         if (haveOpenPlayheadTails) {
             const uint32_t tailsStartUs = micros();
+            // Withdrawn 2026-10-30 (see the draw-source path): the closure-tick freeze fed the
+            // wrap-split branch and stretched notes to the loop end.
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
             // Growing RECORD has no sealed loop wrap. OVERDUBBING+PLAYING enables

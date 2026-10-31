@@ -42,15 +42,20 @@ path and confidence when alternatives exist; do not block on vagueness.
 
 - **Firmware env:** `teensy41-capture-serial` for build and upload unless the
   user explicitly names another env in this session.
-- **Upload:** after a *successful* firmware build, **ask** before flashing the
-  board. Exception: while evaluating the change with a dedicated HITL preset,
-  upload and run without asking.
-- **macOS uploader:** follow [`TEENSY_FIRMWARE_UPLOAD.md`](docs/Guides/TEENSY_FIRMWARE_UPLOAD.md):
-  prefer explicit Homebrew `teensy_loader_cli` **2.3+**; the installed PlatformIO
-  bundled CLI 2.2 rejects images reaching 1 MiB (`HEX parse error line 65553`).
-  Do not default to PlatformIO's GUI upload path or count its `SUCCESS` as
-  programming/boot proof. Disable GUI Auto; retain exact HEX hash, loader result
-  and separate USB/boot evidence. Use a short PROGRAM press when needed.
+- **Upload:** after a *successful* firmware build, flashing the board is
+  **pre-authorized** (owner instruction, 2026-10-30): upload and run without asking.
+  Never upload after a failed build or when the user asked build-only. Record the
+  exact HEX hash and verify boot separately over serial (`boot_reset,crash=0`,
+  `BOOT,load,ok`); `SUCCESS` is not programming/boot proof.
+- **macOS uploader:** follow [`TEENSY_FIRMWARE_UPLOAD.md`](docs/Guides/TEENSY_FIRMWARE_UPLOAD.md).
+  **No-press default on this host:** `pio run -e teensy41-capture-serial -t upload`
+  (`upload_protocol = teensy-gui`, Teensyduino's tool, which reboots the board itself).
+  The standalone Homebrew `teensy_loader_cli` **2.3+** cannot reboot a running board on
+  macOS (`-r` -> `Unable to find rebootor`, `-s` unimplemented) and the PlatformIO
+  bundled CLI 2.2 rejects images reaching 1 MiB (`HEX parse error line 65553`), so it is
+  used only when the board is already in HalfKay. Either way `SUCCESS` is **not**
+  programming/boot proof: retain the exact HEX hash and verify boot separately over
+  serial (`boot_reset,crash=0`, `BOOT,load,ok`). A short PROGRAM press is the fallback.
 - **Device SD is user data:** quarantine (`!QUARANTINE_WORKSPACE`), delete or
   rename on the card only with explicit permission in the same session. The
   firmware has no restore command, so quarantine is one-way in practice — see

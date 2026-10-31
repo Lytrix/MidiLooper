@@ -133,6 +133,10 @@ PRESSURE_RECLAIM_MEM void TrackManager::reclaimUnreferencedDisabledPasses(PassRe
   static uint16_t lastSlotsWithPins = 0xFFFFu;
   const bool pinsChanged = pinnedCapturePasses != lastCapturePins ||
                            pinnedEditPasses != lastEditPins || slotsWithPins != lastSlotsWithPins;
+  // `diagnosticVisibility` is a **force** term, not a filter: the Critical-pressure caller runs every
+  // main-loop pass, so passing true wrote >10k identical rows in 60 s (`session_20261030_181524.log`)
+  // and evicted Tier-A rows. Callers pass false and let the change gate below name the real events; the
+  // pressure transition row already names the Critical level.
   if (passesReclaimed > 0 || chunksReleased > 0 || diagnosticVisibility || pinsChanged) {
     lastCapturePins = pinnedCapturePasses;
     lastEditPins = pinnedEditPasses;

@@ -397,7 +397,14 @@ TRACK_COLD_MEM __attribute__((noinline)) void dropStaleRecordTakeDemands(LoopPla
 }
 #endif
 
-bool Track::startRecording(uint32_t currentTick) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+bool& Track::viewPrewarmStrictForTest() {
+  static bool strict = false;
+  return strict;
+}
+#endif
+
+TRACK_COLD_MEM bool Track::startRecording(uint32_t currentTick) {
   // A repeated/ineligible start must not reset a live capture before setState rejects it.
   if (!isValidStateTransition(TRACK_RECORDING)) return false;
   // Capture admission, and it sits before every mutation on purpose - including the
@@ -407,12 +414,27 @@ bool Track::startRecording(uint32_t currentTick) {
   // the slot's pass timeline, the armed pre-roll, the pending-note set, the capture
   // baseline and the track state exactly as they were. Admission succeeds only if every
   // allocation-free-stop prerequisite for this take has been established.
-  if (!prewarmPlaybackForSlot(activeLoopIndex, true)) {
+  // DEC-231: the Record edge only validates/adopts prepared views. Production advances preparation
+  // from the off-edge owner; host fixtures predate that owner and drive the same state machine
+  // synchronously unless the strict test seam is set (the edge REDs set it).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (!viewPrewarmStrictForTest() && !viewPrewarmReadyForSlot(activeLoopIndex)) {
+    requestViewPrewarmForSlot(activeLoopIndex);
+    for (uint16_t unit = 0; unit < 256 && !viewPrewarmReadyForSlot(activeLoopIndex); ++unit) {
+      (void)stepViewPrewarmForSlot(activeLoopIndex, 1, 5000);
+    }
+  }
+#endif
+  if (!viewPrewarmReadyForSlot(activeLoopIndex)) {
+    requestViewPrewarmForSlot(activeLoopIndex);
+    return false;  // pending Record retains; the ownered preparation continues off-edge
+  }
+  if (!prewarmPlaybackForSlot(activeLoopIndex, true, false, true)) {
     MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::RecordStart);
     return false;
   }
   LoopPlaybackRuntime* recordRuntime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-  if (!recordRuntime) return false;
+  if (!recordRuntime || (recordRuntime->viewPrewarmResourceMask & 0x1Fu) != 0x1Fu) return false;
   RuntimePlaybackViewBuild::PreparationTurn primaryTurn(recordRuntime->viewBuild);
   RuntimePlaybackViewBuild::PreparationTurn bridgeTurn(recordRuntime->bridgeWindowBuild);
   if (!primaryTurn || !bridgeTurn) return false;
@@ -441,7 +463,7 @@ bool Track::startRecording(uint32_t currentTick) {
   // Everything is already reserved by the admission pass above, so this allocates
   // nothing; it exists to re-stamp against the post-reset canonical generation and the
   // now-empty pass set.
-  (void)prewarmPlaybackForSlot(activeLoopIndex, true);
+  (void)prewarmPlaybackForSlot(activeLoopIndex, true, true, true);
   ExternalPoolAccounting::endTag();
   auto preRoll = std::move(armedPreRollNotes);
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {

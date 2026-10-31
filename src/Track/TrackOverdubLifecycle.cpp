@@ -177,6 +177,13 @@ TRACK_COLD_MEM bool Track::hasAcceptedUnexecutedInteraction() const {
   return latch != nullptr && latch->isSet();
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+uint32_t& companionWorkBudgetUsForTest() {
+  static uint32_t budgetUs = UINT32_MAX;  // disabled by default; a fixture opts in
+  return budgetUs;
+}
+#endif
+
 TRACK_COLD_MEM bool Track::hasLiveCaptureInterval() const {
   return isRecording() || isOverdubbing();
 }
@@ -268,6 +275,14 @@ TRACK_COLD_MEM size_t Track::captureStopPreviewCount() const {
   return captureStopJobs_ ? captureStopJobs_->count : 0;
 }
 
+TRACK_COLD_MEM bool Track::hasCaptureStopPreviewForSlot(uint8_t slot) const {
+  if (!captureStopJobs_ || !loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return false;
+  for (size_t ordinal = 0; ordinal < captureStopJobs_->count; ++ordinal) {
+    if (captureStopPreviewForSlot(slot, ordinal) != nullptr) return true;
+  }
+  return false;
+}
+
 TRACK_COLD_MEM const CapturePreview* Track::captureStopPreviewForSlot(
     uint8_t slot, size_t ordinal, uint32_t* closureTick) const {
   if (!captureStopJobs_ || ordinal >= captureStopJobs_->count ||
@@ -285,8 +300,11 @@ TRACK_COLD_MEM const CapturePreview* Track::recordStopPreviewForSlot(uint8_t slo
   if (!captureStopJobs_) return nullptr;
   for (size_t ordinal = 0; ordinal < captureStopJobs_->count; ++ordinal) {
     const auto& job = captureStopJobs_->entries[(captureStopJobs_->head + ordinal) % CaptureStopJobs::kCapacity];
-    if (job.mode != CapturePhase::Record || job.admission.phase == PendingStopPhase::RecordEmpty ||
-        job.admission.phase == PendingStopPhase::RecordPublished) continue;
+    // Keep serving the published Record preview through the Snapshot publication gap. The
+    // `displaySourcePublicationPending` hold already ends once the committed source is current;
+    // dropping the preview at `RecordPublished` left the panel with an empty base (the 20-bar
+    // `n=0 hold_gap` at the record stop).
+    if (job.mode != CapturePhase::Record || job.admission.phase == PendingStopPhase::RecordEmpty) continue;
     const CapturePreview* preview = captureStopPreviewForSlot(slot, ordinal);
     if (preview && !preview->notes.empty()) {
       if (closureTick) *closureTick = job.loopLengthTicks == 0 ? 0 :
@@ -369,6 +387,124 @@ TRACK_COLD_MEM void Track::consumeAcceptedStopObligation(const char* reason) {
   latch->clear();
 }
 
+/// DEC-233 decision 1: a matching overdub Stop owns `slot` and its input is already closed, but the
+/// interval has not bound a job yet. The identity is the latch's own: the same slot, the **same**
+/// `captureInterval_` (the press does not advance it), the same LoopId and the same capture phase.
+TRACK_COLD_MEM bool Track::hasRetainedInputClosedStop(uint8_t slot) const {
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Stop) return false;
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return false;
+  if (latch->slot != slot || latch->interval != captureInterval_) return false;
+  // Overdub only: a retained Record stop keeps its own established live-interval semantics.
+  if (latch->mode != CapturePhase::Overdub) return false;
+  const Loop& loop = getLoop(slot);
+  if (latch->loopId != loop.loopId || loop.capture.phase != latch->mode) return false;
+  // Input is already closed for this interval. A still-overdubbing track is the live edge, not a retry.
+  return !isOverdubbing();
+}
+
+/// DEC-233 decision 1: close this interval's input on the Stop press. State only -- the producer
+/// capture, its rows/reservations, held notes, pending changes, preview and session-exit claim all
+/// stay with the interval until the job binds, and the capture identity does not move.
+TRACK_COLD_MEM void Track::closeOverdubInputForRetainedStop() {
+  if (!isOverdubbing()) return;
+  const bool transportRuns = clockManager.isTransportRunning();
+  trackState = TRACK_OVERDUB_STOPPING;
+  logger.logStateTransition("Track", TrackStateMachine::toString(TRACK_OVERDUBBING),
+                            TrackStateMachine::toString(TRACK_OVERDUB_STOPPING));
+  if (transportRuns) {
+    trackState = TRACK_PLAYING;
+    logger.logStateTransition("Track", TrackStateMachine::toString(TRACK_OVERDUB_STOPPING),
+                              TrackStateMachine::toString(TRACK_PLAYING));
+    return;
+  }
+  // Transport Stop wins: the interval is input-closed either way, but it may not publish PLAYING.
+  trackState = TRACK_STOPPED;
+  logger.logStateTransition("Track", TrackStateMachine::toString(TRACK_OVERDUB_STOPPING),
+                            TrackStateMachine::toString(TRACK_STOPPED));
+}
+
+/// DEC-233 decision 4: transport stop retargets the retained obligation instead of consuming it, and
+/// never restamps the first Stop's musical boundary.
+TRACK_COLD_MEM bool Track::retargetRetainedStopToStopped() {
+  PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Stop) return false;
+  if (!hasRetainedInputClosedStop(latch->slot)) return false;
+  latch->destination = PendingStopDestination::Stopped;
+  return true;
+}
+
+/// DEC-233 decision 3: hand a retained, input-closed Stop off **before** a successor Start touches the
+/// live role. True means there is nothing retained to hand off, or the handoff bound a job.
+TRACK_COLD_MEM bool Track::handOffRetainedStopBeforeSuccessorStart(uint32_t currentTick) {
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr) return true;
+  if (!hasRetainedInputClosedStop(latch->slot)) return true;
+  const PendingInteractionLatch request = *latch;
+  const PendingStopDestination destination =
+      clockManager.isTransportRunning() ? request.destination : PendingStopDestination::Stopped;
+  if (!beginDeferredOverdubStopForSlot(destination, currentTick, request.slot, request.interval,
+                                       request.phaseTick, /*inputClosedRetry=*/true)) {
+    return false;
+  }
+  consumeAcceptedStopObligation("successor_start");
+  return true;
+}
+
+/// DEC-233 decision 3: the successor Start could not hand the retained Stop off (genuine physical cut
+/// exhaustion). Keep one bounded intent beside the Stop; it never stacks or overwrites the Stop.
+TRACK_COLD_MEM void Track::retainSuccessorStartIntent() {
+  PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Stop) return;
+  if (!hasRetainedInputClosedStop(latch->slot)) return;
+  latch->successorStart = true;
+}
+
+/// DEC-233 decision 3: the Stop has bound, so its successor intent becomes the existing Start carrier
+/// against the **post-binding** interval identity. Called after the Stop obligation was consumed.
+TRACK_COLD_MEM void Track::transferSuccessorStartIntent(uint8_t slot) {
+  PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr || latch->isSet()) return;
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  const Loop& loop = getLoop(slot);
+  latch->kind = PendingInteractionLatch::Kind::Start;
+  latch->slot = slot;
+  latch->loopId = loop.loopId;
+  latch->interval = captureInterval_;
+  latch->mode = CapturePhase::Overdub;
+}
+
+/// DEC-233 decision 5: the input-closed producer is a **closed** display source with an immutable
+/// closure phase, not a live playhead tail. Only the retained (unbound) interval is served here; once
+/// the job owns the preview, `captureStopPreviewForSlot` is its boundary.
+TRACK_COLD_MEM const CapturePreview* Track::inputClosedOverdubPreviewForSlot(
+    uint8_t slot, uint32_t* closureTick) const {
+  if (!hasRetainedInputClosedStop(slot)) return nullptr;
+  const Loop& loop = getLoop(slot);
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (closureTick) {
+    *closureTick = loop.loopLengthTicks == 0
+                       ? 0
+                       : std::min(latch->phaseTick, loop.loopLengthTicks - 1);
+  }
+  return &loop.capturePreviewView();
+}
+
+/// DEC-233 decision 2: top up an **empty, unowned** canonical worker output. A populated store (its
+/// content or another owner) is left byte-for-byte intact, so the wait stays observable.
+TRACK_COLD_MEM bool Track::replenishEmptyCanonicalCaptureOutput(uint8_t slot) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr || runtime->captureStopOwner != nullptr) return false;
+  if (!runtime->canonicalCaptureOutput.store.empty()) return false;
+  if (LoopEventStore::freeChunkCount() != 0) {
+    (void)runtime->replenishCanonicalCaptureChunk();
+  }
+  if (!runtime->canonicalCaptureOutputAdmitted()) {
+    (void)runtime->prewarmCanonicalCaptureOutput();
+  }
+  return runtime->canonicalCaptureOutputAdmitted();
+}
+
 /// S2b.6: the stop-side park. Admission found the interval slot's canonical-copy reservation
 /// unadmitted. Legal here because a deferred turn is not the action edge. It re-runs the slot's
 /// reservation, then reports `canonical_output_busy` as a **wait** and lets the next deferred
@@ -421,7 +557,15 @@ TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
 /// every deferred owner lane. The admitted job always owns the turn first, so an accepted request
 /// can never stack a second stop job.
 TRACK_COLD_MEM bool Track::serviceAcceptedInteractionTurn() {
-  if (!hasAcceptedUnexecutedInteraction() || hasPendingDeferredOverdubStop()) return false;
+  if (!hasAcceptedUnexecutedInteraction()) return false;
+  // The admitted job owns the turn for **stop** work, so an accepted request can never stack a second
+  // stop job. DEC-233 decision 3: a successor **Start** is legal while a predecessor finalizes, and it
+  // must not wait for that predecessor's publication/cleanup -- only its own cheap Start preflight.
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (hasPendingDeferredOverdubStop() &&
+      (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Start)) {
+    return false;
+  }
   (void)driveAcceptedInteraction();
   return true;
 }
@@ -475,14 +619,24 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   // S4f.17: the accepted obligation is admitted by the mode its interval was captured in. A
   // Record interval runs the Record chain (its own receipts and geometry) and its own transport
   // edge; the overdub form keeps the staging-dependent path.
+  // DEC-233 decision 1: the interval's **first** Stop phase is the musical boundary, so an overdub
+  // retry closes there and never at the retry clock. A retry whose interval is already input-closed
+  // is explicitly eligible even though the track left OVERDUBBING at the press; it bypasses only
+  // that completed transition, never resource or identity preflight.
+  const bool inputClosedRetry = !isOverdubbing();
   const bool admitted =
       request.mode == CapturePhase::Record
           ? beginDeferredRecordStopForSlot(destination, clockManager.getCurrentTick(),
                                            request.slot, request.interval)
           : beginDeferredOverdubStopForSlot(destination, clockManager.getCurrentTick(),
-                                            request.slot, request.interval);
+                                            request.slot, request.interval, request.phaseTick,
+                                            inputClosedRetry);
   if (admitted) {
+    // DEC-233 decision 3: a successor Start retained beside this Stop transfers into the existing
+    // Start carrier now, against the identity the binding just advanced -- never before it.
+    const bool successorStart = request.successorStart;
     consumeAcceptedStopObligation("admitted");
+    if (successorStart) transferSuccessorStartIntent(request.slot);
     return true;
   }
   parkAcceptedStopForCanonicalOutput(request.slot);
@@ -573,6 +727,15 @@ DMAMEM uint32_t sOverdubRetryReportMs;
 }  // namespace
 
 TRACK_COLD_MEM bool Track::hasLiveOwnerOfReservedSessionExitObligation(const Loop& loop) const {
+  // DEC-233 decision 3: a retained, input-closed Stop remains a live owner of this Loop's reservation
+  // until its own handoff. State Playing is not evidence that the Reserved claim is orphaned.
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch != nullptr && latch->kind == PendingInteractionLatch::Kind::Stop &&
+      latch->mode == CapturePhase::Overdub && latch->interval == captureInterval_ &&
+      latch->loopId == loop.loopId && loopsAllocated() &&
+      latch->slot < Config::MAX_LOOPS_PER_TRACK && &getLoop(latch->slot) == &loop) {
+    return true;
+  }
   if (!captureStopJobs_) return false;
   for (size_t i = 0; i < captureStopJobs_->count; ++i) {
     const CaptureStopJob& job =
@@ -705,8 +868,16 @@ TRACK_COLD_MEM bool Track::replenishLiveOverdubTransferHorizon() {
   // depends on (the start-time prewarm carries the same precondition). A continuous chain never offers
   // the start-time edge -- each start precedes its predecessor's commit -- so without this turn the
   // horizon lapsed mid-chain and the next stop waited forever for a start that its own interval blocks.
-  if (!isOverdubbing() || hasPendingDeferredOverdubStop() || !loopsAllocated()) return false;
-  Loop& loop = getActiveLoop();
+  // DEC-233 decision 4: an interval whose Stop is retained and input-closed still owes that stop, so it
+  // stays eligible for the top-up -- otherwise the lapsed horizon could never be restored and the
+  // retained Stop would wait on a resource no start can renew. The no-job relocation guard is kept.
+  if (!loopsAllocated() || hasPendingDeferredOverdubStop()) return false;
+  const PendingInteractionLatch* latch = interactionLatch();
+  const bool retainedClosedStop =
+      latch != nullptr && latch->kind == PendingInteractionLatch::Kind::Stop &&
+      hasRetainedInputClosedStop(latch->slot);
+  if (!isOverdubbing() && !retainedClosedStop) return false;
+  Loop& loop = getLoop(retainedClosedStop ? latch->slot : activeLoopIndex);
   if (!loop.activeOverdubTransferHorizonLow()) return false;
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
   const bool replenished = loop.prewarmActiveOverdubTransferHorizon();
@@ -1450,8 +1621,16 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
 
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestination destination,
                                                            uint32_t currentTick, uint8_t slot,
-                                                           uint64_t interval) {
-  if (!captureStopJobs_ || !isOverdubbing() || hasPendingStopForInterval(interval)) {
+                                                           uint64_t interval, uint32_t phaseTick,
+                                                           bool inputClosedRetry) {
+  if (!captureStopJobs_ || hasPendingStopForInterval(interval)) {
+    return false;
+  }
+  // DEC-233 decision 1: the press already closed this interval's input, so its retry is eligible
+  // without re-entering OVERDUBBING. That is the only bypassed transition; every resource and
+  // identity preflight below still runs, and an interval that never closed its input still needs
+  // the live overdub state.
+  if (!isOverdubbing() && !inputClosedRetry) {
     return false;
   }
   // DEC-078 item 3 / S4f.0: the request names the interval it belongs to. A drive whose
@@ -1508,11 +1687,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
     DENY_REENTRY_RESOURCE();
     return false;
   }
-  if (!hasPendingDeferredOverdubStop() && !runtime->canonicalCaptureOutputAdmitted()) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy", resolveTrackIndexForPersistence(*this));
-    DENY_REENTRY_RESOURCE();
-    return false;
-  }
+  // DEC-233 decision 2: a canonical output reservation is **not** a condition for owning an
+  // input-closed interval. The descriptor/cut resources above protect content and stay mandatory;
+  // the canonical worker is bound only when its empty, unowned output is ready (`bindCaptureStopWorker`
+  // below and on the deferred turn). A busy finalizer alone must not delay this stop or a successor.
   // Task 4.20: the tail needs a durable destination, not a receipt slot specifically. When the ring is
   // full the interval's admission-reserved obligation record is that destination, so a full ring no
   // longer denies the stop (`session_exit_handoff_full` stays for the case where neither exists).
@@ -1632,8 +1810,9 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
     return false;
   }
   // Pure predicate: resolve it before the seal so no fallible step follows the
-  // ownership transfer.
-  if (!isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
+  // ownership transfer. DEC-233: a retry of an already input-closed interval does not re-enter the
+  // input-state transition the press already performed.
+  if (!inputClosedRetry && !isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
     return false;
   }
   if (!job.admission.begin(generation, currentTick, 0, openReservations,
@@ -1663,7 +1842,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   job.owner = &loop;
   if (captureStopJobs_->count == 0 && runtime->captureStopOwner == nullptr) {
     roleSet->frozenStagingIndex = job.frozenStagingIndex;
-    runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+    // DEC-233 decision 2: bind only a **ready** canonical worker. The eager `setCaptureStopOwner`
+    // that used to sit here was the readiness bypass: it took the canonical owner without an empty,
+    // unowned output. When the output is not ready the job stays queued and the deferred turn binds.
+    (void)bindCaptureStopWorker(job);
   }
 #if defined(SESSION_CAPTURE)
   // S4f.3 L5: the accepted stop is **bound** -- the interval the request named is now the job's. The
@@ -1704,7 +1886,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   job.loopId = loop.loopId;
   job.slot = slot;
   job.mode = loop.capture.phase;
-  job.phaseTick = capturePhaseTick(currentTick);
+  job.phaseTick = phaseTick != UINT32_MAX ? phaseTick : capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
   job.interval = interval;
   job.admission.sessionExitReceiptRing = sessionExitReceiptRing;
@@ -1789,6 +1971,13 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // `job.admission` remains the capture-admission and transport-stop
   // barrier until the joint commit and cleanup retire it.
   trackState = TRACK_OVERDUB_STOPPING;
+  // DEC-222: these two transitions used to write `trackState` directly, so the capture had no
+  // `ST,Track,OVERDUBBING,OVERDUB_STOPPING` / `ST,Track,OVERDUB_STOPPING,PLAYING` row even though the
+  // device change was real (owner observed it on the panel; the log said otherwise). `setTrackState` is
+  // not usable here -- it runs the armed-pre-roll, telemetry and pending-start side effects this path
+  // must not re-run -- so the row is emitted the same way `TrackStateFacade` does.
+  logger.logStateTransition("Track", TrackStateMachine::toString(TRACK_OVERDUBBING),
+                            TrackStateMachine::toString(TRACK_OVERDUB_STOPPING));
   ++captureInterval_; // accepting Stop ends ingress for this interval in this turn
 #if RUNTIME_TIMING_ENABLED
   RuntimeTimingTelemetry::recordStopStateTransition(
@@ -1797,6 +1986,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
 #endif
   if (destination == PendingStopDestination::Playing) {
     trackState = TRACK_PLAYING;
+    logger.logStateTransition("Track", TrackStateMachine::toString(TRACK_OVERDUB_STOPPING),
+                              TrackStateMachine::toString(TRACK_PLAYING));
 #if RUNTIME_TIMING_ENABLED
     RuntimeTimingTelemetry::recordStopStateTransition(
         resolveTrackIndexForPersistence(*this), slot,
@@ -2937,6 +3128,14 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   Loop& loop = *job.owner;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  // DEC-233 decision 2: the descriptor/cut is owned already; the canonical worker binds only when its
+  // output is ready. An ordinary turn tops up an **empty, unowned** output first, so the interval is
+  // not parked behind a reservation nothing renews -- and a populated store or another owner is never
+  // cleared to force the bind.
+  if (runtime != nullptr && runtime->captureStopOwner == nullptr &&
+      !runtime->canonicalCaptureOutputAdmitted()) {
+    (void)replenishEmptyCanonicalCaptureOutput(job.slot);
+  }
   if (!bindCaptureStopWorker(job)) return false;
   // Record jobs own no live capture staging: they run the closure, bounded source
   // staging and (later) the preparation composition over the job's frozen range.
@@ -3105,6 +3304,59 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   const bool causalBaseCurrent = !job.causalBaseRecorded ||
       (job.causalBase.playbackRevision == loop.playbackRevision &&
        job.causalBase.snapshotIdentity == loop.publishedSnapshotIdentity());
+
+  // One raw-only retirement for every cause that makes the companion path unreachable on this job. The
+  // destination-Playing gate is deliberately not used: this route exists because `retireSkipped`
+  // refuses exactly this destination (evidence 2026-10-27-STOP-RETIREMENT-REVIEW Finding 1).
+  const auto retireWithoutCompanions = [&](const char* stallReason) {
+    noteStallOnce(stallReason);
+    stop.setPhase(PendingStopPhase::PrepareTransfer);
+    if (!stop.retireCompanionSkippedForBaseAbandonment()) return false;
+    // A *superseded* base keeps its prepared companion horizon: the atomic transfer's superseded
+    // branch restores it (`restoreSupersededPreparedCompanionHistory`), which is the contract the
+    // next interval depends on. Only a genuinely dead/stalled base discards it.
+    if (causalBaseCurrent) loop.discardPreparedCompanionHistory(stop.intervalToken());
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub stop: companion path skipped (canonical derivation unavailable); raw pass only");
+    stop.setPhase(PendingStopPhase::AtomicTransfer);
+    return false;
+  };
+
+  // **Slice 4 of the 2026-10-30 plan: a total companion-work budget.** The tail/history/bridge grains are
+  // small, but the job can spend 5-14 s in the family (measured `midifile-chain-16`), holding the stop
+  // FIFO head and the display's committed base hostage to derived work. The raw pass is authoritative, so
+  // when the family exceeds the budget the job commits raw and hands the remaining derived work to the
+  // generation-qualified DEC-172 obligation (serviced outside the stop FIFO). The timer starts on the first
+  // grain in the family and resets whenever the phase leaves it; the budget is 65.536 ms-quantized because
+  // the two fields fill existing `Track` padding.
+  const bool companionFamily =
+      stop.phase >= PendingStopPhase::CanonicalTail && stop.phase <= PendingStopPhase::CompanionBridge;
+  if (!companionFamily) {
+    companionWorkStartUnit_ = 0;
+  } else if (stop.destination == PendingStopDestination::Playing) {
+    // 262.144 ms units: one byte, wrap-safe, and the first unit is 0 only during the first 262 ms after
+    // boot, where no stop job can exist.
+    const uint8_t nowUnit = static_cast<uint8_t>(micros() >> 18);
+    if (companionWorkStartUnit_ == 0) {
+      companionWorkStartUnit_ = nowUnit == 0 ? 1 : nowUnit;
+    } else {
+      const uint32_t elapsedUnits =
+          static_cast<uint32_t>(static_cast<uint8_t>(nowUnit - companionWorkStartUnit_));
+      if (elapsedUnits * 262144u >= companionWorkBudgetUs()) {
+        noteStallOnce("companion preparation exceeded its work budget; deferring convergence");
+        stop.canonicalBaseAbandoned = true;
+        runtime->discardFrozenCanonicalTail();
+        loop.discardPreparedCompanionHistory(stop.intervalToken());
+#if defined(SESSION_CAPTURE)
+        DebugSessionCapture::stopTailBlockedImmediate(
+            resolveTrackIndexForPersistence(*this), job.slot, stopPhaseCode,
+            "work_budget", static_cast<uint16_t>(elapsedUnits));
+#endif
+        companionWorkStartUnit_ = 0;
+        return retireWithoutCompanions("companion preparation exceeded its work budget; deferred");
+      }
+    }
+  }
 
   // A clean stop commonly follows a completed wrap with no successor rows.
   // There is no canonical or audible ordering work in that candidate; advance
@@ -3459,21 +3711,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (stopCompanionPathIsUnreachable(static_cast<uint8_t>(stop.phase),
                                        stop.retargetedFromPlaying,
                                        stop.canonicalBaseAbandoned)) {
-      noteStallOnce("canonical base unavailable; companion path skipped");
-      stop.setPhase(PendingStopPhase::PrepareTransfer);
-      // Named refusal: this route is destination-Playing by construction, so the destination-gated
-      // `retireSkippedCompanionPreparation` refused 100% of the time here and the surviving
-      // estimates kept the stop from ever committing -- the wedge DEC-165's cause route had merely
-      // moved one phase later (evidence 2026-10-27-STOP-RETIREMENT-REVIEW Finding 1).
-      if (!stop.retireCompanionSkippedForBaseAbandonment()) return false;
-      // A *superseded* base keeps its prepared companion horizon: the atomic transfer's superseded
-      // branch restores it (`restoreSupersededPreparedCompanionHistory`), which is the contract the
-      // next interval depends on. Only a genuinely dead/stalled base discards it.
-      if (causalBaseCurrent) loop.discardPreparedCompanionHistory(stop.intervalToken());
-      logger.log(CAT_TRACK, LOG_WARNING,
-                 "Overdub stop: companion path skipped (no canonical base); raw pass only");
-      stop.setPhase(PendingStopPhase::AtomicTransfer);
-      return false;
+      return retireWithoutCompanions("canonical base unavailable; companion path skipped");
     }
     // DEC-168: the same cause for a **retargeted** job. Its base was never built -- the STOPPED route
     // skips `CanonicalPrefix`, so `canonicalBaseReady()` is false and `beginFrozenCanonicalTail`
@@ -3494,8 +3732,51 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       stop.setPhase(PendingStopPhase::AtomicTransfer);
       return false;
     }
+    // Liveness bound for a tail that never **begins** (`kCanonicalTailStartStallGrains`). The measured device
+    // shape this covers is the base that still *looks* healthy: a same-slot successor owns the slot's shared
+    // canonical/companion machinery, so `beginFrozenCanonicalTail` refuses on `captureAttached`, an active
+    // capture bridge, a busy apply, or inputs whose generation moved -- every grain re-enters
+    // `CanonicalTail` without starting anything, and no row said so. That is a *parked* job: it holds the
+    // FIFO head, the stop owner and the session-exit receipt for as long as the successor chain runs
+    // (`session_20261030_143745.log`: 63.0 s -> 113.8 s, tail `Idle`, successor windows never opened). A
+    // begun tail is real work and is deliberately not counted here.
+    const bool tailIdle = runtime->canonicalTailIdle();
+    const bool tailDenied = runtime->canonicalTailDenied();
+    if (tailIdle || tailDenied) {
+      if (retargetStallPhase_ != stopPhaseCode) {
+        retargetStallPhase_ = stopPhaseCode;
+        retargetStallGrains_ = 0;
+      } else if (retargetStallGrains_ < kCanonicalTailStartStallGrains) {
+        ++retargetStallGrains_;
+      }
+      if (tailDenied || retargetStallGrains_ >= kCanonicalTailStartStallGrains) {
+        stop.canonicalBaseAbandoned = true;
+        if (tailDenied) runtime->discardFrozenCanonicalTail();
+#if defined(SESSION_CAPTURE)
+        // One decisive row per blocked job (the logger's stall note is once per Track, so a second episode
+        // would otherwise be anonymous). Direct when USB has room, ring as the Tier-A fallback.
+        DebugSessionCapture::stopTailBlockedImmediate(
+            resolveTrackIndexForPersistence(*this), job.slot, stopPhaseCode,
+            tailDenied ? "denied" : "no_start", retargetStallGrains_);
+#endif
+        const bool retired = retireWithoutCompanions(
+            tailDenied ? "canonical tail denied; companion path deferred"
+                       : "canonical tail could not begin; companion path deferred");
+        // The counter is advisory: clearing it on every terminal edge keeps a later job from inheriting a
+        // spent budget. (A job that vanishes mid-phase instead can only *shorten* the next job's budget,
+        // which takes the same raw+obligation route -- never losses content.)
+        retargetStallPhase_ = 0;
+        retargetStallGrains_ = 0;
+        return retired;
+      }
+    }
     if (runtime->beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)) {
       return false;
+    }
+    if (!runtime->canonicalTailIdle()) {
+      // The tail began; this job's no-start budget no longer applies.
+      retargetStallPhase_ = 0;
+      retargetStallGrains_ = 0;
     }
     const auto result = runtime->stepReservedFrozenCanonicalTail(
         stop, kDeferredStopPreparationQuantum);
@@ -4066,6 +4347,14 @@ void Track::startOverdubbing(uint32_t currentTick) {
     }
     return;
   }
+  // DEC-233 decision 3: a retained, input-closed predecessor Stop on this slot still owns the live
+  // producer. Hand it off **before** this Start prewarms, resets staging or claims a session-exit
+  // obligation. Only genuine physical cut exhaustion retains the Start as a distinct intent beside the
+  // Stop: the Stop is never overwritten, and the successor opens as soon as its own role is available.
+  if (!handOffRetainedStopBeforeSuccessorStart(currentTick)) {
+    retainSuccessorStartIntent();
+    return;
+  }
   // Capture staging is provisioned by capture admission, not by boot (DEC-065). This
   // is the overdub operation's own cold admission turn: reserve both roles *before*
   // any mutation and deny explicitly if the pool and the heap cannot supply them.
@@ -4273,12 +4562,13 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
 #endif
     // DEC-078 / invariant 31: this is not a refusal. The stop is accepted and retained against
     // the interval's own slot and generation; `Track::driveAcceptedInteraction` re-runs this
-    // guard chain on a deferred turn and executes it exactly once when the owner frees. The
-    // interval keeps recording, with its rows, reservations, pending notes and preview intact,
-    // and the user never presses twice. The `deny` row above is retained as the DEC-067
-    // counterfactual the HITL oracle already reads; `accepted_stop_finalizer_wait` is the
-    // DEC-078 scheduling evidence.
+    // guard chain on a deferred turn and executes it exactly once when the owner frees.
+    // DEC-233 decision 1 amends the retention: the user never presses twice **and** the interval does
+    // not keep recording. The press closes this interval's input and publishes PLAYING (or STOPPED
+    // when transport has stopped) while the producer, its rows/reservations, held notes, pending
+    // changes, preview and session-exit claim stay owned by this interval until the job binds.
     latchAcceptedStop(PendingStopDestination::Playing, activeLoopIndex, captureInterval_);
+    closeOverdubInputForRetainedStop();
     // DEC-070 diagnostic: name the resource that is still owned. The generic message hid which of
     // five different leaks wedged the slot (`ring_count_without_job` in particular means the ring
     // bookkeeping, not a live job, is holding the refusal).
@@ -4442,20 +4732,44 @@ TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
 TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
   // S4f.4, transport stop: transport stop wins over a pending return to PLAYING, and this path
-  // admits (or synchronously completes) the stop itself. The accepted stop's obligation is
-  // therefore consumed here, so the deferred drive can never execute a stale PLAYING stop
-  // against an interval this path already stopped.
-  consumeAcceptedStopObligation("transport_stop");
+  // admits (or synchronously completes) the stop itself. An admitted stop's latch was already
+  // consumed at admission, so this consume only retires a *remaining* accepted obligation that this
+  // path is about to complete -- it can never run against an interval this path already stopped.
+  //
+  // DEC-233 decision 4: a retained, **input-closed** Stop is retargeted rather than consumed, and it
+  // keeps its first phase. It stays owned until its own bind; transport Stop merely wins its
+  // destination, and a queued predecessor is retargeted on its existing job.
+  const bool retainedClosedStop = retargetRetainedStopToStopped();
   suppressMidiOutputForTransportStop();
   if (hasPendingDeferredOverdubStop()) {
     // Transport Stop wins over a pending return to PLAYING. The frozen source
     // remains valid, but its continuation may resolve only to STOPPED.
     requestDeferredOverdubStopToStopped();
+    if (!isOverdubbing() && !retainedClosedStop) {
+      if (isPlaying()) setState(TRACK_STOPPED);
+      return;
+    }
+  }
+  if (retainedClosedStop) {
+    const PendingInteractionLatch request = *interactionLatch();
+    if (beginDeferredOverdubStopForSlot(PendingStopDestination::Stopped,
+                                        clockManager.getCurrentTick(), request.slot,
+                                        request.interval, request.phaseTick,
+                                        /*inputClosedRetry=*/true)) {
+      consumeAcceptedStopObligation("transport_admitted");
+    }
+    // The obligation (bound or retained) owns the interval; the transport stop owns the state.
+    setState(TRACK_STOPPED);
+    return;
+  }
+  consumeAcceptedStopObligation("transport_stop");
+  if (hasPendingDeferredOverdubStop()) {
     if (!isOverdubbing()) {
       if (isPlaying()) setState(TRACK_STOPPED);
       return;
     }
   }
+
   overdubStopDebtProbeArmed_ = false;
   // DEC-069: this interval's own rows are sealed below, so no deferred wrap commit survives it.
   overdubWrapCommitPending_ = false;

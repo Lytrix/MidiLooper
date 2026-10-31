@@ -206,6 +206,15 @@ SC_MEM_ATTR void envelopeRouteLatenessRow(uint8_t type, uint8_t ch, uint32_t max
  */
 SC_MEM_ATTR const char* envelopeDistTagPrefix();
 SC_MEM_ATTR const char* envelopeRouteTagPrefix();
+/// The Tier-A prefix of the deferred-stop tail liveness row (`DIAG,stop_tail,`). `extern` for the same reason
+/// as the two above: the literal lives in `Utils/StopDiagRows.cpp`, which is carved into FLASH, so the
+/// classifier's own DTCM `.rodata` does not cross the RAM1 align edge.
+SC_MEM_ATTR const char* stopTailTagPrefix();
+/// The Tier-A prefix of DEC-216's aggregate owner-turn row (`DIAG,idle_turn,`). It moved out of
+/// `CaptureLineTier.h` for the same DTCM reason: the header list is instantiated in every including TU, and
+/// one more 16-byte literal there crossed the RAM1 align edge. Positive/negative pins live in
+/// `test_capture_ring`, the suite that asks the production predicate.
+SC_MEM_ATTR const char* idleTurnTagPrefix();
 SC_MEM_ATTR void emitEnvelopeRowLine(const char* line);
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel);
 SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType);
@@ -232,6 +241,20 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
 SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
                                bool ready, uint16_t credits, uint16_t freeChunks,
                                uint32_t heapFree);
+/// One row after `prewarmPlaybackForSlot` with the internal split. Emitted **directly** from the
+/// carved `StopDiagRows.cpp` TU so the format literal does not touch DTCM and no serial work runs
+/// inside the measured pause. `restamp=1` is the post-reset second call from `startRecording`.
+/// DEC-231: one direct row per bounded view-prewarm unit, emitted **after** the unit. Used to prove the
+/// preparation grain cost and that the owner turn returned between units.
+/// DEC-231/230 probe: the request target and the phase after `requestViewPrewarm`.
+SC_MEM_ATTR void viewPrewarmRequest(uint8_t track, uint8_t slot, bool runtimeExists, uint8_t phase);
+
+SC_MEM_ATTR void viewPrewarmStep(uint8_t track, uint8_t slot, uint16_t unit, uint32_t us, bool ready);
+
+SC_MEM_ATTR void capturePrewarmSplit(uint8_t track, uint8_t slot, bool restamp, uint8_t okMask,
+                                     uint32_t viewsUs, uint32_t canonicalUs, uint32_t horizonUs,
+                                     uint32_t stopJobsUs, uint32_t companionUs, uint32_t orderUs,
+                                     uint32_t otherUs, uint32_t totalUs);
 /** Boot-only external-pool admission sample: DIAG,capture_prewarm,phase=<before|after>,
  *  psram_free, psram_pool, heap_free, free_chunks. Walks the smalloc pool, so it is
  *  called only from the pre-transport boot prewarm. */
@@ -296,7 +319,7 @@ SC_MEM_ATTR void allocationCensusRow(uint32_t heapFreeBytes, uint32_t heapMinFre
                                      uint16_t chunksFree, uint16_t capturePasses, uint16_t editPasses,
                                      uint16_t undoEntries, uint32_t internalBytes,
                                      uint32_t editPassBytes, uint32_t undoIdBytes,
-                                     uint32_t externalBytes);
+                                     uint32_t externalBytes, bool loopEdit);
 /// Task 4.20 **allocatability probe row**: `tail` is the arena tail the admission policy currently reads
 /// (`&_heap_end - __brkval`), `want` the request, `malloc` whether the **internal heap** served it, `pool` whether only
 /// PSRAM could. Emitted **on demand** (`!HEAP_PROBE`), never per turn: it costs a real allocation by design, and its
@@ -341,6 +364,13 @@ SC_MEM_ATTR void stopGrainTiming(uint8_t track, uint8_t slot, uint8_t phase,
 SC_MEM_ATTR void stopStateTiming(uint8_t track, uint8_t slot, uint8_t fromState,
     uint8_t toState, uint32_t tick, uint32_t atUs, uint32_t serviceSequence,
     uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs);
+/// A deferred stop's `CanonicalTail` could not begin (`cause="no_start"`) or latched `Denied`
+/// (`cause="denied"`), so the job took the raw-only route and left the derived representation to the slot
+/// obligation. One decisive row per blocked job: the logger's `Deferred stop stalled:` note is once per
+/// Track, so a second episode would be anonymous. Tier-A and delivered direct-when-USB-has-room with the
+/// ring as fallback (`DIAG,stop_tail,` is registered in `isTierATextLine`).
+SC_MEM_ATTR void stopTailBlockedImmediate(uint8_t track, uint8_t slot, uint8_t phase,
+    const char* cause, uint16_t grains);
 SC_MEM_ATTR void stopServiceTiming(uint32_t serviceSequence, uint32_t actualUs,
     uint32_t dueUs, uint32_t deadlineUs, uint32_t periodUs);
 SC_MEM_ATTR void stopMidiEmissionTiming(uint32_t serviceSequence, uint8_t isNoteOn,
@@ -511,6 +541,30 @@ SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t he
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome);
+/// The physical capture-pass write, timed **below** the save step: one row per overrun (>= 4 ms), one
+/// sampled normal row per 200 ms, and always a failed write. `file_pos == file_size` means the write
+/// extended the file (allocation/metadata in play); `file_pos < file_size` is an overwrite of an
+/// already-allocated range. This is the discriminator for the 144 ms stall seen at the record stop.
+/// Slice 3 of the 2026-10-30 plan: one row pairing the frame's committed generation, the live/sealed
+/// capture overlay identity, and the pending deferred stop job. Change-gated by the `disp_turn` receipt
+/// (with a hard floor), so it does not become a per-frame stream. `DIAG,disp_` is already Tier-A.
+/// J2 (2026-10-30 plan): one **direct** row when the CLEAR long-press is refused by the blocking
+/// persistence drain. `slot` is the 1-based operator slot (the same base as `MIDI: Clear selected slot N`);
+/// `reason` is the drain's named gate (`post_load_holdoff`, `transport_active`, ...). The logger row is
+/// queued and can lag; this row is what lets the rig retry deterministically. Read-only, no state.
+SC_MEM_ATTR void clearRefusedImmediate(uint8_t slot, const char* reason);
+
+SC_MEM_ATTR void displaySourceIdentity(uint8_t track, uint8_t slot, uint32_t committedRevision,
+                                       uint32_t committedPassRevision, uint32_t previewRevision,
+                                       uint32_t previewNotes, uint32_t sealedNotes,
+                                       uint32_t stopPreviews, uint32_t stopPreviewNotes, bool pending,
+                                       uint8_t pendingPhase, uint32_t pendingGeneration,
+                                       bool loopEdit, bool retained);
+
+SC_MEM_ATTR void persistenceSdWriteImmediate(const char* stage, uint32_t requestedBytes,
+                                             uint32_t acknowledgedBytes, uint32_t chunkOffset,
+                                             uint32_t filePosition, uint32_t fileSize,
+                                             uint32_t durationUs);
 /// The window lane's **readiness receipt** (DEC-108 §13b / task 3.9): the readiness outcome for a slot, and the
 /// **holder** that owes the work when it is not ready, with the revision and the lead it judged. Emitted
 /// **directly when USB has room** for the same reason `persistenceResultImmediate` is: a window is prepared *under
@@ -1004,7 +1058,7 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                  editPins, slotsWithPins)
 // Task 4.20 allocation census: the caller has already decided it is due (rate-limited), so this only forwards.
 // Single line on purpose: a continued macro in this header previously mangled its backslashes.
-#define SC_ALLOC_CENSUS(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes) DebugSessionCapture::allocationCensusRow(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes)
+#define SC_ALLOC_CENSUS(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes, loopEdit) DebugSessionCapture::allocationCensusRow(heapFree, heapMin, chunksFree, capPasses, editPasses, undoEntries, internalBytes, editPassBytes, undoIdBytes, externalBytes, loopEdit)
 #define SC_HEAP_PROBE(tailFree, want, mallocOk, poolOk) DebugSessionCapture::heapProbeRow(tailFree, want, mallocOk, poolOk)
 #define SC_HEAP_LADDER(tailFree, need, largest, mask) DebugSessionCapture::heapLadderRow(tailFree, need, largest, mask)
 

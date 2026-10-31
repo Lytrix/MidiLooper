@@ -282,6 +282,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr &&
         !runtime.hasBoundRecordReturnWindowForPendingJob() && !runtime.hasPositionedPreviewReadyOwed()) {
       if (!runtime.reset(true)) return;
+#if defined(SESSION_CAPTURE)
+      if (isActive) reportFirstBarRouteForSlot(slotIndex, currentTick, 8, nullptr);
+#endif
     }
     // A bound rolling interval retains its cursor/version until its end.
     if (!rollingViewSelected) {
@@ -356,6 +359,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // moving the projection arithmetic into the cold owner brought it back to the budget line below).
   const bool anyServingRouteSelected =
       fixedBridge != nullptr || fixedView != nullptr || pagedEmission;
+#if defined(SESSION_CAPTURE)
+  if (isActive)
+    reportFirstBarRouteForSlot(slotIndex, currentTick,
+        fixedBridge != nullptr ? 1 : fixedView != nullptr ? 2 : pagedEmission ? 3 : mergedEvents != nullptr ? 4 : 0,
+        fixedView);
+#endif
   if (!anyServingRouteSelected) {
     // Every reader above is out, so the merged catch-all is the only remaining candidate -- it is the one branch that is
     // always selectable. The cold owner decides whether *its* window covers this phase and asks containment only if not.
@@ -601,6 +610,9 @@ void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
     return;
   }
   if (!hasAudiblePlaybackSource(activeLoopIndex)) {
+#if defined(SESSION_CAPTURE)
+    if (isPlaying()) reportFirstBarRouteForSlot(activeLoopIndex, currentTick, 7, nullptr);
+#endif
     return;
   }
   playbackEmitMidiOutput_ = emitMidiOutput && !muted;
@@ -669,6 +681,8 @@ TRACK_COLD_MEM const RuntimePlaybackView* Track::adoptOrServiceOnwardRecordWindo
         ready.coverage.loopLengthTicks == loop.loopLengthTicks && ready.coverage.contains(phase) &&
         qualified && (committedReady || captureReady)) {
       adopted = runtime.adoptFrozenRecordWindow(ready.source, loop.loopLengthTicks, phase);
+      if (adopted != nullptr && captureReady)
+        runtime.frozenCaptureAdoptedStorage = static_cast<uint16_t>(adopted->storageGeneration);
     }
   }
   if (adopted == nullptr && set != nullptr && previousCurrent < set->views.size()) {
@@ -678,13 +692,21 @@ TRACK_COLD_MEM const RuntimePlaybackView* Track::adoptOrServiceOnwardRecordWindo
     // Record pass publication advances canonical currency, not the sealed
     // range. Keep its already-served copied interval under the original stamp
     // until a complete successor takes over; never adopt a stale ready here.
+    // The same two identities as the ready branch above: a `Capture` window adopted mid-window must keep
+    // serving on the following ticks, or it sounds for one tick and the bar falls silent (121645). Only
+    // the exact window that branch adopted qualifies: a live rolling view can share the frozen token.
     if (current.complete && current.published && !current.rawCoveragePrepared &&
         !current.firstRecordReturnWindow && current.source.snapshotIdentity == nullptr &&
-        current.source.origin == PlaybackWindowOrigin::Committed &&
-        current.source.sourceGeneration == sourceIdentity.sourceGeneration &&
         current.coverage.loopLengthTicks == loop.loopLengthTicks && current.coverage.contains(phase) &&
         qualifiedFrozenRecordCaptureSourceForSlot(presentation->slot, presentation->interval, frozen, receipt)) {
-      adopted = &current;
+      const bool committedCurrent = current.source.origin == PlaybackWindowOrigin::Committed &&
+          current.source.sourceGeneration == sourceIdentity.sourceGeneration;
+      const bool captureCurrent = current.source.origin == PlaybackWindowOrigin::Capture &&
+          current.source.captureContentGeneration != 0 &&
+          current.source.captureContentGeneration == frozen.captureContentToken &&
+          runtime.frozenCaptureAdoptedStorage != 0 &&
+          static_cast<uint16_t>(current.storageGeneration) == runtime.frozenCaptureAdoptedStorage;
+      if (committedCurrent || captureCurrent) adopted = &current;
     }
   }
   // Each copied interval has its own order indices. Keep the crossing floor,
@@ -904,7 +926,14 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::sendAllNotesOff() {
   }
   playbackRuntime.clearAllLedgers();
   // also clear any half-open pending notes so they don't get forced later
-  pendingNotes.clear();
+  // DEC-233 decision 4: a retained, input-closed Stop still owes its held notes to its own job, so a
+  // transport-stop CC sweep must not erase that capture state. The ordinary paths keep the old clear
+  // (an admitted stop already moved its held notes into the job).
+  const PendingInteractionLatch* latch = interactionLatch();
+  const bool retainedClosedStop =
+      latch != nullptr && latch->kind == PendingInteractionLatch::Kind::Stop &&
+      hasRetainedInputClosedStop(latch->slot);
+  if (!retainedClosedStop) pendingNotes.clear();
   logger.logTrackEvent("All Notes Off sent", clockManager.getCurrentTick());
 }
 

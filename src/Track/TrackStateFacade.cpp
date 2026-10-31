@@ -100,6 +100,15 @@ TRACK_COLD_MEM bool Track::transitionState(TrackState newState) {
 
 void Track::forceSetState(TrackState newState) {
   if (newState != TRACK_PLAYING) cancelPendingOverdubStart();
+  // DEC-223: every state write emits the `ST,Track` edge. `forceSetState` is the one setter that used to
+  // write silently, so a path that reaches a state through it (a retained start, a load, a slot clear)
+  // left the capture with no transition row while the panel showed the change -- the owner observed the
+  // overdubs on the device and the log claimed they never started. One row per real change; a no-op
+  // set is silent.
+  if (trackState != newState) {
+    logger.logStateTransition("Track", TrackStateMachine::toString(trackState),
+                              TrackStateMachine::toString(newState));
+  }
   trackState = newState;
 }
 

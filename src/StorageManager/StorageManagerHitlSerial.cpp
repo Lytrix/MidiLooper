@@ -870,11 +870,13 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // Explicit stopped-only retrieval also works while a pending
                 // stop keeps the automatic capture drain timing-protected.
                 DebugSessionCapture::flushCaptureBuffer(64);
-            } else if (std::strcmp(sHitlSerialLineBuffer, "!CAP_IDENTITY_STATS") == 0 &&
-                       !clockManager.isTransportRunning()) {
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!CAP_IDENTITY_STATS") == 0) {
                 // S1.3 save/restore-survival: read-only read-back of the bounded identity-path
                 // counters (emitter entry, enqueue, rejection, transmission, eviction, last identity).
-                // Stopped-only and outside the record-stop path: it neither records nor writes.
+                // Deliberately **not** transport-gated (K4, 2026-10-30 plan): the counter snapshot is
+                // read-only, its row is emitted directly, and the capture-close request arrives after
+                // a run whose transport may still be running -- gating it there silently produced no
+                // `RING,stats` row, so absence could never be proven. It neither records nor writes.
                 DebugSessionCapture::emitIdentityPathStats();
 #if defined(__IMXRT1062__)
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REBOOT") == 0 &&

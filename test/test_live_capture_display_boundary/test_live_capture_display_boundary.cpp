@@ -938,6 +938,36 @@ void test_closed_overdub_note_survives_painted_stop_and_gradual_finalization() {
   }
 }
 
+void test_apply_capture_playhead_tails_honours_the_frozen_close_tick() {
+  // The paint copy grows an open preview row to the tick the caller supplies. An accepted stop must
+  // supply its closure tick, never the advanced playhead (`midifile-chain-43` owner report).
+  CapturePreview preview;
+  NoteUtils::DisplayNote row{};
+  row.noteId = 7;
+  row.note = 74;
+  row.velocity = 100;
+  row.startTick = 320;
+  row.endTick = 320;
+  preview.notes.push_back(row);
+  CapturePreviewNoteState state;
+  state.pitch = 74;
+  state.open = true;
+  preview.noteStates.push_back(state);
+  preview.openNoteIndices.push_back(0);
+
+  const auto paintWithCloseTick = [&](uint32_t closeTick) {
+    NoteUtils::DisplayNoteVec notes;
+    notes.push_back(row);
+    DisplayManagerInternal::applyCapturePlayheadTails(preview, 3072, closeTick, 0, notes, false);
+    TEST_ASSERT_EQUAL_UINT32(1, notes.size());
+    return notes[0].endTick;
+  };
+  // Live interval: the caller passes the playhead and the row follows it.
+  TEST_ASSERT_EQUAL_UINT32(344, paintWithCloseTick(344));
+  // Accepted stop: the caller passes the frozen closure tick; the advanced playhead (560) is not it.
+  TEST_ASSERT_EQUAL_UINT32(400, paintWithCloseTick(400));
+}
+
 void test_record_preview_is_cleared_before_stop_descriptor_reuse() {
   Track& t = beginRecord();
   for (unsigned take = 0; take < 5; ++take) {
@@ -1653,6 +1683,135 @@ struct DisplayChainOwnerTurns {
   }
 };
 
+/// Sealed-pass immutability oracle (committed-pass-identity-corruption): snapshot the **entire semantic
+/// Record-pass row vector** immediately after Record seal, then require exact equality after every overdub
+/// commit. NoteId 24 is a witness, not the oracle: any row may be the first to change, and a fix that only
+/// moves the corruption elsewhere still fails. Physical chunk identity is deliberately excluded — storage may
+/// relocate while semantic content stays identical.
+struct SealedRecordRow {
+  uint8_t type = 0;
+  uint32_t tick = 0;
+  NoteId noteId = kInvalidNoteId;
+  uint8_t channel = 0;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+};
+
+static bool sealedRowLess(const SealedRecordRow& a, const SealedRecordRow& b) {
+  if (a.tick != b.tick) return a.tick < b.tick;
+  if (a.type != b.type) return a.type < b.type;
+  if (a.noteId != b.noteId) return a.noteId < b.noteId;
+  if (a.channel != b.channel) return a.channel < b.channel;
+  if (a.pitch != b.pitch) return a.pitch < b.pitch;
+  return a.velocity < b.velocity;
+}
+
+static bool sealedRowsEqual(const SealedRecordRow& a, const SealedRecordRow& b) {
+  return a.type == b.type && a.tick == b.tick && a.noteId == b.noteId && a.channel == b.channel &&
+         a.pitch == b.pitch && a.velocity == b.velocity;
+}
+
+static std::vector<SealedRecordRow> sealedRecordRows(const Loop& loop) {
+  LoopPasses recordOnly = loop.passes;
+  recordOnly.overdubPasses.clear();
+  recordOnly.editPasses.clear();
+  SessionMidiEventVec flat;
+  copyEffectiveCommittedEventsFromPasses(recordOnly, loop.loopLengthTicks, 0, loop.loopLengthTicks,
+                                         flat, false);
+  std::vector<SealedRecordRow> rows;
+  rows.reserve(flat.size());
+  for (const MidiEvent& event : flat) {
+    const bool note = event.type == midi::NoteOn || event.type == midi::NoteOff;
+    rows.push_back({static_cast<uint8_t>(event.type), event.tick, event.noteId, event.channel,
+                    note ? event.data.noteData.note : static_cast<uint8_t>(0),
+                    note ? event.data.noteData.velocity : static_cast<uint8_t>(0)});
+  }
+  std::sort(rows.begin(), rows.end(), sealedRowLess);
+  return rows;
+}
+
+static size_t appendSealedRow(char* out, size_t cap, size_t used, const char* prefix,
+                              const SealedRecordRow& row) {
+  if (used >= cap) return used;
+  const int written = std::snprintf(out + used, cap - used, "%s@t%lu %s id=%lu p=%u v=%u ",
+      prefix, static_cast<unsigned long>(row.tick),
+      row.type == midi::NoteOn ? "N" : (row.type == midi::NoteOff ? "F" : "?"),
+      static_cast<unsigned long>(row.noteId), static_cast<unsigned>(row.pitch),
+      static_cast<unsigned>(row.velocity));
+  return written < 0 ? used : used + static_cast<size_t>(written);
+}
+
+/// Compact multiset delta for the sealed-row oracle; both vectors are sorted by `sealedRowLess`.
+static void describeSealedDelta(const std::vector<SealedRecordRow>& expected,
+                                const std::vector<SealedRecordRow>& actual, char* out, size_t cap) {
+  out[0] = '\0';
+  size_t used = 0;
+  const int head = std::snprintf(out, cap, "expected=%zu actual=%zu ", expected.size(), actual.size());
+  if (head > 0) used = static_cast<size_t>(head);
+  size_t i = 0, j = 0;
+  unsigned missing = 0, extra = 0;
+  while (i < expected.size() || j < actual.size()) {
+    if (i < expected.size() && j < actual.size() && sealedRowsEqual(expected[i], actual[j])) {
+      ++i;
+      ++j;
+      continue;
+    }
+    if (j >= actual.size() ||
+        (i < expected.size() && sealedRowLess(expected[i], actual[j]))) {
+      if (missing < 3) used = appendSealedRow(out, cap, used, "missing ", expected[i]);
+      ++i;
+      ++missing;
+    } else {
+      if (extra < 3) used = appendSealedRow(out, cap, used, "extra ", actual[j]);
+      ++j;
+      ++extra;
+    }
+  }
+}
+
+/// Live-capture boundary probe: the Record store must hold the witness pair before growth and before stop.
+static void assertCaptureStoreRecordPair(Track& track, NoteId id, uint32_t expectedOn,
+                                         uint32_t expectedOff, const char* stage) {
+  const Loop& loop = track.getActiveLoop();
+  unsigned ons = 0, offs = 0;
+  uint32_t onTick = 0, offTick = 0;
+  for (size_t i = 0; i < loop.capture.store.size(); ++i) {
+    const MidiEvent& event = loop.capture.store.at(i);
+    if (event.noteId != id) continue;
+    if (event.isNoteOn()) {
+      ++ons;
+      onTick = event.tick;
+    } else if (event.isNoteOff()) {
+      ++offs;
+      offTick = event.tick;
+    }
+  }
+  char detail[300];
+  std::snprintf(detail, sizeof(detail),
+      "capture store %s id=%lu ons=%u@%lu offs=%u@%lu rows=%zu expected=%lu/%lu", stage,
+      static_cast<unsigned long>(id), ons, static_cast<unsigned long>(onTick), offs,
+      static_cast<unsigned long>(offTick), loop.capture.store.size(),
+      static_cast<unsigned long>(expectedOn), static_cast<unsigned long>(expectedOff));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, ons, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, offs, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedOn, onTick, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedOff, offTick, detail);
+}
+
+static void assertSealedRecordRowsUnchanged(const Loop& loop,
+                                            const std::vector<SealedRecordRow>& baseline,
+                                            unsigned overdub, const char* context) {
+  const std::vector<SealedRecordRow> current = sealedRecordRows(loop);
+  bool same = current.size() == baseline.size();
+  for (size_t i = 0; same && i < baseline.size(); ++i) same = sealedRowsEqual(baseline[i], current[i]);
+  if (same) return;
+  char delta[900];
+  describeSealedDelta(baseline, current, delta, sizeof(delta));
+  char detail[1100];
+  std::snprintf(detail, sizeof(detail), "%s overdub=%u %s", context, overdub, delta);
+  TEST_FAIL_MESSAGE(detail);
+}
+
 static void exerciseDisplayOverdubChain(unsigned bars) {
   Track& track = beginRecord();
   std::vector<NoteId> recordIds;
@@ -1660,21 +1819,79 @@ static void exerciseDisplayOverdubChain(unsigned bars) {
   for (unsigned bar = 0; bar < bars; ++bar)
     recordIds.push_back(acceptPair(track, 48, bar * Config::TICKS_PER_BAR + 12,
                                   bar * Config::TICKS_PER_BAR + 48));
+  // First boundary: the live Record capture store, before geometry growth and stop.
+  assertCaptureStoreRecordPair(track, recordIds.back(),
+                               (bars - 1u) * Config::TICKS_PER_BAR + 12u,
+                               (bars - 1u) * Config::TICKS_PER_BAR + 48u, "pre-growth");
   growRecordGeometry(track, length);
+  assertCaptureStoreRecordPair(track, recordIds.back(),
+                               (bars - 1u) * Config::TICKS_PER_BAR + 12u,
+                               (bars - 1u) * Config::TICKS_PER_BAR + 48u, "post-growth");
+  std::vector<SealedRecordRow> expectedRecordRows;
+  expectedRecordRows.reserve(static_cast<size_t>(bars) * 2u);
+  for (unsigned bar = 0; bar < bars; ++bar) {
+    const uint32_t onTick = bar * Config::TICKS_PER_BAR + 12;
+    const uint32_t offTick = bar * Config::TICKS_PER_BAR + 48;
+    expectedRecordRows.push_back({static_cast<uint8_t>(midi::NoteOn), onTick, recordIds[bar], 1, 48, 100});
+    expectedRecordRows.push_back({static_cast<uint8_t>(midi::NoteOff), offTick, recordIds[bar], 1, 48, 0});
+  }
+  std::sort(expectedRecordRows.begin(), expectedRecordRows.end(), sealedRowLess);
   clockManager.assignCurrentTickSilently(length);
   track.stopRecording(length);
   Loop& loop = track.getActiveLoop();
-  // Setup only: a real committed/current Record, never an empty fabricated root.
+  // Setup only: a real committed/current Record, never an empty fabricated root. Probe the first readable
+  // pass state: if it already differs, the transfer wrote it; if it starts equal and later differs, a
+  // post-transfer owner mutated the sealed rows.
+  std::vector<SealedRecordRow> firstReadableRows;
+  unsigned firstReadableTurn = 0;
+  bool haveFirstReadable = false;
   for (unsigned turn = 0; turn < 20000 &&
-       (track.hasPendingDeferredOverdubStop() || !loop.publishedSnapshotIsCurrent()); ++turn)
+       (track.hasPendingDeferredOverdubStop() || !loop.publishedSnapshotIsCurrent()); ++turn) {
     track.processDeferredIdleMaintenance(millis(), false,
         (turn & 1) ? MidiServiceDrain::DeferredIdleOwner::Snapshot
                    : MidiServiceDrain::DeferredIdleOwner::VisualCache);
+    if (!haveFirstReadable && loop.passes.hasRecordPass()) {
+      std::vector<SealedRecordRow> probe = sealedRecordRows(loop);
+      if (!probe.empty()) {
+        firstReadableRows = std::move(probe);
+        firstReadableTurn = turn;
+        haveFirstReadable = true;
+      }
+    }
+  }
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  if (haveFirstReadable) {
+    char delta[900];
+    describeSealedDelta(expectedRecordRows, firstReadableRows, delta, sizeof(delta));
+    char detail[1100];
+    std::snprintf(detail, sizeof(detail), "first readable Record pass turn=%u length=%lu rows=%zu %s",
+                  firstReadableTurn, static_cast<unsigned long>(loop.loopLengthTicks),
+                  firstReadableRows.size(), delta);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expectedRecordRows.size()),
+                                     static_cast<uint32_t>(firstReadableRows.size()), detail);
+    TEST_ASSERT_TRUE_MESSAGE(
+        std::equal(expectedRecordRows.begin(), expectedRecordRows.end(), firstReadableRows.begin(),
+                   sealedRowsEqual),
+        detail);
+  }
   clockManager.assignCurrentTickSilently(96);
   submitFrame(96); completeFrame();
   assertNote(completedFrame.notes, recordIds.front(), 48, 12, 48);
+  // The immutable source baseline: the whole semantic Record-pass row vector after seal.
+  const std::vector<SealedRecordRow> sealedRecordBaseline = sealedRecordRows(loop);
+  {
+    char delta[900];
+    describeSealedDelta(expectedRecordRows, sealedRecordBaseline, delta, sizeof(delta));
+    char detail[1100];
+    std::snprintf(detail, sizeof(detail), "sealed Record baseline bars=%u %s", bars, delta);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expectedRecordRows.size()),
+                                     static_cast<uint32_t>(sealedRecordBaseline.size()), detail);
+    TEST_ASSERT_TRUE_MESSAGE(
+        std::equal(expectedRecordRows.begin(), expectedRecordRows.end(), sealedRecordBaseline.begin(),
+                   sealedRowsEqual),
+        detail);
+  }
 
   DisplayChainOwnerTurns owners;
   for (unsigned bar = 0; bar < std::min(bars, 16u); ++bar)
@@ -1749,6 +1966,7 @@ static void exerciseDisplayOverdubChain(unsigned bars) {
         TrackCaptureStopTestAccess::jobs(track), static_cast<unsigned long>(overdub));
     TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(4u, maxQueue, context);
     assertNote(completedFrame.notes, recordIds.front(), 48, 12, 48);
+    assertSealedRecordRowsUnchanged(loop, sealedRecordBaseline, overdub, context);
   }
   // Display progress is asserted on the measured window, before any teardown drain.
   const unsigned framesDuringChain =
@@ -1771,6 +1989,7 @@ static void exerciseDisplayOverdubChain(unsigned bars) {
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
   TEST_ASSERT_FALSE(track.hasPendingOverdubStart());
+  assertSealedRecordRowsUnchanged(loop, sealedRecordBaseline, 22, "final-drain");
   TEST_ASSERT_EQUAL_UINT32(1 + accepted, loop.passes.capturePassCount());
   TEST_ASSERT_GREATER_THAN(0u, owners.paints);
 }
@@ -2296,8 +2515,90 @@ void test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes(
                            "the current root is the committed authority, not the passes");
 }
 
+static void exerciseCommittedWindowGatherAcrossWrap(bool publishSnapshot) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 20 * bar;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  LoopEventStore record;
+  const uint32_t starts[] = {12, 10 * bar + 12, 17 * bar + 12, 19 * bar + 12};
+  const uint32_t ends[] = {80, 10 * bar + 80, 18 * bar + 120, 19 * bar + 80};
+  for (unsigned n = 0; n < 4; ++n) {
+    MidiEvent on = MidiEvent::NoteOn(starts[n], 1, 60 + n, 100);
+    MidiEvent off = MidiEvent::NoteOff(ends[n], 1, 60 + n, 0);
+    on.noteId = off.noteId = 900 + n;
+    TEST_ASSERT_TRUE(record.append(on));
+    TEST_ASSERT_TRUE(record.append(off));
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = length;
+  if (publishSnapshot) {
+    TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+    for (unsigned turn = 0; turn < 4096 && !loop.publishedSnapshotIsCurrent(); ++turn)
+      loop.stepPendingSnapshotPublish(4, true, 0);
+    TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                             "the current-root control must publish through production construction");
+  } else {
+    TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
+  }
+  SessionMidiEventVec events;
+  DisplayNoteVec notes;
+  rebuildDisplayNotesInWindow(loop, loop, length, 18 * bar, 4 * bar, events, notes, false);
+  assertNote(notes, 900, 60, starts[0], ends[0]);
+  assertNote(notes, 902, 62, starts[2], ends[2]);
+  assertNote(notes, 903, 63, starts[3], ends[3]);
+  TEST_ASSERT_NULL_MESSAGE(displayNoteById(notes, 901), "the excluded middle must not leak into paint");
+  TEST_ASSERT_EQUAL_UINT32(3, notes.size());
+
+  rebuildDisplayNotesInWindow(loop, loop, length, 18 * bar, 2 * bar, events, notes, false);
+  assertNote(notes, 902, 62, starts[2], ends[2]);
+  assertNote(notes, 903, 63, starts[3], ends[3]);
+  TEST_ASSERT_EQUAL_UINT32(2, notes.size());
+
+  rebuildDisplayNotesInWindow(loop, loop, length, 0, length, events, notes, false);
+  TEST_ASSERT_EQUAL_UINT32(4, notes.size());
+  for (unsigned n = 0; n < 4; ++n)
+    assertNote(notes, 900 + n, 60 + n, starts[n], ends[n]);
+}
+
+void test_rootless_committed_window_gather_keeps_both_wrap_spans_and_complete_notes() {
+  exerciseCommittedWindowGatherAcrossWrap(false);
+}
+
+void test_current_snapshot_window_gather_keeps_both_wrap_spans_and_complete_notes() {
+  exerciseCommittedWindowGatherAcrossWrap(true);
+}
+
+void test_rootless_boundary_pair_does_not_appear_in_an_unrelated_window() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, length = 20 * bar;
+  LoopEventStore::initPool();
+  Loop loop;
+  LoopEventStore record;
+  MidiEvent on = MidiEvent::NoteOn(length - 1, 1, 70, 100);
+  MidiEvent off = MidiEvent::NoteOff(0, 1, 70, 0);
+  on.noteId = off.noteId = 910;
+  TEST_ASSERT_TRUE(record.append(on));
+  TEST_ASSERT_TRUE(record.append(off));
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = length;
+  SessionMidiEventVec events;
+  DisplayNoteVec notes;
+  rebuildDisplayNotesInWindow(loop, loop, length, 5 * bar, bar, events, notes, false);
+  TEST_ASSERT_TRUE_MESSAGE(notes.empty(), "a boundary pair's one-tick tail must not leak into the middle");
+  rebuildDisplayNotesInWindow(loop, loop, length, 19 * bar, 2 * bar, events, notes, false);
+  assertNote(notes, 910, 70, length - 1, length - 1);
+  TEST_ASSERT_EQUAL_UINT32(1, notes.size());
+  rebuildDisplayNotesInWindow(loop, loop, length, 0, length, events, notes, false);
+  assertNote(notes, 910, 70, length - 1, length - 1);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_rootless_boundary_pair_does_not_appear_in_an_unrelated_window);
+  RUN_TEST(test_rootless_committed_window_gather_keeps_both_wrap_spans_and_complete_notes);
+  RUN_TEST(test_current_snapshot_window_gather_keeps_both_wrap_spans_and_complete_notes);
   RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
   RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
   RUN_TEST(test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window);
@@ -2316,6 +2617,7 @@ int main() {
   RUN_TEST(test_held_record_preview_uses_frozen_stop_endpoint_before_and_after_publication);
   RUN_TEST(test_truncated_record_stop_reprojects_complete_first_sixteen_bars);
   RUN_TEST(test_closed_overdub_note_survives_truncated_record_publication_gap);
+  RUN_TEST(test_apply_capture_playhead_tails_honours_the_frozen_close_tick);
   RUN_TEST(test_closed_overdub_note_survives_painted_stop_and_gradual_finalization);
   RUN_TEST(test_selected_gap_display_source_survives_competing_audible_track);
   RUN_TEST(test_committed_display_base_is_independent_of_the_overlap_view);

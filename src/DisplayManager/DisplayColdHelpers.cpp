@@ -91,13 +91,10 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
         outNotes.clear();
     }
     mutLoop.appendOverdubPassDisplayNotes(outNotes);
-    const uint32_t windowEnd = windowStart + windowLength;
-    outNotes.erase(std::remove_if(outNotes.begin(), outNotes.end(),
-                                  [windowStart, windowEnd](const NoteUtils::DisplayNote& note) {
-                                    return note.endTick < windowStart ||
-                                           note.startTick >= windowEnd;
-                                  }),
-                   outNotes.end());
+    // Keep complete note geometry in both physical halves of a circular window;
+    // filtering may exclude a row, but must not clip or re-pair its endpoints.
+    DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(
+        outNotes, windowStart, windowLength, loopLength);
 }
 
 uint8_t resolveTrackIndex(const Track& track) {

@@ -493,6 +493,12 @@ TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination des
   // `stepDeferredRecordEmptyResult` resolves once, against the published result.
   (void)setState(TRACK_STOPPED_RECORDING);
   if (!toPlaying) {
+    // The PLAYING route refuses a stale raw bar inside `bindFirstRecordingBar` below. A STOPPED take must
+    // refuse it too, or the deferred return bind serves that pre-input bar as bar 1 after Start (121645).
+    if (finalLength > 0) {
+      if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot))
+        (void)runtime->discardStaleFirstRecordingBar(loop);
+    }
     setState(TRACK_STOPPED);
     return;
   }
