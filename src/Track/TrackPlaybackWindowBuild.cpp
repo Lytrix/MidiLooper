@@ -29,6 +29,7 @@
 #include "Utils/CommittedMidiScratch.h"
 #include "WindowPagedStream.h"  // task 3.7a (I1): the paged stream's page capacity is the gather's slice size
 #include "PlaybackMergedMidiEvents.h"
+#include "Utils/RuntimeProfiler.h"
 
 namespace {
 /// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
@@ -1928,6 +1929,10 @@ TRACK_COLD_MEM void Track::prewarmBootPlaybackRuntimeSlots() {
 
 TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture,
                                                   bool restamp, bool skipViews) {
+  // DEC-239 profile scope (long: seven reserves, unbounded at boot/load; synchronous, no wait). The
+  // `capture_prewarm_split` row emitted at the end of this body is part of the measured interval.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::PlaybackPrewarm_slot);
+  profileScope.setContext(RuntimeProfiler::kNoContext, slotIndex);
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return false;
@@ -2145,9 +2150,18 @@ TRACK_COLD_MEM bool Track::stepViewPrewarmForSlot(uint8_t slotIndex, uint8_t max
   }
   const Loop& loop = getLoop(slotIndex);
   const uint32_t startUs = micros();
-  const bool ready = runtime->stepViewPrewarm(
-      viewPrewarmIdentityForSlot(slotIndex), loop.fullTakePlaybackViewAdmissible(),
-      loop.companionRowHorizonBound(), maxUnits, budgetUs);
+  bool ready;
+  {
+    // DEC-239 profile scope (long: one unit is one external allocation, measured up to ~17.7 ms, and
+    // the time guard is secondary -- no hard cap; synchronous, no wait). Closes before
+    // `viewPrewarmStep` so the profiler and the row bracket comparable intervals (scope <= row).
+    PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::ViewPrewarm_unit);
+    profileScope.setContext(RuntimeProfiler::kNoContext, slotIndex);
+    ready = runtime->stepViewPrewarm(
+        viewPrewarmIdentityForSlot(slotIndex), loop.fullTakePlaybackViewAdmissible(),
+        loop.companionRowHorizonBound(), maxUnits, budgetUs);
+    profileScope.setResult(ready ? 1u : 0u);
+  }
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::viewPrewarmStep(
       resolveTrackIndexForPersistence(*this), slotIndex, runtime->viewPrewarmProgress(),

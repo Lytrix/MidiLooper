@@ -15,6 +15,7 @@ log rather than trusting the fenced window alone.
 
 Usage:
     .venv/bin/python scripts/hitl_profile_dump.py --out-dir captures [--bpm 120] [--reset]
+    .venv/bin/python scripts/hitl_profile_dump.py --out-dir captures --attach   # after a rig run
 """
 from __future__ import annotations
 
@@ -94,16 +95,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-batches", type=int, default=20)
     parser.add_argument("--request-timeout-s", type=float, default=5.0)
     parser.add_argument("--reset", action="store_true", help="also send !PROFILE_RESET and re-read stats")
+    parser.add_argument("--attach", action="store_true",
+                        help="attach to the running device without a reset and without starting the clock, "
+                             "so the profile of a run that just finished is read back intact")
     parser.add_argument("--port-substring", default="Teensy")
     args = parser.parse_args(argv)
 
     summary: dict[str, object] = {"started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    with ManagedCaptureSession(out_dir=args.out_dir, boot_reset="force", boot_wait_s=10.0) as session:
+    boot_mode = "never" if args.attach else "force"
+    with ManagedCaptureSession(out_dir=args.out_dir, boot_reset=boot_mode, boot_wait_s=10.0) as session:
         log = session.session_log  # `__enter__` started the capture
         if log is None:
             raise RuntimeError("capture session did not report its log")
         wait_for_capture_boot_ready(args.out_dir, log, timeout_s=40.0)
         summary["capture_log"] = str(log)
+        if args.attach:
+            summary["mode"] = "attach (no reset, no clock)"
+            summary["stats"] = _drain(session, log, "!PROFILE_STATS", max_batches=args.max_batches,
+                                      timeout_s=args.request_timeout_s)
+            summary["ring"] = _drain(session, log, "!PROFILE_RING", max_batches=args.max_batches,
+                                     timeout_s=args.request_timeout_s)
+            summary["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            print(json.dumps(summary, indent=2))
+            return 0
         _, boot_row = _wait_for(log, "DIAG,profile_boot,", after=0, timeout_s=15.0)
         summary["boot_row"] = boot_row
         lines = _log_lines(log)

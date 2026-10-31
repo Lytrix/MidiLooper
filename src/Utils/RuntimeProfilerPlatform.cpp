@@ -53,6 +53,16 @@ FLASHMEM void emitRow(const char* line) {
 #endif
 }
 
+FLASHMEM void emitRetainedRow(const char* line) {
+  if (line == nullptr) return;
+#if defined(SESSION_CAPTURE)
+  // Tier-A on the capture ring: survives until a capture attaches, unlike a direct boot-time write.
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  emitRow(line);
+#endif
+}
+
 }  // namespace Platform
 }  // namespace RuntimeProfiler
 

@@ -44,7 +44,10 @@ content, keep the row and drop only its duration field; **C** — not a duplicat
 
 ## Stages
 
-**Stage 0 — evidence (inside `runtime-profiling-layer`).** Slice 3/4 device runs capture each class-A/B
+**Stage 0 — evidence (inside `runtime-profiling-layer`).** Slice 3 done: `view_prewarm_step us=` equivalent to
+`ViewPrewarm_unit` within [0, 50] µs; `capture_prewarm_split` needs per-reserve child ids first; and a direct
+row inside a measured body can absorb the core's 120 ms USB transmit timeout at boot (125 ms
+`PlaybackPrewarm_slot` breach) — `evidence/EXECUTION_PACKET-slice3.md`. Slice 3/4 device runs capture each class-A/B
 row beside its identity; `evidence/<date>-retirement-equivalence.md` records the band per row. No
 removal.
 

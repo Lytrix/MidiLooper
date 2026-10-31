@@ -135,22 +135,22 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
 
 ## 4. Slice 3 — the DEC-231 preparation vertical proof
 
-- [ ] 4.1 Write `evidence/EXECUTION_PACKET-slice3.md` pinning the four sites, their ceilings, the
+- [x] 4.1 Write `evidence/EXECUTION_PACKET-slice3.md` pinning the four sites, their ceilings, the
       oracle from design § Slice 3 against the 0.8 reference, the `view_prewarm_step` agreement rule
       (profiler ≤ row, within 10 µs), and the `midi_gap`/`late_on` tolerance (within the 0.8 spread).
-- [ ] 4.2 Add long scopes to `Track::startRecording`, `Track::prewarmPlaybackForSlot`,
+- [x] 4.2 Add long scopes to `Track::startRecording`, `Track::prewarmPlaybackForSlot`,
       `LoopPlaybackRuntime::prewarmViews` and the `stepViewPrewarm` call in
       `Track::stepViewPrewarmForSlot` (closed before `viewPrewarmStep`) — no control-flow, return-value
       or ownership edit; verify the diff is instrumentation-only and the owners' focused suites are
       unchanged.
-- [ ] 4.3 Add native assertions that the four paths increment their aggregate call counts, and that a
+- [x] 4.3 Add native assertions that the four paths increment their aggregate call counts, and that a
       prepared Record edge does not increment `PlaybackPrewarm_views`; verify with
       `pio test -e native -f test_runtime_profiler` plus the nearest owner suites.
-- [ ] 4.4 Run the 0.7 stimulus on the profile image and record: `ViewPrewarm_unit` ring rows against
+- [x] 4.4 Run the 0.7 stimulus on the profile image and record: `ViewPrewarm_unit` ring rows against
       the same run's `view_prewarm_step us=`, the Record edge's aggregate `last_us` and absence of a
       ring record, `PlaybackPrewarm_views` count across the edge, `capture_prewarm_split views=0`, and
       `midi_gap`/`late_on`/`win_gap_overrun`; verify every oracle line or record the miss.
-- [ ] 4.5 Record the row-equivalence result in `evidence/<date>-retirement-equivalence.md`
+- [x] 4.5 Record the row-equivalence result in `evidence/<date>-retirement-equivalence.md`
       (RETIREMENT.md stage 0) for `capture_prewarm_split` (`views`/`total` only — the other reserves have
       no identity yet, R4) and `view_prewarm_step us=` (the `ready=1` event is kept, R3); verify it
       states the band, which numbers agree and any that do not. No row is removed in this change.

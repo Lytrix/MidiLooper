@@ -263,7 +263,7 @@ RP_FLASH void initAtBoot() {
   }
   char line[ProfileDiagRows::kBootRowCapacity];
   if (ProfileDiagRows::formatBootRow(line, sizeof(line), b, Platform::micros())) {
-    Platform::emitRow(line);
+    Platform::emitRetainedRow(line);
   }
 }
 

@@ -15,6 +15,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/RuntimeProfiler.h"
 
 #if defined(__IMXRT1062__)
 #include <Arduino.h>
@@ -674,6 +675,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
 #if defined(PIO_UNIT_TEST_NATIVE)
   ++monolithicViewPrewarmCallsForTest();
 #endif
+  // DEC-239 profile scope (long: pool allocation loops, unbounded count; synchronous, no wait). No
+  // result: the body has eight exits and the scope must not restructure them.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::PlaybackPrewarm_views);
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
   const bool stagingReady = prewarmCaptureStaging();
   ExternalPoolAccounting::endTag();

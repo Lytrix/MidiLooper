@@ -8,6 +8,8 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
     "test_midi_button_timing",
     "test_shared_capture_finalization",
+    # runtime-profiling-layer slice 3 (DEC-239): the DEC-231 preparation owners linked with the profiler on.
+    "test_runtime_profiler_sites",
     # Immediate Record/overdub handoff: native-only proof/measurement suites reuse production owners.
     "test_immediate_capture_handoff",
     "test_immediate_visual_cache_probe",

@@ -235,6 +235,8 @@ Rows:
 
 Cycles convert to microseconds at dump time only. The boot row is the only unsolicited profile row
 and is emitted once per boot including `source=0`.
+It is enqueued on the Tier-A capture ring (`Platform::emitRetainedRow`), never only written directly:
+a direct boot-time write is lost when no host reads yet (observed on device in slice 3).
 
 ### D9 — Registration in the classifier source list, behind the flag
 
@@ -354,7 +356,8 @@ precede slice 1.
   `setResult`; `setContext(track, slot)` where the indices are in scope.
 - **Postconditions / oracle** (against P8, not against older images):
   - `ViewPrewarm_unit`: ring records for the units above 5 ms; per-unit `dur_us` is **≤** the same
-    run's `view_prewarm_step us=` (the row brackets a superset of the scope) and within 10 µs of it;
+    run's `view_prewarm_step us=` (the row brackets a superset of the scope); measured offset 32–42 µs
+    (the row's bracket also covers its own argument evaluation), so later comparisons use [0, 50] µs;
     max ≈ the P8 largest unit; `parentId` = `IdleOwner_unit` only once slice 4 lands, otherwise none.
   - `PlaybackPrewarm_slot` self time includes `capture_prewarm_split`'s own emission (RED_TEAM R5);
     the evidence records it rather than subtracting it.

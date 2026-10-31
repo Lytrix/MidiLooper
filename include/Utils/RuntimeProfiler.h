@@ -167,6 +167,9 @@ uint32_t cpuHz();   // boot contract; 0 = cycle counter unavailable
 /// One profiler row (`#CAP,...` without CRLF). The device writes directly when USB has room and falls
 /// back to the capture ring (DEC-228 K1); fixtures capture the text.
 void emitRow(const char* line);
+/// The once-per-boot row: always enqueued on the capture ring, which keeps it until a host drains it.
+/// A direct write at boot is lost when no host is reading yet (observed on device, slice 3).
+void emitRetainedRow(const char* line);
 }  // namespace Platform
 
 class Scope {

@@ -34,6 +34,7 @@ uint32_t micros() {
 uint32_t ipsr() { return gIpsr; }
 uint32_t cpuHz() { return gHz; }
 void emitRow(const char* line) { gRows.emplace_back(line); }
+void emitRetainedRow(const char* line) { gRows.emplace_back(std::string("[retained]") + line); }
 }  // namespace RuntimeProfiler::Platform
 
 #include "../../src/Utils/ProfileDiagRows.cpp"
@@ -100,6 +101,8 @@ void test_boot_row_and_calibration_arithmetic() {
   TEST_ASSERT_EQUAL_UINT32(0, stat(ProfileId::Calibration).calls);
   TEST_ASSERT_EQUAL_UINT16(0, counters().ringCount);
   TEST_ASSERT_EQUAL_size_t(1, gRows.size());
+  // The boot row goes to the retained capture ring, never only to a direct write (lost before a host reads).
+  TEST_ASSERT_EQUAL(0u, gRows[0].find("[retained]#CAP,"));
   TEST_ASSERT_NOT_NULL(std::strstr(gRows[0].c_str(), "DIAG,profile_boot,source=1,cpu_hz=600000000,"));
   TEST_ASSERT_NOT_NULL(std::strstr(gRows[0].c_str(), ",samples=256,short_min_cycles=21,"));
   gCycleStep = 0;

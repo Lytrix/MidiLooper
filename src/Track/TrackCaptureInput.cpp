@@ -24,6 +24,7 @@
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "OverlapNoteIdSet.h"
+#include "Utils/RuntimeProfiler.h"
 
 #if defined(__IMXRT1062__)
 #define TRACK_CAPTURE_ADMISSION_MEM FLASHMEM
@@ -405,6 +406,11 @@ bool& Track::viewPrewarmStrictForTest() {
 #endif
 
 TRACK_COLD_MEM bool Track::startRecording(uint32_t currentTick) {
+  // DEC-239 profile scope (long: composes prewarm and allocation, no hard bound; < 71.6 min because it
+  // is a synchronous main-loop call with no wait). Every exit below is timed, including the
+  // not-prepared `return false`. Compiled out unless RUNTIME_PROFILE_SCOPES.
+  PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::RecordStart_edge);
+  profileScope.setContext(RuntimeProfiler::kNoContext, activeLoopIndex);
   // A repeated/ineligible start must not reset a live capture before setState rejects it.
   if (!isValidStateTransition(TRACK_RECORDING)) return false;
   // Capture admission, and it sits before every mutation on purpose - including the
