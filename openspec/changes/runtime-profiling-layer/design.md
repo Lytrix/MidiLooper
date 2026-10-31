@@ -118,6 +118,9 @@ Runtime-detectable rules:
   non-zero means the operation was reached from an exception handler, so the scope neither pushes a
   frame nor records, and `isrRefused` increments (reported in the stats terminator). Without this, an
   ISR scope would exit LIFO on top of an interrupted main-lane frame and corrupt it silently.
+- **Before `initAtBoot()`** the `DMAMEM` state is stale (NOLOAD). A magic word rejects cold-boot
+  garbage; because a warm reset preserves the previous boot's magic, every ring/stack index is also
+  bounded on use, so an early scope can only touch the profiler's own state, which init then clears.
 - `elapsed == 0` is a valid measurement.
 - An unavailable timing source refuses the measurement and increments `refused`, for both variants.
 - An out-of-order exit increments `orderFaults` and **poisons** the nesting state: no further
@@ -213,6 +216,7 @@ cross-domain outcome enum is introduced.
 - **Stats** is a multi-batch snapshot over a stable id cursor (`multi_batch=1` when more than one batch).
 - Each dump has its own persisted cursor; reset clears both.
 - **Reset** clears table, ring, `dropped`, `depthOverflow`, `poisoned` and both cursors, nothing else.
+  `isrRefused` is kept (it reports a wiring fault, not a measurement) and `seq` stays monotonic.
 - Rows are direct-first/ring-fallback (DEC-228 K1), not transport-gated (DEC-228 K4); the batch bound
   keeps them from stalling the loop.
 

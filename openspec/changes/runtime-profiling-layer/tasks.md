@@ -10,11 +10,11 @@ out. No PR unless requested.
 Each item is a hard gate for slice 1 (proposal § Prerequisites, P1–P8). Items 0.1–0.4 are
 documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a new env.
 
-- [ ] 0.1 **P1 — scope authorization.** Add a `## Now implementing` entry to
+- [x] 0.1 **P1 — scope authorization.** Add a `## Now implementing` entry to
       `docs/Runtime/CURRENT_WORK.md` naming this change, its thirteen sites, its non-goals and that
       `HotPathTelemetry` is untouched; verify it sits at the top of that section and no other active
       declaration is overwritten. Owner-visible gate: firmware work waits for it.
-- [ ] 0.2 **P2 — decision review and DEC.** Fill `docs/Templates/DECISION_REVIEW.md` into
+- [x] 0.2 **P2 — decision review and DEC.** Fill `docs/Templates/DECISION_REVIEW.md` into
       `evidence/DECISION_REVIEW.md` after searching `docs/DECISION_LOG.md`, `openspec/specs/` and
       `docs/Plans/` for: profiler, DWT, cycle counter, RAII, telemetry, instrumentation, span timing,
       `view_prewarm_step`, `capture_prewarm_split`. Record the reused owners
@@ -23,23 +23,23 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
       short/long validity contract and source-selection rule, the report-only ceiling classes, the
       depth-zero command gate and batch/horizon rules, and the dedicated env; verify it cites DEC-043
       point 4, DEC-214 and DEC-231 and states that no `ExecutionBounds.md` row is added.
-- [ ] 0.3 **P3 — rebased preflight and baseline.** Fill `docs/Templates/PREFLIGHT.md` into
+- [x] 0.3 **P3 — rebased preflight and baseline.** Fill `docs/Templates/PREFLIGHT.md` into
       `evidence/PREFLIGHT.md`: branch, HEAD `5ddba83e`, tree state, required gates, exact build/test
       commands for slices 1–4. **Before any edit**, build `teensy41-capture-serial` and
       `teensy41-capture-serial-no-grain` and record their `check_ram1_budget.py` lines (variables,
       locals free, ITCM code, padding), the default image's HEX SHA-256, and the full
       `pio test -e native` case/skip counts. These figures are the "default image unchanged" oracle
       and the slice-4 A/B image.
-- [ ] 0.4 **P6 — boot hook.** Read `setup()` in `src/main.cpp` and record in `evidence/PREFLIGHT.md`
+- [x] 0.4 **P6 — boot hook.** Read `setup()` in `src/main.cpp` and record in `evidence/PREFLIGHT.md`
       the exact position where `RuntimeProfiler::initAtBoot()` will be called: after `Serial`/capture
       init (the boot row needs them), before the first call that can reach an instrumented owner
       (boot load, boot prewarm, the first display update). Verify by listing those calls in order.
-- [ ] 0.5 **P4 — profile env and RAM1 baseline.** Add `[env:teensy41-capture-serial-profile]` to
+- [x] 0.5 **P4 — profile env and RAM1 baseline.** Add `[env:teensy41-capture-serial-profile]` to
       `platformio.ini` extending `teensy41-capture-serial` with `-D RUNTIME_PROFILE_SCOPES=1`, and add
       `"teensy41-capture-serial-profile": "teensy41-capture-serial"` to `scripts/ram1_budget.json`
       (the checker fails an env without a baseline). Verify `pio run -e teensy41-capture-serial-profile`
       builds (the flag has no consumer yet) and the default env figures equal 0.3.
-- [ ] 0.6 **P5 — linker carve-out.** Add `*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str*)` beside
+- [x] 0.6 **P5 — linker carve-out.** Add `*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str*)` beside
       the `StopDiagRows`/`EnvelopeDistRows` lines in `linker/imxrt1062_t41_lcr.ld`, with a comment
       naming this change; verify both envs still link at the 0.3 figures (a rule matching no object
       is inert).
@@ -59,7 +59,7 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
 
 ## 1. Contract review (no firmware edit)
 
-- [ ] 1.1 Review the D12 site table against the code at `5ddba83e`: for the **short** scope
+- [x] 1.1 Review the D12 site table against the code at `5ddba83e`: for the **short** scope
       (`PlaybackViewService_grain`) confirm the row-27 grain is the scope's whole body after the gate;
       for every **long** scope confirm the `< 71.6 min` reason; for every site record which existing
       session-capture rows fall inside the scope (D11) and confirm the scope placement after the
@@ -68,38 +68,40 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
       prove it runs outside all thirteen scopes (RED_TEAM R8). Record in `evidence/DECISION_REVIEW.md`;
       verify no site's only justification is its ceiling or window span, and that `Display_frame_phase`
       and `SnapshotPublish_step` remain long.
-- [ ] 1.2 Review [RED_TEAM.md](RED_TEAM.md) and [RETIREMENT.md](RETIREMENT.md) with the owner; verify
+- [x] 1.2 Review [RED_TEAM.md](RED_TEAM.md) and [RETIREMENT.md](RETIREMENT.md) with the owner; verify
       every "Applied" finding is reflected in design/spec/tasks and TBD-4 (default-env promotion) has
-      an owner decision or is explicitly left open.
+      an owner decision or is explicitly left open. *(2026-10-31: findings applied in `fec18994`; TBD-4 left open by
+      the owner until the slice-4 A/B; runtime arming moved to a follow-up by owner decision.)*
 
 ## 2. Slice 1 — runtime core, short/long primitives, aggregate and ring
 
-- [ ] 2.1 Write `evidence/EXECUTION_PACKET-slice1.md` from the design's slice-1 contract; verify every
+- [x] 2.1 Write `evidence/EXECUTION_PACKET-slice1.md` from the design's slice-1 contract; verify every
       template field is filled or marked not-applicable with a reason.
-- [ ] 2.2 Add `include/Utils/RuntimeProfiler.h`: `ProfileId` enum (with a reserved calibration id),
+- [x] 2.2 Add `include/Utils/RuntimeProfiler.h`: `ProfileId` enum (with a reserved calibration id),
       capacity and layout `static_assert`s (ids ≤ 64, depth 16, ring 256, `sizeof(ProfileStat) == 48`,
       ring record 24), the five report-only classes, `kCycleTrustUs`, the scope API (`setResult`,
       `setContext`, reference form) and no-op macros when `RUNTIME_PROFILE_SCOPES` is undefined; verify
       the native build compiles and a `static_assert` fails on purpose when the id count exceeds
       capacity (mutation check, then restore).
-- [ ] 2.3 Write `test/test_runtime_profiler` fixtures **before** the record path: inclusive/self split,
+- [x] 2.3 Write `test/test_runtime_profiler` fixtures **before** the record path: inclusive/self split,
       LIFO order fault + poison + reset at depth 0, depth overflow without double counting,
       over-ceiling ring entry, ring overwrite with `dropped` and a `seq` gap, zero-duration call,
       unavailable source, entry under a faked non-zero `IPSR` (refused, `isrRefused` counted, stack
       untouched), optional result/context present and absent, the `kCycleTrustUs` boundary
       (below / at / above), a coarse duration larger than 32-bit cycles, and boot clear over a
-      pre-filled pattern; verify the suite is RED on the discriminating assertions before 2.4.
-- [ ] 2.4 Implement the record path in `src/Utils/RuntimeProfiler.cpp` (DMAMEM storage, clock shims
+      pre-filled pattern; verify the suite is RED on the discriminating assertions before 2.4. *(Discrimination shown by mutation —
+      see `evidence/EXECUTION_PACKET-slice1.md`.)*
+- [x] 2.4 Implement the record path in `src/Utils/RuntimeProfiler.cpp` (DMAMEM storage, clock shims
       `profileCyclesNow()` / `profileMicrosNow()`, refusal/order/poison/overflow guards, no I/O, no
       allocation); verify 2.3 turns green with `pio test -e native -f test_runtime_profiler`.
-- [ ] 2.5 Implement the short and long primitives with the D2 selection rule and the shared u64
+- [x] 2.5 Implement the short and long primitives with the D2 selection rule and the shared u64
       domain; verify the boundary and multi-period fixtures, and that a normal operation keeps cycle
       resolution.
-- [ ] 2.6 Implement `initAtBoot()` (clear, read `cpu_hz`, calibrate both primitives over 128–256
+- [x] 2.6 Implement `initAtBoot()` (clear, read `cpu_hz`, calibrate both primitives over 128–256
       samples into the calibration id, clear it, emit the boot row once) and call it at the 0.4
       position; verify native fixtures for sample count, min/average arithmetic, both variants, the
       `source=0` case, and that the calibration id leaves no aggregate residue.
-- [ ] 2.7 Build both envs: profile env at RAM1 `96,192` with padding ≥ 840; default and no-grain figures
+- [x] 2.7 Build both envs: profile env at RAM1 `96,192` with padding ≥ 840; default and no-grain figures
       equal 0.3; verify `git diff --stat` touches only intended files and `HotPathTelemetry` has no diff.
 
 ## 3. Slice 2 — bounded commands, Tier-A registration, host decoder

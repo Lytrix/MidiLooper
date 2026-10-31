@@ -37,6 +37,7 @@
 #include "Utils/MidiServiceDrain.h"
 #include "BootGate.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "Utils/RuntimeProfiler.h"
 #include <cstdio>
 
 static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
@@ -1161,6 +1162,11 @@ FLASHMEM void setup() {
   }
 #if defined(SESSION_CAPTURE)
   emitBootResetCapture(hadCrashReport);
+#endif
+#if RUNTIME_PROFILE_SCOPES
+  // DEC-239: the profiler's RAM2 state is NOLOAD; clear it, calibrate and emit the boot row before
+  // `prewarmPlaybackRuntime()` below, the first call that can reach an instrumented owner.
+  RuntimeProfiler::initAtBoot();
 #endif
   // DEC-190: after a fault, park **only** the slot whose restore/first paint was in flight. The file is not
   // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal

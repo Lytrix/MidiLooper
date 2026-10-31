@@ -187,9 +187,13 @@ SECTIONS
 		   budget. Read-only; the TU owns no mutable state. */
 		*StopDiagRows.cpp.o(.rodata.str* .rodata.*.str*)
 		/* Runtime profiler names, row formats and command strings (DEC-239,
-		   openspec/changes/runtime-profiling-layer). Compiled only with RUNTIME_PROFILE_SCOPES;
-		   the rule matches no object in other envs. Read-only; the TU owns no mutable state. */
-		*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str*)
+		   openspec/changes/runtime-profiling-layer), plus the compiler's switch tables for the
+		   name and ceiling lookups (`.rodata.CSWTCH.*`, 56-60 B each, measured in the profile ELF):
+		   the slice-3.9 lesson above -- a dense enum switch is tabulated even in a FLASHMEM function.
+		   Compiled only with RUNTIME_PROFILE_SCOPES; the rules match no object in other envs.
+		   Read-only; neither TU owns mutable data here (the profiler state is DMAMEM). */
+		*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str* .rodata.CSWTCH*)
+		*RuntimeProfiler.cpp.o(.rodata.str* .rodata.*.str* .rodata.CSWTCH*)
 		. = ALIGN(4);
 	} > FLASH
 
