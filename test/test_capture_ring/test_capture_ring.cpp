@@ -935,6 +935,22 @@ void test_pit_motion_delivery_tier_parser_and_fit() {
   }
 }
 
+void test_runtime_profiler_rows_are_tier_a_in_the_source_list_only() {
+  // DEC-239: every profiler row family, classified by the `.cpp` list at the longest timestamp, with the
+  // boundary pinned; the header list must not learn the family (its literals cost DTCM in every TU).
+  for (const char* row : {"#CAP,4294967295,DIAG,profile_boot,source=1,cpu_hz=600000000",
+                          "#CAP,4294967295,DIAG,profile_stat,2,RecordStart_edge,calls=1",
+                          "#CAP,4294967295,DIAG,profile_stat,end,count=14,resume=0",
+                          "#CAP,4294967295,DIAG,profile_ring,1,t_us=5,id=5",
+                          "#CAP,4294967295,DIAG,profile_reset,15",
+                          "#CAP,4294967295,DIAG,profile_cmd,refused,depth=1"}) {
+    TEST_ASSERT_TRUE(isTierATextLine(row));
+    TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(row));
+  }
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,profilex,1"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,profil_stat,1"));
+}
+
 void test_ingress_cost_delivery_tier_parser_and_fit() {
   MidiIngress::IngressCostStats stats{};
   stats.accepted = 3; stats.minimumCycles = 10; stats.maximumCycles = 20; stats.sumCycles = 45;
@@ -1041,6 +1057,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_playback_read_mailbox_preserves_time_cadence_and_tier_without_usb_on_edge);
   RUN_TEST(test_rolling_record_tier_exact_prefix_and_max_timestamp_fit);
+  RUN_TEST(test_runtime_profiler_rows_are_tier_a_in_the_source_list_only);
   RUN_TEST(test_ingress_cost_delivery_tier_parser_and_fit);
   RUN_TEST(test_pit_motion_delivery_tier_parser_and_fit);
   RUN_TEST(test_pit_ring_fallback_can_follow_end_fence_without_losing_request_identity);

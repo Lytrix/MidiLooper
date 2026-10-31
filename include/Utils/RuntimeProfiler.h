@@ -131,6 +131,19 @@ struct BootReport {
   uint32_t longAvgCycles;
 };
 
+/// Persisted dump cursors (design D8). Cleared by boot and by reset; owned by `ProfileDiagRows`.
+struct DumpCursors {
+  uint16_t statsNext;   // next identity index of the active stats dump
+  bool statsActive;     // a stats dump owes another batch
+  bool statsMultiBatch; // the active stats dump already spans more than one batch
+  bool ringActive;      // a ring dump session is pinned
+  uint32_t ringNext;    // next seq to emit
+  uint32_t ringStart;   // pinned horizon
+  uint32_t ringEnd;
+  uint32_t ringGap;     // seqs of the pinned range overwritten before they were read
+  uint32_t ringDrained; // last seq a completed or partial session has emitted; never re-emitted
+};
+
 /// Global counters a dump reports beside the table.
 struct ProfileCounters {
   uint32_t nextSeq;        // seq of the next ring record (first record is 1)
@@ -205,6 +218,11 @@ const BootReport& bootReport();
 uint32_t ceilingUs(ProfileId id);
 /// Ring access by age: 0 = oldest retained record. Returns false past `ringCount`.
 bool ringAt(size_t age, ProfileRingRecord& out);
+/// Live nesting depth including scopes entered past the stack; profile commands run only at zero.
+uint32_t liveDepth();
+DumpCursors& dumpCursors();
+/// Converts a cycle count to microseconds at the boot CPU rate (0 when the source is unavailable).
+uint64_t cyclesToUs(uint64_t cycles);
 
 #define PROFILE_SCOPE_SHORT(name, id) ::RuntimeProfiler::Scope name((id), false)
 #define PROFILE_SCOPE_LONG(name, id) ::RuntimeProfiler::Scope name((id), true)

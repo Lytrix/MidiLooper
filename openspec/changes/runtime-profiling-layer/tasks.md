@@ -107,28 +107,28 @@ documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a
 
 ## 3. Slice 2 — bounded commands, Tier-A registration, host decoder
 
-- [ ] 3.1 Write `evidence/EXECUTION_PACKET-slice2.md`; verify every field is filled or justified.
-- [ ] 3.2 Add `src/Utils/ProfileDiagRows.cpp` (names, row formats, command strings) and its accessor
+- [x] 3.1 Write `evidence/EXECUTION_PACKET-slice2.md`; verify every field is filled or justified.
+- [x] 3.2 Add `src/Utils/ProfileDiagRows.cpp` (names, row formats, command strings) and its accessor
       header; verify the profile build keeps RAM1 `96,192` and a native test proves every declared id
       returns a non-empty, unique name.
-- [ ] 3.3 Add the `DIAG,profile_` `PROGMEM` prefix to `isTierATextLine` under
+- [x] 3.3 Add the `DIAG,profile_` `PROGMEM` prefix to `isTierATextLine` under
       `#if defined(PIO_UNIT_TEST_NATIVE) || RUNTIME_PROFILE_SCOPES` (header list unchanged) and pin it
       in `test_capture_ring` and `test_capture_line_tier`; verify `check_marker_contract.py` reports
       EMITTED / TIER-A / FIT for **each** of `DIAG,profile_boot,`, `DIAG,profile_stat,`,
       `DIAG,profile_ring,`, `DIAG,profile_reset,` and `DIAG,profile_cmd,` (RED_TEAM R10), `--audit`
       exits 0, and the default env still equals 0.3.
-- [ ] 3.4 Implement `!PROFILE_STATS` and `!PROFILE_RING` (inside `#if RUNTIME_PROFILE_SCOPES`) with
+- [x] 3.4 Implement `!PROFILE_STATS` and `!PROFILE_RING` (inside `#if RUNTIME_PROFILE_SCOPES`) with
       independent cursors, batch maxima 16 / 32, the pinned ring horizon and terminators carrying
       `count`, `resume`, `poisoned` and, for the ring, `dropped`/`range_start`/`range_end`/`gap`;
       verify a native fixture drains more than one batch with no row loss, a mid-dump breach is
       neither duplicated nor skipped, and an overwritten pinned range reports its gap.
-- [ ] 3.5 Implement the depth-zero gate for all three commands; verify a command invoked inside an
+- [x] 3.5 Implement the depth-zero gate for all three commands; verify a command invoked inside an
       instrumented scope emits `profile_cmd,refused,depth=<n>` and leaves table, ring, cursors and stack
       byte-identical.
-- [ ] 3.6 Implement `scripts/profile_report.py` and `scripts/test_profile_report.py` (complete capture,
+- [x] 3.6 Implement `scripts/profile_report.py` and `scripts/test_profile_report.py` (complete capture,
       Tier-A eviction, `seq` gap, poisoned terminator, no profile rows); verify the suite passes with
       no MIDI and no serial port.
-- [ ] 3.7 Device leg (0.7 stimulus): flash the profile image, record HEX hash and boot proof, verify
+- [x] 3.7 Device leg (0.7 stimulus): flash the profile image, record HEX hash and boot proof, verify
       the boot row appears once with `source=1`, `cpu_hz=600000000` and both calibrations, and that
       repeated stats/ring requests drain in batches under a running transport; record
       `evidence/<date>-slice2-device.md`.

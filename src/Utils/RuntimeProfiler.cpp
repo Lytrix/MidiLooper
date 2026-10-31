@@ -47,6 +47,7 @@ struct State {
   ProfileRingRecord ring[kRingCapacity];
   Frame stack[kMaxDepth];
   ProfileCounters counters;
+  DumpCursors cursors;
   BootReport boot;
   uint32_t cpuHz;
   uint32_t cycleTrustUs;
@@ -145,6 +146,7 @@ RP_FLASH void clearMeasurements() {
   std::memset(&s.counters, 0, sizeof(s.counters));
   s.counters.nextSeq = nextSeq == 0 ? 1u : nextSeq;  // seq stays monotonic across a reset
   s.counters.isrRefused = isrRefused;  // a wiring fault, not a measurement: D8 does not clear it
+  std::memset(&s.cursors, 0, sizeof(s.cursors));
   s.ringHead = 0;
   s.overflowDepth = 0;
 }
@@ -307,6 +309,16 @@ RP_FLASH const ProfileStat& stat(ProfileId id) { return statAt(static_cast<size_
 RP_FLASH const ProfileCounters& counters() { return gState.counters; }
 
 RP_FLASH const BootReport& bootReport() { return gState.boot; }
+
+RP_FLASH uint32_t liveDepth() {
+  return static_cast<uint32_t>(gState.counters.depth) + gState.overflowDepth;
+}
+
+RP_FLASH DumpCursors& dumpCursors() { return gState.cursors; }
+
+RP_FLASH uint64_t cyclesToUs(uint64_t cycles) {
+  return gState.cpuHz == 0 ? 0 : (cycles * 1000000ull) / gState.cpuHz;
+}
 
 RP_FLASH bool ringAt(size_t age, ProfileRingRecord& out) {
   const detail::State& s = gState;

@@ -341,6 +341,11 @@ static const char kIngressCostTierPrefix[] PROGMEM = "DIAG,ingress_cost,";
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
 static const char kRollingRecordTierPrefix[] PROGMEM = "DIAG,rolling_record,";
 #endif
+#if defined(PIO_UNIT_TEST_NATIVE) || RUNTIME_PROFILE_SCOPES
+// DEC-239 runtime profiler rows (boot, stats, ring, reset, refusal): one flash-resident prefix, compiled
+// only into the profile env and native tests, so the default and no-grain images gain no literal.
+static const char kProfileTierPrefix[] PROGMEM = "DIAG,profile_";
+#endif
 static const char kPlaybackReadTierPrefix[] PROGMEM = "DIAG,playback_read,";
 static const char kPlaybackAvailableTierPrefix[] PROGMEM = "DIAG,playback_available,";
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
@@ -370,6 +375,9 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          CaptureLineTier::tagStartsWith(line, kIngressCostTierPrefix) ||
 #endif
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,") ||
+#if defined(PIO_UNIT_TEST_NATIVE) || RUNTIME_PROFILE_SCOPES
+         CaptureLineTier::tagStartsWith(line, kProfileTierPrefix) ||
+#endif
          CaptureLineTier::tagStartsWith(line, kPlaybackReadTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kPlaybackAvailableTierPrefix) ||
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)

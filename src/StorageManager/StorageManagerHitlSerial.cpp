@@ -24,6 +24,7 @@
 #include "Utils/StoppedHeapDiagnostics.h"
 #include "Utils/InvestigationCaptureLog.h"
 #include "Utils/MidiIngressCostProbe.h"
+#include "Utils/ProfileDiagRows.h"
 
 #if defined(__IMXRT1062__)
 #define CAPTURE_HITL_MEM FLASHMEM
@@ -870,6 +871,12 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // Explicit stopped-only retrieval also works while a pending
                 // stop keeps the automatic capture drain timing-protected.
                 DebugSessionCapture::flushCaptureBuffer(64);
+#if RUNTIME_PROFILE_SCOPES
+            } else if (ProfileDiagRows::handleCommand(sHitlSerialLineBuffer)) {
+                // DEC-239 runtime profiler: `!PROFILE_STATS` / `!PROFILE_RING` / `!PROFILE_RESET`. Bounded
+                // batches (16 / 32 rows), refused while any profile scope is live, mutate profiler state
+                // only; not transport-gated (DEC-228 K4). The command strings live in the carved TU.
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CAP_IDENTITY_STATS") == 0) {
                 // S1.3 save/restore-survival: read-only read-back of the bounded identity-path
                 // counters (emitter entry, enqueue, rejection, transmission, eviction, last identity).

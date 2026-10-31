@@ -85,6 +85,10 @@ class RequestParsingTests(unittest.TestCase):
         self.assertIn("!STOP_STATUS", capture_session.ALLOWED_HITL_COMMANDS)
         self.assertIn("!LIB_OBSERVE_STATUS", capture_session.ALLOWED_HITL_COMMANDS)
         self.assertIn("!TRACE_DRAIN", capture_session.ALLOWED_HITL_COMMANDS)
+        for profile in ("!PROFILE_STATS", "!PROFILE_RING", "!PROFILE_RESET"):
+            self.assertIn(profile, capture_session.ALLOWED_HITL_COMMANDS)
+            self.assertTrue(capture_session.is_allowed_hitl_command(profile))
+        self.assertFalse(capture_session.is_allowed_hitl_command("!PROFILE_RESET 1"))
         for mutating in ("!CLEAR", "!QUARANTINE_WORKSPACE", "!REV_NUKE_SETS", "!RESTORE_WORKSPACE 1 2"):
             self.assertNotIn(mutating, capture_session.ALLOWED_HITL_COMMANDS)
 

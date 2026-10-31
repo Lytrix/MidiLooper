@@ -37,6 +37,13 @@ registered variant, scaffold
 | Verdict rule | Validity first (handoff § 4): `overdubs=12`, 0 `order_deny`, 0 `preparation_denied`, else not evidence. A missing profile row is evidence only if `hitl_absence_check.py` reports `ABSENT-EVIDENCE`. |
 | Evidence to record | Capture log path + tail, `parse_overdub_chain_timing.py --windows` output, `scripts/profile_report.py` output, HEX hash. |
 
+## Slice-2 device tool
+
+`scripts/hitl_profile_dump.py` — no gesture, no slot, no SD: a managed capture that owns a fresh boot,
+the shared `MidiClockMaster` pump for a running transport, and the fenced, allowlisted
+`!PROFILE_STATS` / `!PROFILE_RING` / `!PROFILE_RESET` requests. Slices 3–4 run the owner rig first,
+then this tool's drains with `--no-boot` semantics added if needed.
+
 ## SD safety
 
 The rig **clears** the scratch slot before recording (track 8, slot 4 1-based / slot 3 0-based). That is

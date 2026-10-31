@@ -214,7 +214,8 @@ cross-domain outcome enum is introduced.
   `startSeq = max(oldest available, endSeq − capacity + 1)`. Only that range drains; later breaches
   belong to the next session. Overwritten parts of the pinned range are reported as `gap`.
 - **Stats** is a multi-batch snapshot over a stable id cursor (`multi_batch=1` when more than one batch).
-- Each dump has its own persisted cursor; reset clears both.
+- Each dump has its own persisted cursor; reset clears both. A ring dump **drains**: a later session
+  starts after the last seq an earlier one emitted or reported as a gap, so no record is emitted twice.
 - **Reset** clears table, ring, `dropped`, `depthOverflow`, `poisoned` and both cursors, nothing else.
   `isrRefused` is kept (it reports a wiring fault, not a measurement) and `seq` stays monotonic.
 - Rows are direct-first/ring-fallback (DEC-228 K1), not transport-gated (DEC-228 K4); the batch bound

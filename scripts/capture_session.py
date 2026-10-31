@@ -28,6 +28,11 @@ ALLOWED_HITL_COMMANDS = frozenset({
     # ring, so an idle device can hold it unflushed; the drain makes a completed
     # observation visible without mutating content.
     "!TRACE_DRAIN",
+    # DEC-239 runtime profiler (profile env only; other images ignore them): bounded read-back
+    # batches, and a reset that clears profiler counters only -- never content, storage or transport.
+    "!PROFILE_STATS",
+    "!PROFILE_RING",
+    "!PROFILE_RESET",
 })
 
 # How this capture treats the boot. The settle exists only to stop the harness driving a board

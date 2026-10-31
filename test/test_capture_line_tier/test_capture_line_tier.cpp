@@ -107,6 +107,9 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_NOT_NULL(strstr(overlapHoldWorst, ",hide,4294967295"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,328705775,DIAG,timing_max,PlaybackBuildTime,74729"));
+  // DEC-239: the runtime profiler family is classified in `isTierATextLine` only (test_capture_ring);
+  // the header list stays unchanged.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,profile_stat,2,RecordStart_edge,calls=1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701476,DIAG,late_on,0,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701477,DIAG,late_off,1200,2"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,late_clk,4000,1"));

@@ -4,6 +4,7 @@
 #define RUNTIME_PROFILE_SCOPES 1
 #include <unity.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -467,6 +468,183 @@ void test_every_identity_has_a_unique_nonempty_name_and_a_declared_ceiling() {
   TEST_ASSERT_EQUAL_UINT32(kDeferredCeilingUs, ceilingUs(ProfileId::ViewPrewarm_unit));
 }
 
+
+// ---- slice 2: bounded dumps, depth-zero gate, reset ----
+namespace {
+size_t rowsWith(const char* tag, size_t from = 0) {
+  size_t n = 0;
+  for (size_t i = from; i < gRows.size(); ++i) {
+    if (gRows[i].find(tag) != std::string::npos) ++n;
+  }
+  return n;
+}
+const std::string& lastRow() { return gRows.back(); }
+void breaches(int count) {
+  for (int i = 0; i < count; ++i) {
+    PROFILE_SCOPE_SHORT(s, ProfileId::SelfTest);
+    advanceUs(2500);
+  }
+}
+uint32_t seqOf(const std::string& row) {
+  const size_t at = row.find("DIAG,profile_ring,");
+  return static_cast<uint32_t>(std::strtoul(row.c_str() + at + 18, nullptr, 10));
+}
+}  // namespace
+
+void test_stats_dump_drains_in_bounded_batches_with_resume() {
+  boot();
+  gRows.clear();
+  const size_t dumpable = static_cast<size_t>(ProfileId::Count) - 1;  // Calibration is never dumped
+  size_t total = 0, batches = 0;
+  for (;;) {
+    total += ProfileDiagRows::dumpStatsBatch(4);
+    ++batches;
+    if (lastRow().find(",resume=0,") != std::string::npos) break;
+    TEST_ASSERT_TRUE(lastRow().find(",resume=1,multi_batch=1,") != std::string::npos);
+    TEST_ASSERT_TRUE(batches < 10);
+  }
+  TEST_ASSERT_EQUAL_size_t(dumpable, total);
+  TEST_ASSERT_EQUAL_size_t((dumpable + 3) / 4, batches);
+  TEST_ASSERT_EQUAL_size_t(dumpable, rowsWith("DIAG,profile_stat,") - batches);
+  TEST_ASSERT_EQUAL_size_t(0, rowsWith(",Calibration,"));
+  TEST_ASSERT_TRUE(lastRow().find(",multi_batch=1,") != std::string::npos);
+  // A completed dump starts over from the first identity.
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_STATS"));
+  TEST_ASSERT_TRUE(gRows[0].find("DIAG,profile_stat,1,SelfTest,calls=0,") != std::string::npos);
+  TEST_ASSERT_TRUE(lastRow().find(",count=14,resume=0,multi_batch=0,") != std::string::npos);
+}
+
+void test_stats_row_reports_averages_in_microseconds() {
+  boot();
+  { PROFILE_SCOPE_SHORT(s, ProfileId::SelfTest); advanceUs(100); }
+  { PROFILE_SCOPE_SHORT(s, ProfileId::SelfTest); advanceUs(300); }
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_STATS"));
+  TEST_ASSERT_TRUE(gRows[0].find(",SelfTest,calls=2,avg_us=200,avg_self_us=200,max_us=300,last_us=300,"
+                                 "over=0,ref=0,order=0,coarse=0,last_result=255") != std::string::npos);
+}
+
+void test_ring_dump_drains_in_batches_of_32_and_never_re_emits() {
+  boot();
+  breaches(70);
+  gRows.clear();
+  std::vector<uint32_t> seqs;
+  for (int request = 0; request < 3; ++request) {
+    TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));
+  }
+  for (const auto& row : gRows) {
+    if (row.find("DIAG,profile_ring,end,") == std::string::npos) seqs.push_back(seqOf(row));
+  }
+  TEST_ASSERT_EQUAL_size_t(70, seqs.size());
+  for (size_t i = 0; i < seqs.size(); ++i) TEST_ASSERT_EQUAL_UINT32(i + 1, seqs[i]);
+  TEST_ASSERT_EQUAL_size_t(3, rowsWith("DIAG,profile_ring,end,"));
+  TEST_ASSERT_TRUE(lastRow().find(",count=6,dropped=0,resume=0,range_start=1,range_end=70,gap=0,") !=
+                   std::string::npos);
+  // The next session has nothing new to read.
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));
+  TEST_ASSERT_EQUAL_size_t(1, gRows.size());
+  TEST_ASSERT_TRUE(lastRow().find(",count=0,") != std::string::npos);
+  TEST_ASSERT_TRUE(lastRow().find(",resume=0,range_start=71,range_end=70,") != std::string::npos);
+}
+
+void test_a_breach_arriving_mid_dump_belongs_to_the_next_session() {
+  boot();
+  breaches(40);
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // pins 1..40, emits 1..32
+  breaches(5);                                                        // seq 41..45
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // emits 33..40 only
+  TEST_ASSERT_TRUE(lastRow().find(",count=8,dropped=0,resume=0,range_start=1,range_end=40,") !=
+                   std::string::npos);
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // new session: 41..45
+  TEST_ASSERT_EQUAL_UINT32(41, seqOf(gRows[0]));
+  TEST_ASSERT_TRUE(lastRow().find(",count=5,dropped=0,resume=0,range_start=41,range_end=45,gap=0,") !=
+                   std::string::npos);
+}
+
+void test_an_overwritten_pinned_range_reports_its_gap() {
+  boot();
+  breaches(260);  // ring holds 5..260
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // pins 5..260, emits 5..36
+  TEST_ASSERT_TRUE(lastRow().find(",range_start=5,range_end=260,gap=0,") != std::string::npos);
+  breaches(100);  // overwrites up to seq 104
+  size_t emitted = 0;
+  for (int request = 0; request < 10; ++request) {
+    gRows.clear();
+    TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));
+    emitted += gRows.size() - 1;
+    if (lastRow().find(",resume=0,") != std::string::npos) break;
+  }
+  TEST_ASSERT_TRUE(lastRow().find(",range_start=5,range_end=260,gap=68,") != std::string::npos);
+  TEST_ASSERT_EQUAL_size_t(260 - 104, emitted);  // 105..260
+}
+
+void test_profile_commands_are_refused_under_a_live_scope_and_change_nothing() {
+  boot();
+  breaches(3);
+  for (const char* command : {"!PROFILE_STATS", "!PROFILE_RING", "!PROFILE_RESET"}) {
+    PROFILE_SCOPE_LONG(outer, ProfileId::RecordStart_edge);
+    std::vector<uint8_t> before(sizeof(detail::gState));
+    std::memcpy(before.data(), &detail::gState, sizeof(detail::gState));
+    gRows.clear();
+    TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand(command));
+    TEST_ASSERT_EQUAL_size_t(1, gRows.size());
+    TEST_ASSERT_TRUE(gRows[0].find("DIAG,profile_cmd,refused,depth=1") != std::string::npos);
+    TEST_ASSERT_EQUAL_MEMORY(before.data(), &detail::gState, sizeof(detail::gState));
+  }
+  TEST_ASSERT_EQUAL_UINT32(3, self().calls);
+}
+
+void test_reset_command_clears_the_table_ring_and_cursors() {
+  boot();
+  breaches(40);
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // mid-session
+  TEST_ASSERT_TRUE(ProfileDiagRows::dumpStatsBatch(2) == 2);            // mid stats dump
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RESET"));
+  TEST_ASSERT_TRUE(lastRow().find("DIAG,profile_reset,15") != std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(0, self().calls);
+  TEST_ASSERT_EQUAL_UINT16(0, counters().ringCount);
+  TEST_ASSERT_FALSE(dumpCursors().ringActive);
+  TEST_ASSERT_FALSE(dumpCursors().statsActive);
+  breaches(2);  // seq continues at 41
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));
+  TEST_ASSERT_TRUE(lastRow().find(",count=2,dropped=0,resume=0,range_start=41,range_end=42,") !=
+                   std::string::npos);
+}
+
+void test_non_profile_lines_are_not_consumed() {
+  boot();
+  gRows.clear();
+  TEST_ASSERT_FALSE(ProfileDiagRows::handleCommand("!CAP_IDENTITY_STATS"));
+  TEST_ASSERT_FALSE(ProfileDiagRows::handleCommand("!PROFILE_STATSX"));
+  TEST_ASSERT_FALSE(ProfileDiagRows::handleCommand(""));
+  TEST_ASSERT_FALSE(ProfileDiagRows::handleCommand(nullptr));
+  TEST_ASSERT_EQUAL_size_t(0, gRows.size());
+}
+
+void test_every_row_fits_and_carries_a_classifying_tag_inside_the_head_read() {
+  boot();
+  { PROFILE_SCOPE_LONG(s, ProfileId::PlaybackViewService_grain); s.setContext(7, 3); s.setResult(9);
+    gCycles += 77; gUs += 4294967u; }  // long name, coarse, large numbers
+  gRows.clear();
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_STATS"));
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));
+  TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RESET"));
+  TEST_ASSERT_TRUE(gRows.size() >= 17);
+  for (const auto& row : gRows) {
+    TEST_ASSERT_TRUE(row.size() < ProfileDiagRows::kRowCapacity);
+    const size_t tag = row.find("DIAG,profile_");
+    TEST_ASSERT_TRUE(tag != std::string::npos);
+    TEST_ASSERT_TRUE(tag + std::strlen("DIAG,profile_") <= 47);  // the ring's head read
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_boot_clears_a_prefilled_ram2_image);
@@ -490,5 +668,14 @@ int main(int, char**) {
   RUN_TEST(test_exception_context_entry_is_refused_without_touching_nesting);
   RUN_TEST(test_reset_keeps_seq_monotonic);
   RUN_TEST(test_every_identity_has_a_unique_nonempty_name_and_a_declared_ceiling);
+  RUN_TEST(test_stats_dump_drains_in_bounded_batches_with_resume);
+  RUN_TEST(test_stats_row_reports_averages_in_microseconds);
+  RUN_TEST(test_ring_dump_drains_in_batches_of_32_and_never_re_emits);
+  RUN_TEST(test_a_breach_arriving_mid_dump_belongs_to_the_next_session);
+  RUN_TEST(test_an_overwritten_pinned_range_reports_its_gap);
+  RUN_TEST(test_profile_commands_are_refused_under_a_live_scope_and_change_nothing);
+  RUN_TEST(test_reset_command_clears_the_table_ring_and_cursors);
+  RUN_TEST(test_non_profile_lines_are_not_consumed);
+  RUN_TEST(test_every_row_fits_and_carries_a_classifying_tag_inside_the_head_read);
   return UNITY_END();
 }
