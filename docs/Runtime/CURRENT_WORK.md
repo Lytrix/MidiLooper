@@ -1,5 +1,7 @@
 ## Now implementing — Overdub stop-edge closure (2026-10-30)
 
+**2026-10-31 — MIDI timing handoff: timing is the priority.** Read the [MIDI timing handoff](2026-10-31-midi-timing-handoff.md) first. It records the A/B table, the scorer (`scripts/parse_overdub_chain_timing.py`), the acceptance gate, and the repair order: stale-root pass walk → bounded producer wrap step → follow-origin prefetch → tile turns. The A/B note below says there is "no evidence" that the arbitration caused the regression. It conflicts with the scorer (281 ms vs 81–94 ms median `midi_gap`), so reconcile it before acting on it.
+
 **2026-10-31 — DEC-238 — MIDI timing first: the staged display-base arbitration ships off.** With Slice 3's arbitration on, the owner rig chain ran at a 281 ms median / 664 ms worst MIDI gap (`session_20261031_212428`); with it off, at 81–94 ms / 197–204 ms (`213255`, `214619`). The board runs `2c7bb5d3…` (switch off, boot verified). Re-enabling requires an on/off rig run with no MIDI regression. Slice 3 code is dormant, not removed.
 
 **2026-10-31 — A/B with the valid arbitration-on run; the last run is the wedge, not the timing baseline.** The B2 run (`captures/session_20261031_213624.log`, `captures/ab-arbitration-on`) is **invalid**: `Overdubbing started: 0`, 11,520 `preparation_denied`, audio gaps to 1.13 s, and the Record stop wedged. Use the **previous** arbitration-on chain-51 (`captures/session_20261031_212428.log`) as the on side. Valid A/B:
