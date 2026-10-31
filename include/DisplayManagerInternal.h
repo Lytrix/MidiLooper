@@ -76,4 +76,9 @@ int resolveDrawHighlightIndex(const NoteUtils::DisplayNoteVec& notes,
                               uint32_t loopLength, bool windowRelativeTicks,
                               uint32_t windowStartTick, uint32_t bracketDisplayTick);
 
+/// Native-diag: how many committed draw-source gathers have taken the **passes** branch (a stale or
+/// missing published root) since the last reset. A current root must never walk the passes.
+uint32_t drawSourceCommittedPassGatherCountForTest();
+void resetDrawSourceCommittedPassGatherCountForTest();
+
 }  // namespace DisplayManagerInternal

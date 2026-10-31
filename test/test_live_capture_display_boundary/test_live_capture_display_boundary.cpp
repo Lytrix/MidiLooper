@@ -2129,10 +2129,179 @@ void test_committed_display_base_is_independent_of_the_overlap_view() {
                            "the committed base must gather committed content, not the overlap view");
 }
 
+// ---------------------------------------------------------------------------
+// Stale published root vs authoritative committed passes (chain-48 shape).
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr uint32_t kStaleRootBar = Config::TICKS_PER_BAR;
+constexpr uint32_t kStaleRootBars = 20;
+constexpr uint32_t kStaleRootLength = kStaleRootBars * kStaleRootBar;
+
+/// Commit one overdub pass through the production stop owner. The note's **phase** is explicit: the tick
+/// passed to the input owner is `kStaleRootLength + phase`, which is the cycle the projection is anchored on.
+void commitOverdubPassAt(Track& t, Loop& loop, uint32_t startTick, uint8_t pitch, uint32_t phaseOn,
+                         uint32_t phaseOff) {
+  clockManager.assignCurrentTickSilently(startTick);
+  t.startOverdubbing(startTick);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "the fixture must open its overdub interval");
+  const uint32_t absOn = kStaleRootLength + phaseOn;
+  const uint32_t absOff = kStaleRootLength + phaseOff;
+  clockManager.assignCurrentTickSilently(absOn);
+  t.noteOn(1, pitch, 100, absOn);
+  clockManager.assignCurrentTickSilently(absOff);
+  t.noteOff(1, pitch, 0, absOff);
+  clockManager.assignCurrentTickSilently(startTick + 800);
+  t.stopOverdubbing();
+  for (unsigned turn = 0; turn < 8192 && t.hasStopInFlight(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(), "the fixture's overdub stop must retire");
+  (void)loop;
+}
+
+const NoteUtils::DisplayNote* displayNoteById(const DisplayNoteVec& notes, NoteId id) {
+  for (const auto& note : notes) {
+    if (note.noteId == id) return &note;
+  }
+  return nullptr;
+}
+
+void gatherCommittedForTest(Track& t, Loop& loop, uint32_t startBar, uint32_t windowBars,
+                            DisplayNoteVec& out) {
+  size_t committedEnd = 0;
+  gatherCommittedDrawSourceBars(t, 0, loop, startBar, startBar + windowBars - 1, 0, 127, out,
+                                committedEnd);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(out.size()),
+                           static_cast<uint32_t>(committedEnd));
+}
+}  // namespace
+
+/// RED (chain-48): committed passes advance while the published root stays stale. `visualCacheDirty`
+/// made the draw source prefer that stale root, so committed overdub rows vanished except where a live
+/// preview temporarily reintroduced them. The committed draw source itself must serve the passes for the
+/// requested window, and the same rows/geometry must appear whether or not the window crosses the wrap.
+void test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window() {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  const NoteId recA = acceptPair(t, 60, 12, 80);
+  // Anchor the take's length at 20 bars: the committed length follows the maintained maximum tick.
+  (void)acceptPair(t, 65, (kStaleRootBars - 1) * kStaleRootBar + 100,
+                   (kStaleRootBars - 1) * kStaleRootBar + 200);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the record pass must commit first");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kStaleRootLength, loop.loopLengthTicks,
+                                   "the fixture needs a 20-bar loop for the sliding window");
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+
+  // Overdub A: bar 5 (0-based bar 4) and bar 12 (0-based 11).
+  commitOverdubPassAt(t, loop, kStaleRootLength, 72, 4 * kStaleRootBar + 100, 4 * kStaleRootBar + 220);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  NoteId a5 = kInvalidNoteId;
+  {
+    SessionMidiEventVec rows;
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+    if (!rows.empty()) a5 = rows.front().noteId;
+  }
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(kInvalidNoteId, a5, "overdub A must commit a note");
+
+  // Overdub B: bar 2 (0-based 1) and bar 18 (0-based 17).
+  commitOverdubPassAt(t, loop, kStaleRootLength + 1000, 76, kStaleRootBar + 100, kStaleRootBar + 220);
+  TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  const NoteId b2 = [&] {
+    SessionMidiEventVec rows;
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+    return rows.empty() ? kInvalidNoteId : rows.front().noteId;
+  }();
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(kInvalidNoteId, b2, "overdub B must commit a note");
+
+  // The chain-48 shape: a published but **stale** root (an empty snapshot at an older revision), with a
+  // dirty visual cache. The committed passes are the only current authority.
+  auto stale = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.startLoopTick,
+                                         loop.peekNextNoteId(), 1);
+  loop.storePublishedSnapshotForTest(stale, 1);
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                            "the fixture root must be stale against the committed passes");
+  loop.visualCacheDirty = true;
+
+  for (uint32_t startBar : {0u, 1u, 4u, 8u}) {
+    DisplayNoteVec out;
+    gatherCommittedForTest(t, loop, startBar, 16, out);
+    TEST_ASSERT_FALSE_MESSAGE(out.empty(), "a stale root must not blank the committed draw source");
+    const uint32_t last = startBar + 15;
+    if (startBar == 0) {
+      TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(out, recA),
+                                   "the record note must be served from the passes");
+      TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(out, b2),
+                                   "overdub B (bar 2) must be served from the passes");
+    }
+    if (startBar <= 4 && 4 <= last) {
+      TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(out, a5),
+                                   "overdub A (bar 5) must stay visible while the window slides");
+    }
+  }
+
+  // Wrap-crossing window: bars 18..33 covers 18, 19, then 0..13. The same rows and geometry must result.
+  DisplayNoteVec wrapped;
+  DisplayNoteVec plain;
+  gatherCommittedForTest(t, loop, 18, 16, wrapped);
+  gatherCommittedForTest(t, loop, 4, 16, plain);
+  const auto* wrapA5 = displayNoteById(wrapped, a5);
+  const auto* plainA5 = displayNoteById(plain, a5);
+  TEST_ASSERT_NOT_NULL_MESSAGE(wrapA5, "a wrap-crossing window must still serve the committed rows");
+  TEST_ASSERT_NOT_NULL(plainA5);
+  TEST_ASSERT_EQUAL_UINT8(plainA5->note, wrapA5->note);
+  TEST_ASSERT_EQUAL_UINT32(plainA5->startTick, wrapA5->startTick);
+  TEST_ASSERT_EQUAL_UINT32(plainA5->endTick, wrapA5->endTick);
+  TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(wrapped, recA),
+                               "the wrap-crossing window must include bar 0");
+  assertNote(wrapped, a5, 72, 4 * kStaleRootBar + 100, 4 * kStaleRootBar + 220);
+  assertNote(wrapped, b2, 76, kStaleRootBar + 100, kStaleRootBar + 220);
+}
+
+/// Negative control: a **current** root is the authority. The committed pass walk must not run, and the
+/// root's content (here an empty root) is what the draw source serves.
+void test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes() {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  const NoteId recA = acceptPair(t, 60, 12, 80);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+
+  auto current = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.startLoopTick,
+                                           loop.peekNextNoteId(), 1);
+  loop.storePublishedSnapshotForTest(current, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the control requires a current root");
+  loop.visualCacheDirty = true;
+
+  DisplayManagerInternal::resetDrawSourceCommittedPassGatherCountForTest();
+  DisplayNoteVec out;
+  gatherCommittedForTest(t, loop, 0, 16, out);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0,
+                                   DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest(),
+                                   "a current root must not be replaced by a redundant pass walk");
+  TEST_ASSERT_NULL_MESSAGE(displayNoteById(out, recA),
+                           "the current root is the committed authority, not the passes");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
   RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
+  RUN_TEST(test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window);
+  RUN_TEST(test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes);
   RUN_TEST(test_stationary_viewport_counts_real_completed_frames_without_transition_receipts);
   RUN_TEST(test_chain_oracle_separates_missing_service_from_missing_content);
   RUN_TEST(test_painted_notes_follow_committed_passes_on_a_stationary_viewport);

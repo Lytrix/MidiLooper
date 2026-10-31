@@ -8,6 +8,7 @@
 #include "ClockManager.h"
 #include "EditManager.h"
 #include "Loop.h"
+#include "LoopContentResolution.h"
 #include "LoopSnapshot.h"
 #include "PendingNoteChange.h"
 #include "TrackManager.h"
@@ -37,6 +38,20 @@
 #endif
 
 using namespace DisplayManagerInternal;
+
+namespace {
+// Native diag: counts committed draw-source gathers that took the **passes** branch (stale/missing root).
+// DMAMEM keeps this test-only counter out of DTCM so the parked display-source fix does not shift the
+// approved RAM1 placement (96,192 variables).
+DMAMEM uint32_t gDrawSourceCommittedPassGathers = 0;
+}  // namespace
+
+uint32_t DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest() {
+    return gDrawSourceCommittedPassGathers;
+}
+void DisplayManagerInternal::resetDrawSourceCommittedPassGatherCountForTest() {
+    gDrawSourceCommittedPassGathers = 0;
+}
 
 namespace {
 DISP_COLD_MEM bool displaySourcePublicationPending(const Track& track, const Loop& loop,
@@ -541,6 +556,21 @@ void appendRecordStopPreviewForBar(const CapturePreview& preview, uint32_t bar,
     }
 }
 
+namespace {
+/// The committed base already owns this preview row's identity (same NoteId and same start): a stop or
+/// live preview must not append a second copy of a note whose own pass is committed. Different starts are
+/// the wrap-head split of one NoteId and must still append.
+bool committedBaseOwnsPreviewRow(const NoteUtils::DisplayNoteVec& out, size_t committedEnd,
+                                 const NoteUtils::DisplayNote& row) {
+    if (row.noteId == kInvalidNoteId) return false;
+    const size_t end = committedEnd < out.size() ? committedEnd : out.size();
+    for (size_t i = 0; i < end; ++i) {
+        if (out[i].noteId == row.noteId && out[i].startTick == row.startTick) return true;
+    }
+    return false;
+}
+}  // namespace
+
 DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t slot, const Loop& loop,
                                                     uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
                                                     uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
@@ -551,16 +581,54 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t 
         return;
     }
     const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
-    const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+    const bool rootStale = static_cast<bool>(snapshot) && !loop.publishedSnapshotIsCurrent();
+    const bool requestedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
         static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
         !loop.visualCache.notes.empty(), loop.visualCacheDirty,
         loop.publishedSnapshotIsCurrent());
+    // A **stale** published root may never be the committed draw source: the committed passes are
+    // authority and roots are acceleration (chain-48: passes advanced while publication lagged, and the
+    // stale root blanked every committed overdub row outside a live preview). Every other selection is
+    // unchanged. A cache **built from passes** stays a qualified source (the partial-cache contract);
+    // a cache built from a root mirrors that root and is not.
+    const bool cacheIsPassDerived =
+        !loop.visualCache.notes.empty() && loop.visualCache.builtFromSnapshotIdentity == nullptr;
+    const bool usePublishedSnapshot = requestedSnapshot && !rootStale;
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     uint32_t closureTick = loopLength - 1;
     const CapturePreview* recordPreview = track.recordStopPreviewForSlot(slot, &closureTick);
+    const uint32_t loopBars = Config::TICKS_PER_BAR > 0
+                                  ? (loopLength + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR
+                                  : 0;
+    if (rootStale && requestedSnapshot && recordPreview == nullptr && !cacheIsPassDerived) {
+        // Window-local, wrap-aware gather over the authoritative committed passes.
+        const uint32_t windowStart = firstBar * Config::TICKS_PER_BAR;
+        const uint32_t windowLength = (lastBar - firstBar + 1u) * Config::TICKS_PER_BAR;
+        NoteUtils::DisplayNoteVec passNotes;
+        LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loopLength, windowStart,
+                                                           windowLength, passNotes);
+        ++gDrawSourceCommittedPassGathers;
+        // This gather may append to a retained prefix (the one-bar slide gather). A committed row the
+        // prefix already carries must not be appended twice.
+        for (const NoteUtils::DisplayNote& note : passNotes) {
+            bool present = false;
+            for (const NoteUtils::DisplayNote& existing : out) {
+                if (existing.noteId == note.noteId && existing.startTick == note.startTick) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) out.push_back(note);
+        }
+        committedEnd = out.size();
+        return;
+    }
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (usePublishedSnapshot) {
-            appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
+            // The window may cross the loop end (one generation, two physical spans), so a logical
+            // bar beyond the loop resolves to its physical bar instead of an empty membership.
+            const uint32_t physicalBar = loopBars == 0 ? 0u : bar % loopBars;
+            appendSnapshotNotesForBar(*snapshot, physicalBar, pitchLow, resolvedPitchHigh, out);
         } else if (recordPreview) {
             appendRecordStopPreviewForBar(*recordPreview, bar, loopLength, closureTick, out);
         } else {
@@ -585,6 +653,7 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, 
             loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
             loop.hasOverdubSession())) {
         for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+            if (committedBaseOwnsPreviewRow(out, committedEnd, sealedRow)) continue;
             for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
                 if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
                     continue;
@@ -597,6 +666,7 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, 
     }
     if (loop.retiredSealedDisplayNeededForFrame()) {
         for (const NoteUtils::DisplayNote& retiredRow : loop.retiredSealedDisplayNotes()) {
+            if (committedBaseOwnsPreviewRow(out, committedEnd, retiredRow)) continue;
             for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
                 if (!previewNoteIntersectsBar(retiredRow, bar, loopLength)) {
                     continue;
@@ -630,6 +700,7 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Track& track, uint8_t slot, 
                                                                  previewNote.endTick)) {
                 appendDisplayNoteUniqueById(out, previewNote);
             } else {
+                if (committedBaseOwnsPreviewRow(out, committedEnd, previewNote)) continue;
                 DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote,
                                                                      true);
             }
