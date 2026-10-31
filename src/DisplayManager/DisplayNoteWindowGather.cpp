@@ -476,8 +476,16 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     uint32_t gatherLength = 0;
     DisplayWindowUtils::expandWindowWithMargin(windowStart, windowLength, loopLength, marginTicks,
                                                gatherStart, gatherLength);
+#if defined(SESSION_CAPTURE)
+    DisplayBaseGatherTrace trace;
+    trace.site = "window";
+    rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
+                                liveDisplayEventBuffer, liveDisplayNotes, true, &trace);
+    emitDisplayBaseGatherTrace(trace, displaySlot);
+#else
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
                                 liveDisplayEventBuffer, liveDisplayNotes, true);
+#endif
     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
     if (sealedHandoffActive) {
         // `rebuildDisplayNotesInWindow` materializes committed content only once
@@ -666,8 +674,26 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t 
         const uint32_t windowStart = firstBar * Config::TICKS_PER_BAR;
         const uint32_t windowLength = (lastBar - firstBar + 1u) * Config::TICKS_PER_BAR;
         NoteUtils::DisplayNoteVec passNotes;
+#if defined(SESSION_CAPTURE)
+        const uint32_t gatherStartUs = micros();
+#endif
         LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loopLength, windowStart,
                                                            windowLength, passNotes);
+#if defined(SESSION_CAPTURE)
+        // DEC-237 Slice 1: this is the draw-source path that `disp_passwalk` counts. Name its
+        // per-call cost so the attribution can distinguish it from the base/window gathers.
+        {
+            DisplayBaseGatherTrace trace;
+            trace.site = "drawsrc";
+            trace.path = "passes";
+            trace.totalUs = micros() - gatherStartUs;
+            trace.passesUs = trace.totalUs;
+            trace.notes = static_cast<uint32_t>(passNotes.size());
+            trace.windowStart = windowStart;
+            trace.windowLength = windowLength;
+            emitDisplayBaseGatherTrace(trace, slot);
+        }
+#endif
         ++gDrawSourceCommittedPassGathers;
         // This gather may append to a retained prefix (the one-bar slide gather). A committed row the
         // prefix already carries must not be appended twice.

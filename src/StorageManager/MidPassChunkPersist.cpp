@@ -119,6 +119,24 @@ STORAGE_PERSIST_MEM bool appendMidPassJournalRecord(File& file, uint16_t chunkId
 
 }  // namespace
 
+STORAGE_PERSIST_MEM void noteMidPassOutcome(uint8_t reason, uint32_t detail) {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+    MidPassChunkPersistJob& job = storageSession.midPassChunkPersist;
+    if (job.lastOutcome == reason) {
+        ++job.outcomeRepeats;
+        return;
+    }
+    DebugSessionCapture::midPassOutcome(reason, PersistenceQueue::queueDepth(), PersistenceQueue::writingChunkCount(),
+                                        detail, job.outcomeRepeats, PersistenceQueue::admitRefusalCount(),
+                                        PersistenceQueue::lastAdmitRefusalReason());
+    job.lastOutcome = reason;
+    job.outcomeRepeats = 0;
+#else
+    (void)reason;
+    (void)detail;
+#endif
+}
+
 STORAGE_PERSIST_MEM void resetMidPassChunkPersistState() {
     MidPassChunkPersistJob& job = storageSession.midPassChunkPersist;
     closeMidPassJournal(job);
@@ -138,6 +156,7 @@ STORAGE_PERSIST_MEM bool stepMidPassChunkPersist() {
 
     uint16_t chunkId = 0;
     if (!PersistenceQueue::beginWriteQueuedChunk(chunkId)) {
+        noteMidPassOutcome(4);
         return true;
     }
 
@@ -145,22 +164,26 @@ STORAGE_PERSIST_MEM bool stepMidPassChunkPersist() {
     uint8_t slotIndex = 0;
     if (!resolveCaptureTrackSlotForMidPass(trackIndex, slotIndex)) {
         PersistenceQueue::requeueWritingChunk(chunkId);
+        noteMidPassOutcome(5, chunkId);
         return true;
     }
 
     MidPassChunkPersistJob& job = storageSession.midPassChunkPersist;
     if (!ensureMidPassJournalOpen(job, trackIndex, slotIndex)) {
         PersistenceQueue::requeueWritingChunk(chunkId);
+        noteMidPassOutcome(6, chunkId);
         return false;
     }
 
     const uint32_t sealSequence = PersistenceQueue::sealSequenceForChunk(chunkId);
     if (!appendMidPassJournalRecord(job.journalFile, chunkId, sealSequence)) {
         PersistenceQueue::requeueWritingChunk(chunkId);
+        noteMidPassOutcome(7, chunkId);
         return false;
     }
 
     PersistenceQueue::markChunkPersisted(chunkId);
+    noteMidPassOutcome(0, chunkId);
     ++job.chunksPersisted;
 
 #if defined(SESSION_CAPTURE)

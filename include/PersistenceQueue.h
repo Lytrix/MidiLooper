@@ -32,6 +32,10 @@ ChunkPersistenceState chunkState(uint16_t chunkId);
 
 /// Admit a newly sealed chunk exactly once. Returns true when newly queued.
 bool admitSealedChunk(uint16_t chunkId);
+/// Report-only: sealed chunks this boot refused admission, and the last refusal's reason
+/// (1 no queue state, 2 not sealed, 3 already Queued/Writing/Persisted, 4 queue full).
+uint32_t admitRefusalCount();
+uint8_t lastAdmitRefusalReason();
 
 /// Next queued chunk in seal order for the writer (Phase 3+). Returns false when empty.
 bool beginWriteQueuedChunk(uint16_t& chunkIdOut);

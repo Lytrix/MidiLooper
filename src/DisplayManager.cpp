@@ -214,12 +214,31 @@ void DisplayManager::runPaintTransferPhase() {
     }
     {
         static uint32_t dframeCounter = 0;
-        if (++dframeCounter % 30U == 0U) {
-            const uint32_t notes = paintLoadSaveActive_
-                                       ? 0U
-                                       : static_cast<uint32_t>(resolvedPaintNotes().size());
-            SC_DFRAME(notes, static_cast<uint32_t>(micros() - paintFrameStartUs_), dframeCounter,
-                      paintResolveUs_, paintDrawUs_, paintTransferUs_);
+        ++dframeCounter;
+        const uint32_t frameNotes = paintLoadSaveActive_
+                                        ? 0U
+                                        : static_cast<uint32_t>(resolvedPaintNotes().size());
+        const uint32_t frameUs = static_cast<uint32_t>(micros() - paintFrameStartUs_);
+        if (dframeCounter % 30U == 0U) {
+            SC_DFRAME(frameNotes, frameUs, dframeCounter, paintResolveUs_, paintDrawUs_,
+                      paintTransferUs_);
+        }
+        // DEC-237 Slice 1: the 30-frame DFRAME sample is ring-shed before the slow windows.
+        // Emit a Tier-A phase split for every slow frame so the 65-105 ms attribution can say
+        // whether it is resolve, draw, transfer or wait.
+        if (frameUs >= 50000U) {
+            char line[176];
+            snprintf_P(line, sizeof(line),
+                       PSTR("#CAP,%lu,DIAG,disp_frame_slow,n=%lu,us=%lu,resolve=%lu,draw=%lu,"
+                            "transfer=%lu,idx=%lu"),
+                       static_cast<unsigned long>(micros()),
+                       static_cast<unsigned long>(frameNotes),
+                       static_cast<unsigned long>(frameUs),
+                       static_cast<unsigned long>(paintResolveUs_),
+                       static_cast<unsigned long>(paintDrawUs_),
+                       static_cast<unsigned long>(paintTransferUs_),
+                       static_cast<unsigned long>(dframeCounter));
+            DebugSessionCapture::appendCaptureTextLine(line);
         }
     }
 #endif

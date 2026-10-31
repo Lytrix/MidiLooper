@@ -535,6 +535,36 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
       "the rolling demand path's gate row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gatex,1"),
                             "and a longer subtag is not swept in");
+  // The report-only private-order rejection names a terminal Record-stop denial; it must survive a busy ring.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,order_deny,reason=4,phase=1,canon=1,chunk=17,id=203,"
+                                           "ref=2,persist=0,inuse=1,used=256,expected=256,count=4500,chunks=18"),
+                           "the order-denial detail row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,order_denyx,1"), "and a longer subtag is not swept in");
+  // The mid-pass persistence outcome row names why a take's chunks were not written; it must survive a busy ring.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,midpass_skip,reason=8,queue=3,writing=0,detail=0,"
+                                           "prev_repeats=0,admit_refused=0,admit_last=0"),
+                           "the mid-pass outcome row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,midpass_skipx,1"), "and a longer subtag is not swept in");
+  // The display rebuild-mix rows (5 s runtime-timing family) are Tier-A through the `DIAG,disp_` family prefix.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,disp_rebuild,42,7"),
+                           "the display rebuild-mix row survives the timing-critical flush");
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,disp_passwalk,12,0"),
+                           "the pass-walk row survives the timing-critical flush");
+  // Slice 1 of DEC-237: the committed-gather attribution row is in the same Tier-A family.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,disp_base,s=0,site=live,path=passes,us=65000,root=0,"
+                      "snap=0,passes=61000,wrap=3000,filter=1000,ev=0,notes=420,win=0,6144"),
+      "the committed-gather attribution row survives the timing-critical flush");
+  // And the slow-frame phase split, which must survive the ring shedding that drops `DFRAME`.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,disp_frame_slow,n=493,us=101667,resolve=1415,"
+                      "draw=586,transfer=48,idx=900"),
+      "the slow display-frame phase row survives the timing-critical flush");
+  // C6.4 T: the VisualCache owner-turn cadence is in the same Tier-A family.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,disp_owner_cadence,vcache_turns=42,max_us=180000,"
+                      "last_us=90000,win_ms=5000"),
+      "the owner-cadence row survives the timing-critical flush");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;

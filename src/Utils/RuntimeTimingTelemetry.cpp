@@ -8,6 +8,8 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/MidiBatchComposition.h"
+#include "Utils/Diagnostics.h"
+#include "DisplayManagerInternal.h"
 
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 
@@ -17,6 +19,11 @@
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
 #include "Utils/InvestigationCaptureLog.h"
+#endif
+
+#if DIAG_LEVEL >= 2 && defined(__IMXRT1062__)
+// Window bases for the display rebuild-mix deltas; DMAMEM keeps them out of RAM1.
+DMAMEM static uint32_t sDisplayRebuildBase[3];
 #endif
 
 #if defined(__IMXRT1062__)
@@ -521,6 +528,21 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("notepair", s.notepair.maxUs, s.notepair.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("idle_maint", s.idleMaint.maxUs, s.idleMaint.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("load_frame", s.loadFrame.maxUs, s.loadFrame.overCount);
+#if DIAG_LEVEL >= 2 && defined(__IMXRT1062__)
+  // DEC-236 follow-up: which display composition each window paid for -- full committed rebuilds against
+  // incremental reuse/slide updates, and the stale-root committed pass walks -- beside `load_frame`.
+  {
+    const uint32_t full = Diagnostics::readCounter(Diagnostics::Counter::DisplayFullRebuild);
+    const uint32_t incremental = Diagnostics::readCounter(Diagnostics::Counter::DisplayIncrementalUpdate);
+    const uint32_t walks = DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest();
+    DebugSessionCapture::runtimeTimingTelemetry("disp_rebuild", full - sDisplayRebuildBase[0],
+                                                incremental - sDisplayRebuildBase[1]);
+    DebugSessionCapture::runtimeTimingTelemetry("disp_passwalk", walks - sDisplayRebuildBase[2], 0);
+    sDisplayRebuildBase[0] = full;
+    sDisplayRebuildBase[1] = incremental;
+    sDisplayRebuildBase[2] = walks;
+  }
+#endif
   DebugSessionCapture::runtimeTimingTelemetry("persist_save", s.persistSave.maxUs,
                                              s.persistSave.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_on", s.lateOn.maxUs, s.lateOn.overCount);

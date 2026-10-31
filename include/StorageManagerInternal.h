@@ -248,6 +248,9 @@ bool stepDeferredWorkspaceFinalizeSlice(bool& finalizeDoneOut);
 void resetDeferredCompletionWriteState();
 void beginCurrentSetCompletion();
 bool stepMidPassChunkPersist();
+/// Report-only: the mid-pass writer's outcome for this turn (`DIAG,midpass_skip`, codes in DebugSessionCapture.h),
+/// emitted only when it changes. No result changes.
+void noteMidPassOutcome(uint8_t reason, uint32_t detail = 0);
 bool beginDeferredSaveJob(const LooperState& state);
 bool stepDeferredSaveJob();
 bool stepDeferredSaveJobCurrentSetMeta();

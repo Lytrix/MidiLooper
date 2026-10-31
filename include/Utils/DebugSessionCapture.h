@@ -338,6 +338,22 @@ SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 /** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period|track_rebuild|track_order|track_send|track_slot|track_resid},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. Stage 4a track_* spans are one `updateAllTracks` iteration; residual is track_update minus attributed spans. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
+/** Report-only private-order chunk rejection (Tier-A, one row per denied cursor, direct when USB has room):
+ *  DIAG,order_deny,reason=<r>,phase=<p>,canon=<0|1>,chunk=<i>,id=<id>,ref=<n>,persist=<s>,inuse=<0|1>,used=<u>,
+ *  expected=<e>,count=<events>,chunks=<n>. reason: 1 index out of range, 2 id >= pool, 3 id not in use,
+ *  4 refcount != 1, 5 persistence state != NotScheduled (0 NotScheduled, 1 Queued, 2 Writing, 3 Persisted),
+ *  6 used != expected. phase is `LoopEventStoreOrderCursor::Phase` (1 Preflight, 3 Merge, 7 Refresh). Every observed
+ *  term is printed, not only the first failing one. */
+SC_MEM_ATTR void orderDenyDetail(uint8_t reason, uint8_t phase, uint8_t canonical, uint32_t chunkIndex,
+                                 uint32_t chunkId, uint32_t refCount, uint32_t persistState, uint8_t inUse,
+                                 uint32_t used, uint32_t expected, uint32_t count, uint32_t chunks);
+/** Report-only mid-pass capture-chunk persistence outcome (Tier-A, emitted only when the outcome changes, direct
+ *  when USB has room): DIAG,midpass_skip,reason=<r>,queue=<n>,writing=<n>,detail=<d>,prev_repeats=<n>,admit_refused=<n>,
+ *  admit_last=<a>. reason: 0 wrote, 1 queue empty, 2 SD I/O already active, 3 slot-load SD session, 4 no queued chunk,
+ *  5 recording slot unresolved, 6 journal open failed, 7 journal append failed, 8 deferred for the workspace save.
+ *  detail: the chunk id for 4-7, else 0. admit_last: 1 no queue, 2 not sealed, 3 already scheduled, 4 queue full. */
+SC_MEM_ATTR void midPassOutcome(uint8_t reason, uint32_t queueDepth, uint32_t writing, uint32_t detail,
+                                uint32_t previousRepeats, uint32_t admitRefused, uint8_t admitLast);
 /** Deferred DROID host feedback queue: depth, oldest age, and overflow count (Tier-A). */
 SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs, uint32_t overflowCount);
 /** Per-track S0 timing telemetry: DIAG,track_update,<track>,<maxUs>,<overCount> (Tier-A). */

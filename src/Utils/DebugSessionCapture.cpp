@@ -379,6 +379,9 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,") ||
+         // Report-only private-order chunk rejection: the row that names a terminal Record-stop denial.
+         CaptureLineTier::tagStartsWith(line, "DIAG,order_deny,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,midpass_skip,") ||
          // S7.5a envelope instruments (capture stamp error in ticks, capture-replenishment wait/work/refusals).
          // One prefix literal, classified here rather than in `CaptureLineTier.h` for the reason above; the row
          // itself is aggregated and its format is flash-resident (`SC_FMT`).
@@ -1408,6 +1411,41 @@ SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros) {
   emitCapPrintf("#CAP,%lu,DIAG,timing_max,%s,%lu\r\n", (unsigned long)micros(), name,
                 (unsigned long)maxMicros);
+}
+
+SC_MEM_ATTR void midPassOutcome(uint8_t reason, uint32_t queueDepth, uint32_t writing, uint32_t detail,
+                                uint32_t previousRepeats, uint32_t admitRefused, uint8_t admitLast) {
+  // Transition-cadenced by the caller; direct when USB has room, ring as fallback.
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,midpass_skip,reason=%u,queue=%lu,writing=%lu,detail=%lu,prev_repeats=%lu,"
+                         "admit_refused=%lu,admit_last=%u\r\n"),
+                  (unsigned long)micros(), reason, (unsigned long)queueDepth, (unsigned long)writing,
+                  (unsigned long)detail, (unsigned long)previousRepeats, (unsigned long)admitRefused, admitLast);
+    return;
+  }
+  emitCapPrintf("#CAP,%lu,DIAG,midpass_skip,reason=%u,queue=%lu,writing=%lu,detail=%lu,prev_repeats=%lu,"
+                "admit_refused=%lu,admit_last=%u\r\n",
+                (unsigned long)micros(), reason, (unsigned long)queueDepth, (unsigned long)writing,
+                (unsigned long)detail, (unsigned long)previousRepeats, (unsigned long)admitRefused, admitLast);
+}
+
+SC_MEM_ATTR void orderDenyDetail(uint8_t reason, uint8_t phase, uint8_t canonical, uint32_t chunkIndex,
+                                 uint32_t chunkId, uint32_t refCount, uint32_t persistState, uint8_t inUse,
+                                 uint32_t used, uint32_t expected, uint32_t count, uint32_t chunks) {
+  // Decisive and rare (once per denied order cursor): written directly when USB has room, ring as fallback.
+  if (serialWriteRoom(176)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,order_deny,reason=%u,phase=%u,canon=%u,chunk=%lu,id=%lu,ref=%lu,persist=%lu,"
+                         "inuse=%u,used=%lu,expected=%lu,count=%lu,chunks=%lu\r\n"),
+                  (unsigned long)micros(), reason, phase, canonical, (unsigned long)chunkIndex,
+                  (unsigned long)chunkId, (unsigned long)refCount, (unsigned long)persistState, inUse,
+                  (unsigned long)used, (unsigned long)expected, (unsigned long)count, (unsigned long)chunks);
+    return;
+  }
+  emitCapPrintf("#CAP,%lu,DIAG,order_deny,reason=%u,phase=%u,canon=%u,chunk=%lu,id=%lu,ref=%lu,persist=%lu,"
+                "inuse=%u,used=%lu,expected=%lu,count=%lu,chunks=%lu\r\n",
+                (unsigned long)micros(), reason, phase, canonical, (unsigned long)chunkIndex,
+                (unsigned long)chunkId, (unsigned long)refCount, (unsigned long)persistState, inUse,
+                (unsigned long)used, (unsigned long)expected, (unsigned long)count, (unsigned long)chunks);
 }
 
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount) {

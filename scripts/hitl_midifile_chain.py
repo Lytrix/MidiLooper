@@ -225,6 +225,34 @@ def _wait_for_view_prewarm(capture_log: pathlib.Path, *, timeout_s: float = 5.0)
             "tail": text[-300:]}
 
 
+def _wait_for_device_rows(
+    capture_log: pathlib.Path,
+    offset: int,
+    *,
+    pattern: str,
+    min_count: int,
+    timeout_s: float,
+    what: str,
+) -> tuple[str, int]:
+    """Wait until the device log contains at least ``min_count`` matches for ``pattern``.
+
+    A host-side phase report is not proof that the device accepted a press. This gate is read-only and
+    fails the run by name when the Record or an overdub never started (the silent no-op shape measured
+    on 2026-10-31: 12 host windows, `cap=0`, zero `Overdubbing started`).
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.1)
+    text = ""
+    while time.monotonic() < deadline:
+        chunk, offset = _read_log_since(capture_log, offset)
+        text += chunk
+        if len(re.findall(pattern, text)) >= min_count:
+            return text, offset
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"the device did not accept {what}: saw {len(re.findall(pattern, text))}/{min_count} "
+        f"matching rows. Last device rows:\n{text[-600:]}")
+
+
 def _clear_slot_verified(
     out_port,
     note: int,
@@ -527,6 +555,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                             "view preparation did not reach Prepared before the Record edge; "
                             "refusing to record cold: " + str(prep.get("tail", ""))[-300:])
             # 1) Record: press first, then Start so the take is live at the grid origin.
+            record_log_offset = (
+                capture_log.stat().st_size if capture_log is not None else None)
             _press(out_port, RECORD_BUTTON_NOTE, press_ms=args.press_ms)
             master.start(bpm=args.bpm)
             grid = master.grid_origin_pulse()
@@ -564,6 +594,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 _press(out_port, RECORD_BUTTON_NOTE, press_ms=args.press_ms)
 
+            # Device content gate: a host phase report is not proof that the Record press landed.
+            # The 2026-10-31 chain-53 run sent 20 bars + 12 windows and the device accepted neither
+            # (`cap=0`); the resulting fast display numbers were empty/preview content.
+            stream_log_offset = record_log_offset
+            if capture_log is not None:
+                _, stream_log_offset = _wait_for_device_rows(
+                    capture_log, stream_log_offset,
+                    pattern=r"Recording started @ tick", min_count=1, timeout_s=3.0,
+                    what="the Record start")
+                report["device_record_starts"] = 1
+
             # 2) One continuous chord stream under all the capture windows.
             settle_clocks = int(round(args.settle_beats * MIDI_CLOCKS_PER_BEAT))
             stream_start = grid + settle_clocks
@@ -574,6 +615,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 note_channel_1based=args.midi_channel,
                 capture_windows=windows,
                 press_ms=args.press_ms, bpm=args.bpm)})
+
+            if capture_log is not None:
+                text, stream_log_offset = _wait_for_device_rows(
+                    capture_log, stream_log_offset,
+                    pattern=r"Overdubbing started @ tick", min_count=len(windows),
+                    timeout_s=3.0, what=f"all {len(windows)} overdub starts")
+                report["device_overdub_starts"] = len(
+                    re.findall(r"Overdubbing started @ tick", text))
 
             # 3) Stop the transport and let the deferred lanes settle.
             _press(out_port, GLOBAL_TRANSPORT_NOTE, press_ms=args.press_ms)
@@ -586,6 +635,21 @@ def main(argv: Optional[list[str]] = None) -> int:
                                      "stop_bars": args.stop_bars,
                                      "stop_seconds": stop_seconds})
             time.sleep(max(stop_seconds, 0.0))
+
+            if capture_log is not None:
+                tail_offset = max(0, capture_log.stat().st_size - 65536)
+                tail, _ = _read_log_since(capture_log, tail_offset)
+                caps = re.findall(r"alloc_census,.*\bcap=(\d+)", tail)
+                starts = int(report.get("device_overdub_starts", 0))
+                expected = 1 + starts
+                if caps:
+                    report["device_cap_last"] = int(caps[-1])
+                if not caps or int(caps[-1]) < expected:
+                    raise RuntimeError(
+                        "device content gate failed: "
+                        f"cap={caps[-1] if caps else 'absent'} < expected {expected} "
+                        f"(1 Record + {starts} overdub starts); refusing to treat this run as "
+                        f"content evidence. Last rows:\n{tail[-600:]}")
         finally:
             master.stop_pump()
 

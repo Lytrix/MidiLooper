@@ -131,6 +131,9 @@ class RecordPreparationCursor {
   DenyReason denyReason() const { return deny_; }
   /// Read-only diagnostic code; never advances or rebinds the private cursor.
   uint8_t phaseCode() const { return static_cast<uint8_t>(phase_); }
+  /// The phase the cursor occupied when it first denied. `phaseCode()` is the terminal `Denied` (13);
+  /// this names the pre-denial stage (Order=1, Reorder=7, Filter*…) so a device stall row is diagnostic.
+  uint8_t deniedPhaseCode() const { return deniedPhase_; }
   size_t lastStepUnits() const { return lastStepUnits_; }
   size_t syntheticOffs() const { return syntheticOffs_; }
   size_t pairsRemoved() const { return pairsRemoved_; }
@@ -182,6 +185,7 @@ class RecordPreparationCursor {
   size_t lastStepUnits_ = 0;
   DenyReason deny_ = DenyReason::None;
   Phase phase_ = Phase::Idle;
+  uint8_t deniedPhase_ = static_cast<uint8_t>(Phase::Idle);
   bool entered_ = false;
   bool empty_ = false;
   bool emptyReported_ = false;

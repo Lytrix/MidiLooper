@@ -27,6 +27,9 @@ struct QueueState {
   uint32_t nextSealSequence = 1;
   uint16_t queueHead = 0;
   uint16_t queueTail = 0;
+  // Report-only admission refusal accounting (zeroed with the state; see `admitRefusalCount`).
+  uint32_t admitRefusals = 0;
+  uint8_t lastAdmitRefusal = 0;
 };
 
 // Same process-lifetime owner as the former function-local pointer. Read-only
@@ -139,21 +142,38 @@ LOOP_COLD_MEM ChunkPersistenceState chunkState(uint16_t chunkId) {
   return state->chunkState[chunkId];
 }
 
+// Report-only refusal accounting, kept in the zeroed queue state (no emission here: chunks seal on the capture path).
+uint32_t admitRefusalCount() {
+  const QueueState* state = queueStateStorage;
+  return state != nullptr ? state->admitRefusals : 0;
+}
+uint8_t lastAdmitRefusalReason() {
+  const QueueState* state = queueStateStorage;
+  return state != nullptr ? state->lastAdmitRefusal : 1;
+}
+
 bool admitSealedChunk(uint16_t chunkId) {
   QueueState* state = queueState();
-  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+  const auto refuse = [state](uint8_t reason) {
+    if (state != nullptr) {
+      ++state->admitRefusals;
+      state->lastAdmitRefusal = reason;
+    }
     return false;
+  };
+  if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
+    return refuse(1);
   }
   if (LoopEventStore::chunkLifecycleState(chunkId) != ChunkLifecycleState::Sealed) {
-    return false;
+    return refuse(2);
   }
   const ChunkPersistenceState existing = state->chunkState[chunkId];
   if (existing == ChunkPersistenceState::Queued || existing == ChunkPersistenceState::Writing ||
       existing == ChunkPersistenceState::Persisted) {
-    return false;
+    return refuse(3);
   }
   if (!queuePush(*state, chunkId)) {
-    return false;
+    return refuse(4);
   }
   state->chunkState[chunkId] = ChunkPersistenceState::Queued;
   state->sealSequence[chunkId] = static_cast<uint16_t>(state->nextSealSequence++);

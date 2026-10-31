@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <new>
 #include <vector>
 #include "../test_support/capture_storage_harness.inc"
@@ -2482,6 +2483,79 @@ void test_stale_root_draw_source_serves_committed_overdub_passes_across_the_slid
                                "the wrap-crossing window must include bar 0");
   assertNote(wrapped, a5, 72, 4 * kStaleRootBar + 100, 4 * kStaleRootBar + 220);
   assertNote(wrapped, b2, 76, kStaleRootBar + 100, kStaleRootBar + 220);
+
+  // DEC-237 Slice 1 guarded RED: the future draw source serves the qualified base/tiles for the covered
+  // range and does not re-walk the passes. Today this call walks the passes, so the assertion fails when
+  // the guard is set. Run `DEC237_STAGED_BASE_RED=1 pio test -e native -f test_live_capture_display_boundary`
+  // to demonstrate; the default suite stays green.
+  if (std::getenv("DEC237_STAGED_BASE_RED") != nullptr) {
+    DisplayManagerInternal::resetDrawSourceCommittedPassGatherCountForTest();
+    DisplayNoteVec covered;
+    gatherCommittedForTest(t, loop, 0, 20, covered);
+    TEST_ASSERT_NOT_NULL(displayNoteById(covered, recA));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        0, DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest(),
+        "DEC-237 RED: a covered committed range must not re-walk the passes");
+  }
+}
+
+/// DEC-237 C6.1 guarded RED: a retained committed delta must not be released while the served display
+/// base is older than the delta. The current release predicate checks only the visual cache; a cache that
+/// covers the rows releases them even though the display base is still generation G. Run with
+/// `DEC237_RETAINED_DELTA_RED=1` to demonstrate; the default suite stays green.
+void test_dec237_retained_delta_survives_a_cache_cover_while_the_base_is_stale() {
+  if (std::getenv("DEC237_RETAINED_DELTA_RED") == nullptr) {
+    TEST_IGNORE_MESSAGE("guarded RED; set DEC237_RETAINED_DELTA_RED=1 to demonstrate");
+    return;
+  }
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  const NoteId recA = acceptPair(t, 60, 12, 80);
+  (void)recA;
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE_MESSAGE(DisplayCaptureTestAccess::buildCommittedBase(t, 0, kStaleRootLength / 2),
+                           "the served base must be generation G before the delta commits");
+  TEST_ASSERT_GREATER_THAN_UINT32(0,
+                                  static_cast<uint32_t>(DisplayCaptureTestAccess::committedBaseNotes().size()));
+
+  // G+1 commits and its closed preview is retained as the authoritative delta.
+  commitOverdubPassAt(t, loop, kStaleRootLength, 72, 4 * kStaleRootBar + 100,
+                      4 * kStaleRootBar + 220);
+  NoteId a5 = kInvalidNoteId;
+  {
+    SessionMidiEventVec rows;
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+    if (!rows.empty()) a5 = rows.front().noteId;
+  }
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, a5);
+  CapturePreview delta;
+  NoteUtils::DisplayNote note;
+  note.noteId = a5;
+  note.note = 72;
+  note.startTick = 4 * kStaleRootBar + 100;
+  note.endTick = 4 * kStaleRootBar + 220;
+  delta.notes.push_back(note);
+  delta.noteStates.push_back(CapturePreviewNoteState{});
+  loop.retainCapturePreviewAtSeal(delta);
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewNotes().empty());
+
+  // A cache that covers the delta rows makes the current cache-only release predicate fire. The display
+  // base was not rebuilt, so it is still G and does not represent the G+1 delta.
+  loop.visualCache.notes.assign(loop.sealedCapturePreviewNotes().begin(),
+                                loop.sealedCapturePreviewNotes().end());
+  loop.visualCacheDirty = false;
+  loop.visualCache.builtFromRevision = loop.playbackRevision;
+  loop.releaseSealedCapturePreviewIfCovered();
+
+  TEST_ASSERT_FALSE_MESSAGE(
+      loop.sealedCapturePreviewNotes().empty(),
+      "C6.1: the retained G+1 delta must survive until the served base covers it");
 }
 
 /// Owner capture 151347: while an overdub is open and the published root lags, every accepted live note
@@ -2721,6 +2795,7 @@ int main() {
   RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
   RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
   RUN_TEST(test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window);
+  RUN_TEST(test_dec237_retained_delta_survives_a_cache_cover_while_the_base_is_stale);
   RUN_TEST(test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives);
   RUN_TEST(test_follow_slide_keeps_the_entering_bar_with_a_stale_root);
   RUN_TEST(test_follow_slide_keeps_the_entering_bar_with_a_current_root);

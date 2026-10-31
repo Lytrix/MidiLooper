@@ -252,3 +252,28 @@ with 25 earlier rig sessions (scripts in the session scratchpad; method only, no
   committed note inside the built window present on the slide frame). They pass with the centred origin and do not
   exercise the visual-cache tile path, so they cannot prove the tile gap.
 - The board is back on the committed image `e7f134a5…` (byte-identical rebuild, boot verified).
+
+### Median MIDI gap — one indivisible pass walk per window (instrumented)
+
+- **Instrument** (session-capture, target only, no RAM1 cost; image `1309a167…`, retained in
+  `captures/display-rebuild-mix-1309a167bb1a/`): two 5 s rows in the runtime-timing family beside `load_frame`.
+  `DIAG,disp_rebuild,<full>,<incremental>` gives the window deltas of `DisplayFullRebuild` /
+  `DisplayIncrementalUpdate`, and `DIAG,disp_passwalk,<n>,0` the stale-root committed pass walks. Both are Tier-A
+  through the existing `DIAG,disp_` family prefix, pinned in `test_capture_ring`.
+- **Run** (owner rig command → `captures/midifile-chain-51/`, serial `captures/session_20261031_162028.log`,
+  12 overdubs, `shed=20`, `tierA_evict=0`, `overflow=0`):
+
+  | Window | worst MIDI gap | worst `load_frame` | full / incremental | pass walks |
+  |---|---|---|---|---|
+  | 140–160 s (window fixed) | 65–105 ms | 65–97 ms | 1–2 / ~55 | 1–3 |
+  | 130–135 s (follow phase) | 83–116 ms | 83–86 ms | 15–27 / 2–25 | 16–29 |
+
+- **Reading.** With the window fixed, reuse works (~55 incremental per window). The worst frame in each window is
+  the **single** full rebuild, a stale-root walk over every committed pass for the 16-bar window, which costs
+  ~65–95 ms in one call. Those rebuilds are legitimate, because committed content changed. On 10-30 the same
+  rebuild drew the stale root at ~10 ms. The follow phase adds its per-tick rebuilds on top (attributed above).
+- **Fix direction (not started; it moves realtime-path work between owners):** the display frame should not run the
+  indivisible `resolveDisplayNotesInWindow` on a committed change. It should keep serving the previous committed
+  base and take the new one from the stepped, parity-guaranteed `LoopContentResolution::stepTilePreparation`
+  (the tile owner's `idle_turn,cov=tile` path), swapping when complete. That touches the idle-owner admission bound
+  and DEC-211, so it needs an owner decision and a plan.

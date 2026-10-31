@@ -427,6 +427,10 @@ void test_no_content_output_pauses_for_retry_and_a_late_denial_is_sticky() {
     TEST_ASSERT_EQUAL(static_cast<int>(Step::Denied), static_cast<int>(cursor.step(1)));
     TEST_ASSERT_EQUAL(static_cast<int>(DenyReason::OutputUnavailable),
                       static_cast<int>(cursor.denyReason()));
+    // DEC-237 diagnostic: the terminal code hides the pre-denial stage; the new getter keeps it.
+    TEST_ASSERT_EQUAL_UINT8(13, cursor.phaseCode());
+    TEST_ASSERT_NOT_EQUAL_UINT8(13, cursor.deniedPhaseCode());
+    TEST_ASSERT_GREATER_THAN_UINT8(0, cursor.deniedPhaseCode());
     // Every later grain keeps denying and never touches the marked store.
     for (size_t turn = 0; turn < 4; ++turn) {
       TEST_ASSERT_EQUAL(static_cast<int>(Step::Denied), static_cast<int>(cursor.step(8)));

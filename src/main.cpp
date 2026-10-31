@@ -269,6 +269,19 @@ DMAMEM uint32_t gStopTraceLastMs;
 // DEC-216: realtime idle-walk rotation. Bit 7 is the priority phase, bits 0-6 the next background track;
 // RAM2 like the gates above, because one DTCM section byte costs 32 and the budget refuses growth.
 DMAMEM uint8_t gRealtimeIdleRotation;
+
+#if defined(SESSION_CAPTURE)
+/// DEC-237 Slice 2: the VisualCache owner turn is the display producer's service opportunity. Record the
+/// interval between those turns so C6.4's T is measured, not assumed. RAM2 only.
+struct VisualCacheOwnerCadence {
+  uint32_t turns;
+  uint32_t maxUs;
+  uint32_t lastUs;
+  uint32_t lastStartUs;
+  uint32_t lastEmitMs;
+};
+DMAMEM static VisualCacheOwnerCadence sVisualCacheCadence;
+#endif
 // DEC-196: deadline for the playback-set boot hold (see `runDeferredLoadAndDisplayFrame`). RAM2 like the sweep gate.
 DMAMEM uint32_t gBootPlaybackSetHoldDeadlineMs;
 #else
@@ -597,6 +610,39 @@ FLASHMEM __attribute__((noinline)) static void reportSlowIdleTurnUnit(uint8_t tr
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint32_t now, bool postOverdubPlayingMidiDrain,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, bool timingCritical, uint32_t turnStartUs) {
+#if defined(SESSION_CAPTURE)
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+    const uint32_t cadenceNowUs = micros();
+    if (sVisualCacheCadence.lastStartUs != 0) {
+      const uint32_t delta = cadenceNowUs - sVisualCacheCadence.lastStartUs;
+      sVisualCacheCadence.lastUs = delta;
+      if (delta > sVisualCacheCadence.maxUs) {
+        sVisualCacheCadence.maxUs = delta;
+      }
+    }
+    sVisualCacheCadence.lastStartUs = cadenceNowUs;
+    ++sVisualCacheCadence.turns;
+  }
+  if (sVisualCacheCadence.lastEmitMs == 0) {
+    sVisualCacheCadence.lastEmitMs = now;
+  }
+  if (now - sVisualCacheCadence.lastEmitMs >= 5000u) {
+    char cadenceLine[176];
+    snprintf_P(cadenceLine, sizeof(cadenceLine),
+               PSTR("#CAP,%lu,DIAG,disp_owner_cadence,vcache_turns=%lu,max_us=%lu,last_us=%lu,"
+                    "win_ms=%lu"),
+               static_cast<unsigned long>(micros()),
+               static_cast<unsigned long>(sVisualCacheCadence.turns),
+               static_cast<unsigned long>(sVisualCacheCadence.maxUs),
+               static_cast<unsigned long>(sVisualCacheCadence.lastUs),
+               static_cast<unsigned long>(now - sVisualCacheCadence.lastEmitMs));
+    DebugSessionCapture::appendCaptureTextLine(cadenceLine);
+    sVisualCacheCadence.turns = 0;
+    sVisualCacheCadence.maxUs = 0;
+    sVisualCacheCadence.lastUs = 0;
+    sVisualCacheCadence.lastEmitMs = now;
+  }
+#endif
   // S4b.7 (Rev 20.3/21.7): the `SlotProvision` turn is served **before** the all-stopped guard below and
   // returns through it -- the contract exempts it, because a queued switch is retained exactly while the
   // track's state is unsettled. It takes the pending switch's inbound occupancy off-clock and builds that

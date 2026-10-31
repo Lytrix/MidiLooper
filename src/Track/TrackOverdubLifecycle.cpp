@@ -3173,11 +3173,12 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
           noteStallOnce(recordNormalizationDenialName(job.lastNormalizationDenial));
           const auto& preparation = captureStopJobs_->recordPreparation;
           logger.log(CAT_TRACK, LOG_WARNING,
-                     "Deferred Record stop stalled: normalization %s deny=%s cursor=%u phase=%u "
+                     "Deferred Record stop stalled: normalization %s deny=%s cursor=%u at=%u phase=%u "
                      "closure=%u order=%u canonical=%llu ranked=%llu notes=%u track=%u",
                      recordNormalizationDenialName(job.lastNormalizationDenial),
                      recordPreparationDenyName(preparation.denyReason()),
                      static_cast<unsigned>(preparation.phaseCode()),
+                     static_cast<unsigned>(preparation.deniedPhaseCode()),
                      static_cast<unsigned>(code),
                      static_cast<unsigned>(stop.remainingClosureGrains),
                      static_cast<unsigned>(stop.remainingOrderGrains),

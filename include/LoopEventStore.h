@@ -379,6 +379,10 @@ class LoopEventStore {
   /// legacy capture sort uses: NoteOff before NoteOn before other at equal ticks.
   /// Equal-key rows keep their relative order. Bounded preflight is identical.
   bool beginPrivateCanonicalOrder(LoopEventStoreOrderCursor& cursor) const;
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  /// Report-only: names the rejected chunk of a private order preflight/merge/refresh (`DIAG,order_deny`).
+  void reportPrivateOrderChunkDenial(const LoopEventStoreOrderCursor& cursor, size_t chunkIndex) const;
+#endif
   /// At most quantum constant-work transitions/comparisons/swaps/chunk visits.
   /// Partial order is unpublished; denial never rolls back prior accepted steps.
   LoopEventStoreRewriteResult stepPrivateTickOrder(LoopEventStoreOrderCursor& cursor,

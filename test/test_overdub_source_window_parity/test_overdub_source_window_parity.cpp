@@ -32,6 +32,7 @@
 #include "LoopEventStore.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/CoveragePrerequisite.h"
+#include "Utils/DisplayBasePreparation.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 
 namespace {
@@ -974,6 +975,196 @@ void test_riao4_13_two_bar_touch_is_region_proportional() {
   TEST_ASSERT_TRUE_MESSAGE(longLoop.tileOps * 3u <= longLoop.wholeOps, msg);
 }
 
+// DEC-237 Slice 1 — the measured draw-source range is 20 bars. The coverage construction unit is a
+// 4-bar tile, so the range is five tiles; the 16-bar committed-base cap is only four. This pins the
+// unit the staged producer must use instead of reusing the base cap.
+void test_dec237_20_bar_draw_range_is_five_tiles() {
+  constexpr uint32_t kTwentyBars = 20 * kBar;
+  TEST_ASSERT_EQUAL_UINT32(4, CoveragePrerequisite::kTileBars);
+  TEST_ASSERT_EQUAL_UINT32(4 * kBar, CoveragePrerequisite::tileLengthTicks());
+  TEST_ASSERT_EQUAL_UINT16(5, CoveragePrerequisite::tileCount(kTwentyBars));
+  TEST_ASSERT_EQUAL_UINT16(4, CoveragePrerequisite::tileCount(16 * kBar));
+  TEST_ASSERT_TRUE(CoveragePrerequisite::tileCountFitsEnvelope(kTwentyBars));
+  char msg[128];
+  std::snprintf(msg, sizeof(msg), "DEC-237 20-bar tiles=%u 16-bar tiles=%u",
+                static_cast<unsigned>(CoveragePrerequisite::tileCount(kTwentyBars)),
+                static_cast<unsigned>(CoveragePrerequisite::tileCount(16 * kBar)));
+  TEST_MESSAGE(msg);
+}
+
+// DEC-237 Slice 1 / C6.4 — measure the coverage duty cycle on a dense chain. With a fixed content set
+// the worker reaches Idle; that is the A case (eventual Idle). Continuous new input is the B case and is
+// not asserted here; the turn count is the evidence the plan's arbitration would be sized from.
+void test_dec237_coverage_duty_cycle_reaches_idle_on_a_dense_chain() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  static Loop loop;
+  seedDenseTileLoop(loop);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.markOverdubCoverageSpan(0, kLoopTicks);
+  loop.notifyCommittedContentChangedForTest();
+
+  uint32_t owedTurns = 0;
+  uint32_t idleTurns = 0;
+  for (uint32_t turn = 0; turn < 4096; ++turn) {
+    if (loop.overdubCoverageOwedCountForTest() == 0) {
+      ++idleTurns;
+      break;
+    }
+    const Loop::OverdubCoverageTurn result =
+        loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    if (result == Loop::OverdubCoverageTurn::Idle) {
+      ++idleTurns;
+      break;
+    }
+    ++owedTurns;
+  }
+
+  char msg[160];
+  std::snprintf(msg, sizeof(msg), "DEC-237 duty owed=%u idle=%u prepared=%u",
+                static_cast<unsigned>(owedTurns), static_cast<unsigned>(idleTurns),
+                static_cast<unsigned>(loop.overdubCoveragePreparedCountForTest()));
+  TEST_MESSAGE(msg);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, owedTurns);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, idleTurns);
+  TEST_ASSERT_GREATER_THAN_UINT16(0, loop.overdubCoveragePreparedCountForTest());
+}
+
+// DEC-237 Slice 1 / C6.4 B — while new committed spans keep arriving, the coverage owed set can remain
+// non-empty for the whole observation; it must drain to Idle once the input stops. This is the B case
+// the arbitration rule must cover (the fixed-set A case is the preceding test).
+void test_dec237_coverage_stays_owed_under_continuous_input_then_reaches_idle() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  static Loop loop;
+  seedDenseTileLoop(loop);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  const uint16_t tileCount = CoveragePrerequisite::tileCount(kLoopTicks);
+  TEST_ASSERT_GREATER_THAN_UINT16(0, tileCount);
+  uint32_t owedTurns = 0;
+  uint32_t idleTurns = 0;
+  for (uint32_t turn = 0; turn < 64; ++turn) {
+    const uint32_t tile = turn % tileCount;
+    const uint32_t start = tile * CoveragePrerequisite::tileLengthTicks();
+    loop.markOverdubCoverageSpan(start, CoveragePrerequisite::tileLengthTicks());
+    loop.notifyCommittedContentChangedForTest();
+    if (loop.overdubCoverageOwedCountForTest() == 0) {
+      ++idleTurns;
+    } else {
+      ++owedTurns;
+    }
+    (void)loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+  }
+
+  char msg[160];
+  std::snprintf(msg, sizeof(msg), "DEC-237 B duty owed=%u idle=%u tiles=%u",
+                static_cast<unsigned>(owedTurns), static_cast<unsigned>(idleTurns),
+                static_cast<unsigned>(tileCount));
+  TEST_MESSAGE(msg);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, owedTurns);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, idleTurns,
+                                   "continuous committed input keeps the coverage owed");
+
+  for (uint32_t turn = 0; turn < 4096 && loop.overdubCoverageOwedCountForTest() > 0; ++turn) {
+    if (loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+        Loop::OverdubCoverageTurn::Idle) {
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, loop.overdubCoverageOwedCountForTest(),
+                                   "coverage drains after the input stops");
+}
+
+// DEC-237 Slice 2 — pure producer parity and S measurement on the actual worst-case shape: a 20-bar
+// loop with a record pass and 13 committed overdubs. The candidate is five 4-bar tiles; `ready` is true
+// only after all five complete and the assembled set equals the current single-shot draw-source window
+// (including the wrap-held append). `prep.steps` is S, the number of bounded display grains.
+void test_dec237_slice2_pure_producer_20_bar_13_pass_parity() {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  (void)acceptPair(t, 60, 12, 80);
+  (void)acceptPair(t, 65, (kStaleRootBars - 1) * kStaleRootBar + 100,
+                   (kStaleRootBars - 1) * kStaleRootBar + 200);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_EQUAL_UINT32(kStaleRootLength, loop.loopLengthTicks);
+  for (uint8_t i = 0; i < 13; ++i) {
+    const uint32_t on = (static_cast<uint32_t>(i) % kStaleRootBars) * kStaleRootBar + 100;
+    commitOverdubPassAt(t, loop, kStaleRootLength, static_cast<uint8_t>(60 + i), on, on + 120);
+  }
+  TEST_ASSERT_EQUAL_UINT32(14, loop.passes.capturePassCount());
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kStaleRootLength;
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+  uint32_t turns = 0;
+  while (!prep.ready && turns < 200000) {
+    (void)DisplayBasePreparation::step(prep, loop, CoveragePrerequisite::kGrainEventsPerTurn);
+    ++turns;
+  }
+  size_t maxTileNotes = 0;
+  for (const auto& tile : prep.tiles) {
+    maxTileNotes = std::max(maxTileNotes, tile.size());
+  }
+  char msg[224];
+  std::snprintf(msg, sizeof(msg), "DEC-237 S=%u tiles=%u notes=%u maxTile=%u",
+                static_cast<unsigned>(prep.steps), static_cast<unsigned>(prep.tileCount),
+                static_cast<unsigned>(prep.stagedNotes.size()),
+                static_cast<unsigned>(maxTileNotes));
+  TEST_MESSAGE(msg);
+  TEST_ASSERT_TRUE(prep.ready);
+  TEST_ASSERT_EQUAL_UINT16(5, prep.tileCount);
+  TEST_ASSERT_EQUAL_UINT16(5, static_cast<uint16_t>(prep.tiles.size()));
+
+  NoteUtils::DisplayNoteVec whole;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0,
+                                                      kStaleRootLength, whole);
+  loop.appendOverdubPassDisplayNotes(whole);
+
+  using Key4 = std::tuple<NoteId, uint8_t, uint32_t, uint32_t>;
+  auto keyOf = [](const NoteUtils::DisplayNote& n) {
+    return Key4{n.noteId, n.note, n.startTick, n.endTick};
+  };
+  std::vector<Key4> expected;
+  std::vector<Key4> got;
+  expected.reserve(whole.size());
+  got.reserve(prep.stagedNotes.size());
+  for (const auto& n : whole) expected.push_back(keyOf(n));
+  for (const auto& n : prep.stagedNotes) got.push_back(keyOf(n));
+  std::sort(expected.begin(), expected.end());
+  std::sort(got.begin(), got.end());
+  std::snprintf(msg, sizeof(msg), "DEC-237 parity expected=%u got=%u S=%u",
+                static_cast<unsigned>(expected.size()), static_cast<unsigned>(got.size()),
+                static_cast<unsigned>(prep.steps));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expected.size()),
+                                   static_cast<uint32_t>(got.size()), msg);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_TRUE_MESSAGE(expected[i] == got[i], msg);
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32(0, prep.steps);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(maxTileNotes));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao2_a_ordinary_window_matches_whole_loop);
@@ -996,5 +1187,9 @@ int main(int, char**) {
   RUN_TEST(test_riao3_3_convergence_equals_the_whole_loop_derivation);
   RUN_TEST(test_riao3_4_unprepared_span_defers_then_discharges_exactly_once);
   RUN_TEST(test_riao4_13_two_bar_touch_is_region_proportional);
+  RUN_TEST(test_dec237_20_bar_draw_range_is_five_tiles);
+  RUN_TEST(test_dec237_coverage_duty_cycle_reaches_idle_on_a_dense_chain);
+  RUN_TEST(test_dec237_coverage_stays_owed_under_continuous_input_then_reaches_idle);
+  RUN_TEST(test_dec237_slice2_pure_producer_20_bar_13_pass_parity);
   return UNITY_END();
 }

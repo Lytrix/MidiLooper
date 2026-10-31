@@ -26,10 +26,33 @@ extern SessionMidiEventVec liveDisplayEventBuffer;
 bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength);
 bool shouldDeferHeavyDisplayRebuild();
 
+/// Slice 1 of DEC-237: report-only attribution for the committed display gather. Filled by
+/// `rebuildDisplayNotesInWindow` only when the caller passes a trace (debug builds); the production
+/// call sites pass `nullptr`, so no `micros()` runs.
+struct DisplayBaseGatherTrace {
+  const char* site = nullptr;
+  const char* path = nullptr;
+  uint32_t totalUs = 0;
+  uint32_t rootUs = 0;
+  uint32_t snapshotUs = 0;
+  uint32_t passesUs = 0;
+  uint32_t wrapUs = 0;
+  uint32_t filterUs = 0;
+  uint32_t events = 0;
+  uint32_t notes = 0;
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+};
+
 void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, uint32_t loopLength,
                                  uint32_t windowStart, uint32_t windowLength,
                                  SessionMidiEventVec& eventBuffer,
-                                 NoteUtils::DisplayNoteVec& outNotes, bool includeActiveCapture);
+                                 NoteUtils::DisplayNoteVec& outNotes, bool includeActiveCapture,
+                                 DisplayBaseGatherTrace* trace = nullptr);
+
+/// Emit `DIAG,disp_base` for a slow gather (Tier-A through the `DIAG,disp_` family). No-op outside a
+/// session-capture build or below the display frame budget.
+void emitDisplayBaseGatherTrace(const DisplayBaseGatherTrace& trace, uint8_t displaySlot);
 
 /// Filter `source` to the paint window plus follow margin. Writes gather bounds.
 void filterNotesToFollowWindow(const NoteUtils::DisplayNoteVec& source, uint32_t windowStart,

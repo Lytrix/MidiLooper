@@ -39,6 +39,9 @@ bool LOOP_COLD_MEM RecordPreparationCursor::appendPrivately(const MidiEvent& row
 }
 
 LOOP_COLD_MEM void RecordPreparationCursor::deny(DenyReason reason) {
+  if (phase_ != Phase::Denied) {
+    deniedPhase_ = static_cast<uint8_t>(phase_);
+  }
   deny_ = reason;
   resetOrderCursor(order_);
   resetFilterCursor(filter_);
@@ -78,6 +81,7 @@ bool LOOP_COLD_MEM RecordPreparationCursor::begin(
   assignedIds_ = 0;
   lastStepUnits_ = 0;
   deny_ = DenyReason::None;
+  deniedPhase_ = static_cast<uint8_t>(Phase::Idle);
   entered_ = false;
   empty_ = false;
   emptyReported_ = false;
@@ -107,6 +111,7 @@ void LOOP_COLD_MEM RecordPreparationCursor::discard() {
   phase_ = Phase::Idle;
   entered_ = false;
   deny_ = DenyReason::None;
+  deniedPhase_ = static_cast<uint8_t>(Phase::Idle);
   inputCount_ = ordinal_ = 0;
   assignedIds_ = 0;
 }

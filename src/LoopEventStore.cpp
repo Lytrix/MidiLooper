@@ -747,6 +747,28 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
   return stepPrivateTickOrder(c, quantum);
 }
 
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+// chain-57/58 `order_denied at=1`: name the rejected chunk and every observed term (report-only; no result changes).
+// Out of line and in flash: a lambda body does not inherit its caller's FLASHMEM section, so this keeps ITCM flat.
+__attribute__((noinline)) void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::reportPrivateOrderChunkDenial(
+    const LoopEventStoreOrderCursor& c, size_t i) const {
+  const size_t base = i * LoopEventStoreConfig::CHUNK_CAPACITY;
+  const size_t expected = base < c.count_ ? std::min(c.count_ - base,
+      size_t(LoopEventStoreConfig::CHUNK_CAPACITY)) : 0;
+  const uint16_t id = i < chunkIds_.size() ? chunkIds_[i] : UINT16_MAX;
+  const bool known = id < LoopEventStoreConfig::POOL_CHUNK_COUNT;
+  const uint32_t ref = known ? poolChunkRefCount_[id] : 0u;
+  const uint32_t persist = known ? static_cast<uint32_t>(PersistenceQueue::chunkState(id)) : 0u;
+  const uint8_t inUse = known && poolUsed_[id] ? 1 : 0;
+  const uint32_t used = known && inUse ? static_cast<uint32_t>(chunk(id).used) : 0u;
+  const uint8_t reason = i >= chunkIds_.size() ? 1 : !known ? 2 : !inUse ? 3 : ref != 1 ? 4
+      : persist != static_cast<uint32_t>(ChunkPersistenceState::NotScheduled) ? 5 : used != expected ? 6 : 0;
+  DebugSessionCapture::orderDenyDetail(reason, static_cast<uint8_t>(c.phase_), c.canonical_ ? 1 : 0,
+      static_cast<uint32_t>(i), id, ref, persist, inUse, used, static_cast<uint32_t>(expected),
+      static_cast<uint32_t>(c.count_), static_cast<uint32_t>(c.chunks_));
+}
+#endif
+
 LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivateTickOrder(
     LoopEventStoreOrderCursor& c, size_t quantum) {
   using Phase = LoopEventStoreOrderCursor::Phase;
@@ -761,15 +783,23 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
   if (c.phase_ == Phase::Complete) return LoopEventStoreRewriteResult::Complete;
   invalidateSourcePrefix();
   auto validChunk = [&](size_t i) {
-    if (i >= chunkIds_.size()) return false;
-    const auto id = chunkIds_[i];
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
-        poolChunkRefCount_[id] != 1 || PersistenceQueue::chunkState(id) != ChunkPersistenceState::NotScheduled)
-      return false;
-    const size_t base = i * LoopEventStoreConfig::CHUNK_CAPACITY;
-    const size_t expected = base < c.count_ ? std::min(c.count_ - base,
-        size_t(LoopEventStoreConfig::CHUNK_CAPACITY)) : 0;
-    return chunk(id).used == expected;
+    bool ok = i < chunkIds_.size();
+    if (ok) {
+      const auto id = chunkIds_[i];
+      ok = id < LoopEventStoreConfig::POOL_CHUNK_COUNT && poolUsed_[id] && poolChunkRefCount_[id] == 1 &&
+          PersistenceQueue::chunkState(id) == ChunkPersistenceState::NotScheduled;
+      if (ok) {
+        const size_t base = i * LoopEventStoreConfig::CHUNK_CAPACITY;
+        const size_t expected = base < c.count_ ? std::min(c.count_ - base,
+            size_t(LoopEventStoreConfig::CHUNK_CAPACITY)) : 0;
+        ok = chunk(id).used == expected;
+      }
+    }
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+    // Report-only: every rejection is followed by the cursor's terminal denial, so this is one row per denial.
+    if (!ok) reportPrivateOrderChunkDenial(c, i);
+#endif
+    return ok;
   };
   auto event = [&](size_t i) -> MidiEvent* {
     const size_t ci = i / LoopEventStoreConfig::CHUNK_CAPACITY;

@@ -324,6 +324,9 @@ struct MidPassChunkPersistJob {
   File journalFile;
   bool journalOpen = false;
   uint16_t chunksPersisted = 0;
+  // Report-only `DIAG,midpass_skip` cadence: the last outcome emitted and how often it repeated since.
+  uint8_t lastOutcome = 0xFF;
+  uint32_t outcomeRepeats = 0;
 };
 
 struct PersistenceWorkItemJob {

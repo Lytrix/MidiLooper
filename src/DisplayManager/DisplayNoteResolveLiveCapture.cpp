@@ -399,8 +399,16 @@ DISP_CAPTURE_MEM void DisplayManager::buildCommittedDisplayBase(
         gatherStart = 0;
     }
     DIAG_COUNTER_INC(DisplayCaptureFullGather);
+#if defined(SESSION_CAPTURE)
+    DisplayBaseGatherTrace trace;
+    trace.site = "live";
+    rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
+                                liveDisplayEventBuffer, liveDisplayNotes, false, &trace);
+    emitDisplayBaseGatherTrace(trace, displaySlot);
+#else
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
                                 liveDisplayEventBuffer, liveDisplayNotes, false);
+#endif
     committedDisplayBase_.valid = true;
     committedDisplayBase_.displaySlot = displaySlot;
     committedDisplayBase_.loopId = loop.loopId;

@@ -26,12 +26,15 @@ namespace {
 /// against a 48 B margin (`scripts/ram1_budget.json`, floor 840).
 STORAGE_PERSIST_MEM void flushOneQueuedCaptureChunkDuringTransport() {
     if (PersistenceQueue::queueDepth() == 0) {
+        noteMidPassOutcome(1);
         return;
     }
     if (storageSession.midPassChunkPersist.sdIoActive) {
+        noteMidPassOutcome(2);
         return;
     }
     if (deferredSaveBlockedByActiveSlotLoadSd()) {
+        noteMidPassOutcome(3);
         return;
     }
     storageSession.midPassChunkPersist.sdIoActive = true;
@@ -268,6 +271,9 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             storageSession.currentWorkspaceSave.pending,
             storageSession.currentWorkspaceSave.urgentRequested, workQueueDepth,
             writingWorkItemCount, storageSession.persistenceWorkItem.itemActive);
+        if (deferMidPassForWorkspaceSave && PersistenceQueue::queueDepth() > 0) {
+            noteMidPassOutcome(8);
+        }
         if (!deferMidPassForWorkspaceSave &&
             PersistenceFailurePolicy::shouldRunMidPassWriter(PersistenceQueue::queueDepth(),
                                                              otherSdIoActive)) {

@@ -350,6 +350,130 @@ void test_first_record_bar_sounds_for_every_stop_job_phase_at_start() {
     exerciseFirstBarAfterStopToStoppedRestart(24, 1, 2600, true, false, true, k);
   }
 }
+// chain-57/58 (owner slice-1 sessions): a dense Record take stopped to STOPPED wedged at the private canonical
+// order's preflight (`preparation_denied deny=order_denied at=1`). The device takes are ~640 events (three
+// chunks); the fixtures above record ~40 (one chunk). This drives the production stop job one grain at a time over
+// a take of the device's density. `drainMidPass` mirrors the passing sessions, whose mid-pass persistence wrote
+// the take's sealed chunks during recording; the denied sessions logged no mid-pass write at all.
+static void exerciseDenseRecordStopToStopped(bool drainMidPass) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 20 * bar;
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  t.setActiveLoopIndex(0);
+  t.startRecording(0);
+  TEST_ASSERT_TRUE(t.isRecording());
+  uint32_t pairs = 0;
+  for (uint32_t b = 0; b < 20; ++b) {
+    for (uint32_t k = 0; k < 16; ++k) {
+      const uint32_t on = b * bar + k * (bar / 16);
+      const uint8_t pitch = static_cast<uint8_t>(84 - k);
+      clockManager.assignCurrentTickSilently(on);
+      t.noteOn(1, pitch, 100, on);
+      t.noteOff(1, pitch, 0, on + (bar / 16) - 8);
+      ++pairs;
+    }
+    if (drainMidPass) {
+      uint16_t id = 0;
+      while (PersistenceQueue::beginWriteQueuedChunk(id)) PersistenceQueue::markChunkPersisted(id);
+    }
+  }
+  Loop& loop = t.getLoop(0);
+  stop(t, false, length - 24);
+  TEST_ASSERT_TRUE(t.isStopped());
+  uint64_t turns = 0;
+  while ((t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) && turns < 60000) {
+    ++turns;
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    else
+      TrackCaptureStopTestAccess::step(t);
+  }
+  char msg[200];
+  snprintf(msg, sizeof(msg), "dense Record stop wedged: drain=%d turns=%llu jobs=%zu phase=%u length=%u queued=%u",
+           drainMidPass, static_cast<unsigned long long>(turns), TrackCaptureStopTestAccess::jobs(t),
+           TrackCaptureStopTestAccess::jobs(t) ? static_cast<unsigned>(TrackCaptureStopTestAccess::phase(t)) : 99u,
+           static_cast<unsigned>(loop.loopLengthTicks), static_cast<unsigned>(PersistenceQueue::queueDepth()));
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t), msg);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the dense take must commit");
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  TEST_ASSERT_EQUAL_UINT32(2 * pairs, static_cast<uint32_t>(rows.size()));
+}
+// chain-57/58, second hypothesis (owner): the slot clear starts a workspace save while the transport is stopped and
+// Record arms before that save reaches the recording slot. This runs the **production** save scheduler alongside the
+// stop job, with the clear's own persistence request (`handleClearTrack`: dirty, admit, request), from boot state.
+// Regression control: it commits for every pause point, and the during-capture flush drains every sealed chunk, so
+// it does not reproduce the device's zero mid-pass rows (see the plan's 2026-10-31 19:50 correction).
+static void exerciseRecordStopWhileClearSaveInFlight(unsigned saveStepsBeforeRecord) {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 20 * bar;
+  auto& session = StorageManagerInternal::storageSession;
+  const bool writesBlocked = session.bootRecovery.writesBlocked;
+  session.bootRecovery.writesBlocked = false;
+  // Boot state, as in every denied device session (first take after boot): no journal bound or open, empty card.
+  StorageManagerInternal::resetMidPassChunkPersistState();
+  SD.reset();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  t.setActiveLoopIndex(0);
+  StorageManager::markTrackSlotsMaterialDirty(0);
+  StorageManager::admitTrackSlotPersistence(0);
+  StorageManager::requestDeferredSaveState(looperState.getLooperState());
+  const bool savePendingAtClear = StorageManager::hasDeferredSaveWork();
+  for (unsigned i = 0; i < saveStepsBeforeRecord; ++i)
+    StorageManager::processDeferredSaveState(looperState.getLooperState());
+  t.startRecording(0);
+  TEST_ASSERT_TRUE(t.isRecording());
+  for (uint32_t b = 0; b < 20; ++b) {
+    for (uint32_t k = 0; k < 16; ++k) {
+      const uint32_t on = b * bar + k * (bar / 16);
+      clockManager.assignCurrentTickSilently(on);
+      t.noteOn(1, static_cast<uint8_t>(84 - k), 100, on);
+      t.noteOff(1, static_cast<uint8_t>(84 - k), 0, on + (bar / 16) - 8);
+    }
+    StorageManager::processDeferredSaveState(looperState.getLooperState());
+  }
+  Loop& loop = t.getLoop(0);
+  stop(t, false, length - 24);
+  TEST_ASSERT_TRUE(t.isStopped());
+  uint64_t turns = 0;
+  while ((t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) && turns < 60000) {
+    ++turns;
+    StorageManager::processDeferredSaveState(looperState.getLooperState());
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    else
+      TrackCaptureStopTestAccess::step(t);
+  }
+  char msg[220];
+  snprintf(msg, sizeof(msg),
+           "Record stop wedged with the clear's save in flight: steps_before=%u save_pending_at_clear=%d turns=%llu "
+           "jobs=%zu phase=%u chunk_queue=%u save_pending=%d",
+           saveStepsBeforeRecord, savePendingAtClear, static_cast<unsigned long long>(turns),
+           TrackCaptureStopTestAccess::jobs(t),
+           TrackCaptureStopTestAccess::jobs(t) ? static_cast<unsigned>(TrackCaptureStopTestAccess::phase(t)) : 99u,
+           static_cast<unsigned>(PersistenceQueue::queueDepth()), StorageManager::hasDeferredSaveWork());
+  const bool wedged = t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t);
+  session.bootRecovery.writesBlocked = writesBlocked;
+  TEST_ASSERT_TRUE_MESSAGE(savePendingAtClear, "fixture precondition: the clear's save request was admitted");
+  TEST_ASSERT_FALSE_MESSAGE(wedged, msg);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the take must commit");
+}
+void test_record_stop_commits_while_the_clear_save_is_in_flight() {
+  for (unsigned steps : {0u, 1u, 2u, 4u, 8u}) {
+    if (steps != 0) { tearDown(); setUp(); }
+    exerciseRecordStopWhileClearSaveInFlight(steps);
+  }
+}
+void test_dense_record_stop_to_stopped_commits_without_mid_pass_persistence() {
+  exerciseDenseRecordStopToStopped(false);
+}
+void test_dense_record_stop_to_stopped_commits_with_mid_pass_persistence() {
+  exerciseDenseRecordStopToStopped(true);
+}
 // Review control for the mid-window Capture fallback: a PLAYING stop with a note held across it (so the
 // inline live handoff is refused) and input after bar 1 (so the raw bar is stale). A live rolling view
 // can carry the frozen token; it must never be served after the stop. Bars 1-2 sound once each and
@@ -701,6 +825,9 @@ int main(int, char**) {
   RUN_TEST(test_first_record_bar_early_event_sounds_after_stop_to_stopped_restart);
   RUN_TEST(test_first_record_bar_early_event_sounds_rig_shape);
   RUN_TEST(test_held_note_playing_stop_never_serves_the_live_capture_view);
+  RUN_TEST(test_dense_record_stop_to_stopped_commits_without_mid_pass_persistence);
+  RUN_TEST(test_dense_record_stop_to_stopped_commits_with_mid_pass_persistence);
+  RUN_TEST(test_record_stop_commits_while_the_clear_save_is_in_flight);
   return UNITY_END();
 }
 #else
