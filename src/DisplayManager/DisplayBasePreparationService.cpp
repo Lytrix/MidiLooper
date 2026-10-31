@@ -31,6 +31,7 @@ DMAMEM alignas(DisplayBasePreparation::Prep)
     uint8_t gStagedDisplayBaseStorage[sizeof(DisplayBasePreparation::Prep)];
 DMAMEM DisplayBasePreparation::Prep* gStagedDisplayBasePrep = nullptr;
 DMAMEM uint32_t gStagedDisplayBaseStartUs = 0;
+DMAMEM uint32_t gStagedDisplayBaseMaxStepUs = 0;
 DMAMEM bool gStagedDisplayBaseReported = false;
 
 DISP_COLD_MEM DisplayBasePreparation::Prep& stagedDisplayBasePrepStorage() {
@@ -91,22 +92,30 @@ DISP_COLD_MEM bool DisplayManager::serviceStagedDisplayBaseTurn(const Track& tra
             return false;
         }
         gStagedDisplayBaseStartUs = micros();
+        gStagedDisplayBaseMaxStepUs = 0;
         gStagedDisplayBaseReported = false;
     }
     if (prep.ready) {
         return true;
     }
+    const uint32_t stepStartUs = micros();
     const bool ready = DisplayBasePreparation::stepFlash(prep, loop, eventBudget);
+    const uint32_t stepUs = micros() - stepStartUs;
+    if (stepUs > gStagedDisplayBaseMaxStepUs) {
+        gStagedDisplayBaseMaxStepUs = stepUs;
+    }
 #if defined(SESSION_CAPTURE)
     if (ready && !gStagedDisplayBaseReported) {
         char line[176];
         snprintf_P(line, sizeof(line),
-                   PSTR("#CAP,%lu,DIAG,disp_base_prep,site=idle,steps=%lu,tiles=%u,wrap=%u,us=%lu,ready=1"),
+                   PSTR("#CAP,%lu,DIAG,disp_base_prep,site=idle,steps=%lu,tiles=%u,wrap=%u,"
+                        "us=%lu,max_step_us=%lu,ready=1"),
                    static_cast<unsigned long>(micros()),
                    static_cast<unsigned long>(prep.steps),
                    static_cast<unsigned>(prep.tileCount),
                    static_cast<unsigned>(prep.wrapPassCount),
-                   static_cast<unsigned long>(micros() - gStagedDisplayBaseStartUs));
+                   static_cast<unsigned long>(micros() - gStagedDisplayBaseStartUs),
+                   static_cast<unsigned long>(gStagedDisplayBaseMaxStepUs));
         DebugSessionCapture::appendCaptureTextLine(line);
         gStagedDisplayBaseReported = true;
     }
