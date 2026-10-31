@@ -504,6 +504,7 @@ enum class IdleOwnerChild : uint8_t {
   WholeLoopDisplayResolve, // whole-pass `resolveDisplayNotes(passes, ...)` fallback
   StoredMidiVerification,  // capture-only effective-notes dump
   SevtDump,                // capture-only stopped-event dump
+  DisplayBaseGrain,        // DEC-237: one bounded staged committed-display-base grain
   Count
 };
 constexpr uint8_t kIdleOwnerChildCount = static_cast<uint8_t>(IdleOwnerChild::Count);
@@ -541,6 +542,8 @@ constexpr IdleOwnerChildBound kIdleOwnerChildBounds[kIdleOwnerChildCount] = {
     // is still owed (section 7), so the max is a declared claim, not a measured one.
     {"stored_midi_verification", 4000, 1000, false},
     {"sevt_dump", 4000, 1000, false},
+    // DEC-237 Slice 3: one bounded staged display-base grain (one tile or one boundary pass).
+    {"display_base_grain", 4000, 1000, false},
 };
 
 enum class IdleOwnerChildDecision : uint8_t {

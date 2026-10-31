@@ -11,6 +11,7 @@
 #include "Globals.h"
 #include "EditManager.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/DisplayBasePreparation.h"
 #include <vector>
 #include <cstdint>
 #include "MidiEvent.h"
@@ -221,6 +222,17 @@ private:
                                               uint32_t currentTick);
     const DisplayNoteVec& resolveDisplayNotesLiveCapture(const Track& track, uint8_t displaySlot,
                                                          uint32_t currentTick);
+public:
+    /// DEC-237 Slice 3a — one bounded grain of the staged committed display base for the selected
+    /// track. The candidate stays private until `ready`; frame adoption is the next Slice 3 sub-slice.
+    /// A key change starts a new candidate; a stopped/empty loop produces a ready empty candidate.
+    bool serviceStagedDisplayBaseTurn(const Track& track, uint8_t displaySlot, uint32_t currentTick,
+                                      size_t eventBudget);
+    bool stagedDisplayBaseReady() const;
+    bool stagedDisplayBaseOwed(const Track& track, uint8_t displaySlot) const;
+    const DisplayBasePreparation::Prep& stagedDisplayBasePrepForTest() const;
+    void cancelStagedDisplayBase();
+private:
     void rebuildOverdubCommittedDisplayLayer(const Track& track, Loop& mutLoop, const Loop& loop,
                                              uint8_t displaySlot, uint32_t currentTick,
                                              uint32_t liveLoopLength, bool havePaintWindow,

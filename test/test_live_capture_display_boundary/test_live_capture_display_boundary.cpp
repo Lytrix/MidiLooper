@@ -23,6 +23,7 @@
 #define resolveTrackIndex resolveDisplayTrackIndex
 #include "DisplayManagerInternal.h"
 #include "../../src/DisplayManager/DisplayColdHelpers.cpp"
+#include "../../src/DisplayManager/DisplayBasePreparationService.cpp"
 #include "../../src/DisplayManager/DisplayTickResolve.cpp"
 #include "../../src/DisplayManager/DisplayNoteResolveLiveCapture.cpp"
 #define findActiveSealedCompanionRow findActiveSealedCompanionDrawRow

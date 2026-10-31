@@ -514,6 +514,9 @@ struct Loop {
     return static_cast<uint16_t>(CoveragePrerequisite::popcount64(overdubCoverage_.prepared));
   }
   uint8_t overdubCoverageOwedCountForTest() const { return overdubCoverage_.owedCount(); }
+  /// DEC-237 Slice 3: the coverage worker still owes a tile. The display producer is served only when
+  /// this is false, so coverage correctness never waits behind display preparation.
+  bool hasOwedOverdubCoverage() const { return overdubCoverage_.owedCount() != 0; }
   uint8_t overdubCoverageDeferredCompletionsForTest() const {
     return overdubCoverageDeferredCount_;
   }

@@ -79,6 +79,25 @@ void test_riao7_1_bounded_verification_admits_the_declared_grain() {
   TEST_ASSERT_TRUE(boundedIdleOwnerChildMayRun(true, false, kStoredVerificationMaxUs, 0, 0));
 }
 
+// DEC-237 Slice 3 — the staged display base is a declared, bounded idle owner child. It is a 4 ms child
+// with a 1 ms fine grain (one tile or one boundary pass per turn).
+void test_dec237_display_base_grain_is_declared() {
+  const IdleOwnerChildBound& bound = idleOwnerChildBound(IdleOwnerChild::DisplayBaseGrain);
+  TEST_ASSERT_EQUAL_STRING("display_base_grain", bound.name);
+  TEST_ASSERT_EQUAL_UINT16(4000, bound.maxUs);
+  TEST_ASSERT_EQUAL_UINT16(1000, bound.fineGrainUs);
+  TEST_ASSERT_FALSE(bound.unbounded);
+  TEST_ASSERT_TRUE(boundedIdleOwnerChildMayRun(true, true, bound.maxUs, kOwnerWorkBudgetUs,
+                                               bound.fineGrainUs));
+  TEST_ASSERT_TRUE(boundedIdleOwnerChildMayRun(true, true, bound.maxUs, bound.fineGrainUs,
+                                               bound.fineGrainUs));
+  TEST_ASSERT_FALSE(boundedIdleOwnerChildMayRun(true, true, bound.maxUs,
+                                                static_cast<uint32_t>(bound.fineGrainUs) - 1u,
+                                                bound.fineGrainUs));
+  TEST_ASSERT_FALSE(boundedIdleOwnerChildMayRun(false, true, bound.maxUs, kOwnerWorkBudgetUs,
+                                                bound.fineGrainUs));
+}
+
 // Not owed costs nothing in either regime: the turn must not spend budget on a child with no work.
 void test_riao1_not_owed_costs_nothing() {
   for (uint8_t i = 0; i < kIdleOwnerChildCount; ++i) {
@@ -270,6 +289,7 @@ int main(int, char**) {
   RUN_TEST(test_riao1_a_unbounded_child_defers_while_timing_critical);
   RUN_TEST(test_riao1_a_control_unbounded_child_runs_when_not_timing_critical);
   RUN_TEST(test_riao7_1_bounded_verification_admits_the_declared_grain);
+  RUN_TEST(test_dec237_display_base_grain_is_declared);
   RUN_TEST(test_riao1_not_owed_costs_nothing);
   RUN_TEST(test_riao1_b_child_that_cannot_fit_is_not_dispatched);
   RUN_TEST(test_riao1_c_finer_grain_takes_the_remaining_deadline);

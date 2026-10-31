@@ -52,6 +52,13 @@ struct Key {
   uint32_t rangeLength = 0;
 };
 
+inline bool keyMatches(const Key& a, const Key& b) {
+  return a.trackIndex == b.trackIndex && a.displaySlot == b.displaySlot && a.loopId == b.loopId &&
+         a.playbackRevision == b.playbackRevision && a.loopLengthTicks == b.loopLengthTicks &&
+         a.snapshotCurrent == b.snapshotCurrent && a.publishedIdentity == b.publishedIdentity &&
+         a.rangeStart == b.rangeStart && a.rangeLength == b.rangeLength;
+}
+
 struct StepWork {
   uint32_t chunksInspected = 0;
   uint32_t eventsAppended = 0;
@@ -94,14 +101,7 @@ struct Prep {
   StepWork lastWork;
   StepWork maxWork;
 
-  bool readyFor(const Key& other) const {
-    return ready && key.trackIndex == other.trackIndex && key.displaySlot == other.displaySlot &&
-           key.loopId == other.loopId && key.playbackRevision == other.playbackRevision &&
-           key.loopLengthTicks == other.loopLengthTicks &&
-           key.snapshotCurrent == other.snapshotCurrent &&
-           key.publishedIdentity == other.publishedIdentity &&
-           key.rangeStart == other.rangeStart && key.rangeLength == other.rangeLength;
-  }
+  bool readyFor(const Key& other) const { return ready && keyMatches(key, other); }
 };
 
 inline void recordStep(Prep& prep, const StepWork& work) {

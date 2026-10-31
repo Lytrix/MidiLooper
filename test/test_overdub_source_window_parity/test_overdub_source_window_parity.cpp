@@ -1608,6 +1608,48 @@ void test_dec237_slice2_active_note_edit_stages_every_wrap_pass() {
   assertSameNoteSet(whole, prep.stagedNotes, "DEC-237 edited fallback parity");
 }
 
+/// DEC-237 Slice 3a — the manager owns the staged candidate and services one bounded grain per call.
+/// The candidate is private until ready; this test drives it on the same 20-bar / 13-overdub shape and
+/// compares it with the independent single-shot composition.
+void test_dec237_slice3a_manager_services_the_staged_base_prep() {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  (void)acceptPair(t, 60, 12, 80);
+  (void)acceptPair(t, 65, (kStaleRootBars - 1) * kStaleRootBar + 100,
+                   (kStaleRootBars - 1) * kStaleRootBar + 200);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  for (uint8_t i = 0; i < 13; ++i) {
+    const uint32_t on = (static_cast<uint32_t>(i) % kStaleRootBars) * kStaleRootBar + 100;
+    commitOverdubPassAt(t, loop, kStaleRootLength, static_cast<uint8_t>(60 + i), on, on + 120);
+  }
+
+  displayManager.cancelStagedDisplayBase();
+  uint32_t turns = 0;
+  while (!displayManager.stagedDisplayBaseReady() && turns < 200000) {
+    (void)displayManager.serviceStagedDisplayBaseTurn(
+        t, 0, 0, DisplayBasePreparation::kMaxEventsAppendedPerStep);
+    ++turns;
+  }
+  const DisplayBasePreparation::Prep& prep = displayManager.stagedDisplayBasePrepForTest();
+  TEST_ASSERT_TRUE_MESSAGE(displayManager.stagedDisplayBaseReady(), "the manager must finish the candidate");
+  TEST_ASSERT_EQUAL_UINT16(5, prep.tileCount);
+  TEST_ASSERT_GREATER_THAN_UINT16(0, prep.wrapPassCount);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT16(loop.activeCommittedPassCount(), prep.wrapPassCount);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(prep.stagedNotes.size()));
+
+  NoteUtils::DisplayNoteVec whole;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0,
+                                                     loop.loopLengthTicks, whole);
+  loop.appendOverdubPassDisplayNotes(whole);
+  assertSameNoteSet(whole, prep.stagedNotes, "DEC-237 Slice 3a manager parity");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao2_a_ordinary_window_matches_whole_loop);
@@ -1640,6 +1682,7 @@ int main(int, char**) {
   RUN_TEST(test_dec237_slice2_wrap_identity_survives_candidate_assembly);
   RUN_TEST(test_dec237_slice2_producer_inspects_at_most_the_declared_chunks);
   RUN_TEST(test_dec237_slice2_active_note_edit_stages_every_wrap_pass);
+  RUN_TEST(test_dec237_slice3a_manager_services_the_staged_base_prep);
   RUN_TEST(test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes);
   return UNITY_END();
 }

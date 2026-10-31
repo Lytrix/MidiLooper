@@ -271,12 +271,14 @@ The producer is one bounded unit per turn:
 - **Mutation-red proved:** disabling the chunk cap reds the sparse-chunk test (`65 > 0`) and the work bound; counting the old per-tile pass projection reds `passLayers` (`14 > 1`); ignoring the start tick in `NoteIdAndStart` reds the identity case; always replacing in the wrap merge reds the first-wrap-wins case; skipping wrap staging reds whole-range parity (`438` vs `437`) and the wrap pair (`2` vs `1`).
 - **Identity scopes:** resolver per-pass = bare `NoteId` (replace) / pitch+start (keep first); cross-tile assembly = `NoteId`+start / pitch+start; wrap-held = pitch+start (replace first non-wrap, keep first wrap). Body before wrap is load-bearing.
 - No frame or idle-owner call yet. Gate: `test_overdub_source_window_parity`, the focused display batch, full native, target build RAM1 unchanged.
-- **Open before Slice 3:** the device owner cadence **T** and C6.4's K; S is now 19/36, not 5, so the `S × (K + 1) × T` service budget must be recomputed on the device shape.
+- **Done before Slice 3:** the device owner cadence **T** and C6.4's K; S = 7/25 after the precheck, K = 0 (see §4.8).
 
 ### Slice 3 — admission, stale serve, adoption
 
-- `IdleOwnerChild::DisplayBaseGrain` + registry/enumeration test.
-- Selected-track `VisualCache` turn: after the coverage worker reports `Idle`, step one prep grain under `boundedIdleOwnerChildMayRun`; C6.4's A-or-B rule governs fairness.
+**Slice 3a (landed native):** `IdleOwnerChild::DisplayBaseGrain` is declared (4 ms / 1 ms fine grain) and the admission test pins it; `DisplayManager` owns a DMAMEM staged candidate and exposes `serviceStagedDisplayBaseTurn` / `stagedDisplayBaseOwed` / `stagedDisplayBaseReady`; `Loop::hasOwedOverdubCoverage` gates the producer behind coverage. The manager-level fixture drives the 20-bar / 13-overdub shape to parity. **The idle-owner call site is deliberately not wired yet:** referencing the producer pulls its inline tile/index code into the ITCM image (+4,656 B, 396,584 code, over the 12-bank ceiling). The next 3b task is to place the producer in flash (or replace the `unordered_map` indexes with a flash-sized table) before the call site returns. Current unreferenced service target is SUCCESS at ITCM `392,312 + 904` (64 B above floor); full native **3,780 / 8 skipped / 3,772 / 0**.
+
+- `IdleOwnerChild::DisplayBaseGrain` + registry/enumeration test. **Landed.**
+- Selected-track `VisualCache` turn: after the coverage worker reports `Idle`, step one prep grain under `boundedIdleOwnerChildMayRun`; C6.4's K = 0 rule governs fairness. **Call site blocked on the ITCM placement above.**
 - Frame: request/start on a covered miss, serve stale + retained delta, swap-adopt on ready, named hold, no synchronous fallback.
 - Fixtures: the §4.5 critical multi-generation fixture (two and three commits during one prep, C6.1 acceptance); commit while overdubbing; slot switch; transport stop; root becomes current; window move inside/outside coverage; stop/undo/load/save during prep; adoption zero-copy/zero-allocation; `base_stale` hold freezes content **and** window geometry. Assert no blank bar, no mixed interval, no duplicate note across generations, no second source read (`overdubSourceViewNotes_` read count = 0).
 - Gate: focused display + live-capture boundary + idle admission; full native; target build RAM1 unchanged.
@@ -329,7 +331,8 @@ The follow-phase windows are reported separately and are **not** acceptance for 
 | Wrap staging adds one grain per boundary-content pass, not one per active pass. | Measured: the precheck takes S from 36 to 25 dense (7 sparse); K = 0 is ~408–448 ms, under the 500 ms target. Edited slots conservatively fall back to every pass (S = 36, ~590–645 ms); that is the recorded p95 caveat, and a finer edit-aware boundary check is a later refinement. |
 | Adoption swaps the whole frame buffer and drops the capture overlay. | The swap is followed by the existing capture-layer sync on the same frame; the fixture asserts the overlay re-appends and G+1 notes occur exactly once. |
 | Cancellation freeing a large candidate on the frame. | Cancel only invalidates ownership on the frame; clear/reuse runs on the deferred owner (§4.3). |
-| RAM1 / PSRAM growth. | Prep state in `DMAMEM`; `variables 96,192` and `sizeof(Loop)`/`DisplayManager` gates; the candidate buffer and cursor are priced before wiring. |
+| RAM1 / PSRAM growth. | Prep state in `DMAMEM` (placement-constructed; no global constructor in ITCM); `variables 96,192` and `sizeof(Loop)`/`DisplayManager` gates. The candidate buffer and cursor are priced before wiring. |
+| The producer's inline tile/index code lands in ITCM when the idle-owner call site references it (+4,656 B measured, over the 12-bank ceiling). | Slice 3b places the producer in flash (or replaces the `unordered_map` indexes with a flash-sized table) before the call site returns. The unreferenced service target is 392,312 + 904 (64 B above floor); the 5.2 route diagnostic (336 B) is a later release, not the fix. |
 | The completion split changes the coverage-tile path's parity. | The coverage caller keeps its current behavior until its own measurement; the display consumer opts into the bounded post-processing. Parity suite runs for both. |
 | `DisplayFullRebuild` and the base gather are different counters; the evidence may name the wrong site. | Slice 1's `disp_base` row names the site and phase before any owner change. |
 
