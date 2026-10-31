@@ -2484,6 +2484,65 @@ void test_stale_root_draw_source_serves_committed_overdub_passes_across_the_slid
   assertNote(wrapped, b2, 76, kStaleRootBar + 100, kStaleRootBar + 220);
 }
 
+/// Owner capture 151347: while an overdub is open and the published root lags, every accepted live note
+/// advanced `captureDisplayRevision`, which the committed reuse key compared, so each frame rebuilt the
+/// committed base -- a whole-window walk over every committed pass (display frames 50-155 ms, MIDI
+/// timing degraded). The pass gather reads only committed passes; live rows are an overlay re-applied on
+/// every compose. Frames at one window with only live input must reuse the committed base, and the
+/// committed rows must stay visible on every frame.
+void test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives() {
+  Track& t = beginRecord();
+  Loop& loop = t.getActiveLoop();
+  const NoteId recA = acceptPair(t, 60, 12, 80);
+  (void)acceptPair(t, 65, (kStaleRootBars - 1) * kStaleRootBar + 100,
+                   (kStaleRootBars - 1) * kStaleRootBar + 200);
+  growRecordGeometry(t, kStaleRootLength);
+  clockManager.assignCurrentTickSilently(kStaleRootLength);
+  t.stopRecording(kStaleRootLength);
+  for (unsigned turn = 0; turn < 8192 && !loop.hasCommittedPasses(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
+  }
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  commitOverdubPassAt(t, loop, kStaleRootLength, 72, 4 * kStaleRootBar + 100, 4 * kStaleRootBar + 220);
+  NoteId a5 = kInvalidNoteId;
+  {
+    SessionMidiEventVec rows;
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+    if (!rows.empty()) a5 = rows.front().noteId;
+  }
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, a5);
+  auto stale = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.startLoopTick,
+                                         loop.peekNextNoteId(), 1);
+  loop.storePublishedSnapshotForTest(stale, 1);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  loop.visualCacheDirty = true;
+
+  // Open a second overdub and feed it live notes; the playhead stays inside one window.
+  const uint32_t odStart = 2 * kStaleRootLength;
+  clockManager.assignCurrentTickSilently(odStart);
+  t.startOverdubbing(odStart);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const uint32_t frameTick = 2 * kStaleRootLength + 2 * kStaleRootBar + 10;
+  (void)DisplayCaptureTestAccess::resolveCommitted(t, 0, frameTick);
+  DisplayManagerInternal::resetDrawSourceCommittedPassGatherCountForTest();
+  const uint32_t frames = 12;
+  for (uint32_t i = 0; i < frames; ++i) {
+    const uint32_t on = frameTick + 1 + 4 * i;
+    clockManager.assignCurrentTickSilently(on);
+    t.noteOn(1, static_cast<uint8_t>(40 + i), 100, on);
+    t.noteOff(1, static_cast<uint8_t>(40 + i), 0, on + 2);
+    const DisplayNoteVec& notes = DisplayCaptureTestAccess::resolveCommitted(t, 0, frameTick);
+    TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(notes, recA), "the record row must stay visible");
+    TEST_ASSERT_NOT_NULL_MESSAGE(displayNoteById(notes, a5), "the committed overdub row must stay visible");
+  }
+  char msg[96];
+  snprintf(msg, sizeof(msg), "committed pass walks across %u live-input frames at one window",
+           static_cast<unsigned>(frames));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, DisplayManagerInternal::drawSourceCommittedPassGatherCountForTest(), msg);
+}
+
 /// Negative control: a **current** root is the authority. The committed pass walk must not run, and the
 /// root's content (here an empty root) is what the draw source serves.
 void test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes() {
@@ -2602,6 +2661,7 @@ int main() {
   RUN_TEST(test_overdub_chain_preserves_frame_progress_one_bar);
   RUN_TEST(test_overdub_chain_preserves_frame_progress_long_loop);
   RUN_TEST(test_stale_root_draw_source_serves_committed_overdub_passes_across_the_sliding_window);
+  RUN_TEST(test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives);
   RUN_TEST(test_current_root_draw_source_stays_root_backed_and_never_walks_the_passes);
   RUN_TEST(test_stationary_viewport_counts_real_completed_frames_without_transition_receipts);
   RUN_TEST(test_chain_oracle_separates_missing_service_from_missing_content);

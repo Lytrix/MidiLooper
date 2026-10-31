@@ -173,3 +173,60 @@ source, 8 runtime reset. Cost: ITCM +336 B (padding 1,880 → 1,544).
 | Frozen-reader suite | 23 / 23 (incl. 10 new first-bar cases and the early-event RED → GREEN) |
 | Full native (isolated build dir) | **3,760 / 7 skipped / 3,753 succeeded / 0 failed**, no ERRORED suite |
 | Target | SUCCESS — RAM1 `variables 96,192`, ITCM code `391,672` + padding `1,544`, `locals 34,880` |
+
+## Follow-up capture `session_20261031_151347.log` (owner, 12-overdub MIDI-file chain) — read-only
+
+No boot banner, so the image is unproven from the log; the board's last flash was `f761c65d…`. Metrics are
+measured inside the overdub chain (first `ODUB,stage,enter` → last `OVERDUB_STOPPING → PLAYING`) and compared
+with 25 earlier rig sessions (scripts in the session scratchpad; method only, no new tooling).
+
+- **MIDI timing:** the median per-window MIDI-service gap is 101 ms, against 37–83 ms on 10-30. Worst
+  `late_on` in the chain is 176 ms, within the historical 59–196 ms. The 513 ms `late_on` after 558 s is a rig
+  tail artifact: the closing transport press restarts the transport after its tap window (541.665 s), then
+  `MIDI clock lost, switching to internal`, and every track measures ~513 ms late on the unsynchronised clock.
+- **Named cost:** display frames over 50 ms (`loop_rem,display_frame`) number **189** (median 85, p90 149,
+  max 154 ms), against 0–16 per 10-30 session and 45 in 121645. `cer_win` (committed-range window gather ≥ 10 ms,
+  `lists=1, chunks=3`, 512–654 events: the 20-bar Record pass) runs **206** times, against 13–29 before.
+  Stale published roots during the chain are normal in every session (`lcr,src … root_rev < play_rev`: 31 on
+  10-30 19:47, 45 now). **Attribution (high confidence, not instrumented):** the stale-root draw-source fallback
+  (`DisplayNoteWindowGather.cpp`, committed as `acb64a4c`, present in every image built on 10-31) calls
+  `LoopContentResolution::resolveDisplayNotesInWindow` over all committed passes for the whole 16-bar window on
+  each gather. Before, a stale root was drawn directly: cheap, but it blanked committed overdub rows (the
+  DEC-199 defect). `gDrawSourceCommittedPassGathers` is not reported in any row, so this is correlation plus the
+  matching call shape, not a counted proof.
+- **Not the cause:** the circular paint origin. Unaligned window starts occur at the same rate (12–20% of
+  beats per state) in every session since 10-30.
+- **Temporary hides:** painted-note drops of 27–59 that recover within ~3–6 s or at the overdub commit
+  (500.8, 515.2, 530.5 s; one right after a raw-only stop). The same class exists on 10-30 19:47 (−42) and
+  20:23 (−55), so it **predates** the 10-31 display work: task 5.3, with identities unproven (no `draw_src`
+  rows in this capture).
+
+### Proof and fix — stale-root pass walk per live-input frame (DEC-236)
+
+- **Mechanism.** `drawSourceCommittedSourceKeysMatch` compares `captureDisplayRevision`, which advances on every
+  accepted live note. With an overdub open and the root stale, every frame failed reuse and fell to the full
+  rebuild, which for a stale root is `resolveDisplayNotesInWindow` over every committed pass for the whole
+  16-bar window.
+- **Native proof (RED → GREEN).** `test_stale_root_committed_base_is_reused_while_live_overdub_input_arrives`
+  (`test_live_capture_display_boundary`) runs production `resolveDisplayNotesByDrawSource` for 12 live-input frames
+  at one window. Before: **12 pass walks** (one per frame). After: 0. The record and committed-overdub rows are
+  present on every frame.
+- **Fix.** One predicate, `committedDrawSourceIsStaleRootPassGather`, now drives both the gather branch and the
+  reuse key. For that source only, the key ignores `captureDisplayRevision` (live rows stay an overlay,
+  re-applied on every compose). Committed changes (`playbackRevision`, root, visual cache) still force a rebuild.
+- **Gates.** Display suite 53/53. Full native **3,761 / 7 skipped / 3,754 / 0**. Target SUCCESS, RAM1 unchanged
+  (`96,192`, ITCM padding 1,544). HEX `e7f134a51fc262c46698bae9ef8bba0178076152970e615e6c3840e1665f58dd` is retained in
+  `captures/display-reuse-e7f134a51fc2/`. Boot verified (`boot_reset,crash=0`, `BOOT,load,ok`, `16C0:0489`).
+- **Device (owner rig command → `captures/midifile-chain-49/`, serial `captures/session_20261031_153427.log`,
+  `shed=1`, `tierA_evict=0`, `overflow=0`; 12 overdubs, same 47 s span):**
+
+  | Metric | 10-30 19:47 baseline | 151347 before | 153427 after |
+  |---|---|---|---|
+  | MIDI gap median / max | 58 / 200 ms | 101 / 262 ms | 85 / 214 ms |
+  | `late_on` max | 108 ms | 176 ms | 104 ms |
+  | display frames > 50 ms | 0 | 148 (max 109 ms) | 22 (max 87 ms) |
+  | `cer_win` ≥ 10 ms | 13 | 165 | 27 |
+
+  Worst lateness is back at baseline, and long frames and pass walks fall by 85–90%. **Not fully closed:** 22 frames
+  > 50 ms and the median gap remain above the 10-30 baseline. Painted-note drops ≥ 10: one temporary (−32), against
+  four before.

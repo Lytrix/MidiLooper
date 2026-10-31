@@ -13398,3 +13398,20 @@ No new owner, allocation, queue or clock-edge work. A session-capture-only diagn
 (padding 1,880 → 1,544, floor 840). It is evaluation instrumentation and may be removed once 5.2 closes.
 Still open: a fixture that discriminates the live-view alias (review F1), and run 1's replay of a cleared
 slot's old take before publication (route unidentified).
+
+## DEC-236 — Live Capture input does not invalidate a stale-root committed pass gather
+
+**Date:** 2026-10-31 · **Status:** Accepted — native RED→GREEN; device overdub chain improved (frames > 50 ms
+148 → 22, `late_on` max 176 → 104 ms), not fully back to the 10-30 baseline.
+[Evidence](../openspec/changes/immediate-record-overdub-handoff/evidence/2026-10-31-FIRST-BAR-HANDOFF.md).
+
+**Context.** The stale-root draw-source fix (`acb64a4c`) made the committed passes the draw source while the
+published root lags. Its reuse key still compared `captureDisplayRevision`, which advances on every live note, so
+each frame of an open overdub re-walked every committed pass for the whole 16-bar window (owner capture 151347:
+display frames to 155 ms, MIDI timing degraded).
+
+**Decision.** `committedDrawSourceIsStaleRootPassGather` is the single predicate for that source. When it holds,
+the committed reuse key ignores `captureDisplayRevision`. Live rows remain an overlay, re-applied on every
+compose. All other committed sources keep the key unchanged.
+
+**Open.** The remaining long frames and the median MIDI gap above baseline are unattributed.

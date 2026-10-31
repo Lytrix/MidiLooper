@@ -616,6 +616,23 @@ bool committedBaseOwnsPreviewRow(const NoteUtils::DisplayNoteVec& out, size_t co
 }
 }  // namespace
 
+namespace {
+/// The committed draw source is the window-local walk over the committed passes: the published root is
+/// stale, the snapshot was requested, no record-stop preview owns the slot and the cache is not
+/// pass-derived. That walk reads committed passes only, never live Capture rows.
+DISP_CAPTURE_MEM bool committedDrawSourceIsStaleRootPassGather(const Track& track, uint8_t slot,
+                                                               const Loop& loop) {
+    const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+    if (!snapshot || loop.publishedSnapshotIsCurrent()) return false;
+    const bool requestedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+        true, loop.captureActive(), loop.hasOverdubSession(), !loop.visualCache.notes.empty(),
+        loop.visualCacheDirty, false);
+    const bool cacheIsPassDerived =
+        !loop.visualCache.notes.empty() && loop.visualCache.builtFromSnapshotIdentity == nullptr;
+    return requestedSnapshot && !cacheIsPassDerived && track.recordStopPreviewForSlot(slot) == nullptr;
+}
+}  // namespace
+
 DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t slot, const Loop& loop,
                                                     uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
                                                     uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
@@ -635,9 +652,7 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t 
     // authority and roots are acceleration (chain-48: passes advanced while publication lagged, and the
     // stale root blanked every committed overdub row outside a live preview). Every other selection is
     // unchanged. A cache **built from passes** stays a qualified source (the partial-cache contract);
-    // a cache built from a root mirrors that root and is not.
-    const bool cacheIsPassDerived =
-        !loop.visualCache.notes.empty() && loop.visualCache.builtFromSnapshotIdentity == nullptr;
+    // a cache built from a root mirrors that root and is not (`committedDrawSourceIsStaleRootPassGather`).
     const bool usePublishedSnapshot = requestedSnapshot && !rootStale;
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     uint32_t closureTick = loopLength - 1;
@@ -645,7 +660,8 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Track& track, uint8_t 
     const uint32_t loopBars = Config::TICKS_PER_BAR > 0
                                   ? (loopLength + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR
                                   : 0;
-    if (rootStale && requestedSnapshot && recordPreview == nullptr && !cacheIsPassDerived) {
+    // One predicate with the reuse key (`makeDrawSourceGatherKey`), so the two can never diverge.
+    if (committedDrawSourceIsStaleRootPassGather(track, slot, loop)) {
         // Window-local, wrap-aware gather over the authoritative committed passes.
         const uint32_t windowStart = firstBar * Config::TICKS_PER_BAR;
         const uint32_t windowLength = (lastBar - firstBar + 1u) * Config::TICKS_PER_BAR;
@@ -1078,7 +1094,10 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     key.windowStart = windowStart;
     key.windowLength = windowLength;
     key.playbackRevision = loop.playbackRevision;
-    key.captureDisplayRevision = loop.captureDisplayRevision;
+    // The stale-root pass walk never reads live Capture rows (they are an overlay, re-applied on every
+    // compose), so live input must not force that whole-window walk each frame (owner capture 151347).
+    key.captureDisplayRevision = committedDrawSourceIsStaleRootPassGather(track, displaySlot, loop)
+        ? 0u : loop.captureDisplayRevision;
     key.capturePreviewRevision = loop.capturePreviewView().revision;
     key.visualCacheRevision = loop.visualCache.revision;
     key.publishedSnapshotRevision = loop.publishedSnapshotRevision();
@@ -1099,7 +1118,6 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     key.snapshotCurrent = loop.publishedSnapshotIsCurrent() ? 1 : 0;
     key.sealedCompanionOverlay = loop.hasSealedCompanionOverlay() ? 1 : 0;
     key.valid = 1;
-    (void)track;
     return key;
 }
 
