@@ -638,6 +638,22 @@ inline bool boundedIdleOwnerChildMayRun(bool owed, bool timingCritical, uint32_t
   return fineGrainUs != 0 && fineGrainUs <= remainingBudgetUs;
 }
 
+/// DEC-237 3c1 — the coverage-vs-display owner-turn choice. Coverage wins only when an owed completion's
+/// consumer due tick is within one owner opportunity (`kCoverageLeadTicks`); merely being owed is not
+/// urgency, or continuous coverage would starve the staged display exactly as C6.4 describes. The due
+/// tick comes from `DeferredOverdubCompletion.endTick`, not from a scheduler-invented age.
+constexpr uint32_t kCoverageLeadTicks = 8;
+enum class CoverageDisplayChoice : uint8_t { Coverage, Display, Nothing };
+inline CoverageDisplayChoice chooseCoverageOrDisplay(bool coverageRequiredNow, bool displayOwed) {
+  if (coverageRequiredNow) {
+    return CoverageDisplayChoice::Coverage;
+  }
+  if (displayOwed) {
+    return CoverageDisplayChoice::Display;
+  }
+  return CoverageDisplayChoice::Nothing;
+}
+
 /// **Aggregate turn arithmetic** (ExecutionBounds row 19). `kOwnerWorkBudgetUs` bounds one *child*; it never
 /// bounded the sum of the tracks one turn visits, because the realtime walk dispatches
 /// `Track::processDeferredIdleMaintenance` for every eligible track in the same turn. Measured on device

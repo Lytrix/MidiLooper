@@ -517,6 +517,14 @@ struct Loop {
   /// DEC-237 Slice 3: the coverage worker still owes a tile. The display producer is served only when
   /// this is false, so coverage correctness never waits behind display preparation.
   bool hasOwedOverdubCoverage() const { return overdubCoverage_.owedCount() != 0; }
+  /// DEC-237 3c1: the earliest consumer horizon among owed coverage completions, or UINT32_MAX when no
+  /// owed completion has a closed span yet (occupancy-only holds are not urgent until their note-off).
+  /// The due tick comes from the consumer that created the completion, never from the scheduler.
+  uint32_t overdubCoverageEarliestDueTick() const;
+  /// DEC-237 3c1: true when an owed completion's due tick is within `leadTicks` of the current loop
+  /// phase. The scheduler lets coverage win this owner opportunity; otherwise the staged display grain
+  /// may take it. A completion with no closed span is not urgent; the seal deadline remains its backstop.
+  bool overdubCoverageRequiredNow(uint32_t currentPhase, uint32_t leadTicks) const;
   uint8_t overdubCoverageDeferredCompletionsForTest() const {
     return overdubCoverageDeferredCount_;
   }
@@ -1987,6 +1995,18 @@ struct Loop {
     completion.startTick = startTick;
     completion.endTick = endTick;
     completion.noteId = kInvalidNoteId;
+    return retainDeferredOverdubCompletion(completion);
+  }
+  /// DEC-237 3c1 witness: a completion with a closed span, so its consumer due tick is known.
+  bool retainCoverageDeadlineForTest(uint8_t channel, uint8_t pitch, uint32_t startTick,
+                                     uint32_t endTick) {
+    DeferredOverdubCompletion completion{};
+    completion.channel = channel;
+    completion.pitch = pitch;
+    completion.startTick = startTick;
+    completion.endTick = endTick;
+    completion.noteId = kInvalidNoteId;
+    completion.spanOwed = true;
     return retainDeferredOverdubCompletion(completion);
   }
   uint8_t dischargeDeferredOverdubCompletionsForTest(uint8_t maxDischarge) {

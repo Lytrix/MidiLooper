@@ -653,8 +653,19 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
       if (selectedTrack.loopsAllocated()) {
         const uint8_t displaySlot = selectedTrack.getActiveLoopIndex();
-        if (!selectedTrack.getLoop(displaySlot).hasOwedOverdubCoverage() &&
-            displayManager.stagedDisplayBaseOwed(selectedTrack, displaySlot)) {
+        const Loop& selectedLoop = selectedTrack.getLoop(displaySlot);
+        uint32_t currentPhase = 0;
+        if (selectedLoop.loopLengthTicks != 0) {
+          const uint32_t loopStart =
+              selectedLoop.loopStartTick % selectedLoop.loopLengthTicks;
+          currentPhase = (clockManager.getCurrentTick() + selectedLoop.loopLengthTicks - loopStart) %
+                         selectedLoop.loopLengthTicks;
+        }
+        const bool coverageRequiredNow = selectedLoop.overdubCoverageRequiredNow(
+            currentPhase, MidiServiceDrain::kCoverageLeadTicks);
+        const bool displayOwed = displayManager.stagedDisplayBaseOwed(selectedTrack, displaySlot);
+        if (MidiServiceDrain::chooseCoverageOrDisplay(coverageRequiredNow, displayOwed) ==
+            MidiServiceDrain::CoverageDisplayChoice::Display) {
           const uint32_t spentUs = micros() - turnStartUs;
           const uint32_t remainingUs =
               spentUs < MidiServiceDrain::kOwnerWorkBudgetUs
@@ -665,6 +676,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
             (void)displayManager.serviceStagedDisplayBaseTurn(
                 selectedTrack, displaySlot, 0,
                 DisplayBasePreparation::kMaxEventsAppendedPerStep);
+            // The display child owns this owner turn; coverage is not due this opportunity.
+            return;
           }
         }
       }

@@ -290,8 +290,36 @@ bool Loop::retainDeferredOverdubCompletion(const DeferredOverdubCompletion& comp
   return true;
 }
 
-uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {
-  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+uint32_t LOOP_COLD_MEM Loop::overdubCoverageEarliestDueTick() const {
+  uint32_t earliest = UINT32_MAX;
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+    const DeferredOverdubCompletion& completion = deferredOverdubCompletions_[i];
+    if (!completion.occupancyOwed && !completion.spanOwed) {
+      continue;
+    }
+    // An occupancy-only hold has no closed span yet; its consumer horizon is the eventual note-off.
+    if (completion.endTick == 0 || completion.endTick == completion.startTick) {
+      continue;
+    }
+    if (completion.endTick < earliest) {
+      earliest = completion.endTick;
+    }
+  }
+  return earliest;
+}
+
+bool LOOP_COLD_MEM Loop::overdubCoverageRequiredNow(uint32_t currentPhase,
+                                                     uint32_t leadTicks) const {
+  const uint32_t dueTick = overdubCoverageEarliestDueTick();
+  if (dueTick == UINT32_MAX || loopLengthTicks == 0) {
+    return false;
+  }
+  const uint32_t phase = currentPhase % loopLengthTicks;
+  const uint32_t untilDue = (dueTick + loopLengthTicks - phase) % loopLengthTicks;
+  return untilDue <= leadTicks;
+}
+
+uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return 0;
   }
   uint8_t discharged = 0;

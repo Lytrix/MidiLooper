@@ -1650,6 +1650,105 @@ void test_dec237_slice3a_manager_services_the_staged_base_prep() {
   assertSameNoteSet(whole, prep.stagedNotes, "DEC-237 Slice 3a manager parity");
 }
 
+/// DEC-237 3c1 — the coverage-vs-display arbitration is data-driven. A completion's consumer end tick is
+/// its due tick; merely having coverage owed is not urgency. Occupancy-only holds have no closed span yet
+/// and are not urgent until their note-off. The truth table is the whole scheduler rule.
+void test_dec237_slice3c1_coverage_due_tick_preempts_display() {
+  using MidiServiceDrain::CoverageDisplayChoice;
+  TEST_ASSERT_EQUAL(CoverageDisplayChoice::Coverage,
+                    MidiServiceDrain::chooseCoverageOrDisplay(true, true));
+  TEST_ASSERT_EQUAL(CoverageDisplayChoice::Display,
+                    MidiServiceDrain::chooseCoverageOrDisplay(false, true));
+  TEST_ASSERT_EQUAL(CoverageDisplayChoice::Nothing,
+                    MidiServiceDrain::chooseCoverageOrDisplay(false, false));
+  TEST_ASSERT_EQUAL(CoverageDisplayChoice::Coverage,
+                    MidiServiceDrain::chooseCoverageOrDisplay(true, false));
+
+  Loop loop;
+  loop.loopLengthTicks = 2048;
+  TEST_ASSERT_TRUE(loop.retainCoverageDeadlineForTest(1, 60, 0, 1000));
+  TEST_ASSERT_EQUAL_UINT32(1000, loop.overdubCoverageEarliestDueTick());
+  TEST_ASSERT_FALSE_MESSAGE(loop.overdubCoverageRequiredNow(500, 8),
+                            "a due tick far from the playhead is not urgent");
+  TEST_ASSERT_TRUE_MESSAGE(loop.overdubCoverageRequiredNow(996, 8),
+                           "a due tick inside the owner lead wins the turn");
+  TEST_ASSERT_TRUE(loop.overdubCoverageRequiredNow(1000, 8));
+
+  Loop wrapped;
+  wrapped.loopLengthTicks = 2048;
+  TEST_ASSERT_TRUE(wrapped.retainCoverageDeadlineForTest(1, 60, 1900, 100));
+  TEST_ASSERT_EQUAL_UINT32(100, wrapped.overdubCoverageEarliestDueTick());
+  TEST_ASSERT_TRUE_MESSAGE(wrapped.overdubCoverageRequiredNow(2040, 200),
+                           "the wrap-relative due distance is forward");
+  TEST_ASSERT_FALSE(wrapped.overdubCoverageRequiredNow(0, 8));
+
+  Loop occupancyOnly;
+  occupancyOnly.loopLengthTicks = 2048;
+  TEST_ASSERT_TRUE(occupancyOnly.retainDeferredOverdubCompletionForTest(1, 60, 0, 1000));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(UINT32_MAX, occupancyOnly.overdubCoverageEarliestDueTick(),
+                                   "an occupancy-only hold has no closed consumer horizon yet");
+  TEST_ASSERT_FALSE(occupancyOnly.overdubCoverageRequiredNow(1000, 8));
+}
+
+/// DEC-237 3c1 — K = 0 under continuously owed coverage: the display grain is served while coverage is
+/// merely owed (not due), the candidate reaches `ready`, and the coverage worker still drains every tile
+/// once the display no longer owes service. No coverage prerequisite is missed.
+void test_dec237_slice3c1_k0_serves_display_while_coverage_is_owed() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  static Loop loop;
+  seedDenseTileLoop(loop);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.markOverdubCoverageSpan(0, kLoopTicks);
+  loop.notifyCommittedContentChangedForTest();
+  TEST_ASSERT_TRUE(loop.hasOwedOverdubCoverage());
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 0;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kLoopTicks;
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+
+  uint32_t turns = 0;
+  while ((!prep.ready || loop.hasOwedOverdubCoverage()) && turns < 4096) {
+    // Keep the coverage continuously owed while the display candidate is still being prepared.
+    if (!prep.ready) {
+      loop.markOverdubCoverageSpan(0, kLoopTicks);
+      loop.notifyCommittedContentChangedForTest();
+    }
+    const bool coverageRequiredNow = loop.overdubCoverageRequiredNow(0, 8);
+    const bool displayOwed = !prep.ready;
+    const MidiServiceDrain::CoverageDisplayChoice choice =
+        MidiServiceDrain::chooseCoverageOrDisplay(coverageRequiredNow, displayOwed);
+    if (choice == MidiServiceDrain::CoverageDisplayChoice::Display) {
+      (void)DisplayBasePreparation::step(prep, loop,
+                                         DisplayBasePreparation::kMaxEventsAppendedPerStep);
+    } else {
+      (void)loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    }
+    ++turns;
+  }
+  char msg[192];
+  std::snprintf(msg, sizeof(msg), "DEC-237 K0 display_ready=%d steps=%u owed=%u turns=%u",
+                prep.ready ? 1 : 0, static_cast<unsigned>(prep.steps),
+                static_cast<unsigned>(loop.overdubCoverageOwedCountForTest()),
+                static_cast<unsigned>(turns));
+  TEST_MESSAGE(msg);
+  TEST_ASSERT_TRUE_MESSAGE(prep.ready, msg);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, loop.overdubCoverageOwedCountForTest(), msg);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(prep.steps));
+  TEST_ASSERT_GREATER_THAN_UINT16(0, loop.overdubCoveragePreparedCountForTest());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao2_a_ordinary_window_matches_whole_loop);
@@ -1683,6 +1782,8 @@ int main(int, char**) {
   RUN_TEST(test_dec237_slice2_producer_inspects_at_most_the_declared_chunks);
   RUN_TEST(test_dec237_slice2_active_note_edit_stages_every_wrap_pass);
   RUN_TEST(test_dec237_slice3a_manager_services_the_staged_base_prep);
+  RUN_TEST(test_dec237_slice3c1_coverage_due_tick_preempts_display);
+  RUN_TEST(test_dec237_slice3c1_k0_serves_display_while_coverage_is_owed);
   RUN_TEST(test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes);
   return UNITY_END();
 }
