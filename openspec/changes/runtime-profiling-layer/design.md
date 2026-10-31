@@ -87,9 +87,9 @@ image is impossible while the profiler is profile-env-only (RED_TEAM R2). Retire
 - **Long** also reads `micros()` at entry and exit. Source selection is fixed:
   `wallUs = microsExit − microsEntry` (wrap-safe u32); if `wallUs < kCycleTrustUs` the cycle delta is
   reported, otherwise `wallUs` is reported and the record is marked coarse-sourced.
-  `kCycleTrustUs = 6,000,000` — one counter period (7,158,278 µs at 600 MHz) minus a 1.16 s guard band,
-  computed from the boot `cpu_hz` and `static_assert`ed against the nominal 600 MHz figure. Estimated
-  ~60–90 cycles per call (two `micros()` calls). Both overheads are measured at boot (D14).
+  `kCycleTrustUs` is computed once at boot as one counter period at the boot `cpu_hz` minus a 1 s guard
+  (`kCycleTrustGuardUs`): 7,158,278 − 1,000,000 = **6,158,278 µs** at 600 MHz. Estimated ~60–90 cycles
+  per call (two `micros()` calls). Both overheads are measured at boot (D14).
 
 The boot contract is read once from `cpuClockHzForObservation()`; `0` means unavailable and **every**
 measurement — short and long — is refused. Because `micros()` depends on the same counter, the wall
@@ -268,7 +268,7 @@ closes before the row so the two numbers are comparable.
 | `PlaybackPrewarm_slot` | `Track::prewarmPlaybackForSlot` body | long | COLD 25 ms | composes seven reserves; unbounded at boot/load | `capture_prewarm_split` |
 | `PlaybackPrewarm_views` | `LoopPlaybackRuntime::prewarmViews` body | long | COLD 25 ms | monolithic pool allocation (boot/load, overdub start); skipped on the prepared edge | none |
 | `ViewPrewarm_unit` | `runtime->stepViewPrewarm(...)` call in `Track::stepViewPrewarmForSlot`, closed before `viewPrewarmStep` | long | DEFERRED 5 ms (= the site's 5,000 µs guard) | one unit, but a unit is one external allocation measured at 17,350 µs and the time guard is secondary (DEC-231) — no hard cap | none (row after scope) |
-| `PlaybackWindow_build` | `Track::ensurePlaybackMergedMidiEventsBuilt` body | long | FRAME 2 ms | content-sized window, no hard event cap | none known |
+| `PlaybackWindow_build` | free function `ensurePlaybackMergedMidiEventsBuilt(Track&, …)` body | long | FRAME 2 ms | content-sized window, no hard event cap | none known |
 | `PlaybackViewService_grain` | `Track::stepPlaybackViewMaintenance` admitted grain | **short** | DEFERRED 5 ms | one declared grain, ≤ 64 inspected / ≤ 48 order / ≤ 64 retirement units (row 27) | verify in 1.5 |
 | `SnapshotPublish_step` | `Loop::stepPendingSnapshotPublish` call in `TrackDeferredMaintenance.cpp` | long | DEFERRED 5 ms | row 21 bounds construction only; the same call can publish (`publishedSnapshotRevision` moves) | qualification rows are outside the call |
 | `SaveWorkItem_step` | deferred-save work-item step | long | DEFERRED 5 ms | SD write | `persist_save,step` (state per site) |
@@ -414,3 +414,46 @@ precede slice 1.
 
 - Ring capacity and batch maxima — tunable after the first two captures (TBD-3).
 - Whether calibration should also report a nested parent+child pair; deferred until first numbers.
+
+## Pre-implementation review (2026-10-31, before slice 1)
+
+Per `.cursor/rules/Plan-Pre-Implementation-Review.mdc`, against the code at `fec18994`. Site-level
+detail: [evidence/DECISION_REVIEW.md § Site table review](evidence/DECISION_REVIEW.md).
+
+### Ready
+
+- Scope authorized (`CURRENT_WORK.md`, 2026-10-31); DEC-239 appended; decision review filled.
+- Baselines recorded before any firmware edit ([evidence/PREFLIGHT.md](evidence/PREFLIGHT.md)): default
+  `2c7bb5d3…`, no-grain `22d5638f…`, both variables 96,192 / code 391,928 / padding 1,288.
+- Profile env, its `ram1_budget.json` alias and the `ProfileDiagRows.cpp` linker rule exist.
+- Boot hook: immediately after `emitBootResetCapture(...)` in `setup()`, before
+  `trackManager.prewarmPlaybackRuntime()`.
+- HITL: owner rig reused unchanged; dumps sent from the capture session after the rig exits.
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Runtime per-ID arming | Follow-up change (owner, 2026-10-31) |
+| `PlaybackWindow_build` owner | Free function `ensurePlaybackMergedMidiEventsBuilt(Track&, …)`, not a `Track` member |
+| Command dispatch vs depth gate | `processHitlSerialCommands()` is called from `loop()` outside every scope |
+| Tier-A prefix form | `PROGMEM` named prefix in `isTierATextLine` (flash-resident, parsed by `check_marker_contract.py`), not an accessor function — the checker does not resolve accessor prefixes (it reports `DIAG,idle_turn,` as not Tier-A today) |
+| `Display_frame_phase` placement | The phase `switch` in `DisplayManager::update`, only when the phase is not `Idle` |
+| `IdleOwner_unit` placement | Whole `Track::processDeferredIdleMaintenance` body; its no-work gate is the caller's admission |
+
+### Open items the implementer pins at session start
+
+1. **ITCM headroom is 448 B above the floor.** Scope objects are `FLASHMEM`-backed: slice 1 made the
+   constructor, destructor and platform reads out-of-line `FLASHMEM` functions (no inline code at a site
+   beyond the calls), so calibration measures that cost. Measure the profile env after
+   slice 1 *and* after each slice-3/4 site; a site in an ITCM function that costs padding is moved to
+   a `FLASHMEM` wrapper or dropped.
+2. **Native has no `DMAMEM`/`FLASHMEM`/`ARM_DWT_CYCCNT`.** Clock and IPSR shims are the only
+   platform seam; the native test owns fake values (D13).
+3. ~~`kCycleTrustUs` source~~ — **resolved in slice 1:** computed at `initAtBoot()` from `cpu_hz` minus a
+   1 s guard (6,158,278 µs at 600 MHz); pinned by the boundary fixture.
+4. **Slice-3/4 exact line placement** for `PlaybackViewService_grain`, `SaveWorkItem_step`,
+   `OverdubStart_body` and `LoadStep` is pinned in their execution packets with the rule recorded in
+   the site review.
+5. **Tooling gap seen in passing:** `check_marker_contract.py` misreports accessor-function prefixes
+   (`DIAG,idle_turn,`, `DIAG,stop_tail,`). Not this change's scope; noted for a host-tooling fix.

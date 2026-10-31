@@ -13451,3 +13451,44 @@ image, retained in `captures/midi-first-2c7bb5d34039/`, boot verified; rig run `
 **Open.** The likely mechanism (owed display starving coverage until urgent, then an indivisible catch-up) is
 inferred, not instrumented. The remaining gap above the 10-30 baseline is the stale-root full pass walk per committed
 change (DEC-236 open item).
+
+## DEC-239 — Runtime profiling (Level 1): validity contract, report-only ceilings, bounded dumps
+
+**Date:** 2026-10-31 · **Status:** Accepted — contract; implementation in progress
+(`openspec/changes/runtime-profiling-layer/`).
+**Owner:** `RuntimeProfiler` (`include/Utils/RuntimeProfiler.h`, `src/Utils/RuntimeProfiler.cpp`).
+
+**Context.** DEC-230 and DEC-231 each needed a bespoke `micros()` row (`capture_prewarm_split`,
+`view_prewarm_step`) and a reflash to attribute one stall. A standard profile scope replaces the next
+such row with a dump. Decision review: `openspec/changes/runtime-profiling-layer/evidence/DECISION_REVIEW.md`.
+
+**Decision.**
+
+1. **Validity is a property of the site, never of the ceiling.** A *short* scope (DWT `CYCCNT` only) is
+   legal only with a recorded structural guarantee that the body cannot span one counter period
+   (7.158 s at 600 MHz). A *long* scope also brackets with the systick-extended `micros()` and reports
+   cycles only when the wall delta is below `kCycleTrustUs` (period minus a ≥ 1 s guard), else the
+   wall duration marked coarse; every long site records why it cannot reach one `micros()` period
+   (≈ 71.6 min). An unavailable CPU rate, an exception-context entry (`IPSR ≠ 0`) or an out-of-order
+   exit refuses the measurement; an order fault poisons nesting until reset. This is observation only
+   and does not revisit DEC-128's rejection of DWT as a clock reference.
+2. **Ceiling classes are report-only.** `CLOCK 50 µs`, `HOT 250 µs`, `FRAME 2 ms`, `DEFERRED 5 ms`,
+   `COLD 25 ms`, or an existing named budget (`MidiServiceDrain::kOwnerWorkBudgetUs`). A class decides
+   ring entry and the over-ceiling count only. Per DEC-043 point 4 and DEC-214, naming or timing a step
+   does not bound it; **no `ExecutionBounds.md` row is added or reclassified.**
+3. **Dumps are bounded and run only at depth zero.** `!PROFILE_STATS` ≤ 16 rows, `!PROFILE_RING` ≤ 32
+   rows per request, persisted independent cursors, a ring sequence horizon pinned at the first batch,
+   terminators with `resume`/`gap`/`poisoned`; every profile command (including `!PROFILE_RESET`) is
+   refused while any scope is active. Rows are direct-first/ring-fallback and not transport-gated
+   (DEC-228 K1/K4).
+4. **Dedicated environment, total absence elsewhere.** `RUNTIME_PROFILE_SCOPES=1` only in
+   `teensy41-capture-serial-profile`; the default and `-no-grain` images carry no profiler code, data,
+   literal, Tier-A prefix or command. Storage is `DMAMEM` (NOLOAD, cleared by `initAtBoot()`); names
+   and formats live in the carved `ProfileDiagRows.cpp`.
+5. **Additive.** `HotPathTelemetry` and `Diagnostics::Timing` are untouched; the profiler is their
+   declared successor and retirement is a staged follow-up
+   (`openspec/changes/runtime-profiling-layer/RETIREMENT.md`). Runtime per-ID arming is a follow-up
+   change (owner decision, 2026-10-31).
+
+**Consequences.** A new timing question is answered by adding one scope line and an append-only
+`ProfileId`, not a new row. Profiler output is never an input to runtime logic.

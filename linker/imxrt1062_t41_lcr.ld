@@ -186,6 +186,10 @@ SECTIONS
 		   removing this line; ITCM `code` byte-identical). Prefixes moved here instead of re-basing the
 		   budget. Read-only; the TU owns no mutable state. */
 		*StopDiagRows.cpp.o(.rodata.str* .rodata.*.str*)
+		/* Runtime profiler names, row formats and command strings (DEC-239,
+		   openspec/changes/runtime-profiling-layer). Compiled only with RUNTIME_PROFILE_SCOPES;
+		   the rule matches no object in other envs. Read-only; the TU owns no mutable state. */
+		*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 
