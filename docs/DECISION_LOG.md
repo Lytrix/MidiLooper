@@ -13418,3 +13418,36 @@ compose. All other committed sources keep the key unchanged.
 middle-bar follow phase. A bar-stable snap was tried and reverted: it blanked the entering bar until the windowed
 visual-cache tiles caught up. The bar-stable origin from DEC-232 therefore also needs next-bar tile preparation
 ahead of the slide. The median MIDI gap above baseline is still unattributed.
+
+## DEC-238 — MIDI timing first: the staged display-base arbitration ships off
+
+**Date:** 2026-10-31 · **Status:** Accepted — shipped off; device-verified on the owner rig chain.
+
+**Context.** DEC-237 Slice 3 wired the staged display-base producer as an idle-owner child of the VisualCache turn,
+with a K=0 arbitration (`chooseCoverageOrDisplay`): when the display base is owed and coverage is not urgent, the
+display child owns the whole turn. On the owner rig chain (`hitl_midifile_chain.py`, 20-bar record + 12 overdubs,
+same 47 s overdub span):
+
+| Session | Image | Arbitration | MIDI gap median / max | late_on max |
+|---|---|---|---|---|
+| `session_20261031_212428` | `0ebccccc…` | on | **281 / 365 ms** (664 ms overall) | 195 ms |
+| `session_20261031_213255` | `2c7bb5d3…` | off | 81 / 197 ms | 96 ms |
+| `session_20261031_214619` | `2c7bb5d3…` (re-flashed) | off | 94 / 204 ms | 157 ms |
+| 10-30 baseline `194716` | — | — | 58 / 200 ms | 108 ms |
+
+With it on, idle-maintenance turns held the main loop for 200–554 ms with no instrumented child (`child=0`), for
+the whole chain, long after both candidates completed (`disp_base_prep` 65.9 s and 67.8 s). The commit `d92dae32`
+reading ("no evidence the arbitration itself caused" it) is superseded by this on/off pair.
+
+**Decision.** `kDisplayBaseArbitrationEnabled = false` in `runDeferredIdleMaintenance` (`src/main.cpp`). The rest of
+Slice 3 stays in the tree, dormant. Any idle-owner child that can take a VisualCache or realtime-adjacent turn may be
+enabled only after an **on/off run of the owner rig chain** shows no MIDI-gap or late-note regression (median and max
+over the overdub span). Native work bounds are necessary but not sufficient.
+
+**Evidence.** HEX `2c7bb5d340395ae54ad65f5c310de058cc7a04a8ff383c62dd1462efc67927fc`, byte-identical to the off A/B
+image, retained in `captures/midi-first-2c7bb5d34039/`, boot verified; rig run `captures/midifile-chain-midi-first-01/`
+(12 overdubs, no denial, `tierA_evict=0`).
+
+**Open.** The likely mechanism (owed display starving coverage until urgent, then an indivisible catch-up) is
+inferred, not instrumented. The remaining gap above the 10-30 baseline is the stale-root full pass walk per committed
+change (DEC-236 open item).

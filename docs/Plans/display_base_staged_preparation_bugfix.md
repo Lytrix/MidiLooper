@@ -446,3 +446,10 @@ The follow-phase windows are reported separately and are **not** acceptance for 
   the per-pass wrap staging exceeded the 4 ms child bound by a wide margin, so the producer needs a boundary-windowed or
   resumable wrap step — **not** a larger grain. Stop-edge repair (`reason=5`) and the wrap-staging bound come first; 3c2
   stays blocked.
+- **DEC-238 (2026-10-31 21:50) — arbitration shipped off for MIDI timing.** The on/off pair on the owner rig chain is
+  281/365 ms (on, `session_20261031_212428`, `0ebccccc…`) against 81/197 and 94/204 ms (off, `213255` and `214619`,
+  `2c7bb5d3…`) median/max MIDI gap over the overdub span. With it on, the long idle turns (200–554 ms, `child=0`)
+  persisted for the whole chain after both candidates completed. This supersedes the `d92dae32` reading. Slice 3 is
+  dormant behind `kDisplayBaseArbitrationEnabled = false`; it re-enables only after an on/off rig run shows no MIDI
+  regression. Next for this plan: instrument which unit holds those residual turns (inferred: coverage starved until
+  urgent, then an indivisible catch-up) before any further wiring.

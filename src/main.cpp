@@ -647,10 +647,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   // served only when coverage has no consumer due tick inside the owner lead, and only under the
   // idle-child admission gate. One bounded grain owns the VisualCache turn when selected; the frame
   // adoption is Slice 3c2.
-  // DEC-237 3c1 A/B diagnostic gate: the shipping value is true. The false build is the byte-near
-  // baseline used to test whether the new arbitration changed the real-time owner schedule; it must be
-  // restored to true before any non-diagnostic image is kept.
-  constexpr bool kDisplayBaseArbitrationEnabled = true;
+  // DEC-238 -- MIDI timing first: the shipping value is false. With the arbitration on, the owner rig's
+  // 12-overdub chain ran at a 281 ms median / 664 ms worst MIDI service gap (session_20261031_212428,
+  // image 0ebccccc) against 81 ms / 197 ms with it off (session_20261031_213255, image 2c7bb5d3), and the
+  // long idle turns persisted after the candidates completed. It may be enabled again only when an
+  // on/off run of the owner rig chain shows no MIDI-gap or late-note regression.
+  constexpr bool kDisplayBaseArbitrationEnabled = false;
   if (kDisplayBaseArbitrationEnabled &&
       deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
     const uint8_t selectedTrackIndex = trackManager.getSelectedTrackIndex();
