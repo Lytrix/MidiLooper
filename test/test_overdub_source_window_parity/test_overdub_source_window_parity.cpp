@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <tuple>
 #include <vector>
 
@@ -53,6 +54,21 @@ std::vector<Key> keysOf(const NoteUtils::DisplayNoteVec& notes) {
   for (const auto& n : notes) out.push_back(keyOf(n));
   std::sort(out.begin(), out.end());
   return out;
+}
+
+void assertSameNoteSet(const NoteUtils::DisplayNoteVec& expected,
+                       const NoteUtils::DisplayNoteVec& got, const char* what) {
+  const std::vector<Key> expectedKeys = keysOf(expected);
+  const std::vector<Key> gotKeys = keysOf(got);
+  char msg[192];
+  std::snprintf(msg, sizeof(msg), "%s expected=%u got=%u", what,
+                static_cast<unsigned>(expectedKeys.size()),
+                static_cast<unsigned>(gotKeys.size()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expectedKeys.size()),
+                                   static_cast<uint32_t>(gotKeys.size()), msg);
+  for (size_t i = 0; i < expectedKeys.size(); ++i) {
+    TEST_ASSERT_TRUE_MESSAGE(expectedKeys[i] == gotKeys[i], msg);
+  }
 }
 
 void appendPair(LoopEventStore& store, NoteId id, uint8_t pitch, uint32_t onTick, uint32_t offTick) {
@@ -765,6 +781,48 @@ void seedDenseTileLoop(Loop& loop) {
   loop.loopLengthTicks = length;
   loop.markDisplayCachesStale();
 }
+
+/// DEC-237 Slice 2 — a committed multi-pass loop in the shape the staged producer must cover: a 20-bar
+/// record pass plus active overdub passes with body rows spread across the whole range, and optionally a
+/// loop-boundary note that the wrap-held append must stage. Built directly in `LoopPasses` (the same
+/// committed shape the parity suite uses) so the producer's work bound is independent of capture setup.
+NoteId seedDenseCommittedLoop(Loop& loop, uint16_t overdubPasses, uint16_t notesPerPass,
+                              uint32_t loopLength, bool withWrapPair) {
+  const uint32_t bars = loopLength / kBar;
+  LoopEventStore record;
+  NoteId id = 20000;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    const uint32_t on = bar * kBar + 100;
+    appendPair(record, id++, static_cast<uint8_t>(48 + bar % 12), on, on + 120);
+  }
+  NoteId wrapId = kInvalidNoteId;
+  if (withWrapPair) {
+    // The NoteOn is in the last bar and the NoteOff is in the first: a wrap-split pair.
+    wrapId = id++;
+    appendPair(record, wrapId, 72, loopLength - 200, 100);
+  }
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = loopLength;
+
+  for (uint16_t p = 0; p < overdubPasses; ++p) {
+    LoopEventStore store;
+    for (uint16_t n = 0; n < notesPerPass; ++n) {
+      const uint32_t slot =
+          (static_cast<uint32_t>(p) * notesPerPass + n) % (loopLength / 64);
+      const uint32_t on = slot * 64 + 20;
+      const uint8_t pitch =
+          static_cast<uint8_t>(50 + ((static_cast<uint32_t>(p) * notesPerPass + n) % 60));
+      appendPair(store, id++, pitch, on, on + 40);
+    }
+    OverdubPass pass{};
+    pass.id = static_cast<PassId>(30000 + p);
+    pass.mergeSequence = p + 1;
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, pass.committedChunkIds));
+    loop.passes.overdubPasses.push_back(std::move(pass));
+  }
+  loop.markDisplayCachesStale();
+  return wrapId;
+}
 }  // namespace
 
 // RIAO-3.1 — the view is a **read-only cut**: with no producer completion it writes nothing, and the
@@ -1165,6 +1223,345 @@ void test_dec237_slice2_pure_producer_20_bar_13_pass_parity() {
   TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(maxTileNotes));
 }
 
+/// DEC-237 Slice 2 — the traversal bounds chunk spans inspected, not just copied events. A window that
+/// intersects three chunks at the end of a 65-chunk pass must not read all 65 in one grain; the cap
+/// splits the pass, and the uncapped control still reads it whole.
+void test_dec237_window_traversal_inspects_at_most_the_declared_chunks() {
+  LoopEventStore store;
+  uint32_t tick = 0;
+  for (uint16_t chunk = 0; chunk < 65; ++chunk) {
+    for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+      MidiEvent on = MidiEvent::NoteOn(tick++, 1, 60, 100);
+      on.noteId = kInvalidNoteId;
+      TEST_ASSERT_TRUE(store.append(on));
+    }
+  }
+  CommittedChunkIdList chunks;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, chunks));
+  TEST_ASSERT_EQUAL_UINT32(65, static_cast<uint32_t>(chunks.size()));
+
+  const uint32_t loopLength = 65 * LoopEventStoreConfig::CHUNK_CAPACITY;
+  const uint32_t windowLength = kBar;
+  const uint32_t windowStart = loopLength - windowLength;
+  const CommittedChunkIdList* listPtr = &chunks;
+
+  SessionMidiEventVec cappedOut;
+  CommittedEventRange::WindowTraversalCursor cappedCursor;
+  const CommittedEventRange::WindowTraversalResult first =
+      CommittedEventRange::appendWindowBudgeted(
+          &listPtr, 1, loopLength, windowStart, windowLength,
+          std::numeric_limits<size_t>::max(), cappedCursor, cappedOut, 64);
+  TEST_ASSERT_FALSE_MESSAGE(first.complete, "the cap must leave the pass incomplete");
+  TEST_ASSERT_EQUAL_UINT32(64, static_cast<uint32_t>(first.chunksInspected));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(first.chunksCopied));
+  const CommittedEventRange::WindowTraversalResult second =
+      CommittedEventRange::appendWindowBudgeted(
+          &listPtr, 1, loopLength, windowStart, windowLength,
+          std::numeric_limits<size_t>::max(), cappedCursor, cappedOut, 64);
+  TEST_ASSERT_TRUE_MESSAGE(second.complete, "the second grain completes the pass");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(second.chunksInspected));
+  TEST_ASSERT_EQUAL_UINT32(65, static_cast<uint32_t>(first.chunksInspected + second.chunksInspected));
+
+  SessionMidiEventVec uncappedOut;
+  CommittedEventRange::WindowTraversalCursor uncappedCursor;
+  const CommittedEventRange::WindowTraversalResult whole =
+      CommittedEventRange::appendWindowBudgeted(
+          &listPtr, 1, loopLength, windowStart, windowLength,
+          std::numeric_limits<size_t>::max(), uncappedCursor, uncappedOut, 0);
+  TEST_ASSERT_TRUE_MESSAGE(whole.complete, "the uncapped control reads the pass in one call");
+  TEST_ASSERT_EQUAL_UINT32(65, static_cast<uint32_t>(whole.chunksInspected));
+}
+
+/// DEC-237 Slice 2 — the producer's per-step work bound. Body tiles are one traversal grain, wrap rows are
+/// one pass layer per grain, and the candidate is assembled incrementally, so no turn projects every pass
+/// or scans the accumulated candidate. The constants are deterministic counts, not host wall-clock.
+void test_dec237_slice2_producer_steps_stay_within_the_declared_work_bound() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  (void)seedDenseCommittedLoop(loop, 13, 32, kStaleRootLength, true);
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kStaleRootLength;
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+  uint32_t turns = 0;
+  while (!prep.ready && turns < 200000) {
+    (void)DisplayBasePreparation::step(prep, loop,
+                                       DisplayBasePreparation::kMaxEventsAppendedPerStep);
+    ++turns;
+  }
+  char msg[224];
+  std::snprintf(msg, sizeof(msg),
+                "DEC-237 work chunks=%u events=%u passes=%u wrap=%u merge=%u steps=%u S=%u",
+                static_cast<unsigned>(prep.maxWork.chunksInspected),
+                static_cast<unsigned>(prep.maxWork.eventsAppended),
+                static_cast<unsigned>(prep.maxWork.passLayersProjected),
+                static_cast<unsigned>(prep.maxWork.wrapRowsStaged),
+                static_cast<unsigned>(prep.maxWork.mergeComparisons),
+                static_cast<unsigned>(prep.steps), static_cast<unsigned>(prep.wrapPassCount));
+  TEST_MESSAGE(msg);
+  std::printf("%s\n", msg);
+  TEST_ASSERT_TRUE(prep.ready);
+  TEST_ASSERT_EQUAL_UINT16(5, prep.tileCount);
+  TEST_ASSERT_EQUAL_UINT16(14, prep.wrapPassCount);
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
+      prep.tileCount + prep.wrapPassCount, prep.steps,
+      "every tile and every active pass needs at least one bounded grain");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxChunksInspectedPerStep,
+                                   prep.maxWork.chunksInspected);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxEventsAppendedPerStep,
+                                   prep.maxWork.eventsAppended);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxPassLayersProjectedPerStep,
+                                   prep.maxWork.passLayersProjected);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxWrapRowsStagedPerStep,
+                                   prep.maxWork.wrapRowsStaged);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxMergeComparisonsPerStep,
+                                   prep.maxWork.mergeComparisons);
+}
+
+/// DEC-237 Slice 2 — parity against the independent single-shot composition, per tile and over the whole
+/// range, including the wrap-held rows. Body tiles must be composed before wrap rows (a wrap row replaces
+/// a body row at the same pitch+start), which is why the whole-range oracle is the authoritative one.
+void test_dec237_slice2_staged_base_parity_per_tile_and_whole_range() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  (void)seedDenseCommittedLoop(loop, 13, 32, kStaleRootLength, true);
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kStaleRootLength;
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+  for (uint32_t turns = 0; !prep.ready && turns < 200000; ++turns) {
+    (void)DisplayBasePreparation::step(prep, loop,
+                                       DisplayBasePreparation::kMaxEventsAppendedPerStep);
+  }
+  TEST_ASSERT_TRUE(prep.ready);
+
+  NoteUtils::DisplayNoteVec whole;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0,
+                                                     kStaleRootLength, whole);
+  loop.appendOverdubPassDisplayNotes(whole);
+  assertSameNoteSet(whole, prep.stagedNotes, "DEC-237 whole-range parity");
+
+  const uint32_t tileUnit = CoveragePrerequisite::tileLengthTicks();
+  for (uint16_t tile = 0; tile < prep.tileCount; ++tile) {
+    const uint32_t start = static_cast<uint32_t>(tile) * tileUnit;
+    uint32_t length = kStaleRootLength - start;
+    if (length > tileUnit) {
+      length = tileUnit;
+    }
+    NoteUtils::DisplayNoteVec expected;
+    LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, start,
+                                                       length, expected);
+    loop.appendOverdubPassDisplayNotes(expected);
+    DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(expected, start, length,
+                                                                   loop.loopLengthTicks);
+    NoteUtils::DisplayNoteVec got = prep.stagedNotes;
+    DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(got, start, length,
+                                                                   loop.loopLengthTicks);
+    char what[64];
+    std::snprintf(what, sizeof(what), "DEC-237 tile %u parity", static_cast<unsigned>(tile));
+    assertSameNoteSet(expected, got, what);
+  }
+}
+
+/// DEC-237 Slice 2 — the wrap head/tail identity survives candidate assembly. A wrap-split pair shares a
+/// NoteId at different starts; the assembly key includes the start, while the resolver's per-pass key is
+/// the bare NoteId. Both scopes are pinned here and in the index unit case below.
+void test_dec237_slice2_wrap_identity_survives_candidate_assembly() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  const NoteId wrapId = seedDenseCommittedLoop(loop, 1, 8, kStaleRootLength, true);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, wrapId);
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = 0;
+  key.rangeLength = kStaleRootLength;
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, kBar));
+  for (uint32_t turns = 0; !prep.ready && turns < 200000; ++turns) {
+    (void)DisplayBasePreparation::step(prep, loop,
+                                       DisplayBasePreparation::kMaxEventsAppendedPerStep);
+  }
+  TEST_ASSERT_TRUE(prep.ready);
+
+  NoteUtils::DisplayNoteVec whole;
+  LoopContentResolution::resolveDisplayNotesInWindow(loop.passes, loop.loopLengthTicks, 0,
+                                                     kStaleRootLength, whole);
+  loop.appendOverdubPassDisplayNotes(whole);
+
+  auto rowsWithId = [](const NoteUtils::DisplayNoteVec& notes, NoteId id) {
+    std::vector<Key> rows;
+    for (const NoteUtils::DisplayNote& note : notes) {
+      if (note.noteId == id) {
+        rows.push_back(keyOf(note));
+      }
+    }
+    std::sort(rows.begin(), rows.end());
+    return rows;
+  };
+  const std::vector<Key> expected = rowsWithId(whole, wrapId);
+  const std::vector<Key> got = rowsWithId(prep.stagedNotes, wrapId);
+  char msg[160];
+  std::snprintf(msg, sizeof(msg), "DEC-237 wrap id=%u expected=%u got=%u",
+                static_cast<unsigned>(wrapId), static_cast<unsigned>(expected.size()),
+                static_cast<unsigned>(got.size()));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, static_cast<uint32_t>(expected.size()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expected.size()),
+                                   static_cast<uint32_t>(got.size()), msg);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_TRUE_MESSAGE(expected[i] == got[i], msg);
+  }
+}
+
+/// DEC-237 Slice 2 — a sparse 4-bar window over a 65-chunk record pass is the case the inspected-chunk
+/// cap exists for. The producer must split the tile across two grains and never report more than the
+/// declared bound in one step. Without the cap the same pass completes in one tile grain.
+void test_dec237_slice2_producer_inspects_at_most_the_declared_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore record;
+  const uint32_t loopLength = 65 * LoopEventStoreConfig::CHUNK_CAPACITY;
+  const uint32_t windowStart = loopLength - 4 * kBar;
+  uint32_t tick = 0;
+  for (uint16_t chunk = 0; chunk < 65; ++chunk) {
+    for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+      // The chunks that intersect the requested 4-bar window each carry exactly one event inside it;
+      // every other event stays before it. The traversal must inspect all 65 chunk spans but copies only
+      // ~12 events, so the inspected-chunk cap — not the event budget — is what splits the grain.
+      uint32_t eventTick = tick++;
+      if (chunk >= 53) {
+        eventTick = (i == LoopEventStoreConfig::CHUNK_CAPACITY - 1)
+                        ? windowStart + (chunk - 53)
+                        : i;
+      }
+      MidiEvent on = MidiEvent::NoteOn(eventTick, 1, 60, 100);
+      on.noteId = kInvalidNoteId;
+      TEST_ASSERT_TRUE(record.append(on));
+    }
+  }
+  Loop loop;
+  loop.seedRecordPassFromStore(record);
+  loop.loopLengthTicks = loopLength;
+
+  DisplayBasePreparation::Key key;
+  key.trackIndex = 7;
+  key.displaySlot = 0;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.loopLengthTicks = loop.loopLengthTicks;
+  key.snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  key.publishedIdentity = key.snapshotCurrent ? loop.publishedSnapshotIdentity() : nullptr;
+  key.rangeStart = loopLength - 4 * kBar;
+  key.rangeLength = 4 * kBar;
+  TEST_ASSERT_EQUAL_UINT16(1, CoveragePrerequisite::tileCount(key.rangeLength));
+
+  DisplayBasePreparation::Prep prep;
+  TEST_ASSERT_TRUE(DisplayBasePreparation::start(prep, loop, key, 0));
+  uint32_t turns = 0;
+  while (!prep.ready && turns < 200000) {
+    (void)DisplayBasePreparation::step(prep, loop,
+                                       DisplayBasePreparation::kMaxEventsAppendedPerStep);
+    ++turns;
+  }
+  char msg[160];
+  std::snprintf(msg, sizeof(msg), "DEC-237 sparse chunks=%u steps=%u passes=%u",
+                static_cast<unsigned>(prep.maxWork.chunksInspected),
+                static_cast<unsigned>(prep.steps),
+                static_cast<unsigned>(prep.maxWork.passLayersProjected));
+  TEST_MESSAGE(msg);
+  std::printf("%s\n", msg);
+  TEST_ASSERT_TRUE(prep.ready);
+  TEST_ASSERT_EQUAL_UINT16(1, prep.tileCount);
+  TEST_ASSERT_EQUAL_UINT16(1, prep.wrapPassCount);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(DisplayBasePreparation::kMaxChunksInspectedPerStep,
+                                   prep.maxWork.chunksInspected);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(3, prep.steps,
+                                   "one wrap layer + two tile grains for the capped 65-chunk pass");
+}
+
+/// DEC-237 Slice 2 — the two identity scopes are deliberate: the resolver replaces by bare NoteId, while
+/// cross-tile assembly keys a valid row by NoteId+start so a wrap head/tail pair survives. The wrap merge
+/// replaces a body row at pitch+start and keeps the first wrap-held row.
+void test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes() {
+  NoteUtils::DisplayNote tail{};
+  tail.noteId = 7;
+  tail.note = 72;
+  tail.startTick = 900;
+  tail.endTick = 150;
+  NoteUtils::DisplayNote head{};
+  head.noteId = 7;
+  head.note = 72;
+  head.startTick = 0;
+  head.endTick = 150;
+
+  NoteUtils::DisplayNoteVec assembled;
+  DisplayNoteUpsertIndex candidate;
+  TEST_ASSERT_TRUE(candidate.insertIfAbsent(assembled, tail,
+                                            DisplayNoteUpsertIndex::KeyMode::NoteIdAndStart));
+  TEST_ASSERT_TRUE(candidate.insertIfAbsent(assembled, head,
+                                            DisplayNoteUpsertIndex::KeyMode::NoteIdAndStart));
+  TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(assembled.size()));
+  TEST_ASSERT_FALSE(candidate.insertIfAbsent(assembled, tail,
+                                             DisplayNoteUpsertIndex::KeyMode::NoteIdAndStart));
+
+  NoteUtils::DisplayNoteVec resolver;
+  DisplayNoteUpsertIndex passLocal;
+  TEST_ASSERT_TRUE(passLocal.upsert(resolver, tail, DisplayNoteUpsertIndex::KeyMode::NoteId));
+  TEST_ASSERT_FALSE(passLocal.upsert(resolver, head, DisplayNoteUpsertIndex::KeyMode::NoteId));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(resolver.size()),
+                                   "the resolver's bare NoteId replacement is unchanged");
+
+  NoteUtils::DisplayNote body{};
+  body.noteId = 8;
+  body.note = 72;
+  body.startTick = 0;
+  body.endTick = 900;
+  NoteUtils::DisplayNoteVec wrapTarget;
+  DisplayNoteUpsertIndex wrap;
+  TEST_ASSERT_TRUE(wrap.upsert(wrapTarget, body, DisplayNoteUpsertIndex::KeyMode::PitchStart, 1000));
+  TEST_ASSERT_FALSE_MESSAGE(
+      wrap.upsert(wrapTarget, head, DisplayNoteUpsertIndex::KeyMode::PitchStart, 1000),
+      "the wrap head replaces the existing body row at the same pitch+start");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(wrapTarget.size()));
+  TEST_ASSERT_EQUAL_UINT32(150, wrapTarget.front().endTick);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::isWrapHeldDisplayNote(wrapTarget.front(), 1000));
+  NoteUtils::DisplayNote secondHead = head;
+  secondHead.endTick = 140;
+  TEST_ASSERT_FALSE(wrap.upsert(wrapTarget, secondHead, DisplayNoteUpsertIndex::KeyMode::PitchStart, 1000));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(150, wrapTarget.front().endTick,
+                                   "the first wrap-held row wins at the same pitch+start");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_riao2_a_ordinary_window_matches_whole_loop);
@@ -1191,5 +1588,11 @@ int main(int, char**) {
   RUN_TEST(test_dec237_coverage_duty_cycle_reaches_idle_on_a_dense_chain);
   RUN_TEST(test_dec237_coverage_stays_owed_under_continuous_input_then_reaches_idle);
   RUN_TEST(test_dec237_slice2_pure_producer_20_bar_13_pass_parity);
+  RUN_TEST(test_dec237_window_traversal_inspects_at_most_the_declared_chunks);
+  RUN_TEST(test_dec237_slice2_producer_steps_stay_within_the_declared_work_bound);
+  RUN_TEST(test_dec237_slice2_staged_base_parity_per_tile_and_whole_range);
+  RUN_TEST(test_dec237_slice2_wrap_identity_survives_candidate_assembly);
+  RUN_TEST(test_dec237_slice2_producer_inspects_at_most_the_declared_chunks);
+  RUN_TEST(test_dec237_display_note_upsert_index_keeps_the_two_identity_scopes);
   return UNITY_END();
 }

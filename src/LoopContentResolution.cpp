@@ -136,12 +136,19 @@ TRACK_COLD_MEM void upsertResolvedDisplayNote(NoteUtils::DisplayNoteVec& dest,
 TRACK_COLD_MEM void appendPassLocalDisplayNotes(const SessionMidiEventVec& layer,
                                                 uint32_t loopLengthTicks,
                                                 bool overdubPassWrapPairing,
-                                                NoteUtils::DisplayNoteVec& dest) {
+                                                NoteUtils::DisplayNoteVec& dest,
+                                                DisplayNoteUpsertIndex* noteIndex = nullptr) {
   if (layer.empty() || loopLengthTicks == 0) {
     return;
   }
   const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
       layer, loopLengthTicks, false, false, overdubPassWrapPairing);
+  if (noteIndex != nullptr) {
+    for (const NoteUtils::DisplayNote& note : notes) {
+      noteIndex->upsert(dest, note, DisplayNoteUpsertIndex::KeyMode::NoteId);
+    }
+    return;
+  }
   for (const NoteUtils::DisplayNote& note : notes) {
     upsertResolvedDisplayNote(dest, note);
   }
@@ -1833,7 +1840,14 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(
 
 TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
     const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
-    size_t eventBudget, TilePrepCursor& cursor) {
+    size_t eventBudget, TilePrepCursor& cursor, DisplayNoteUpsertIndex* noteIndex,
+    size_t maxChunks, size_t* chunksInspectedOut, size_t* eventsAppendedOut) {
+  if (chunksInspectedOut != nullptr) {
+    *chunksInspectedOut = 0;
+  }
+  if (eventsAppendedOut != nullptr) {
+    *eventsAppendedOut = 0;
+  }
   if (cursor.complete) {
     return true;
   }
@@ -1881,13 +1895,27 @@ TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
   }
 
   size_t remaining = eventBudget;
+  size_t chunkBudget = maxChunks;
+  size_t chunksThisCall = 0;
+  size_t eventsThisCall = 0;
   while (remaining > 0 && cursor.passCursor < listCount) {
     const CommittedEventRange::WindowTraversalResult result =
         CommittedEventRange::appendWindowBudgeted(&lists[cursor.passCursor], 1, loopLengthTicks,
                                                   windowStart, windowLength, remaining,
-                                                  cursor.windowCursor, cursor.layer);
+                                                  cursor.windowCursor, cursor.layer, chunkBudget);
+    chunksThisCall += result.chunksInspected;
+    eventsThisCall += result.eventsAppended;
     remaining = result.eventsAppended >= remaining ? 0 : remaining - result.eventsAppended;
+    if (maxChunks != 0) {
+      chunkBudget = result.chunksInspected >= chunkBudget ? 0 : chunkBudget - result.chunksInspected;
+    }
     if (!result.complete) {
+      if (chunksInspectedOut != nullptr) {
+        *chunksInspectedOut = chunksThisCall;
+      }
+      if (eventsAppendedOut != nullptr) {
+        *eventsAppendedOut = eventsThisCall;
+      }
       return false;
     }
     // The pass's window is fully traversed: apply its edit rows, then keep the **edited** events for the
@@ -1896,13 +1924,23 @@ TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
     // edit"), and then pair it locally. Bounded by this pass's window content.
     applyActiveEdits(cursor.layer, passes, loopLengthTicks);
     cursor.rawEvents.insert(cursor.rawEvents.end(), cursor.layer.begin(), cursor.layer.end());
-    appendPassLocalDisplayNotes(cursor.layer, loopLengthTicks, false, cursor.notes);
+    appendPassLocalDisplayNotes(cursor.layer, loopLengthTicks, false, cursor.notes, noteIndex);
     cursor.layer.clear();
     CommittedEventRange::resetWindowTraversalCursor(cursor.windowCursor);
     ++cursor.passCursor;
     ++cursor.visitedPasses;
+    if (maxChunks != 0 && chunkBudget == 0 && cursor.passCursor < listCount) {
+      // The inspected-chunk cap is the step bound; the next pass starts on the next turn.
+      break;
+    }
   }
   cursor.complete = cursor.passCursor >= listCount;
+  if (chunksInspectedOut != nullptr) {
+    *chunksInspectedOut = chunksThisCall;
+  }
+  if (eventsAppendedOut != nullptr) {
+    *eventsAppendedOut = eventsThisCall;
+  }
   return cursor.complete;
 }
 

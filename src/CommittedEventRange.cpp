@@ -154,7 +154,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
                                           size_t listCount, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,
                                           size_t maxEvents, WindowTraversalCursor& cursor,
-                                          SessionMidiEventVec& out) {
+                                          SessionMidiEventVec& out, size_t maxChunks) {
   WindowTraversalResult result{};
   result.resumed = cursor.listIndex != 0 || cursor.chunkIndex != 0 || cursor.chunkEventOffset != 0;
   if (cursor.complete) {
@@ -213,6 +213,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
 #endif
 
   size_t appended = 0;
+  size_t inspectedThisCall = 0;
   size_t li = cursor.listIndex;
   while (li < listCount) {
     const CommittedChunkIdList* list = lists[li];
@@ -226,6 +227,20 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
 
     size_t ci = (li == cursor.listIndex) ? cursor.chunkIndex : 0;
     for (; ci < list->size(); ++ci) {
+      // Cap the span reads, not just the copied chunks: a window that intersects little can otherwise
+      // inspect every chunk of the pass in one grain. At least one chunk is inspected per call, so a
+      // capped caller always advances (the cursor resumes at `ci` next time).
+      if (maxChunks != 0 && inspectedThisCall >= maxChunks) {
+        cursor.listIndex = li;
+        cursor.chunkIndex = ci;
+        cursor.chunkEventOffset = 0;
+        result.eventsAppended = appended;
+        result.chunksInspected = inspectedThisCall;
+        result.complete = false;
+        CER_EMIT_TRAVERSAL(appended);
+        return result;
+      }
+      ++inspectedThisCall;
       const uint16_t chunkId = (*list)[ci];
       uint32_t firstTick = 0;
       uint32_t lastTick = 0;
@@ -297,6 +312,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
         cursor.chunkIndex = ci;
         cursor.chunkEventOffset = startOffset + take;
         result.eventsAppended = appended;
+        result.chunksInspected = inspectedThisCall;
         result.complete = false;
         CER_EMIT_TRAVERSAL(appended);
         return result;
@@ -313,6 +329,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
         }
         cursor.complete = cursor.listIndex >= listCount;
         result.eventsAppended = appended;
+        result.chunksInspected = inspectedThisCall;
         result.complete = cursor.complete;
         CER_EMIT_TRAVERSAL(appended);
         return result;
@@ -330,6 +347,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
   cursor.chunkIndex = 0;
   cursor.chunkEventOffset = 0;
   result.eventsAppended = appended;
+  result.chunksInspected = inspectedThisCall;
   result.complete = true;
   CER_EMIT_TRAVERSAL(appended);
   return result;

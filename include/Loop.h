@@ -1554,6 +1554,13 @@ struct Loop {
   /// Visual-cache entry: wrap-held heads/tails only. Interior wrap-paired
   /// body notes stay off the piano-roll list (204132 / NOTE_EDIT open).
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
+  /// DEC-237 Slice 2 — active committed passes in display order (record first, then active overdubs
+  /// with content). The staged display producer uses this as its per-pass staging count.
+  uint16_t activeCommittedPassCount() const;
+  /// DEC-237 Slice 2 — stage the wrap-held rows of exactly one active committed pass, in the same display
+  /// order. One pass per call; the producer iterates so a candidate never re-reads every pass per tile.
+  /// Returns false when `passIndex` is outside the active committed inventory.
+  bool appendOverdubWrapNotesForPass(uint16_t passIndex, NoteUtils::DisplayNoteVec& notes) const;
   /// Closed NoteOn identities in committed events but missing from `dest`
   /// (snapshot NoteRef / resolve miss). Cold path — kept for non-snapshot
   /// source-view origins and diagnostics; visual/adopt call sites unwound.

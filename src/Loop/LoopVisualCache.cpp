@@ -121,18 +121,6 @@ bool displayNotePitchStartPresent(const NoteUtils::DisplayNoteVec& notes,
   return false;
 }
 
-bool isWrapHeldDisplayNote(const NoteUtils::DisplayNote& note, uint32_t loopLength) {
-  if (loopLength == 0) {
-    return false;
-  }
-  const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
-  if (note.startTick >= tailStart) {
-    return true;
-  }
-  const uint32_t wrapWindow = loopLength - tailStart;
-  return note.startTick == 0 && note.endTick <= wrapWindow;
-}
-
 uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
                           uint32_t maxBarDistanceFromPriority) {
   if (dirtyBars.empty()) {
@@ -1040,7 +1028,7 @@ LOOP_COLD_MEM static void appendWrapPairedPassNotes(NoteUtils::DisplayNoteVec& n
     // so two passes may share pitch+start (`183043`). A linear same-start
     // remnant from non-wrap pairing is replaced, not skipped (`225200`).
     if (wrapHeldOnly) {
-      if (!isWrapHeldDisplayNote(note, loopLengthTicks)) {
+      if (!DisplayWindowUtils::isWrapHeldDisplayNote(note, loopLengthTicks)) {
         continue;
       }
       bool replaced = false;
@@ -1048,7 +1036,7 @@ LOOP_COLD_MEM static void appendWrapPairedPassNotes(NoteUtils::DisplayNoteVec& n
         if (existing.note != note.note || existing.startTick != note.startTick) {
           continue;
         }
-        if (!isWrapHeldDisplayNote(existing, loopLengthTicks)) {
+        if (!DisplayWindowUtils::isWrapHeldDisplayNote(existing, loopLengthTicks)) {
           existing = note;
         }
         replaced = true;
@@ -1092,6 +1080,54 @@ LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNote
 
 LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
   appendOverdubPassWrapPairedNotes(notes, true);
+}
+
+LOOP_COLD_MEM uint16_t Loop::activeCommittedPassCount() const {
+  uint16_t count = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    ++count;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+LOOP_COLD_MEM bool Loop::appendOverdubWrapNotesForPass(uint16_t passIndex,
+                                                       NoteUtils::DisplayNoteVec& notes) const {
+  if (loopLengthTicks == 0) {
+    return false;
+  }
+  EditPassVec activeEdits;
+  for (const EditPass& editPass : passes.editPasses) {
+    if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
+      activeEdits.push_back(editPass);
+    }
+  }
+  uint16_t index = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    if (index == passIndex) {
+      appendWrapPairedPassNotes(notes, passes.recordPass.committedChunkIds, activeEdits,
+                                loopLengthTicks, true);
+      return true;
+    }
+    ++index;
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+      continue;
+    }
+    if (index == passIndex) {
+      appendWrapPairedPassNotes(notes, pass.committedChunkIds, activeEdits, loopLengthTicks, true);
+      return true;
+    }
+    ++index;
+  }
+  return false;
 }
 
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(

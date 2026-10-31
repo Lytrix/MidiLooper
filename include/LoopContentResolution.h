@@ -19,6 +19,133 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Utils/DisplayWindowUtils.h"
+
+/// DEC-237 Slice 2 — identity-preserving display-note merge without a linear scan of the accumulated
+/// destination. The identity rules are the existing ones, not a new global uniqueness assumption:
+///   - `NoteId`: the per-pass resolver upsert (replace a valid NoteId, keep the first invalid pitch+start);
+///   - `NoteIdAndStart`: cross-tile candidate assembly (a wrap head/tail pair shares a NoteId at different
+///     starts, so the start tick is part of the key);
+///   - `PitchStart`: the wrap-held append (replace the first non-wrap row at the same pitch+start, keep the
+///     first wrap-held row).
+class DisplayNoteUpsertIndex {
+ public:
+  enum class KeyMode : uint8_t { NoteId, NoteIdAndStart, PitchStart };
+
+  void clear() {
+    index_.clear();
+    comparisons_ = 0;
+  }
+
+  /// Explicit comparisons performed by this index since `clear()`, for the deterministic work bound.
+  size_t comparisons() const { return comparisons_; }
+
+  /// Resolver upsert semantics. A valid `NoteId` row is replaced in place; an invalid row keeps the
+  /// first row at its pitch+start. `PitchStart` also replaces a non-wrap row at that pitch+start.
+  bool upsert(NoteUtils::DisplayNoteVec& dest, const NoteUtils::DisplayNote& note, KeyMode mode,
+              uint32_t loopLength = 0) {
+    const Key key = keyFor(note, mode);
+    ++comparisons_;
+    auto found = index_.find(key);
+    if (found != index_.end()) {
+      if (found->second >= dest.size()) {
+        found->second = static_cast<uint32_t>(dest.size());
+        dest.push_back(note);
+        return true;
+      }
+      NoteUtils::DisplayNote& existing = dest[found->second];
+      if (mode == KeyMode::PitchStart) {
+        if (!DisplayWindowUtils::isWrapHeldDisplayNote(existing, loopLength)) {
+          existing = note;
+        }
+        return false;
+      }
+      if (note.noteId != kInvalidNoteId) {
+        existing = note;
+      }
+      return false;
+    }
+    index_.emplace(key, static_cast<uint32_t>(dest.size()));
+    dest.push_back(note);
+    return true;
+  }
+
+  /// Record an already-present row in the table without appending it. Used to prefill the wrap table
+  /// from body rows that the candidate index already owns.
+  void indexExisting(const NoteUtils::DisplayNoteVec& dest, uint32_t index, KeyMode mode) {
+    if (index >= dest.size()) {
+      return;
+    }
+    const Key key = keyFor(dest[index], mode);
+    ++comparisons_;
+    if (index_.find(key) == index_.end()) {
+      index_.emplace(key, index);
+    }
+  }
+
+  /// Keep the first row for the key. Used for cross-tile assembly and to prefill the wrap table with
+  /// body rows, matching `displayNoteIdentityPresent` / the wrap append's replace-first rule.
+  bool insertIfAbsent(NoteUtils::DisplayNoteVec& dest, const NoteUtils::DisplayNote& note,
+                      KeyMode mode) {
+    const Key key = keyFor(note, mode);
+    ++comparisons_;
+    auto found = index_.find(key);
+    if (found != index_.end()) {
+      if (found->second < dest.size()) {
+        return false;
+      }
+      found->second = static_cast<uint32_t>(dest.size());
+      dest.push_back(note);
+      return true;
+    }
+    index_.emplace(key, static_cast<uint32_t>(dest.size()));
+    dest.push_back(note);
+    return true;
+  }
+
+ private:
+  struct Key {
+    uint32_t noteId = kInvalidNoteId;
+    uint32_t startTick = 0;
+    uint8_t pitch = 0;
+    bool operator==(const Key& other) const {
+      return noteId == other.noteId && startTick == other.startTick && pitch == other.pitch;
+    }
+  };
+  struct KeyHash {
+    size_t operator()(const Key& key) const {
+      uint64_t h = static_cast<uint64_t>(key.noteId) * 0x9E3779B97F4A7C15ull;
+      h ^= static_cast<uint64_t>(key.startTick) * 0xC2B2AE3D27D4EB4Full;
+      h ^= static_cast<uint64_t>(key.pitch) * 0x165667B19E3779F9ull;
+      h ^= h >> 29;
+      return static_cast<size_t>(h);
+    }
+  };
+  using Map =
+      std::unordered_map<Key, uint32_t, KeyHash, std::equal_to<Key>,
+                         ExternalMemoryFirstAllocator<std::pair<const Key, uint32_t>>>;
+
+  static Key keyFor(const NoteUtils::DisplayNote& note, KeyMode mode) {
+    Key key{};
+    if (mode == KeyMode::PitchStart) {
+      key.pitch = note.note;
+      key.startTick = note.startTick;
+    } else if (note.noteId == kInvalidNoteId) {
+      key.pitch = note.note;
+      key.startTick = note.startTick;
+    } else {
+      key.noteId = note.noteId;
+      if (mode == KeyMode::NoteIdAndStart) {
+        key.startTick = note.startTick;
+      }
+    }
+    return key;
+  }
+
+  Map index_;
+  size_t comparisons_ = 0;
+};
+
 struct ResolutionCostCounters {
   uint32_t eventsInHistory = 0;
   uint32_t passesInHistory = 0;
@@ -330,10 +457,16 @@ struct LoopContentResolution {
   static constexpr uint8_t kTilePrepMaxPasses = 32;
 
   /// Advance one grain. Returns true when the window's derivation is complete; `cursor.notes` then holds
-  /// the result. Consumes at most `eventBudget` events from the window traversal.
+  /// the result. Consumes at most `eventBudget` events from the window traversal. `maxChunks` bounds the
+  /// chunk spans inspected in this call (`0` keeps the historical unlimited behavior). `noteIndex`
+  /// accelerates the per-pass upsert without changing its identity semantics; pass `nullptr` for the
+  /// historical linear path. The out-params carry this call's deterministic work counts.
   static bool stepTilePreparation(const LoopPasses& passes, uint32_t loopLengthTicks,
                                   uint32_t windowStart, uint32_t windowLength, size_t eventBudget,
-                                  TilePrepCursor& cursor);
+                                  TilePrepCursor& cursor,
+                                  DisplayNoteUpsertIndex* noteIndex = nullptr,
+                                  size_t maxChunks = 0, size_t* chunksInspectedOut = nullptr,
+                                  size_t* eventsAppendedOut = nullptr);
 
   static void resolveDisplayNotesInWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,

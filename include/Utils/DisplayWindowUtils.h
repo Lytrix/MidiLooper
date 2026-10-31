@@ -1011,6 +1011,21 @@ inline bool displayNoteIdentityPresent(const NoteUtils::DisplayNoteVec& notes,
   return false;
 }
 
+/// A wrap-held row is the tail half of a note that crosses the loop boundary: it starts in the tail
+/// window (or at tick 0 for the head half) and its end lies before its start. The wrap-held append uses
+/// this predicate to replace a body row at the same pitch+start, never to duplicate it.
+inline bool isWrapHeldDisplayNote(const NoteUtils::DisplayNote& note, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return false;
+  }
+  const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+  if (note.startTick >= tailStart) {
+    return true;
+  }
+  const uint32_t wrapWindow = loopLength - tailStart;
+  return note.startTick == 0 && note.endTick <= wrapWindow;
+}
+
 /// Replace same valid `NoteId`; append a new valid ID. Invalid-ID rows keep
 /// pitch+start uniqueness.
 inline void upsertDisplayNoteByNoteId(NoteUtils::DisplayNoteVec& notes,
