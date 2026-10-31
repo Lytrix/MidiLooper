@@ -1,160 +1,195 @@
 # Tasks — runtime profiling layer (Level 1)
 
-Commit boundary for every group: the working branch (`feature/unified-rolling-playback-path` at
-`ebaa6ebe`), never `dev`, one reviewable commit per group, staged by hunk — the tree carries
-unrelated modified files and they must not be swept into these commits. No PR unless requested.
+Commit boundary for every group: the working branch (`feature/unified-rolling-playback-path`,
+baseline HEAD `5ddba83e`, tree clean at rebase on 2026-10-31), never `dev`, one reviewable commit per
+group, staged by hunk. Re-check `git status` before each commit and leave any unrelated modification
+out. No PR unless requested.
 
-## 1. Authorization and contract gates (no firmware edit)
+## 0. Prerequisites — create these first (no firmware behavior change)
 
-- [ ] 1.1 Add a `## Now implementing` scope entry to `docs/Runtime/CURRENT_WORK.md` naming this
-      change, its twelve sites, its non-goals and the fact that `HotPathTelemetry` is untouched;
-      verify the entry sits at the top of that section and that no other active declaration is
-      overwritten.
-- [ ] 1.2 Fill `docs/Templates/DECISION_REVIEW.md` into
-      `openspec/changes/runtime-profiling-layer/evidence/DECISION_REVIEW.md` after searching
-      `docs/DECISION_LOG.md`, `openspec/specs/` and `docs/Plans/` for: profiler, DWT, cycle counter,
-      RAII, telemetry, instrumentation, span timing; verify it records the reused owners
-      (`ClockPhysicalReferencePlatform` as the boot contract, `IngressCost`'s validity *shape*,
-      `StopDiagRows.cpp` carve-out), and states why `HotPathTelemetry` is not migrated in this change.
-- [ ] 1.3 Append one `DEC-###` entry recording: the short/long validity contract (a ceiling is never
-      evidence of interval validity), the report-only ceiling classes, the depth-zero command gate and
-      batch/horizon rules, and the dedicated profile environment; verify it cites DEC-043 point 4 and
-      DEC-214 and states that no `ExecutionBounds.md` row is added.
-- [ ] 1.4 Fill `docs/Templates/PREFLIGHT.md` into `evidence/PREFLIGHT.md` (branch, tree state, baseline
-      HEAD `ebaa6ebe`, unrelated modified files, required gates); verify it names the exact build and
-      test commands for slices 1–4 and the device stimulus for slice 3.
-- [ ] 1.5 Review the design's D12 site table against the code: for every **short** scope, confirm a hard
-      structural cap that keeps it below 7.16 s (or move it to long — as already done for
-      `PlaybackWindow_build` and `DisplayBase_gather`), and for every **long** scope confirm the
-      `< 71.6 min` structural reason; verify the result is recorded in `evidence/DECISION_REVIEW.md`
-      and that no site's only justification is its ceiling or its window span.
-- [ ] 1.6 Add `[env:teensy41-capture-serial-profile]` to `platformio.ini` extending
-      `teensy41-capture-serial` with `-D RUNTIME_PROFILE_SCOPES=1`; verify `pio run -e
-      teensy41-capture-serial-profile` builds and that the default env's linked figures are unchanged
-      (`scripts/check_ram1_budget.py` output recorded).
+Each item is a hard gate for slice 1 (proposal § Prerequisites, P1–P8). Items 0.1–0.4 are
+documentation/evidence only; 0.5–0.6 are build plumbing whose only effect is a new env.
+
+- [ ] 0.1 **P1 — scope authorization.** Add a `## Now implementing` entry to
+      `docs/Runtime/CURRENT_WORK.md` naming this change, its thirteen sites, its non-goals and that
+      `HotPathTelemetry` is untouched; verify it sits at the top of that section and no other active
+      declaration is overwritten. Owner-visible gate: firmware work waits for it.
+- [ ] 0.2 **P2 — decision review and DEC.** Fill `docs/Templates/DECISION_REVIEW.md` into
+      `evidence/DECISION_REVIEW.md` after searching `docs/DECISION_LOG.md`, `openspec/specs/` and
+      `docs/Plans/` for: profiler, DWT, cycle counter, RAII, telemetry, instrumentation, span timing,
+      `view_prewarm_step`, `capture_prewarm_split`. Record the reused owners
+      (`ClockPhysicalReferencePlatform` boot contract, `IngressCost` validity shape, `StopDiagRows.cpp`
+      carve-out) and why `HotPathTelemetry` is not migrated. Then append one `DEC-###` recording: the
+      short/long validity contract and source-selection rule, the report-only ceiling classes, the
+      depth-zero command gate and batch/horizon rules, and the dedicated env; verify it cites DEC-043
+      point 4, DEC-214 and DEC-231 and states that no `ExecutionBounds.md` row is added.
+- [ ] 0.3 **P3 — rebased preflight and baseline.** Fill `docs/Templates/PREFLIGHT.md` into
+      `evidence/PREFLIGHT.md`: branch, HEAD `5ddba83e`, tree state, required gates, exact build/test
+      commands for slices 1–4. **Before any edit**, build `teensy41-capture-serial` and
+      `teensy41-capture-serial-no-grain` and record their `check_ram1_budget.py` lines (variables,
+      locals free, ITCM code, padding), the default image's HEX SHA-256, and the full
+      `pio test -e native` case/skip counts. These figures are the "default image unchanged" oracle
+      and the slice-4 A/B image.
+- [ ] 0.4 **P6 — boot hook.** Read `setup()` in `src/main.cpp` and record in `evidence/PREFLIGHT.md`
+      the exact position where `RuntimeProfiler::initAtBoot()` will be called: after `Serial`/capture
+      init (the boot row needs them), before the first call that can reach an instrumented owner
+      (boot load, boot prewarm, the first display update). Verify by listing those calls in order.
+- [ ] 0.5 **P4 — profile env and RAM1 baseline.** Add `[env:teensy41-capture-serial-profile]` to
+      `platformio.ini` extending `teensy41-capture-serial` with `-D RUNTIME_PROFILE_SCOPES=1`, and add
+      `"teensy41-capture-serial-profile": "teensy41-capture-serial"` to `scripts/ram1_budget.json`
+      (the checker fails an env without a baseline). Verify `pio run -e teensy41-capture-serial-profile`
+      builds (the flag has no consumer yet) and the default env figures equal 0.3.
+- [ ] 0.6 **P5 — linker carve-out.** Add `*ProfileDiagRows.cpp.o(.rodata.str* .rodata.*.str*)` beside
+      the `StopDiagRows`/`EnvelopeDistRows` lines in `linker/imxrt1062_t41_lcr.ld`, with a comment
+      naming this change; verify both envs still link at the 0.3 figures (a rule matching no object
+      is inert).
+- [ ] 0.7 **P7 — HITL stimulus and recipe.** Read `docs/Agents/hitl_authoring_traps.md`, run
+      `.venv/bin/python scripts/host_midi_hitl.py stimulus list`, and fill `HITL_TEST_RECIPE.md` into
+      `evidence/HITL_TEST_RECIPE.md` for the slice-2/3/4 device legs. The chain rig
+      (`scripts/hitl_midifile_chain.py`, used for DEC-230/231) is not a registered stimulus: register a
+      temporary variant `STIM-PROFILE-CHAIN-TEMP-01` (record + idle preparation + playback, then
+      `!PROFILE_STATS`/`!PROFILE_RING` drains), or record the owner's acceptance of the rig as a reuse.
+      Verify the recipe names tier registration, RAM1 headroom and reused `scripts/hitl/actions/`.
+- [ ] 0.8 **P8 — same-day reference capture.** On the 0.3 default image, run the 0.7 stimulus once
+      and record in `evidence/<date>-baseline-device.md`: the Record edge (`capture_prewarm_split`
+      `views`/`total`), every `view_prewarm_step` unit (`unit`, `us`), `midi_gap`/`late_on` maxima and
+      `win_gap_overrun` count, plus a second run for run-to-run spread. Verify boot proof
+      (`boot_reset,crash=0`, `BOOT,load,ok`) and the HEX hash. These numbers replace the DEC-230
+      image `79aa5b7f…` figures as the slice-3 oracle.
+
+## 1. Contract review (no firmware edit)
+
+- [ ] 1.1 Review the D12 site table against the code at `5ddba83e`: for the **short** scope
+      (`PlaybackViewService_grain`) confirm the row-27 grain is the scope's whole body after the gate;
+      for every **long** scope confirm the `< 71.6 min` reason; for every site record which existing
+      session-capture rows fall inside the scope (D11) and confirm the scope placement after the
+      no-work gate. Also record, per site, the legacy timers already inside it (`HotPathTelemetry`,
+      `Diagnostics::Timing`, session-capture rows), and trace the HITL serial dispatch call chain to
+      prove it runs outside all thirteen scopes (RED_TEAM R8). Record in `evidence/DECISION_REVIEW.md`;
+      verify no site's only justification is its ceiling or window span, and that `Display_frame_phase`
+      and `SnapshotPublish_step` remain long.
+- [ ] 1.2 Review [RED_TEAM.md](RED_TEAM.md) and [RETIREMENT.md](RETIREMENT.md) with the owner; verify
+      every "Applied" finding is reflected in design/spec/tasks and TBD-4 (default-env promotion) has
+      an owner decision or is explicitly left open.
 
 ## 2. Slice 1 — runtime core, short/long primitives, aggregate and ring
 
-- [ ] 2.1 Write `evidence/EXECUTION_PACKET-slice1.md` from the design's slice-1 contract (owner, files,
-      pre/post, invariants, non-goals, oracle, commands, evidence path); verify every template field is
-      filled or marked not-applicable with a reason.
-- [ ] 2.2 Add `include/Utils/RuntimeProfiler.h` with the `ProfileId` enum, capacity `static_assert`s
-      (ids ≤ 64, depth 16, ring 256), the five report-only ceiling classes, the optional-result API
-      (`setResult` + reference form), and macros that expand to a no-op statement when
-      `RUNTIME_PROFILE_SCOPES` is undefined; verify the native build compiles and a `static_assert`
-      fails on purpose when the id count is raised past capacity (mutation check, then restore).
-- [ ] 2.3 Write `test/test_runtime_profiler` fixtures **before** the record path: inclusive/self split
-      for parent+child, strictly-LIFO order fault, depth overflow, over-ceiling ring entry, ring
-      overwrite with `dropped` and a `seq` gap, zero-duration call, unavailable source, refused
-      measurement, optional result present and absent, short-vs-long selection, and a coarse duration
-      larger than 32-bit cycles that must not truncate; verify the suite is RED for the expected
-      discriminating assertions (`Expected …, Was …`) before 2.4.
-- [ ] 2.4 Implement the record path in `src/Utils/RuntimeProfiler.cpp` (DMAMEM table/ring/depth stack,
-      fake clock shims `profileCyclesNow()` / `profileMicrosNow()`, refusal and order-fault guards, no
-      I/O, no allocation); verify 2.3 turns green and `pio test -e native -f test_runtime_profiler`
-      passes.
-- [ ] 2.5 Implement the **short** primitive (DWT only) and the **long** primitive (DWT + `micros()`
-      bracket, coarse-sourced when the cycle delta spans one period, normalized into the shared u64
-      duration domain); verify a native fixture proves a forced multi-period operation reports the
-      wall-clock duration and marks it coarse, that the cycle 32-bit field is never presented as the
-      duration, and that a normal operation keeps cycle resolution.
-- [ ] 2.6 Implement the boot calibration: 128–256 empty short scopes with no serial inside the loop,
-      reporting sample count, minimum and average cycles (and microseconds at the reported rate);
-      verify a native fixture covers the sample count, the min/average arithmetic and the
-      source-unavailable case (all scopes refused, boot row still emitted once with `source=0`).
-- [ ] 2.7 Build both envs and record RAM1/ITCM: profile env at `ram1_variables 96,192` and padding at or
-      above the 840 floor; default env figures identical to `scripts/ram1_budget.json`; verify
-      `git diff --stat` touches only the intended files and that `HotPathTelemetry` has no diff.
+- [ ] 2.1 Write `evidence/EXECUTION_PACKET-slice1.md` from the design's slice-1 contract; verify every
+      template field is filled or marked not-applicable with a reason.
+- [ ] 2.2 Add `include/Utils/RuntimeProfiler.h`: `ProfileId` enum (with a reserved calibration id),
+      capacity and layout `static_assert`s (ids ≤ 64, depth 16, ring 256, `sizeof(ProfileStat) == 48`,
+      ring record 24), the five report-only classes, `kCycleTrustUs`, the scope API (`setResult`,
+      `setContext`, reference form) and no-op macros when `RUNTIME_PROFILE_SCOPES` is undefined; verify
+      the native build compiles and a `static_assert` fails on purpose when the id count exceeds
+      capacity (mutation check, then restore).
+- [ ] 2.3 Write `test/test_runtime_profiler` fixtures **before** the record path: inclusive/self split,
+      LIFO order fault + poison + reset at depth 0, depth overflow without double counting,
+      over-ceiling ring entry, ring overwrite with `dropped` and a `seq` gap, zero-duration call,
+      unavailable source, entry under a faked non-zero `IPSR` (refused, `isrRefused` counted, stack
+      untouched), optional result/context present and absent, the `kCycleTrustUs` boundary
+      (below / at / above), a coarse duration larger than 32-bit cycles, and boot clear over a
+      pre-filled pattern; verify the suite is RED on the discriminating assertions before 2.4.
+- [ ] 2.4 Implement the record path in `src/Utils/RuntimeProfiler.cpp` (DMAMEM storage, clock shims
+      `profileCyclesNow()` / `profileMicrosNow()`, refusal/order/poison/overflow guards, no I/O, no
+      allocation); verify 2.3 turns green with `pio test -e native -f test_runtime_profiler`.
+- [ ] 2.5 Implement the short and long primitives with the D2 selection rule and the shared u64
+      domain; verify the boundary and multi-period fixtures, and that a normal operation keeps cycle
+      resolution.
+- [ ] 2.6 Implement `initAtBoot()` (clear, read `cpu_hz`, calibrate both primitives over 128–256
+      samples into the calibration id, clear it, emit the boot row once) and call it at the 0.4
+      position; verify native fixtures for sample count, min/average arithmetic, both variants, the
+      `source=0` case, and that the calibration id leaves no aggregate residue.
+- [ ] 2.7 Build both envs: profile env at RAM1 `96,192` with padding ≥ 840; default and no-grain figures
+      equal 0.3; verify `git diff --stat` touches only intended files and `HotPathTelemetry` has no diff.
 
 ## 3. Slice 2 — bounded commands, Tier-A registration, host decoder
 
-- [ ] 3.1 Write `evidence/EXECUTION_PACKET-slice2.md` (owner, command table, row contract, batch sizes,
-      cursor semantics, oracle, commands, evidence path); verify every field is filled or justified.
-- [ ] 3.2 Add `src/Utils/ProfileDiagRows.cpp` (names + row formats) plus the one linker carve-out line
-      and the name accessor header; verify the target build keeps `ram1_variables 96,192` and a native
-      test proves every declared id returns a non-empty, unique name.
-- [ ] 3.3 Add the `DIAG,profile_` classifier prefix to `isTierATextLine` in
-      `DebugSessionCapture.cpp` **only** (the header list stays unchanged) and pin the resulting
-      classification in `test_capture_ring` and `test_capture_line_tier`; verify
-      `python3 scripts/check_marker_contract.py 'DIAG,profile_stat,'` reports EMITTED / TIER-A / FIT and
-      `--audit` exits 0.
-- [ ] 3.4 Implement `!PROFILE_STATS` and `!PROFILE_RING` with independent persisted cursors, batch
-      maxima of 16 (stats) and 32 (ring), a ring sequence horizon pinned at the first batch
-      (`range_start`/`range_end`, new records excluded), and a terminator carrying `count`, `dropped`,
-      `resume` and the reported gap; verify a native fixture drains a table larger than one batch in
-      the expected number of requests with no row loss, and that a breach arriving mid-dump is neither
-      duplicated nor skipped and an overwritten pinned range reports its `seq` gap.
-- [ ] 3.5 Implement the **depth-zero gate** for all three commands: a command received while any scope
-      is active emits `profile_cmd,refused,depth=<n>` and changes no table, ring or cursor state, and
-      the host retries later; verify with a native fixture that a command invoked inside an
-      instrumented scope records nothing for its own work and leaves the depth stack untouched.
-- [ ] 3.6 Implement `scripts/profile_report.py` (aggregate table, breach timeline, **immediate
-      enclosing profiled scope**, `seq` gap/overwrite detection, pinned-range accounting, explicit
-      unavailable/incomplete states) and `scripts/test_profile_report.py` covering a complete capture,
-      a capture with Tier-A eviction, a capture with a `seq` gap and a capture with no profile rows;
-      verify the suite passes and the tool runs with no MIDI and no serial port.
-- [ ] 3.7 Device leg: flash the profile image, verify the boot row appears once with the calibration
-      numbers (and `source=1`, `cpu_hz=600000000`), that repeated stats/ring requests drain in batches
-      under a running transport, and that a command issued while a scope is active is refused with its
-      depth; record the capture path in `evidence/<date>-slice2-device.md`.
+- [ ] 3.1 Write `evidence/EXECUTION_PACKET-slice2.md`; verify every field is filled or justified.
+- [ ] 3.2 Add `src/Utils/ProfileDiagRows.cpp` (names, row formats, command strings) and its accessor
+      header; verify the profile build keeps RAM1 `96,192` and a native test proves every declared id
+      returns a non-empty, unique name.
+- [ ] 3.3 Add the `DIAG,profile_` `PROGMEM` prefix to `isTierATextLine` under
+      `#if defined(PIO_UNIT_TEST_NATIVE) || RUNTIME_PROFILE_SCOPES` (header list unchanged) and pin it
+      in `test_capture_ring` and `test_capture_line_tier`; verify `check_marker_contract.py` reports
+      EMITTED / TIER-A / FIT for **each** of `DIAG,profile_boot,`, `DIAG,profile_stat,`,
+      `DIAG,profile_ring,`, `DIAG,profile_reset,` and `DIAG,profile_cmd,` (RED_TEAM R10), `--audit`
+      exits 0, and the default env still equals 0.3.
+- [ ] 3.4 Implement `!PROFILE_STATS` and `!PROFILE_RING` (inside `#if RUNTIME_PROFILE_SCOPES`) with
+      independent cursors, batch maxima 16 / 32, the pinned ring horizon and terminators carrying
+      `count`, `resume`, `poisoned` and, for the ring, `dropped`/`range_start`/`range_end`/`gap`;
+      verify a native fixture drains more than one batch with no row loss, a mid-dump breach is
+      neither duplicated nor skipped, and an overwritten pinned range reports its gap.
+- [ ] 3.5 Implement the depth-zero gate for all three commands; verify a command invoked inside an
+      instrumented scope emits `profile_cmd,refused,depth=<n>` and leaves table, ring, cursors and stack
+      byte-identical.
+- [ ] 3.6 Implement `scripts/profile_report.py` and `scripts/test_profile_report.py` (complete capture,
+      Tier-A eviction, `seq` gap, poisoned terminator, no profile rows); verify the suite passes with
+      no MIDI and no serial port.
+- [ ] 3.7 Device leg (0.7 stimulus): flash the profile image, record HEX hash and boot proof, verify
+      the boot row appears once with `source=1`, `cpu_hz=600000000` and both calibrations, and that
+      repeated stats/ring requests drain in batches under a running transport; record
+      `evidence/<date>-slice2-device.md`.
 
-## 4. Slice 3 — the DEC-230 vertical proof
+## 4. Slice 3 — the DEC-231 preparation vertical proof
 
-- [ ] 4.1 Write `evidence/EXECUTION_PACKET-slice3.md` pinning the three sites, their long variant and
-      ceilings, the oracle (first admission breach vs restamp clean), the tolerance for `midi_gap` /
-      `late_on`, and the evidence path.
-- [ ] 4.2 Add one long scope each to `Track::startRecording`, `Track::prewarmPlaybackForSlot` and
-      `LoopPlaybackRuntime::prewarmViews` — no control-flow, return-value or ownership edit;
-      `prewarmViews` supplies its existing `bool` through `setResult`; verify the diff is
-      instrumentation-only and the focused suites for those owners are unchanged.
-- [ ] 4.3 Add native assertions that the three production paths increment their aggregate call count
-      (durations are not asserted; ring and validity logic are covered by slice 1); verify with
-      `pio test -e native -f test_runtime_profiler` plus the nearest existing owner suites.
-- [ ] 4.4 Run the DEC-230 device shape on the profile image and record: the first Record admission's
-      `profile_ring` rows for the three identities, the restamp's absence of all three,
-      `capture_prewarm_split`'s `views`/`total` in the same run, and `midi_gap`/`late_on` in the record
-      window. Verify the breach ordering matches DEC-230 within the ring's microsecond rounding and
-      that no new `win_gap_overrun` appears.
-- [ ] 4.5 Record the `capture_prewarm_split` equivalence result and the retirement condition (keep the
-      row until the DEC-230 repair lands); verify `evidence/<date>-slice3-device.md` states which
-      numbers agree and any that do not.
+- [ ] 4.1 Write `evidence/EXECUTION_PACKET-slice3.md` pinning the four sites, their ceilings, the
+      oracle from design § Slice 3 against the 0.8 reference, the `view_prewarm_step` agreement rule
+      (profiler ≤ row, within 10 µs), and the `midi_gap`/`late_on` tolerance (within the 0.8 spread).
+- [ ] 4.2 Add long scopes to `Track::startRecording`, `Track::prewarmPlaybackForSlot`,
+      `LoopPlaybackRuntime::prewarmViews` and the `stepViewPrewarm` call in
+      `Track::stepViewPrewarmForSlot` (closed before `viewPrewarmStep`) — no control-flow, return-value
+      or ownership edit; verify the diff is instrumentation-only and the owners' focused suites are
+      unchanged.
+- [ ] 4.3 Add native assertions that the four paths increment their aggregate call counts, and that a
+      prepared Record edge does not increment `PlaybackPrewarm_views`; verify with
+      `pio test -e native -f test_runtime_profiler` plus the nearest owner suites.
+- [ ] 4.4 Run the 0.7 stimulus on the profile image and record: `ViewPrewarm_unit` ring rows against
+      the same run's `view_prewarm_step us=`, the Record edge's aggregate `last_us` and absence of a
+      ring record, `PlaybackPrewarm_views` count across the edge, `capture_prewarm_split views=0`, and
+      `midi_gap`/`late_on`/`win_gap_overrun`; verify every oracle line or record the miss.
+- [ ] 4.5 Record the row-equivalence result in `evidence/<date>-retirement-equivalence.md`
+      (RETIREMENT.md stage 0) for `capture_prewarm_split` (`views`/`total` only — the other reserves have
+      no identity yet, R4) and `view_prewarm_step us=` (the `ready=1` event is kept, R3); verify it
+      states the band, which numbers agree and any that do not. No row is removed in this change.
 
 ## 5. Slice 4 — remaining nine bodies, coverage and overhead proof
 
-- [ ] 5.1 Write `evidence/EXECUTION_PACKET-slice4.md` pinning the nine remaining bodies, their variant
-      and ceiling from D12, the domain coverage list and the pre-declared A/B tolerance.
+- [ ] 5.1 Write `evidence/EXECUTION_PACKET-slice4.md` pinning the nine bodies, variants and ceilings
+      from D12, the domain list and the A/B tolerance.
 - [ ] 5.2 Add one scope each to `PlaybackWindow_build`, `PlaybackViewService_grain`,
       `SnapshotPublish_step`, `SaveWorkItem_step`, `IdleOwner_unit`, `DisplayBase_gather`,
-      `Display_frame_build`, `LoadStep` and `OverdubStart_body` — every scope after its cheap no-work
-      gate, never around the poll entry; verify the diff is instrumentation-only and that each short
-      site's guarantee still holds after the gate is accounted for.
-- [ ] 5.3 Add native aggregate-count assertions for those nine paths and verify the full native suite
-      (`pio test -e native`) reports no new failure, with the case/skip counts recorded.
-- [ ] 5.4 Run the coverage gate on device: one run exercising record, overdub, playback, a save and a
-      slot load, then repeated `!PROFILE_STATS` requests until `resume=0`; verify at least one identity
-      per declared domain has a non-zero call count and unexercised domains are named as such.
-- [ ] 5.5 Run the overhead A/B (profile image with all twelve scopes vs the pre-change default image,
-      same stimulus) and record the boot calibration, `midi_gap`/`late_on` maxima and
-      `win_gap_overrun` counts; verify no new overrun and maxima within the pre-declared spread, or
-      remove the offending site and record the decision.
-- [ ] 5.6 Record the first two real captures' ring capacity, `seq` gaps and batch counts and close
-      TBD-3 (256 capacity and 16/32 batch maxima confirmed or re-based); verify the decision is written
-      before closeout.
+      `Display_frame_phase`, `LoadStep` and `OverdubStart_body`, each after its no-work gate; verify the
+      diff is instrumentation-only and the short site's guarantee still holds.
+- [ ] 5.3 Add native aggregate-count assertions for those nine paths; verify the full native suite
+      (`pio test -e native`) has no new failure against the 0.3 counts.
+- [ ] 5.4 Coverage gate on device: one run exercising record, overdub, playback, a save and a slot
+      load, then `!PROFILE_STATS` until `resume=0`; verify one identity per declared domain has a
+      non-zero count, unexercised domains are named, and `ViewPrewarm_unit` reports `IdleOwner_unit`
+      as parent when stepped from the idle owner.
+- [ ] 5.5 Overhead A/B: profile image (thirteen scopes) vs the 0.3 default image, same stimulus;
+      record both calibrations, `midi_gap`/`late_on` maxima and `win_gap_overrun`, and each site's
+      legacy timers (R7); verify no new overrun and maxima within the 0.8 spread, or remove the
+      offending site and record the decision. Append the same runs' `DIAG,timing`/`timing_max`,
+      `idle_turn` and `persist_save,step` values beside their identities to
+      `evidence/<date>-retirement-equivalence.md`, and record the TBD-4 promotion recommendation.
+- [ ] 5.6 Record ring capacity use, `seq` gaps and batch counts from two real captures and close
+      TBD-3; verify the decision is written before closeout.
 
 ## 6. Closeout
 
-- [ ] 6.1 Add `docs/Guides/RUNTIME_PROFILING.md` (profile env, short vs long and when each is legal,
-      the three commands and their batching/reset rules, the class table, what is report-only, what is
-      not) and a one-line pointer in `AGENTS.md`'s rule map; verify the guide cites the spec and states
-      the Level-2 and `HotPathTelemetry`-consolidation non-goals.
+- [ ] 6.1 Add `docs/Guides/RUNTIME_PROFILING.md` (env, short vs long and when each is legal, selection
+      rule, interrupt-time note, commands and batching/reset rules, class table, what is report-only)
+      and a one-line pointer in `AGENTS.md`; verify it cites the spec and the Level-2 and
+      `HotPathTelemetry` non-goals.
 - [ ] 6.2 Add the "profiling ceilings are not execution bounds" note to
-      `docs/Authority/Architecture/ExecutionBounds.md` without adding or reclassifying a row; verify
-      the file's row count is unchanged and the note cites the `DEC-###` from 1.3.
+      `docs/Authority/Architecture/ExecutionBounds.md` without changing a row; verify the row count is
+      unchanged and the note cites the 0.2 `DEC-###`.
 - [ ] 6.3 Update `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md` and
-      `docs/DELIVERABLE_TRACKING.md` with the landed layer, the device evidence and the remaining named
-      work (including the deferred `HotPathTelemetry` consolidation); verify each file's newest entry
-      names this change and the exact gates reached.
-- [ ] 6.4 Re-check every task's own verification evidence in the change's `evidence/` files and check
-      off only those that pass; verify no device claim rests on a native or build-only run.
-- [ ] 6.5 Archive the change only after slices 1–4 pass their native, build and device gates; verify
+      `docs/DELIVERABLE_TRACKING.md` with the landed layer, device evidence and remaining named work
+      (the `retire-duplicate-timing-rows` follow-up per RETIREMENT.md stages 1–5, including
+      `Diagnostics::Timing` and `HotPathTelemetry`); verify each newest entry names this change and the
+      gates reached.
+- [ ] 6.4 Re-check every task's evidence and check off only those that pass; verify no device claim
+      rests on a native or build-only run.
+- [ ] 6.5 Archive only after slices 1–4 pass their native, build and device gates; verify
       `openspec validate runtime-profiling-layer --strict` passes and the delta spec is applied.

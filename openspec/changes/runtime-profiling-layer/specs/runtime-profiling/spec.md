@@ -15,13 +15,26 @@ trigger**, so that every exit path — including each early `false` return — i
 be identified by a fixed binary identity, and the measured duration SHALL come from the platform's
 cycle counter.
 
-Inside the measured operation the scope SHALL perform no serial write, no allocation, no formatting,
-no logging and no blocking wait. The scope SHALL NOT change the measured operation's control flow:
-an instrumented operation SHALL return the same value and take the same branch structure as the same
-operation compiled without scopes.
+The profiler SHALL add no serial write, no allocation, no formatting, no logging and no blocking wait
+to the measured operation. A session-capture row that the operation already emits is part of its
+measured cost unless the scope closes before it, and the site SHALL state which applies. The scope
+SHALL NOT change the measured operation's control flow: an instrumented operation SHALL return the
+same value and take the same branch structure as the same operation compiled without scopes.
+
+A measured duration is main-lane wall time and SHALL be documented as including the time of any
+interrupt that preempts the scope; the profiler does not subtract it.
 
 Scope entry is restricted to the main-loop and deferred-owner lanes. An operation reached from an
-interrupt context SHALL NOT be instrumented in this capability.
+interrupt context SHALL NOT be instrumented in this capability, and a scope entered while the
+processor is in exception context SHALL refuse its measurement, leave the nesting state untouched and
+increment a reported interrupt-refusal count.
+
+#### Scenario: A scope entered from an interrupt is refused
+
+- **WHEN** an instrumented operation is entered while an exception handler is active
+- **THEN** no frame is pushed and no duration is recorded for it
+- **AND** the interrupted main-lane scope's nesting state is unchanged
+- **AND** the interrupt-refusal count reported by the stats dump increments
 
 A scope SHALL time the operation's **work body**, not a surrounding poll function that usually
 returns without doing work.
@@ -69,9 +82,10 @@ set, a fixed frame) or a recorded measurement with its source, not a restatement
 ### Requirement: A long scope resolves multi-second operations instead of aliasing them
 
 A long scope SHALL bracket the operation with a coarse monotonic wall clock in addition to the cycle
-counter. When the cycle delta lies inside one counter period it SHALL report the exact cycle
-duration; when it does not, it SHALL report the wall-clock duration and mark the record as
-coarse-sourced.
+counter. The duration source SHALL be selected by one fixed rule: when the wall-clock delta is below
+a declared trust threshold — one counter period at the boot-reported CPU rate minus a guard band of at
+least one second — it SHALL report the exact cycle duration; otherwise it SHALL report the
+wall-clock duration and mark the record as coarse-sourced.
 
 Two 32-bit wall-clock samples cannot detect a full `micros()` wrap, so a long scope SHALL be
 permitted only where the site records an independent guarantee that the operation cannot span one
@@ -88,6 +102,12 @@ long scope.
 - **WHEN** an instrumented long scope's operation spans more than one cycle-counter period
 - **THEN** its reported duration is the wall-clock duration, marked as coarse-sourced
 - **AND** the value is not a modulo of the cycle counter presented as a short duration
+
+#### Scenario: The selection boundary is exact
+
+- **WHEN** a long scope's wall-clock delta is just below, at, and just above the trust threshold
+- **THEN** the first reports the cycle duration and the other two report the wall-clock duration
+- **AND** only the latter two are marked coarse-sourced
 
 #### Scenario: Normal durations keep cycle resolution
 
@@ -122,8 +142,8 @@ reading a symbol table, and a build SHALL declare an identity at most once.
 
 ### Requirement: Aggregate statistics are kept per identity in RAM2, outside RAM1
 
-The profiler SHALL keep exactly one aggregate record per identity for the whole session in external
-RAM, never in the DTCM-resident variables bank. Each record SHALL carry: call count, total inclusive
+The profiler SHALL keep exactly one aggregate record per identity for the whole session in RAM2/OCRAM
+(`DMAMEM`), never in the DTCM-resident variables bank and never in external PSRAM. Each record SHALL carry: call count, total inclusive
 cycles, total self cycles, maximum duration, last duration, over-ceiling count, refused-measurement
 count, and last declared result. Maximum and last duration SHALL be retained in both cycle and
 wall-clock units so a coarse multi-second measurement is never truncated to a 32-bit cycle count.
@@ -135,7 +155,16 @@ output format.
 A result code is optional: a scope SHALL record one only when the site supplies it, and the measured
 duration SHALL be recorded correctly whether or not a result was supplied.
 
-An aggregate record SHALL be cleared only by the explicit reset command or by boot.
+An aggregate record SHALL be cleared only by the explicit reset command or by boot. Because RAM2
+storage is not initialized by the startup code, the profiler SHALL explicitly clear its table, ring,
+stack and counters at boot, before the first instrumented operation can run.
+
+#### Scenario: Boot clears stale RAM2 contents
+
+- **WHEN** the profiler's storage holds a non-zero pattern left by a previous image
+- **AND** the profile image boots
+- **THEN** every aggregate record, the ring, the overwrite count and both cursors read as cleared before
+  the first instrumented operation is entered
 
 #### Scenario: A scope without a result still records its duration
 
@@ -193,8 +222,10 @@ Normal calls SHALL update the aggregate record only. A call whose duration excee
 declared ceiling SHALL additionally write one fixed-size record to a preallocated circular ring in RAM2/OCRAM (`DMAMEM`),
 outside RAM1/DTCM. Each record SHALL carry: a monotonic sequence number, a wall-clock timestamp, the
 identity, the immediate enclosing profiled identity (if any), the duration **both as cycles and as
-wall-clock microseconds with exactly one of the two meaningful and marked**, the track and slot when
-the site supplies them, the declared result code when the site supplies one, and a source/flag byte.
+wall-clock microseconds, with a source flag stating whether the cycle field is exact or saturated**,
+the track and slot when the site supplies them through the scope's context setter, the declared result
+code when the site supplies one, and a source/flag byte. Fields the site did not supply SHALL carry a
+declared "none" value.
 
 The ring SHALL carry the **immediate enclosing profiled scope only**. It SHALL NOT claim a complete
 call chain, and the dump SHALL NOT present one.
@@ -236,7 +267,9 @@ scope's wall clock exists to disambiguate a cycle-counter wrap, not to serve as 
 
 A scope that exits while a different scope is the innermost active scope SHALL be recorded as an
 ordering fault, SHALL NOT contribute a duration to either identity, and SHALL poison the nesting
-state so that no further measurement is recorded until an explicit reset.
+state so that no further measurement is recorded until an explicit reset. While poisoned, depth
+bookkeeping SHALL continue so live scopes unwind, and the poisoned state SHALL be reported in every
+dump terminator.
 
 Refusal SHALL NOT abort or alter the measured operation, and a refused measurement SHALL NOT be
 stored as a zero or as a modulo value presented as a duration.
@@ -280,6 +313,13 @@ the parent's self time.
   clock
 - **THEN** the parent's self and inclusive totals account for the child's full duration
 - **AND** the parent's recorded maximum is not a 32-bit cycle truncation of it
+
+#### Scenario: Depth overflow is counted and never double-counted
+
+- **WHEN** scopes nest deeper than the fixed stack
+- **THEN** a depth-overflow count increments and the overflowed scopes record inclusive time only
+- **AND** only the outermost overflowed scope contributes its duration to the deepest tracked parent
+- **AND** the stack is never written past its capacity
 
 ### Requirement: Profile commands are on demand, bounded, and mutate only profiler state
 
@@ -346,7 +386,8 @@ classified Tier-A by the predicate the capture ring asks, with a classifying pre
 the ring's head read.
 
 The registration point SHALL be the classifier source list, not the inline header list whose literals
-are instantiated in every translation unit. The build's marker pre-flight, the ring's tier suite, and
+are instantiated in every translation unit, and the prefix SHALL be compiled only in the profile build
+and the native test build so that the default images gain no literal. The build's marker pre-flight, the ring's tier suite, and
 the header-list suite SHALL each pin the resulting behaviour so that the two lists cannot drift
 silently.
 
@@ -402,11 +443,12 @@ corresponding rows or reports ring loss. It SHALL NOT present a missing identity
 ### Requirement: The profiler exists only in a profile build
 
 The profiler SHALL be compiled out of the default firmware and the no-grain acceptance image. Those
-images SHALL contain no profile code, no profile table, no profile ring and no profile command
-answers, and SHALL remain unchanged by this capability.
+images SHALL contain no profile code, no profile table, no profile ring, no profile command answers,
+no profile Tier-A prefix and no profile string literal, and SHALL remain unchanged by this capability
+when compared with a baseline recorded before the first edit.
 
-The profile build SHALL be a dedicated environment that extends the default diagnostic environment
-and enables the profiler explicitly.
+The profile build SHALL be a dedicated environment that extends the default diagnostic environment,
+enables the profiler explicitly, and has its own approved RAM1 baseline entry.
 
 #### Scenario: Default image is unchanged
 
@@ -423,9 +465,10 @@ and enables the profiler explicitly.
 
 ### Requirement: The layer reports its own per-scope overhead
 
-The profile build SHALL measure the cost of an empty scope over a declared sample of **128 to 256
-entries** once at boot, with no serial output inside the measurement loop, and SHALL report at least
-the minimum and the average cost in the boot row.
+The profile build SHALL measure the cost of an empty scope **for each primitive (short and long)**
+over a declared sample of **128 to 256 entries** once at boot, with no serial output inside the
+measurement loop, and SHALL report at least the minimum and the average cost of each in the boot row.
+Calibration samples SHALL NOT remain in any reported identity's aggregate record.
 
 The boot row SHALL be emitted once per boot even when the timing source is unavailable (with the
 source marked unavailable), so a capture always shows whether the profiler was armed.
@@ -433,8 +476,8 @@ source marked unavailable), so a capture always shows whether the profiler was a
 #### Scenario: Overhead is a measured number, not a single sample
 
 - **WHEN** the profile image boots
-- **THEN** one calibration row reports the per-scope minimum and average cost in cycles and in
-  microseconds at the reported CPU rate
+- **THEN** one calibration row reports the per-scope minimum and average cost of both primitives in
+  cycles and in microseconds at the reported CPU rate
 - **AND** the sample count is stated
 - **AND** the row is emitted once per boot, not per call
 
@@ -447,12 +490,14 @@ source marked unavailable), so a capture always shows whether the profiler was a
 ### Requirement: The first profile image covers the domains that have produced stalls
 
 The first profile image SHALL declare at least one identity in each of: the Record admission edge, its
-prewarm and its views child, playback window build and rolling service, snapshot publication, the
-deferred save step, the deferred idle-owner turn, display base gather and frame build, the deferred
-slot-load step, and overdub start admission.
+prewarm and its monolithic views child, the off-edge view-preparation unit, playback window build and
+rolling service, snapshot publication, the deferred save step, the deferred idle-owner turn, display
+base gather and frame phase, the deferred slot-load step, and overdub start admission.
 
-The DEC-230 vertical proof SHALL land before the remaining domains are instrumented: the Record edge,
-its prewarm and its views child SHALL be proven on device to reproduce the known attribution first.
+The preparation vertical proof SHALL land before the remaining domains are instrumented: the Record
+edge, its prewarm, its views child and the off-edge preparation unit SHALL be proven on device to
+reproduce the attribution of a reference capture taken on the pre-change image of the same tree,
+including agreement with the existing per-unit preparation row in the same run.
 
 #### Scenario: Coverage is verifiable from the dump
 
@@ -465,5 +510,5 @@ its prewarm and its views child SHALL be proven on device to reproduce the known
 #### Scenario: The known answer comes before the wide spread
 
 - **WHEN** the remaining domains are wired
-- **THEN** the Record/prewarm/views attribution has already been accepted on device
+- **THEN** the Record/prewarm/views/preparation-unit attribution has already been accepted on device
 - **AND** the later sites reuse the same primitives without re-opening the validity contract
