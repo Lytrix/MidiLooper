@@ -81,24 +81,9 @@ struct Session {
     const uint8_t runs = store.manifest(store.current()).runCount;
     if (runs < kCompactAt) return;
     if (policy == Policy::HistoryClosed) {
-      // Only overdub ranges that no history entry holds in part (nothing to do until history has aged out), and at
-      // most kInflightCapRows of input, so the merged copy in flight stays bounded: a range that would re-merge a
-      // large merged run starts after it instead (LSM-style levels).
-      const auto& m = store.manifest(store.current());
-      for (uint8_t first = 1; first + 1 < m.runCount; ++first) {
-        const uint8_t count = store.largestClosedRangeFrom(first);
-        uint8_t fitting = 0;
-        uint32_t rows = 0;
-        for (uint8_t i = 0; i < count; ++i) {
-          rows += store.run(m.runs[first + i]).midiCount;
-          if (rows > kInflightCapRows) break;
-          fitting = static_cast<uint8_t>(i + 1);
-        }
-        if (fitting >= 2) {
-          TEST_ASSERT_EQUAL(CompactResult::Ok, store.beginCompaction(first, fitting));
-          return;
-        }
-      }
+      // The store's planner (B.5c): history-closed ranges only, at most kInflightCapRows of input in flight.
+      const CompactResult planned = store.planCompaction(kInflightCapRows);
+      TEST_ASSERT_TRUE(planned == CompactResult::Ok || planned == CompactResult::NothingToCompact);
       return;
     }
     const CompactResult begun =

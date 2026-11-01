@@ -151,12 +151,12 @@ void commitBoth(Loop& loop, bool record, const std::vector<Op>& ops) {
 }
 
 // Returns the number of groups compared; fails the test on the first divergence, naming it.
-void assertParity(const Loop& loop, const char* label) {
+void assertParity(const Loop& loop, const char* label, EffectivePolicy policy = EffectivePolicy::revision()) {
   SessionMidiEventVec production;
   TEST_ASSERT_TRUE(loop.tryCopyCurrentSnapshotEditViewEvents(production));
   std::vector<Row> a;
   for (const MidiEvent& e : production) a.push_back(rowOf(e));
-  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192);
+  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, policy);
   TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
   std::vector<Row> b;
   for (uint32_t i = 0; i < stamp.count; ++i) b.push_back(rowOf(gOut[i]));
@@ -241,22 +241,6 @@ void test_same_tick_cc_and_cross_pass_overlap_match_production() {
   assertParity(loop, "sustain-127-then-0");
   commitBoth(loop, false, {{288, 0x90, 1, 60, 90}, {384, 0x80, 1, 60, 0}});
   assertParity(loop, "same-pitch overlap across passes");
-}
-
-// NAMED DIVERGENCE (B.2a finding 3): a zero-length note (NoteOn + velocity-0 NoteOn on one tick) is committed to the
-// chunk rows, but production's effective view drops note events whose noteId has no display span
-// (`copyEditViewEventsFromSnapshot`). The store keeps them. Which layer owns that rule is a B.3 decision.
-void test_zero_length_note_is_dropped_by_production_effective_view() {
-  Loop loop;
-  resetAll(loop);
-  commitBoth(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {192, 0x90, 1, 50, 100},
-                          {192, 0x90, 1, 50, 0}});
-  SessionMidiEventVec production;
-  TEST_ASSERT_TRUE(loop.tryCopyCurrentSnapshotEditViewEvents(production));
-  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192);
-  TEST_ASSERT_EQUAL_UINT32(2, production.size());
-  TEST_ASSERT_EQUAL_UINT32(4, stamp.count);
-  TEST_IGNORE_MESSAGE("known divergence: production effective view drops span-less (zero-length) notes");
 }
 
 // ---- B.2b: seeded random sequences under DEC-244 ---------------------------------------------------------------------
@@ -453,6 +437,18 @@ void compareRevision(Sequence& q, uint32_t seed, uint32_t step) {
                static_cast<unsigned>(i), prodSorted[i].tick, prodSorted[i].status, expSorted[i].tick,
                expSorted[i].status);
       TEST_FAIL_MESSAGE(msg);
+    }
+  }
+  {
+    // DEC-245: the store's explicit production projection reproduces production's effective content directly.
+    const ComposeStamp compat =
+        gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, EffectivePolicy::productionCompat());
+    std::vector<Row> compatRows;
+    for (uint32_t i = 0; i < compat.count; ++i) compatRows.push_back(rowOf(gOut[i]));
+    TEST_ASSERT_TRUE_MESSAGE(normalise(compatRows), where);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(prodSorted.size(), compatRows.size(), where);
+    for (size_t i = 0; i < compatRows.size(); ++i) {
+      TEST_ASSERT_TRUE_MESSAGE(compatRows[i] == prodSorted[i], where);
     }
   }
   for (size_t i = 0; i < expectedProd.size();) {
@@ -874,6 +870,20 @@ void test_two_edits_on_one_note_match_production() {
   assertParity(loop, "pitch then length");
 }
 
+// DEC-245 B.3b: a zero-length note (NoteOn + velocity-0 NoteOn on one tick) stays in the committed source (4 rows);
+// production's effective view drops it (`copyEditViewEventsFromSnapshot` keeps only notes with a span). That is
+// the store's explicit `productionCompat()` projection, not a storage rule: parity under it, 4 rows in source.
+void test_zero_length_note_kept_in_source_and_suppressed_by_production_projection() {
+  Loop loop;
+  resetAll(loop);
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {192, 0x90, 1, 50, 100},
+                                 {192, 0x90, 1, 50, 0}},
+                    {});
+  assertParity(loop, "zero-length, production projection", EffectivePolicy::productionCompat());
+  const ComposeStamp source = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, EffectivePolicy::source());
+  TEST_ASSERT_EQUAL_UINT32(4, source.count);
+}
+
 // ---- B.3 seeded: overdubs with Hide/Shorten, NOTE_EDITs and undo, mixed ---------------------------------------------
 
 struct VisibleNote {
@@ -1008,7 +1018,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
   RUN_TEST(test_wrap_crossing_record_note_matches_production);
   RUN_TEST(test_same_tick_cc_and_cross_pass_overlap_match_production);
-  RUN_TEST(test_zero_length_note_is_dropped_by_production_effective_view);
   RUN_TEST(test_seeded_sequences_store_exact_and_production_multiset_under_dec244);
   RUN_TEST(test_overdub_hide_of_record_note_matches_production);
   RUN_TEST(test_overdub_shorten_of_record_note_matches_production);
@@ -1022,6 +1031,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_edit_delete_matches_production);
   RUN_TEST(test_undo_of_note_edit_restores_the_note_in_both);
   RUN_TEST(test_two_edits_on_one_note_match_production);
+  RUN_TEST(test_zero_length_note_kept_in_source_and_suppressed_by_production_projection);
   RUN_TEST(test_seeded_overlap_edit_and_undo_match_production);
   return UNITY_END();
 }

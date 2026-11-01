@@ -29,15 +29,11 @@ constexpr PageId kNoPage = 0xFFFFu;
 constexpr RunId kNoRun = 0xFFFFu;
 constexpr ManifestId kNoManifest = 0xFFFFu;
 
-enum class PassEventKind : uint8_t {
-  /// A MIDI message at `tick`.
-  Midi = 0,
-  /// Hides every Midi row carrying `noteId` in the runs *before* this run in a manifest (overlap-resolve, NOTE_EDIT).
-  HideNote = 1,
-};
-
-/// 16-byte canonical row. `seq` is the append ordinal inside the run: immutable through commit and compaction (a
-/// compacted run renumbers in composed order), and the tie-break for rows on one tick. SysEx is not representable.
+/// 16-byte committed source row (DEC-245 layer 1). A run keeps Midi rows and HideNote rows in separate regions; a
+/// HideNote row hides every Midi row carrying `noteId` in earlier passes (overlap-resolve, NOTE_EDIT).
+/// `seq` is the append ordinal inside the source pass and `origin` the source pass's ordinal inside a compacted run
+/// (0 in an ordinary run): both survive compaction unchanged, so provenance and DEC-244 order are kept.
+/// SysEx is not representable.
 struct PassEvent {
   uint32_t tick = 0;
   uint32_t noteId = 0;
@@ -45,7 +41,7 @@ struct PassEvent {
   uint8_t status = 0;
   uint8_t data1 = 0;
   uint8_t data2 = 0;
-  PassEventKind kind = PassEventKind::Midi;
+  uint8_t origin = 0;
 };
 static_assert(sizeof(PassEvent) == 16, "PassEvent is a fixed 16-byte row");
 
@@ -89,6 +85,18 @@ enum class CompactStep : uint8_t { Idle, Pending, Published, Superseded, DeniedN
 /// holds all of it at the same positions or none of it, so publishing frees the originals at once (B.5: compacting
 /// runs that history still names kept both copies alive, 2-3x content). `AllowCopies` is for tests and off-line use.
 enum class CompactionScope : uint8_t { HistoryClosedOnly, AllowCopies };
+
+/// DEC-245 layer 2 policy for a composed window. `revision()` is the pure effective revision (hides and
+/// replacements); `productionCompat()` adds today's production projections (zero-length suppression, cross-pass
+/// identical-event collapse); `source()` is layer 1 (no hides), for provenance and multiset checks.
+struct EffectivePolicy {
+  bool applyHides = true;
+  bool suppressZeroLength = false;
+  bool collapseCrossRunDuplicates = false;
+  static EffectivePolicy revision() { return {}; }
+  static EffectivePolicy productionCompat() { return {true, true, true}; }
+  static EffectivePolicy source() { return {false, false, false}; }
+};
 
 /// What a derived window can prove about itself: the manifest it read and that manifest's revision.
 /// `revision` is logical (compaction keeps it); `identity` is physical and never reused, unlike the `manifest` slot.
@@ -155,6 +163,8 @@ class PagePool {
 template <typename Cap>
 class StoreCore {
   static_assert(Cap::kRunsPerManifest <= 64, "the cached merge key holds the run index in 6 bits");
+  static_assert(sizeof(PassEvent) * Cap::kEventsPerPage >= 4 * Cap::kRunsPerManifest,
+                "an origin page must hold one pass serial per run of a full manifest");
 
  public:
   using Pool = PagePool<Cap::kPageCount, Cap::kEventsPerPage>;
@@ -178,6 +188,9 @@ class StoreCore {
     uint16_t refs;
     PassKind kind;
     bool committed;
+    uint32_t serial;     // monotonic pass identity, never reused (provenance)
+    PageId originPage;   // compacted runs: page holding the source passes' serials, indexed by `origin`
+    uint8_t originCount;
     uint32_t rowCount() const { return midiCount + hideCount; }
     uint32_t segEnd(uint8_t s) const { return s + 1 < segCount ? segStart[s + 1] : midiCount; }
     void clear(PassKind k) {  // scalars only: the arrays are read only below their counts
@@ -188,6 +201,9 @@ class StoreCore {
       refs = 0;
       kind = k;
       committed = false;
+      serial = 0;
+      originPage = kNoPage;
+      originCount = 0;
     }
   };
 
@@ -220,7 +236,8 @@ class StoreCore {
     uint32_t n = 0;
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
       if (!runLive_[i]) continue;
-      n += static_cast<uint32_t>(runs_[i].pageCount) + runs_[i].dirPageCount + runs_[i].hidePageCount;
+      n += static_cast<uint32_t>(runs_[i].pageCount) + runs_[i].dirPageCount + runs_[i].hidePageCount +
+           (runs_[i].originPage != kNoPage ? 1u : 0u);
     }
     return n;
   }
@@ -236,6 +253,24 @@ class StoreCore {
   }
   /// Commits that fell back to a sort because a run exceeded its segment budget. Expected 0 for capture input.
   uint32_t slowSeals() const { return slowSeals_; }
+  /// Serial of the source pass a row of run `id` came from (its own serial unless the run is compacted).
+  uint32_t sourceSerialOf(RunId id, uint8_t origin) const {
+    const PassRun& r = runs_[id];
+    if (r.originPage == kNoPage) return r.serial;
+    return reinterpret_cast<const uint32_t*>(&pool_.row(r.originPage, 0))[origin];
+  }
+  /// Visit every committed source row of manifest `id` (DEC-245 layer 1): `f(row, sourceSerial, isHide)`, in storage
+  /// order. Off-line use (tests, persistence, diagnostics); cost is the manifest's whole content.
+  template <typename F>
+  void forEachSourceRow(ManifestId id, F&& f) const {
+    const RevisionManifest& m = manifests_[id];
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      const RunId runId = m.runs[i];
+      const PassRun& r = runs_[runId];
+      for (uint32_t k = 0; k < r.midiCount; ++k) f(midiAt(r, k), sourceSerialOf(runId, midiAt(r, k).origin), false);
+      for (uint32_t k = 0; k < r.hideCount; ++k) f(hideAt(r, k), sourceSerialOf(runId, hideAt(r, k).origin), true);
+    }
+  }
   /// Data page `p` of run `id` (diagnostics and tests).
   PageId dataPageOf(RunId id, uint16_t p) const { return dataPage(runs_[id], p); }
 
@@ -281,7 +316,6 @@ class StoreCore {
     e.data1 = data1;
     e.data2 = data2;
     e.noteId = noteId;
-    e.kind = PassEventKind::Midi;
     e.seq = r.rowCount();
     const AppendResult pushed = pushMidi(r, e);
     if (pushed != AppendResult::Ok) return writerStop_ = pushed;
@@ -295,7 +329,6 @@ class StoreCore {
     PassRun& r = runs_[writer_];
     PassEvent e;
     e.noteId = noteId;
-    e.kind = PassEventKind::HideNote;
     e.seq = r.rowCount();
     const AppendResult pushed = pushHide(r, e);
     if (pushed != AppendResult::Ok) return writerStop_ = pushed;
@@ -363,10 +396,12 @@ class StoreCore {
   }
   void unpin(ManifestId id) { releaseManifest(id); }
 
-  /// Compose `[fromTick, toTick)` of `id` into `out` in DEC-244 order. Hidden notes are dropped.
+  /// Compose `[fromTick, toTick)` of `id` into `out` in DEC-244 order, projected by `policy` (DEC-245 layer 2):
+  /// by default hides and replacements apply; `EffectivePolicy::source()` returns the committed source rows.
   /// Heap merge over the manifest's segments with cached keys: O(log cursors) per row, comparisons never touch pages.
   /// Main-loop only (uses the store's scratch merge state, not the stack); never from an interrupt.
-  ComposeStamp composeWindow(ManifestId id, uint32_t fromTick, uint32_t toTick, PassEvent* out, uint32_t capacity) const {
+  ComposeStamp composeWindow(ManifestId id, uint32_t fromTick, uint32_t toTick, PassEvent* out, uint32_t capacity,
+                             EffectivePolicy policy = EffectivePolicy::revision()) const {
     ComposeStamp stamp;
     if (id == kNoManifest || !manifests_[id].live) return stamp;
     const RevisionManifest& m = manifests_[id];
@@ -377,7 +412,7 @@ class StoreCore {
     Merge& merge = composeScratch_;
     merge.reset();
     merge.limit = m.runCount;
-    collectHideRuns(m, 0, m.runCount, merge);
+    if (policy.applyHides) collectHideRuns(m, 0, m.runCount, merge);
     for (uint8_t i = 0; i < m.runCount; ++i) {
       const PassRun& r = runs_[m.runs[i]];
       for (uint8_t s = 0; s < r.segCount; ++s) {
@@ -387,15 +422,50 @@ class StoreCore {
     for (uint16_t k = 0; k < merge.count; ++k) {
       if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
     }
+    // The current equal-tick group's run indices, for the two cross-row projections.
+    uint8_t* groupRun = composeGroupRun_;
+    uint32_t groupStart = 0;
+    uint32_t groupCount = 0;
     while (merge.heapSize != 0) {
       const uint16_t k = heapPop(m, merge);
+      const PassEvent& row = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
+      const uint8_t runIndex = merge.run[k];
+      ++merge.at[k];
+      if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
+      if (groupCount == 0 || out[groupStart].tick != row.tick) {
+        groupStart = stamp.count;
+        groupCount = 0;
+      }
+      if (policy.collapseCrossRunDuplicates && collapsesWithEarlierRun(out + groupStart, groupRun, groupCount, row,
+                                                                     runIndex)) {
+        continue;
+      }
+      if (policy.suppressZeroLength && equalTickClass(row) == 1 && row.noteId != 0) {
+        uint32_t off = groupCount;
+        for (uint32_t g = 0; g < groupCount; ++g) {
+          const PassEvent& e = out[groupStart + g];
+          if (equalTickClass(e) == 0 && e.noteId == row.noteId) {
+            off = g;
+            break;
+          }
+        }
+        if (off != groupCount) {  // drop the pair: remove its NoteOff, skip this NoteOn
+          for (uint32_t g = off; g + 1 < groupCount; ++g) {
+            out[groupStart + g] = out[groupStart + g + 1];
+            if (g + 1 < kGroupCapacity) groupRun[g] = groupRun[g + 1];
+          }
+          --groupCount;
+          --stamp.count;
+          continue;
+        }
+      }
       if (stamp.count >= capacity) {
         stamp.status = ComposeStatus::OutputFull;
         break;
       }
-      out[stamp.count++] = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
-      ++merge.at[k];
-      if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
+      out[stamp.count++] = row;
+      if (groupCount < kGroupCapacity) groupRun[groupCount] = runIndex;
+      ++groupCount;
     }
     return stamp;
   }
@@ -445,10 +515,34 @@ class StoreCore {
     return 0;
   }
 
+  /// Compaction planner (B.5c): start a job on the first history-closed range of layered runs (never the base run at
+  /// index 0) whose input fits `maxInputRows`, so the copy in flight stays bounded. A range that would re-merge a large
+  /// merged run therefore starts after it (LSM-style levels). `NothingToCompact` when no such range exists.
+  CompactResult planCompaction(uint32_t maxInputRows) {
+    if (job_.active) return CompactResult::DeniedBusy;
+    if (current_ == kNoManifest) return CompactResult::NothingToCompact;
+    const RevisionManifest& m = manifests_[current_];
+    for (uint8_t first = 1; first + 1 < m.runCount; ++first) {
+      const uint8_t count = largestClosedRangeFrom(first);
+      uint8_t fitting = 0;
+      uint32_t rows = 0;
+      uint32_t origins = 0;
+      for (uint8_t i = 0; i < count; ++i) {
+        const PassRun& r = runs_[m.runs[first + i]];
+        rows += r.midiCount;
+        origins += r.originPage == kNoPage ? 1u : r.originCount;
+        if (rows > maxInputRows || origins > kMaxOrigins) break;
+        fitting = static_cast<uint8_t>(i + 1);
+      }
+      if (fitting >= 2) return beginCompaction(first, fitting);
+    }
+    return CompactResult::NothingToCompact;
+  }
+
   /// Start merging runs [first, first + count) of the current manifest. Off-clock maintenance, step by step; a writer,
-  /// readers and undo may run meanwhile. The source manifest is pinned until the job ends. With `first > 0` (e.g.
-  /// every overdub but not the Record) the large base run is never copied, and the range's HideNote rows are carried
-  /// into the merged run because they may target runs before the range.
+  /// readers and undo may run meanwhile. The source manifest is pinned until the job ends. Lossless (DEC-245): every
+  /// source row and every hide is copied with its source pass as `origin` and its `seq` unchanged, so the committed
+  /// source multiset, provenance and every manifest's effective output are preserved.
   CompactResult beginCompaction(uint8_t first, uint8_t count,
                                 CompactionScope scope = CompactionScope::HistoryClosedOnly) {
     if (job_.active) return CompactResult::DeniedBusy;
@@ -458,6 +552,12 @@ class StoreCore {
     if (scope == CompactionScope::HistoryClosedOnly && !rangeIsHistoryClosed(first, count)) {
       return CompactResult::NotHistoryClosed;
     }
+    uint32_t origins = 0;
+    for (uint8_t i = first; i < first + count; ++i) {
+      const PassRun& r = runs_[src.runs[i]];
+      origins += r.originPage == kNoPage ? 1u : r.originCount;
+    }
+    if (origins > kMaxOrigins) return CompactResult::NothingToCompact;
     const RunId out = takeRun(PassKind::Compacted);
     if (out == kNoRun) return CompactResult::DeniedNoRun;
     const ManifestId dst = takeManifest();
@@ -465,18 +565,33 @@ class StoreCore {
       runLive_[out] = false;
       return CompactResult::DeniedNoManifest;
     }
+    const PageId originPage = pool_.take();
+    if (originPage == kNoPage) {
+      runLive_[out] = false;
+      manifests_[dst].live = false;
+      return CompactResult::DeniedNoPage;
+    }
+    // Origin table: the source passes' serials, in run order, flattening already-compacted runs.
+    PassRun& merged = runs_[out];
+    merged.originPage = originPage;
+    merged.originCount = 0;
+    uint32_t* serials = reinterpret_cast<uint32_t*>(&pool_.row(originPage, 0));
+    for (uint8_t i = first; i < first + count; ++i) {
+      const RunId id = src.runs[i];
+      job_.originBase[i] = merged.originCount;
+      const uint8_t n = runs_[id].originPage == kNoPage ? 1 : runs_[id].originCount;
+      for (uint8_t o = 0; o < n; ++o) serials[merged.originCount++] = sourceSerialOf(id, o);
+    }
     job_.active = true;
     job_.source = current_;
     job_.first = first;
     job_.end = static_cast<uint8_t>(first + count);
     job_.out = out;
     job_.dst = dst;
-    job_.seq = 0;
     ++manifests_[current_].refs;
     Merge& merge = job_.merge;
     merge.reset();
-    merge.limit = job_.end;
-    collectHideRuns(src, first, job_.end, merge);
+    merge.limit = job_.end;  // no hide runs collected: compaction copies every row (lossless)
     for (uint8_t i = first; i < job_.end; ++i) {
       const PassRun& r = runs_[src.runs[i]];
       for (uint8_t s = 0; s < r.segCount; ++s) merge.add(i, r.segStart[s], r.segEnd(s));
@@ -504,9 +619,9 @@ class StoreCore {
       if (merge.heapSize == 0) return finishCompaction();
       const uint16_t k = heapPop(src, merge);
       PassEvent copy = midiAt(runs_[src.runs[merge.run[k]]], merge.at[k]);
+      copy.origin = static_cast<uint8_t>(job_.originBase[merge.run[k]] + copy.origin);
       ++merge.at[k];
       if (advanceToVisible(src, merge, k, UINT32_MAX)) heapPush(src, merge, k);
-      copy.seq = job_.seq++;
       if (pushMidi(merged, copy) != AppendResult::Ok) {
         endCompaction(false);
         return CompactStep::DeniedNoPage;
@@ -550,6 +665,7 @@ class StoreCore {
     writerStop_ = AppendResult::Ok;
     loopLengthTicks_ = 0;
     nextIdentity_ = 1;
+    nextSerial_ = 1;
     slowSeals_ = 0;
     job_.active = false;
   }
@@ -558,6 +674,36 @@ class StoreCore {
   static constexpr uint16_t kMaxCursors = static_cast<uint16_t>(Cap::kRunsPerManifest) * Cap::kSegmentsPerRun;
   /// Same-tick class inversions are fixed in place while appending, but only across this many rows.
   static constexpr uint32_t kMaxLocalShift = 32;
+  /// Source passes one compacted run can name (origin is a byte; the table is one page of uint32 serials).
+  static constexpr uint32_t kMaxOrigins =
+      (sizeof(PassEvent) * Cap::kEventsPerPage / 4) < 255 ? (sizeof(PassEvent) * Cap::kEventsPerPage / 4) : 255;
+  /// Equal-tick group size tracked for the cross-row projections; beyond it, collapse sees only the first rows.
+  static constexpr uint32_t kGroupCapacity = 256;
+
+  // Production's cross-pass collapse (`midiEventMatchesSnapshot`): a row matches an earlier-run row on the same tick
+  // with the same type and channel; CCs also match number and value; notes also match pitch, and a NoteOn never matches
+  // another NoteOn with a different id (NoteOffs carry no id in production, so they match by pitch).
+  static bool collapsesWithEarlierRun(const PassEvent* group, const uint8_t* groupRun, uint32_t groupCount,
+                                      const PassEvent& row, uint8_t runIndex) {
+    const uint32_t tracked = groupCount < kGroupCapacity ? groupCount : kGroupCapacity;
+    for (uint32_t g = 0; g < tracked; ++g) {
+      const PassEvent& e = group[g];
+      if (groupRun[g] >= runIndex || e.status != row.status) continue;
+      const uint8_t type = row.status & 0xF0;
+      if (type == 0xB0) {
+        if (e.data1 == row.data1 && e.data2 == row.data2) return true;
+        continue;
+      }
+      if (type == 0x80 || type == 0x90) {
+        if (e.data1 != row.data1) continue;
+        const bool bothOn = equalTickClass(e) == 1 && equalTickClass(row) == 1;
+        if (bothOn && e.noteId != 0 && row.noteId != 0 && e.noteId != row.noteId) continue;
+        return true;
+      }
+      return true;
+    }
+    return false;
+  }
 
   /// Cursors over segments plus a binary min-heap of cursor indices (DEC-244 order) and the runs that carry hides.
   struct Merge {
@@ -566,7 +712,7 @@ class StoreCore {
     // Cached DEC-244 key of each cursor's current row, so heap comparisons never re-read rows from (PSRAM) pages:
     // (tick << 8) | (class << 6) | run index, then seq.
     uint64_t key[kMaxCursors];
-    uint32_t seq[kMaxCursors];
+    uint64_t seq[kMaxCursors];  // (origin << 32) | seq: inside a compacted run, source pass order then append order
     uint8_t run[kMaxCursors];  // index into the manifest's run list
     uint16_t heap[kMaxCursors];
     uint8_t hideRuns[Cap::kRunsPerManifest];
@@ -590,7 +736,7 @@ class StoreCore {
     uint8_t end = 0;  // one past the last compacted run
     RunId out = kNoRun;
     ManifestId dst = kNoManifest;
-    uint32_t seq = 0;
+    uint8_t originBase[Cap::kRunsPerManifest];  // origin offset of each source run in the merged run
     Merge merge;
   };
 
@@ -601,11 +747,14 @@ class StoreCore {
     }
   }
 
-  bool hidden(const RevisionManifest& m, const Merge& merge, uint8_t runIndex, uint32_t noteId) const {
+  /// A row (run `runIndex`, source `origin`) is hidden by any hide in a later run, or by a hide inside its own
+  /// (compacted) run that came from a later source pass.
+  bool hidden(const RevisionManifest& m, const Merge& merge, uint8_t runIndex, uint8_t origin, uint32_t noteId) const {
     if (noteId == 0) return false;
     for (uint8_t h = 0; h < merge.hideRunCount; ++h) {
       const uint8_t j = merge.hideRuns[h];
-      if (j > runIndex && j < merge.limit && runHides(runs_[m.runs[j]], noteId)) return true;
+      if (j >= merge.limit || j < runIndex) continue;
+      if (runHides(runs_[m.runs[j]], noteId, j == runIndex ? origin + 1u : 0u)) return true;
     }
     return false;
   }
@@ -619,10 +768,10 @@ class StoreCore {
         merge.at[k] = merge.end[k];
         return false;
       }
-      if (!hidden(m, merge, merge.run[k], row.noteId)) {
+      if (!hidden(m, merge, merge.run[k], row.origin, row.noteId)) {
         merge.key[k] = (static_cast<uint64_t>(row.tick) << 8) | (static_cast<uint64_t>(equalTickClass(row)) << 6) |
                        merge.run[k];
-        merge.seq[k] = row.seq;
+        merge.seq[k] = (static_cast<uint64_t>(row.origin) << 32) | row.seq;
         return true;
       }
       ++merge.at[k];
@@ -690,6 +839,7 @@ class StoreCore {
       if (!runLive_[i]) {
         runLive_[i] = true;
         runs_[i].clear(kind);
+        runs_[i].serial = nextSerial_++;
         return static_cast<RunId>(i);
       }
     }
@@ -807,7 +957,7 @@ class StoreCore {
   bool rowLess(PassRun& r, uint32_t a, uint32_t b, bool hides) {
     const PassEvent& x = rowRef(r, a, hides);
     const PassEvent& y = rowRef(r, b, hides);
-    if (hides) return x.noteId < y.noteId;
+    if (hides) return x.noteId != y.noteId ? x.noteId < y.noteId : x.origin < y.origin;
     if (tickClassLess(x, y)) return true;
     if (tickClassLess(y, x)) return false;
     return x.seq < y.seq;
@@ -846,18 +996,20 @@ class StoreCore {
     return lo;
   }
 
-  bool runHides(const PassRun& r, uint32_t noteId) const {
+  /// A hide for `noteId` whose source origin is at least `minOrigin` (hides sorted by noteId, then origin).
+  bool runHides(const PassRun& r, uint32_t noteId, uint32_t minOrigin) const {
     uint32_t lo = 0;
     uint32_t hi = r.hideCount;
-    while (lo < hi) {
+    while (lo < hi) {  // first hide with noteId >= target
       const uint32_t mid = lo + (hi - lo) / 2;
-      const uint32_t v = hideAt(r, mid).noteId;
-      if (v == noteId) return true;
-      if (v < noteId) {
+      if (hideAt(r, mid).noteId < noteId) {
         lo = mid + 1;
       } else {
         hi = mid;
       }
+    }
+    for (; lo < r.hideCount && hideAt(r, lo).noteId == noteId; ++lo) {
+      if (hideAt(r, lo).origin >= minOrigin) return true;
     }
     return false;
   }
@@ -897,13 +1049,16 @@ class StoreCore {
       return CompactStep::Superseded;
     }
     PassRun& merged = runs_[job_.out];
-    if (job_.first > 0) {
-      // Carry the range's hides: they may target runs before the range. Bounded by the hide rows, not the content.
+    {
+      // Carry every hide with its source origin (lossless; a hide may target runs before the range or rows of an
+      // earlier source pass inside it). Bounded by the hide rows, not the content.
       const RevisionManifest& src = manifests_[job_.source];
       for (uint8_t i = job_.first; i < job_.end; ++i) {
         const PassRun& r = runs_[src.runs[i]];
         for (uint32_t h = 0; h < r.hideCount; ++h) {
-          if (pushHide(merged, hideAt(r, h)) != AppendResult::Ok) {
+          PassEvent hide = hideAt(r, h);
+          hide.origin = static_cast<uint8_t>(job_.originBase[i] + hide.origin);
+          if (pushHide(merged, hide) != AppendResult::Ok) {
             endCompaction(false);
             return CompactStep::DeniedNoPage;
           }
@@ -944,6 +1099,8 @@ class StoreCore {
     for (uint16_t p = 0; p < r.pageCount; ++p) pool_.give(dataPage(r, p));
     for (uint16_t i = 0; i < r.dirPageCount; ++i) pool_.give(r.dirPages[i]);
     for (uint16_t i = 0; i < r.hidePageCount; ++i) pool_.give(r.hidePages[i]);
+    if (r.originPage != kNoPage) pool_.give(r.originPage);
+    r.originPage = kNoPage;
     r.pageCount = 0;
     r.dirPageCount = 0;
     r.hidePageCount = 0;
@@ -1003,9 +1160,11 @@ class StoreCore {
   AppendResult writerStop_ = AppendResult::Ok;
   uint32_t loopLengthTicks_ = 0;
   uint32_t nextIdentity_ = 1;
+  uint32_t nextSerial_ = 1;
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
   mutable Merge composeScratch_;
+  mutable uint8_t composeGroupRun_[kGroupCapacity];
 };
 
 /// A store with its own page pool (one slot, tests, the probe). `reset()` empties both.

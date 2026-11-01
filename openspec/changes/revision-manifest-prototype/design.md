@@ -46,6 +46,9 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   (same-tick class inversions fixed in place over ≤ 32 rows; a tick decrease opens a segment); composition merges
   segments like runs. HideNote rows live in their own region, the only part ordered at commit. Overflow falls back to a
   counted commit-time sort.
+- **D0b — Three layers (DEC-245).** Committed source rows are lossless (multiplicity, identity, zero-length pairs);
+  effective meaning is an explicit `EffectivePolicy` projection at compose time; windows and snapshots are caches.
+  Compaction keeps every row and hide with `origin` + source serial provenance.
 - **D5c — Compaction takes history-closed ranges only (B.5a default).** A range qualifies when every history entry holds
   all of it at the same positions or none of it; publish rewrites them all, so no second copy outlives the job. With
   undo depth 99 nothing closes during a normal session: many runs, composed by a heap merge on cached keys, are the
@@ -97,7 +100,7 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 
 - **Q1** Resolved by B.2a: parity on (tick, class) groups; production defines no within-class order (owner question: make
   append order the defined order?). [B.2a](evidence/2026-11-01-b2a-production-oracle.md)
-- **Q1b** Span-less (zero-length) notes: production's effective view drops them, the store keeps them (B.3).
+- **Q1b** Resolved by DEC-245 B.3b: kept in source, suppressed by the explicit `productionCompat()` projection.
 - **Q2** Overlap-resolve and ledger semantics expressed as hides + replacement rows; compare against
   `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md` cases.
 - **Q3** NOTE_EDIT / quantize as edit runs; whether that needs bar-sliced manifests (D8).

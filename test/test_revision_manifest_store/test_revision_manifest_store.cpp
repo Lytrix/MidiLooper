@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <new>
+#include <tuple>
 #include <vector>
 
 #include "RevisionStore/RevisionStore.h"
@@ -703,6 +704,154 @@ void test_large_run_uses_directory_pages() {
   assertManifestMatches(gStore.current(), rev, 1, 0, kLongTakeTicks);
 }
 
+// ---- B.5c / DEC-245: lossless compaction, explicit projections, the planner ---------------------------------------
+
+struct SourceKey {
+  uint32_t tick, noteId, seq, serial;
+  uint8_t status, data1, data2, hide;
+  bool operator<(const SourceKey& o) const {
+    return std::tie(serial, hide, seq, tick, noteId, status, data1, data2) <
+           std::tie(o.serial, o.hide, o.seq, o.tick, o.noteId, o.status, o.data1, o.data2);
+  }
+  bool operator==(const SourceKey& o) const { return !(*this < o) && !(o < *this); }
+};
+
+template <typename S>
+static std::vector<SourceKey> sourceMultiset(const S& store, ManifestId id) {
+  std::vector<SourceKey> keys;
+  store.forEachSourceRow(id, [&](const PassEvent& e, uint32_t serial, bool isHide) {
+    keys.push_back({e.tick, e.noteId, e.seq, serial, e.status, e.data1, e.data2, static_cast<uint8_t>(isHide)});
+  });
+  std::sort(keys.begin(), keys.end());
+  return keys;
+}
+
+static std::vector<PassEvent> composeAll(ManifestId id, EffectivePolicy policy) {
+  const ComposeStamp stamp = gStore.composeWindow(id, 0, kLongTakeTicks, gOut, 4096, policy);
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  return std::vector<PassEvent>(gOut, gOut + stamp.count);
+}
+
+static bool sameRows(const std::vector<PassEvent>& a, const std::vector<PassEvent>& b) {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (a[i].tick != b[i].tick || a[i].status != b[i].status || a[i].data1 != b[i].data1 || a[i].data2 != b[i].data2 ||
+        a[i].noteId != b[i].noteId) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Record with a zero-length note; OD1 repeats a Record CC row byte-for-byte and hides a Record note; OD2 hides a note
+// OD1 added (a hide between source passes *inside* the compacted range) and repeats OD1's CC; OD3 is left outside.
+static void buildLosslessFixture() {
+  gStore.beginPass(PassKind::Record, kLongTakeTicks);
+  gStore.appendMidi(96, kNoteOn, 60, 100, 1);
+  gStore.appendMidi(480, kNoteOff, 60, 0, 1);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);
+  gStore.appendMidi(768, kNoteOn, 62, 90, 2);  // zero-length pair
+  gStore.appendMidi(768, kNoteOff, 62, 0, 2);
+  gStore.appendMidi(900, kNoteOn, 64, 80, 3);
+  gStore.appendMidi(1200, kNoteOff, 64, 0, 3);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendHide(3);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);  // identical to the Record row
+  gStore.appendMidi(1500, kNoteOn + 1, 70, 100, 10);
+  gStore.appendMidi(1700, kNoteOff + 1, 70, 0, 10);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendHide(10);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);
+  gStore.appendMidi(2000, kNoteOn + 2, 72, 100, 20);
+  gStore.appendMidi(2100, kNoteOff + 2, 72, 0, 20);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendMidi(3000, kNoteOn + 3, 50, 100, 30);
+  gStore.appendMidi(3100, kNoteOff + 3, 50, 0, 30);
+  gStore.commitPass();
+}
+
+void test_compaction_is_lossless_for_source_rows_hides_duplicates_and_zero_length_pairs() {
+  buildLosslessFixture();
+  const ManifestId before = gStore.pinCurrent();
+  const auto sourceBefore = sourceMultiset(gStore, before);
+  const auto effectiveBefore = composeAll(before, EffectivePolicy::revision());
+  const auto compatBefore = composeAll(before, EffectivePolicy::productionCompat());
+  const auto rawBefore = composeAll(before, EffectivePolicy::source());
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 2, CompactionScope::AllowCopies));  // OD1 + OD2
+  while (gStore.stepCompaction(3) == CompactStep::Pending) {
+  }
+  const ManifestId after = gStore.current();
+  TEST_ASSERT_EQUAL_UINT8(3, gStore.manifest(after).runCount);
+  // Layer 1: the committed source multiset, with each row's source pass serial, is unchanged.
+  TEST_ASSERT_TRUE(sourceBefore == sourceMultiset(gStore, after));
+  TEST_ASSERT_TRUE(sameRows(rawBefore, composeAll(after, EffectivePolicy::source())));
+  // Layer 2: the effective outputs are unchanged under both policies.
+  TEST_ASSERT_TRUE(sameRows(effectiveBefore, composeAll(after, EffectivePolicy::revision())));
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(after, EffectivePolicy::productionCompat())));
+  // The hide between OD1 and OD2 still works inside the merged run: OD1's note 70 is gone, OD2's note 72 is not.
+  bool has70 = false, has72 = false;
+  for (const PassEvent& e : effectiveBefore) {
+    has70 = has70 || e.data1 == 70;
+    has72 = has72 || e.data1 == 72;
+  }
+  TEST_ASSERT_FALSE(has70);
+  TEST_ASSERT_TRUE(has72);
+  gStore.unpin(before);
+}
+
+void test_effective_policies_are_explicit_projections_over_lossless_source() {
+  buildLosslessFixture();
+  const ManifestId m = gStore.current();
+  auto count = [](const std::vector<PassEvent>& rows, uint8_t status, uint8_t data1) {
+    uint32_t n = 0;
+    for (const PassEvent& e : rows) n += (e.status == status && e.data1 == data1) ? 1 : 0;
+    return n;
+  };
+  const auto source = composeAll(m, EffectivePolicy::source());
+  const auto revision = composeAll(m, EffectivePolicy::revision());
+  const auto compat = composeAll(m, EffectivePolicy::productionCompat());
+  // B.3a: three identical CC74=100 rows stay three in source and in the revision view; production collapses to one.
+  TEST_ASSERT_EQUAL_UINT32(3, count(source, 0xB0, 74));
+  TEST_ASSERT_EQUAL_UINT32(3, count(revision, 0xB0, 74));
+  TEST_ASSERT_EQUAL_UINT32(1, count(compat, 0xB0, 74));
+  // B.3b: the zero-length pair stays in source and revision; production compat suppresses it.
+  TEST_ASSERT_EQUAL_UINT32(1, count(revision, kNoteOn, 62));
+  TEST_ASSERT_EQUAL_UINT32(0, count(compat, kNoteOn, 62));
+  TEST_ASSERT_EQUAL_UINT32(0, count(compat, kNoteOff, 62));
+  // Hidden rows are absent from the revision view but present in source.
+  TEST_ASSERT_EQUAL_UINT32(1, count(source, kNoteOn, 64));
+  TEST_ASSERT_EQUAL_UINT32(0, count(revision, kNoteOn, 64));
+}
+
+void test_planner_takes_only_closed_ranges_within_the_row_cap() {
+  using PlanCap = Capacity<512, 32, 24, 64, 24, 12, /*history*/ 2>;
+  static Store<PlanCap> plan;
+  plan.reset();
+  plan.beginPass(PassKind::Record, 4 * kBarTicks);
+  plan.appendMidi(0, kNoteOn, 60, 100, 1);
+  plan.appendMidi(96, kNoteOff, 60, 0, 1);
+  plan.commitPass();
+  TEST_ASSERT_EQUAL(CompactResult::NothingToCompact, plan.planCompaction(1000));
+  for (uint32_t i = 0; i < 6; ++i) {
+    plan.beginPass(PassKind::Overdub);
+    for (uint32_t k = 0; k < 10; ++k) plan.appendMidi(100 + i * 50 + k, kNoteOn, 70, 100, 100 + i * 10 + k);
+    plan.commitPass();
+  }
+  // History holds revisions 6 and 7: overdubs 1..5 are closed; a 25-row cap admits only two of them at a time.
+  TEST_ASSERT_EQUAL(CompactResult::Ok, plan.planCompaction(25));
+  while (plan.stepCompaction(8) == CompactStep::Pending) {
+  }
+  TEST_ASSERT_EQUAL_UINT8(6, plan.manifest(plan.current()).runCount);  // R, [OD1+OD2], OD3, OD4, OD5, OD6
+  // The next plan does not re-merge the 20-row merged run with another overdub past the cap; it starts after it.
+  TEST_ASSERT_EQUAL(CompactResult::Ok, plan.planCompaction(25));
+  while (plan.stepCompaction(8) == CompactStep::Pending) {
+  }
+  TEST_ASSERT_EQUAL_UINT8(5, plan.manifest(plan.current()).runCount);  // R, [OD1+OD2], [OD3+OD4], OD5, OD6
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -730,5 +879,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_compaction_refuses_a_range_history_still_names_and_admits_a_closed_one);
   RUN_TEST(test_two_slots_share_one_page_pool);
   RUN_TEST(test_large_run_uses_directory_pages);
+  RUN_TEST(test_compaction_is_lossless_for_source_rows_hides_duplicates_and_zero_length_pairs);
+  RUN_TEST(test_effective_policies_are_explicit_projections_over_lossless_source);
+  RUN_TEST(test_planner_takes_only_closed_ranges_within_the_row_cap);
   return UNITY_END();
 }

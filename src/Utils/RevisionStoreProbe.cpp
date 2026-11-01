@@ -29,7 +29,7 @@ using ProbeStore = Store<ProbeCap>;
 constexpr uint32_t kBarTicks = 768;
 constexpr uint32_t kBars = 64;
 constexpr uint32_t kLoopTicks = kBarTicks * kBars;
-constexpr uint32_t kWindowCapacity = 4096;
+constexpr uint32_t kWindowCapacity = 8192;
 
 uint32_t cyclesToUs(uint32_t cycles) { return cycles / (F_CPU_ACTUAL / 1000000u); }
 
@@ -57,16 +57,17 @@ uint32_t nextRandom() {
 
 // `notes` paired notes appended the way capture delivers them: in time order from mid-loop (one wrap), each NoteOff
 // emitted when it falls due. 260 rows per bar at the densest observed device bar.
-void appendTake(ProbeStore& store, uint32_t notes, uint8_t status, uint32_t& noteId, Stat& append) {
+void appendTake(ProbeStore& store, uint32_t notes, uint8_t status, uint32_t& noteId, Stat& append,
+                uint32_t startTick = kLoopTicks / 2, uint32_t spanTicks = kLoopTicks) {
   struct Pending {
     uint32_t offTick;  // unwrapped
     uint8_t pitch;
     uint32_t id;
   };
-  Pending pending[64];
+  constexpr uint32_t kPending = 256;
+  Pending pending[kPending];
   uint32_t pendingCount = 0;
-  const uint32_t startTick = kLoopTicks / 2;
-  const uint32_t step = kLoopTicks / (notes == 0 ? 1 : notes);
+  const uint32_t step64 = (static_cast<uint64_t>(spanTicks) << 6) / (notes == 0 ? 1 : notes);  // 1/64-tick steps
   const uint8_t offStatus = static_cast<uint8_t>((status & 0x0F) | 0x80);
   auto timed = [&](uint32_t tick, uint8_t st, uint8_t pitch, uint8_t velocity, uint32_t id) {
     const uint32_t t0 = ARM_DWT_CYCCNT;
@@ -85,12 +86,12 @@ void appendTake(ProbeStore& store, uint32_t notes, uint8_t status, uint32_t& not
     }
   };
   for (uint32_t i = 0; i < notes; ++i) {
-    const uint32_t on = startTick + i * step;
+    const uint32_t on = startTick + static_cast<uint32_t>((static_cast<uint64_t>(i) * step64) >> 6);
     flushDue(on);
     const uint8_t pitch = static_cast<uint8_t>(36 + nextRandom() % 48);
     const uint32_t id = noteId++;
     timed(on, status, pitch, 100, id);
-    if (pendingCount < 64) {
+    if (pendingCount < kPending) {
       pending[pendingCount++] = {on + 24 + nextRandom() % 96, pitch, id};
     } else {
       timed(on, offStatus, pitch, 0, id);  // never reached at these densities; keeps the generator bounded
@@ -235,7 +236,54 @@ void run() {
   Serial.printf_P(PSTR("REVSTORE,pages_used_31runs=%u\r\n"),
                   static_cast<unsigned>(ProbeCap::kPageCount - store.freePageCount()));
 
+  {
+    // B.5c: the explicit production projection (zero-length suppression, cross-pass collapse) at 31 runs.
+    Stat compose;
+    uint32_t rows = 0;
+    for (uint32_t from = 0; from < kLoopTicks; from += 2 * kBarTicks) {
+      t0 = ARM_DWT_CYCCNT;
+      const ComposeStamp stamp = store.composeWindow(store.current(), from, from + 2 * kBarTicks, window,
+                                                     kWindowCapacity, EffectivePolicy::productionCompat());
+      compose.add(ARM_DWT_CYCCNT - t0);
+      rows += stamp.count;
+    }
+    printStat("compose_2bar_31runs_compat", rows, 31, compose);
+  }
   Serial.printf_P(PSTR("REVSTORE,slow_seals=%lu\r\n"), static_cast<unsigned long>(store.slowSeals()));
+
+  // B.5c hide-heavy: Record + 30 overdubs that each hide 60 random Record notes (hidden checks on most rows).
+  {
+    store.reset();
+    gLcg = 3;
+    uint32_t id = 1;
+    Stat ignore;
+    store.beginPass(PassKind::Record, kLoopTicks);
+    appendTake(store, 8320, 0x90, id, ignore);
+    store.commitPass();
+    for (uint32_t od = 0; od < 30; ++od) {
+      store.beginPass(PassKind::Overdub);
+      for (uint32_t h = 0; h < 60; ++h) store.appendHide(1 + nextRandom() % 8320);
+      appendTake(store, 520, static_cast<uint8_t>(0x90 | ((od % 3) + 1)), id, ignore);
+      store.commitPass();
+    }
+    composeAll("compose_2bar_31runs_hideheavy", 31);
+    Serial.printf_P(PSTR("REVSTORE,pages_used_hideheavy=%u\r\n"),
+                    static_cast<unsigned>(ProbeCap::kPageCount - store.freePageCount()));
+  }
+  // B.5c dense burst: Record + one overdub of 2,000 notes packed into bars 0-1 (one window of ~4,500 rows).
+  {
+    store.reset();
+    gLcg = 5;
+    uint32_t id = 1;
+    Stat ignore;
+    store.beginPass(PassKind::Record, kLoopTicks);
+    appendTake(store, 8320, 0x90, id, ignore);
+    store.commitPass();
+    store.beginPass(PassKind::Overdub);
+    appendTake(store, 2000, 0x91, id, ignore, 0, 2 * kBarTicks);
+    store.commitPass();
+    composeAll("compose_2bar_burst", 2);
+  }
 
   // Rebuild Record + 8 overdubs + a 1-row overdub (10 runs) for the compaction measurements.
   auto rebuildTenRuns = [&]() {

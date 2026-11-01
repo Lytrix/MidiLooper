@@ -13785,3 +13785,42 @@ share; keys 3–4 are what the musician did.
 ### Related
 
 DEC-076 (playhead-scheduled MVCC), `LoopEventStore` private canonical order (keys 1–2 already, stable).
+
+## DEC-245 — Committed source is lossless; meaning is a projection; compaction changes representation only
+
+**Date:** 2026-11-01
+**Owner:** content-model semantics; prototype owner `RevisionStore::StoreCore` (change `revision-manifest-prototype`,
+tasks B.3a, B.3b, B.5c). No production behaviour changes with this entry.
+**Status:** Accepted (owner, 2026-11-01).
+
+### Three layers
+
+1. **Committed source** — immutable pass rows (Record, overdub, edit) plus their hide/replacement operations. Authority
+   begins *after* capture rules (pairing, wrap handling, capture acceptance): these are immutable committed source
+   rows, not raw MIDI input. Multiplicity and identity (pass, append ordinal) are preserved; no destructive cleanup.
+2. **Effective revision view** — what revision N musically means: hides, shortens/replacements, NOTE_EDIT, overlap
+   semantics, zero-length suppression, an identical-event policy. Every rule here is explicit and testable.
+3. **Serving representations** — playback windows, display tiles, snapshots/roots, persisted accelerators. Caches only.
+
+### Decisions
+
+- **B.3a — duplicate preservation.** Distinct committed source rows stay distinct even when tick and MIDI payload are
+  identical. Pass identity and append identity are authoritative. Deduplication, if wanted, is an effective-view
+  policy and never mutates source history. Production's cross-pass collapse (`midiEventMatchesSnapshot`) is pinned
+  as a legacy effective-view behaviour, not a defect; whether to keep it is a later decision.
+- **B.3b — zero-length preservation.** A valid committed note pair of zero duration stays in its source pass.
+  Effective, display and playback views may suppress it by an explicit projection rule. Seal and compaction never
+  delete it.
+- **Compaction** may change physical representation, but must preserve the complete committed-source multiset, the
+  identities and provenance the model needs, and the effective ordered output of every retained manifest. It never
+  performs semantic garbage collection (no dropping of hidden rows, hides, duplicates or zero-length pairs).
+
+### Consequences
+
+- Persistence stores the authoritative pieces (pass rows, edit operations, manifests); snapshots and windows are
+  optional caches rebuilt from manifests.
+- Undoing an edit selects a manifest without the hide/replacement; nothing is reconstructed.
+
+### Related
+
+DEC-244 (one equal-tick order), DEC-076. Evidence: `revision-manifest-prototype` B.2a, B.2b, B.3.

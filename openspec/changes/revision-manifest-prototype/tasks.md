@@ -67,7 +67,14 @@ timing and memory envelope without introducing real-time construction?
       directories (descriptor 76 B), shared `PagePool` across slot stores. Capacity: history-closed peak 1.12–1.23×
       content (vs 2–3.4× with copies); device (HEX `8f70c93a…`, boot verified): 2-bar compose at 31 runs 5.45 ms max,
       compaction step 4.16 ms, commit 10 µs. [Evidence](evidence/2026-11-01-b5a-store-changes.md)
-- [ ] B.5c Move the compaction planner into the store (in-flight cap, level rule); time denser/hide-heavy windows.
+- [x] B.5c DEC-245 recorded (lossless committed source, explicit projections, compaction changes representation
+      only). Compaction made lossless (origin + serial provenance, origin-aware hiding); `EffectivePolicy`
+      (revision / source / productionCompat); `planCompaction` in the store; zero-length divergence now parity under
+      `productionCompat`, and that projection equals production on all 520 seeded revisions. Device (HEX `2db2116a…`):
+      31-run compat 5.26 ms, dense burst 7.85 ms, **hide-heavy 31 runs 30.7 ms (over budget)**.
+      [Evidence](evidence/2026-11-01-b5c-lossless-projections-planner.md)
+- [ ] B.5d Per-manifest hide index (noteId → latest hiding run/origin; layer-3 cache built off-edge), hide region on
+      the run's page directory (bulk NOTE_EDIT); re-time the hide-heavy window.
 - [x] B.5b Session high-water on device (probe HEX `8f70c93a…`, fresh boot verified, owner rig: 20-bar Record + 12
       overdubs + internal-clock hold; `session_20261101_170808.log`): firmware alone peaks at **7.15 MB of 8.38 MB**,
       1.33 MB free after stop; event chunks are 1.0 MB of it. The store cannot sit beside today's firmware at its
