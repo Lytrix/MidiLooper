@@ -15,7 +15,8 @@ SlotLoadSession::SlotLoadSession(uint8_t trackIndex, uint8_t slotIndex)
       slotIndex_(slotIndex),
       state_(SlotLoadSessionState::Dequeued),
       finished_(false) {
-  LoopEventStore::enterSdLoadStaging();
+  // DEC-240: no SD-load staging here. The session lives across main-loop turns; the load's own appends
+  // open `LoopEventStore::SdLoadStagingScope` themselves (StorageLoopIo), so capture seals in between stay queued.
   ++activeCount_;
   activeTrack_ = trackIndex_;
   activeSlot_ = slotIndex_;
@@ -29,7 +30,6 @@ SlotLoadSession::~SlotLoadSession() {
       activeState_ = SlotLoadSessionState::Failed;
     }
   }
-  LoopEventStore::leaveSdLoadStaging();
   if (activeCount_ > 0) {
     --activeCount_;
   }

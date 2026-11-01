@@ -153,6 +153,8 @@ bool STORAGE_LOOP_IO_MEM readCapturePassSlotFileHeader(const StorageIo& io, Capt
     return false;
   }
 
+  // DEC-240: the load's appends and detach below are SD-load staged; nothing outside this function is.
+  LoopEventStore::SdLoadStagingScope loadAppends;
   LoopEventStore staging;
   auto failStagingRead = [&staging]() {
     staging.clear();
@@ -826,6 +828,7 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
   auto finalizeActivePass = [&]() -> bool {
     CommittedChunkIdList committedChunkIds;
     if (state.passStaging) {
+      const LoopEventStore::SdLoadStagingScope loadAppends;  // DEC-240: the tail seal is a load seal
       if (!state.passStaging->detachChunksToCommittedChunkIds(committedChunkIds)) {
         state.passStaging->clear();
         state.passStaging.reset();
@@ -970,6 +973,7 @@ PersistedLoopParseStepResult STORAGE_LOOP_IO_MEM stepPersistedLoopSnapshotParse(
       if (!ioRead(io, batch, static_cast<size_t>(batchCount) * sizeof(MidiEvent))) {
         return failAndReset();
       }
+      const LoopEventStore::SdLoadStagingScope loadAppends;  // DEC-240: only this batch's appends are load appends
       for (uint32_t i = 0; i < batchCount; ++i) {
         const MidiEvent& evt = batch[i];
         if (evt.tick > maxTick) {

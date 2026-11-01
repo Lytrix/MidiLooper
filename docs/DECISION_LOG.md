@@ -13492,3 +13492,35 @@ such row with a dump. Decision review: `openspec/changes/runtime-profiling-layer
 
 **Consequences.** A new timing question is answered by adding one scope line and an append-only
 `ProfileId`, not a new row. Profiler output is never an input to runtime logic.
+
+## DEC-240 — SD-load staging covers the load's own appends, not the load session's lifetime
+
+**Date:** 2026-11-01 · **Status:** Implemented — native verified; device acceptance in progress.
+**Owner:** `LoopEventStore` (staging scope), `SlotLoadSession`, `StorageLoopIo` (the two load append/detach sites).
+Resolves the open stop-edge wedge (`CURRENT_WORK.md` priority; DEC-233 area) whose term is
+`DIAG,order_deny,reason=5,…,persist=3,used=256,expected=256`.
+
+**Evidence.** Three consecutive owner-rig chains on 2026-11-01 wedged with that term — on two profile images
+and on the pre-change default `909c930d…` that ran clean twice on 2026-10-31 — so the trigger was device/card
+state, not an image. In every wedged take the mid-pass writer logged one row at Record start
+(`midpass_skip,reason=1,queue=0,admit_refused=0`) and never changed for the whole take, while the take's chunk
+read `Persisted`: the chunks were sealed **without** being admitted, which only `LoopEventStore::sealChunk`'s
+SD-load branch does (`markChunkPersistedFromSdLoad`). That branch keyed off a process-wide depth that
+`SlotLoadSession` held for its whole lifetime; a load job keeps its session alive across main-loop turns and
+pauses while capture runs, so any capture chunk sealed in that window became "already on SD" — never written,
+and refused by the Record stop's private-order preflight (`NotScheduled` required) forever. In the wedged boots
+Record started 14–15 s after boot (restore sweep still owed); in the valid ones 23–35 s.
+
+**Decision.** `SdLoadStagingScope` (RAII) is opened only around the load's own appends and tail detach in
+`StorageLoopIo` (the capture-pass staging read, the parse step's batch, `finalizeActivePass`'s detach).
+`SlotLoadSession` no longer enters staging. All three consumers of the flag — the seal's persistence state,
+bar-index deferral and the RAM-floor bypass in `canStagePersistedEvent` — act only during those appends, so
+their behaviour for loads is unchanged; committed loads are still also marked explicitly
+(`markLoopCommittedChunksPersistedFromSdLoad`).
+
+**Tests.** RED→GREEN `test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persisted`
+(`test_persistence_queue`: `Expected 1 (Queued) Was 3 (Persisted)` before); the real-load smoke test now also
+asserts an empty chunk queue and no open staging scope after the job retires.
+
+**Not changed.** The private-order preflight, the stall's terminal-denial retirement, mid-pass admission,
+and every load/commit gate.

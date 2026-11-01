@@ -4,10 +4,12 @@
 #include <unity.h>
 
 #include "../../src/LoopEventStore.cpp"
+#include "../../src/StorageManager/SlotLoadSession.cpp"
 
 #include "LoopEventStore.h"
 #include "MidiEvent.h"
 #include "PersistenceQueue.h"
+#include "SlotLoadSession.h"
 
 namespace {
 
@@ -131,6 +133,27 @@ void test_sd_load_staging_marks_persisted_without_queue() {
   LoopEventStore::leaveSdLoadStaging();
 }
 
+
+/// Device wedge 2026-11-01 (`DIAG,order_deny,reason=5,…,persist=3`, three chains on `cb4694f5`/`975e0577`/`909c930d`):
+/// the Record take's mid-pass writer logged `queue=0, admit_refused=0` for the whole take while the take's own chunk
+/// read `Persisted`, i.e. its chunks were sealed through the SD-load branch. A load job keeps its `SlotLoadSession`
+/// alive across main-loop turns (it pauses while capture runs), so a live session must not turn an unrelated capture
+/// seal into "already on SD": that chunk is never written and the Record stop's private-order preflight denies it.
+void test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persisted() {
+  resetPool();
+  PersistenceQueue::resetForTests();
+  SlotLoadSession otherSlotLoading(1, 0);  // a boot-sweep load of another slot, parked across turns
+  LoopEventStore capture;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY + 5; ++i) {
+    TEST_ASSERT_TRUE(capture.append(noteOn(i)));
+  }
+  const uint16_t first = capture.chunkIds().front();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(ChunkPersistenceState::Queued),
+                            static_cast<int>(PersistenceQueue::chunkState(first)),
+                            "a capture chunk sealed while a slot load is in flight must be admitted to persistence");
+  TEST_ASSERT_TRUE(PersistenceQueue::queueDepth() >= 1u);
+}
+
 void test_ephemeral_seal_does_not_enqueue_mid_pass() {
   resetPool();
   LoopEventStore::enterEphemeralSeal();
@@ -195,6 +218,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_drain_order_matches_seal_order);
   RUN_TEST(test_persisted_chunk_not_re_enqueued);
   RUN_TEST(test_sd_load_staging_marks_persisted_without_queue);
+  RUN_TEST(test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persisted);
   RUN_TEST(test_ephemeral_seal_does_not_enqueue_mid_pass);
   RUN_TEST(test_mark_chunk_persisted_from_sd_load_purges_queued);
   RUN_TEST(test_chunk_freed_resets_persistence_state);

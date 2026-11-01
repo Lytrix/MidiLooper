@@ -314,6 +314,11 @@ void test_restore_harness_smoke_commits_a_queued_request_through_production_path
                                    "the served request must leave the queue");
   TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::anyLoadLoopJobActive(),
                             "the job retires after a completed commit");
+  // DEC-240: loaded chunks are already on SD -- the load's own appends must still mark them persisted, never queue
+  // them for a second write; and once the job retires no SD-load staging scope may remain open.
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, PersistenceQueue::queueDepth(),
+                                   "a loaded pass must not be admitted to mid-pass persistence");
+  TEST_ASSERT_FALSE_MESSAGE(LoopEventStore::isSdLoadStaging(), "no staging scope outlives the load's appends");
 }
 
 /// **A1.2 [C1 — transport-gated background admission], desired behavior, red on current `src/`.**

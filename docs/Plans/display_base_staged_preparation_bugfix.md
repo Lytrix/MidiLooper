@@ -419,6 +419,9 @@ The follow-phase windows are reported separately and are **not** acceptance for 
   slot-resolve failure (re-queue, no row) or `ensureMidPassJournalOpen` failure (no row). None of those emits a row.
   The generation/ownership guard for stale slot saves is still the right contract, but the evidence no longer ties it
   to this stall, so it is **not implemented**.
+- **Resolved 2026-11-01 (DEC-240):** the zero mid-pass rows are explained — nothing was ever queued. While a slot load
+  was in flight, `SlotLoadSession`'s session-long SD-load staging made every capture seal `Persisted` instead of
+  `Queued`. Fix and device evidence: `openspec/changes/overdub-stop-edge-closure/evidence/2026-11-01-reason5-load-staging.md`.
 - **Update (2026-10-31 19:30) — report-only mid-pass outcome rows landed (image `dac97d87…`, on the board, retained in
   `captures/midpass-outcome-dac97d872577/`).** `DIAG,midpass_skip,reason,queue,writing,detail,prev_repeats,
   admit_refused,admit_last` is emitted only when the writer's outcome changes. Reasons: 0 wrote, 1 queue empty, 2 SD I/O

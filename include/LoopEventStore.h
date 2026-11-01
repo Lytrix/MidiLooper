@@ -287,10 +287,19 @@ class LoopEventStore {
   static void retainChunkReferenceForTests(uint16_t id) { retainChunkReference(id); }
 #endif
 
-  /// Nested SD-load staging scope: sealChunk marks Persisted instead of admitting mid_pass.
+  /// Nested SD-load staging scope: sealChunk marks Persisted instead of admitting mid_pass. Held only around the
+  /// load's **own** appends and detach (`SdLoadStagingScope`), never for a load session's lifetime: a session spans
+  /// many main-loop turns and pauses while capture runs, so a session-long scope turned every capture chunk sealed in
+  /// that window into "already on SD" -- never written, and denied by the Record stop's private order (DEC-240).
   static void enterSdLoadStaging();
   static void leaveSdLoadStaging();
   static bool isSdLoadStaging();
+  struct SdLoadStagingScope {
+    SdLoadStagingScope() { enterSdLoadStaging(); }
+    ~SdLoadStagingScope() { leaveSdLoadStaging(); }
+    SdLoadStagingScope(const SdLoadStagingScope&) = delete;
+    SdLoadStagingScope& operator=(const SdLoadStagingScope&) = delete;
+  };
 
   /// Derived-view / ephemeral seal: sealChunk does not touch PersistenceQueue.
   static void enterEphemeralSeal();
