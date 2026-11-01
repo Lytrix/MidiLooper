@@ -164,10 +164,14 @@ timing and memory envelope without introducing real-time construction?
 - [ ] C5 One manifest-backed rolling-window reader (DEC-246 amendment 19; authorized 2026-11-01). Seam and G2 packet:
       [design.md § C5](design.md). The committed lane's **snapshot-window fill** becomes a manifest-window fill with a
       metadata-only currency test; owed states are named and there is no real-time fallback.
-  - [ ] C5.1 consumer contract fixture (snapshot fill vs manifest fill emit the same sequence)
+  - **Blocked on `playback-tick-consume-only`** landing and device qualification; then rebase this branch onto its
+    routing (DEC-246 amendment 20). Probe env only, A/B flag 0 / 1; with flag 0 the integration allocates nothing.
+  - [ ] C5.1 consumer contract fixture: the full tuple (`MidiEvent`, phase, rank, `passOrigin`, ledger/boundary)
+        through the real order builder equals the snapshot fill; a manifest `passOrigin` never collides with the
+        live-overlay origin
   - [ ] C5.2 `ManifestWindow` fill source with named refusals and the exact identity stamp
   - [ ] C5.3 lane switch behind `REVISION_MANIFEST_READER` (probe env)
-  - [ ] C5.4 device: current-boot owner chain + reboot-restored; timing vs flag off
+  - [ ] C5.4 device A/B (probe flag 0 / 1, same stimulus): current-boot owner chain + reboot-restored; timing
 - [ ] C6 Remove the corresponding old reader after device parity.
 
 ## D–E. Production stages (not authorized)

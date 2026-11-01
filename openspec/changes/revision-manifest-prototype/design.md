@@ -195,10 +195,24 @@ compare).
    - Every served window carries the exact identity it read.
    - MIDI timing: `tick_playback_miss` and route counts against the same chain on the probe image with the flag off.
 
-### Open questions for the owner before C5.2
+### Owner rulings (DEC-246 amendment 20)
 
-1. **Image scope.** C5 is behind `REVISION_MANIFEST_READER` in the probe env only; the default image keeps the
-   snapshot fill until C6. Proposed: yes.
-2. **Coexistence with `playback-tick-consume-only`.** That change is also active on this lane and file (phases 5–6
-   change routing). Proposed: C5 touches only the fill source and the Committed currency term, and lands on this
-   branch; the other change keeps the routing. Confirm the sequencing, or name the change that goes first.
+1. **Image:** the probe env only, behind `REVISION_MANIFEST_READER`.
+   - With the flag at 0, the integration allocates nothing and registers nothing.
+   - Qualification is an A/B of two otherwise identical probe builds (flag 0 / 1).
+   - The default image is unchanged until C6.
+2. **Sequence:** `playback-tick-consume-only` lands and is device-qualified **first**. This branch then rebases onto
+   its final routing and miss semantics, and C5 is designed inside that boundary.
+   - An owed manifest window is then "the rolling-window owner owes preparation; the tick sees no qualified new
+     window and does zero construction".
+   - C5.3 asserts this.
+3. **C5.1 pins the full tuple** (`MidiEvent`, phase, rank, `passOrigin`, ledger/boundary) through the real order
+   builder, plus a test that a manifest `passOrigin` never equals the live-overlay origin.
+4. **Currency:**
+   - actual manifest identity == demanded identity;
+   - the frozen source identity still qualifies;
+   - the interval is covered.
+
+   Never `playbackRevision` alone.
+
+**C5 status: blocked on `playback-tick-consume-only`** (DEC-246 amendment 20). Nothing is implemented.

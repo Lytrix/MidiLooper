@@ -13940,6 +13940,24 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
       - no regression in MIDI timing.
     - The companion-loss repair stays separate; C5 mirrors what production committed.
     - C6 removes or demotes the legacy path after C5 is device-green on current-boot and reboot-restored content.
+20. **C5 scope and sequence (owner, 2026-11-01).**
+    - **Image.** C5 runs behind `REVISION_MANIFEST_READER` in the probe env only. The default image keeps the
+      snapshot reader until C6.
+      - With the flag at 0, the reader integration allocates nothing (no 0.5 MiB pool) and registers no runtime
+        obligations.
+      - Device qualification is an A/B of two otherwise identical probe builds (flag 0 / 1), with the same
+        diagnostics, compiler settings and stimulus.
+    - **Sequence.** `playback-tick-consume-only` lands and is device-qualified first: the tick consumes qualified
+      state and never builds or repairs it. This branch is then rebased onto its final routing and miss semantics.
+      C5 replaces only the committed `SnapshotWindow` fill source inside that boundary. The order is: tick
+      consume-only → rebase → C5.1 → C5.2 → C5.3 → C5.4 A/B → C6 decision. The companion-loss branch stays separate.
+    - **C5.1 pins the full consumer-visible tuple**, not only the event sequence: `MidiEvent`, phase, rank,
+      `passOrigin`, and the ledger/boundary result.
+      - It proves that the real order builder yields the same final order as the snapshot fill.
+      - It proves that a manifest `passOrigin` can never collide with the live-overlay origin.
+    - **Currency.** A served window is current iff its actual manifest identity equals the demanded manifest identity,
+      the frozen production source identity still qualifies, and the requested interval is covered. A matching
+      `playbackRevision` alone is never enough: compaction keeps the revision and changes the identity.
 
 ### Related
 
