@@ -77,6 +77,7 @@ SECTIONS
 		*LoopInternalColdHelpers*.o(.text .text.*)
 		*SetBrowserRead*.o(.text .text.*)
 		*StorageManagerHitlSerial*.o(.text .text.*)
+		*RevisionStoreProbe*.o(.text .text.*)
 		*DebugSessionCapture*.o(.text .text.*)
 		*NoteEditSessionUndoStack*.o(.text .text.*)
 		/* The DIN *input* path: the `MidiInterface` parse pipeline this TU

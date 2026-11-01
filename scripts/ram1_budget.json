@@ -34,6 +34,7 @@
     },
     "teensy41-capture-serial-ingress": "teensy41-capture-serial",
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
+    "teensy41-capture-serial-revstore-probe": "teensy41-capture-serial",
     "teensy41-capture-serial-profile": {
       "itcm_bytes": 393216,
       "ram1_variables": 96192,

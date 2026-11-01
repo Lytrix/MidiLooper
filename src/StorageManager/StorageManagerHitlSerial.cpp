@@ -25,6 +25,9 @@
 #include "Utils/InvestigationCaptureLog.h"
 #include "Utils/MidiIngressCostProbe.h"
 #include "Utils/ProfileDiagRows.h"
+#if REVISION_STORE_PROBE
+#include "Utils/RevisionStoreProbe.h"
+#endif
 
 #if defined(__IMXRT1062__)
 #define CAPTURE_HITL_MEM FLASHMEM
@@ -859,6 +862,15 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                         static_cast<unsigned long>(probe.requestedBytes),
                         probe.internalMallocOk ? 1u : 0u, probe.externalPoolOk ? 1u : 0u);
                 }
+#if REVISION_STORE_PROBE
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REVSTORE_PROBE") == 0) {
+                // revision-manifest-prototype B.4: stopped-only, host-requested cost probe of the unwired prototype.
+                if (clockManager.isTransportRunning()) {
+                    Serial.println("REVSTORE,denied,transport_running");
+                } else {
+                    RevisionStoreProbe::run();
+                }
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE") == 0) {
                 // `restored-library-stability` 1.3: request the bounded on-demand library observation.
                 // Deliberately not transport-gated: the states it must explain include a restore waiting

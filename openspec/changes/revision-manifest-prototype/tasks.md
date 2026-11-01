@@ -44,9 +44,12 @@ timing and memory envelope without introducing real-time construction?
       43 edits, 10 undos). Writer requirement: NoteOff rows carry their note's id. Open: span-less notes (Q1b), the
       cross-pass collapse decision, live `Track` overlap-resolve, Tick moves, CC edits, redo of edits.
       [Evidence](evidence/2026-11-01-b3-overlap-and-edits.md)
-- [ ] B.4 Teensy cost experiment in `teensy41-capture-serial-profile`, store not wired to playback: begin pass, append,
-      seal, manifest commit, window compose, undo/redo selection, compaction grain, on the densest captured take.
-      Any content-sized step (seal sort, compaction) must be shown boundable off Record/Stop and off the PIT path.
+- [x] B.4 Teensy cost probe (env `teensy41-capture-serial-revstore-probe`, RAM1-neutral, flash-resident code, PSRAM
+      arena; HEX `e5db1dfc…`, boot verified). Manifest commit < 1 µs, undo/redo ≤ 2 µs, begin ≤ 95 µs, append < 1 µs avg,
+      2-bar compose 2.8 ms max at 10 runs (1.4 ms compacted). **Not fitting:** seal is a content-sized sort (134 ms at
+      16,640 rows) and compaction is synchronous (67 ms for 25k rows). Next design step: sort-free seal (two sorted
+      segments around the capture wrap) and step-bounded compaction (~2,900 rows per 8 ms grain).
+      [Evidence](evidence/2026-11-01-b4-teensy-timing.md)
 - [ ] B.5 Capacity budget (design.md D7) with exact figures, including the compaction peak and pinned discarded
       branches.
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest
