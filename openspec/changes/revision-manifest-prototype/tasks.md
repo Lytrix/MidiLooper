@@ -117,39 +117,47 @@ timing and memory envelope without introducing real-time construction?
       import step max 683 µs at 64 rows; shadow `revision()` = production passes view **54/54** under real hides.
       Found: production's snapshot (62) and passes view (54) disagree after overlap Shortens + undo/redo.
       [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
-- [ ] C3c Restored slots (after C4, owner order): read-only hydration of persisted pass records through the same
-      importer source abstraction (`LivePassesSource` / `PersistedPassesSource`); never a snapshot as source.
+- [ ] C3c Restored slots (**next**, before C5, DEC-246 amendment 17): read-only hydration of persisted pass records
+      through the same importer source abstraction (`LivePassesSource` / `PersistedPassesSource`); never a snapshot
+      as source. Until then `NoCommittedSource` is a hard refusal for boot-restored slots.
 - [x] C3d Shadow window producer: store `beginWindow`/`stepWindow` (`Ready` with actual identity, `IndexOwed`,
       `ImportOwed`, `CapacityDenied`, `SourceMoved`; no build, no scan; honest finish); firmware child
       `RevisionShadowWindowGrain` (2 ms / 0.5 ms), each window produced once per manifest identity, digests in PSRAM.
       [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md)
-- [~] C4 Device shadow compare against the **passes-derived `revision()` surface** (DEC-246 amendment 9), gate-valid
-      owner chain: **10/10 windows** match, whole loop 1,042/1,042, grains ≤ 256 µs import / 243 µs window, 0 duplicate
-      publications. **With hides (gate-valid same-pitch owner chain, 33 hides): NOT clean** — whole loop 1,138 vs
-      1,136 (2 NoteOffs misattributed by the streaming pairing; windows 10/10 only because production's windowed gather
-      shares the blind spot), import step 3,212 µs (> 2 ms), and PSRAM exhaustion over long uptime with the 0.49 MB
-      shadow. [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md),
-      [hides](evidence/2026-11-01-c4-hides-not-clean.md)
-- [~] C4a Host repro + fix of NoteOff misattribution (pairing equal to production's, bounded); bound the import step
-      with edits; C4 acceptance includes the whole-loop comparison; smaller shadow footprint; HITL validity re-check
-      on the default image.
+- [x] C4 Device shadow compare against the **passes-derived `revision()` surface** (DEC-246 amendments 9, 14). Two
+      coverage claims, recorded separately:
+  - [x] **C4 content** (owner-chain scale and windowing): armed owner chain, Record and overdubs both `16ths.mid`,
+        take at tick 0, the whole file sent. Whole loop **1,210 = 1,210**, **10/10** windows, `c4_clean=1`, import max
+        209 µs, window max ≤ 241 µs, 0 duplicate publications. This run had **no companion overlays**: production
+        skipped all 12. [Evidence](evidence/2026-11-01-c4-closeout.md)
+  - [x] **C4 hide/index** (Hide + `EditIndex` read `IndexOnly`): C3b real-hide run, **54/54**, `IndexOnly` used a
+        published index. Qualification: that preset's own verdict was FAIL (amendment 10); the owner counts its parity
+        (amendment 14). [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
+  - History: the first hide run was not clean (2 NoteOffs misattributed, a 3,212 µs step)
+    ([evidence](evidence/2026-11-01-c4-hides-not-clean.md)); window producer
+    ([evidence](evidence/2026-11-01-c3d-c4-window-producer.md)).
+- [x] C4a NoteOff attribution equal to production's; bounded seal; whole-loop comparator.
   - [x] `LanePairer` = production's tick-ordered lane walk + unique-earlier wrap NoteOff, shared by importer
         (`PairWalk`/`PairWrap`) and host oracle; wrap-overlap repro RED → GREEN; zero-length suppression no longer
         needs a stamped id; 664 parity checks.
   - [x] Bounded seal (`stepSealStagedRun`, resumable heapsort); no per-edit allocation in `EditApply`;
-        per-phase import timing.
-  - [x] Whole-loop comparison in `!REVSHADOW_WINDOWS` (`windows_whole_loop`, `c4_clean`). Device, two fresh boots
-        on the same-pitch owner chain: `c4_clean=1`, whole loop 1,204/1,204 and 1,206/1,206, import max 197 µs —
-        **but 0 hides** (production produced no companion edits either run).
+        per-phase import timing (`import_phases`).
+  - [x] Whole-loop comparison in `!REVSHADOW_WINDOWS` (`windows_whole_loop`, `c4_clean`).
         [Evidence](evidence/2026-11-01-c4a-pairing-and-whole-loop.md)
-  - [x] C4b: midifile chain recorded the Record take `startLoopTick mod 48` off the grid (316/316 NoteOns at +24);
-        the chain now anchors the record pattern on the device's `Recording started @ tick N` → 0/314 off grid.
-        Importer crash (null read in `stepCaptures`: pointers into production pass vectors) fixed with ids resolved
-        per step; RED → GREEN test. [Evidence](evidence/2026-11-01-c4b-hitl-alignment-and-import-crash.md)
-  - [ ] Hide-carrying device run with `c4_clean=1` and an `import_phases` reading (names the 3,212 µs phase).
-        Blocked on production: exact overlaps are resolved (`lcr,part a=1`) but 9–12 of 12 overdub stops retire
-        "companion path skipped (canonical derivation unavailable); raw pass only", so no Delete companion is sealed.
-  - [ ] Smaller shadow footprint; HITL validity re-check on the default image.
+- [x] C4b Rig and importer fixes.
+  - [x] The midifile chain recorded the take `startLoopTick mod 48` off the grid. It now arms Record with the clock
+        stopped, waits for `armed, waiting for clock`, then sends `Start`; the take starts at tick 0 and the file is
+        streamed from event zero. The run fails by name otherwise.
+  - [x] Importer crash (null read in `stepCaptures`: pointers into production pass vectors) fixed with ids resolved
+        per step; regression fixture "same source identity, backing container relocates".
+        [Evidence](evidence/2026-11-01-c4b-hitl-alignment-and-import-crash.md)
+- [ ] Residuals, not blocking C3c:
+  - The 3,212 µs import step seen once with 33 edits is unattributed (`import_phases` will name it). Owed on an
+    edit-carrying source before C5.
+  - Smaller shadow footprint for long uptimes.
+  - HITL validity on the default image.
+- Out of scope here (DEC-246 amendment 16): production overdub companion loss ("companion path skipped (canonical
+  derivation unavailable); raw pass only"), to go to its own change.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.
 

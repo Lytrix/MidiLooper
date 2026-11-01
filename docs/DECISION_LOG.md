@@ -13873,6 +13873,29 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
 13. **Restored slots:** C3c hydrates persisted pass records read-only through the same importer source abstraction
     (`LivePassesSource` / `PersistedPassesSource`); a derived snapshot is never imported as source.
 
+### Amendments (owner, 2026-11-01, after C4 / C4b)
+
+14. **C4 is two coverage claims, recorded separately.**
+    - *C4 content:* ordinary committed-content parity at owner-chain scale and windowing. Green from the armed owner
+      chain: passes 1,210 = `revision()` 1,210, 10/10 windows, `c4_clean=1`.
+    - *C4 hide/index:* Hide plus `EditIndex` semantics read with `IndexOnly`. Green from the C3b real-hide run: 54/54,
+      with `IndexOnly` using a published index.
+
+    The owner-chain run exercised no companion overlays: production skipped them.
+    Recorded qualification: under amendment 10 the C3b preset's own verdict was FAIL, because its undo/redo proof and
+    diagnostic markers were absent on the capture image. The owner counts its parity as the hide/index evidence.
+15. **Snapshots are diagnostic only for Stage C.** `snapshot != passes` is a derived-publication problem, not a
+    semantic oracle.
+16. **Production companion loss is a production-write defect, outside RevisionStore.**
+    - The defect: the overlap resolver computes Hide/Shorten, then the stop retires with "companion path skipped
+      (canonical derivation unavailable); raw pass only".
+    - RevisionStore mirrors what production committed and does not compensate.
+    - It goes to its own change. The expected invariant is *defer the companion, do not discard it*. Investigate the
+      ownership and liveness contract first: forcing the companion through at stop risks a stop wedge.
+17. **Order:** rig ARMED-start cleanup → C4 closeout → C3c persisted-pass source → C5 one-reader authority switch.
+    Until C3c, `NoCommittedSource` stays a hard refusal for boot-restored slots. C3c comes before C5 so the
+    authoritative reader works across reboot without a temporary routing exception.
+
 ### Related
 
 DEC-241 (consume-only tick), DEC-244 (equal-tick order), DEC-245 (lossless source, explicit projections), DEC-243.

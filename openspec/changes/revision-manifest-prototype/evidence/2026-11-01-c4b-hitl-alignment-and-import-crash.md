@@ -29,7 +29,11 @@ Cause:
   `tick - startLoopTick`.
 - The Record pattern therefore sat `startLoopTick mod 48` off the grid that the overdubs used after the restart.
 
-Fix (host tooling only):
+> **Superseded the same day** by the armed-start rig ([C4 closeout](2026-11-01-c4-closeout.md)). Record is now armed
+> with the clock stopped, so the take starts at tick 0 and the whole file is sent. The take-start anchor below lost
+> the first 1–2 sixteenths.
+
+Fix (host tooling only, first version):
 - The chain reads `Recording started @ tick N` from the capture log.
 - It streams the Record pattern with position 0 on pulse `origin + N / TICKS_PER_CLOCK`, joining at the next unsent
   pulse; the first 1–2 sixteenths of the take are not sent.
