@@ -148,3 +148,81 @@ long 377–392 / 393–414 (0.5–0.7 µs).
 - **5.6:** partial.
 - **Board left on the default image `909c930d…`.** The scratch slot (track 8 / slot 4) holds whatever the
   last wedged run left; the next valid run clears it first.
+
+
+## 2026-11-01 (after DEC-240) — overhead A/B and coverage, unblocked
+
+The stop-edge wedge was fixed (DEC-240, `d4b84b54` + `f4a539ae`), so valid chains became possible again.
+All four runs: owner rig, fresh boot each (`boot_reset,crash=0`, `BOOT,load,ok`), same card state, Record at
+12.7–14.0 s. The scratch slot was cleared by the rig each time (owner-approved).
+
+### Overhead A/B (task 5.5) — **PASS**
+
+| Side | Image | Capture | midi_gap med / max | late_on max | `win_gap_overrun` |
+|---|---|---|---|---|---|
+| A1 | default `39f8926904bdea4e514ff80d65a1b2a7308283a4984288b30db501b4d045e3f5` | `session_20261101_011549.log` | 91 / 185 ms | 40 ms | 3 |
+| A2 | same | `session_20261101_013208.log` | 92 / 170 ms | 151 ms | 4 |
+| B1 | profile `4d4efe9726a0c78ed3eb77878203f97adb6d306baec5c5e17e59169e71aeae9d` | `session_20261101_013536.log` | 78 / 146 ms | 93 ms | 3 |
+| B2 | same | `session_20261101_013906.log` | 82 / 159 ms | 134 ms | 3 |
+
+Pre-declared tolerance: no new overrun, and maxima within the baseline pair's spread.
+- Overruns: B has 3 / 3 against A's 3 / 4.
+- midi_gap max: B 146 / 159 ms, below A's 170 / 185.
+- late_on max: B 93 / 134 ms, inside A's 40–151.
+- **The profile image is not worse on any metric.** Its medians are lower, within run-to-run noise.
+
+No site is removed. One extra A run, `session_20261101_012718.log`, is excluded: the upload failed with the Teensy
+Loader read error, so it was not a fresh boot. It was fixed by opening the loader app; see `CURRENT_WORK` 2026-10-31.
+
+### Coverage (task 5.4) — 8 / 10 domains
+
+Complete stats dump from B2 (`session_20261101_014133.log`):
+
+| Identity | calls | avg µs | max µs | over |
+|---|---|---|---|---|
+| `RecordStart_edge` | 1 | 2,626 | 2,626 | 0 |
+| `PlaybackPrewarm_slot` | 18 | 8,687 | 124,342 (boot, USB transmit timeout) | 1 |
+| `ViewPrewarm_unit` | 41 | 7,963 | 19,100 | 32 |
+| `PlaybackWindow_build` | 78 (reuse poll excluded) | 4,742 | 17,911 | 64 |
+| `PlaybackViewService_grain` | 451 | 71 | 172 | 0 |
+| `SaveWorkItem_step` | 3,661 | 1,354 | **155,531** | 206 |
+| `Display_frame_phase` | 4,849 | 2,069 | 14,826 | 335 |
+| `LoadStep` | 501 | 1,816 | **306,280** | 37 |
+| `OverdubStart_body` | 12 | **66,425** | **159,165** | 8 |
+| `SnapshotPublish_step` | **0** — not exercised: the chain never reaches that `stepPendingSnapshotPublish` call site | — | — |
+| `DisplayBase_gather` | **0** — not exercised: `passwalk=0` in all four runs; no committed display-base rebuild happened | — | — |
+| `PlaybackPrewarm_views` | 0 — expected on the prepared path | — | — |
+
+**Findings for the timing work, not repaired here:**
+- **Each overdub start averages 66 ms and peaks at 159 ms.** It is an edge cost on the MIDI path.
+- A save step peaks at 155 ms.
+- A boot load step reaches 306 ms.
+
+### Ring (task 5.6) — TBD-3 decided: keep 256, the aggregate is primary
+
+- **The ring floods.** In one valid chain it overwrote 440–507 records (`dropped`). The owners are
+  `Display_frame_phase` (335 over 5 ms) and `SaveWorkItem_step` (206 over 5 ms).
+- **Decision:** keep capacity 256 and the 16 / 32 batch sizes.
+  - The aggregate table, which is complete in every dump, is the instrument for "who owns the time".
+  - The ring is a sample of the most recent breaches, and its overwrite count is reported honestly.
+  - Raising capacity costs RAM2 for a sample that ordinary display and save traffic would still fill.
+  - Revisit the `Display_frame_phase` and `SaveWorkItem_step` ceilings when either becomes a repair target.
+- **Open defect — dump delivery loses rows under a burst.**
+  - In B2's ring drain the device reported `count=32,gap=0` for every batch, but seqs 505–519 and 530–544
+    never reached the capture log.
+  - The drain stopped after 5 batches with `resume=1`: the tool's request timed out waiting for a terminator.
+  - The capture ring's own stats show no loss, so the loss is between `Platform::emitRow` (direct-first,
+    capture-ring fallback) and the host.
+  - The decoder flagged it correctly as unexplained missing seq.
+  - Mechanism unproven, so not fixed here. Candidates: the direct write path under USB back-pressure, and
+    the ring-fallback rows arriving after the request's fence.
+
+### Completion record (supersedes the BLOCKED lines above)
+
+| Task | Status |
+|---|---|
+| 5.4 | 8 / 10 domains; 2 named as not exercised |
+| 5.5 | PASS |
+| 5.6 | decided; dump-delivery loss open |
+
+The board is left on the profile image `4d4efe97…`.

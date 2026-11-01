@@ -156,7 +156,8 @@ behavior.
   every reserve before it can go.
 - **TBD-4:** whether the profiler is promoted into `teensy41-capture-serial` after the slice-4 A/B.
   Without promotion no default-image row can be retired (RED_TEAM R2). Owner decision.
-- **TBD-3:** ring capacity (256) and dump batch sizes (16 / 32) after the first two real captures.
+- **TBD-3 (decided 2026-11-01):** keep ring capacity 256 and batches 16 / 32 — the aggregate table is the primary
+  instrument; the ring is a recent-breach sample whose overwrite count is reported (evidence, slice 4).
 
 ## Non-goals
 
