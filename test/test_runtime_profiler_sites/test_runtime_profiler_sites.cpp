@@ -271,6 +271,26 @@ void test_tick_route_and_miss_counters_follow_the_consumed_route() {
   TEST_ASSERT_EQUAL_UINT32(0, served.missInterrupt - missed.missInterrupt);
 }
 
+/// playback-tick-consume-only phase 2: a merged-fallback tick through the real hot path files its reason under the slot
+/// (this suite compiles the windowed lane out, so the reason is that one), on both clocks.
+void test_merged_fallback_tick_files_its_route_reject_reason() {
+  using PlaybackTickContext::RouteReject;
+  PlaybackTickContext::initAtBoot();
+  Track& t = playingTrackWithContent();
+  t.playMidiEvents(96, false);
+  auto filed = PlaybackTickContext::routeRejectForTest(0, 0);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RouteReject::RollingDisabled), filed.reason);
+  TEST_ASSERT_EQUAL_UINT32(1, filed.ticks);
+  TEST_ASSERT_EQUAL_UINT32(1, filed.changes);
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(120, false);
+  }
+  filed = PlaybackTickContext::routeRejectForTest(0, 0);
+  TEST_ASSERT_EQUAL_UINT32(2, filed.ticks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, filed.changes, "an unchanged reason is not a change");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_slot_prewarm_and_monolithic_views_are_profiled);
@@ -285,5 +305,6 @@ int main(int, char**) {
   RUN_TEST(test_main_loop_tick_still_builds_the_merged_fallback);
   RUN_TEST(test_isr_tick_never_rebuilds_the_playback_order);
   RUN_TEST(test_tick_route_and_miss_counters_follow_the_consumed_route);
+  RUN_TEST(test_merged_fallback_tick_files_its_route_reject_reason);
   return UNITY_END();
 }

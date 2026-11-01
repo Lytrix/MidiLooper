@@ -810,6 +810,9 @@ struct LoopPlaybackRuntime {
     /// `refusedHandoffValid`.
     uint8_t refusedSpanAttempts = 0;
     bool refusedHandoffValid = false;
+    /// playback-tick-consume-only phase 2 (report-only): the `PlaybackTickContext::RouteReject` the resolver blocked
+    /// this frame with; 0 when the producer blocked it. Sits in existing padding; dies with the frame.
+    uint8_t blockedBy = 0;
   } rolling;
   // Window-only pins; never a root lease or another event buffer. Destruction on
   // active transport is forbidden until the lane drains explicit retirement.

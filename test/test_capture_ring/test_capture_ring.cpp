@@ -953,6 +953,25 @@ void test_tick_route_row_is_tier_a_and_fits_the_head_read() {
   TEST_ASSERT_TRUE(captureSerial.output.size() < 192);
 }
 
+void test_route_reject_row_is_tier_a_and_fits_the_head_read() {
+  // playback-tick-consume-only phase 2: the merged-fallback reason row.
+  captureSerial.output.clear(); captureSerial.room = 4096;
+  static const char kExit[] = "win_blocked_by_budget";
+  routeRejectRow(7, 7, 37, 37, 9, 4294967295u, 4294967295u, 4294967295u, 4294967295u, kExit);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,route_reject,t=7,s=7,why=37,cause=37,prev=9,prev_n=4294967295,"
+                                             "since=4294967295,chg=4294967295,len=4294967295,"
+                                             "prod=win_blocked_by_budget\r\n") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.size() < 192);
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,route_reject,t=0"));
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,route_rejectx,t=0"));
+  captureSerial.output.clear(); captureSerial.room = 8;  // no room: the row falls back to the ring
+  routeRejectRow(0, 1, 8, 0, 0, 0, 0, 1, 7680, nullptr);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,route_reject,t=0,s=1,why=8,cause=0,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("prod=-\r\n") != std::string::npos);
+}
+
 void test_runtime_profiler_rows_are_tier_a_in_the_source_list_only() {
   // DEC-239: every profiler row family, classified by the `.cpp` list at the longest timestamp, with the
   // boundary pinned; the header list must not learn the family (its literals cost DTCM in every TU).
@@ -1076,6 +1095,7 @@ int main() {
   RUN_TEST(test_playback_read_mailbox_preserves_time_cadence_and_tier_without_usb_on_edge);
   RUN_TEST(test_rolling_record_tier_exact_prefix_and_max_timestamp_fit);
   RUN_TEST(test_tick_route_row_is_tier_a_and_fits_the_head_read);
+  RUN_TEST(test_route_reject_row_is_tier_a_and_fits_the_head_read);
   RUN_TEST(test_runtime_profiler_rows_are_tier_a_in_the_source_list_only);
   RUN_TEST(test_ingress_cost_delivery_tier_parser_and_fit);
   RUN_TEST(test_pit_motion_delivery_tier_parser_and_fit);

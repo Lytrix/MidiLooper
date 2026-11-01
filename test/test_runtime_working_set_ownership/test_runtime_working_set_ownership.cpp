@@ -39,6 +39,25 @@ inline void record(uint8_t track, uint8_t slot, const char* readiness, const cha
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   WindowReadinessRows::record(track, slot, readiness, holder, revision, leadTicks)
 
+// playback-tick-consume-only phase 2: the merged-fallback reason row through the same substitutable seam.
+namespace RouteRejectRows {
+struct Row {
+  uint8_t track = 0, slot = 0, reason = 0, cause = 0, prevReason = 0;
+  uint32_t prevTicks = 0, sinceTick = 0, changes = 0, loopLength = 0;
+};
+inline Row rows[16];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason, uint32_t prevTicks,
+                   uint32_t sinceTick, uint32_t changes, uint32_t loopLength) {
+  if (count < sizeof(rows) / sizeof(rows[0]))
+    rows[count] = Row{track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLength};
+  ++count;
+}
+}  // namespace RouteRejectRows
+#define SC_ROUTE_REJECT(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks, exit) \
+  RouteRejectRows::record(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks)
+
 // DEC-108 §13b / task 3.10: the lane's **service-gap sample** through the same substitutable-seam pattern, so the one
 // quantity the admission's `maximumPhaseAdvancePerTurn` is declared in can be observed and asserted rather than assumed.
 namespace WindowGapRows {
@@ -15392,6 +15411,131 @@ void test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one() {
   TEST_ASSERT_NOT_EQUAL_MESSAGE(0u, runtime->rolling.startPhase, "the next span, not the adopted phase zero");
 }
 
+// ---- playback-tick-consume-only phase 2: the first failed predicate that keeps a tick off the windowed lane ----
+
+namespace {
+using PlaybackTickContext::RouteReject;
+uint8_t ord(RouteReject r) { return static_cast<uint8_t>(r); }
+/// The 3.7f shape: a demoted 24-bar target (slot 2) whose bound launch window the lane has adopted and is serving.
+uint32_t seedServingLaunch(Track& track, LoopPlaybackRuntime*& runtime) {
+  PlaybackTickContext::initAtBoot();
+  RouteRejectRows::reset();
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  const uint32_t phaseBeforeBind = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), track.getProjectionCycleStartTick(), length);
+  nativePlaybackDeadlineClock.tick += (length - phaseBeforeBind) % length;
+  const uint32_t boundAt = static_cast<uint32_t>(nativePlaybackDeadlineClock.tick);
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, boundAt));
+  TrackCaptureStopTestAccess::selectSlot(track, 2);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  return boundAt;
+}
+Track::RollingResolution resolveAt(Track& track, uint64_t tick, uint32_t epochDelta = 0) {
+  nativePlaybackDeadlineClock.tick = tick;
+  PlaybackDeadlineClock clock = nativePlaybackDeadlineClock;
+  clock.epoch += epochDelta;
+  PlaybackTickContext::gState.turnReject = ord(RouteReject::NotEvaluated);
+  PlaybackTickContext::gState.turnCause = 0;
+  return track.resolveRollingPlaybackWindow(2, static_cast<uint32_t>(tick), clock);
+}
+}  // namespace
+
+/// A served tick names nothing; a rejecting tick names its predicate, and the blocked frame keeps naming it as cause.
+void test_route_reject_names_the_blocking_predicate_and_a_served_tick_names_nothing() {
+  auto& track = trackManager.getTrack(0);
+  LoopPlaybackRuntime* runtime = nullptr;
+  const uint32_t boundAt = seedServingLaunch(track, runtime);
+  const auto served = resolveAt(track, boundAt + 64);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Serving), static_cast<int>(served.outcome));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(ord(RouteReject::NotEvaluated), PlaybackTickContext::gState.turnReject,
+                                  "a served tick must not compute a reason");
+  // The clock re-stamped under the frame: the resolver blocks it and names the clock term.
+  const auto epochMoved = resolveAt(track, boundAt + 128, /*epochDelta=*/1);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Rejected), static_cast<int>(epochMoved.outcome));
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::ClockEpochChanged), PlaybackTickContext::gState.turnReject);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::ClockEpochChanged), runtime->rolling.blockedBy);
+  // Every later tick reads the blocked frame and carries the predicate that blocked it.
+  (void)resolveAt(track, boundAt + 192);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::FrameBlocked), PlaybackTickContext::gState.turnReject);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::ClockEpochChanged), PlaybackTickContext::gState.turnCause);
+}
+
+/// A served span ends by expiring (named), and the frame it leaves Idle is named as "no demand" until the producer acts.
+void test_route_reject_names_expiry_then_the_idle_frame() {
+  auto& track = trackManager.getTrack(0);
+  LoopPlaybackRuntime* runtime = nullptr;
+  const uint32_t boundAt = seedServingLaunch(track, runtime);
+  const auto expired = resolveAt(track, boundAt + 2 * Config::TICKS_PER_BAR);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Expired), static_cast<int>(expired.outcome));
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::ServingExpired), PlaybackTickContext::gState.turnReject);
+  (void)resolveAt(track, boundAt + 2 * Config::TICKS_PER_BAR + 1);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::FrameIdle), PlaybackTickContext::gState.turnReject);
+  // The producer opens the successor demand: the tick before its deadline is the named lead the merged fallback covers.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+                    static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  (void)resolveAt(track, nativePlaybackDeadlineClock.tick + 1);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::WaitingForHandoff), PlaybackTickContext::gState.turnReject);
+}
+
+/// The committed reader's own eligibility: a non-active long slot is named before any rolling predicate.
+void test_route_reject_names_an_inactive_slot() {
+  auto& track = trackManager.getTrack(0);
+  LoopPlaybackRuntime* runtime = nullptr;
+  const uint32_t boundAt = seedServingLaunch(track, runtime);
+  PlaybackViewSourceIdentity source{};
+  const FixedPlaybackBridgeStorage* bridge = nullptr;
+  const RuntimePlaybackView* view = nullptr;
+  bool rolling = false, overlay = false;
+  track.resolveQualificationPlaybackSourceForTurn(0, track.getLoop(0), false, boundAt + 64, source, bridge, view,
+                                                  rolling, overlay);
+  TEST_ASSERT_NULL(view);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::InactiveSlot), PlaybackTickContext::gState.turnReject);
+}
+
+/// The merged-fallback filing and the main-loop row: one row per change, spaced, carrying the previous reason's ticks.
+void test_route_reject_row_is_emitted_on_change_from_the_main_loop() {
+  auto& track = trackManager.getTrack(0);
+  LoopPlaybackRuntime* runtime = nullptr;
+  const uint32_t boundAt = seedServingLaunch(track, runtime);
+  (void)resolveAt(track, boundAt + 128, 1);  // blocked by the clock
+  (void)resolveAt(track, boundAt + 192);
+  PlaybackTickContext::recordMergedRouteReject(0, 2, boundAt + 192);
+  PlaybackTickContext::recordMergedRouteReject(0, 2, boundAt + 193);
+  trackManager.reportPlaybackRouteRejects(1000);
+  TEST_ASSERT_EQUAL_UINT32(1, RouteRejectRows::count);
+  const auto& first = RouteRejectRows::rows[0];
+  TEST_ASSERT_EQUAL_UINT8(0, first.track);
+  TEST_ASSERT_EQUAL_UINT8(2, first.slot);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::FrameBlocked), first.reason);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::ClockEpochChanged), first.cause);
+  TEST_ASSERT_EQUAL_UINT32(boundAt + 192, first.sinceTick);
+  TEST_ASSERT_EQUAL_UINT32(track.getLoop(2).loopLengthTicks, first.loopLength);
+  trackManager.reportPlaybackRouteRejects(1001);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, RouteRejectRows::count, "an unchanged reason emits nothing");
+  // A served (bridge) turn files nothing.
+  PlaybackTickContext::noteTurnReject(RouteReject::Served);
+  PlaybackTickContext::recordMergedRouteReject(0, 2, boundAt + 194);
+  TEST_ASSERT_EQUAL_UINT32(2, PlaybackTickContext::routeRejectForTest(0, 2).ticks);
+  // A new reason is spaced from the previous row, then named with the previous reason's tick count.
+  PlaybackTickContext::noteTurnReject(RouteReject::FrameIdle);
+  PlaybackTickContext::recordMergedRouteReject(0, 2, boundAt + 195);
+  trackManager.reportPlaybackRouteRejects(1000 + PlaybackTickContext::kRouteRejectRowSpacingMs - 1);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, RouteRejectRows::count, "a change inside the spacing waits");
+  trackManager.reportPlaybackRouteRejects(1000 + PlaybackTickContext::kRouteRejectRowSpacingMs);
+  TEST_ASSERT_EQUAL_UINT32(2, RouteRejectRows::count);
+  const auto& second = RouteRejectRows::rows[1];
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::FrameIdle), second.reason);
+  TEST_ASSERT_EQUAL_UINT8(0, second.cause);
+  TEST_ASSERT_EQUAL_UINT8(ord(RouteReject::FrameBlocked), second.prevReason);
+  TEST_ASSERT_EQUAL_UINT32(2, second.prevTicks);
+  TEST_ASSERT_EQUAL_UINT32(1, second.changes);
+}
+
 /// 3.7f (blocker) -- **a bound launch belongs to the playing slot, so the provision owner leaves it alone.** Device
 /// `captures/i5-s37f-device-32bar-01` landed an interleaving the previous run did not: the commit bound the target's
 /// launch (`launchBoundTick` set, the phase-0 window adopted as `current`) and the provision owner's next turn ran
@@ -18719,6 +18863,10 @@ int main() {
   RUN_TEST(test_3_7e_a_bound_launch_past_its_interval_is_not_seeded);
   RUN_TEST(test_3_7e_a_stale_bound_launch_is_not_seeded);
   RUN_TEST(test_3_7f_a_served_launch_span_expires_and_the_lane_opens_the_next_one);
+  RUN_TEST(test_route_reject_names_the_blocking_predicate_and_a_served_tick_names_nothing);
+  RUN_TEST(test_route_reject_names_expiry_then_the_idle_frame);
+  RUN_TEST(test_route_reject_names_an_inactive_slot);
+  RUN_TEST(test_route_reject_row_is_emitted_on_change_from_the_main_loop);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
   // fits inside one loop; DEC-156's bounded later occurrence otherwise).

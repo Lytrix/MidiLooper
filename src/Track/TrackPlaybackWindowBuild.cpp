@@ -31,6 +31,11 @@
 #include "PlaybackMergedMidiEvents.h"
 #include "Utils/RuntimeProfiler.h"
 #include "Utils/PlaybackTickContext.h"
+// Phase 2's reason row seam: harnesses that stub the capture header compile the row out.
+#ifndef SC_ROUTE_REJECT
+#define SC_ROUTE_REJECT(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks, exit) \
+  ((void)0)
+#endif
 
 namespace {
 /// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
@@ -595,6 +600,35 @@ TRACK_COLD_MEM void PlaybackTickContext::initAtBoot() {
   for (auto& count : gState.emittedRoute) count = 0;
   gState.emittedMissInterrupt = 0;
   gState.emittedMissExternal = 0;
+  gState.turnReject = 0;
+  gState.turnCause = 0;
+  for (auto& row : gState.reject)
+    for (auto& slot : row) slot = SlotRouteReject{};
+  for (auto& exit : gState.producerExit) exit = nullptr;
+}
+/// playback-tick-consume-only phase 2: files this turn's first failed predicate under the slot. Reached only from
+/// `selectMergedPlaybackFallbackForTick`, i.e. only when the merged fallback was selected; a served tick never runs it.
+TRACK_COLD_MEM void PlaybackTickContext::recordMergedRouteReject(uint8_t trackIndex, uint8_t slotIndex, uint32_t tick) {
+  if (trackIndex >= 8 || slotIndex >= 8) return;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  const uint8_t reason = gState.turnReject;
+  const uint8_t cause = reason == static_cast<uint8_t>(RouteReject::FrameBlocked) ? gState.turnCause : 0;
+#else
+  const uint8_t reason = static_cast<uint8_t>(RouteReject::RollingDisabled);
+  const uint8_t cause = 0;
+#endif
+  if (reason == static_cast<uint8_t>(RouteReject::Served)) return;
+  SlotRouteReject& s = gState.reject[trackIndex][slotIndex];
+  if (s.reason != reason || s.cause != cause || s.changes == 0) {
+    s.prevReason = s.reason;
+    s.prevTicks = s.ticks;
+    s.reason = reason;
+    s.cause = cause;
+    s.sinceTick = tick;
+    s.ticks = 0;
+    s.changes = s.changes + 1u;
+  }
+  s.ticks = s.ticks + 1u;
 }
 TRACK_COLD_MEM PlaybackTickContext::RouteCounts PlaybackTickContext::takeRouteWindow() {
   const RouteCounts now = routeCounts();
@@ -1106,6 +1140,7 @@ const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
 /// merged source (the caller contains the turn). No build, allocation, incremental admit, order rebuild or publication.
 TRACK_COLD_MEM const SessionMidiEventVec* selectMergedPlaybackFallbackForTick(
     Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint8_t slotIndex, uint32_t currentTick) {
+  PlaybackTickContext::recordMergedRouteReject(playbackRebuildTrackIndex(track), slotIndex, currentTick);
   if (!PlaybackTickContext::inInterrupt()) {
     return buildMergedPlaybackFallbackCold(track, loop, runtime, currentTick);
   }
@@ -1322,6 +1357,9 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut, bool& overlayLiveSelectedOut) {
   rollingViewSelectedOut = false;
   overlayLiveSelectedOut = false;
+  // playback-tick-consume-only phase 2: this turn's first failed predicate starts unset (two byte stores).
+  PlaybackTickContext::gState.turnReject = static_cast<uint8_t>(PlaybackTickContext::RouteReject::NotEvaluated);
+  PlaybackTickContext::gState.turnCause = 0;
   // Task 3.15d (slice 2): **NOTE_EDIT is served by the preview's own interval** -- see
   // `resolveNoteEditPreviewSourceForTurn` for the contract and the hazards. One out-of-line FLASH-resident call keeps
   // the ITCM resolver's own edge bounded: the caller only takes the committed reader's frame-bound `return`.
@@ -1639,6 +1677,16 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
     }
   }
   resolveFixedPlaybackSourceForTurn(slotIndex, loop, eligible, sourceOut, bridgeOut, viewOut);
+  if (!eligible && PlaybackTickContext::gState.turnReject ==
+                       static_cast<uint8_t>(PlaybackTickContext::RouteReject::NotEvaluated)) {
+    // Phase 2 (report-only): why the committed reader was not eligible, when no rolling predicate named it.
+    using PlaybackTickContext::RouteReject;
+    PlaybackTickContext::noteTurnReject(slotIndex != activeLoopIndex ? RouteReject::InactiveSlot
+                                        : editManager.isNoteEditActive() ? RouteReject::NoteEditActive
+                                        : isOverdubbing() ? RouteReject::OverdubNoLiveWindow
+                                                          : RouteReject::NotPlaying);
+  }
+  if (bridgeOut != nullptr) PlaybackTickContext::noteTurnReject(PlaybackTickContext::RouteReject::Served);
   if (viewOut == nullptr && eligible) {
     const RuntimePlaybackView* rollingView =
         resolveRollingPlaybackWindow(slotIndex, currentTick, clockManager.getPlaybackDeadlineClock()).view;
@@ -2338,6 +2386,32 @@ TRACK_COLD_MEM void TrackManager::serviceOwedTickPlaybackFallbacks() {
     PlaybackTickContext::gState.owed[trackIndex] = 0;
     for (uint8_t slot = 0; slot < 8; ++slot) {
       if ((owed & (1u << slot)) != 0) getTrack(trackIndex).serviceOwedTickPlaybackFallback(slot);
+    }
+  }
+}
+
+TRACK_COLD_MEM void TrackManager::reportPlaybackRouteRejects(uint32_t nowMs) {
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS && trackIndex < getTrackCount(); ++trackIndex) {
+    for (uint8_t slot = 0; slot < 8; ++slot) {
+      PlaybackTickContext::SlotRouteReject& s = PlaybackTickContext::gState.reject[trackIndex][slot];
+      const uint32_t changes = s.changes;
+      if (changes == s.emittedChanges) continue;
+      const uint8_t reason = s.reason;
+      const uint8_t cause = s.cause;
+      if (reason == s.emittedReason && cause == s.emittedCause && s.emittedChanges != 0) {
+        s.emittedChanges = changes;  // flapped back to the reported reason: nothing new to name
+        continue;
+      }
+      if (s.emittedChanges != 0 && nowMs - s.emittedMs < PlaybackTickContext::kRouteRejectRowSpacingMs) continue;
+      Track& track = getTrack(trackIndex);
+      const uint32_t loopLength = track.loopsAllocated() ? track.getLoop(slot).loopLengthTicks : 0;
+      SC_ROUTE_REJECT(trackIndex, slot, reason, cause, s.prevReason, s.prevTicks, s.sinceTick,
+                      changes - s.emittedChanges, loopLength, PlaybackTickContext::gState.producerExit[trackIndex]);
+      (void)loopLength;
+      s.emittedReason = reason;
+      s.emittedCause = cause;
+      s.emittedChanges = changes;
+      s.emittedMs = nowMs;
     }
   }
 }
@@ -5295,8 +5369,11 @@ TRACK_COLD_MEM bool staleColdRollingReady(const LoopPlaybackRuntime& runtime,
        ready->source.snapshotIdentity != loop.publishedSnapshotIdentity());
 }
 TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingFrame(
-    LoopPlaybackRuntime& runtime, Loop& loop) {
+    LoopPlaybackRuntime& runtime, Loop& loop, PlaybackTickContext::RouteReject why) {
   auto& frame = runtime.rolling;
+  // playback-tick-consume-only phase 2 (report-only): the predicate that blocks this frame, for the ticks after it.
+  PlaybackTickContext::noteTurnReject(why);
+  frame.blockedBy = static_cast<uint8_t>(why);
   const auto* set = runtime.viewSetIfPrewarmed();
   if (set && set->lifecycle.current == frame.boundView && frame.boundView < set->views.size() &&
       set->views[frame.boundView].storageGeneration == frame.boundStorageGeneration)
@@ -5819,16 +5896,30 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   return {RollingOutcome::Disabled, nullptr};
 #else
   RollingMetadataGuard guard;
+  using PlaybackTickContext::RouteReject;
   auto* runtime = playbackRuntime.slotIfAllocated(slot);
-  if (!runtime) return {RollingOutcome::Excluded, nullptr};
+  if (!runtime) {
+    PlaybackTickContext::noteTurnReject(RouteReject::NoRuntime);
+    return {RollingOutcome::Excluded, nullptr};
+  }
   const bool launchedThisTick = runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
                                 runtime->launchBoundTick == tick;
-  if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle)
+  if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle) {
+    PlaybackTickContext::noteTurnReject(RouteReject::FrameIdle);
     return {RollingOutcome::Excluded, nullptr};
+  }
   auto& frame = runtime->rolling;
   auto& loop = loopForSlot(slot);
   auto* set = runtime->viewSetIfPrewarmed();
-  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) return {RollingOutcome::Rejected, nullptr};
+  // Report-only naming of a blocked frame (phase 2): the reason byte and the cause the blocking reject latched.
+  const auto noteBlocked = [&]() {
+    PlaybackTickContext::noteTurnReject(RouteReject::FrameBlocked);
+    PlaybackTickContext::gState.turnCause = frame.blockedBy;
+  };
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+    noteBlocked();
+    return {RollingOutcome::Rejected, nullptr};
+  }
   // C3 (DEC-116): the active slot's route is unchanged. A **non-active** slot resolves through this same
   // function only while it holds its own consumer-ready cold full-loop frame (a completed one-bar candidate
   // or its adopted serving view) and is an enabled sounding holder; every other non-active frame -- a
@@ -5843,7 +5934,14 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
       (!isPlaying() && !(layeredCold && isAudiblePlaybackActive())) ||
       isJamPlaybackActive() || isJamming() || (hasQueuedPlaybackStart() && !launchedThisTick) ||
       editManager.isNoteEditActive() || hasPendingDeferredOverdubStop())
-    return rejectRollingFrame(*runtime, loop);
+    // The condition above decided; the naming re-reads its terms in the same order (pure reads, reject path only).
+    return rejectRollingFrame(*runtime, loop,
+        (slot != activeLoopIndex && !layeredCold) ? RouteReject::GateNotActiveSlot
+        : (!isPlaying() && !(layeredCold && isAudiblePlaybackActive())) ? RouteReject::GateNotPlaying
+        : (isJamPlaybackActive() || isJamming()) ? RouteReject::GateJam
+        : (hasQueuedPlaybackStart() && !launchedThisTick) ? RouteReject::GateQueuedStart
+        : editManager.isNoteEditActive() ? RouteReject::GateNoteEdit
+                                         : RouteReject::GateDeferredOverdubStop);
   const bool coldReady = frame.phase == LoopPlaybackRuntime::RollingPhase::Ready &&
       frame.epoch == 0 && frame.deadlineTick == 0 && frame.startPhase == 0 &&
       frame.loopLength == Config::TICKS_PER_BAR;
@@ -5863,23 +5961,36 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
       playbackGeneration != frame.generation || loop.loopLengthTicks != frame.loopLength ||
       !frame.loopLength ||
       (uint32_t(slotProjectionOrigin) - uint32_t(frame.projectionStart)) % frame.loopLength != 0)
-    return rejectRollingFrame(*runtime, loop);
+    return rejectRollingFrame(*runtime, loop,
+        !clock.epoch ? RouteReject::ClockNoEpoch
+        : (!(coldReady || coldWaiting) && clock.epoch != frame.epoch) ? RouteReject::ClockEpochChanged
+        : (clock.tick < frame.lastTick || uint32_t(clock.tick) != tick) ? RouteReject::ClockTickSkew
+        : playbackGeneration != frame.generation ? RouteReject::GenerationChanged
+        : (loop.loopLengthTicks != frame.loopLength || !frame.loopLength) ? RouteReject::LoopLengthChanged
+                                                                           : RouteReject::ProjectionMoved);
   frame.lastTick = clock.tick;
-  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) return {RollingOutcome::Rejected, nullptr};
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+    noteBlocked();
+    return {RollingOutcome::Rejected, nullptr};
+  }
   // C3 (DEC-116): the phase is read through the slot's own origin below (`slotProjectionOrigin`); the active
   // slot's value is unchanged.
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(tick,
       slotProjectionOrigin, loop.loopLengthTicks);
-  if (!set) return rejectRollingFrame(*runtime, loop);
+  if (!set) return rejectRollingFrame(*runtime, loop, RouteReject::NoViewSet);
   // Starting transport before cold preparation finishes is a named wait, not
   // a stale epoch. The previous route may contain this traversal; the owner
   // continues off-clock and only a complete successor can join at phase zero.
-  if (coldWaiting) return {RollingOutcome::Waiting, nullptr};
+  if (coldWaiting) {
+    PlaybackTickContext::noteTurnReject(RouteReject::ColdWaiting);
+    return {RollingOutcome::Waiting, nullptr};
+  }
   const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength :
       (frame.startPhase < frame.loopLength
           ? std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) : 0u);
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
-    if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView) return rejectRollingFrame(*runtime, loop);
+    if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView)
+      return rejectRollingFrame(*runtime, loop, RouteReject::ServingViewNotBound);
     const auto& current = set->views[set->lifecycle.current];
     if (!current.complete || !current.published || current.storageGeneration != frame.boundStorageGeneration ||
         current.source.sourceGeneration != frame.generation || current.source.origin != PlaybackWindowOrigin::Committed ||
@@ -5889,13 +6000,23 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
             !playbackWindowSourceIsCurrentForSlot(slot) ||
             (loop.publishedSnapshotIsCurrent() &&
              current.source.snapshotIdentity != loop.publishedSnapshotIdentity()))))
-      return rejectRollingFrame(*runtime, loop);
+      return rejectRollingFrame(*runtime, loop,
+          (!current.complete || !current.published || current.storageGeneration != frame.boundStorageGeneration)
+              ? RouteReject::ServingViewNotPublished
+          : (current.source.sourceGeneration != frame.generation ||
+             current.source.origin != PlaybackWindowOrigin::Committed)
+              ? RouteReject::ServingViewSourceStale
+          : (current.coverage.startPhase != frame.startPhase || current.coverage.lengthTicks != span ||
+             current.coverage.loopLengthTicks != frame.loopLength)
+              ? RouteReject::ServingViewGeometry
+              : RouteReject::ServingViewSourceStale);
     if (frame.deadlineTick != 0 && clock.tick >= frame.deadlineTick && clock.tick - frame.deadlineTick >= span) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
       loop.nextEventIndex = 0; // Fallback's crossing predicate excludes the already-served interval.
+      PlaybackTickContext::noteTurnReject(RouteReject::ServingExpired);
       return {RollingOutcome::Expired, nullptr};
     }
-    if (!current.coverage.contains(phase)) return rejectRollingFrame(*runtime, loop);
+    if (!current.coverage.contains(phase)) return rejectRollingFrame(*runtime, loop, RouteReject::ServingUncovered);
     // The copied interval is immutable even if a newer content revision arrives.
     return {RollingOutcome::Serving, &current};
   }
@@ -5903,12 +6024,15 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     // A cold build may finish after playback began. It missed the initial
     // phase-zero boundary; keep the complete successor private until the next
     // eligible wrap rather than blocking its frame on intermediate ticks.
-    if (phase != 0) return {RollingOutcome::Ready, nullptr};
+    if (phase != 0) {
+      PlaybackTickContext::noteTurnReject(RouteReject::ColdReadyOffBoundary);
+      return {RollingOutcome::Ready, nullptr};
+    }
     if (!set || set->lifecycle.ready >= set->views.size() ||
         runtime->viewBuildOperationGeneration != frame.generation ||
         runtime->completedPromisePendingJudgement || runtime->admittedPromiseInvalidated ||
         runtime->viewBuildWork.clockEpoch != 0 || runtime->viewBuildWork.deadlineTick != 0 ||
-        !playbackWindowSourceIsCurrentForSlot(slot)) return rejectRollingFrame(*runtime, loop);
+        !playbackWindowSourceIsCurrentForSlot(slot)) return rejectRollingFrame(*runtime, loop, RouteReject::ColdReadyRefused);
     const auto& ready = set->views[set->lifecycle.ready];
     if (!ready.complete || ready.published || ready.rawCoveragePrepared || !ready.storageGeneration ||
         ready.source.origin != PlaybackWindowOrigin::Committed ||
@@ -5917,7 +6041,7 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
         (loop.publishedSnapshotIsCurrent() && ready.source.snapshotIdentity != loop.publishedSnapshotIdentity()) ||
         ready.coverage.startPhase != 0 || ready.coverage.lengthTicks != frame.loopLength ||
         ready.coverage.loopLengthTicks != frame.loopLength ||
-        !adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop);
+        !adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop, RouteReject::ColdReadyRefused);
     loop.nextEventIndex = 0;
     frame.boundView = set->lifecycle.current;
     frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
@@ -5926,12 +6050,19 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
     return {RollingOutcome::Serving, &set->views[frame.boundView]};
   }
-  if (clock.tick < frame.deadlineTick) return {RollingOutcome::Waiting, nullptr};
+  if (clock.tick < frame.deadlineTick) {
+    PlaybackTickContext::noteTurnReject(RouteReject::WaitingForHandoff);
+    return {RollingOutcome::Waiting, nullptr};
+  }
   if (clock.tick != frame.deadlineTick || frame.phase != LoopPlaybackRuntime::RollingPhase::Ready ||
       phase != frame.startPhase ||
       !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase))
-    return rejectRollingFrame(*runtime, loop);
-  if (!adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop);
+    return rejectRollingFrame(*runtime, loop,
+        clock.tick != frame.deadlineTick ? RouteReject::HandoffMissed
+        : frame.phase != LoopPlaybackRuntime::RollingPhase::Ready ? RouteReject::CandidateNotReady
+        : phase != frame.startPhase ? RouteReject::HandoffPhaseMismatch
+                                    : RouteReject::CandidateRejected);
+  if (!adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop, RouteReject::AdoptRefused);
   loop.nextEventIndex = 0; // First event in the new half-open interval, no inline search/build.
   frame.boundView = set->lifecycle.current;
   frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
@@ -9378,6 +9509,11 @@ uint16_t rollingGateFlags(bool epochStamped, bool avoidFullRebuild, bool spanAli
 
 TRACK_COLD_MEM void Track::reportPlaybackRollingGateRow(const char* exit, bool clockEpochStamped, bool reprojectedTick,
                                                         uint8_t requestResult) {
+  // playback-tick-consume-only phase 2 (every capture image): the producer's last exit, named beside the tick's reason.
+  {
+    const uint8_t latchTrack = playbackRebuildTrackIndex(*this);
+    if (latchTrack < 8) PlaybackTickContext::gState.producerExit[latchTrack] = exit;
+  }
   // The rolling demand path's **state-change record**: every exit of `serviceRollingPlaybackWindow` used to return a
   // typed outcome with no row, so on hardware "this track owed no window" and "the window was refused, and by which
   // term" were the same absence (F-16). Nothing here admits, refuses, reorders or retires: the guards have already

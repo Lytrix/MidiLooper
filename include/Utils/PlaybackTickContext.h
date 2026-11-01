@@ -23,6 +23,71 @@ namespace PlaybackTickContext {
 /// The playback source a slot-tick consumed (playback-tick-consume-only phase 1), in emission priority.
 enum class TickRoute : uint8_t { View = 0, Bridge = 1, Paged = 2, Merged = 3, None = 4, Count = 5 };
 
+/// playback-tick-consume-only phase 2: the **first failed predicate**, in decision order, that kept a merged-fallback
+/// tick off the windowed lane. Report-only. Values are append-only; `scripts/parse_tick_routes.py` names them.
+/// The tick writes one byte where a resolver predicate fails; the classification is read only when the merged
+/// fallback is selected, and the row is emitted from the main loop (`TrackManager::reportPlaybackRouteRejects`).
+enum class RouteReject : uint8_t {
+  NotEvaluated = 0,  // no resolver predicate ran this turn
+  Served = 1,        // the resolver chose a bridge this turn (never reported)
+  RollingDisabled = 2,  // the image has no windowed lane (`PLAYBACK_WINDOW_ROLLING_ENABLED=0`)
+  // `Track::resolveQualificationPlaybackSourceForTurn`: why the committed reader was not eligible
+  InactiveSlot = 3,         // a non-active slot without a cold one-bar layered frame
+  NoteEditActive = 4,
+  OverdubNoLiveWindow = 5,  // overdubbing, and the live overlay window was not selected
+  NotPlaying = 6,           // the transport is not PLAYING (record, queued start, stopped)
+  // `Track::resolveRollingPlaybackWindow`, in its own order
+  NoRuntime = 7,
+  FrameIdle = 8,     // no rolling frame: the producer has not opened a demand
+  FrameBlocked = 9,  // the frame is blocked; `cause` names the resolver predicate that blocked it (0: the producer)
+  GateNotActiveSlot = 10,
+  GateNotPlaying = 11,
+  GateJam = 12,
+  GateQueuedStart = 13,
+  GateNoteEdit = 14,
+  GateDeferredOverdubStop = 15,
+  ClockNoEpoch = 16,
+  ClockEpochChanged = 17,
+  ClockTickSkew = 18,  // the tick is behind the frame, or is not the clock's stamped tick
+  GenerationChanged = 19,
+  LoopLengthChanged = 20,
+  ProjectionMoved = 21,
+  NoViewSet = 22,
+  ColdWaiting = 23,
+  ServingViewNotBound = 24,
+  ServingViewNotPublished = 25,  // complete / published / storage generation
+  ServingViewSourceStale = 26,   // generation / origin / revision / source currency / snapshot
+  ServingViewGeometry = 27,      // start phase / span / loop length
+  ServingExpired = 28,
+  ServingUncovered = 29,
+  ColdReadyOffBoundary = 30,
+  ColdReadyRefused = 31,
+  WaitingForHandoff = 32,  // a requested window is not yet due; the merged fallback covers the lead
+  HandoffMissed = 33,      // the tick is past the demand's deadline (it was not adopted on it)
+  CandidateNotReady = 34,  // the frame is not Ready at its deadline (the build had not finished)
+  HandoffPhaseMismatch = 35,
+  CandidateRejected = 36,  // `rollingCandidateReadyAtBoundary` refused the prepared window
+  AdoptRefused = 37,
+  Count = 38
+};
+
+/// Per-slot reason state: written by the tick (`recordMergedRouteReject`), read and emitted by the main loop.
+struct SlotRouteReject {
+  volatile uint8_t reason;
+  volatile uint8_t cause;
+  volatile uint8_t prevReason;
+  uint8_t emittedReason;
+  uint8_t emittedCause;
+  volatile uint32_t sinceTick;  // the tick at which `reason`/`cause` took effect
+  volatile uint32_t ticks;      // merged ticks under the current reason
+  volatile uint32_t prevTicks;  // merged ticks under `prevReason`
+  volatile uint32_t changes;
+  uint32_t emittedChanges;
+  uint32_t emittedMs;
+};
+/// The emitter's minimum spacing per slot: a reason that flaps every tick is sampled, and `chg` carries the count.
+constexpr uint32_t kRouteRejectRowSpacingMs = 50;
+
 struct State {
   volatile bool inInterrupt;
   volatile bool servicing;
@@ -34,8 +99,27 @@ struct State {
   uint32_t emittedRoute[static_cast<int>(TickRoute::Count)];
   uint32_t emittedMissInterrupt;
   uint32_t emittedMissExternal;
+  // Phase 2: the turn's scratch (reset by the resolver, read when the merged fallback is selected) and per-slot state.
+  volatile uint8_t turnReject;
+  volatile uint8_t turnCause;
+  SlotRouteReject reject[8][8];
+  const char* producerExit[8];  // the rolling producer's last exit token per track (flash literal)
 };
 extern State gState;
+
+/// One byte: the predicate that failed this turn. Called only on a resolver's non-serving exit.
+inline void noteTurnReject(RouteReject why) { gState.turnReject = static_cast<uint8_t>(why); }
+/// Called where the merged fallback is selected (never on a served tick): files the turn's reason under the slot.
+void recordMergedRouteReject(uint8_t trackIndex, uint8_t slotIndex, uint32_t tick);
+#if defined(PIO_UNIT_TEST_NATIVE)
+inline SlotRouteReject routeRejectForTest(uint8_t trackIndex, uint8_t slotIndex) {
+  const SlotRouteReject& s = gState.reject[trackIndex][slotIndex];
+  SlotRouteReject out{};
+  out.reason = s.reason; out.cause = s.cause; out.prevReason = s.prevReason;
+  out.sinceTick = s.sinceTick; out.ticks = s.ticks; out.prevTicks = s.prevTicks; out.changes = s.changes;
+  return out;
+}
+#endif
 
 void initAtBoot();
 

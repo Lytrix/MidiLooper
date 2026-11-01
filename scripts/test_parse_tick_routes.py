@@ -2,6 +2,7 @@
 """Tests for `parse_tick_routes.py` (capture-only, never reports a missing count as zero)."""
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +49,36 @@ class ParseTickRoutesTests(unittest.TestCase):
         report = parse_tick_routes.decode([row(10)])
         self.assertIsNone(report["ring_loss"])
         self.assertIn("no RING,stats", parse_tick_routes.render(report))
+
+    def test_route_reject_rows_are_named_and_attributed(self):
+        lines = ["[14.367] [INFO] External MIDI clock detected",
+                 "#CAP,2000000,DIAG,route_reject,t=0,s=1,why=8,cause=0,prev=0,prev_n=0,since=10,chg=1,len=7680,"
+                 "prod=win_busy",
+                 "#CAP,3000000,DIAG,route_reject,t=0,s=1,why=9,cause=33,prev=8,prev_n=40,since=50,chg=2,len=7680,"
+                 "prod=win_blocked",
+                 "#CAP,4000000,DIAG,route_reject,t=0,s=1,why=32,cause=0,prev=9,prev_n=500,since=90,chg=1,len=7680,"
+                 "prod=win_waiting",
+                 row(5), CLEAN]
+        report = parse_tick_routes.decode(lines)
+        rr = report["route_reject"]
+        self.assertEqual(3, len(rr["rows"]))
+        self.assertEqual("external", rr["rows"][0]["clock"])
+        self.assertEqual({"frame_idle": 40, "frame_blocked(handoff_missed)": 500}, rr["ticks_by_reason"])
+        self.assertEqual({"t0s1": "waiting_for_handoff"}, rr["open"])
+        text = parse_tick_routes.render(report)
+        self.assertIn("frame_blocked(handoff_missed)", text)
+        self.assertIn("prod=win_blocked", text)
+
+    def test_reason_names_track_the_firmware_enum(self):
+        header = (Path(__file__).resolve().parent.parent / "include/Utils/PlaybackTickContext.h").read_text()
+        body = header.split("enum class RouteReject")[1].split("};")[0]
+        names = re.findall(r"^\s*(\w+) = (\d+),", body, re.M)
+        self.assertEqual(len(parse_tick_routes.REJECT_NAMES), len([n for n in names if n[0] != "Count"]))
+        for name, value in names:
+            if name == "Count":
+                continue
+            snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+            self.assertEqual(snake, parse_tick_routes.REJECT_NAMES[int(value)], name)
 
 
 if __name__ == "__main__":

@@ -349,6 +349,7 @@ static const char kProfileTierPrefix[] PROGMEM = "DIAG,profile_";
 static const char kPlaybackReadTierPrefix[] PROGMEM = "DIAG,playback_read,";
 // playback-tick-consume-only phase 1: the consumed-route / miss window row (flash-resident, like the others here).
 static const char kTickRouteTierPrefix[] PROGMEM = "DIAG,tick_route,";
+static const char kRouteRejectTierPrefix[] PROGMEM = "DIAG,route_reject,";
 static const char kPlaybackAvailableTierPrefix[] PROGMEM = "DIAG,playback_available,";
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // The window lane's **service-gap sample** (task 3.10) is Tier-A, and its tag is classified **here** rather than in
@@ -382,6 +383,7 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
 #endif
          CaptureLineTier::tagStartsWith(line, kPlaybackReadTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kTickRouteTierPrefix) ||
+         CaptureLineTier::tagStartsWith(line, kRouteRejectTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kPlaybackAvailableTierPrefix) ||
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
          CaptureLineTier::tagStartsWith(line, kRollingRecordTierPrefix) ||
@@ -1495,6 +1497,28 @@ SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, ui
                 static_cast<unsigned long>(bridge), static_cast<unsigned long>(paged),
                 static_cast<unsigned long>(merged), static_cast<unsigned long>(none),
                 static_cast<unsigned long>(missInterrupt), static_cast<unsigned long>(missExternal));
+}
+
+SC_MEM_ATTR void routeRejectRow(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason,
+                                uint32_t prevTicks, uint32_t sinceTick, uint32_t changes, uint32_t loopLengthTicks,
+                                const char* producerExit) {
+  static const char kNoProducerExit[] PROGMEM = "-";
+  const char* prod = producerExit != nullptr ? producerExit : kNoProducerExit;
+  if (serialWriteRoom(192)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,route_reject,t=%u,s=%u,why=%u,cause=%u,prev=%u,prev_n=%lu,since=%lu,chg=%lu,"
+                         "len=%lu,prod=%s\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                  static_cast<unsigned>(reason), static_cast<unsigned>(cause), static_cast<unsigned>(prevReason),
+                  static_cast<unsigned long>(prevTicks), static_cast<unsigned long>(sinceTick),
+                  static_cast<unsigned long>(changes), static_cast<unsigned long>(loopLengthTicks), prod);
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,route_reject,t=%u,s=%u,why=%u,cause=%u,prev=%u,prev_n=%lu,since=%lu,chg=%lu,"
+                       "len=%lu,prod=%s\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                static_cast<unsigned>(reason), static_cast<unsigned>(cause), static_cast<unsigned>(prevReason),
+                static_cast<unsigned long>(prevTicks), static_cast<unsigned long>(sinceTick),
+                static_cast<unsigned long>(changes), static_cast<unsigned long>(loopLengthTicks), prod);
 }
 
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,

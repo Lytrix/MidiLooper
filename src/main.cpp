@@ -1307,6 +1307,7 @@ void loop() {
   trackManager.drainEdgeEffects();
   // DEC-241: build, off-clock, any merged playback fallback the internal-clock ISR tick found stale (it never builds).
   trackManager.serviceOwedTickPlaybackFallbacks();
+  trackManager.reportPlaybackRouteRejects(millis());
 
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();

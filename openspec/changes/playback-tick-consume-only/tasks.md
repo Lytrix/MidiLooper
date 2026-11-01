@@ -31,10 +31,10 @@ group; no PR unless requested. Phases 4 and 5 are **blocked** until phase 3 reco
 
 ## 2. Routing characterization
 
-- [ ] 2.1 Read route selection and the windowed-lane admission chain from `Track::playMidiEvents` down to the selected
+- [x] 2.1 Read route selection and the windowed-lane admission chain from `Track::playMidiEvents` down to the selected
       source; write the `PlaybackRouteReject` enum with one value per predicate, in decision order, citing each
       predicate's function; verify no value is a generic "not usable".
-- [ ] 2.2 Compute the first failed predicate in flash only when the merged fallback is selected; emit on change per
+- [x] 2.2 Compute the first failed predicate in flash only when the merged fallback is selected; emit on change per
       slot (DEC-193 pattern); native case per reachable value; verify served ticks never compute it.
 - [ ] 2.3 Device: one owner chain; record the named reason(s) for the long loop and when they change, in
       `evidence/<date>-route-reject.md`.

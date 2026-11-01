@@ -182,6 +182,11 @@ SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
 /// clock, as deltas since the previous window. Tier-A (`DIAG,tick_route,`), direct-first with ring fallback.
 SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, uint32_t merged, uint32_t none,
                               uint32_t missInterrupt, uint32_t missExternal);
+/// playback-tick-consume-only phase 2: a slot's merged-fallback reason changed (`PlaybackTickContext::RouteReject`
+/// ordinals; `prod` is the rolling producer's last exit token). Tier-A (`DIAG,route_reject,`), direct-first.
+SC_MEM_ATTR void routeRejectRow(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason,
+                                uint32_t prevTicks, uint32_t sinceTick, uint32_t changes, uint32_t loopLengthTicks,
+                                const char* producerExit);
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
                                  uint32_t replenishWaitUs, uint32_t replenishWorkUs,
                                  uint32_t replenishRefused, uint32_t replenishPairs);
@@ -945,6 +950,19 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #else
 #ifndef SC_WIN_GATE
 #define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) ((void)0)
+#endif
+#endif
+/// Phase 2's reason row, `#ifndef`-guarded so a native suite can substitute a recorder (the `SC_WIN_GATE` seam).
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+#ifndef SC_ROUTE_REJECT
+#define SC_ROUTE_REJECT(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks, exit) \
+  DebugSessionCapture::routeRejectRow(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes,       \
+                                      loopLengthTicks, exit)
+#endif
+#else
+#ifndef SC_ROUTE_REJECT
+#define SC_ROUTE_REJECT(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks, exit) \
+  ((void)0)
 #endif
 #endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \

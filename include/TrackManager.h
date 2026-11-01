@@ -70,6 +70,9 @@ public:
   /// DEC-241: main-loop owner of the merged playback fallbacks an interrupt-context tick could not consume. Cheap when
   /// nothing is owed; builds each owed slot off-clock so the next interrupt tick can consume it.
   void serviceOwedTickPlaybackFallbacks();
+  /// playback-tick-consume-only phase 2 (report-only): emits one `DIAG,route_reject` row per slot whose merged-fallback
+  /// reason changed since its last row, at most one per slot per `nowMs` window. Main loop only; the tick never emits.
+  void reportPlaybackRouteRejects(uint32_t nowMs);
   void advanceJamTicks(uint32_t delta);         // Advance jamTick for all jam-active tracks
 
   // --- Recording ---
