@@ -38,9 +38,12 @@ timing and memory envelope without introducing real-time construction?
       committed row (60) and all four overdubs; production's replay sounds 1 of 4 while its own content authority holds
       all 60 rows and 4 overdubs after the replay — a serving defect, not content (caveat: authority read after the
       replay). [Evidence](evidence/2026-11-01-b2c-red-fixture.md)
-- [ ] B.3 Overlap-resolve and NOTE_EDIT parity **by output**: whichever representation (hides + replacement rows,
-      immutable edit pass, compaction) reproduces the production stream; decided by B.2b divergences, not by fitting
-      today's implementation.
+- [x] B.3 Overlap-resolve and NOTE_EDIT parity by output: `Hide` / `Shorten` companions (incl. wrap, second-overdub
+      target, channel 3) and NOTE_EDIT pitch / length / velocity / delete, each with undo, are represented as HideNote +
+      replacement rows in a later run (new `PassKind::Edit`); seeded mix 132/132 revisions in parity (61 overlap changes,
+      43 edits, 10 undos). Writer requirement: NoteOff rows carry their note's id. Open: span-less notes (Q1b), the
+      cross-pass collapse decision, live `Track` overlap-resolve, Tick moves, CC edits, redo of edits.
+      [Evidence](evidence/2026-11-01-b3-overlap-and-edits.md)
 - [ ] B.4 Teensy cost experiment in `teensy41-capture-serial-profile`, store not wired to playback: begin pass, append,
       seal, manifest commit, window compose, undo/redo selection, compaction grain, on the densest captured take.
       Any content-sized step (seal sort, compaction) must be shown boundable off Record/Stop and off the PIT path.

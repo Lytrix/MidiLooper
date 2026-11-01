@@ -18,7 +18,19 @@
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
+#define LOOP_PENDING_NOTE_CHANGE_PROVIDES_DISPLAY_APPLY
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
+#include "../../src/EditManager/NoteEditCurrentState.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/ParticipatingNoteSession.cpp"
+#include "../../src/Loop/LoopPendingNoteChange.cpp"
+#include "../../src/Utils/RuntimeTimingTelemetry.cpp"
+#include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureCompanions.cpp"
+#include "../../src/Utils/PlaybackCursorAdvance.cpp"
+#include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -28,6 +40,8 @@
 
 #include "Loop.h"
 #include "MidiEvent.h"
+#include "EditPass.h"
+#include "PendingNoteChange.h"
 #include "RevisionStore/RevisionStore.h"
 
 namespace {
@@ -550,6 +564,445 @@ void test_seeded_sequences_store_exact_and_production_multiset_under_dec244() {
   TEST_ASSERT_EQUAL_UINT32(520, gTotalRevisions);
 }
 
+// ---- B.3: overlap-resolve results (Hide / Shorten companions) ---------------------------------------------------------
+//
+// Production decides what an overdub hides or shortens (overlap-resolve, unchanged owner) and, at the overdub stop,
+// commits the OverdubPass and seals the session's pending changes into companion edit passes
+// (`sealPendingNoteChangesToEditPasses`), which publication applies. The harness injects the pending changes with the
+// existing test hook and drives that same sequence. The store represents a Hide as a HideNote row in the overdub's run,
+// and a Shorten as a HideNote row plus replacement NoteOn/NoteOff rows on the note's own channel.
+
+struct Change {
+  PendingNoteChangeKind kind;
+  NoteId noteId;
+  uint8_t channel;
+  uint8_t pitch;
+  uint8_t velocity;
+  uint32_t startTick;
+  uint32_t endTick;
+};
+
+// Committed rows of the newest pass, with each NoteOff paired to its NoteOn's noteId (same pass, channel and pitch).
+std::vector<PassEvent> committedPassRows(const Loop& loop, bool record) {
+  const CommittedChunkIdList& committed =
+      record ? loop.passes.recordPass.committedChunkIds : loop.passes.overdubPasses.back().committedChunkIds;
+  const CommittedChunkIdList* lists[] = {&committed};
+  SessionMidiEventVec rows;
+  CommittedEventRange::full(lists, 1, kLength).appendTo(rows);
+  std::vector<PassEvent> out;
+  for (const MidiEvent& e : rows) {
+    PassEvent p;
+    p.tick = e.tick;
+    p.status = statusOf(e);
+    p.data1 = e.data.noteData.note;
+    p.data2 = e.data.noteData.velocity;
+    p.noteId = e.isNoteOn() ? e.noteId : 0;
+    out.push_back(p);
+  }
+  for (PassEvent& off : out) {
+    if (equalTickClass(off) != 0) continue;
+    for (const PassEvent& on : out) {
+      if (equalTickClass(on) == 1 && (on.status & 0x0F) == (off.status & 0x0F) && on.data1 == off.data1) {
+        off.noteId = on.noteId;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+EditPassIdList gLastCompanionIds;
+
+void commitWithChanges(Loop& loop, bool record, const std::vector<Op>& ops, const std::vector<Change>& changes,
+                       std::vector<PassEvent>* committedOut = nullptr) {
+  loop.beginCapture(record ? CapturePhase::Record : CapturePhase::Overdub);
+  for (const Change& c : changes) {
+    PendingNoteChange change{};
+    change.kind = c.kind;
+    change.noteId = c.noteId;
+    change.channel = c.channel;
+    change.pitch = c.pitch;
+    change.velocity = c.velocity;
+    change.startTick = c.startTick;
+    change.endTick = c.endTick;
+    loop.pushPendingNoteChangeForTest(change);
+  }
+  uint32_t lastTick = 0;
+  for (const Op& op : ops) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(toMidi(op)));
+    lastTick = std::max(lastTick, op.tick);
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(record ? CommitReason::RecordStop : CommitReason::OverdubStop, lastTick + 1));
+  gLastCompanionIds.clear();
+  if (!record) gLastCompanionIds = loop.sealPendingNoteChangesToEditPasses(false);
+  const std::vector<PassEvent> rows = committedPassRows(loop, record);
+  if (committedOut != nullptr) *committedOut = rows;
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(record ? PassKind::Record : PassKind::Overdub, kLength));
+  for (const Change& c : changes) {
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendHide(c.noteId));
+    if (c.kind == PendingNoteChangeKind::Shorten) {
+      gStore.appendMidi(c.startTick, static_cast<uint8_t>(0x90 | (c.channel - 1)), c.pitch, c.velocity, c.noteId);
+      gStore.appendMidi(c.endTick, static_cast<uint8_t>(0x80 | (c.channel - 1)), c.pitch, 0, c.noteId);
+    }
+  }
+  for (const PassEvent& p : rows) {
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(p.tick, p.status, p.data1, p.data2, p.noteId));
+  }
+  gStore.commitPass();
+  finishPublication(loop);
+}
+
+// Count production effective-view rows matching (tick, status, data1).
+uint32_t productionCount(const Loop& loop, uint32_t tick, uint8_t status, uint8_t data1) {
+  SessionMidiEventVec production;
+  TEST_ASSERT_TRUE(loop.tryCopyCurrentSnapshotEditViewEvents(production));
+  uint32_t n = 0;
+  for (const MidiEvent& e : production) {
+    const Row r = rowOf(e);
+    if (r.tick == tick && r.status == status && r.data1 == data1) ++n;
+  }
+  return n;
+}
+
+NoteId noteIdAt(const std::vector<PassEvent>& rows, uint8_t pitch) {
+  for (const PassEvent& p : rows) {
+    if (equalTickClass(p) == 1 && p.data1 == pitch) return p.noteId;
+  }
+  TEST_FAIL_MESSAGE("note not found in committed rows");
+  return kInvalidNoteId;
+}
+
+void test_overdub_hide_of_record_note_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {768, 0x90, 1, 64, 90}, {960, 0x80, 1, 64, 0}},
+                    {}, &rec);
+  const NoteId hidden = noteIdAt(rec, 60);
+  commitWithChanges(loop, false, {{192, 0x90, 1, 60, 110}, {384, 0x80, 1, 60, 0}},
+                    {{PendingNoteChangeKind::Hide, hidden, 1, 60, 100, 96, 480}});
+  assertParity(loop, "hide record note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 96, 0x90, 60), "hidden Record NoteOn is gone");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 480, 0x80, 60), "hidden Record NoteOff is gone");
+}
+
+void test_overdub_shorten_of_record_note_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {960, 0x80, 1, 60, 0}, {1536, 0x90, 1, 67, 80}, {1700, 0x80, 1, 67, 0}},
+                    {}, &rec);
+  const NoteId shortened = noteIdAt(rec, 60);
+  commitWithChanges(loop, false, {{480, 0x90, 1, 60, 110}, {700, 0x80, 1, 60, 0}},
+                    {{PendingNoteChangeKind::Shorten, shortened, 1, 60, 100, 96, 480}});
+  assertParity(loop, "shorten record note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 480, 0x80, 60), "shortened note ends at 480");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 960, 0x80, 60), "original end 960 is gone");
+}
+
+void test_overdub_shorten_of_wrap_crossing_note_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{kLength - 192, 0x90, 1, 62, 100}, {384, 0x80, 1, 62, 0}}, {}, &rec);
+  const NoteId shortened = noteIdAt(rec, 62);
+  commitWithChanges(loop, false, {{96, 0x90, 1, 62, 110}, {200, 0x80, 1, 62, 0}},
+                    {{PendingNoteChangeKind::Shorten, shortened, 1, 62, 100, kLength - 192, 96}});
+  assertParity(loop, "shorten wrap-crossing note");
+}
+
+void test_second_overdub_hides_first_overdub_note_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  commitWithChanges(loop, true, {{96, 0x90, 1, 48, 100}, {480, 0x80, 1, 48, 0}}, {});
+  std::vector<PassEvent> od1;
+  commitWithChanges(loop, false, {{768, 0x90, 1, 72, 90}, {1152, 0x80, 1, 72, 0}}, {}, &od1);
+  const NoteId hidden = noteIdAt(od1, 72);
+  commitWithChanges(loop, false, {{900, 0x90, 1, 72, 110}, {1000, 0x80, 1, 72, 0}},
+                    {{PendingNoteChangeKind::Hide, hidden, 1, 72, 90, 768, 1152}});
+  assertParity(loop, "hide first-overdub note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 768, 0x90, 72), "hidden overdub NoteOn is gone");
+}
+
+// The companion event path stamps replacement events with channel 1 (`appendCompanionEventChanges`); a Shorten of a
+// channel-3 note shows whether that reaches the effective view.
+void test_overdub_shorten_of_channel_three_note_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 3, 60, 100}, {960, 0x80, 3, 60, 0}}, {}, &rec);
+  const NoteId shortened = noteIdAt(rec, 60);
+  commitWithChanges(loop, false, {{480, 0x90, 3, 60, 110}, {700, 0x80, 3, 60, 0}},
+                    {{PendingNoteChangeKind::Shorten, shortened, 3, 60, 100, 96, 480}});
+  assertParity(loop, "shorten channel-3 note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 480, 0x82, 60), "replacement NoteOff stays on channel 3");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 480, 0x80, 60), "no channel-1 replacement");
+}
+
+// Production undo of an overdub session (`TrackUndo` applyUndoEntry): disable the capture pass and its companion
+// edit passes, bump the playback revision, republish.
+void productionUndoOverdub(Loop& loop, PassId passId, const EditPassIdList& companions) {
+  TEST_ASSERT_TRUE(loop.setCapturePassState(passId, CapturePassState::Disabled));
+  for (EditPass& row : loop.passes.editPasses) {
+    for (const EditPassId id : companions) {
+      if (row.id == id) row.state = EditPassState::Disabled;
+    }
+  }
+  ++loop.playbackRevision;
+  finishPublication(loop);
+}
+
+void test_undo_of_overdub_with_hide_restores_the_note_in_both() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {768, 0x90, 1, 64, 90}, {960, 0x80, 1, 64, 0}},
+                    {}, &rec);
+  const NoteId hidden = noteIdAt(rec, 60);
+  commitWithChanges(loop, false, {{192, 0x90, 1, 60, 110}, {384, 0x80, 1, 60, 0}},
+                    {{PendingNoteChangeKind::Hide, hidden, 1, 60, 100, 96, 480}});
+  TEST_ASSERT_EQUAL_UINT32(1, gLastCompanionIds.size());
+  productionUndoOverdub(loop, loop.passes.overdubPasses.back().id, gLastCompanionIds);
+  TEST_ASSERT_TRUE(gStore.undo());
+  assertParity(loop, "undo overdub with hide");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 96, 0x90, 60), "hidden note is back after undo");
+}
+
+// ---- B.3: NOTE_EDIT passes ------------------------------------------------------------------------------------------
+
+struct NoteEdit {
+  EditActionType action;
+  EditPropertyType property;
+  NoteId target;
+  uint8_t channel;
+  uint8_t pitch;      // resulting pitch
+  uint8_t velocity;   // resulting velocity
+  uint32_t startTick; // resulting span
+  uint32_t endTick;
+};
+
+EditPassId saveEditBoth(Loop& loop, const NoteEdit& edit) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = edit.action;
+  row.propertyType = edit.property;
+  row.targetNoteId = edit.target;
+  row.startTick = edit.startTick;
+  row.endTick = edit.endTick;
+  row.pitch = edit.pitch;
+  row.velocity = edit.velocity;
+  const EditPassId id = loop.saveNoteEditPass(0, row);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
+  finishPublication(loop);
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Edit));
+  gStore.appendHide(edit.target);
+  if (edit.action != EditActionType::Delete) {
+    gStore.appendMidi(edit.startTick, static_cast<uint8_t>(0x90 | (edit.channel - 1)), edit.pitch, edit.velocity, edit.target);
+    gStore.appendMidi(edit.endTick, static_cast<uint8_t>(0x80 | (edit.channel - 1)), edit.pitch, 0, edit.target);
+  }
+  gStore.commitPass();
+  return id;
+}
+
+std::vector<PassEvent> recordForEdits(Loop& loop) {
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {768, 0x90, 1, 64, 90}, {960, 0x80, 1, 64, 0}},
+                    {}, &rec);
+  return rec;
+}
+
+void test_note_edit_pitch_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 60), 1, 67, 100, 96, 480});
+  assertParity(loop, "edit pitch");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 96, 0x90, 67), "pitch edit applied");
+}
+
+void test_note_edit_length_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Length, noteIdAt(rec, 60), 1, 60, 100, 96, 288});
+  assertParity(loop, "edit length");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 288, 0x80, 60), "length edit applied");
+}
+
+void test_note_edit_velocity_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Velocity, noteIdAt(rec, 64), 1, 64, 40, 768, 960});
+  assertParity(loop, "edit velocity");
+}
+
+void test_note_edit_delete_matches_production() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  saveEditBoth(loop, {EditActionType::Delete, EditPropertyType::None, noteIdAt(rec, 64), 1, 64, 90, 768, 960});
+  assertParity(loop, "edit delete");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, productionCount(loop, 768, 0x90, 64), "delete applied");
+}
+
+void test_undo_of_note_edit_restores_the_note_in_both() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  const EditPassId id =
+      saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 60), 1, 67, 100, 96, 480});
+  for (EditPass& row : loop.passes.editPasses) {
+    if (row.id == id) row.state = EditPassState::Disabled;
+  }
+  ++loop.playbackRevision;
+  finishPublication(loop);
+  TEST_ASSERT_TRUE(gStore.undo());
+  assertParity(loop, "undo edit pitch");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, productionCount(loop, 96, 0x90, 60), "original pitch back after undo");
+}
+
+// Two edits on one note: the second edit's run hides the first edit's replacement rows (same noteId).
+void test_two_edits_on_one_note_match_production() {
+  Loop loop;
+  resetAll(loop);
+  const auto rec = recordForEdits(loop);
+  const NoteId target = noteIdAt(rec, 60);
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, target, 1, 67, 100, 96, 480});
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Length, target, 1, 67, 100, 96, 240});
+  assertParity(loop, "pitch then length");
+}
+
+// ---- B.3 seeded: overdubs with Hide/Shorten, NOTE_EDITs and undo, mixed ---------------------------------------------
+
+struct VisibleNote {
+  NoteId id;
+  uint8_t channel, pitch, velocity;
+  uint32_t start, end;
+};
+
+// Visible, non-wrapping notes of the store's current revision (paired by noteId in composed order).
+std::vector<VisibleNote> visibleNotes() {
+  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192);
+  std::vector<VisibleNote> notes;
+  for (uint32_t i = 0; i < stamp.count; ++i) {
+    const PassEvent& on = gOut[i];
+    if (equalTickClass(on) != 1 || on.noteId == 0) continue;
+    for (uint32_t j = i + 1; j < stamp.count; ++j) {
+      const PassEvent& off = gOut[j];
+      if (equalTickClass(off) == 0 && off.noteId == on.noteId) {
+        if (off.tick >= on.tick + 48) {
+          notes.push_back({on.noteId, static_cast<uint8_t>((on.status & 0x0F) + 1), on.data1, on.data2, on.tick, off.tick});
+        }
+        break;
+      }
+    }
+  }
+  return notes;
+}
+
+struct UndoStep {
+  bool isEdit;
+  PassId passId;
+  EditPassIdList companions;
+  EditPassId editId;
+};
+
+void runB3Seed(uint32_t seed, uint32_t steps, uint32_t& revisions, uint32_t& changesApplied, uint32_t& editsApplied,
+               uint32_t& undos) {
+  Sequence q;
+  q.lcg = seed;
+  resetAll(q.loop);
+  Loop& loop = q.loop;
+  std::vector<UndoStep> undoStack;
+  {
+    std::vector<Op> ops;
+    for (uint8_t n = 0; n < 8; ++n) {
+      const uint32_t on = (q.next() % (kLength / 96 - 4)) * 96;
+      ops.push_back({on, 0x90, 1, static_cast<uint8_t>(48 + n * 2), static_cast<uint8_t>(60 + n)});
+      ops.push_back({on + 96 + (q.next() % 4) * 48, 0x80, 1, static_cast<uint8_t>(48 + n * 2), 0});
+    }
+    commitWithChanges(loop, true, ops, {});
+  }
+  ++revisions;
+  char where[64];
+  for (uint32_t step = 1; step <= steps; ++step) {
+    snprintf(where, sizeof(where), "b3 seed %u step %u", seed, step);
+    const uint32_t roll = q.next() % 100;
+    const std::vector<VisibleNote> visible = visibleNotes();
+    if (roll < 15 && !undoStack.empty()) {
+      const UndoStep undo = undoStack.back();
+      undoStack.pop_back();
+      if (undo.isEdit) {
+        for (EditPass& row : loop.passes.editPasses) {
+          if (row.id == undo.editId) row.state = EditPassState::Disabled;
+        }
+        ++loop.playbackRevision;
+        finishPublication(loop);
+      } else {
+        productionUndoOverdub(loop, undo.passId, undo.companions);
+      }
+      TEST_ASSERT_TRUE_MESSAGE(gStore.undo(), where);
+      ++undos;
+    } else if (roll < 50 && !visible.empty()) {
+      const VisibleNote& n = visible[q.next() % visible.size()];
+      const uint32_t kind = q.next() % 4;
+      NoteEdit edit{EditActionType::Update, EditPropertyType::Pitch, n.id, n.channel, n.pitch, n.velocity, n.start, n.end};
+      if (kind == 0) edit.pitch = static_cast<uint8_t>(n.pitch + 1 + q.next() % 5);
+      if (kind == 1) {
+        edit.property = EditPropertyType::Length;
+        edit.endTick = n.start + 24 + (q.next() % ((n.end - n.start) / 24)) * 24;
+      }
+      if (kind == 2) {
+        edit.property = EditPropertyType::Velocity;
+        edit.velocity = static_cast<uint8_t>(20 + q.next() % 100);
+      }
+      if (kind == 3) {
+        edit.action = EditActionType::Delete;
+        edit.property = EditPropertyType::None;
+      }
+      UndoStep u{true, kInvalidPassId, {}, saveEditBoth(loop, edit)};
+      undoStack.push_back(u);
+      ++editsApplied;
+    } else {
+      // Overdub on channel 2 with up to two overlap-resolve results on visible notes.
+      std::vector<Change> changes;
+      std::vector<NoteId> used;
+      for (uint32_t c = 0, count = visible.empty() ? 0 : q.next() % 3; c < count; ++c) {
+        const VisibleNote& n = visible[q.next() % visible.size()];
+        if (std::find(used.begin(), used.end(), n.id) != used.end()) continue;
+        used.push_back(n.id);
+        if (q.next() % 2) {
+          changes.push_back({PendingNoteChangeKind::Hide, n.id, n.channel, n.pitch, n.velocity, n.start, n.end});
+        } else {
+          const uint32_t newEnd = n.start + 24 + (q.next() % ((n.end - n.start) / 24)) * 24;
+          changes.push_back({PendingNoteChangeKind::Shorten, n.id, n.channel, n.pitch, n.velocity, n.start, newEnd});
+        }
+      }
+      std::vector<Op> ops;
+      for (uint8_t k = 0; k < 2; ++k) {
+        const uint32_t on = (q.next() % (kLength / 96 - 4)) * 96;
+        const uint8_t pitch = static_cast<uint8_t>(80 + step * 2 + k);
+        ops.push_back({on, 0x90, 2, pitch, 90});
+        ops.push_back({on + 96, 0x80, 2, pitch, 0});
+      }
+      commitWithChanges(loop, false, ops, changes);
+      undoStack.push_back({false, loop.passes.overdubPasses.back().id, gLastCompanionIds, kInvalidEditPassId});
+      changesApplied += static_cast<uint32_t>(changes.size());
+    }
+    assertParity(loop, where);
+    ++revisions;
+  }
+}
+
+void test_seeded_overlap_edit_and_undo_match_production() {
+  uint32_t revisions = 0, changes = 0, edits = 0, undos = 0;
+  for (uint32_t seed = 1; seed <= 12; ++seed) runB3Seed(seed, 10, revisions, changes, edits, undos);
+  printf("B3 revisions=%u overlap_changes=%u note_edits=%u undos=%u\n", revisions, changes, edits, undos);
+  TEST_ASSERT_TRUE(changes > 10 && edits > 10 && undos > 5);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
@@ -557,5 +1010,18 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_tick_cc_and_cross_pass_overlap_match_production);
   RUN_TEST(test_zero_length_note_is_dropped_by_production_effective_view);
   RUN_TEST(test_seeded_sequences_store_exact_and_production_multiset_under_dec244);
+  RUN_TEST(test_overdub_hide_of_record_note_matches_production);
+  RUN_TEST(test_overdub_shorten_of_record_note_matches_production);
+  RUN_TEST(test_overdub_shorten_of_wrap_crossing_note_matches_production);
+  RUN_TEST(test_second_overdub_hides_first_overdub_note_matches_production);
+  RUN_TEST(test_overdub_shorten_of_channel_three_note_matches_production);
+  RUN_TEST(test_undo_of_overdub_with_hide_restores_the_note_in_both);
+  RUN_TEST(test_note_edit_pitch_matches_production);
+  RUN_TEST(test_note_edit_length_matches_production);
+  RUN_TEST(test_note_edit_velocity_matches_production);
+  RUN_TEST(test_note_edit_delete_matches_production);
+  RUN_TEST(test_undo_of_note_edit_restores_the_note_in_both);
+  RUN_TEST(test_two_edits_on_one_note_match_production);
+  RUN_TEST(test_seeded_overlap_edit_and_undo_match_production);
   return UNITY_END();
 }

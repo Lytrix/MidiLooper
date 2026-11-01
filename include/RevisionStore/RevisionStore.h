@@ -60,7 +60,8 @@ inline bool tickClassLess(const PassEvent& a, const PassEvent& b) {
   return equalTickClass(a) < equalTickClass(b);
 }
 
-enum class PassKind : uint8_t { Record = 0, Overdub = 1, Compacted = 2 };
+/// An Edit run (NOTE_EDIT) composes like an overdub: HideNote rows for the targets plus their replacement rows.
+enum class PassKind : uint8_t { Record = 0, Overdub = 1, Compacted = 2, Edit = 3 };
 
 enum class AdmitResult : uint8_t { Ok, DeniedNoRun, DeniedNoPage, DeniedNoManifest, DeniedManifestFull, DeniedWriterBusy };
 /// A capacity denial latches: the pass is stopped, every later append returns the same reason, the committed
@@ -170,8 +171,9 @@ class Store {
   /// Admission is one run descriptor, one page and the manifest slot its commit will need. Commit cannot fail.
   AdmitResult beginPass(PassKind kind, uint32_t loopLengthTicks = 0) {
     if (writer_ != kNoRun) return AdmitResult::DeniedWriterBusy;
-    if (kind == PassKind::Overdub && current_ == kNoManifest) return AdmitResult::DeniedNoManifest;
-    if (kind == PassKind::Overdub && manifests_[current_].runCount >= Cap::kRunsPerManifest) {
+    const bool layered = kind == PassKind::Overdub || kind == PassKind::Edit;
+    if (layered && current_ == kNoManifest) return AdmitResult::DeniedNoManifest;
+    if (layered && manifests_[current_].runCount >= Cap::kRunsPerManifest) {
       return AdmitResult::DeniedManifestFull;  // compaction owed before another pass can be admitted
     }
     const RunId run = takeRun();
@@ -230,7 +232,7 @@ class Store {
     RevisionManifest& m = manifests_[writerManifest_];
     m.runCount = 0;
     uint32_t parentRevision = 0;
-    if (r.kind == PassKind::Overdub && current_ != kNoManifest) {
+    if ((r.kind == PassKind::Overdub || r.kind == PassKind::Edit) && current_ != kNoManifest) {
       const RevisionManifest& parent = manifests_[current_];
       for (uint8_t i = 0; i < parent.runCount; ++i) {
         m.runs[m.runCount++] = parent.runs[i];

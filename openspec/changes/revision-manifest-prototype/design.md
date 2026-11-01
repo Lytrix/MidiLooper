@@ -39,8 +39,9 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   matching production's canonical class (`LoopEventStore` private canonical order, `midiEventChronologicalLess`).
   `seq` is a 32-bit append ordinal that survives seal; a compacted run renumbers it in composed order. Hidden notes are dropped. Cost per window is
   O(runs · log rows) to seek plus O(rows in window · runs · log hides) — bounded by the window, not the loop.
-- **D4 — Hides are whole-note tombstones by `noteId`**, applying to earlier runs only. This is a hook, not the
-  overlap-resolve model: trims and shortened notes need replacement rows (an edit run) — stage B question Q2.
+- **D4 — Hides are whole-note tombstones by `noteId`**, applying to earlier runs only. With replacement rows in the
+  same run they express overlap-resolve (`Hide`, `Shorten`) and NOTE_EDIT (an `Edit` run); B.3 shows parity by output.
+  The writer must stamp NoteOff rows with their note's id.
 - **D5 — Compaction is prefix-only and revision-preserving.** Merging runs `[0, k)` applies and drops the hides inside
   the prefix (they can only target rows inside it). The compacted manifest replaces the history entry at the cursor;
   pinned readers keep the old manifest until they unpin. Overdub admission is denied at `kRunsPerManifest` until
