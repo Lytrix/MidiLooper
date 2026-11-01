@@ -89,7 +89,9 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 
 ## Open questions (stage B and later)
 
-- **Q1** Resolved for the class key (above); open for within-class order until the production oracle is named (B.2a).
+- **Q1** Resolved by B.2a: parity on (tick, class) groups; production defines no within-class order (owner question: make
+  append order the defined order?). [B.2a](evidence/2026-11-01-b2a-production-oracle.md)
+- **Q1b** Span-less (zero-length) notes: production's effective view drops them, the store keeps them (B.3).
 - **Q2** Overlap-resolve and ledger semantics expressed as hides + replacement rows; compare against
   `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md` cases.
 - **Q3** NOTE_EDIT / quantize as edit runs; whether that needs bar-sliced manifests (D8).

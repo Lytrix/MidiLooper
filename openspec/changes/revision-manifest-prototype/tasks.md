@@ -22,9 +22,12 @@ timing and memory envelope without introducing real-time construction?
       physical manifest `identity` separate from logical `revision`; latched capacity stop on append; tests for a
       reader holding a discarded redo branch, identity across compaction and slot reuse, equal-tick class across
       runs, and non-contiguous pages. Native suite 17/17.
-- [ ] B.2a Name the production oracle for "the effective ordered MIDI stream of revision N" (candidates: the published
-      `LoopSnapshot` event index; the `LoopEventStore` private canonical order over a pass's chunks; `Track`
-      `mergedEvents` / playback order) and record which within-class order it guarantees.
+- [x] B.2a Production oracle named: the published `LoopSnapshot` edit view (`tryCopyCurrentSnapshotEditViewEvents`);
+      the store is fed each committed pass's chunk rows; parity is on (tick, class) groups compared as multisets.
+      Findings: four production surfaces use four equal-tick keys; same-tick rows identical up to data2 (sustain
+      127/0) have no defined order in the oracle; span-less (zero-length) notes are dropped by the effective view
+      (named divergence, pinned). Suite `test_revision_store_differential` 3 pass + 1 ignored.
+      [Evidence](evidence/2026-11-01-b2a-production-oracle.md)
 - [ ] B.2b Differential harness: one generated operation sequence (Record, overdub, overlap, undo, redo, commit after
       undo, wrap-crossing notes, NOTE_EDIT where reachable) applied to the production model and to `RevisionStore`;
       compare every revision's ordered effective stream, a set of playback windows, undo/redo results and
