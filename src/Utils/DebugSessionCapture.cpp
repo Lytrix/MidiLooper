@@ -347,6 +347,8 @@ static const char kRollingRecordTierPrefix[] PROGMEM = "DIAG,rolling_record,";
 static const char kProfileTierPrefix[] PROGMEM = "DIAG,profile_";
 #endif
 static const char kPlaybackReadTierPrefix[] PROGMEM = "DIAG,playback_read,";
+// playback-tick-consume-only phase 1: the consumed-route / miss window row (flash-resident, like the others here).
+static const char kTickRouteTierPrefix[] PROGMEM = "DIAG,tick_route,";
 static const char kPlaybackAvailableTierPrefix[] PROGMEM = "DIAG,playback_available,";
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // The window lane's **service-gap sample** (task 3.10) is Tier-A, and its tag is classified **here** rather than in
@@ -379,6 +381,7 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          CaptureLineTier::tagStartsWith(line, kProfileTierPrefix) ||
 #endif
          CaptureLineTier::tagStartsWith(line, kPlaybackReadTierPrefix) ||
+         CaptureLineTier::tagStartsWith(line, kTickRouteTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kPlaybackAvailableTierPrefix) ||
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
          CaptureLineTier::tagStartsWith(line, kRollingRecordTierPrefix) ||
@@ -1475,6 +1478,25 @@ SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_
 // refused attempts, completed pairs). Emitted directly when USB has room with the ring as the fallback — the
 // same two rules as `readinessReceiptImmediate`, because these are raised while a transport runs, exactly the
 // regime whose shed path drops non-Tier-A head records.
+SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, uint32_t merged, uint32_t none,
+                              uint32_t missInterrupt, uint32_t missExternal) {
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,tick_route,view=%lu,bridge=%lu,paged=%lu,merged=%lu,none=%lu,"
+                         "miss_int=%lu,miss_ext=%lu\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned long>(view),
+                  static_cast<unsigned long>(bridge), static_cast<unsigned long>(paged),
+                  static_cast<unsigned long>(merged), static_cast<unsigned long>(none),
+                  static_cast<unsigned long>(missInterrupt), static_cast<unsigned long>(missExternal));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,tick_route,view=%lu,bridge=%lu,paged=%lu,merged=%lu,none=%lu,"
+                       "miss_int=%lu,miss_ext=%lu\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned long>(view),
+                static_cast<unsigned long>(bridge), static_cast<unsigned long>(paged),
+                static_cast<unsigned long>(merged), static_cast<unsigned long>(none),
+                static_cast<unsigned long>(missInterrupt), static_cast<unsigned long>(missExternal));
+}
+
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
                                  uint32_t replenishWaitUs, uint32_t replenishWorkUs,
                                  uint32_t replenishRefused, uint32_t replenishPairs) {

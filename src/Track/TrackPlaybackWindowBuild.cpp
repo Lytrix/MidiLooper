@@ -590,6 +590,31 @@ TRACK_COLD_MEM void PlaybackTickContext::initAtBoot() {
   gState.servicing = false;
   for (auto& bits : gState.owed) bits = 0;
   gState.misses = 0;
+  gState.missesExternal = 0;
+  for (auto& count : gState.route) count = 0;
+  for (auto& count : gState.emittedRoute) count = 0;
+  gState.emittedMissInterrupt = 0;
+  gState.emittedMissExternal = 0;
+}
+TRACK_COLD_MEM PlaybackTickContext::RouteCounts PlaybackTickContext::takeRouteWindow() {
+  const RouteCounts now = routeCounts();
+  RouteCounts delta{};
+  for (int i = 0; i < static_cast<int>(TickRoute::Count); ++i) {
+    delta.route[i] = now.route[i] - gState.emittedRoute[i];
+    gState.emittedRoute[i] = now.route[i];
+  }
+  delta.missInterrupt = now.missInterrupt - gState.emittedMissInterrupt;
+  delta.missExternal = now.missExternal - gState.emittedMissExternal;
+  gState.emittedMissInterrupt = now.missInterrupt;
+  gState.emittedMissExternal = now.missExternal;
+  return delta;
+}
+TRACK_COLD_MEM PlaybackTickContext::RouteCounts PlaybackTickContext::routeCounts() {
+  RouteCounts out{};
+  for (int i = 0; i < static_cast<int>(TickRoute::Count); ++i) out.route[i] = gState.route[i];
+  out.missInterrupt = gState.misses;
+  out.missExternal = gState.missesExternal;
+  return out;
 }
 #if defined(PIO_UNIT_TEST_NATIVE)
 bool mergedFallbackOwedForTest(uint8_t trackIndex, uint8_t slotIndex) {

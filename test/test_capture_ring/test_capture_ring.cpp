@@ -935,6 +935,24 @@ void test_pit_motion_delivery_tier_parser_and_fit() {
   }
 }
 
+void test_tick_route_row_is_tier_a_and_fits_the_head_read() {
+  // playback-tick-consume-only phase 1: the consumed-route / playback-miss window row.
+  captureSerial.output.clear(); captureSerial.room = 4096;
+  tickRouteRow(1, 2, 3, 35856, 5, 6, 0);
+  TEST_ASSERT_TRUE(captureSerial.output.find(
+                       "DIAG,tick_route,view=1,bridge=2,paged=3,merged=35856,none=5,miss_int=6,miss_ext=0\r\n") !=
+                   std::string::npos);
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,tick_route,view=0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,tick_route,view=0"));  // source list only
+  TEST_ASSERT_FALSE(isTierATextLine("#CAP,1,DIAG,tick_routex,view=0"));
+  captureSerial.output.clear(); captureSerial.room = 8;  // no room: the row falls back to the ring
+  tickRouteRow(UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,tick_route,view=4294967295,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.size() < 192);
+}
+
 void test_runtime_profiler_rows_are_tier_a_in_the_source_list_only() {
   // DEC-239: every profiler row family, classified by the `.cpp` list at the longest timestamp, with the
   // boundary pinned; the header list must not learn the family (its literals cost DTCM in every TU).
@@ -1057,6 +1075,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_playback_read_mailbox_preserves_time_cadence_and_tier_without_usb_on_edge);
   RUN_TEST(test_rolling_record_tier_exact_prefix_and_max_timestamp_fit);
+  RUN_TEST(test_tick_route_row_is_tier_a_and_fits_the_head_read);
   RUN_TEST(test_runtime_profiler_rows_are_tier_a_in_the_source_list_only);
   RUN_TEST(test_ingress_cost_delivery_tier_parser_and_fit);
   RUN_TEST(test_pit_motion_delivery_tier_parser_and_fit);

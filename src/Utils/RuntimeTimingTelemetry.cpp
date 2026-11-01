@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/PlaybackTickContext.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
 #include "Globals.h"
@@ -475,6 +476,18 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
 RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowElapsedUs) {
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::runtimeTimingTelemetry("midi_gap", s.midiGap.maxUs, s.midiGap.overCount);
+#if defined(ARDUINO) && !defined(PIO_UNIT_TEST_NATIVE)
+  {
+    // playback-tick-consume-only phase 1: consumed routes and playback misses for this window (report-only).
+    const PlaybackTickContext::RouteCounts d = PlaybackTickContext::takeRouteWindow();
+    using PlaybackTickContext::TickRoute;
+    DebugSessionCapture::tickRouteRow(d.route[static_cast<int>(TickRoute::View)],
+                                      d.route[static_cast<int>(TickRoute::Bridge)],
+                                      d.route[static_cast<int>(TickRoute::Paged)],
+                                      d.route[static_cast<int>(TickRoute::Merged)],
+                                      d.route[static_cast<int>(TickRoute::None)], d.missInterrupt, d.missExternal);
+  }
+#endif
   DebugSessionCapture::runtimeTimingTelemetry("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
   // S7.5a envelope instruments, as **one aggregated row** (the tag and its fields live in the sink, whose format
   // is flash-resident): the captured-event stamp error in ticks and the replenishment owner's request-to-completion

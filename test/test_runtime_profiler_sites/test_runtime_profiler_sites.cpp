@@ -238,6 +238,39 @@ void test_isr_tick_never_rebuilds_the_playback_order() {
   TEST_ASSERT_FALSE(mergedFallbackOwedForTest(0, 0));
 }
 
+
+/// playback-tick-consume-only phase 1: every slot-tick that reaches route selection is counted by the route it consumes,
+/// and an interrupt miss is counted per clock -- report-only, so the long-loop bypass can be measured before any repair.
+void test_tick_route_and_miss_counters_follow_the_consumed_route() {
+  using PlaybackTickContext::TickRoute;
+  Track& t = playingTrackWithContent();
+  const auto before = PlaybackTickContext::routeCountsForTest();
+  t.playMidiEvents(96, false);  // main-loop tick: builds and consumes the merged fallback
+  auto after = PlaybackTickContext::routeCountsForTest();
+  TEST_ASSERT_EQUAL_UINT32(1, after.route[static_cast<int>(TickRoute::Merged)] -
+                                  before.route[static_cast<int>(TickRoute::Merged)]);
+  Loop& loop = t.getLoop(0);
+  loop.playbackOrderDirty = true;  // make the next interrupt tick's source unconsumable
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(120, false);
+  }
+  const auto missed = PlaybackTickContext::routeCountsForTest();
+  TEST_ASSERT_EQUAL_UINT32(1, missed.route[static_cast<int>(TickRoute::None)] -
+                                  after.route[static_cast<int>(TickRoute::None)]);
+  TEST_ASSERT_EQUAL_UINT32(1, missed.missInterrupt - after.missInterrupt);
+  TEST_ASSERT_EQUAL_UINT32(0, missed.missExternal - after.missExternal);
+  trackManager.serviceOwedTickPlaybackFallbacks();
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(144, false);
+  }
+  const auto served = PlaybackTickContext::routeCountsForTest();
+  TEST_ASSERT_EQUAL_UINT32(1, served.route[static_cast<int>(TickRoute::Merged)] -
+                                  missed.route[static_cast<int>(TickRoute::Merged)]);
+  TEST_ASSERT_EQUAL_UINT32(0, served.missInterrupt - missed.missInterrupt);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_slot_prewarm_and_monolithic_views_are_profiled);
@@ -251,5 +284,6 @@ int main(int, char**) {
   RUN_TEST(test_isr_tick_never_builds_the_merged_fallback_and_owes_it);
   RUN_TEST(test_main_loop_tick_still_builds_the_merged_fallback);
   RUN_TEST(test_isr_tick_never_rebuilds_the_playback_order);
+  RUN_TEST(test_tick_route_and_miss_counters_follow_the_consumed_route);
   return UNITY_END();
 }

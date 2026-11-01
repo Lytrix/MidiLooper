@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/RuntimeProfiler.h"
+#include "Utils/PlaybackTickContext.h"
 #include "TrackInternal.h"
 
 #include "ClockManager.h"
@@ -352,6 +353,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     if (mergedEvents == nullptr) {
       // DEC-241: an interrupt tick with no consumable fallback owes the build and ends the turn, contained.
       (void)containPlaybackTurnIfNoRouteForSlot(slotIndex, currentTick, isActive);
+      PlaybackTickContext::noteTickRoute(PlaybackTickContext::TickRoute::None);
       return;
     }
   }
@@ -376,7 +378,15 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (!anyServingRouteSelected) {
     // Every reader above is out, so the merged catch-all is the only remaining candidate -- it is the one branch that is
     // always selectable. The cold owner decides whether *its* window covers this phase and asks containment only if not.
-    (void)containPlaybackTurnIfNoRouteForSlot(slotIndex, currentTick, isActive);
+    const bool mergedCovers = containPlaybackTurnIfNoRouteForSlot(slotIndex, currentTick, isActive) ==
+                              LastResortOutcome::NotNeeded;
+    PlaybackTickContext::noteTickRoute(mergedCovers ? PlaybackTickContext::TickRoute::Merged
+                                                    : PlaybackTickContext::TickRoute::None);
+  } else {
+    // playback-tick-consume-only phase 1: the consumed route, in emission priority (report-only).
+    PlaybackTickContext::noteTickRoute(fixedBridge != nullptr ? PlaybackTickContext::TickRoute::Bridge
+                                       : fixedView != nullptr ? PlaybackTickContext::TickRoute::View
+                                                              : PlaybackTickContext::TickRoute::Paged);
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(micros() - rebuildStartUs);

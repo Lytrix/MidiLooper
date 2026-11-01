@@ -178,6 +178,10 @@ SC_MEM_ATTR uint32_t midiOutNoteOnCount();
 SC_MEM_ATTR uint8_t midiOutLastNote();
 SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
 /** S7.5a envelope instruments: one aggregated row per telemetry window (see the definition for the fields). */
+/// playback-tick-consume-only phase 1: one row per 5 s window -- slot-ticks per consumed route and playback misses per
+/// clock, as deltas since the previous window. Tier-A (`DIAG,tick_route,`), direct-first with ring fallback.
+SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, uint32_t merged, uint32_t none,
+                              uint32_t missInterrupt, uint32_t missExternal);
 SC_MEM_ATTR void envelopeInstrRow(uint32_t captureStampMaxTicks, uint32_t captureStampSamples,
                                  uint32_t replenishWaitUs, uint32_t replenishWorkUs,
                                  uint32_t replenishRefused, uint32_t replenishPairs);

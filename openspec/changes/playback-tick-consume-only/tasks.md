@@ -5,28 +5,28 @@ group; no PR unless requested. Phases 4 and 5 are **blocked** until phase 3 reco
 
 ## 0. Authorization and gates
 
-- [ ] 0.1 Add a `## Now implementing` entry to `docs/Runtime/CURRENT_WORK.md` naming this change, its phase gating
+- [x] 0.1 Add a `## Now implementing` entry to `docs/Runtime/CURRENT_WORK.md` naming this change, its phase gating
       (no new buffering before phase 3) and its non-goals; verify no active declaration is overwritten.
-- [ ] 0.2 Fill `docs/Templates/DECISION_REVIEW.md` into `evidence/DECISION_REVIEW.md` (search: windowed lane, route
+- [x] 0.2 Fill `docs/Templates/DECISION_REVIEW.md` into `evidence/DECISION_REVIEW.md` (search: windowed lane, route
       selection, merged fallback, paged delivery, bridge, readiness, DEC-193, DEC-197, DEC-241); verify it cites the
       main-spec requirements this change makes measurable.
 
 ## 1. Telemetry (report-only)
 
-- [ ] 1.1 Write `evidence/EXECUTION_PACKET-phase1.md`.
-- [ ] 1.2 Native RED: a fixture ticks a slot through each route reachable in the harness (served view, merged fallback,
+- [x] 1.1 Write `evidence/EXECUTION_PACKET-phase1.md`.
+- [x] 1.2 Native RED: a fixture ticks a slot through each route reachable in the harness (served view, merged fallback,
       contained miss under `PlaybackTickContext::InterruptScope`, contained miss on the main-loop tick once phase 5
       exists) and asserts the per-route and per-clock counters; verify it fails before the counters exist.
-- [ ] 1.3 Add the RAM2 counters beside `PlaybackTickContext::gState` (cleared by `initAtBoot()`), the single indexed
+- [x] 1.3 Add the RAM2 counters beside `PlaybackTickContext::gState` (cleared by `initAtBoot()`), the single indexed
       increment after route selection in `Track::playCommittedLoopMidi`, and the miss split by clock; verify 1.2 passes.
-- [ ] 1.4 Emit `DIAG,tick_route,…` from the 5 s telemetry owner (deltas per window), format literal in a carved TU,
+- [x] 1.4 Emit `DIAG,tick_route,…` from the 5 s telemetry owner (deltas per window), format literal in a carved TU,
       prefix in `isTierATextLine`; pin it in `test_capture_ring`; verify `check_marker_contract.py 'DIAG,tick_route,'`
       reports OK and `--audit` exits 0.
-- [ ] 1.5 Builds: default RAM1 variables 96,192 and padding ≥ 840 (record the ITCM delta), no-grain and profile envs
+- [x] 1.5 Builds: default RAM1 variables 96,192 and padding ≥ 840 (record the ITCM delta), no-grain and profile envs
       link; full native green.
-- [ ] 1.6 Decoder: totals and the external/internal interval split in `scripts/parse_overdub_chain_timing.py` (or a
-      small sibling), with unit tests for complete, missing-rows and Tier-A-loss captures.
-- [ ] 1.7 Device baseline: one owner chain with a 45 s internal-clock hold; record route totals and misses per clock in
+- [x] 1.6 Decoder: totals and the external/internal interval split in `scripts/parse_tick_routes.py` (a small
+      sibling of the scorer), with unit tests for complete, missing-rows and Tier-A-loss captures.
+- [x] 1.7 Device baseline: one owner chain with a 45 s internal-clock hold; record route totals and misses per clock in
       `evidence/<date>-baseline-routes.md`.
 
 ## 2. Routing characterization
