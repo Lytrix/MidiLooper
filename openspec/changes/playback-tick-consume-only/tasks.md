@@ -36,7 +36,7 @@ group; no PR unless requested. Phases 4 and 5 are **blocked** until phase 3 reco
       predicate's function; verify no value is a generic "not usable".
 - [x] 2.2 Compute the first failed predicate in flash only when the merged fallback is selected; emit on change per
       slot (DEC-193 pattern); native case per reachable value; verify served ticks never compute it.
-- [ ] 2.3 Device: one owner chain; record the named reason(s) for the long loop and when they change, in
+- [x] 2.3 Device: one owner chain; record the named reason(s) for the long loop and when they change, in
       `evidence/<date>-route-reject.md`.
 
 ## 3. Capability proof

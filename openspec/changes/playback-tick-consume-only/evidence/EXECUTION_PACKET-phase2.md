@@ -70,4 +70,4 @@ Task 2.3 names whichever ones occur.
 - **Decoder.** `scripts/parse_tick_routes.py` adds the reason timeline and the merged ticks per closed reason. Tests
   6/6, including one that pins the decoder's names to the firmware enum.
 - **Image.** Default `1799e442719f1808879aa41679c4dd15314f91a4b1fffa67d35ef63394a72aae`.
-- **Device (2.3).** Pending.
+- **Device (2.3).** Flashed and boot-verified; [route-reject evidence](2026-11-01-route-reject.md). Long loop: `frame_blocked(clock_epoch_changed)` from the 66.28 s transport restart to the end of the run.
