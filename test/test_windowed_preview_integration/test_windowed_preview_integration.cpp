@@ -370,13 +370,13 @@ bool projectionHasNoteAt(const MidiEventVec& events, uint32_t tick, uint8_t pitc
 }
 
 /// The interval the requester uses for this slot at `playhead` — the **same** policy call the production
-/// requester makes (`Track::playbackWindowInterval` with the loop's own demoted test), so a fixture never
+/// requester makes (`Track::playbackWindowInterval`, one policy for every length), so a fixture never
 /// invents a second geometry rule.
 PlaybackCoverageInterval playbackIntervalAt(Track& track, uint8_t slot, uint32_t playhead) {
   const Loop& loop = track.getLoop(slot);
   PlaybackCoverageInterval coverage{};
   TEST_ASSERT_TRUE(Track::playbackWindowInterval(
-      loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), playhead, coverage));
+      loop.loopLengthTicks, playhead, coverage));
   return coverage;
 }
 
@@ -1313,10 +1313,11 @@ static void test_3_15d_an_empty_effective_interval_is_a_complete_silent_preview(
                                    "the empty interval is a complete preview of zero events");
 }
 
-/// Task 3.15d (slice 1) -- **P3: a short loop requests its whole-loop interval.** The window lane is no longer limited
-/// to the demoted shape: a loop at or below the detailed-rebuild bar limit publishes the preview too, and its interval
-/// is the whole loop (the same shape the merged NOTE_EDIT preview uses).
-static void test_3_15d_a_short_loop_requests_its_whole_loop_interval() {
+/// Task 3.15d (slice 1) -- **P3: a short loop requests the same clamped interval as any loop (DEC-242).** The window
+/// lane is not limited to the demoted shape: a loop at or below the detailed-rebuild bar limit publishes the preview
+/// too, and its interval is the one policy's (`Track::playbackWindowInterval`): the two-bar window at the playhead,
+/// clamped by the loop. Length is geometry, not a whole-loop special case.
+static void test_3_15d_a_short_loop_requests_the_one_policy_interval() {
   constexpr uint32_t kShortLoopTicks = 4u * 768u;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
@@ -1330,9 +1331,13 @@ static void test_3_15d_a_short_loop_requests_its_whole_loop_interval() {
   const WindowIdentity identity = serveLatestPreview(track, 0, revision);
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackWindowOrigin::Preview),
                             static_cast<int>(identity.origin), "the short loop's window is a preview");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, identity.interval.startPhase, "a short loop's interval is the whole loop");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kShortLoopTicks, identity.interval.lengthTicks,
-                                   "a short loop's interval is the whole loop");
+  PlaybackCoverageInterval policy{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(kShortLoopTicks, kPlayhead % kShortLoopTicks, policy));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * 768u, policy.lengthTicks, "the policy clamps a 4-bar loop to two bars");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(policy.startPhase, identity.interval.startPhase,
+                                   "a short loop's interval is the one policy's");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(policy.lengthTicks, identity.interval.lengthTicks,
+                                   "a short loop's interval is the one policy's");
   assertServedWindowIsSessionProjection(track, 0, "and its content is the session's own projection");
 }
 
@@ -3050,7 +3055,7 @@ int main(int, char**) {
   // delta -- including an empty effective interval, a short loop, supersession, and the currency identity.
   RUN_TEST(test_3_15d_the_preview_is_the_committed_interval_composed_with_the_session_delta);
   RUN_TEST(test_3_15d_an_empty_effective_interval_is_a_complete_silent_preview);
-  RUN_TEST(test_3_15d_a_short_loop_requests_its_whole_loop_interval);
+  RUN_TEST(test_3_15d_a_short_loop_requests_the_one_policy_interval);
   RUN_TEST(test_3_15d_the_interval_preview_never_mixes_revisions);
   RUN_TEST(test_3_15d_a_preview_window_is_never_committed_currency);
   // Task 3.15d (slice 2): the native MIDI-emission harness -- the ledger boundary's semantics with a crossing note,

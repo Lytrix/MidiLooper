@@ -662,18 +662,7 @@ uint32_t mergedFallbackTickMissesForTest() { return PlaybackTickContext::gState.
 namespace { unsigned sOverlayLiveSelectionsForTest = 0; bool sOverlayEdgeDisabledForTest = false; }
 unsigned Track::overlayLiveSelectionCount() { return sOverlayLiveSelectionsForTest; }
 void Track::setOverlayEdgeDisabledForTest(bool disabled) { sOverlayEdgeDisabledForTest = disabled; }
-namespace { bool sWindowLengthGatesBypassedForTest = false; }
-void Track::setWindowLengthGatesBypassedForTest(bool bypassed) { sWindowLengthGatesBypassedForTest = bypassed; }
 #endif
-namespace {
-/// The windowed lane's length gate (DEC-200's keystone): true when the loop is long enough for the lane today.
-inline bool windowLaneAdmitsLength(const Loop& loop) {
-#if defined(PIO_UNIT_TEST_NATIVE)
-  if (sWindowLengthGatesBypassedForTest) return true;
-#endif
-  return loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
-}
-}  // namespace
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 /// DEC-143's cost criterion, measurable from a native suite: how many times the merged fallback actually rebuilt. A
@@ -2406,10 +2395,14 @@ TRACK_COLD_MEM void TrackManager::reportPlaybackRouteRejects(uint32_t nowMs) {
     for (uint8_t slot = 0; slot < 8; ++slot) {
       PlaybackTickContext::SlotRouteReject& s = PlaybackTickContext::gState.reject[trackIndex][slot];
       const uint32_t changes = s.changes;
-      if (changes == s.emittedChanges) continue;
+      const char* exit = PlaybackTickContext::gState.producerExit[trackIndex];
+      // A slot still on the merged fallback whose producer moved to another exit is named again: the producer side
+      // of an unchanged reason (phase 4 device finding: a frame idle for the whole run hid which exit kept it idle).
+      const bool producerMoved = s.emittedChanges != 0 && exit != s.emittedExit && s.ticks != s.emittedTicks;
+      if (changes == s.emittedChanges && !producerMoved) continue;
       const uint8_t reason = s.reason;
       const uint8_t cause = s.cause;
-      if (reason == s.emittedReason && cause == s.emittedCause && s.emittedChanges != 0) {
+      if (!producerMoved && reason == s.emittedReason && cause == s.emittedCause && s.emittedChanges != 0) {
         s.emittedChanges = changes;  // flapped back to the reported reason: nothing new to name
         continue;
       }
@@ -2417,8 +2410,10 @@ TRACK_COLD_MEM void TrackManager::reportPlaybackRouteRejects(uint32_t nowMs) {
       Track& track = getTrack(trackIndex);
       const uint32_t loopLength = track.loopsAllocated() ? track.getLoop(slot).loopLengthTicks : 0;
       SC_ROUTE_REJECT(trackIndex, slot, reason, cause, s.prevReason, s.prevTicks, s.sinceTick,
-                      changes - s.emittedChanges, loopLength, PlaybackTickContext::gState.producerExit[trackIndex]);
+                      changes - s.emittedChanges, loopLength, exit);
       (void)loopLength;
+      s.emittedExit = exit;
+      s.emittedTicks = s.ticks;
       s.emittedReason = reason;
       s.emittedCause = cause;
       s.emittedChanges = changes;
@@ -4926,10 +4921,8 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
   if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
     return PlaybackViewRequestResult::NotServable;
   }
-  // Whole-take (undemoted) slots keep their existing route; the windowed lane's production scope is the
-  // demoted shape (the 1.4 scope split). The legacy fallbacks remain for every refusal below.
-  const bool demoted = windowLaneAdmitsLength(loop);
-  if (!demoted) return PlaybackViewRequestResult::NotServable;
+  // DEC-242 (DEC-200's keystone): every committed length takes the windowed lane. Length is the window's geometry
+  // (`playbackWindowInterval`'s clamp), never a refusal; the legacy fallbacks remain for every refusal below.
   if (playbackWindowReadinessForSlot(slot) == PlaybackWindowReadiness::Ready) {
     return PlaybackViewRequestResult::NotServable;
   }
@@ -4947,7 +4940,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
     }
   }
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, demoted, playheadPhase, coverage)) {
+  if (!playbackWindowInterval(loop.loopLengthTicks, playheadPhase, coverage)) {
     return PlaybackViewRequestResult::NotServable;
   }
   const uint32_t phase = playheadPhase % loop.loopLengthTicks;
@@ -5680,9 +5673,8 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Excluded; // Re-projection does not erase the positioned debt.
   }
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
-  if (!clock.epoch || !windowLaneAdmitsLength(loop) ||
-      loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
-    // The demand requires a stamped clock, demoted content and bar-aligned geometry.
+  if (!clock.epoch || loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
+    // The demand requires a stamped clock and bar-aligned geometry; length is not a term (DEC-242).
     // Odd bar counts use a clamped terminal interval, never a wrapping cursor read.
     reportPlaybackRollingGateRow("win_window_ineligible", clock.epoch != 0);
     return RollingOutcome::Excluded;
@@ -7735,7 +7727,7 @@ TRACK_COLD_MEM Track::OverdubOverlayDemand Track::overdubOverlayDemandForSlot(ui
     return demand;
   }
   const uint32_t phase = playheadPhase % loop.loopLengthTicks;
-  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), phase,
+  if (!playbackWindowInterval(loop.loopLengthTicks, phase,
                               demand.coverage)) {
     return demand;
   }
@@ -7880,17 +7872,12 @@ TRACK_COLD_MEM OverdubOverlayLane::Turn Track::serviceOverdubOverlayWindow() {
   return runtime->stepOverdubOverlayBuild(request, loop, kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
 }
 
-TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,
-                                                  uint32_t playheadPhase, PlaybackCoverageInterval& out) {
+TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, uint32_t playheadPhase,
+                                                  PlaybackCoverageInterval& out) {
   if (loopLengthTicks == 0) {
     return false;
   }
-  if (!demoted) {
-    // Whole-loop coverage: the interval is the loop the playhead is in.
-    out = PlaybackCoverageInterval{0, loopLengthTicks, loopLengthTicks};
-    return true;
-  }
-  // Two bars at the playhead, clamped into the loop -- the same shape the live build uses, kept identical so
+  // DEC-242: one policy for every length. Two bars at the playhead, clamped into the loop -- the same shape the live build uses, kept identical so
   // the windowed representation is one policy rather than two.
   constexpr uint32_t kWindowBars = 2;
   uint32_t length = kWindowBars * Config::TICKS_PER_BAR;
@@ -7956,7 +7943,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
     return PlaybackViewRequestResult::NotServable;
   }
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), playheadPhase,
+  if (!playbackWindowInterval(loop.loopLengthTicks, playheadPhase,
                               coverage)) {
     return PlaybackViewRequestResult::NotServable;
   }
@@ -8047,8 +8034,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
   // The caller supplies the interval-qualified composition (`composePreviewIntervalSourceForSlot`); an empty
   // composition is a valid, complete preview (zero events over a real span), not a refusal.
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
-                              intervalPhase, coverage)) {
+  if (!playbackWindowInterval(loop.loopLengthTicks, intervalPhase, coverage)) {
     return PlaybackViewRequestResult::NotServable;
   }
   // The **frozen source**: preview currency is the session's preview revision, and the origin marks the contract. The
@@ -8283,7 +8269,7 @@ TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
   // after the busy guard above, so a live build's source is never overwritten. An empty composition is a complete
   // preview (the interval really holds nothing after the session's edits), not a refusal.
   PlaybackCoverageInterval coverage{};
-  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), phase,
+  if (!playbackWindowInterval(loop.loopLengthTicks, phase,
                               coverage)) {
     return;
   }

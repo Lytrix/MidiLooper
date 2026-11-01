@@ -8934,8 +8934,7 @@ void test_3_15e_slice2b_the_overlay_demand_is_the_live_generation_and_the_commit
   TEST_ASSERT_EQUAL_UINT64(loop.captureContentGeneration(), live.captureGeneration);
   TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, live.playbackRevision);
   PlaybackCoverageInterval want{};
-  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks,
-                                                 loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), 1470, want));
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, 1470, want));
   TEST_ASSERT_EQUAL_UINT32(want.startPhase, live.coverage.startPhase);
   TEST_ASSERT_EQUAL_UINT32(want.lengthTicks, live.coverage.lengthTicks);
   TEST_ASSERT_EQUAL_UINT32(want.loopLengthTicks, live.coverage.loopLengthTicks);

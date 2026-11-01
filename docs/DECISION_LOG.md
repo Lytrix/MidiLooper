@@ -13578,3 +13578,92 @@ until the owner builds.
 **Tests.** `test_runtime_profiler_sites`: ISR tick never builds and owes it, the owner builds, the next ISR tick
 consumes without building; ISR tick never rebuilds the order; main-loop tick unchanged. Mutations: restoring the cold
 build fails (`Expected 0 Was 1`); consuming an order-dirty fallback fails.
+
+## DEC-242 — Loop length is window geometry, not a route: the windowed lane admits every committed length
+
+**Date:** 2026-11-01
+**Owner:** `Track::requestCommittedPlaybackWindowForSlot`, `Track::serviceRollingPlaybackWindow` and
+`Track::playbackWindowInterval` (`src/Track/TrackPlaybackWindowBuild.cpp`); change `playback-tick-consume-only` phase 4.
+**Status:** Accepted; landed (native + three env builds green; device chain recorded). The successor-demand defect (B)
+and the restored-slot blocker found on device are open, named below.
+
+### Direction
+
+- **Owner, 2026-10-29 (DEC-200):** "length should not be the discriminator, there should only be one DRY logic to handle
+  playback. short and whole loop logic should be removed everywhere in the codebase."
+- **Owner, 2026-11-01 (this change):** finish that unification before any new buffering. The requested window is
+  `clamp(lookahead span, loop extent)`; length becomes geometry, not routing.
+
+### Landed
+
+1. **DEC-200's keystone is flipped.** `requestCommittedPlaybackWindowForSlot` no longer answers `NotServable` for loops of
+   16 bars or fewer.
+2. **The producer twin is flipped.** `serviceRollingPlaybackWindow`'s `win_window_ineligible` no longer has a length
+   term; it keeps the stamped-clock and bar-alignment terms.
+3. **The interval slice lands with them.** `playbackWindowInterval` loses `demoted`. It is one rule for every length:
+   the two-bar window at the playhead, clamped by the loop, so a 1-bar loop gets its whole extent. All five callers
+   (committed request, overlay demand, committed request with scratch, NOTE_EDIT preview request, preview service) use
+   the one rule.
+
+### Reconciling DEC-193
+
+DEC-193 (2026-10-29) parked a bundle of window-first material in `docs/Plans/future_root_independent_playback.md`:
+root-independent startup, any supported slot, continuous coverage, standby pools, source-lifetime analysis. It parked
+that bundle as an unauthorized product direction reached by inference from one failed repair.
+
+This decision does not reopen that bundle:
+- It adds no owner, pool, lifetime or startup path.
+- It removes a length refusal from the lane the main spec already names as the playback owner.
+
+That refusal is the one the owner's later DEC-200 / DEC-202 direction (same day) named as the keystone to flip. For
+this lane, DEC-200 / DEC-202 narrow DEC-193: length-based routing was a migration fallback, not an intended design. The
+parked material stays parked.
+
+The successor-demand repair (B below) touches DEC-193's "continuous coverage" item and needs its own owner decision.
+
+### Fixture re-derivations (no fixture weakened)
+
+| Fixture | Change |
+|---|---|
+| `test_enforced_candidate_charges_derived_cost_and_eight_track_rotation` | The 7-bar slot gathers the same two-bar window as the 40-bar slot: 64 → 63 rows. The contrast it needs is lead, not representation. |
+| `test_3_10_the_declared_envelope_is_the_admissions_own_boundary` | Re-derived on a 4-bar loop with the playhead in bar 0, where the window starts at phase 0 and the lead is exactly `length − phase`. A precondition pins that region. |
+| `test_window_owner_resolves_the_interval_through_the_published_snapshot` | A 4-bar loop gets two bars; a 1-bar loop is clamped to 768. |
+| `test_1_4_production_demand_requests_the_active_demoted_window_and_skips_whole_take` | The 2-bar control now requests its window. |
+| `test_short_committed_loop_edge_baseline_preserves_two_wrap_traversals` | The 1-bar demand is `Requested` and stays pending; the edge MIDI/ledger oracle is unchanged. |
+| `test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change` | The 4-bar case no longer exits `win_window_ineligible`. |
+| `test_3_15d_a_short_loop_requests_the_one_policy_interval` | Renamed; the preview interval is the policy's. |
+
+Phase 3's `test_capability_classification_baseline` inverts defect A: every length is acquired on the production lane.
+
+### Device (`session_20261101_123322.log`, image `093e69e4…`, boot verified, valid chain)
+
+- **No route gain on the device.** Merged share is 85.6 %. Interrupt misses are 433, against 417 on `3e4161e9…` and 2
+  on the phase-2 run with the same card.
+- **Restored slots.** The six restored slots (1, 8, 4, 31, 2 and 4 bars; the 31-bar one was never length-gated) are
+  `frame_idle` for the whole run. The producer's exit is **`win_not_servable`** whenever transport runs.
+- **Why `win_not_servable`.** Boot prewarm reserves **no view set** (`prewarmPlaybackForSlot(s, false)`,
+  `capture_prewarm_split views=0`). The producer checks `playbackWindowSourceIsCurrentForSlot` **before** the request.
+  That request is the only place a rootless slot's source is retained (DEC-194). Either term refuses restored slots
+  forever.
+- **This is phase 5's invariant, now on device:** a PLAYING route depends on an admission-time preparation that does not
+  recur while playing.
+
+### Open
+
+- **B (successor demand).** The lane requests the next window only when the current one expires, a priced lead (about
+  8 bars) ahead. The steady duty cycle is 25 %. Continuous 2-bar coverage under that admission contract needs about 4
+  windows in flight; a slot has one frame, one demand and three views. Candidate repairs:
+  - a window span of `clamp(priced lead, loop)`, the owner's formula, with view capacity to check;
+  - a deeper pipeline (new state);
+  - a tighter admission price (DEC-147 / 3.7h soundness).
+  This needs an owner decision.
+- **Restored-slot servability.** The producer must be able to acquire a view set and retain the source while playing,
+  off-clock and bounded. The switch launch path already calls `prewarmRollingViews` while playing, so there is
+  precedent. Phase 5.
+- **The switch-launch length gate** (`launch_not_demoted_content` in `preparePlaybackLaunchForSlot`) is a third length
+  gate, left for phase 6's routing slice.
+
+### Related
+
+DEC-193 (parked bundle, narrowed here), DEC-194 (rootless first window), DEC-200 / DEC-202 (owner direction and the
+keystone), DEC-147 / 3.7h (the priced lead), DEC-241 (ISR consume-only).

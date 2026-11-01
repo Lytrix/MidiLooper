@@ -61,21 +61,24 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
 
 ## 4. Remove the length gates (blocked on 3.3)
 
-- [ ] 4.1 Design note and `DEC-###`: the repair against the phase-2 reasons and phase-3 classes; one window request
+- [x] 4.1 Design note and `DEC-###`: the repair against the phase-2 reasons and phase-3 classes; one window request
       policy, `requested window = clamp(lookahead span, loop extent)`, length as geometry and never routing. State
       explicitly how DEC-200 / DEC-202 (owner direction, 2026-10-29) supersede or narrow DEC-193's parked window-first
       material for this lane. A merged `ready` buffer only with a recorded capability gap.
-- [ ] 4.2 RED/GREEN: `requestCommittedPlaybackWindowForSlot` no longer answers `NotServable` by length (DEC-200's
+- [x] 4.2 RED/GREEN: `requestCommittedPlaybackWindowForSlot` no longer answers `NotServable` by length (DEC-200's
       keystone), and `serviceRollingPlaybackWindow` no longer exits `win_window_ineligible` by length; the interval slice
       lands with it (`playbackWindowInterval` loses `demoted`; its two discriminator-shaped fixtures re-derived against
       the final policy, never number-bumped).
-- [ ] 4.2b RED/GREEN for capability defect B (`evidence/2026-11-01-capability.md`): the successor window is requested
+- [ ] 4.2b **(blocked: owner decision, DEC-242 "Open")** RED/GREEN for capability defect B (`evidence/2026-11-01-capability.md`): the successor window is requested
       **while the current one serves**, positioned at its end, so a steady loop of any length stays on the lane across
       every seam (today: one two-bar window in four, the merged fallback covering the rest).
-- [ ] 4.3 Full native; three env builds; device chain with both clocks: route and reason rows recorded per length.
+- [x] 4.3 Full native; three env builds; device chain with both clocks: route and reason rows recorded per length.
 
 ## 5. Live recovery after transport start / restart (blocked on 4)
 
+- [ ] 5.0 RED (device finding, `evidence/2026-11-01-phase4-gates.md`): a restored slot whose boot prewarm reserved no
+      view set and whose source is pass-only (no current root) becomes servable **while playing** — the producer acquires
+      the view set and retains the source off-clock, bounded, instead of exiting `win_not_servable` for the session.
 - [ ] 5.1 RED: after a transport restart (new epoch) a blocked or stale frame recovers **while transport runs** — the
       20-bar `frame_blocked(clock_epoch_changed)` shape (capability defect C) and the revision-change
       `frame_blocked(candidate_rejected)` shape (defect D) — and a slot with no stopped-time publication is served by the

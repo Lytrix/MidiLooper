@@ -366,13 +366,13 @@ bool projectionHasNoteAt(const MidiEventVec& events, uint32_t tick, uint8_t pitc
 }
 
 /// The interval the requester uses for this slot at `playhead` — the **same** policy call the production
-/// requester makes (`Track::playbackWindowInterval` with the loop's own demoted test), so a fixture never
+/// requester makes (`Track::playbackWindowInterval`, one policy for every length), so a fixture never
 /// invents a second geometry rule.
 PlaybackCoverageInterval playbackIntervalAt(Track& track, uint8_t slot, uint32_t playhead) {
   const Loop& loop = track.getLoop(slot);
   PlaybackCoverageInterval coverage{};
   TEST_ASSERT_TRUE(Track::playbackWindowInterval(
-      loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), playhead, coverage));
+      loop.loopLengthTicks, playhead, coverage));
   return coverage;
 }
 

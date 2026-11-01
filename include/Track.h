@@ -456,10 +456,6 @@ public:
   /// Test-only witness: MIDI turns that selected the live overlay window (slice 3).
   static uint32_t overlayLiveSelectionCount();
   static void setOverlayEdgeDisabledForTest(bool disabled);
-  /// playback-tick-consume-only phase 3: bypass the two length gates of the windowed lane (DEC-200's keystone in
-  /// `requestCommittedPlaybackWindowForSlot` and the producer's `win_window_ineligible`), so the capability fixture
-  /// measures the lane apart from them. Native only; the target keeps both gates.
-  static void setWindowLengthGatesBypassedForTest(bool bypassed);
   /// **3.15f/C diagnostic:** the exact adoption terms witnessed at the last clock-edge adoption attempt. `firstFalse`
   /// is 0 when all terms held; otherwise the first false term in evaluation order (1 published, 2 incomplete,
   /// 3 positioned tick not reached, 4 not Preview, 5 revision, 6 coverage invalid, 7 coverage loop length,
@@ -561,11 +557,11 @@ public:
                                   const FixedPlaybackBridgeStorage* bridge = nullptr);
   void observePlaybackSnapshotAvailability(uint8_t slotIndex, uint32_t tick);
   /// DEC-108 item 1 / task 3.2: the **interval policy** -- which interval a slot's window serves. A pure
-  /// resolution from the loop's geometry, its demotion state and the playhead: whole-loop coverage where the
-  /// whole-take view is admissible, else the two-bar window at the playhead that the live build already uses
+  /// resolution from the loop's geometry and the playhead, one policy for every length (DEC-242): the two-bar window
+  /// at the playhead, clamped by the loop, that the live build already uses
   /// (DEC-108 item 8's "prepare ahead of the playhead"; "centred on the playhead" is the present shape of that
   /// rule, not its contract). Public so the resolver, its fixtures and its readers agree on one policy.
-  static bool playbackWindowInterval(uint32_t loopLengthTicks, bool demoted, uint32_t playheadPhase,
+  static bool playbackWindowInterval(uint32_t loopLengthTicks, uint32_t playheadPhase,
                                      PlaybackCoverageInterval& out);
   /// **Slice 3.15e/2b-ii — the per-overdub overlay demand.** What the overlay lane owes for a slot, derived from **live
   /// state only** (there is no stored record, so no stale demand can exist): `owed` while an overdub is recording rows on

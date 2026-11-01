@@ -84,6 +84,8 @@ struct SlotRouteReject {
   volatile uint32_t changes;
   uint32_t emittedChanges;
   uint32_t emittedMs;
+  const char* emittedExit;  // the producer exit named on the last row
+  uint32_t emittedTicks;    // `ticks` at the last row: a slot still on the merged fallback has advanced it
 };
 /// The emitter's minimum spacing per slot: a reason that flaps every tick is sampled, and `chg` carries the count.
 constexpr uint32_t kRouteRejectRowSpacingMs = 50;
