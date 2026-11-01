@@ -13906,7 +13906,7 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
 17. **Order:** rig ARMED-start cleanup → C4 closeout → C3c persisted-pass source → C5 one-reader authority switch.
     Until C3c, `NoCommittedSource` stays a hard refusal for boot-restored slots. C3c comes before C5 so the
     authoritative reader works across reboot without a temporary routing exception.
-18. **C3c finding (2026-11-01, for the owner to confirm): the restored-slot source is the live passes.**
+18. **C3c (confirmed by the owner, 2026-11-01): the restored-slot source is the live passes.**
     - Both persisted slot formats carry the full capture-pass and edit-pass records.
     - Boot restore installs them into `loop.passes` (`readPersistedLoopSnapshot` → `adoptPersistedSnapshot`).
     - So the importer's one live source covers boot-restored slots once their restore applies, and amendment 13's
@@ -13914,6 +13914,32 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - Before the restore applies, the result stays `NoCommittedSource`. A snapshot is never imported as source.
     - Evidence: host round trip with Hide and Shorten edits; device reboot import of the restored slot, 1,210 / 1,210,
       `c4_clean=1`.
+    - Stage C imports only materialized committed passes from `Loop::passes`. Persisted restore is production-owned.
+      `PersistedPassesSource` is dropped. A device restored-edit case is later qualification, not a C5 blocker.
+19. **C5 authorized (owner, 2026-11-01): one manifest-backed rolling-window read path, nothing else.**
+    - Production keeps capture, overdub commit, edits, undo/redo and persistence.
+    - The path: passes → bounded transactional import → manifest M → `IndexOnly` edit index M → bounded window
+      preparation → a window carrying `actualManifestIdentity = M` → playback consumes.
+    - A reader that requested a manifest-backed window either consumes a qualified window for the exact manifest
+      identity or holds a named owed state: `ImportOwed`, `IndexOwed`, `WindowOwed`, `CapacityDenied` or
+      `SourceMoved`.
+    - It never reconstructs from snapshot state, and never silently falls back to a content-sized legacy read on the
+      real-time path. It keeps the previously qualified window where the playback contract allows; otherwise the miss
+      is named.
+    - The legacy reader stays a diagnostic oracle off-edge, not an automatic fallback.
+    - Pinned before C5 is complete:
+      - fresh current-boot content and reboot-restored content (`NoCommittedSource` allowed until the restore
+        applies);
+      - the manifest moving during preparation;
+      - index owed → ready;
+      - both index slots pinned → `IndexCapacityDenied`, with no eviction;
+      - an undo/redo or source-generation move cannot publish a stale candidate;
+      - the exact actual identity on every served window;
+      - zero `Scan`, zero snapshot-source reconstruction, zero builds from the PIT/ISR;
+      - the oracle agrees in shadow comparison;
+      - no regression in MIDI timing.
+    - The companion-loss repair stays separate; C5 mirrors what production committed.
+    - C6 removes or demotes the legacy path after C5 is device-green on current-boot and reboot-restored content.
 
 ### Related
 

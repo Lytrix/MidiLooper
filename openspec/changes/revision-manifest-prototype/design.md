@@ -117,3 +117,88 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   history get their own design.
 - **Q8** Loop-length change and a new Record on a non-empty slot (prototype: the Record manifest replaces content and
   advances the revision; history keeps the old take for undo).
+
+## C5 — one manifest-backed rolling-window reader (DEC-246 amendment 19)
+
+Authorized by the owner on 2026-11-01. Status: **specified**; no firmware has been written.
+
+### Seam: what changes, and where
+
+- Production's committed rolling windows (active slot, `PlaybackWindowOrigin::Committed`) are filled today from the
+  **published snapshot**. `RuntimePlaybackViewFill::begin(destination, LoopSnapshot::EventWindowCursor&, …)` runs
+  with scope `SnapshotWindow`.
+- Serving is gated on `loop.publishedSnapshotIsCurrent()` and `snapshotIdentity == publishedSnapshotIdentity()`
+  (`serviceRollingPlaybackWindow`, `TrackPlaybackWindowBuild.cpp`). That gate is why the C4 runs kept showing
+  `pending_publish=1` / snapshot not current.
+- C5 replaces only the **content source and its currency test** for those windows:
+  - The fill gains a source kind `ManifestWindow`. It drives the RevisionStore window job
+    (`beginWindow(M, expectedIdentity, expectedRevision, from, to, staging, cap)` / `stepWindow(maxRows)`) in bounded
+    quanta, converting each `PassEvent` into the view row.
+  - Per row it writes:
+    - the `MidiEvent`;
+    - `phases[i] = tick`, so the order builder's default mode applies: phase, then NoteOff < NoteOn < other, then
+      tick;
+    - a rank equal to the window index, which keeps DEC-244's run-order and seq tie;
+    - `passOrigins[i]` set to the row's source serial and ordinal. The edit bit is kept so an edit row is never
+      treated as a live overlay (`kLiveOverlayPassOrigin` is never produced).
+  - The view's source identity carries the **actual manifest identity and revision** the window read, and the frozen
+    `ImportSourceKey` it was imported from. `snapshotIdentity` is `nullptr`.
+  - The serving test becomes: the manifest identity equals the reader's current published identity, and the
+    imported source key equals `importSourceKeyOf(loop)`. Both are metadata only, with no snapshot term.
+- **Unchanged:** frame admission, epoch/generation/projection checks, cursor anchoring, the ledger, closure, the
+  order builder, Capture/Preview origins, NOTE_EDIT preview windows, the Record-return window, and every write path.
+
+### Owned states (no real-time fallback)
+
+| State | Meaning | Reader action |
+|---|---|---|
+| `ImportOwed` | The source key moved, or no manifest is published for the selected slot | keep the previously qualified window if the playback contract allows; otherwise a named miss |
+| `NoCommittedSource` | slot restore not applied yet (amendment 18) | named miss; the importer begins when the restore moves the key |
+| `IndexOwed` | edit index for M not `Ready` | same as `ImportOwed`; never `Scan` |
+| `WindowOwed` | the window for the interval is still preparing | existing lane behaviour for a preparing successor |
+| `CapacityDenied` | window rows exceed the view, or `IndexCapacityDenied` (both slots pinned, no eviction) | named miss |
+| `SourceMoved` | M changed during preparation | the candidate is discarded, never published |
+
+Each state is reported through the existing `route_reject` / `win_*` telemetry with a new reason value. No path
+reconstructs from the snapshot, and no path falls back to a content-sized legacy read on the real-time path.
+The legacy snapshot fill remains callable off-edge **only** as the diagnostic oracle (`!REVSHADOW_WINDOWS`-style
+compare).
+
+### Ownership
+
+`RevisionShadow` becomes the reader owner on the C5 image:
+- it imports, indexes and serves `beginWindow` for the lane;
+- the three registered idle children keep their 2 ms bounds;
+- nothing runs from the PIT/ISR;
+- window preparation stays on the lane's existing deferred producer turn.
+
+### Slices
+
+1. **C5.1 Consumer contract.** A native fixture fills one view from the snapshot cursor and one from the manifest
+   window, for the same committed content with a current snapshot. It asserts equal emitted sequences (rows, order,
+   closure) through the real order builder and cursor. It also pins which per-row fields the consumers read
+   (`phases`, ranks, `passOrigins`, `ledgerBoundary`).
+2. **C5.2 Fill source.** `RuntimePlaybackViewFill` `ManifestWindow` scope. Named refusals: capacity, `SourceMoved`,
+   `IndexOwed`. The identity stamp is the actual one read. Native: an identity move mid-fill → no publish; both
+   index slots pinned → `IndexCapacityDenied` with no eviction; an undo/redo or generation move cannot publish a
+   stale candidate.
+3. **C5.3 Lane switch.**
+   - Committed windows of the active slot request manifest windows under a compile flag
+     (`REVISION_MANIFEST_READER`), set only in the probe env.
+   - The serving and currency gate becomes metadata-only.
+   - Owed states are named in telemetry, and there is no legacy fallback on the real-time path.
+   - Native: current-boot content, restored content (`NoCommittedSource` → `ImportOwed` → served), index owed →
+     ready, zero `Scan`, zero snapshot-source reads on the serving path.
+4. **C5.4 Device.**
+   - Armed owner chain (current boot), plus a reboot with no stimulus (restored).
+   - Oracle compare per window.
+   - Every served window carries the exact identity it read.
+   - MIDI timing: `tick_playback_miss` and route counts against the same chain on the probe image with the flag off.
+
+### Open questions for the owner before C5.2
+
+1. **Image scope.** C5 is behind `REVISION_MANIFEST_READER` in the probe env only; the default image keeps the
+   snapshot fill until C6. Proposed: yes.
+2. **Coexistence with `playback-tick-consume-only`.** That change is also active on this lane and file (phases 5–6
+   change routing). Proposed: C5 touches only the fill source and the Committed currency term, and lands on this
+   branch; the other change keeps the routing. Confirm the sequencing, or name the change that goes first.

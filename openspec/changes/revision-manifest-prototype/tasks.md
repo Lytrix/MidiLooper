@@ -161,7 +161,13 @@ timing and memory envelope without introducing real-time construction?
   - HITL validity on the default image.
 - Out of scope here (DEC-246 amendment 16): production overdub companion loss ("companion path skipped (canonical
   derivation unavailable); raw pass only"), to go to its own change.
-- [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
+- [ ] C5 One manifest-backed rolling-window reader (DEC-246 amendment 19; authorized 2026-11-01). Seam and G2 packet:
+      [design.md § C5](design.md). The committed lane's **snapshot-window fill** becomes a manifest-window fill with a
+      metadata-only currency test; owed states are named and there is no real-time fallback.
+  - [ ] C5.1 consumer contract fixture (snapshot fill vs manifest fill emit the same sequence)
+  - [ ] C5.2 `ManifestWindow` fill source with named refusals and the exact identity stamp
+  - [ ] C5.3 lane switch behind `REVISION_MANIFEST_READER` (probe env)
+  - [ ] C5.4 device: current-boot owner chain + reboot-restored; timing vs flag off
 - [ ] C6 Remove the corresponding old reader after device parity.
 
 ## D–E. Production stages (not authorized)
