@@ -13746,3 +13746,42 @@ Not accepted:
 
 DEC-231 (stepped prewarm, gated off while timing-critical), DEC-212 (8 ms child budget), DEC-194 (rootless source),
 DEC-193 (standby pools, to be promoted with this evidence), DEC-242.
+
+## DEC-244 — Equal-tick events have one defined order: tick, NoteOff < NoteOn < other, pass commit order, append order
+
+**Date:** 2026-11-01
+**Owner:** the order rule is content semantics; the prototype owner is `RevisionStore::Store` (change
+`revision-manifest-prototype`, task B.2b). Production conformance is **not** implemented by this decision.
+**Status:** Accepted (owner, 2026-11-01). Normative for the store and for the stage-B differential comparison.
+
+### Rule
+
+The effective ordered stream of a revision orders rows by:
+
+1. tick;
+2. equal-tick class: NoteOff (including NoteOn velocity 0) < NoteOn < every other message;
+3. pass commit order (Record, then overdubs in the order they committed);
+4. append order inside the pass (the committed row order).
+
+Every key is defined, so there is exactly one order. Example: sustain `CC64 127` then `CC64 0` on one tick stay in
+that order.
+
+### Why
+
+B.2a ([evidence](../openspec/changes/revision-manifest-prototype/evidence/2026-11-01-b2a-production-oracle.md))
+found four production surfaces ordering equal ticks four ways, and the oracle (`resolvedEventLess` under `std::sort`)
+leaves rows that differ only in data2 unordered — an audible ambiguity. Keys 1–2 are the only ones all four surfaces
+share; keys 3–4 are what the musician did.
+
+### Consequences
+
+- The store composes by exactly this key (`tickClassLess`, then run order, then `seq`).
+- The differential harness compares the store against this rule **exactly**, and production against it as a multiset
+  per (tick, class) group. Production reorderings inside a group are counted as production conformance gaps, not
+  store failures.
+- Bringing production surfaces into conformance (`resolvedEventLess`, the compatibility gather, the playback window
+  order) is separate scoped work; nothing in production changes with this entry.
+
+### Related
+
+DEC-076 (playhead-scheduled MVCC), `LoopEventStore` private canonical order (keys 1–2 already, stable).

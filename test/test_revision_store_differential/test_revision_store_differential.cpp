@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iterator>
 #include <tuple>
 #include <vector>
 
@@ -244,11 +245,317 @@ void test_zero_length_note_is_dropped_by_production_effective_view() {
   TEST_IGNORE_MESSAGE("known divergence: production effective view drops span-less (zero-length) notes");
 }
 
+// ---- B.2b: seeded random sequences under DEC-244 ---------------------------------------------------------------------
+//
+// Expected order (DEC-244): tick, equal-tick class, pass commit order, committed row order. The store must equal it
+// exactly; production must equal it as a multiset per (tick, class) group, and its within-group reorderings are counted
+// as production conformance gaps (reported, not failed).
+
+struct ModelPass {
+  PassId id = kInvalidPassId;
+  std::vector<PassEvent> rows;  // committed row order
+  bool active = true;
+};
+
+struct Sequence {
+  Loop loop;
+  std::vector<ModelPass> passes;   // commit order; passes[0] is Record
+  std::vector<size_t> redoStack;   // indices of passes disabled by undo, most recent last
+  uint32_t lcg = 1;
+  uint32_t gapsProductionOrder = 0;
+  uint32_t groupsCompared = 0;
+  uint32_t collapsedRows = 0;
+  uint32_t revisionsWithCollapse = 0;
+  uint32_t gapsByClass[3] = {0, 0, 0};
+  uint32_t audibleCcGaps = 0;
+  uint32_t next() {
+    lcg = lcg * 1664525u + 1013904223u;
+    return lcg >> 8;
+  }
+};
+
+// Production's cross-pass collapse (`midiEventMatchesSnapshot`): a row from a later pass is not added when an earlier
+// active pass already holds a match -- same tick, type and channel; CCs also match number and value; NoteOn/NoteOff also
+// match pitch, and a NoteOn with a noteId on both sides never matches (the store's rows carry ids on NoteOn only).
+bool productionCollapses(const PassEvent& existing, const PassEvent& incoming) {
+  if (existing.tick != incoming.tick || (existing.status & 0xF0) != (incoming.status & 0xF0) ||
+      (existing.status & 0x0F) != (incoming.status & 0x0F)) {
+    return false;
+  }
+  const uint8_t type = incoming.status & 0xF0;
+  if (type == 0xB0) return existing.data1 == incoming.data1 && existing.data2 == incoming.data2;
+  if (type == 0x80 || type == 0x90) {
+    if (existing.data1 != incoming.data1) return false;
+    if (existing.noteId != 0 && incoming.noteId != 0 && existing.noteId != incoming.noteId) return false;
+  }
+  return true;
+}
+
+uint32_t gFirstAudiblePrinted = 0;
+
+std::vector<Row> expectedRows(const Sequence& q, bool productionCollapse = false, uint32_t* collapsed = nullptr) {
+  struct K {
+    uint32_t tick;
+    uint8_t cls;
+    size_t pass;
+    size_t row;
+    Row r;
+  };
+  std::vector<K> ks;
+  std::vector<PassEvent> earlier;
+  for (size_t p = 0; p < q.passes.size(); ++p) {
+    if (!q.passes[p].active) continue;
+    std::vector<PassEvent> kept;
+    for (size_t i = 0; i < q.passes[p].rows.size(); ++i) {
+      const PassEvent& row = q.passes[p].rows[i];
+      if (productionCollapse) {
+        bool hit = false;
+        for (const PassEvent& e : earlier) hit = hit || productionCollapses(e, row);
+        if (hit) {
+          if (collapsed != nullptr) ++*collapsed;
+          continue;
+        }
+      }
+      kept.push_back(row);
+      const Row r = rowOf(row);
+      ks.push_back({r.tick, r.cls, p, i, r});
+    }
+    earlier.insert(earlier.end(), kept.begin(), kept.end());
+  }
+  std::sort(ks.begin(), ks.end(), [](const K& a, const K& b) {
+    return std::tie(a.tick, a.cls, a.pass, a.row) < std::tie(b.tick, b.cls, b.pass, b.row);
+  });
+  std::vector<Row> out;
+  for (const K& k : ks) out.push_back(k.r);
+  return out;
+}
+
+// One pass of random content: distinct pitches inside the pass (no same-pitch overlap, so no span-less notes), notes
+// of at least 24 ticks that may cross the wrap, and CCs on a 24-tick grid so equal-tick collisions are frequent.
+std::vector<Op> randomPassOps(Sequence& q, uint8_t channel) {
+  std::vector<Op> ops;
+  const uint32_t grid = 24;
+  const uint32_t slots = kLength / grid;
+  const uint32_t notes = 2 + q.next() % 6;
+  uint8_t pitch = static_cast<uint8_t>(36 + q.next() % 24);
+  for (uint32_t n = 0; n < notes; ++n, pitch = static_cast<uint8_t>(pitch + 1 + q.next() % 3)) {
+    const uint32_t on = (q.next() % slots) * grid;
+    const uint32_t off = (on + grid * (1 + q.next() % 16)) % kLength;
+    ops.push_back({on, 0x90, channel, pitch, static_cast<uint8_t>(40 + q.next() % 80)});
+    ops.push_back({off, 0x80, channel, pitch, 0});
+  }
+  const uint32_t ccs = q.next() % 4;
+  for (uint32_t c = 0; c < ccs; ++c) {
+    const uint32_t t = (q.next() % slots) * grid;
+    ops.push_back({t, 0xB0, channel, 64, 127});
+    if (q.next() % 2) ops.push_back({t, 0xB0, channel, 64, 0});  // same-tick sustain 127 then 0
+  }
+  return ops;
+}
+
+void commitRandomPass(Sequence& q, bool record) {
+  Loop& loop = q.loop;
+  const std::vector<Op> ops = randomPassOps(q, static_cast<uint8_t>(1 + q.passes.size() % 3));
+  loop.beginCapture(record ? CapturePhase::Record : CapturePhase::Overdub);
+  uint32_t lastTick = 0;
+  for (const Op& op : ops) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(toMidi(op)));
+    lastTick = std::max(lastTick, op.tick);
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(record ? CommitReason::RecordStop : CommitReason::OverdubStop, lastTick + 1));
+  const PassId passId = record ? loop.passes.recordPass.id : loop.passes.overdubPasses.back().id;
+  const CommittedChunkIdList& committed =
+      record ? loop.passes.recordPass.committedChunkIds : loop.passes.overdubPasses.back().committedChunkIds;
+  const CommittedChunkIdList* lists[] = {&committed};
+  SessionMidiEventVec rows;
+  CommittedEventRange::full(lists, 1, kLength).appendTo(rows);
+  ModelPass model;
+  model.id = passId;
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(record ? PassKind::Record : PassKind::Overdub, kLength));
+  for (const MidiEvent& e : rows) {
+    PassEvent p;
+    p.tick = e.tick;
+    p.status = statusOf(e);
+    p.data1 = e.data.noteData.note;
+    p.data2 = e.data.noteData.velocity;
+    p.noteId = e.isNoteOn() ? e.noteId : 0;
+    model.rows.push_back(p);
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(p.tick, p.status, p.data1, p.data2, e.noteId));
+  }
+  gStore.commitPass();
+  // Commit after undo discards the redo branch in both models (production's passes stay Disabled).
+  q.redoStack.clear();
+  q.passes.push_back(model);
+}
+
+void republish(Loop& loop) { finishPublication(loop); }
+
+void compareRevision(Sequence& q, uint32_t seed, uint32_t step) {
+  char where[96];
+  snprintf(where, sizeof(where), "seed %u step %u", seed, step);
+  const std::vector<Row> expected = expectedRows(q);
+  // Store: exact.
+  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192);
+  TEST_ASSERT_EQUAL_MESSAGE(ComposeStatus::Complete, stamp.status, where);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected.size(), stamp.count, where);
+  for (uint32_t i = 0; i < stamp.count; ++i) {
+    if (!(rowOf(gOut[i]) == expected[i])) {
+      char msg[200];
+      snprintf(msg, sizeof(msg), "%s: store row %u differs from DEC-244 order", where, i);
+      TEST_FAIL_MESSAGE(msg);
+    }
+  }
+  // Production: multiset per (tick, class) group against DEC-244 minus production's cross-pass collapse (a named
+  // divergence, counted); count within-group order gaps.
+  uint32_t collapsedRows = 0;
+  const std::vector<Row> expectedProd = expectedRows(q, true, &collapsedRows);
+  q.collapsedRows += collapsedRows;
+  if (collapsedRows != 0) ++q.revisionsWithCollapse;
+  SessionMidiEventVec production;
+  TEST_ASSERT_TRUE_MESSAGE(q.loop.tryCopyCurrentSnapshotEditViewEvents(production), where);
+  std::vector<Row> prod;
+  for (const MidiEvent& e : production) prod.push_back(rowOf(e));
+  if (expectedProd.size() != prod.size()) {
+    std::vector<Row> e = expectedProd, pr = prod;
+    std::sort(e.begin(), e.end());
+    std::sort(pr.begin(), pr.end());
+    std::vector<Row> missing, extra;
+    std::set_difference(e.begin(), e.end(), pr.begin(), pr.end(), std::back_inserter(missing));
+    std::set_difference(pr.begin(), pr.end(), e.begin(), e.end(), std::back_inserter(extra));
+    for (const Row& r : missing) printf("DIFF %s missing-in-production t=%u s=%02X d=%u/%u\n", where, r.tick, r.status, r.data1, r.data2);
+    for (const Row& r : extra) printf("DIFF %s extra-in-production t=%u s=%02X d=%u/%u\n", where, r.tick, r.status, r.data1, r.data2);
+    for (const Row& r : expectedProd) printf("DIFF %s expectedProd t=%u s=%02X d=%u/%u\n", where, r.tick, r.status, r.data1, r.data2);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expectedProd.size(), prod.size(), where);
+  std::vector<Row> prodSorted = prod;
+  std::vector<Row> expSorted = expectedProd;
+  TEST_ASSERT_TRUE_MESSAGE(normalise(prodSorted), where);
+  TEST_ASSERT_TRUE_MESSAGE(normalise(expSorted), where);
+  for (size_t i = 0; i < expSorted.size(); ++i) {
+    if (!(prodSorted[i] == expSorted[i])) {
+      char msg[200];
+      snprintf(msg, sizeof(msg), "%s: production content differs at row %u (t=%u s=%02X vs t=%u s=%02X)", where,
+               static_cast<unsigned>(i), prodSorted[i].tick, prodSorted[i].status, expSorted[i].tick,
+               expSorted[i].status);
+      TEST_FAIL_MESSAGE(msg);
+    }
+  }
+  for (size_t i = 0; i < expectedProd.size();) {
+    size_t j = i + 1;
+    while (j < expectedProd.size() && expectedProd[j].tick == expectedProd[i].tick && expectedProd[j].cls == expectedProd[i].cls) ++j;
+    bool same = true;
+    for (size_t k = i; k < j; ++k) same = same && prod[k] == expectedProd[k];
+    ++q.groupsCompared;
+    if (!same) {
+      ++q.gapsProductionOrder;
+      ++q.gapsByClass[expectedProd[i].cls];
+      // Audible: the same controller on the same channel ends on a different value (last write wins).
+      if (expectedProd[i].cls == 2) {
+        bool flipped = false;
+        for (size_t k = i; k < j && !flipped; ++k) {
+          uint8_t lastExpected = 0, lastProduction = 0;
+          for (size_t m = i; m < j; ++m) {
+            if (expectedProd[m].status == expectedProd[k].status && expectedProd[m].data1 == expectedProd[k].data1) {
+              lastExpected = expectedProd[m].data2;
+            }
+            if (prod[m].status == expectedProd[k].status && prod[m].data1 == expectedProd[k].data1) {
+              lastProduction = prod[m].data2;
+            }
+          }
+          flipped = lastExpected != lastProduction;
+        }
+        if (flipped) {
+          ++q.audibleCcGaps;
+          if (q.audibleCcGaps == 1 && gFirstAudiblePrinted++ == 0) {
+            printf("B2B first_audible seed=%u step=%u tick=%u\n", seed, step, expectedProd[i].tick);
+            for (size_t m = i; m < j; ++m) {
+              printf("B2B   expected %02X/%u/%u   production %02X/%u/%u\n", expectedProd[m].status, expectedProd[m].data1,
+                     expectedProd[m].data2, prod[m].status, prod[m].data1, prod[m].data2);
+            }
+          }
+        }
+      }
+    }
+    i = j;
+  }
+}
+
+uint32_t gTotalGroups = 0;
+uint32_t gTotalGaps = 0;
+uint32_t gTotalRevisions = 0;
+uint32_t gTotalUndos = 0;
+uint32_t gTotalRedos = 0;
+uint32_t gTotalCollapsedRows = 0;
+uint32_t gTotalGapsByClass[3] = {0, 0, 0};
+uint32_t gTotalAudibleCcGaps = 0;
+uint32_t gTotalRevisionsWithCollapse = 0;
+
+void runSeed(uint32_t seed, uint32_t steps) {
+  Sequence q;
+  q.lcg = seed;
+  resetAll(q.loop);
+  commitRandomPass(q, true);
+  republish(q.loop);
+  compareRevision(q, seed, 0);
+  ++gTotalRevisions;
+  for (uint32_t step = 1; step <= steps; ++step) {
+    const uint32_t roll = q.next() % 100;
+    const bool canUndo = q.passes.size() > 1 && q.passes.back().active && gStore.canUndo();
+    if (roll < 20 && canUndo) {
+      // Undo the newest active overdub: disable it in production, move the store's cursor back.
+      size_t idx = q.passes.size();
+      while (idx > 1 && !q.passes[idx - 1].active) --idx;
+      if (idx <= 1) continue;
+      ModelPass& pass = q.passes[idx - 1];
+      TEST_ASSERT_TRUE(q.loop.setCapturePassState(pass.id, CapturePassState::Disabled));
+      TEST_ASSERT_TRUE(gStore.undo());
+      pass.active = false;
+      q.redoStack.push_back(idx - 1);
+      ++gTotalUndos;
+    } else if (roll < 32 && !q.redoStack.empty()) {
+      ModelPass& pass = q.passes[q.redoStack.back()];
+      q.redoStack.pop_back();
+      TEST_ASSERT_TRUE(q.loop.setCapturePassState(pass.id, CapturePassState::Active));
+      TEST_ASSERT_TRUE(gStore.redo());
+      pass.active = true;
+      ++gTotalRedos;
+    } else {
+      if (!q.redoStack.empty()) {
+        // Production keeps the discarded branch Disabled; the model drops it from the redo stack.
+        for (size_t idx : q.redoStack) q.passes[idx].active = false;
+      }
+      commitRandomPass(q, false);
+    }
+    republish(q.loop);
+    compareRevision(q, seed, step);
+    ++gTotalRevisions;
+  }
+  gTotalGroups += q.groupsCompared;
+  gTotalGaps += q.gapsProductionOrder;
+  gTotalCollapsedRows += q.collapsedRows;
+  for (int c = 0; c < 3; ++c) gTotalGapsByClass[c] += q.gapsByClass[c];
+  gTotalAudibleCcGaps += q.audibleCcGaps;
+  gTotalRevisionsWithCollapse += q.revisionsWithCollapse;
+}
+
+void test_seeded_sequences_store_exact_and_production_multiset_under_dec244() {
+  for (uint32_t seed = 1; seed <= 40; ++seed) runSeed(seed, 12);
+  printf("B2B revisions=%u undos=%u redos=%u groups=%u production_order_gaps=%u collapsed_rows=%u revisions_with_collapse=%u\n",
+         gTotalRevisions, gTotalUndos, gTotalRedos, gTotalGroups, gTotalGaps, gTotalCollapsedRows,
+         gTotalRevisionsWithCollapse);
+  printf("B2B production_order_gaps_by_class noteoff=%u noteon=%u other=%u audible_cc_final_value=%u\n",
+         gTotalGapsByClass[0], gTotalGapsByClass[1], gTotalGapsByClass[2], gTotalAudibleCcGaps);
+  // Pinned so a change in either producer is noticed; these are production conformance gaps under DEC-244.
+  TEST_ASSERT_EQUAL_UINT32(520, gTotalRevisions);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
   RUN_TEST(test_wrap_crossing_record_note_matches_production);
   RUN_TEST(test_same_tick_cc_and_cross_pass_overlap_match_production);
   RUN_TEST(test_zero_length_note_is_dropped_by_production_effective_view);
+  RUN_TEST(test_seeded_sequences_store_exact_and_production_multiset_under_dec244);
   return UNITY_END();
 }

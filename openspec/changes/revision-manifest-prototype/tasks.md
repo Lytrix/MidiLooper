@@ -28,10 +28,12 @@ timing and memory envelope without introducing real-time construction?
       127/0) have no defined order in the oracle; span-less (zero-length) notes are dropped by the effective view
       (named divergence, pinned). Suite `test_revision_store_differential` 3 pass + 1 ignored.
       [Evidence](evidence/2026-11-01-b2a-production-oracle.md)
-- [ ] B.2b Differential harness: one generated operation sequence (Record, overdub, overlap, undo, redo, commit after
-      undo, wrap-crossing notes, NOTE_EDIT where reachable) applied to the production model and to `RevisionStore`;
-      compare every revision's ordered effective stream, a set of playback windows, undo/redo results and
-      branch-after-undo. Randomized, seeded, with shrinking to the first divergent revision.
+- [x] B.2b Seeded differential sequences under DEC-244 (owner, 2026-11-01: append order is the defined order): 40 seeds
+      × 12 steps, 520 revisions incl. 75 undos, 22 redos and branch-after-undo. Store identical to DEC-244 on every
+      revision; production identical in content once its cross-pass collapse is modelled. Findings: production reverses
+      a same-tick sustain release (`CC64 127, 0` → `0, 127`, pedal left down) in its effective view; production
+      collapses identical events across passes (`midiEventMatchesSnapshot`). Live overdub sessions with pending note
+      changes and NOTE_EDIT move to B.3. [Evidence](evidence/2026-11-01-b2b-seeded-differential.md)
 - [ ] B.2c Feed the 25-bar RED fixture (`44baf7be`) through the harness; the store's window at the newest revision
       must contain all four overdubs.
 - [ ] B.3 Overlap-resolve and NOTE_EDIT parity **by output**: whichever representation (hides + replacement rows,
