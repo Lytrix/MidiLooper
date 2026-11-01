@@ -117,9 +117,12 @@ timing and memory envelope without introducing real-time construction?
       import step max 683 µs at 64 rows; shadow `revision()` = production passes view **54/54** under real hides.
       Found: production's snapshot (62) and passes view (54) disagree after overlap Shortens + undo/redo.
       [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
-- [ ] C3c Restored slots (**next**, before C5, DEC-246 amendment 17): read-only hydration of persisted pass records
-      through the same importer source abstraction (`LivePassesSource` / `PersistedPassesSource`); never a snapshot
-      as source. Until then `NoCommittedSource` is a hard refusal for boot-restored slots.
+- [x] C3c Restored slots: **no new source needed**. Boot restore installs the persisted capture and edit passes into
+      `loop.passes`, so the importer's live source is the persisted-pass source once the restore applies. Before
+      that, the result is `NoCommittedSource`; a snapshot is never imported. Host round trip (save → restore →
+      import, with Hide and Shorten edits) equals the pre-save import and the restored passes view. Device reboot:
+      restored t8/s4 imported 1,210 / 1,210, 10/10 windows, `c4_clean=1`. DEC-246 amendment 18 (finding, for the owner
+      to confirm). [Evidence](evidence/2026-11-01-c3c-restored-slots.md)
 - [x] C3d Shadow window producer: store `beginWindow`/`stepWindow` (`Ready` with actual identity, `IndexOwed`,
       `ImportOwed`, `CapacityDenied`, `SourceMoved`; no build, no scan; honest finish); firmware child
       `RevisionShadowWindowGrain` (2 ms / 0.5 ms), each window produced once per manifest identity, digests in PSRAM.

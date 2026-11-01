@@ -31,6 +31,14 @@
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 #include "../../src/Utils/PlaybackCursorAdvance.cpp"
 #include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
+// C3c: the persisted slot format (save -> boot restore) for the restored-slot round trip.
+#include "../../src/Loop/LoopContentHistory.cpp"
+#include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageManager/PersistedLoopSnapshotRelease.cpp"
+#include "../../src/PassReclaim.cpp"
+#include "../../src/Track/TrackUndoRetirement.cpp"
+#include "../../src/Track/TrackUndoPublication.cpp"
+#include "../../src/StorageLoopIoBodyFormatV1.cpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -1267,6 +1275,115 @@ void test_import_survives_pass_storage_rebuilt_with_the_same_content() {
   }
 }
 
+// ---- C3c: a boot-restored slot is imported from the persisted pass records it restored ----
+// Boot restore (`readLoopPersisted` -> `adoptPersistedSnapshot`) installs the saved capture passes, their chunk lists
+// and the edit passes into `loop.passes`, so the importer's live-passes source is the persisted-pass source: no
+// snapshot is ever imported. The round trip must give the same `revision()` content as before the save and equal the
+// restored loop's passes view.
+
+class C3cMemoryIo {
+ public:
+  explicit C3cMemoryIo(std::vector<uint8_t>* buffer) : buffer_(buffer) {}
+  StorageIo io() {
+    return StorageIo{
+        [this](const void* data, size_t size) {
+          const auto* bytes = static_cast<const uint8_t*>(data);
+          buffer_->insert(buffer_->end(), bytes, bytes + size);
+          return true;
+        },
+        [this](void* data, size_t size) {
+          if (at_ + size > buffer_->size()) return false;
+          std::memcpy(data, buffer_->data() + at_, size);
+          at_ += size;
+          return true;
+        },
+        [this](void* data, size_t size) {
+          if (at_ + size > buffer_->size()) return false;
+          std::memcpy(data, buffer_->data() + at_, size);
+          return true;
+        },
+    };
+  }
+
+ private:
+  std::vector<uint8_t>* buffer_;
+  size_t at_ = 0;
+};
+
+using C3cRow = std::tuple<uint32_t, uint8_t, uint8_t, uint8_t>;  // tick, status, data1, data2
+
+std::vector<C3cRow> c3cRevisionRows(const Loop& loop) {
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, gImport));
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) step = gImport.stepEditIndex(256);
+  const ComposeStamp stamp = gImport.composeWindow(gImport.current(), 0, loop.loopLengthTicks, gOut, 8192,
+                                                   EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  std::vector<C3cRow> rows;
+  for (uint32_t i = 0; i < stamp.count; ++i) rows.emplace_back(gOut[i].tick, gOut[i].status, gOut[i].data1, gOut[i].data2);
+  std::sort(rows.begin(), rows.end());
+  return rows;
+}
+
+std::vector<C3cRow> c3cPassesRows(const Loop& loop) {
+  SessionMidiEventVec events;
+  loop.copyEffectiveCommittedEventsInRange(events, 0, loop.loopLengthTicks);
+  std::vector<C3cRow> rows;
+  for (const MidiEvent& e : events) {
+    rows.emplace_back(e.tick, static_cast<uint8_t>(static_cast<uint8_t>(e.type) | ((e.channel - 1) & 0x0F)),
+                      e.data.noteData.note, e.data.noteData.velocity);
+  }
+  std::sort(rows.begin(), rows.end());
+  return rows;
+}
+
+void test_restored_slot_imports_from_its_persisted_passes() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true,
+                    {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {768, 0x90, 1, 64, 90}, {960, 0x80, 1, 64, 0},
+                     {1200, 0x90, 1, 67, 80}, {1500, 0x80, 1, 67, 0}},
+                    {}, &rec);
+  const NoteId hidden = noteIdAt(rec, 60);
+  const NoteId shortened = noteIdAt(rec, 67);
+  commitWithChanges(loop, false, {{192, 0x90, 1, 60, 110}, {384, 0x80, 1, 60, 0}},
+                    {{PendingNoteChangeKind::Hide, hidden, 1, 60, 100, 96, 480}});
+  commitWithChanges(loop, false, {{1300, 0x90, 1, 67, 70}, {1400, 0x80, 1, 67, 0}},
+                    {{PendingNoteChangeKind::Shorten, shortened, 1, 67, 80, 1200, 1300}});
+  const std::vector<C3cRow> before = c3cRevisionRows(loop);
+  TEST_ASSERT_TRUE(before == c3cPassesRows(loop));
+
+  std::vector<uint8_t> slotFile;
+  C3cMemoryIo writer(&slotFile);
+  TEST_ASSERT_TRUE(writeLoopPersisted(writer.io(), loop));
+  Loop restored;
+  restored.loopLengthTicks = 0;
+  C3cMemoryIo reader(&slotFile);
+  TEST_ASSERT_TRUE(readLoopPersisted(reader.io(), restored));
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL_UINT32(loop.passes.overdubPasses.size(), restored.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT32(loop.passes.editPasses.size(), restored.passes.editPasses.size());
+
+  const std::vector<C3cRow> after = c3cRevisionRows(restored);
+  TEST_ASSERT_EQUAL_UINT32(before.size(), after.size());
+  TEST_ASSERT_TRUE_MESSAGE(before == after, "restored import differs from the pre-save import");
+  TEST_ASSERT_TRUE_MESSAGE(after == c3cPassesRows(restored), "restored import differs from the restored passes view");
+  // The edits survived the round trip: the hidden note is gone and the shortened note ends at 1300.
+  TEST_ASSERT_TRUE(std::find(after.begin(), after.end(), C3cRow{96, 0x90, 60, 100}) == after.end());
+  TEST_ASSERT_TRUE(std::find(after.begin(), after.end(), C3cRow{1500, 0x80, 67, 0}) == after.end());
+}
+
+// A slot whose restore has not applied yet has no committed source: a named refusal, never a snapshot import.
+void test_slot_before_restore_is_a_named_refusal() {
+  Loop pending;
+  resetAll(pending);
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::NoCommittedSource, importLoop(pending, gImport));
+  TEST_ASSERT_EQUAL_UINT32(0, gImport.ownedPageCount());
+}
+
 // Refusals happen before anything is written: capacity (atomic, conservative) and no committed source.
 void test_import_refusals_happen_before_anything_is_written() {
   Loop loop;
@@ -1335,6 +1452,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_import_candidate_is_invisible_until_published);
   RUN_TEST(test_import_source_moving_mid_build_cancels_the_candidate);
   RUN_TEST(test_import_survives_pass_storage_rebuilt_with_the_same_content);
+  RUN_TEST(test_restored_slot_imports_from_its_persisted_passes);
+  RUN_TEST(test_slot_before_restore_is_a_named_refusal);
   RUN_TEST(test_import_refusals_happen_before_anything_is_written);
   RUN_TEST(test_wrap_overlapping_same_pitch_notes_are_attributed_like_production);
   printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);

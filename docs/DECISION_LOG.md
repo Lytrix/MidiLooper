@@ -13895,6 +13895,14 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
 17. **Order:** rig ARMED-start cleanup → C4 closeout → C3c persisted-pass source → C5 one-reader authority switch.
     Until C3c, `NoCommittedSource` stays a hard refusal for boot-restored slots. C3c comes before C5 so the
     authoritative reader works across reboot without a temporary routing exception.
+18. **C3c finding (2026-11-01, for the owner to confirm): the restored-slot source is the live passes.**
+    - Both persisted slot formats carry the full capture-pass and edit-pass records.
+    - Boot restore installs them into `loop.passes` (`readPersistedLoopSnapshot` → `adoptPersistedSnapshot`).
+    - So the importer's one live source covers boot-restored slots once their restore applies, and amendment 13's
+      `PersistedPassesSource` is not needed.
+    - Before the restore applies, the result stays `NoCommittedSource`. A snapshot is never imported as source.
+    - Evidence: host round trip with Hide and Shorten edits; device reboot import of the restored slot, 1,210 / 1,210,
+      `c4_clean=1`.
 
 ### Related
 
