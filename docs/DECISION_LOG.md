@@ -13890,8 +13890,19 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - The defect: the overlap resolver computes Hide/Shorten, then the stop retires with "companion path skipped
       (canonical derivation unavailable); raw pass only".
     - RevisionStore mirrors what production committed and does not compensate.
-    - It goes to its own change. The expected invariant is *defer the companion, do not discard it*. Investigate the
-      ownership and liveness contract first: forcing the companion through at stop risks a stop wedge.
+    - It goes to its own change.
+    - Refined by the owner (2026-11-01):
+      - Capture passes are Layer-1 committed source. Overlap Hide/Shorten results are Layer-2 semantic operations.
+      - Layer-2 publication is deferred independently and is never dropped because a Layer-3/canonical
+        representation is unavailable.
+      - Stop commits the source pass and transfers every established edit into a generation-qualified deferred edit
+        obligation, which carries stable identities (loop, source capture, target noteId, operation, generation). It
+        is never retried as a canonical companion.
+      - Shorten = Hide(original) + Replacement(original, new geometry).
+      - Today the obligation writes through the production edit mechanism. In Stage D/E it writes to a RevisionManifest
+        edit run, so the sink changes and the meaning does not.
+      - The terminal-denial liveness safeguard stays: an owed obligation never wedges capture closure.
+      - An obligation from an older source generation never publishes into a new slot generation.
 17. **Order:** rig ARMED-start cleanup → C4 closeout → C3c persisted-pass source → C5 one-reader authority switch.
     Until C3c, `NoCommittedSource` stays a hard refusal for boot-restored slots. C3c comes before C5 so the
     authoritative reader works across reboot without a temporary routing exception.
