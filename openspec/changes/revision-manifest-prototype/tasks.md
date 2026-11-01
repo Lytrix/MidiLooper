@@ -55,8 +55,18 @@ timing and memory envelope without introducing real-time construction?
       5.4 ms max, superseded when undo or a different history makes the prefix stale), construction 0.25 ms,
       `beginPass` ≤ 22 µs. Compose at 10 runs rises to 3.3 ms max (two segments per run). Native store suites 39 + 1
       ignored. [Evidence](evidence/2026-11-01-b4-teensy-timing.md#b4b--after-the-fixes-same-day-sort-free-commit-step-bounded-compaction)
-- [ ] B.5 Capacity budget (design.md D7) with exact figures, including the compaction peak and pinned discarded
-      branches.
+- [x] B.5 Capacity budget. Device (HEX `9be5e197…`, boot verified): 8 MB PSRAM, pool used 4.93 MB / free 3.44 MB with
+      slots loaded (event chunks only 0.67 MB of it; ~1 MiB capture ring, ~1.9 MB boot-reserved views). Native
+      worst-case slot (dense 64-bar take, 30 overdubs, undo branches, pinned reader): peak 703 pages without compaction
+      (1.08× content) vs 1.8–2.2k pages when compaction includes the Record and ~1.3k when it takes overdubs only —
+      compaction duplicates whatever history still references. Range compaction and history-wide rewrite added
+      (content hash-identical under every policy). Budget ≈ 2.76 MiB store-wide at today's 131,072-event ceiling,
+      about the same as today's 2.67 MB of chunk backing. [Evidence](evidence/2026-11-01-b5-capacity-budget.md)
+- [ ] B.5a Store changes from B.5: compaction only of history-closed ranges (capped in-flight range); heap-merge compose
+      that skips hide-free runs, with `kRunsPerManifest` sized to undo depth; paged run directories with one global run
+      table (descriptor ~64 B, not 2 KiB). Re-run the capacity suite and the B.4 probe.
+- [ ] B.5b Session high-water on device: owner-rig baseline chain on the probe image, then `!REVSTORE_PROBE` for
+      `acct_high`; gives the reserve the store must fit beside during migration.
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest
       marker, crash consistency, garbage collection, persisted undo history.
 

@@ -9,6 +9,11 @@
 #include <new>
 
 #include "RevisionStore/RevisionStore.h"
+#include "LoopEventStore.h"
+#include "Utils/ExternalPoolAccounting.h"
+#include "Utils/MemoryMonitor.h"
+
+extern "C" uint8_t external_psram_size;
 
 // The whole TU is routed to FLASH by linker/imxrt1062_t41_lcr.ld (`*RevisionStoreProbe*.o`), so the store's template
 // code costs no ITCM and the timings are a conservative (flash-resident) bound.
@@ -97,6 +102,35 @@ void appendTake(ProbeStore& store, uint32_t notes, uint8_t status, uint32_t& not
 }  // namespace
 
 void run() {
+  {
+    // B.5: the firmware's existing PSRAM obligation at this (stopped) moment, before the probe takes its arena.
+    // The pool walk is slow; acceptable here because the command is stopped-only.
+#if defined(EXTERNAL_POOL_WRAP)
+    const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
+    const unsigned long live = c.liveBytes, high = c.highWaterLiveBytes;
+#else
+    const unsigned long live = 0, high = 0;
+#endif
+    Serial.printf_P(PSTR("REVSTORE,psram,size_mb=%u,pool_total=%lu,pool_used=%lu,pool_free=%lu,acct_live=%lu,acct_high=%lu\r\n"),
+                    static_cast<unsigned>(external_psram_size),
+                    static_cast<unsigned long>(MemoryMonitor::getExternalMemoryPoolTotalBytes()),
+                    static_cast<unsigned long>(MemoryMonitor::getExternalMemoryPoolUsedBytes()),
+                    static_cast<unsigned long>(MemoryMonitor::getExternalMemoryPoolFreeBytes()), live, high);
+#if defined(EXTERNAL_POOL_WRAP)
+    char tags[192];
+    ExternalPoolAccounting::formatTagVector(tags, sizeof(tags));
+    Serial.printf_P(PSTR("REVSTORE,psram_tags,%s\r\n"), tags);
+    Serial.printf_P(PSTR("REVSTORE,psram_classes,le128=%lu,le1k=%lu,le8k=%lu,le32k=%lu,le128k=%lu,gt128k=%lu\r\n"),
+                    static_cast<unsigned long>(c.liveBytesByClass[0]), static_cast<unsigned long>(c.liveBytesByClass[1]),
+                    static_cast<unsigned long>(c.liveBytesByClass[2]), static_cast<unsigned long>(c.liveBytesByClass[3]),
+                    static_cast<unsigned long>(c.liveBytesByClass[4]), static_cast<unsigned long>(c.liveBytesByClass[5]));
+#endif
+    Serial.printf_P(PSTR("REVSTORE,event_chunks,used=%u,free=%u,backed_bytes=%lu,chunk_bytes=%u\r\n"),
+                    static_cast<unsigned>(LoopEventStore::usedChunkCount()),
+                    static_cast<unsigned>(LoopEventStore::freeChunkCount()),
+                    static_cast<unsigned long>(LoopEventStore::poolBackedBytes()),
+                    static_cast<unsigned>(sizeof(EventChunk)));
+  }
   void* arena = extmem_malloc(sizeof(ProbeStore));
   PassEvent* window = static_cast<PassEvent*>(extmem_malloc(sizeof(PassEvent) * kWindowCapacity));
   if (arena == nullptr || window == nullptr) {

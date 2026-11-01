@@ -46,7 +46,9 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   (same-tick class inversions fixed in place over ≤ 32 rows; a tick decrease opens a segment); composition merges
   segments like runs. HideNote rows live in their own region, the only part ordered at commit. Overflow falls back to a
   counted commit-time sort.
-- **D5 — Compaction is prefix-only and revision-preserving.** Merging runs `[0, k)` applies and drops the hides inside
+- **D5 — Compaction is range-based and revision-preserving.** (Was prefix-only; B.5 added `beginCompaction(first, count)`
+  with the range's hides carried into the merged run when `first > 0`, and a publish that rewrites every history entry
+  holding the range.) Merging runs `[0, k)` applies and drops the hides inside
   the prefix (they can only target rows inside it). It runs in bounded steps (`stepCompaction(maxRows)`) with its
   source pinned; at the end it publishes only if the current manifest still starts with the compacted runs, carrying
   any runs committed meanwhile, else it is `Superseded`. The compacted manifest replaces the history entry at the cursor;
@@ -55,21 +57,13 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 - **D6 — Reclamation by reference count**: manifests count history entries and pins; runs count manifests; a run's
   pages return to the free stack when its count reaches zero. Single-core, main-loop only; the ISR never touches
   the store (it consumes published windows — stage C).
-- **D7 — Sizing is a budget, not an estimate.** Rows are 16 B. The 4 MiB figure (1 KB pages × 4096) is a placeholder
-  until task B.5 fills:
-
-  ```
-  PSRAM page pool
-  − worst simultaneous immutable history (all slots × history depth, shared runs counted once)
-  − active writers and their reservations
-  − manifests held by readers (incl. discarded redo branches still pinned)
-  − compaction peak: old and new representations coexisting
-  − playback / display candidates built from manifests
-  − existing non-store PSRAM obligations
-  = guaranteed reserve  (must be ≥ 0 at every admission)
-  ```
-
-  A design that normally uses 4 MiB but needs 7 MiB at compaction peak has a different admission problem.
+- **D7 — Sizing is a budget, not an estimate** (filled by B.5, [evidence](evidence/2026-11-01-b5-capacity-budget.md)).
+  One page pool shared by all slots, sized to today's admission ceiling (131,072 events): 2,048 content pages + ~320
+  per-run waste + ~256 for one capped compaction range in flight + ~64 for writers and pinned generations ≈ 2,688 pages
+  (2.63 MiB), plus ~0.13 MiB metadata once run directories are paged. That is about the same as today's chunk backing
+  for the same ceiling (2.67 MB), *provided compaction only takes history-closed ranges*: compacting runs that history
+  still names keeps both copies alive (measured 2–3.3× content). Device: 3.44 MB free after load; session high-water
+  pending (B.5b).
 - **D8 — Time slices deferred.** Per-run sorted rows already give bounded window seeks. Slicing roots into bar tiles is
   revisited when edits need partial replacement (stage B Q3), not before.
 

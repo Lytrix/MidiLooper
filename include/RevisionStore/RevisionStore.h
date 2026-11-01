@@ -396,13 +396,19 @@ class Store {
   }
 
   // ---- Compaction: same revision, fewer runs, in bounded steps -----------------------------------------------------
-  /// Start merging the first `prefixRuns` runs of the current manifest. Off-clock maintenance, step by step; a writer,
-  /// readers and undo may run meanwhile. The source manifest is pinned until the job ends.
-  CompactResult beginCompaction(uint8_t prefixRuns) {
+  /// Start merging the first `prefixRuns` runs of the current manifest (see the range form).
+  CompactResult beginCompaction(uint8_t prefixRuns) { return beginCompaction(0, prefixRuns); }
+
+  /// Start merging runs [first, first + count) of the current manifest. Off-clock maintenance, step by step; a writer,
+  /// readers and undo may run meanwhile. The source manifest is pinned until the job ends. With `first > 0` (e.g.
+  /// every overdub but not the Record) the large base run is never copied, and the range's HideNote rows are carried
+  /// into the merged run because they may target runs before the range.
+  CompactResult beginCompaction(uint8_t first, uint8_t count) {
     if (job_.active) return CompactResult::DeniedBusy;
     if (current_ == kNoManifest) return CompactResult::NothingToCompact;
     const RevisionManifest& src = manifests_[current_];
-    if (prefixRuns < 2 || prefixRuns > src.runCount) return CompactResult::NothingToCompact;
+    if (count < 2 || first + count > src.runCount) return CompactResult::NothingToCompact;
+    const uint8_t prefixRuns = static_cast<uint8_t>(first + count);
     const RunId out = takeRun(PassKind::Compacted);
     if (out == kNoRun) return CompactResult::DeniedNoRun;
     const ManifestId dst = takeManifest();
@@ -412,13 +418,14 @@ class Store {
     }
     job_.active = true;
     job_.source = current_;
+    job_.first = first;
     job_.prefix = prefixRuns;
     job_.out = out;
     job_.dst = dst;
     job_.seq = 0;
     ++manifests_[current_].refs;
     job_.cursors.count = 0;
-    for (uint8_t i = 0; i < prefixRuns; ++i) {
+    for (uint8_t i = first; i < prefixRuns; ++i) {
       const PassRun& r = runs_[src.runs[i]];
       for (uint8_t s = 0; s < r.segCount; ++s) job_.cursors.add(i, r.segStart[s], r.segEnd(s));
     }
@@ -429,9 +436,10 @@ class Store {
 
   bool compacting() const { return job_.active; }
 
-  /// Advance the job by at most `maxRows` source rows (copied or dropped as hidden). Publishes when done: if the
-  /// current manifest still starts with the compacted runs, a manifest {compacted, the current's remaining runs} with
-  /// the current's revision replaces it; otherwise the result is discarded (`Superseded`).
+  /// Advance the job by at most `maxRows` source rows (copied or dropped as hidden). Publishes when done: every history
+  /// entry that still holds the compacted runs at the same positions is replaced by one holding the merged run instead
+  /// (same revision), so the old runs are freed once no reader pins them. If the current manifest is not among them
+  /// the result is discarded (`Superseded`).
   CompactStep stepCompaction(uint32_t maxRows) {
     if (!job_.active) return CompactStep::Idle;
     const RevisionManifest& src = manifests_[job_.source];
@@ -493,7 +501,8 @@ class Store {
   struct CompactionJob {
     bool active = false;
     ManifestId source = kNoManifest;
-    uint8_t prefix = 0;
+    uint8_t first = 0;
+    uint8_t prefix = 0;  // one past the last compacted run
     RunId out = kNoRun;
     ManifestId dst = kNoManifest;
     uint32_t seq = 0;
@@ -693,33 +702,70 @@ class Store {
     return false;
   }
 
-  CompactStep finishCompaction() {
+  bool holdsCompactedRange(ManifestId id) const {
+    if (id == kNoManifest) return false;
     const RevisionManifest& src = manifests_[job_.source];
-    bool prefixMatches = current_ != kNoManifest && manifests_[current_].runCount >= job_.prefix;
-    for (uint8_t i = 0; prefixMatches && i < job_.prefix; ++i) {
-      prefixMatches = manifests_[current_].runs[i] == src.runs[i];
+    const RevisionManifest& m = manifests_[id];
+    if (m.runCount < job_.prefix) return false;
+    for (uint8_t i = job_.first; i < job_.prefix; ++i) {
+      if (m.runs[i] != src.runs[i]) return false;
     }
-    if (!prefixMatches) {
+    return true;
+  }
+
+  // {m.runs[0, first), merged, m.runs[prefix, end)} at m's revision, into slot `dst`.
+  void buildCompactedManifest(ManifestId dst, const RevisionManifest& m) {
+    RevisionManifest& out = manifests_[dst];
+    out.revision = m.revision;
+    out.loopLengthTicks = m.loopLengthTicks;
+    out.runCount = 0;
+    for (uint8_t i = 0; i < job_.first; ++i) {
+      out.runs[out.runCount++] = m.runs[i];
+      ++runs_[m.runs[i]].refs;
+    }
+    out.runs[out.runCount++] = job_.out;
+    ++runs_[job_.out].refs;
+    for (uint8_t i = job_.prefix; i < m.runCount; ++i) {
+      out.runs[out.runCount++] = m.runs[i];
+      ++runs_[m.runs[i]].refs;
+    }
+  }
+
+  CompactStep finishCompaction() {
+    if (!holdsCompactedRange(current_)) {
       endCompaction(false);
       return CompactStep::Superseded;
     }
     PassRun& merged = runs_[job_.out];
+    if (job_.first > 0) {
+      // Carry the range's hides: they may target runs before the range. Bounded by the hide rows, not the content.
+      const RevisionManifest& src = manifests_[job_.source];
+      for (uint8_t i = job_.first; i < job_.prefix; ++i) {
+        const PassRun& r = runs_[src.runs[i]];
+        for (uint32_t h = 0; h < r.hideCount; ++h) {
+          if (pushHide(merged, hideAt(r, h)) != AppendResult::Ok) {
+            endCompaction(false);
+            return CompactStep::DeniedNoPage;
+          }
+        }
+      }
+      heapSort(merged, merged.hideCount, true);
+    }
     merged.committed = true;
     if (merged.midiCount == 0) merged.segCount = 0;
-    const RevisionManifest& cur = manifests_[current_];
-    RevisionManifest& m = manifests_[job_.dst];
-    m.revision = cur.revision;
-    m.loopLengthTicks = cur.loopLengthTicks;
-    m.runCount = 0;
-    m.runs[m.runCount++] = job_.out;
-    ++merged.refs;
-    for (uint8_t i = job_.prefix; i < cur.runCount; ++i) {
-      m.runs[m.runCount++] = cur.runs[i];
-      ++runs_[cur.runs[i]].refs;
+    // The current entry uses the reserved slot; other matching history entries take a slot if one is free (if not,
+    // they keep the old runs: still correct, only less memory is returned).
+    buildCompactedManifest(job_.dst, manifests_[current_]);
+    const ManifestId currentDst = job_.dst;
+    for (uint8_t i = 0; i < historyCount_; ++i) {
+      if (i == historyCursor_ || !holdsCompactedRange(history_[i])) continue;
+      const ManifestId dst = takeManifest();
+      if (dst == kNoManifest) break;
+      buildCompactedManifest(dst, manifests_[history_[i]]);
+      replaceHistoryAt(i, dst);
     }
-    const ManifestId dst = job_.dst;
     endCompaction(true);
-    replaceHistoryAtCursor(dst);
+    replaceHistoryAt(historyCursor_, currentDst);
     return CompactStep::Published;
   }
 
@@ -774,11 +820,11 @@ class Store {
     current_ = id;
   }
 
-  void replaceHistoryAtCursor(ManifestId id) {
+  void replaceHistoryAt(uint8_t index, ManifestId id) {
     ++manifests_[id].refs;
-    const ManifestId old = history_[historyCursor_];
-    history_[historyCursor_] = id;
-    current_ = id;
+    const ManifestId old = history_[index];
+    history_[index] = id;
+    if (index == historyCursor_) current_ = id;
     releaseManifest(old);
   }
 
