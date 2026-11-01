@@ -143,9 +143,13 @@ RP_FLASH void clearMeasurements() {
   std::memset(s.stack, 0, sizeof(s.stack));
   const uint32_t nextSeq = s.counters.nextSeq;
   const uint32_t isrRefused = s.counters.isrRefused;
+  const uint16_t lastIsrIpsr = s.counters.lastIsrIpsr;
+  const uint16_t lastIsrId = s.counters.lastIsrId;
   std::memset(&s.counters, 0, sizeof(s.counters));
   s.counters.nextSeq = nextSeq == 0 ? 1u : nextSeq;  // seq stays monotonic across a reset
   s.counters.isrRefused = isrRefused;  // a wiring fault, not a measurement: D8 does not clear it
+  s.counters.lastIsrIpsr = lastIsrIpsr;
+  s.counters.lastIsrId = lastIsrId;
   std::memset(&s.cursors, 0, sizeof(s.cursors));
   s.ringHead = 0;
   s.overflowDepth = 0;
@@ -171,11 +175,14 @@ using detail::gState;
 
 RP_FLASH Scope::Scope(ProfileId id, bool longScope) : id_(static_cast<uint16_t>(id)), long_(longScope) {
   detail::State& s = gState;
-  if (Platform::ipsr() != 0) {
+  const uint32_t exceptionNumber = Platform::ipsr();
+  if (exceptionNumber != 0) {
     // Exception context: the stack belongs to the interrupted main-lane scope; touch no nesting state.
     // The per-identity `refused` count names which owner an interrupt reached (2026-11-01: isr_refused=24
     // on device with no owner named).
     ++s.counters.isrRefused;
+    s.counters.lastIsrIpsr = static_cast<uint16_t>(exceptionNumber & 0x1FFu);
+    s.counters.lastIsrId = id_;
     if (id_ < kMaxIds && s.initMagic == detail::kInitMagic) ++s.stats[id_].refused;
     state_ = detail::kRefused;
     return;
@@ -302,6 +309,8 @@ RP_FLASH uint32_t ceilingUs(ProfileId id) {
     case ProfileId::OverdubStart_openSession:
     case ProfileId::OverdubStart_beginCapture:
     case ProfileId::OverdubStart_bindPredecessor:
+    case ProfileId::TickMergedFallback_build:
+    case ProfileId::TickSlotSwitch_build:
       return kHotCeilingUs;  // children of a 66 ms edge: any child over 250 us is worth a ring record
     case ProfileId::PlaybackWindow_build:
     case ProfileId::DisplayBase_gather:

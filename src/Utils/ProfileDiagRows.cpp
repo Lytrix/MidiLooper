@@ -51,6 +51,8 @@ PDR_FLASH const char* profileName(ProfileId id) {
     case ProfileId::OverdubStart_openSession: return "OverdubStart_openSession";
     case ProfileId::OverdubStart_beginCapture: return "OverdubStart_beginCapture";
     case ProfileId::OverdubStart_bindPredecessor: return "OverdubStart_bindPredecessor";
+    case ProfileId::TickMergedFallback_build: return "TickMergedFallback_build";
+    case ProfileId::TickSlotSwitch_build: return "TickSlotSwitch_build";
     case ProfileId::Count: break;
   }
   return "Unknown";
@@ -144,10 +146,11 @@ PDR_FLASH size_t dumpStatsBatch(size_t maxRows) {
   const int n = std::snprintf(
       line, sizeof(line),
       "#CAP,%lu,DIAG,profile_stat,end,count=%u,resume=%u,multi_batch=%u,poisoned=%u,"
-      "depth_overflow=%lu,isr_refused=%lu",
+      "depth_overflow=%lu,isr_refused=%lu,isr_last=%u:%u",
       static_cast<unsigned long>(Platform::micros()), static_cast<unsigned>(emitted),
       resume ? 1u : 0u, (continuing || resume) ? 1u : 0u, k.poisoned ? 1u : 0u,
-      static_cast<unsigned long>(k.depthOverflow), static_cast<unsigned long>(k.isrRefused));
+      static_cast<unsigned long>(k.depthOverflow), static_cast<unsigned long>(k.isrRefused),
+      static_cast<unsigned>(k.lastIsrIpsr), static_cast<unsigned>(k.lastIsrId));
   emitFormatted(line, n);
   c.statsActive = resume;
   c.statsMultiBatch = continuing || resume;

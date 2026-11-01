@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "TrackManager.h"
 
 #include "ClockManager.h"
@@ -272,6 +273,8 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         // their gather/order build on the clock edge (short-loop path unchanged).
         if (!tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
                 tracks[i].getLoop(targetSlot).loopLengthTicks)) {
+          // DEC-239 diagnostic: names this tick-path route into the merged build.
+          PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::TickSlotSwitch_build);
           tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
         }
         // S4b.5: the commit is the actor here (the pending switch was just consumed), so it lands the write at

@@ -1,6 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
+#include "Utils/RuntimeProfiler.h"
 #include "TrackInternal.h"
 
 #include "ClockManager.h"
@@ -345,6 +346,8 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const bool useMergedFallback = fixedView == nullptr && !pagedEmission;
   const SessionMidiEventVec* mergedEvents = nullptr;
   if (useMergedFallback) {
+    // DEC-239 diagnostic: names this tick-path route into the merged build (entered from IRQ_PIT on internal clock).
+    PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::TickMergedFallback_build);
     mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
   }
 

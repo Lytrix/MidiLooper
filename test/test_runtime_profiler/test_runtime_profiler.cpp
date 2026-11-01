@@ -438,6 +438,8 @@ void test_exception_context_entry_is_refused_without_touching_nesting() {
   TEST_ASSERT_EQUAL_UINT32(1, counters().isrRefused);
   TEST_ASSERT_EQUAL_UINT32(0, self().calls);
   TEST_ASSERT_EQUAL_UINT32(1, self().refused);  // names the identity the interrupt reached
+  TEST_ASSERT_EQUAL_UINT16(15, counters().lastIsrIpsr);  // and which exception (SysTick here)
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(ProfileId::SelfTest), counters().lastIsrId);
   TEST_ASSERT_FALSE(counters().poisoned);
   const ProfileStat& outer = stat(ProfileId::RecordStart_edge);
   TEST_ASSERT_EQUAL_UINT32(1, outer.calls);

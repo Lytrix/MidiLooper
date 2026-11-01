@@ -64,6 +64,9 @@ enum class ProfileId : uint16_t {
   OverdubStart_openSession = 22,
   OverdubStart_beginCapture = 23,
   OverdubStart_bindPredecessor = 24,
+  // The two tick-path routes into PlaybackWindow_build (2026-11-01: it was entered from IRQ_PIT).
+  TickMergedFallback_build = 25,
+  TickSlotSwitch_build = 26,
   Count
 };
 
@@ -162,6 +165,8 @@ struct ProfileCounters {
   uint32_t dropped;        // ring records overwritten
   uint32_t depthOverflow;  // scopes entered past the depth stack
   uint32_t isrRefused;     // scopes entered in exception context
+  uint16_t lastIsrIpsr;    // exception number (IPSR) of the latest such entry: 15 SysTick, 16+n IRQ n
+  uint16_t lastIsrId;      // identity it tried to enter
   uint16_t ringCount;
   uint8_t depth;
   bool poisoned;

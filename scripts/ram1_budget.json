@@ -38,8 +38,8 @@
       "itcm_bytes": 393216,
       "ram1_variables": 96192,
       "locals_free": 34880,
-      "padding": 1016,
-      "note": "2026-11-01 overdub-start attribution: ten child scopes inside the ITCM-resident Track::startOverdubbing (ids 15-24) took ITCM code 392,008 -> 392,200 (+192 B), padding 1,208 -> 1,016, still 176 B above the 840 floor; profile env only. Runtime profiler env (DEC-239, openspec/changes/runtime-profiling-layer, 2026-11-01): the default capture contract plus -D RUNTIME_PROFILE_SCOPES=1. All profiler state is DMAMEM and every profiler literal/switch table is carved to FLASH, so RAM1 variables equal the default env. ITCM code 391,928 -> 392,008 (+80 B) from the scope call sites in the two ITCM-resident owners (the three phase cases of DisplayManager::update, and Track::startOverdubbing); padding 1,288 -> 1,208, floor 840 unchanged. The default env is unchanged."
+      "padding": 952,
+      "note": "2026-11-01 ISR trace: two diagnostic scopes on the tick-path routes into the merged build (ids 25-26, one in the ITCM hot path) took code 392,200 -> 392,264, padding 1,016 -> 952 (112 B above the floor). 2026-11-01 overdub-start attribution: ten child scopes inside the ITCM-resident Track::startOverdubbing (ids 15-24) took ITCM code 392,008 -> 392,200 (+192 B), padding 1,208 -> 1,016, still 176 B above the 840 floor; profile env only. Runtime profiler env (DEC-239, openspec/changes/runtime-profiling-layer, 2026-11-01): the default capture contract plus -D RUNTIME_PROFILE_SCOPES=1. All profiler state is DMAMEM and every profiler literal/switch table is carved to FLASH, so RAM1 variables equal the default env. ITCM code 391,928 -> 392,008 (+80 B) from the scope call sites in the two ITCM-resident owners (the three phase cases of DisplayManager::update, and Track::startOverdubbing); padding 1,288 -> 1,208, floor 840 unchanged. The default env is unchanged."
     },
     "teensy41-capture-serial-investigation-diag": {
       "itcm_bytes": 393216,
