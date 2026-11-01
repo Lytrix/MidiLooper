@@ -68,8 +68,11 @@ timing and memory envelope without introducing real-time construction?
       content (vs 2–3.4× with copies); device (HEX `8f70c93a…`, boot verified): 2-bar compose at 31 runs 5.45 ms max,
       compaction step 4.16 ms, commit 10 µs. [Evidence](evidence/2026-11-01-b5a-store-changes.md)
 - [ ] B.5c Move the compaction planner into the store (in-flight cap, level rule); time denser/hide-heavy windows.
-- [ ] B.5b Session high-water on device: owner-rig baseline chain on the probe image, then `!REVSTORE_PROBE` for
-      `acct_high`; gives the reserve the store must fit beside during migration.
+- [x] B.5b Session high-water on device (probe HEX `8f70c93a…`, fresh boot verified, owner rig: 20-bar Record + 12
+      overdubs + internal-clock hold; `session_20261101_170808.log`): firmware alone peaks at **7.15 MB of 8.38 MB**,
+      1.33 MB free after stop; event chunks are 1.0 MB of it. The store cannot sit beside today's firmware at its
+      2.76 MiB ceiling budget: stage C must size the pool to present content, stage D must retire chunk backing as it
+      lands, stage E returns most memory. [Evidence](evidence/2026-11-01-b5b-session-high-water.md)
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest
       marker, crash consistency, garbage collection, persisted undo history.
 

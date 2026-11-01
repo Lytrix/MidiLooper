@@ -66,8 +66,9 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   per-run waste + ~256 for one capped compaction range in flight + ~64 for writers and pinned generations ≈ 2,688 pages
   (2.63 MiB), plus ~0.13 MiB metadata once run directories are paged. That is about the same as today's chunk backing
   for the same ceiling (2.67 MB), *provided compaction only takes history-closed ranges*: compacting runs that history
-  still names keeps both copies alive (measured 2–3.3× content). Device: 3.44 MB free after load; session high-water
-  pending (B.5b).
+  still names keeps both copies alive (measured 2–3.3× content). Device (B.5b): after one owner-rig session the
+  firmware alone holds 7.15 MB of 8.38 MB (1.33 MB free; content chunks 1.0 MB), so migration must replace owners,
+  not add the store beside them.
 - **D8 — Time slices deferred.** Per-run sorted rows already give bounded window seeks. Slicing roots into bar tiles is
   revisited when edits need partial replacement (stage B Q3), not before.
 
