@@ -73,8 +73,12 @@ timing and memory envelope without introducing real-time construction?
       `productionCompat`, and that projection equals production on all 520 seeded revisions. Device (HEX `2db2116a…`):
       31-run compat 5.26 ms, dense burst 7.85 ms, **hide-heavy 31 runs 30.7 ms (over budget)**.
       [Evidence](evidence/2026-11-01-b5c-lossless-projections-planner.md)
-- [ ] B.5d Per-manifest hide index (noteId → latest hiding run/origin; layer-3 cache built off-edge), hide region on
-      the run's page directory (bulk NOTE_EDIT); re-time the hide-heavy window.
+- [x] B.5d Hides as scalable source operations + manifest-qualified edit index (owner scope 2026-11-01): page-listed
+      hides (no 256 cap), target = stable `noteId` lineage, explicit precedence (latest hide position strictly later
+      than the row hides it), `EditIndex` keyed by manifest identity with two LRU slots, bounded `stepEditIndex`
+      worker, `HideLookup::IndexOnly` returns `IndexOwed` (never builds), `Scan` kept as oracle. Device
+      (HEX `365b6d11…`): hide-heavy 31-run window **30.8 → 5.56 ms**, index build steps ≤ 1.12 ms.
+      [Evidence](evidence/2026-11-01-b5d-edit-index.md)
 - [x] B.5b Session high-water on device (probe HEX `8f70c93a…`, fresh boot verified, owner rig: 20-bar Record + 12
       overdubs + internal-clock hold; `session_20261101_170808.log`): firmware alone peaks at **7.15 MB of 8.38 MB**,
       1.33 MB free after stop; event chunks are 1.0 MB of it. The store cannot sit beside today's firmware at its

@@ -49,6 +49,10 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 - **D0b — Three layers (DEC-245).** Committed source rows are lossless (multiplicity, identity, zero-length pairs);
   effective meaning is an explicit `EffectivePolicy` projection at compose time; windows and snapshots are caches.
   Compaction keeps every row and hide with `origin` + source serial provenance.
+- **D4b — Edit precedence and the edit index (B.5d).** A hide targets a `noteId` lineage. A Midi row is hidden iff the
+  latest hide of its `noteId` is at a strictly later (run index, origin) position. The `EditIndex` (noteId → latest
+  hide position) is a cache keyed by manifest identity, built off-edge in bounded steps; real-time composition asks
+  for it with `HideLookup::IndexOnly` and gets `IndexOwed`, never a build.
 - **D5c — Compaction takes history-closed ranges only (B.5a default).** A range qualifies when every history entry holds
   all of it at the same positions or none of it; publish rewrites them all, so no second copy outlives the job. With
   undo depth 99 nothing closes during a normal session: many runs, composed by a heap merge on cached keys, are the

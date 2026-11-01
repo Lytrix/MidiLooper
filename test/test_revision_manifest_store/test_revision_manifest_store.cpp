@@ -357,6 +357,10 @@ void test_zero_heap_after_construction() {
   gStore.beginCompaction(0, 4, CompactionScope::AllowCopies);
   while (gStore.stepCompaction(64) == CompactStep::Pending) {
   }
+  while (gStore.stepEditIndex(16) == IndexStep::Pending) {
+  }
+  gStore.composeWindow(gStore.current(), 0, kLongTakeTicks, gOut, 4096,
+                       EffectivePolicy::productionCompat().with(HideLookup::IndexOnly));
   gStore.unpin(pin);
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
   // Witness self-check: the counter does see an allocation, so the zero above is not vacuous.
@@ -852,6 +856,187 @@ void test_planner_takes_only_closed_ranges_within_the_row_cap() {
   TEST_ASSERT_EQUAL_UINT8(5, plan.manifest(plan.current()).runCount);  // R, [OD1+OD2], [OD3+OD4], OD5, OD6
 }
 
+// ---- B.5d: page-listed hides and the manifest-qualified edit index ----------------------------------------------
+
+template <typename S>
+static void buildIndexFully(S& store, uint32_t stepRows = 16) {
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) step = store.stepEditIndex(stepRows);
+  TEST_ASSERT_TRUE(step == IndexStep::Published || step == IndexStep::Idle);
+}
+
+static std::vector<PassEvent> composeWith(ManifestId id, EffectivePolicy policy, uint32_t to = kLongTakeTicks) {
+  const ComposeStamp stamp = gStore.composeWindow(id, 0, to, gOut, 4096, policy);
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  return std::vector<PassEvent>(gOut, gOut + stamp.count);
+}
+
+static void assertIndexEqualsScan(ManifestId id, uint32_t to = kLongTakeTicks) {
+  for (EffectivePolicy base : {EffectivePolicy::revision(), EffectivePolicy::productionCompat()}) {
+    const auto scan = composeWith(id, base.with(HideLookup::Scan), to);
+    const ComposeStamp stamp = gStore.composeWindow(id, 0, to, gOut, 4096, base.with(HideLookup::IndexOnly));
+    TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+    TEST_ASSERT_TRUE(stamp.usedIndex);
+    TEST_ASSERT_TRUE(sameRows(scan, std::vector<PassEvent>(gOut, gOut + stamp.count)));
+  }
+}
+
+static uint32_t countPitch(const std::vector<PassEvent>& rows, uint8_t pitch) {
+  uint32_t n = 0;
+  for (const PassEvent& e : rows) n += (equalTickClass(e) == 1 && e.data1 == pitch) ? 1 : 0;
+  return n;
+}
+
+// Explicit precedence: P1 note A (id 7); P2 hides 7; P3 adds replacement A' with the same id; P4 hides 7 again.
+void test_edit_precedence_latest_hide_position_wins() {
+  gStore.beginPass(PassKind::Record, 4 * kBarTicks);
+  gStore.appendMidi(96, kNoteOn, 60, 100, 7);
+  gStore.appendMidi(480, kNoteOff, 60, 0, 7);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Edit);
+  gStore.appendHide(7);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Edit);
+  gStore.appendMidi(192, kNoteOn, 61, 100, 7);  // replacement A' (same lineage id)
+  gStore.appendMidi(480, kNoteOff, 61, 0, 7);
+  gStore.commitPass();
+  buildIndexFully(gStore);
+  auto rows = composeWith(gStore.current(), EffectivePolicy::revision().with(HideLookup::IndexOnly), 4 * kBarTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, countPitch(rows, 60));  // A hidden by P2
+  TEST_ASSERT_EQUAL_UINT32(1, countPitch(rows, 61));  // A' is later than P2's hide: visible
+  assertIndexEqualsScan(gStore.current(), 4 * kBarTicks);
+  gStore.beginPass(PassKind::Edit);
+  gStore.appendHide(7);
+  gStore.commitPass();
+  buildIndexFully(gStore);
+  rows = composeWith(gStore.current(), EffectivePolicy::revision().with(HideLookup::IndexOnly), 4 * kBarTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, countPitch(rows, 60));
+  TEST_ASSERT_EQUAL_UINT32(0, countPitch(rows, 61));  // P4's hide is later than A': both gone
+  assertIndexEqualsScan(gStore.current(), 4 * kBarTicks);
+  // Compacting P2..P4 (hides and replacement in one merged run) keeps every target and the same result.
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 3, CompactionScope::AllowCopies));
+  while (gStore.stepCompaction(2) == CompactStep::Pending) {
+  }
+  buildIndexFully(gStore);
+  rows = composeWith(gStore.current(), EffectivePolicy::revision().with(HideLookup::IndexOnly), 4 * kBarTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, countPitch(rows, 60));
+  TEST_ASSERT_EQUAL_UINT32(0, countPitch(rows, 61));
+  assertIndexEqualsScan(gStore.current(), 4 * kBarTicks);
+  // Undo selects the manifest without P4's hide (pre-compaction history entry): A' is visible again.
+  TEST_ASSERT_TRUE(gStore.undo());
+  buildIndexFully(gStore);
+  rows = composeWith(gStore.current(), EffectivePolicy::revision().with(HideLookup::IndexOnly), 4 * kBarTicks);
+  TEST_ASSERT_EQUAL_UINT32(1, countPitch(rows, 61));
+}
+
+// Randomised sessions (hides of Record notes, compaction mid-way): index == scan == the vector oracle, every revision.
+void test_edit_index_equals_scan_and_oracle_on_random_sessions() {
+  for (uint32_t seed = 1; seed <= 6; ++seed) {
+    gStore.reset();
+    gLcg = seed;
+    gNextNoteId = 1;
+    OracleRevision rev = recordTake(150, kLongTakeTicks);
+    for (uint32_t od = 0; od < 7; ++od) {
+      std::vector<uint32_t> hides;
+      for (uint32_t h = 0, n = nextRandom() % 12; h < n; ++h) {
+        hides.push_back(rev.passes[0].rows[2 * (nextRandom() % 150)].noteId);
+      }
+      rev = overdub(rev, 10, kLongTakeTicks, hides);
+      if (od == 4) {
+        TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 4, CompactionScope::AllowCopies));
+        while (gStore.stepCompaction(64) == CompactStep::Pending) {
+        }
+      }
+      buildIndexFully(gStore, 5);
+      assertIndexEqualsScan(gStore.current());
+      const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLongTakeTicks, gOut, 4096,
+                                                      EffectivePolicy::revision().with(HideLookup::IndexOnly));
+      assertSameRows(oracleWindow(rev, 0, kLongTakeTicks), gOut, stamp.count);
+    }
+  }
+}
+
+// A reader pinned to manifest M keeps resolving through M's index while compaction makes M' (same revision) current
+// and M' gets its own index; neither depends on the other.
+void test_edit_index_is_qualified_by_manifest_identity() {
+  OracleRevision rev = recordTake(80, 4 * kBarTicks);
+  for (int i = 0; i < 3; ++i) rev = overdub(rev, 5, 4 * kBarTicks, {rev.passes[0].rows[2 * i].noteId});
+  buildIndexFully(gStore);
+  const ManifestId reader = gStore.pinCurrent();
+  TEST_ASSERT_TRUE(gStore.editIndexReady(reader));
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 3, CompactionScope::AllowCopies));
+  while (gStore.stepCompaction(16) == CompactStep::Pending) {
+  }
+  const ManifestId compacted = gStore.current();
+  TEST_ASSERT_EQUAL_UINT32(gStore.manifest(reader).revision, gStore.manifest(compacted).revision);
+  TEST_ASSERT_TRUE(gStore.editIndexOwed());  // M' needs its own index; M's does not stand in for it
+  const ComposeStamp owed = gStore.composeWindow(compacted, 0, 4 * kBarTicks, gOut, 4096,
+                                                 EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::IndexOwed, owed.status);
+  const ComposeStamp old = gStore.composeWindow(reader, 0, 4 * kBarTicks, gOut, 4096,
+                                                EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, old.status);
+  TEST_ASSERT_TRUE(old.usedIndex);
+  assertSameRows(oracleWindow(rev, 0, 4 * kBarTicks), gOut, old.count);
+  buildIndexFully(gStore);
+  TEST_ASSERT_TRUE(gStore.editIndexReady(compacted));
+  TEST_ASSERT_TRUE(gStore.editIndexReady(reader));  // two slots: both identities resolved
+  assertIndexEqualsScan(compacted, 4 * kBarTicks);
+  gStore.unpin(reader);
+}
+
+// Real time never builds: an IndexOnly compose answers IndexOwed and leaves the obligation owed; the worker's steps
+// are bounded by rows.
+void test_realtime_compose_never_builds_the_index_and_steps_are_bounded() {
+  OracleRevision rev = recordTake(200, kLongTakeTicks);
+  std::vector<uint32_t> hides;
+  for (uint32_t i = 0; i < 100; ++i) hides.push_back(rev.passes[0].rows[2 * i].noteId);
+  rev = overdub(rev, 5, kLongTakeTicks, hides);
+  for (int i = 0; i < 3; ++i) {
+    const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, kLongTakeTicks, gOut, 4096,
+                                                    EffectivePolicy::revision().with(HideLookup::IndexOnly));
+    TEST_ASSERT_EQUAL(ComposeStatus::IndexOwed, stamp.status);
+    TEST_ASSERT_TRUE(gStore.editIndexOwed());
+  }
+  uint32_t steps = 0;
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) {
+    step = gStore.stepEditIndex(10);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL(IndexStep::Published, step);
+  TEST_ASSERT_TRUE(steps >= 100 / 10);
+  TEST_ASSERT_EQUAL(IndexStep::Idle, gStore.stepEditIndex(10));
+  assertIndexEqualsScan(gStore.current());
+}
+
+// Thousands of hides in one edit run (a whole-take quantise) up to the pool, then a named refusal.
+void test_thousands_of_hides_in_one_edit_run() {
+  using BulkCap = Capacity<1024, 32, 16, 256, 16, 8, 8>;
+  static Store<BulkCap> bulk;
+  bulk.reset();
+  bulk.beginPass(PassKind::Record, kLongTakeTicks);
+  for (uint32_t i = 0; i < 3000; ++i) bulk.appendMidi(i * 6, kNoteOn, 60, 100, i + 1);
+  bulk.commitPass();
+  bulk.beginPass(PassKind::Edit);
+  for (uint32_t i = 0; i < 3000; ++i) TEST_ASSERT_EQUAL(AppendResult::Ok, bulk.appendHide(i + 1));
+  bulk.commitPass();
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) step = bulk.stepEditIndex(256);
+  TEST_ASSERT_EQUAL(IndexStep::Published, step);
+  const ComposeStamp stamp = bulk.composeWindow(bulk.current(), 0, kLongTakeTicks, gOut, 4096,
+                                                EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  TEST_ASSERT_EQUAL_UINT32(0, stamp.count);
+  // Exhaust the pool with hides: a latched, named refusal, and the committed revision is untouched.
+  bulk.beginPass(PassKind::Edit);
+  AppendResult last = AppendResult::Ok;
+  for (uint32_t i = 0; i < 100000 && last == AppendResult::Ok; ++i) last = bulk.appendHide(100000 + i);
+  TEST_ASSERT_TRUE(last == AppendResult::DeniedNoPage || last == AppendResult::DeniedRunFull);
+  bulk.abandonPass();
+  TEST_ASSERT_EQUAL_UINT32(BulkCap::kPageCount, bulk.ownedPageCount() + bulk.freePageCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -882,5 +1067,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_compaction_is_lossless_for_source_rows_hides_duplicates_and_zero_length_pairs);
   RUN_TEST(test_effective_policies_are_explicit_projections_over_lossless_source);
   RUN_TEST(test_planner_takes_only_closed_ranges_within_the_row_cap);
+  RUN_TEST(test_edit_precedence_latest_hide_position_wins);
+  RUN_TEST(test_edit_index_equals_scan_and_oracle_on_random_sessions);
+  RUN_TEST(test_edit_index_is_qualified_by_manifest_identity);
+  RUN_TEST(test_realtime_compose_never_builds_the_index_and_steps_are_bounded);
+  RUN_TEST(test_thousands_of_hides_in_one_edit_run);
   return UNITY_END();
 }

@@ -60,13 +60,21 @@ inline bool tickClassLess(const PassEvent& a, const PassEvent& b) {
 }
 
 /// An Edit run (NOTE_EDIT) composes like an overdub: HideNote rows for the targets plus their replacement rows.
-enum class PassKind : uint8_t { Record = 0, Overdub = 1, Compacted = 2, Edit = 3 };
+enum class PassKind : uint8_t { Record = 0, Overdub = 1, Compacted = 2, Edit = 3, EditIndex = 4 };
 
 enum class AdmitResult : uint8_t { Ok, DeniedNoRun, DeniedNoPage, DeniedNoManifest, DeniedManifestFull, DeniedWriterBusy };
 /// A capacity denial latches: the pass is stopped, every later append returns the same reason, the committed
 /// revision is untouched, and the writer may still commit the rows captured so far or abandon them (all pages return).
 enum class AppendResult : uint8_t { Ok, DeniedNoPage, DeniedRunFull, DeniedNotWriting };
-enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest };
+/// `IndexOwed`: the manifest carries hides, the caller asked for `HideLookup::IndexOnly` (the real-time mode) and the
+/// edit index for this exact manifest is not published yet. Composition never builds it; keep the previous window.
+enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest, IndexOwed };
+/// How a composition resolves hides. `IndexOnly`: through the manifest's edit index, else `IndexOwed` (real time).
+/// `Scan`: per row over the later runs' hide regions (the slow reference, kept as the host oracle).
+/// `IndexOrScan`: the index when published, else the scan (off-line convenience).
+enum class HideLookup : uint8_t { IndexOrScan, IndexOnly, Scan };
+/// Step outcome of the edit-index worker.
+enum class IndexStep : uint8_t { Idle, Pending, Published, DeniedNoPage };
 enum class CompactResult : uint8_t {
   Ok,
   NothingToCompact,
@@ -93,9 +101,15 @@ struct EffectivePolicy {
   bool applyHides = true;
   bool suppressZeroLength = false;
   bool collapseCrossRunDuplicates = false;
+  HideLookup hideLookup = HideLookup::IndexOrScan;
   static EffectivePolicy revision() { return {}; }
-  static EffectivePolicy productionCompat() { return {true, true, true}; }
-  static EffectivePolicy source() { return {false, false, false}; }
+  static EffectivePolicy productionCompat() { return {true, true, true, HideLookup::IndexOrScan}; }
+  static EffectivePolicy source() { return {false, false, false, HideLookup::IndexOrScan}; }
+  EffectivePolicy with(HideLookup lookup) const {
+    EffectivePolicy p = *this;
+    p.hideLookup = lookup;
+    return p;
+  }
 };
 
 /// What a derived window can prove about itself: the manifest it read and that manifest's revision.
@@ -106,12 +120,14 @@ struct ComposeStamp {
   uint32_t revision = 0;
   uint32_t count = 0;
   ComposeStatus status = ComposeStatus::NoManifest;
+  bool usedIndex = false;  // hides were resolved through the edit index published for this manifest identity
 };
 
 /// Compile-time capacities.
 /// `PagesPerRun`: max data pages of one run (beyond `kInlinePages`, ids live in directory pages from the pool).
 /// `SegmentsPerRun`: sorted Midi segments a run may hold (a capture wrap costs one); beyond it the run falls back to a
-/// commit-time sort, counted by `slowSeals()`. `HidePagesPerRun`: pages for a run's HideNote rows.
+/// commit-time sort, counted by `slowSeals()`. `HidePagesPerRun`: unused since B.5d (HideNote rows are page-listed
+/// like Midi rows, up to `PagesPerRun` pages), kept so existing capacity declarations still compile.
 template <uint16_t PageCount, uint16_t EventsPerPage, uint16_t RunCount, uint16_t PagesPerRun, uint16_t ManifestCount,
           uint8_t RunsPerManifest, uint8_t HistoryDepth, uint8_t SegmentsPerRun = 8, uint8_t HidePagesPerRun = 4>
 struct Capacity {
@@ -172,15 +188,21 @@ class StoreCore {
   static constexpr uint32_t kIdsPerDirPage = Pool::kIdsPerDirPage;
   static constexpr uint16_t kDirPagesPerRun = static_cast<uint16_t>(
       Cap::kPagesPerRun <= kInlinePages ? 0 : (Cap::kPagesPerRun - kInlinePages + kIdsPerDirPage - 1) / kIdsPerDirPage);
+  static constexpr uint8_t kHideInlinePages = 1;
+  static constexpr uint16_t kHideDirPagesPerRun = static_cast<uint16_t>(
+      Cap::kPagesPerRun <= kHideInlinePages ? 0
+                                            : (Cap::kPagesPerRun - kHideInlinePages + kIdsPerDirPage - 1) / kIdsPerDirPage);
 
   struct PassRun {
     PageId inlinePages[kInlinePages];         // data pages 0..3
     PageId dirPages[kDirPagesPerRun ? kDirPagesPerRun : 1];  // ids of data pages 4.. live in these pool pages
-    PageId hidePages[Cap::kHidePagesPerRun];  // HideNote rows, by noteId once committed
+    PageId hideInline[kHideInlinePages];      // HideNote rows (by noteId, then origin, once committed)
+    PageId hideDirPages[kHideDirPagesPerRun ? kHideDirPagesPerRun : 1];
     uint32_t segStart[Cap::kSegmentsPerRun];  // segment s = [segStart[s], segStart[s+1] or midiCount)
     uint16_t pageCount;                       // data pages
     uint16_t dirPageCount;
     uint16_t hidePageCount;
+    uint16_t hideDirPageCount;
     uint32_t midiCount;
     uint32_t hideCount;
     uint8_t segCount;
@@ -194,7 +216,7 @@ class StoreCore {
     uint32_t rowCount() const { return midiCount + hideCount; }
     uint32_t segEnd(uint8_t s) const { return s + 1 < segCount ? segStart[s + 1] : midiCount; }
     void clear(PassKind k) {  // scalars only: the arrays are read only below their counts
-      pageCount = dirPageCount = hidePageCount = 0;
+      pageCount = dirPageCount = hidePageCount = hideDirPageCount = 0;
       midiCount = hideCount = 0;
       segCount = 0;
       needsSort = false;
@@ -237,7 +259,7 @@ class StoreCore {
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
       if (!runLive_[i]) continue;
       n += static_cast<uint32_t>(runs_[i].pageCount) + runs_[i].dirPageCount + runs_[i].hidePageCount +
-           (runs_[i].originPage != kNoPage ? 1u : 0u);
+           runs_[i].hideDirPageCount + (runs_[i].originPage != kNoPage ? 1u : 0u);
     }
     return n;
   }
@@ -412,7 +434,20 @@ class StoreCore {
     Merge& merge = composeScratch_;
     merge.reset();
     merge.limit = m.runCount;
-    if (policy.applyHides) collectHideRuns(m, 0, m.runCount, merge);
+    merge.index = nullptr;
+    if (policy.applyHides && manifestHasHides(id)) {
+      const EditIndexSlot* slot = policy.hideLookup == HideLookup::Scan ? nullptr : findIndexSlot(id);
+      if (slot == nullptr && policy.hideLookup == HideLookup::IndexOnly) {
+        stamp.status = ComposeStatus::IndexOwed;
+        return stamp;
+      }
+      if (slot != nullptr) {
+        merge.index = slot;
+        stamp.usedIndex = true;
+      } else {
+        collectHideRuns(m, 0, m.runCount, merge);
+      }
+    }
     for (uint8_t i = 0; i < m.runCount; ++i) {
       const PassRun& r = runs_[m.runs[i]];
       for (uint8_t s = 0; s < r.segCount; ++s) {
@@ -468,6 +503,68 @@ class StoreCore {
       ++groupCount;
     }
     return stamp;
+  }
+
+  // ---- Edit index (B.5d): derived, manifest-qualified, built off the edge ----------------------------------------
+  //
+  // Precedence (explicit, independent of how the index is built): a hide's position is (run index in the manifest,
+  // source origin). A Midi row is hidden iff the latest hide of its noteId sits at a strictly later position than
+  // the row. The index stores, per noteId, that latest position; it is keyed by manifest *identity*, so a reader
+  // of a manifest that compaction replaced keeps its own index.
+
+  bool manifestHasHides(ManifestId id) const {
+    if (id == kNoManifest) return false;
+    const RevisionManifest& m = manifests_[id];
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      if (runs_[m.runs[i]].hideCount != 0) return true;
+    }
+    return false;
+  }
+  bool editIndexReady(ManifestId id) const { return findIndexSlot(id) != nullptr; }
+  /// The current manifest carries hides and has no published index yet.
+  bool editIndexOwed() const { return manifestHasHides(current_) && !editIndexReady(current_); }
+
+  /// Advance the edit-index worker by about `maxRows` hide rows (a run of equal noteIds is finished as a unit). It
+  /// always targets the current manifest: a job for a manifest that stopped being current is abandoned.
+  IndexStep stepEditIndex(uint32_t maxRows) {
+    if (indexJob_.active && indexJob_.identity != identityOf(current_)) endIndexJob(false);
+    if (!indexJob_.active) {
+      if (!editIndexOwed()) return IndexStep::Idle;
+      if (!beginIndexJob()) return IndexStep::DeniedNoPage;
+    }
+    const RevisionManifest& m = manifests_[indexJob_.manifest];
+    uint32_t done = 0;
+    while (done < maxRows) {
+      uint32_t noteId = 0;
+      bool any = false;
+      for (uint8_t c = 0; c < indexJob_.cursorCount; ++c) {
+        const PassRun& r = runs_[m.runs[indexJob_.runIndex[c]]];
+        if (indexJob_.at[c] >= r.hideCount) continue;
+        const uint32_t v = hideAt(r, indexJob_.at[c]).noteId;
+        if (!any || v < noteId) noteId = v;
+        any = true;
+      }
+      if (!any) return publishIndexJob();
+      uint32_t latest = 0;
+      for (uint8_t c = 0; c < indexJob_.cursorCount; ++c) {
+        const uint8_t runIndex = indexJob_.runIndex[c];
+        const PassRun& r = runs_[m.runs[runIndex]];
+        while (indexJob_.at[c] < r.hideCount && hideAt(r, indexJob_.at[c]).noteId == noteId) {
+          const uint32_t pos = (static_cast<uint32_t>(runIndex) << 8) | hideAt(r, indexJob_.at[c]).origin;
+          if (pos > latest) latest = pos;
+          ++indexJob_.at[c];
+          ++done;
+        }
+      }
+      PassEvent entry;
+      entry.noteId = noteId;
+      entry.tick = latest;
+      if (pushMidi(runs_[indexJob_.out], entry) != AppendResult::Ok) {
+        endIndexJob(false);
+        return IndexStep::DeniedNoPage;
+      }
+    }
+    return IndexStep::Pending;
   }
 
   // ---- Undo / redo: selection of an existing manifest --------------------------------------------------------------
@@ -668,6 +765,9 @@ class StoreCore {
     nextSerial_ = 1;
     slowSeals_ = 0;
     job_.active = false;
+    indexJob_.active = false;
+    for (uint8_t i = 0; i < kIndexSlots; ++i) indexSlots_[i].live = false;
+    indexClock_ = 0;
   }
 
  private:
@@ -705,6 +805,8 @@ class StoreCore {
     return false;
   }
 
+  struct EditIndexSlot;
+
   /// Cursors over segments plus a binary min-heap of cursor indices (DEC-244 order) and the runs that carry hides.
   struct Merge {
     uint32_t at[kMaxCursors];
@@ -720,7 +822,12 @@ class StoreCore {
     uint16_t heapSize = 0;
     uint8_t hideRunCount = 0;
     uint8_t limit = 0;  // hides are consulted from runs before this index
-    void reset() { count = heapSize = 0; hideRunCount = 0; }
+    const EditIndexSlot* index = nullptr;  // when set, hides resolve through the edit index
+    void reset() {
+      count = heapSize = 0;
+      hideRunCount = 0;
+      index = nullptr;
+    }
     void add(uint8_t runIndex, uint32_t from, uint32_t to) {
       at[count] = from;
       end[count] = to;
@@ -728,6 +835,109 @@ class StoreCore {
       ++count;
     }
   };
+
+  struct EditIndexSlot {
+    bool live = false;
+    uint32_t identity = 0;  // the manifest identity this index resolves
+    ManifestId manifest = kNoManifest;
+    RunId run = kNoRun;  // rows: noteId, tick = latest hide position
+    uint32_t lastUse = 0;
+  };
+  static constexpr uint8_t kIndexSlots = 2;
+
+  struct IndexJob {
+    bool active = false;
+    uint32_t identity = 0;
+    ManifestId manifest = kNoManifest;
+    RunId out = kNoRun;
+    uint8_t cursorCount = 0;
+    uint8_t runIndex[Cap::kRunsPerManifest];
+    uint32_t at[Cap::kRunsPerManifest];
+  };
+
+  const EditIndexSlot* findIndexSlot(ManifestId id) const {
+    if (id == kNoManifest) return nullptr;
+    const uint32_t identity = manifests_[id].identity;
+    for (uint8_t i = 0; i < kIndexSlots; ++i) {
+      if (indexSlots_[i].live && indexSlots_[i].identity == identity && indexSlots_[i].manifest == id) {
+        indexSlots_[i].lastUse = ++indexClock_;
+        return &indexSlots_[i];
+      }
+    }
+    return nullptr;
+  }
+
+  bool indexLookup(const EditIndexSlot& slot, uint32_t noteId, uint32_t& latest) const {
+    const PassRun& r = runs_[slot.run];
+    uint32_t lo = 0;
+    uint32_t hi = r.midiCount;
+    while (lo < hi) {
+      const uint32_t mid = lo + (hi - lo) / 2;
+      const PassEvent& e = midiAt(r, mid);
+      if (e.noteId == noteId) {
+        latest = e.tick;
+        return true;
+      }
+      if (e.noteId < noteId) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return false;
+  }
+
+  bool beginIndexJob() {
+    const RunId out = takeRun(PassKind::EditIndex);
+    if (out == kNoRun) return false;
+    indexJob_.active = true;
+    indexJob_.manifest = current_;
+    indexJob_.identity = manifests_[current_].identity;
+    indexJob_.out = out;
+    indexJob_.cursorCount = 0;
+    ++manifests_[current_].refs;  // the job pins the manifest it resolves
+    const RevisionManifest& m = manifests_[current_];
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      if (runs_[m.runs[i]].hideCount == 0) continue;
+      indexJob_.runIndex[indexJob_.cursorCount] = i;
+      indexJob_.at[indexJob_.cursorCount] = 0;
+      ++indexJob_.cursorCount;
+    }
+    return true;
+  }
+
+  void endIndexJob(bool published) {
+    if (!published) {
+      releaseRunPages(runs_[indexJob_.out]);
+      runLive_[indexJob_.out] = false;
+      releaseManifest(indexJob_.manifest);
+    }
+    indexJob_.active = false;
+  }
+
+  IndexStep publishIndexJob() {
+    EditIndexSlot* slot = nullptr;
+    for (uint8_t i = 0; i < kIndexSlots && slot == nullptr; ++i) {
+      if (!indexSlots_[i].live) slot = &indexSlots_[i];
+    }
+    if (slot == nullptr) {  // evict the least recently used index: its manifest pin goes with it
+      slot = &indexSlots_[0];
+      for (uint8_t i = 1; i < kIndexSlots; ++i) {
+        if (indexSlots_[i].lastUse < slot->lastUse) slot = &indexSlots_[i];
+      }
+      releaseRunPages(runs_[slot->run]);
+      runLive_[slot->run] = false;
+      releaseManifest(slot->manifest);
+    }
+    slot->live = true;
+    slot->identity = indexJob_.identity;
+    slot->manifest = indexJob_.manifest;  // keeps the job's pin
+    slot->run = indexJob_.out;
+    slot->lastUse = ++indexClock_;
+    runs_[indexJob_.out].committed = true;
+    endIndexJob(true);
+    return IndexStep::Published;
+  }
 
   struct CompactionJob {
     bool active = false;
@@ -751,6 +961,11 @@ class StoreCore {
   /// (compacted) run that came from a later source pass.
   bool hidden(const RevisionManifest& m, const Merge& merge, uint8_t runIndex, uint8_t origin, uint32_t noteId) const {
     if (noteId == 0) return false;
+    if (merge.index != nullptr) {
+      uint32_t latest = 0;
+      return indexLookup(*merge.index, noteId, latest) &&
+             latest > ((static_cast<uint32_t>(runIndex) << 8) | origin);
+    }
     for (uint8_t h = 0; h < merge.hideRunCount; ++h) {
       const uint8_t j = merge.hideRuns[h];
       if (j >= merge.limit || j < runIndex) continue;
@@ -816,10 +1031,40 @@ class StoreCore {
     return top;
   }
 
-  PageId dataPage(const PassRun& r, uint32_t p) const {
-    if (p < kInlinePages) return r.inlinePages[p];
-    const uint32_t q = p - kInlinePages;
-    return pool_.dirEntry(r.dirPages[q / kIdsPerDirPage], q % kIdsPerDirPage);
+  // A page list: the first `inlineCount` page ids inline, the rest in directory pages taken from the pool.
+  PageId listPage(const PageId* inl, uint8_t inlineCount, const PageId* dir, uint32_t p) const {
+    if (p < inlineCount) return inl[p];
+    const uint32_t q = p - inlineCount;
+    return pool_.dirEntry(dir[q / kIdsPerDirPage], q % kIdsPerDirPage);
+  }
+  AppendResult listAdd(PageId* inl, uint8_t inlineCount, PageId* dir, uint16_t& count, uint16_t& dirCount) {
+    if (count >= Cap::kPagesPerRun) return AppendResult::DeniedRunFull;
+    const uint32_t p = count;
+    if (p >= inlineCount && (p - inlineCount) % kIdsPerDirPage == 0) {
+      const PageId d = pool_.take();
+      if (d == kNoPage) return AppendResult::DeniedNoPage;
+      dir[dirCount++] = d;
+    }
+    const PageId page = pool_.take();
+    if (page == kNoPage) return AppendResult::DeniedNoPage;
+    if (p < inlineCount) {
+      inl[p] = page;
+    } else {
+      const uint32_t q = p - inlineCount;
+      pool_.dirEntry(dir[q / kIdsPerDirPage], q % kIdsPerDirPage) = page;
+    }
+    ++count;
+    return AppendResult::Ok;
+  }
+  void listRelease(const PageId* inl, uint8_t inlineCount, const PageId* dir, uint16_t& count, uint16_t& dirCount) {
+    for (uint32_t p = 0; p < count; ++p) pool_.give(listPage(inl, inlineCount, dir, p));
+    for (uint16_t i = 0; i < dirCount; ++i) pool_.give(dir[i]);
+    count = 0;
+    dirCount = 0;
+  }
+  PageId dataPage(const PassRun& r, uint32_t p) const { return listPage(r.inlinePages, kInlinePages, r.dirPages, p); }
+  PageId hidePage(const PassRun& r, uint32_t p) const {
+    return listPage(r.hideInline, kHideInlinePages, r.hideDirPages, p);
   }
   PassEvent& midiRef(PassRun& r, uint32_t index) {
     return pool_.row(dataPage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
@@ -828,10 +1073,10 @@ class StoreCore {
     return pool_.row(dataPage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
   }
   PassEvent& hideRef(PassRun& r, uint32_t index) {
-    return pool_.row(r.hidePages[index / Cap::kEventsPerPage], index % Cap::kEventsPerPage);
+    return pool_.row(hidePage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
   }
   const PassEvent& hideAt(const PassRun& r, uint32_t index) const {
-    return pool_.row(r.hidePages[index / Cap::kEventsPerPage], index % Cap::kEventsPerPage);
+    return pool_.row(hidePage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
   }
 
   RunId takeRun(PassKind kind) {
@@ -862,25 +1107,8 @@ class StoreCore {
     return kNoManifest;
   }
 
-  // Append a data page id to run `r`: inline first, then directory pages (a new directory page when one fills).
   AppendResult addDataPage(PassRun& r) {
-    if (r.pageCount >= Cap::kPagesPerRun) return AppendResult::DeniedRunFull;
-    const uint32_t p = r.pageCount;
-    if (p >= kInlinePages && (p - kInlinePages) % kIdsPerDirPage == 0) {
-      const PageId dir = pool_.take();
-      if (dir == kNoPage) return AppendResult::DeniedNoPage;
-      r.dirPages[r.dirPageCount++] = dir;
-    }
-    const PageId page = pool_.take();
-    if (page == kNoPage) return AppendResult::DeniedNoPage;
-    if (p < kInlinePages) {
-      r.inlinePages[p] = page;
-    } else {
-      const uint32_t q = p - kInlinePages;
-      pool_.dirEntry(r.dirPages[q / kIdsPerDirPage], q % kIdsPerDirPage) = page;
-    }
-    ++r.pageCount;
-    return AppendResult::Ok;
+    return listAdd(r.inlinePages, kInlinePages, r.dirPages, r.pageCount, r.dirPageCount);
   }
 
   AppendResult pushMidi(PassRun& r, const PassEvent& row) {
@@ -897,10 +1125,9 @@ class StoreCore {
   AppendResult pushHide(PassRun& r, const PassEvent& row) {
     const uint32_t index = r.hideCount;
     if (index >= static_cast<uint32_t>(r.hidePageCount) * Cap::kEventsPerPage) {
-      if (r.hidePageCount >= Cap::kHidePagesPerRun) return AppendResult::DeniedRunFull;
-      const PageId page = pool_.take();
-      if (page == kNoPage) return AppendResult::DeniedNoPage;
-      r.hidePages[r.hidePageCount++] = page;
+      const AppendResult added =
+          listAdd(r.hideInline, kHideInlinePages, r.hideDirPages, r.hidePageCount, r.hideDirPageCount);
+      if (added != AppendResult::Ok) return added;
     }
     hideRef(r, index) = row;
     ++r.hideCount;
@@ -1096,14 +1323,11 @@ class StoreCore {
   }
 
   void releaseRunPages(PassRun& r) {
-    for (uint16_t p = 0; p < r.pageCount; ++p) pool_.give(dataPage(r, p));
-    for (uint16_t i = 0; i < r.dirPageCount; ++i) pool_.give(r.dirPages[i]);
-    for (uint16_t i = 0; i < r.hidePageCount; ++i) pool_.give(r.hidePages[i]);
+    listRelease(r.inlinePages, kInlinePages, r.dirPages, r.pageCount, r.dirPageCount);
+    listRelease(r.hideInline, kHideInlinePages, r.hideDirPages, r.hidePageCount, r.hideDirPageCount);
     if (r.originPage != kNoPage) pool_.give(r.originPage);
     r.originPage = kNoPage;
-    r.pageCount = 0;
-    r.dirPageCount = 0;
-    r.hidePageCount = 0;
+
   }
 
   void releaseRun(RunId id) {
@@ -1164,6 +1388,9 @@ class StoreCore {
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
   mutable Merge composeScratch_;
+  mutable EditIndexSlot indexSlots_[kIndexSlots];
+  mutable uint32_t indexClock_ = 0;
+  IndexJob indexJob_;
   mutable uint8_t composeGroupRun_[kGroupCapacity];
 };
 

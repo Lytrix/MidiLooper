@@ -266,7 +266,34 @@ void run() {
       appendTake(store, 520, static_cast<uint8_t>(0x90 | ((od % 3) + 1)), id, ignore);
       store.commitPass();
     }
-    composeAll("compose_2bar_31runs_hideheavy", 31);
+    composeAll("compose_2bar_31runs_hideheavy", 31);  // scan lookup: no index published yet
+    {
+      // B.5d: build the manifest's edit index off the edge, in bounded steps, then compose through it.
+      Stat steps;
+      IndexStep step = IndexStep::Pending;
+      while (step == IndexStep::Pending) {
+        t0 = ARM_DWT_CYCCNT;
+        step = store.stepEditIndex(256);
+        steps.add(ARM_DWT_CYCCNT - t0);
+      }
+      printStat("edit_index_step_256", 30 * 60, 31, steps);
+      Serial.printf_P(PSTR("REVSTORE,edit_index_result=%u\r\n"), static_cast<unsigned>(step));
+      Stat compose;
+      uint32_t rows = 0, maxRows = 0, indexed = 0;
+      for (uint32_t from = 0; from < kLoopTicks; from += 2 * kBarTicks) {
+        t0 = ARM_DWT_CYCCNT;
+        const ComposeStamp stamp =
+            store.composeWindow(store.current(), from, from + 2 * kBarTicks, window, kWindowCapacity,
+                                EffectivePolicy::revision().with(HideLookup::IndexOnly));
+        compose.add(ARM_DWT_CYCCNT - t0);
+        rows += stamp.count;
+        if (stamp.count > maxRows) maxRows = stamp.count;
+        indexed += stamp.usedIndex ? 1 : 0;
+      }
+      printStat("compose_2bar_31runs_hideheavy_indexed", rows, 31, compose);
+      Serial.printf_P(PSTR("REVSTORE,hideheavy_indexed_windows=%lu,rows_per_window_max=%lu\r\n"),
+                      static_cast<unsigned long>(indexed), static_cast<unsigned long>(maxRows));
+    }
     Serial.printf_P(PSTR("REVSTORE,pages_used_hideheavy=%u\r\n"),
                     static_cast<unsigned>(ProbeCap::kPageCount - store.freePageCount()));
   }
