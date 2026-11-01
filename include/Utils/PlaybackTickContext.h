@@ -15,6 +15,8 @@
 
 #include <cstdint>
 
+#include "RevisionManifestReaderConfig.h"
+
 namespace PlaybackTickContext {
 
 /// RAM2 (`DMAMEM`, NOLOAD) so the RT guard adds nothing to the DTCM variables budget; `initAtBoot()` clears it before
@@ -68,7 +70,12 @@ enum class RouteReject : uint8_t {
   HandoffPhaseMismatch = 35,
   CandidateRejected = 36,  // `rollingCandidateReadyAtBoundary` refused the prepared window
   AdoptRefused = 37,
+#if REVISION_MANIFEST_READER
+  ManifestOwed = 38,  // C5.3: the routed slot's served/ready window is not the current servable manifest identity
+  Count = 39
+#else
   Count = 38
+#endif
 };
 
 /// Per-slot reason state: written by the tick (`recordMergedRouteReject`), read and emitted by the main loop.

@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "RevisionManifestReaderConfig.h"
+
 /// **DEC-193 — the build gate's one canonical refusal name.**
 ///
 /// The playback window lane has a single predicate that decides whether an owed build may advance this turn
@@ -51,6 +53,13 @@ enum class PlaybackBuildRefusal : uint8_t {
   SourceNotCurrent,
   /// The demand names a different revision than the loop.
   RevisionMismatch,
+#if REVISION_MANIFEST_READER
+  /// C5.3 (DEC-246 amendment 19): the routed slot's manifest owes preparation; nothing else is read in its place.
+  ManifestNoCommittedSource,
+  ManifestImportOwed,
+  ManifestIndexOwed,
+  ManifestCapacityDenied,
+#endif
 };
 
 /// The row token for a refusal. Flash-resident literals; an if/else chain, never a table (the RAM1 rule).
@@ -75,6 +84,12 @@ inline const char* playbackBuildRefusalName(PlaybackBuildRefusal refusal) {
     case PlaybackBuildRefusal::GeometryChanged: return "gate_geometry_changed";
     case PlaybackBuildRefusal::SourceNotCurrent: return "gate_source_not_current";
     case PlaybackBuildRefusal::RevisionMismatch: return "gate_revision_mismatch";
+#if REVISION_MANIFEST_READER
+    case PlaybackBuildRefusal::ManifestNoCommittedSource: return "gate_manifest_no_committed_source";
+    case PlaybackBuildRefusal::ManifestImportOwed: return "gate_manifest_import_owed";
+    case PlaybackBuildRefusal::ManifestIndexOwed: return "gate_manifest_index_owed";
+    case PlaybackBuildRefusal::ManifestCapacityDenied: return "gate_manifest_capacity_denied";
+#endif
   }
   return "gate_unknown";
 }

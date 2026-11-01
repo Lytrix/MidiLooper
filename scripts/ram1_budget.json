@@ -35,6 +35,13 @@
     "teensy41-capture-serial-ingress": "teensy41-capture-serial",
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-revstore-probe": "teensy41-capture-serial",
+    "teensy41-capture-serial-revstore-reader": {
+      "itcm_bytes": 393216,
+      "ram1_variables": 96224,
+      "locals_free": 34848,
+      "padding": 936,
+      "note": "revision-manifest-prototype C5.3 (DEC-246 amendments 20-23), probe-only A/B side with REVISION_MANIFEST_READER=1 over teensy41-capture-serial-revstore-probe (the flag-0 side, byte-identical to its previous image). Measured 2026-11-01 on the linked image: ITCM code 392,280 + padding 936 (96 B above the 840 floor; C5.2 alone measured 392,216 + 1,000), 12 banks unchanged. RAM1 variables 96,192 -> 96,224 and locals free 34,880 -> 34,848 (+32 B DTCM, one section granule): the lane's tick-readable servable words, the window-owner pointers and the shadow reader object; the report-only lane counters are DMAMEM (RAM2, zeroed by the reader owner at boot). The lane code itself is FLASH (TRACK_COLD_MEM / the RevisionShadow linker carve-out); the lane cursor is extmem. The default env is unchanged. Recorded in openspec/changes/revision-manifest-prototype/evidence/2026-11-01-c5-3a-manifest-lane-source-authority.md."
+    },
     "teensy41-capture-serial-profile": {
       "itcm_bytes": 393216,
       "ram1_variables": 96192,

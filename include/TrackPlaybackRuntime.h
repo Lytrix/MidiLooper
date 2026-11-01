@@ -1044,7 +1044,21 @@ struct LoopPlaybackRuntime {
       uint32_t loopLength, uint32_t phase, uint32_t tick);
   uint32_t coverageEventCount = 0;
   uint32_t coverageSourceUnits = 0;
+#if REVISION_MANIFEST_READER
+  /// C5.3 (DEC-246 amendment 22): the routed slot's committed coverage source is the reader's one manifest window
+  /// read (`CommittedManifestLane`), held by at most one runtime. It has no retirement steps: its pin ends with the
+  /// read. Out of line (flash), so nothing of it lands in ITCM.
+  bool ownsManifestCoverage() const;
+  bool ownsCoverageSource() const { return !coverageSource.idle() || ownsManifestCoverage(); }
+  bool beginManifestCoverageQualification(CommittedWindowRowSource& source, bool keepCaptureReady = false);
+  /// End the manifest read after its candidate is complete or discarded (the snapshot cursor's `beginRelease`).
+  void releaseManifestCoverage();
+  bool coverageSourceComplete() const;
+  size_t coverageSourceReadUnits() const;
+  size_t coverageSourceReleaseUnitBound() const;
+#else
   bool ownsCoverageSource() const { return !coverageSource.idle(); }
+#endif
   bool beginCoverageQualification(const LoopSnapshot& snapshot, bool keepCaptureReady = false);
   bool stepCoverageQualification(size_t quantum);
   bool beginQualifiedCoverageBuild(const CoverageServiceContract& contract, PlaybackDeadlineClock clock);

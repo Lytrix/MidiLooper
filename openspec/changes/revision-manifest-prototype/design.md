@@ -120,7 +120,17 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 
 ## C5 — one manifest-backed rolling-window reader (DEC-246 amendment 19)
 
-Authorized by the owner on 2026-11-01. Status: **specified**; no firmware has been written.
+Authorized by the owner on 2026-11-01. Status:
+- **C5.1–C5.3a are host-verified.**
+- C5.3b (successor preparation) is next and must pass before the C5.4 A/B.
+
+Routing and order follow DEC-246 amendments 22–23:
+- One designated track (`REVISION_MANIFEST_READER_TRACK`) reads the manifest; every other track keeps the snapshot
+  reader.
+- That track's lane-owned misses are named and never use the merged fallback.
+- Continuity comes before C5.4, common to both probe builds.
+
+[C5.3a evidence](evidence/2026-11-01-c5-3a-manifest-lane-source-authority.md).
 
 ### Seam: what changes, and where
 

@@ -13977,6 +13977,46 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - **5.1–5.3** (restart / revision recovery) are written once, against manifest identity.
     - **4.2b and 6.x** stay, as source-independent lane qualification after C5.
     - **7** (external-clock consume-only) stays. **8** runs once, on the combined architecture.
+22. **C5 reader authority is statically assigned per track (owner, 2026-11-01, C5.3 scope).**
+    - Why: the one shadow store holds one current manifest, while the committed lane plays every track.
+    - One designated track `T` (`REVISION_MANIFEST_READER_TRACK`, default 0) is served from RevisionManifest.
+      - For `T`'s active slot, committed windows come from the manifest only.
+      - `ImportOwed` / `IndexOwed` / `WindowOwed` are a named miss or hold, never a snapshot read.
+    - Every other track keeps the existing snapshot reader, and the manifest is never consulted for it.
+    - This routing is chosen before any request. It is not a runtime fallback.
+    - UI selection never changes reader authority. `RevisionShadow` imports `T`'s active slot, not the selected track.
+      - A change of `T`'s active slot is a source-identity move, and the importer follows it transactionally.
+    - One 0.5 MiB store stays sufficient. Per-track manifest stores belong to a later migration stage.
+    - The A/B compares flag 0 (every track on the snapshot) with flag 1 (`T` on the manifest, the rest on the
+      snapshot), so the reader for `T` is the only intended difference.
+    - C5.4 logs must pin the routing:
+      - `T`: `source=manifest`, the actual manifest identity, zero snapshot committed reads;
+      - a sounding non-target track: `source=snapshot`, zero manifest requests.
+    - The seam is compile-time (`#if`) at the implementation boundary: no runtime policy machinery, and today's path
+      is byte-identical with the flag off.
+23. **The routed track stays strict, and continuity comes before C5.4 (owner, 2026-11-01).**
+    - Measured on the host: the rolling lane serves 1,536 of 9,216 ticks of a steady 4-bar slot; the merged fallback
+      serves the other 83 %. Two reasons:
+      - the requester returns while `Serving`, so no successor is prepared;
+      - each window is positioned about 1.5 traversals ahead.
+    - **C5.3a (source authority).** On the designated track, a committed-window miss the lane owned is a named,
+      contained miss, never the merged fallback.
+      - The playhead still advances, so a missed interval stays missed and is not replayed.
+      - Turns the lane did not own (overdub, note edit, a deferred stop, a queued start) are counted separately.
+      - Option (b) is rejected: merged gaps would let the defective path play most of a "successful" overdub run.
+    - **Next, before C5.4:** the smallest source-independent continuity primitive from `playback-tick-consume-only`.
+      - The rule: serving does not suppress successor demand. While window N serves, N+1 is requested, built
+        off-clock and qualified, and is handed off atomically at N's end.
+      - First anchoring: `successor.begin = current.end`, with the existing window span.
+      - A missed successor is `WindowOwed` / a named miss: no merged fallback, no build from the tick.
+      - It is common to both probe builds (flag 0: snapshot source; flag 1: manifest source), so the A/B isolates
+        source authority from scheduling.
+    - **Gate before C5.4:** on a steady committed slot, lane-owned merged-fallback ticks are zero in both probe builds.
+      Non-lane-owned states stay named separately.
+    - Not pulled forward: wider preparation span, many-seam coverage, routing every length, recovery after
+      epoch/revision changes (the rest of 4.2b / 5.x / 6.x).
+    - Revised order: C5.3a → successor preparation → continuous handoff proven with flag 0 and 1 → C5.4
+      overdub-audibility A/B → the remaining 4.2b / 5.x / 6.x.
 
 ### Related
 

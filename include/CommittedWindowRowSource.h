@@ -8,15 +8,7 @@
 
 #include "LoopSnapshot.h"
 
-/// C5 gate (DEC-246 amendment 20): the manifest-backed committed reader exists only where it is enabled. Device images
-/// default to 0, so the default image carries none of its code; the native suites always build it.
-#ifndef REVISION_MANIFEST_READER
-#if defined(PIO_UNIT_TEST_NATIVE)
-#define REVISION_MANIFEST_READER 1
-#else
-#define REVISION_MANIFEST_READER 0
-#endif
-#endif
+#include "RevisionManifestReaderConfig.h"
 
 /// C5 (DEC-246 amendment 19): a committed coverage source other than the published snapshot, i.e. the RevisionManifest
 /// window. It honours the read contract of `LoopSnapshot::EventWindowCursor`, so the view fill and every later build

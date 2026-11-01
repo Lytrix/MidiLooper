@@ -1176,11 +1176,22 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
       PlaybackViewSourceIdentity served{};
       PlaybackCoverageInterval coverage{};
       const Loop* loop = presentation.owner;
+#if REVISION_MANIFEST_READER
+      // C5.3: on the routed slot the takeover reader is the servable manifest window, never the root.
+      if (loop == nullptr ||
+          (manifestLaneRoutesSlot(slot) ? false : !loop->publishedSnapshotIsCurrent()) ||
+          !publishedPlaybackWindowForSlot(slot, served, coverage) ||
+          served.playbackRevision != loop->playbackRevision ||
+          served.sourceGeneration != playbackGeneration ||
+          (manifestLaneRoutesSlot(slot) ? !manifestIdentityServable(slot, served)
+                                        : served.snapshotIdentity != loop->publishedSnapshotIdentity())) continue;
+#else
       if (loop == nullptr || !loop->publishedSnapshotIsCurrent() ||
           !publishedPlaybackWindowForSlot(slot, served, coverage) ||
           served.playbackRevision != loop->playbackRevision ||
           served.sourceGeneration != playbackGeneration ||
           served.snapshotIdentity != loop->publishedSnapshotIdentity()) continue;
+#endif
     }
     if (!cancelled && presentation.owner != nullptr &&
         presentation.owner->pendingSnapshotSessionExitQueued() &&
@@ -2926,8 +2937,16 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // below govern it -- and a successor nothing can advance expires the budget, is torn
   // through the build's own discard path, and the job still retires instead of parking its
   // raw range, its capture-stop owner and its ring slot forever.
+#if REVISION_MANIFEST_READER
+  const bool manifestRouted = manifestLaneRoutesSlot(job.slot);
+  const bool committedSourceCurrent = manifestRouted ? playbackWindowSourceIsCurrentForSlot(job.slot)
+                                                     : loop.publishedSnapshotIsCurrent();
+  if (runtime != nullptr && intervalHasGeometry && committedSourceCurrent &&
+      runtime->hasBoundRecordReturnWindowForPendingJob()) {
+#else
   if (runtime != nullptr && intervalHasGeometry && loop.publishedSnapshotIsCurrent() &&
       runtime->hasBoundRecordReturnWindowForPendingJob()) {
+#endif
     const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
     // The reader's takeover: the same terms `currentRootWindowServed` reads below, so the
     // hold and the release edge can never disagree about whether the root arrived.
@@ -2937,7 +2956,14 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
     const bool rootBackedReader = hasServedWindow &&
         servedIdentity.playbackRevision == loop.playbackRevision &&
         servedIdentity.sourceGeneration == playbackGeneration &&
-        servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity();
+#if REVISION_MANIFEST_READER
+        (manifestRouted ? manifestIdentityServable(job.slot, servedIdentity) :
+#endif
+        servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity()
+#if REVISION_MANIFEST_READER
+        )
+#endif
+        ;
     // In flight: the route's build is the lane's only admitted build that carries **no
     // position at all** (item 2 -- no fabricated deadline) while the frozen reader serves.
     // Launch preparations and the cold requested-frame route are excluded by their own state.
@@ -2958,7 +2984,14 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
           ready.complete && !ready.published && !ready.rawCoveragePrepared &&
           ready.source.origin == PlaybackWindowOrigin::Committed &&
           ready.source.sourceGeneration == playbackGeneration &&
-          ready.source.snapshotIdentity == loop.publishedSnapshotIdentity() &&
+#if REVISION_MANIFEST_READER
+          (manifestRouted ? manifestIdentityServable(job.slot, ready.source) :
+#endif
+          ready.source.snapshotIdentity == loop.publishedSnapshotIdentity()
+#if REVISION_MANIFEST_READER
+          )
+#endif
+          &&
           ready.coverage.loopLengthTicks == loop.loopLengthTicks;
       const bool frozenCaptureSuccessor =
           ready.complete && !ready.published &&
@@ -3009,8 +3042,15 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // until a complete current-root successor has actually been adopted during
   // playback. The copied serving view then outlives the raw source extent.
   bool currentRootWindowServed = false;
+#if REVISION_MANIFEST_READER
+  const bool takeoverRouted = manifestLaneRoutesSlot(job.slot);
+  if (runtime != nullptr && intervalHasGeometry &&
+      (takeoverRouted ? playbackWindowSourceIsCurrentForSlot(job.slot) : loop.publishedSnapshotIsCurrent()) &&
+      isAudiblePlaybackActive() && loop.lastTickInLoop != UINT32_MAX) {
+#else
   if (runtime != nullptr && intervalHasGeometry && loop.publishedSnapshotIsCurrent() &&
       isAudiblePlaybackActive() && loop.lastTickInLoop != UINT32_MAX) {
+#endif
     PlaybackViewSourceIdentity servedIdentity{};
     PlaybackCoverageInterval servedCoverage{};
     const bool hasServedWindow = publishedPlaybackWindowForSlot(
@@ -3018,8 +3058,14 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
     const bool sameCommittedRevision = hasServedWindow &&
         servedIdentity.playbackRevision == loop.playbackRevision &&
         servedIdentity.sourceGeneration == playbackGeneration;
+#if REVISION_MANIFEST_READER
+    currentRootWindowServed = sameCommittedRevision &&
+        (takeoverRouted ? manifestIdentityServable(job.slot, servedIdentity)
+                        : servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity());
+#else
     currentRootWindowServed = sameCommittedRevision &&
         servedIdentity.snapshotIdentity == loop.publishedSnapshotIdentity();
+#endif
     // The copied frozen Capture view keeps its pre-publication revision when
     // the whole root advances. Do not require today's committed revision to
     // recognize the still-serving job source; release waits for a complete

@@ -9,6 +9,7 @@
 
 #include "ActiveNoteLedger.h"
 #include "MidiEvent.h"
+#include "RevisionManifestReaderConfig.h"
 
 #ifndef PLAYBACK_WINDOW_ROLLING_ENABLED
 #define PLAYBACK_WINDOW_ROLLING_ENABLED 0
@@ -175,10 +176,19 @@ struct PlaybackViewSourceIdentity {
 
   /// Loop-owned live Capture content receipt; zero for other source origins.
   uint64_t captureContentGeneration = 0;
+#if REVISION_MANIFEST_READER
+  /// C5.3 (DEC-246 amendment 22): the RevisionManifest identity a committed window of the designated track actually
+  /// read; zero for every snapshot-backed or non-committed source. Part of equality, so a manifest window never equals
+  /// a snapshot window of the same revision, nor one read from another manifest.
+  uint32_t manifestIdentity = 0;
+#endif
   __attribute__((noinline)) bool operator==(const PlaybackViewSourceIdentity& other) const {
     return playbackRevision == other.playbackRevision &&
            sourceGeneration == other.sourceGeneration &&
            snapshotIdentity == other.snapshotIdentity && origin == other.origin &&
+#if REVISION_MANIFEST_READER
+           manifestIdentity == other.manifestIdentity &&
+#endif
            captureContentGeneration == other.captureContentGeneration;
   }
 };

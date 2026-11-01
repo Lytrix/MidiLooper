@@ -1,5 +1,19 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-01 — revision-manifest C5.3a (host): the designated track's committed lane reads RevisionManifest only (DEC-246 amendments 22–23).**
+- **Routing.** Track `REVISION_MANIFEST_READER_TRACK`'s active slot is served from the manifest through
+  `CommittedManifestLane`. Other tracks keep the snapshot reader, and selection never moves this.
+- **Named misses.** Owed states (`ImportOwed` / `NoCommittedSource` / `IndexOwed` / `CapacityDenied` / `SourceMoved`)
+  are named. A lane-owned miss is contained and never uses the merged fallback; the tick only reads `gServable`.
+- **Tests.** `test_revision_manifest_lane`: 9 cases, mutation-checked, plus an independent review (two should-fix defects fixed and pinned).
+- **Builds.** The default and flag-0 probe HEX are byte-identical to `e3fb9598`. The flag-1 env
+  `teensy41-capture-serial-revstore-reader` is 392,280 + 936 (floor 840). Not flashed.
+- **Finding.** The rolling lane serves only 17 % of a steady slot; the merged fallback serves 83 %, because no
+  successor is prepared while serving.
+- **Next.** C5.3b, source-independent successor preparation, gated on zero lane-owned merged ticks in both probe
+  builds, then the C5.4 A/B.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-01-c5-3a-manifest-lane-source-authority.md)
+
 **2026-11-01 — revision-manifest C5.1 + C5.2 (host): the manifest window gives the playback consumer the snapshot window's exact tuple.** The committed lane's fill (`EventWindowCursor` → `RuntimePlaybackViewFill` `SnapshotWindow` → canonical order → ranks → playback order) now has a second source behind `REVISION_MANIFEST_READER`: `CommittedWindowRowSource` / `RevisionStore::ManifestWindowCursor` (scope `ManifestWindow`, same downstream phases; named `SourceMoved` / `ImportOwed` / `IndexOwed` / `CapacityDenied`; snapshot shapes only; never imports, indexes or scans). Ranks are consumer-visible (`RuntimePlaybackBridge` indexes masks by them), so the store's window stamps each row with its manifest-wide source position and the cursor keys rows pass-major like the snapshot. `test_playback_prewarm`: over four coverages of real committed passes with a current root, the event, phase, rank and committed provenance are equal row for row (window-index ranks fail the fixture); refusals pinned. Native 3,916 / 8 skipped / 3,908; default and probe images unchanged (391,944 / 1,272 and 392,072 / 1,144); probe with flag 1 at 392,216 / 1,000 (160 B ITCM headroom for C5.3). Next: C5.3 lane switch. [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-01-c5-1-2-consumer-contract.md)
 
 **2026-11-01 — owner reversed the C5 sequencing (DEC-246 amendment 21): C5.1–C5.3 proceed now behind the probe flag.** C5 needs only the hard consume-only boundary (DEC-241, already on this branch, which contains `feature/unified-rolling-playback-path` at `83e7b60c`): the tick consumes a qualified manifest window or owes it, and never imports, indexes or builds. Overdub audibility: no further legacy-reader repair; its RED is the C5 A/B discriminator (flag ON plays the overdubs → the old source is superseded; still lost → a downstream defect that blocks C5). `playback-tick-consume-only` 5.0 is deferred (superseded if manifest reboot qualification passes); 4.2b / 5.1–5.3 / 6.x are done against the manifest-backed lane, 7 stays, and 8 runs once on the combined architecture.

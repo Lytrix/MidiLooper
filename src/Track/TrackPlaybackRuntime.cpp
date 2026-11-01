@@ -4,6 +4,7 @@
 
 #include "TrackPlaybackRuntime.h"
 #include "Loop.h"
+#include "CommittedManifestLane.h"
 
 #include <cstdlib>
 #include <limits>
@@ -2347,15 +2348,34 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepCoverageQualificat
   if (coveragePreparation != CoveragePreparation::Counting || !quantum) return false;
   const auto result = viewBuild.stepCoverageQualification(quantum);
   coverageEventCount = static_cast<uint32_t>(viewBuild.qualifiedEventCount());
+#if REVISION_MANIFEST_READER
+  coverageSourceUnits = static_cast<uint32_t>(coverageSourceReadUnits());
+  if (result == RuntimePlaybackViewFillResult::Denied && ownsManifestCoverage()) {
+    // The read ended by name (`SourceMoved`, `IndexOwed`, `CapacityDenied`): the candidate is discarded, never
+    // published, and the demand is owed again. Nothing else is read in its place.
+    const auto why = CommittedManifestLane::gReader->windowResult();
+    ++CommittedManifestLane::gCounters.owed[static_cast<uint8_t>(why)];
+    frozenViewRequest.reason = why == CommittedManifestLane::State::CapacityDenied ||
+            coverageEventCount > RuntimePlaybackViewConfig::kWindowAdmissionLimit
+        ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity : PlaybackViewPendingReason::SourceNotCurrent;
+    retireCoverageSource();
+    return false;
+  }
+#else
   coverageSourceUnits = static_cast<uint32_t>(coverageSource.readUnits());
+#endif
   if (result == RuntimePlaybackViewFillResult::Denied) {
     frozenViewRequest.reason = coverageEventCount > RuntimePlaybackViewConfig::kWindowAdmissionLimit
         ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity : PlaybackViewPendingReason::SourceNotCurrent;
     retireCoverageSource();
     return false;
   }
-  if (result == RuntimePlaybackViewFillResult::Complete)
+  if (result == RuntimePlaybackViewFillResult::Complete) {
     coveragePreparation = CoveragePreparation::AwaitAdmission;
+#if REVISION_MANIFEST_READER
+    if (ownsManifestCoverage()) ++CommittedManifestLane::gCounters.windowsCompleted;
+#endif
+  }
   return true;
 }
 
@@ -2377,7 +2397,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   // applies, so the window is only ever prepared privately and never served before it is valid.
   const bool privateRootReturn =
       frozenViewRequest.reason == PlaybackViewPendingReason::PrivateRootReturnPreparation;
+#if REVISION_MANIFEST_READER
+  if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSourceComplete() ||
+#else
   if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSource.complete() ||
+#endif
       !frozenViewRequest.active || frozenViewRequest.positionInvalidated ||
       (!launch && !cold && !privateRootReturn &&
        (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
@@ -2389,7 +2413,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   // cannot discharge that request until the single successor role is free.
   if (!set || set->lifecycle.build >= set->views.size() ||
       (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) ||
+#if REVISION_MANIFEST_READER
+      coverageSourceReadUnits() != coverageSourceUnits) return false;
+#else
       coverageSource.readUnits() != coverageSourceUnits) return false;
+#endif
   const auto& candidate = set->views[set->lifecycle.build];
   if (!(candidate.source == frozenViewRequest.source) || candidate.storage.eventCount != coverageEventCount ||
       candidate.coverage.startPhase != frozenViewRequest.coverage.startPhase ||
@@ -2419,7 +2447,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::retireCoverageSource() {
+#if REVISION_MANIFEST_READER
+  const bool manifest = ownsManifestCoverage();
+  if (coverageSource.idle() && !manifest) return;
+#else
   if (coverageSource.idle()) return;
+#endif
   if (viewBuild.coverageOwned()) viewBuild.discard();
   // Cancellation must not erase a newer request. Coalesce the frozen obligation
   // behind it using the existing retention rule (oldest compatible position).
@@ -2438,6 +2471,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::retireCoverageSource()
     }
     frozenViewRequest = {};
   }
+#if REVISION_MANIFEST_READER
+  if (manifest) {
+    releaseManifestCoverage();  // no retirement steps: the read's pin ends here
+    return;
+  }
+#endif
   coverageSource.beginRelease();
   coveragePreparation = CoveragePreparation::Retiring;
 }
@@ -2447,6 +2486,60 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepCoverageSourceReti
   if (coverageSource.stepRelease(quantum)) coveragePreparation = CoveragePreparation::Idle;
   return true;
 }
+
+#if REVISION_MANIFEST_READER
+#if defined(__IMXRT1062__)
+// C5.3: the lane's report-only counters, RAM2 NOLOAD (zeroed by the reader owner before it installs itself).
+DMAMEM CommittedManifestLane::Counters CommittedManifestLane::gCounters;
+#endif
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::ownsManifestCoverage() const {
+  return CommittedManifestLane::gWindowOwner == this;
+}
+
+/// C5.3: the snapshot qualification's own preconditions and freeze, over the reader's manifest window read. The read
+/// was begun by the lane's producer turn for exactly the demand's manifest identity; this runtime now holds it.
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginManifestCoverageQualification(
+    CommittedWindowRowSource& source, bool keepCaptureReady) {
+  if (CommittedManifestLane::gWindowOwner != nullptr || !coverageRoleAvailable(keepCaptureReady) ||
+      !pendingViewRequest_.active ||
+      (pendingViewRequest_.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+       pendingViewRequest_.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedLaunch)) return false;
+  CommittedManifestLane::gWindowOwner = this;
+  CommittedManifestLane::gWindowSource = &source;
+  auto* set = viewSetIfPrewarmed();
+  if (!viewBuild.beginCoverageQualification(set->views[set->lifecycle.build], source,
+      pendingViewRequest_.source, pendingViewRequest_.coverage)) {
+    releaseManifestCoverage();
+    return false;
+  }
+  frozenViewRequest = pendingViewRequest_;
+  clearViewPendingRequest();
+  coverageEventCount = 0;
+  coverageSourceUnits = 0;
+  coveragePreparation = CoveragePreparation::Counting;
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseManifestCoverage() {
+  if (!ownsManifestCoverage()) return;
+  if (CommittedManifestLane::gReader != nullptr) CommittedManifestLane::gReader->endWindow();
+  CommittedManifestLane::gWindowOwner = nullptr;
+  CommittedManifestLane::gWindowSource = nullptr;
+  coveragePreparation = CoveragePreparation::Idle;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageSourceComplete() const {
+  return ownsManifestCoverage() ? CommittedManifestLane::gWindowSource->complete() : coverageSource.complete();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM size_t LoopPlaybackRuntime::coverageSourceReadUnits() const {
+  return ownsManifestCoverage() ? CommittedManifestLane::gWindowSource->readUnits() : coverageSource.readUnits();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM size_t LoopPlaybackRuntime::coverageSourceReleaseUnitBound() const {
+  return ownsManifestCoverage() ? 0 : coverageSource.qualifiedReleaseUnitBound();
+}
+#endif
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingBar(
     uint32_t ticksPerBar, const RuntimePlaybackViewBuild::PreparationTurn* primary,
@@ -3532,8 +3625,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // identity, and adds 16 B on this ABI (7,808 -> 7,824; compiler measured): two counts + the certified flag + a
 // report-only resume counter. The runtime is extmem-allocated per slot, so no `Track` field and no RAM1 byte grows;
 // the cost is external-pool bytes, re-based here explicitly as the architectural price.
+#if REVISION_MANIFEST_READER
+// C5.3 (DEC-246 amendment 22): 7,848 -> 8,024 B (+176) on the flag-1 probe, compiler measured: the manifest identity in
+// every view source identity the runtime holds. Extmem per slot, no RAM1 byte; the default image (flag 0) is unchanged.
+static_assert(sizeof(LoopPlaybackRuntime) == 8024,
+              "I5/C5.3: target per-slot runtime with the manifest identity in each view source identity");
+#else
 static_assert(sizeof(LoopPlaybackRuntime) == 7848,
               "I5: target per-slot runtime measured after the committed-history certification");
+#endif
 // CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
 // (compiler measured on `teensy41-capture-serial`). The cursor is interval-qualified state, and it
 // lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
@@ -3592,7 +3692,15 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // (9,896 -> 9,944 host; compiler measured). The runtime is extmem-allocated per slot, so RAM1 is
 // unchanged and no `Track` field grows.
 // task 6.4c (DEC-177): 9,944 -> 9,960 host (+16 B), compiler measured; extmem per slot, RAM1 unchanged.
+#if REVISION_MANIFEST_READER
+// C5.3 (DEC-246 amendment 22): 9,984 -> 10,160 host (+176 B), compiler measured: the manifest identity (4 B, 8 with
+// this ABI's padding) in every view source identity the runtime holds. Extmem per slot; the default device image does
+// not carry the field (flag 0).
+static_assert(sizeof(LoopPlaybackRuntime) == 10160,
+              "I5/C5.3: host per-slot runtime with the manifest identity in each view source identity");
+#else
 static_assert(sizeof(LoopPlaybackRuntime) == 9984,
               "I5: host per-slot runtime measured after the committed-history certification");
+#endif
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

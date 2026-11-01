@@ -22,6 +22,9 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # the finalization suite's real Track/Loop/storage closure with the rolling reader enabled, so it
     # needs the same Arduino/SD hardware boundaries and the same dead-strip settings.
     "test_rolling_record_retirement",
+    # revision-manifest-prototype C5.3: the designated track's manifest-backed committed lane over the same real
+    # Track/Loop/storage closure with the rolling reader enabled.
+    "test_revision_manifest_lane",
     "test_playback_read_witness",
     # S3 gate: the runtime working-set acceptance suite drives the production admission paths
     # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the

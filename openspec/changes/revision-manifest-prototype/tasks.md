@@ -176,7 +176,25 @@ timing and memory envelope without introducing real-time construction?
         (`SourceMoved`, `ImportOwed`, `CapacityDenied`, with the pin released); the snapshot cursor's shapes only;
         behind `REVISION_MANIFEST_READER`. Default and flag-0 images unchanged; flag 1 adds +144 B ITCM (160 B headroom
         left).
-  - [ ] C5.3 lane switch behind `REVISION_MANIFEST_READER` (probe env)
+  - [x] C5.3a lane switch, source authority (DEC-246 amendments 22–23).
+    - Routing: only the designated track's (`REVISION_MANIFEST_READER_TRACK`) active slot reads committed windows from
+      the manifest, through the seam `CommittedManifestLane`. Other tracks keep the snapshot reader. Selection never
+      moves this, and `RevisionShadow` imports the designated track.
+    - Owed states are named on the build gate and in rows: `ImportOwed`, `NoCommittedSource`, `IndexOwed`,
+      `CapacityDenied`, `SourceMoved`.
+    - No retained gather, paged ring, root read or merged fallback for a lane-owned miss. A miss is contained, with the
+      playhead recorded.
+    - New env `teensy41-capture-serial-revstore-reader` (flag 1).
+    - Native: `test_revision_manifest_lane`, 9 cases, each discriminated by a mutation; an independent review found two should-fix defects (a stale snapshot cold-ready wedge, a note hanging over a gap), both fixed and pinned.
+    - Builds: the default and flag-0 probe HEX are byte-identical to `HEAD` (pinned date, same path); flag 1 is
+      392,280 + 936.
+    - [Evidence](evidence/2026-11-01-c5-3a-manifest-lane-source-authority.md)
+  - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds.
+    - The rule: serving does not suppress successor demand. While window N serves, request N+1 at
+      `begin = N.end` with the existing span, build it off-clock, and hand off atomically at N's end.
+    - A missed successor is a named miss: no merged fallback, no tick build.
+    - Gate: on a steady committed slot, lane-owned merged-fallback ticks are 0 with flag 0 and with flag 1. Measured
+      before this slice: 83 % (7,680 of 9,216).
   - [ ] C5.4 device A/B (probe flag 0 / 1, same stimulus): current-boot owner chain + reboot-restored; timing
 - [ ] C6 Remove the corresponding old reader after device parity.
 

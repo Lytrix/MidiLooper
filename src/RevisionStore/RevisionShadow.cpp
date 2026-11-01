@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "CommittedEventRange.h"
+#include "CommittedManifestLane.h"
+#include "RevisionStore/ManifestWindowCursor.h"
 #include "RevisionStore/RevisionImport.h"
 #include "RevisionStore/RevisionStore.h"
 #include "Track.h"
@@ -125,19 +127,107 @@ struct State {
   uint32_t duplicatePublishes = 0;   // a publication of a source identity already published (DEC-246 amendment 12)
   uint32_t indexesPublished = 0;
   uint32_t capacityDenied = 0;
+  uint32_t producerYields = 0;       // C5.3: digest-producer windows cancelled because the lane began its read
 } gState;
 
 uint32_t cyclesToUs(uint32_t cycles) { return cycles / (F_CPU_ACTUAL / 1000000u); }
 
 SourceIdentity identityOfSelected() {
   SourceIdentity id;
+#if REVISION_MANIFEST_READER
+  // C5.3 (DEC-246 amendment 22): the shadow imports the designated track's active slot; UI selection moves nothing.
+  id.track = REVISION_MANIFEST_READER_TRACK;
+#else
   id.track = trackManager.getSelectedTrackIndex();
+#endif
   if (id.track >= trackManager.getTrackCount()) return id;
   const Track& track = trackManager.getTrack(id.track);
   id.slot = track.getActiveLoopIndex();
   id.key = importSourceKeyOf(track.getActiveLoop());
   return id;
 }
+
+#if REVISION_MANIFEST_READER
+using LaneCursor = ManifestWindowCursor<ShadowCap>;
+
+CommittedManifestLane::State laneStateOf(WindowResult r) {
+  switch (r) {
+    case WindowResult::IndexOwed: return CommittedManifestLane::State::IndexOwed;
+    case WindowResult::ImportOwed: return CommittedManifestLane::State::ImportOwed;
+    case WindowResult::CapacityDenied: return CommittedManifestLane::State::CapacityDenied;
+    case WindowResult::SourceMoved: return CommittedManifestLane::State::SourceMoved;
+    case WindowResult::Pending: return CommittedManifestLane::State::WindowOwed;
+    default: return CommittedManifestLane::State::Ready;
+  }
+}
+
+/// C5.3: the shadow as the designated track's reader owner. Metadata answers and the one window read; the import, the
+/// edit index and the digest producer stay on the registered idle children. The read's staging is the digest
+/// producer's buffer: the producer yields while the lane holds the read, so the flag-1 image allocates one cursor only.
+class ShadowReader final : public CommittedManifestLane::Reader {
+ public:
+  LaneCursor* cursor = nullptr;  // PSRAM, placed at boot
+
+  CommittedManifestLane::Source current(const Loop& loop) override {
+    using CommittedManifestLane::State;
+    CommittedManifestLane::Source s{};
+    if (gState.store == nullptr || cursor == nullptr) return s.state = State::CapacityDenied, s;  // pool refused
+    if (!loop.hasCommittedPasses()) return s.state = State::NoCommittedSource, s;
+    ShadowStore& store = *gState.store;
+    const ManifestId m = store.current();
+    const SourceIdentity source = identityOfSelected();
+    if (m == kNoManifest || !(gState.published == source) || gState.published.key != importSourceKeyOf(loop))
+      return s.state = State::ImportOwed, s;
+    const IndexRequest index = store.requestIndex(m);  // playback demand; never builds here
+    if (index == IndexRequest::IndexCapacityDenied) return s.state = State::CapacityDenied, s;
+    if (index != IndexRequest::NotNeeded && index != IndexRequest::Ready) return s.state = State::IndexOwed, s;
+    s.state = State::Ready;
+    s.identity = store.identityOf(m);
+    s.revision = store.manifest(m).revision;
+    s.sourceRevision = gState.published.key.playbackRevision;
+    return s;
+  }
+
+  CommittedWindowRowSource* beginWindow(uint32_t identity, uint32_t revision, uint32_t startTick, uint32_t lengthTicks,
+                                        uint32_t loopLengthTicks, CommittedManifestLane::State& refusal) override {
+    if (gState.store == nullptr || cursor == nullptr) {
+      refusal = CommittedManifestLane::State::CapacityDenied;
+      return nullptr;
+    }
+    ShadowStore& store = *gState.store;
+    // One producer at a time: the digest producer's window yields to the lane and restarts that window later.
+    if (store.windowActive()) {
+      store.cancelWindow();
+      gState.producerHashed = 0;
+      gState.producerDigest = Digest{};
+      ++gState.producerYields;
+    }
+    const WindowResult r =
+        cursor->begin(store, store.current(), identity, revision, startTick, lengthTicks, loopLengthTicks);
+    if (r != WindowResult::Pending) {
+      refusal = laneStateOf(r);
+      return nullptr;
+    }
+    return cursor;
+  }
+
+  CommittedManifestLane::State windowResult() const override {
+    return cursor != nullptr ? laneStateOf(cursor->result()) : CommittedManifestLane::State::CapacityDenied;
+  }
+  void endWindow() override {
+    if (cursor != nullptr) cursor->cancel();
+  }
+  bool reading() const { return cursor != nullptr && !cursor->idle(); }
+};
+ShadowReader gReader;
+
+void installManifestReader() {
+  void* cursor = extmem_malloc(sizeof(LaneCursor));
+  if (cursor != nullptr) gReader.cursor = new (cursor) LaneCursor(gState.producerOut, kProducerCapacity);
+  CommittedManifestLane::gCounters = {};  // RAM2 NOLOAD: zeroed before the reader can route anything
+  CommittedManifestLane::gReader = &gReader;  // installed even if refused: the reader then names CapacityDenied
+}
+#endif
 
 }  // namespace
 
@@ -154,6 +244,10 @@ void initAtBoot() {
     if (window != nullptr) extmem_free(window);
     if (producer != nullptr) extmem_free(producer);
     gState.initRefused = true;
+#if REVISION_MANIFEST_READER
+    CommittedManifestLane::gCounters = {};      // RAM2 NOLOAD: zeroed before the reader can route anything
+    CommittedManifestLane::gReader = &gReader;  // static routing: the designated track's reader answers CapacityDenied
+#endif
     return;
   }
   gState.store = new (arena) ShadowStore();  // once, at boot; nothing is allocated afterwards
@@ -162,12 +256,18 @@ void initAtBoot() {
   gState.producerOut = static_cast<PassEvent*>(producer);
   gState.digests = static_cast<WindowDigest*>(digests);
   for (uint8_t i = 0; i < kDigestCount; ++i) new (&gState.digests[i]) WindowDigest();
+#if REVISION_MANIFEST_READER
+  installManifestReader();
+#endif
 }
 
 // C3d: the registered `RevisionShadowWindowGrain` child. Consecutive 2-bar windows of the current shadow manifest,
 // each digested and labelled with the identity it actually read. A new manifest identity restarts the table.
 static void serviceWindowProducer(bool timingCritical) {
   ShadowStore& store = *gState.store;
+#if REVISION_MANIFEST_READER
+  if (gReader.reading()) return;  // the store's one window job belongs to the lane's read (DEC-246 amendment 19)
+#endif
   const ManifestId current = store.current();
   // One manifest identity -> each window produced once; a complete table is not rebuilt until the identity moves.
   const bool identityMoved = current != kNoManifest && store.identityOf(current) != gState.producerIdentity;
@@ -350,6 +450,24 @@ void printStatus() {
                   static_cast<unsigned long>(gState.windowsCapacityDenied),
                   static_cast<unsigned long>(gState.windowsSourceMoved),
                   static_cast<unsigned long>(gState.duplicatePublishes));
+#if REVISION_MANIFEST_READER
+  {
+    // C5.3/C5.4 routing proof: the designated track's lane served from the manifest, with no merged gap reads.
+    const auto& c = CommittedManifestLane::gCounters;
+    Serial.printf_P(PSTR("REVSHADOW,lane,track=%u,source=manifest,servable=%lu,state=%u,begun=%lu,completed=%lu,"
+                         "published=%lu,legacy_refused=%lu,legacy_gated=%lu,producer_yields=%lu,import_owed=%lu,"
+                         "index_owed=%lu,capacity_denied=%lu,source_moved=%lu,no_committed_source=%lu\r\n"),
+                    static_cast<unsigned>(REVISION_MANIFEST_READER_TRACK),
+                    static_cast<unsigned long>(CommittedManifestLane::gServable.identity),
+                    static_cast<unsigned>(CommittedManifestLane::gServable.state),
+                    static_cast<unsigned long>(c.windowsBegun), static_cast<unsigned long>(c.windowsCompleted),
+                    static_cast<unsigned long>(c.windowsPublished), static_cast<unsigned long>(c.legacyRefused),
+                    static_cast<unsigned long>(c.legacyGated), static_cast<unsigned long>(gState.producerYields),
+                    static_cast<unsigned long>(c.owed[2]), static_cast<unsigned long>(c.owed[3]),
+                    static_cast<unsigned long>(c.owed[5]), static_cast<unsigned long>(c.owed[6]),
+                    static_cast<unsigned long>(c.owed[1]));
+  }
+#endif
   // Per-pass grid phase (stopped-only diagnostic): each imported run's first NoteOn and its NoteOn histogram over the
   // tick offset from the 16th grid. Identical patterns overdubbed onto themselves should share the Record's phase.
   if (store.current() != kNoManifest) {

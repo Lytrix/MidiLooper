@@ -27,6 +27,7 @@
 // Included for `TRACK_COLD_MEM` (task 3.15g accessors are defined out of line and FLASH-placed).
 #include "LoopEventStore.h"
 #include "TrackPlaybackRuntime.h"
+#include "CommittedManifestLane.h"
 #include "Slot.h"
 #include "LoopPool.h"
 #include "Globals.h"
@@ -697,6 +698,25 @@ public:
   /// from; it deliberately does not replace `Loop::publishedSnapshotIsCurrent()` where that answer is the checkpoint /
   /// effective-content authority's (DEC-114), and it changes nothing a gate row reports about the root itself.
   bool playbackWindowSourceIsCurrentForSlot(uint8_t slotIndex) const;
+#if REVISION_MANIFEST_READER
+  /// C5.3 (DEC-246 amendment 22): the committed-window source seam. True only for the designated track's active slot
+  /// while a reader is installed; such a slot's committed windows read the manifest and nothing else.
+  bool manifestLaneRoutesSlot(uint8_t slotIndex) const;
+  /// Main-loop only: ask the reader (metadata only) and publish the routed slot's servability to the tick words.
+  CommittedManifestLane::State refreshManifestLane(uint8_t slotIndex);
+  /// The routed slot's currency for a window identity: the actual manifest identity is the servable one, imported from
+  /// the loop's current source revision. Reads the tick words only (consume-only, either context).
+  bool manifestIdentityServable(uint8_t slotIndex, const PlaybackViewSourceIdentity& source) const;
+  /// The routed slot's producer turn: stamp the demand with the servable identity and begin its window read.
+  PlaybackViewTurnResult beginManifestQualificationForSlot(uint8_t slotIndex, bool keepCaptureReady);
+  /// A Committed window's identity against the slot's live committed source: the servable manifest identity on the
+  /// routed slot, the published root (when current) everywhere else.
+  bool committedRootIdentityStale(uint8_t slotIndex, const PlaybackViewSourceIdentity& source) const;
+  /// "Is the slot's committed source current": the servable manifest on the routed slot, `owner`'s root elsewhere.
+  bool committedSourceCurrentForSlot(uint8_t slotIndex, const Loop& owner) const;
+  /// The identity a Committed window of the slot's current source carries.
+  PlaybackViewSourceIdentity committedSourceIdentityForSlot(uint8_t slotIndex, const Loop& owner) const;
+#endif
   /// Task 3.7a (I2): begin the **retained-source gather** for this slot's pending demand -- freezing the demand, exactly
   /// as `beginCoverageQualification` does for the root-backed path -- or refuse by name with the demand left owed and
   /// the reason recorded (`LoopPlaybackRuntime::retainedGatherRefusal`). Off-clock only.
@@ -2174,8 +2194,15 @@ private:
     // Capacity bump (owner request): FIFO 4 -> 8 jobs and custody 5 -> 9 receipts. Measured
     // 29,632 -> 33,088 B = +4 x 744 B job + 4 x 120 B receipt. Track stays 384 B; the ring is
     // external and the post-link guard owns RAM1 placement.
+#if REVISION_MANIFEST_READER
+    // C5.3 (DEC-246 amendment 22): the view source identities the jobs carry gain the manifest identity (+64 B,
+    // compiler measured on the flag-1 probe). External, so no RAM1 byte; the default image has no such field.
+    static_assert(sizeof(CaptureStopJobs) == 33152,
+                  "C5.3: target external stop ring with the manifest identity is 33,152 B; remeasure before changing");
+#else
     static_assert(sizeof(CaptureStopJobs) == 33088,
                   "capacity bump: target external stop ring is 33,088 B; remeasure before changing");
+#endif
 #endif
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
