@@ -1229,6 +1229,44 @@ void test_import_source_moving_mid_build_cancels_the_candidate() {
   TEST_ASSERT_EQUAL_UINT8(0, gImport.stagedRunCount());
 }
 
+// Device crash 2026-11-01 (null read in stepCaptures during overdubs): production may rebuild its pass vectors with the
+// same content, so the source key does not move but the storage does. The job keeps ids, never pointers, across steps:
+// a rebuilt vector mid-import gives exactly the content of a fresh import.
+void test_import_survives_pass_storage_rebuilt_with_the_same_content() {
+  Loop loop;
+  buildImportSource(loop);
+  commitWithChanges(loop, false, {{700, 0x90, 3, 60, 90}, {800, 0x80, 3, 60, 0}}, {});
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.begin(loop, gImport));
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.step(16));
+  {
+    // Same content, new storage; the old storage is poisoned before it is released.
+    auto overdubs = loop.passes.overdubPasses;
+    loop.passes.overdubPasses.swap(overdubs);
+    for (OverdubPass& old : overdubs) {
+      old.committedChunkIds.clear();
+      old.id = 0;
+    }
+  }
+  ImportStep step = ImportStep::Pending;
+  for (uint32_t i = 0; i < 10000 && step == ImportStep::Pending; ++i) step = gJob.step(16);
+  TEST_ASSERT_EQUAL(ImportStep::Published, step);
+  const ComposeStamp a = gImport.composeWindow(gImport.current(), 0, loop.loopLengthTicks, gOut, 8192,
+                                               EffectivePolicy::source());
+  std::vector<PassEvent> rebuilt(gOut, gOut + a.count);
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, gImport));
+  const ComposeStamp b = gImport.composeWindow(gImport.current(), 0, loop.loopLengthTicks, gOut, 8192,
+                                               EffectivePolicy::source());
+  TEST_ASSERT_EQUAL_UINT32(b.count, a.count);
+  for (uint32_t i = 0; i < a.count; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(gOut[i].tick, rebuilt[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(gOut[i].status, rebuilt[i].status);
+    TEST_ASSERT_EQUAL_UINT8(gOut[i].data1, rebuilt[i].data1);
+    TEST_ASSERT_EQUAL_UINT32(gOut[i].noteId, rebuilt[i].noteId);
+  }
+}
+
 // Refusals happen before anything is written: capacity (atomic, conservative) and no committed source.
 void test_import_refusals_happen_before_anything_is_written() {
   Loop loop;
@@ -1296,6 +1334,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_collapse_matrix_edit_and_edit_replacements_measured);
   RUN_TEST(test_import_candidate_is_invisible_until_published);
   RUN_TEST(test_import_source_moving_mid_build_cancels_the_candidate);
+  RUN_TEST(test_import_survives_pass_storage_rebuilt_with_the_same_content);
   RUN_TEST(test_import_refusals_happen_before_anything_is_written);
   RUN_TEST(test_wrap_overlapping_same_pitch_notes_are_attributed_like_production);
   printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);

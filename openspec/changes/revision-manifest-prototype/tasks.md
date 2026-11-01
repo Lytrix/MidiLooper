@@ -142,7 +142,13 @@ timing and memory envelope without introducing real-time construction?
         on the same-pitch owner chain: `c4_clean=1`, whole loop 1,204/1,204 and 1,206/1,206, import max 197 µs —
         **but 0 hides** (production produced no companion edits either run).
         [Evidence](evidence/2026-11-01-c4a-pairing-and-whole-loop.md)
+  - [x] C4b: midifile chain recorded the Record take `startLoopTick mod 48` off the grid (316/316 NoteOns at +24);
+        the chain now anchors the record pattern on the device's `Recording started @ tick N` → 0/314 off grid.
+        Importer crash (null read in `stepCaptures`: pointers into production pass vectors) fixed with ids resolved
+        per step; RED → GREEN test. [Evidence](evidence/2026-11-01-c4b-hitl-alignment-and-import-crash.md)
   - [ ] Hide-carrying device run with `c4_clean=1` and an `import_phases` reading (names the 3,212 µs phase).
+        Blocked on production: exact overlaps are resolved (`lcr,part a=1`) but 9–12 of 12 overdub stops retire
+        "companion path skipped (canonical derivation unavailable); raw pass only", so no Delete companion is sealed.
   - [ ] Smaller shadow footprint; HITL validity re-check on the default image.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.

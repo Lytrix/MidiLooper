@@ -167,12 +167,18 @@ def stream_pattern(
     channel_1based: int,
     abort=None,
     wait_timeout_s: float = 2.0,
+    phase_origin_pulse: Optional[int] = None,
 ) -> dict[str, object]:
     """Emit ``pattern`` for ``total_clocks`` clocks from pulse ``start_pulse`` on the master grid.
 
     Every event is sent on the pulse it belongs to, so the device sees the pattern on its own
     clock grid rather than on host wall-clock jitter. Returns a small report for the run record.
+
+    ``phase_origin_pulse`` is the pulse at which pattern position 0 falls (default ``start_pulse``).
+    A later ``start_pulse`` then joins the pattern mid-cycle instead of restarting it, e.g. to keep
+    the pattern on the grid of a take whose start the device chose.
     """
+    origin = int(start_pulse) if phase_origin_pulse is None else int(phase_origin_pulse)
     channel = int(channel_1based) - 1
     sent = 0
     behind_pulses = 0
@@ -184,7 +190,7 @@ def stream_pattern(
         # How far the pump already is past this event's pulse: the honest measure of host pacing,
         # since a burst here means the note did not land on its own clock edge.
         behind_pulses = max(behind_pulses, master.pulses_sent() - (pulse + 1))
-        position = offset % pattern.clock_length
+        position = (pulse - origin) % pattern.clock_length
         for event in pattern.events_at(position):
             if event.note_on:
                 out_port.send(mido.Message("note_on", channel=channel, note=event.note,
@@ -198,5 +204,6 @@ def stream_pattern(
         "clocks": int(total_clocks),
         "events_sent": sent,
         "start_pulse": int(start_pulse),
+        "phase_origin_pulse": origin,
         "behind_pulses": behind_pulses,
     }

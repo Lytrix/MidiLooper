@@ -18,12 +18,18 @@ a musically coherent slice. Restarting the pattern at every pass would put the s
 every window and make the passes indistinguishable. The button is therefore an *event on the same
 pulse timeline as the notes*, not a phase boundary.
 
-Why the record press comes before Start
----------------------------------------
+Why the record pattern is anchored on the device's take start
+-------------------------------------------------------------
 ``MidiClockMaster.start()`` sends realtime ``Start``; the device resets its tick to 0 and holds it
-through the first pulse. Pressing Record **before** ``Start`` means the take is live when the grid
-origin arrives, so pattern position 0 lands on device tick 0 instead of wherever the host happened
-to be when the press returned.
+through the first pulse. The Record press is sent before ``Start``, but the device acts on it only
+when its short-press window expires, 15-20 clocks later (measured take starts at ticks 120, 128 and
+160), and it anchors the take there: ``startLoopTick = currentTick``, stored ticks are
+``tick - startLoopTick``. Streaming the record pattern from the grid origin therefore put the whole
+take off the grid by ``startLoopTick`` (2026-11-01: 316/316 Record NoteOns 24 ticks off the 16th grid,
+every overdub on it), so the same pattern overdubbed onto itself never overlapped and never hid a
+note. The run reads ``Recording started @ tick N`` from the capture log and streams the record
+pattern with position 0 on the take start (pulse ``origin + N / TICKS_PER_CLOCK``). Without a
+capture log the take start is unknown and the pattern stays on the grid origin (reported).
 
 Usage
 -----
@@ -66,6 +72,7 @@ from hitl.control_constants import (  # noqa: E402
 from hitl.midi_clock import MidiClockMaster  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_long_press, _send_short_press  # noqa: E402
 from hitl.midi_pattern import MidiPattern, load_midi_pattern, stream_pattern  # noqa: E402
+from hitl.serial_tick_anchor import TICKS_PER_CLOCK  # noqa: E402
 
 CONTROL_CHANNEL = CONTROL_CHANNEL_1BASED - 1
 CONTROL_VELOCITY = 127
@@ -569,10 +576,29 @@ def main(argv: Optional[list[str]] = None) -> int:
             # 8-tick take that then wedges the record stop. Land ~5 clocks short instead; the length
             # quantizes to the full bar count.
             stop_lead = _press_clocks(args.press_ms, args.bpm) + 2
+            record_end = grid + record_clocks - stop_lead
+            # Anchor the pattern on the take the device actually started (see the module docstring).
+            record_anchor = grid
+            stream_log_offset = record_log_offset
+            if capture_log is not None:
+                text, stream_log_offset = _wait_for_device_rows(
+                    capture_log, stream_log_offset,
+                    pattern=r"Recording started @ tick \d+", min_count=1, timeout_s=3.0,
+                    what="the Record start")
+                report["device_record_starts"] = 1
+                start_tick = int(re.search(r"Recording started @ tick (\d+)", text).group(1))
+                if start_tick % TICKS_PER_CLOCK != 0:
+                    raise RuntimeError(f"take start tick {start_tick} is not on a clock pulse")
+                record_anchor = grid + start_tick // TICKS_PER_CLOCK
+                report["record_take_start_tick"] = start_tick
+            report["record_phase_origin_pulse"] = record_anchor
+            # Notes before the take start are not captured; join the pattern at the next pulse not
+            # yet sent so no event is emitted late in a burst.
+            record_start = max(record_anchor, master.pulses_sent() + 1)
             report["phases"].append({"phase": "record", **stream_pattern(
                 out_port, master, record_pattern,
-                start_pulse=grid, total_clocks=record_clocks - stop_lead,
-                channel_1based=args.midi_channel)})
+                start_pulse=record_start, total_clocks=record_end - record_start,
+                channel_1based=args.midi_channel, phase_origin_pulse=record_anchor)})
             if args.record_stop_mode == "transport":
                 # End the take with the global transport stop. `--hold-clock-on-settle` keeps the host
                 # clock pump running through the settle (the I1 gate): the firmware's all-stopped
@@ -596,14 +622,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             # Device content gate: a host phase report is not proof that the Record press landed.
             # The 2026-10-31 chain-53 run sent 20 bars + 12 windows and the device accepted neither
-            # (`cap=0`); the resulting fast display numbers were empty/preview content.
-            stream_log_offset = record_log_offset
-            if capture_log is not None:
-                _, stream_log_offset = _wait_for_device_rows(
-                    capture_log, stream_log_offset,
-                    pattern=r"Recording started @ tick", min_count=1, timeout_s=3.0,
-                    what="the Record start")
-                report["device_record_starts"] = 1
+            # (`cap=0`); the take-start read above is that gate (it fails the run by name).
 
             # 2) One continuous chord stream under all the capture windows.
             settle_clocks = int(round(args.settle_beats * MIDI_CLOCKS_PER_BEAT))

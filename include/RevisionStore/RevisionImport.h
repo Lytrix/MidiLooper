@@ -244,9 +244,10 @@ class ImportJob {
         passes.recordPass.committedChunkIds.empty()) {
       return refuse(ImportResult::NoCommittedSource);
     }
-    // Capture passes in commit order.
+    // Capture passes in commit order. Only ids are kept across steps: production may rebuild its pass vectors with the
+    // same content (the source key does not move), so a pointer into them is never held past this call.
     passCount_ = 0;
-    lists_[passCount_++] = &passes.recordPass.committedChunkIds;
+    passIds_[passCount_++] = passes.recordPass.id;
     const OverdubPass* overdubs[Cap::kRunsPerManifest];
     uint8_t overdubCount = 0;
     for (const OverdubPass& pass : passes.overdubPasses) {
@@ -256,7 +257,7 @@ class ImportJob {
     }
     std::sort(overdubs, overdubs + overdubCount,
               [](const OverdubPass* a, const OverdubPass* b) { return a->mergeSequence < b->mergeSequence; });
-    for (uint8_t i = 0; i < overdubCount; ++i) lists_[passCount_++] = &overdubs[i]->committedChunkIds;
+    for (uint8_t i = 0; i < overdubCount; ++i) passIds_[passCount_++] = overdubs[i]->id;
     // Edit passes in id order, and their distinct targets.
     editCount_ = 0;
     targetCount_ = 0;
@@ -264,11 +265,13 @@ class ImportJob {
       if (edit.state != EditPassState::Active) continue;
       if (edit.passType != EditPassType::Note) return refuse(ImportResult::UnsupportedEditPass);
       if (editCount_ >= MaxEdits) return refuse(ImportResult::DeniedCapacity);
-      edits_[editCount_++] = &edit;
+      editIds_[editCount_++] = edit.id;
     }
-    std::sort(edits_, edits_ + editCount_, [](const EditPass* a, const EditPass* b) { return a->id < b->id; });
+    std::sort(editIds_, editIds_ + editCount_);
     for (uint16_t e = 0; e < editCount_; ++e) {
-      const NoteId target = edits_[e]->targetNoteId;
+      const EditPass* edit = resolveEdit(editIds_[e]);
+      if (edit == nullptr) return refuse(ImportResult::SourceMoved);
+      const NoteId target = edit->targetNoteId;
       if (target == kInvalidNoteId || findTarget(target) != kNoTarget) continue;
       if (targetCount_ >= MaxEditTargets) return refuse(ImportResult::DeniedCapacity);
       insertTarget(target);
@@ -278,7 +281,9 @@ class ImportJob {
     uint32_t pages = 0;
     for (uint8_t p = 0; p < passCount_; ++p) {
       uint32_t rows = 0;
-      for (const uint16_t chunk : *lists_[p]) rows += LoopEventStore::chunkUsedCount(chunk);
+      const CommittedChunkIdList* list = resolveList(p);
+      if (list == nullptr) return refuse(ImportResult::SourceMoved);
+      for (const uint16_t chunk : *list) rows += LoopEventStore::chunkUsedCount(chunk);
       pages += runPagesFor(rows);
     }
     if (targetCount_ != 0) {
@@ -305,11 +310,12 @@ class ImportJob {
     if (phase_ == Phase::Idle) return ImportStep::Idle;
     ++stats_.steps;
     if (importSourceKeyOf(*loop_) != key_) return fail(ImportResult::SourceMoved);
+    stepFailure_ = ImportResult::DeniedCapacity;
     uint32_t budget = maxRows;
     while (budget != 0) {
       switch (phase_) {
         case Phase::Captures:
-          if (!stepCaptures(budget)) return fail(ImportResult::DeniedCapacity);
+          if (!stepCaptures(budget)) return fail(stepFailure_);
           break;
         case Phase::PairWalk:
           if (!stepPairWalk(budget)) return fail(ImportResult::DeniedCapacity);
@@ -318,7 +324,7 @@ class ImportJob {
           if (!stepPairWrap(budget)) return fail(ImportResult::DeniedCapacity);
           break;
         case Phase::EditApply:
-          if (!stepEditApply(budget)) return fail(ImportResult::DeniedCapacity);
+          if (!stepEditApply(budget)) return fail(stepFailure_);
           break;
         case Phase::EditSort:
           sortReplacements();
@@ -355,6 +361,25 @@ class ImportJob {
   static uint32_t runPagesFor(uint32_t rows) {
     const uint32_t data = (rows + Cap::kEventsPerPage - 1) / Cap::kEventsPerPage + 1;
     return data + 1;  // + one directory page of margin
+  }
+
+  // The committed chunk list of capture pass `p` as the Loop holds it now; nullptr when it is gone.
+  const CommittedChunkIdList* resolveList(uint8_t p) const {
+    const LoopPasses& passes = loop_->passes;
+    if (p == 0) {
+      return passes.hasRecordPass() && passes.recordPass.id == passIds_[0] ? &passes.recordPass.committedChunkIds
+                                                                           : nullptr;
+    }
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.id == passIds_[p] && pass.state == CapturePassState::Active) return &pass.committedChunkIds;
+    }
+    return nullptr;
+  }
+  const EditPass* resolveEdit(EditPassId id) const {
+    for (const EditPass& edit : loop_->passes.editPasses) {
+      if (edit.id == id && edit.state == EditPassState::Active) return &edit;
+    }
+    return nullptr;
   }
 
   ImportStep refuse(ImportResult why) {
@@ -428,7 +453,12 @@ class ImportJob {
           return false;
         }
       }
-      const CommittedChunkIdList& chunks = *lists_[pass_];
+      const CommittedChunkIdList* list = resolveList(pass_);
+      if (list == nullptr) {
+        stepFailure_ = ImportResult::SourceMoved;
+        return false;
+      }
+      const CommittedChunkIdList& chunks = *list;
       if (chunk_ >= chunks.size()) {
         const SealStep sealed = store_->stepSealStagedRun(budget);  // bounded: an over-budget run sorts in steps
         if (sealed == SealStep::Failed) return false;
@@ -529,7 +559,12 @@ class ImportJob {
         phase_ = Phase::EditSort;
         return true;
       }
-      const EditPass& edit = *edits_[editCursor_++];
+      const EditPass* resolved = resolveEdit(editIds_[editCursor_++]);
+      if (resolved == nullptr) {
+        stepFailure_ = ImportResult::SourceMoved;
+        return false;
+      }
+      const EditPass& edit = *resolved;
       budget = budget > kEventsPerTarget ? budget - kEventsPerTarget : 0;
       const uint16_t t = findTarget(edit.targetNoteId);
       if (t == kNoTarget) continue;
@@ -622,7 +657,7 @@ class ImportJob {
   ImportSourceKey key_;
   const Loop* loop_ = nullptr;
   StoreCore<Cap>* store_ = nullptr;
-  const CommittedChunkIdList* lists_[Cap::kRunsPerManifest];
+  PassId passIds_[Cap::kRunsPerManifest];  // [0] = the Record pass; resolved against the live Loop on every use
   uint8_t passCount_ = 0;
   uint8_t pass_ = 0;
   size_t chunk_ = 0;
@@ -632,7 +667,8 @@ class ImportJob {
   uint8_t pairSegments_ = 0;
   uint32_t pairAt_[Cap::kSegmentsPerRun];
   uint32_t pairEnd_[Cap::kSegmentsPerRun];
-  const EditPass* edits_[MaxEdits];
+  EditPassId editIds_[MaxEdits];  // id order; resolved against the live Loop on every use
+  ImportResult stepFailure_ = ImportResult::DeniedCapacity;
   uint16_t editCount_ = 0;
   uint16_t editCursor_ = 0;
   NoteId targets_[MaxEditTargets];

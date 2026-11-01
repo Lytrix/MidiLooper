@@ -1,0 +1,2 @@
+REVSHADOW,windows_compare,source_current=1,identity=12,compared=10,matched=10,stale_identity=0
+REVSHADOW,windows_whole_loop,covered=1,shadow_rows=1202,production_rows=1202,match=1,c4_clean=1

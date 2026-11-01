@@ -98,6 +98,61 @@ class MidiPatternTests(unittest.TestCase):
             self.assertEqual(192, pattern.clock_length)
 
 
+class _FakeMaster:
+    def wait_pulse(self, pulse, timeout_s=0.0, abort=None) -> bool:
+        self.pulse = pulse
+        return True
+
+    def pulses_sent(self) -> int:
+        return getattr(self, "pulse", 0) + 1
+
+
+class _FakePort:
+    def __init__(self, master: _FakeMaster) -> None:
+        self.master = master
+        self.sent: list[tuple[int, str]] = []
+
+    def send(self, message) -> None:
+        self.sent.append((self.master.pulse, message.type))
+
+
+class PhaseOriginTests(unittest.TestCase):
+    """The record take starts where the device's press expires, not at the grid origin (2026-11-01)."""
+
+    def test_pattern_position_zero_lands_on_the_phase_origin(self) -> None:
+        from hitl.midi_pattern import stream_pattern
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "16ths.mid"
+            _write_pattern(path)
+            pattern = load_midi_pattern(path)
+            master = _FakeMaster()
+            port = _FakePort(master)
+            # Take started 15 clocks after the grid origin (device tick 120); the host joins at pulse 20.
+            origin = 1 + 15
+            report = stream_pattern(port, master, pattern, start_pulse=20, total_clocks=96,
+                                    channel_1based=1, phase_origin_pulse=origin)
+            note_on_pulses = [pulse for pulse, kind in port.sent if kind == "note_on"]
+            self.assertTrue(note_on_pulses)
+            # Every NoteOn is on the take's 16th grid (6 clocks), none on the grid-origin phase.
+            self.assertTrue(all((pulse - origin) % 6 == 0 for pulse in note_on_pulses), note_on_pulses)
+            self.assertEqual(origin, report["phase_origin_pulse"])
+
+    def test_default_origin_is_the_start_pulse(self) -> None:
+        from hitl.midi_pattern import stream_pattern
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "16ths.mid"
+            _write_pattern(path)
+            pattern = load_midi_pattern(path)
+            master = _FakeMaster()
+            port = _FakePort(master)
+            stream_pattern(port, master, pattern, start_pulse=7, total_clocks=96, channel_1based=1)
+            note_on_pulses = [pulse for pulse, kind in port.sent if kind == "note_on"]
+            self.assertEqual(7, note_on_pulses[0])
+            self.assertTrue(all((pulse - 7) % 6 == 0 for pulse in note_on_pulses))
+
+
 class WindowPlanTests(unittest.TestCase):
     """The beat plan is the contract the Record button is timed against."""
 

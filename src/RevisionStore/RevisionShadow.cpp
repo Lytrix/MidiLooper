@@ -350,6 +350,41 @@ void printStatus() {
                   static_cast<unsigned long>(gState.windowsCapacityDenied),
                   static_cast<unsigned long>(gState.windowsSourceMoved),
                   static_cast<unsigned long>(gState.duplicatePublishes));
+  // Per-pass grid phase (stopped-only diagnostic): each imported run's first NoteOn and its NoteOn histogram over the
+  // tick offset from the 16th grid. Identical patterns overdubbed onto themselves should share the Record's phase.
+  if (store.current() != kNoManifest) {
+    const auto& m = store.manifest(store.current());
+    const uint32_t sixteenth = Config::TICKS_PER_BAR / 16;
+    for (uint8_t r = 0; r < m.runCount; ++r) {
+      const auto& run = store.run(m.runs[r]);
+      uint32_t ons = 0, firstOn = UINT32_MAX, onGrid = 0;
+      uint32_t phaseCount[4] = {};
+      uint32_t phaseValue[4] = {};
+      for (uint32_t i = 0; i < run.midiCount; ++i) {
+        const PassEvent& e = store.stagedRow(m.runs[r], i);
+        if (equalTickClass(e) != 1) continue;
+        ++ons;
+        if (e.tick < firstOn) firstOn = e.tick;
+        const uint32_t phase = e.tick % sixteenth;
+        if (phase == 0) ++onGrid;
+        for (uint8_t k = 0; k < 4; ++k) {
+          if (phaseCount[k] == 0 || phaseValue[k] == phase) {
+            phaseValue[k] = phase;
+            ++phaseCount[k];
+            break;
+          }
+        }
+      }
+      Serial.printf_P(PSTR("REVSHADOW,run_phase,run=%u,note_ons=%lu,first_on=%lu,on_grid=%lu,"
+                           "phase0=%lu:%lu,phase1=%lu:%lu,phase2=%lu:%lu\r\n"),
+                      r, static_cast<unsigned long>(ons),
+                      static_cast<unsigned long>(firstOn == UINT32_MAX ? 0 : firstOn),
+                      static_cast<unsigned long>(onGrid), static_cast<unsigned long>(phaseValue[0]),
+                      static_cast<unsigned long>(phaseCount[0]), static_cast<unsigned long>(phaseValue[1]),
+                      static_cast<unsigned long>(phaseCount[1]), static_cast<unsigned long>(phaseValue[2]),
+                      static_cast<unsigned long>(phaseCount[2]));
+    }
+  }
   // Shadow parity (stopped-only diagnostic): the shadow's real-time read vs production's effective view.
   if (gState.publishes == 0 || id.track >= trackManager.getTrackCount()) return;
   const Track& track = trackManager.getTrack(id.track);
