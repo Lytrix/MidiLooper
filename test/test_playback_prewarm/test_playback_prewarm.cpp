@@ -7,6 +7,7 @@
 #define UNIFIED_RECORD_RETURN_READER_ORACLE 1
 #define main sharedCaptureFinalizationSuiteMain
 #include "Utils/PlaybackTickContext.h"
+#include "RevisionStore/RevisionStore.h"
 #include "../test_shared_capture_finalization/test_shared_capture_finalization.cpp"
 #undef main
 
@@ -820,6 +821,65 @@ void test_record_note_stream_survives_four_stops_before_predecessor_publication(
     // Record readers keep serving Record-only copies over bars 0-2 after the overdubs committed there, so one replay
     // traversal sounds 1 of the 4 committed overdubs (the 8-bar sibling sounds 4 of 4). The repair inverts this to 4.
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, overdubOns, "BASELINE: committed overdubs masked by the frozen Record readers");
+  }
+  {
+    // revision-manifest-prototype B.2c: the same committed passes as a RevisionStore manifest. Record + the four
+    // overdubs (merge order) become revision 5 at their commits; every two-bar window of that manifest must hold each
+    // committed row inside it, so all four overdubs are present whatever the Record publication is doing.
+    using namespace RevisionStore;
+    using B2cCap = Capacity<256, 32, 8, 64, 8, 8, 8>;
+    static Store<B2cCap> store;
+    static PassEvent window[512];
+    store.reset();
+    std::vector<const CommittedChunkIdList*> passLists{&loop.passes.recordPass.committedChunkIds};
+    std::vector<const OverdubPass*> overdubs;
+    for (const OverdubPass& pass : loop.passes.overdubPasses) overdubs.push_back(&pass);
+    std::sort(overdubs.begin(), overdubs.end(),
+              [](const OverdubPass* a, const OverdubPass* b) { return a->mergeSequence < b->mergeSequence; });
+    for (const OverdubPass* pass : overdubs) passLists.push_back(&pass->committedChunkIds);
+    uint32_t committedRows = 0;
+    for (size_t p = 0; p < passLists.size(); ++p) {
+      const CommittedChunkIdList* one[] = {passLists[p]};
+      SessionMidiEventVec rows;
+      CommittedEventRange::full(one, 1, length).appendTo(rows);
+      TEST_ASSERT_EQUAL(AdmitResult::Ok, store.beginPass(p == 0 ? PassKind::Record : PassKind::Overdub, length));
+      for (const MidiEvent& e : rows) {
+        const uint8_t status = static_cast<uint8_t>(static_cast<uint8_t>(e.type) | ((e.channel - 1) & 0x0F));
+        TEST_ASSERT_EQUAL(AppendResult::Ok, store.appendMidi(e.tick, status, e.data.noteData.note,
+                                                             e.data.noteData.velocity, e.isNoteOn() ? e.noteId : 0));
+      }
+      committedRows += static_cast<uint32_t>(rows.size());
+      store.commitPass();
+    }
+    TEST_ASSERT_EQUAL_UINT32(5, store.manifest(store.current()).revision);
+    uint32_t windowRows = 0, storeOverdubOns = 0;
+    for (uint32_t from = 0; from < length; from += 2 * bar) {
+      const ComposeStamp stamp = store.composeWindow(store.current(), from, std::min(from + 2 * bar, length), window, 512);
+      TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+      TEST_ASSERT_EQUAL_UINT32(5, stamp.revision);
+      windowRows += stamp.count;
+      for (uint32_t i = 0; i < stamp.count; ++i) {
+        if ((window[i].status & 0xF0) == 0x90 && window[i].data2 > 0 && window[i].data1 >= 100 && window[i].data1 <= 103) {
+          ++storeOverdubOns;
+        }
+      }
+    }
+    // The production content authority at the same moment: is the content right and only the serving wrong?
+    SessionMidiEventVec effective;
+    const bool effectiveOk = loop.tryCopyCurrentSnapshotEditViewEvents(effective);
+    uint32_t effectiveOverdubOns = 0;
+    for (const MidiEvent& e : effective) {
+      if (e.isNoteOn() && e.data.noteData.note >= 100 && e.data.noteData.note <= 103) ++effectiveOverdubOns;
+    }
+    char detail[180];
+    snprintf(detail, sizeof(detail),
+             "B2C store rev=5 committed_rows=%u window_rows=%u overdub_ons=%u; production effective_view ok=%u rows=%u "
+             "overdub_ons=%u; production replay 1",
+             committedRows, windowRows, storeOverdubOns, effectiveOk ? 1u : 0u, unsigned(effective.size()),
+             effectiveOverdubOns);
+    TEST_MESSAGE(detail);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(committedRows, windowRows, "every committed row is in exactly one window");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, storeOverdubOns, "the manifest holds all four committed overdubs");
   }
   for (uint32_t b = 0; b < recordIds.size(); ++b) {
     const MidiEvent& on = recordEvents[2 * b];

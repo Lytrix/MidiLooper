@@ -34,8 +34,10 @@ timing and memory envelope without introducing real-time construction?
       a same-tick sustain release (`CC64 127, 0` → `0, 127`, pedal left down) in its effective view; production
       collapses identical events across passes (`midiEventMatchesSnapshot`). Live overdub sessions with pending note
       changes and NOTE_EDIT move to B.3. [Evidence](evidence/2026-11-01-b2b-seeded-differential.md)
-- [ ] B.2c Feed the 25-bar RED fixture (`44baf7be`) through the harness; the store's window at the newest revision
-      must contain all four overdubs.
+- [x] B.2c The 25-bar RED fixture (`44baf7be`) through the store: at revision 5 every two-bar window holds every
+      committed row (60) and all four overdubs; production's replay sounds 1 of 4 while its own content authority holds
+      all 60 rows and 4 overdubs after the replay — a serving defect, not content (caveat: authority read after the
+      replay). [Evidence](evidence/2026-11-01-b2c-red-fixture.md)
 - [ ] B.3 Overlap-resolve and NOTE_EDIT parity **by output**: whichever representation (hides + replacement rows,
       immutable edit pass, compaction) reproduces the production stream; decided by B.2b divergences, not by fitting
       today's implementation.
