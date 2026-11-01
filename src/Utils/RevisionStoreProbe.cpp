@@ -50,23 +50,48 @@ uint32_t nextRandom() {
   return gLcg >> 8;
 }
 
-// `notes` paired notes appended in capture order starting mid-loop (so the take wraps), 260 rows per bar at the
-// densest observed device bar.
+// `notes` paired notes appended the way capture delivers them: in time order from mid-loop (one wrap), each NoteOff
+// emitted when it falls due. 260 rows per bar at the densest observed device bar.
 void appendTake(ProbeStore& store, uint32_t notes, uint8_t status, uint32_t& noteId, Stat& append) {
+  struct Pending {
+    uint32_t offTick;  // unwrapped
+    uint8_t pitch;
+    uint32_t id;
+  };
+  Pending pending[64];
+  uint32_t pendingCount = 0;
   const uint32_t startTick = kLoopTicks / 2;
   const uint32_t step = kLoopTicks / (notes == 0 ? 1 : notes);
+  const uint8_t offStatus = static_cast<uint8_t>((status & 0x0F) | 0x80);
+  auto timed = [&](uint32_t tick, uint8_t st, uint8_t pitch, uint8_t velocity, uint32_t id) {
+    const uint32_t t0 = ARM_DWT_CYCCNT;
+    store.appendMidi(tick % kLoopTicks, st, pitch, velocity, id);
+    append.add(ARM_DWT_CYCCNT - t0);
+  };
+  auto flushDue = [&](uint32_t now) {
+    for (;;) {
+      uint32_t best = pendingCount;
+      for (uint32_t k = 0; k < pendingCount; ++k) {
+        if (pending[k].offTick <= now && (best == pendingCount || pending[k].offTick < pending[best].offTick)) best = k;
+      }
+      if (best == pendingCount) return;
+      timed(pending[best].offTick, offStatus, pending[best].pitch, 0, pending[best].id);
+      pending[best] = pending[--pendingCount];
+    }
+  };
   for (uint32_t i = 0; i < notes; ++i) {
-    const uint32_t on = (startTick + i * step + nextRandom() % 8) % kLoopTicks;
-    const uint32_t off = (on + 24 + nextRandom() % 96) % kLoopTicks;
+    const uint32_t on = startTick + i * step;
+    flushDue(on);
     const uint8_t pitch = static_cast<uint8_t>(36 + nextRandom() % 48);
     const uint32_t id = noteId++;
-    uint32_t t0 = ARM_DWT_CYCCNT;
-    store.appendMidi(on, status, pitch, 100, id);
-    append.add(ARM_DWT_CYCCNT - t0);
-    t0 = ARM_DWT_CYCCNT;
-    store.appendMidi(off, static_cast<uint8_t>((status & 0x0F) | 0x80), pitch, 0, id);
-    append.add(ARM_DWT_CYCCNT - t0);
+    timed(on, status, pitch, 100, id);
+    if (pendingCount < 64) {
+      pending[pendingCount++] = {on + 24 + nextRandom() % 96, pitch, id};
+    } else {
+      timed(on, offStatus, pitch, 0, id);  // never reached at these densities; keeps the generator bounded
+    }
   }
+  flushDue(UINT32_MAX);
 }
 
 }  // namespace
@@ -164,14 +189,45 @@ void run() {
   }
   printStat("redo_select", 0, 10, redo);
 
-  // 4. Compaction of all ten runs (synchronous; the grain is derived from rows per ms).
+  Serial.printf_P(PSTR("REVSTORE,slow_seals=%lu\r\n"), static_cast<unsigned long>(store.slowSeals()));
+
+  // 4a. Compaction of all ten runs in bounded steps (2,048 source rows per step), then 4b synchronous.
   {
+    Stat steps;
+    store.beginCompaction(10);
+    CompactStep step = CompactStep::Pending;
+    while (step == CompactStep::Pending) {
+      t0 = ARM_DWT_CYCCNT;
+      step = store.stepCompaction(2048);
+      steps.add(ARM_DWT_CYCCNT - t0);
+    }
+    printStat("compact_step_2048", 16640 + 8 * 1040 + 1, 10, steps);
+    Serial.printf_P(PSTR("REVSTORE,compact_step_result=%u\r\n"), static_cast<unsigned>(step));
+    composeAll("compose_2bar_stepcompacted", 1);
+  }
+  // 4b. Synchronous, for the rows-per-ms rate, on a rebuilt store (two compacted copies do not fit the arena).
+  {
+    store.reset();
+    gLcg = 1;
+    uint32_t id = 1;
+    Stat ignore;
+    store.beginPass(PassKind::Record, kLoopTicks);
+    appendTake(store, 8320, 0x90, id, ignore);
+    store.commitPass();
+    for (uint32_t od = 0; od < 8; ++od) {
+      store.beginPass(PassKind::Overdub);
+      appendTake(store, 520, static_cast<uint8_t>(0x90 | ((od % 3) + 1)), id, ignore);
+      store.commitPass();
+    }
+    store.beginPass(PassKind::Overdub);
+    store.appendMidi(0, 0xB0, 64, 127, 0);
+    store.commitPass();
     Stat compact;
     const uint16_t freeBefore = store.freePageCount();
     t0 = ARM_DWT_CYCCNT;
     const CompactResult result = store.compactCurrentPrefix(10);
     compact.add(ARM_DWT_CYCCNT - t0);
-    printStat("compact_10runs", 16640 + 8 * 1040 + 1, 10, compact);
+    printStat("compact_10runs_sync", 16640 + 8 * 1040 + 1, 10, compact);
     Serial.printf_P(PSTR("REVSTORE,compact_result=%u,pages_free_before=%u,after=%u\r\n"),
                     static_cast<unsigned>(result), static_cast<unsigned>(freeBefore),
                     static_cast<unsigned>(store.freePageCount()));

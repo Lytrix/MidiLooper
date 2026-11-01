@@ -50,6 +50,11 @@ timing and memory envelope without introducing real-time construction?
       16,640 rows) and compaction is synchronous (67 ms for 25k rows). Next design step: sort-free seal (two sorted
       segments around the capture wrap) and step-bounded compaction (~2,900 rows per 8 ms grain).
       [Evidence](evidence/2026-11-01-b4-teensy-timing.md)
+- [x] B.4b Seal and compaction fixed and re-measured (HEX `5ad8e493…`, boot verified): sort-free commit (append-time
+      sorted segments; 16,640-row Record commits in 15 µs, `slow_seals=0`), step-bounded compaction (2,048-row step
+      5.4 ms max, superseded when undo or a different history makes the prefix stale), construction 0.25 ms,
+      `beginPass` ≤ 22 µs. Compose at 10 runs rises to 3.3 ms max (two segments per run). Native store suites 39 + 1
+      ignored. [Evidence](evidence/2026-11-01-b4-teensy-timing.md#b4b--after-the-fixes-same-day-sort-free-commit-step-bounded-compaction)
 - [ ] B.5 Capacity budget (design.md D7) with exact figures, including the compaction peak and pinned discarded
       branches.
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest

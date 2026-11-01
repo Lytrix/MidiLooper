@@ -42,8 +42,14 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 - **D4 — Hides are whole-note tombstones by `noteId`**, applying to earlier runs only. With replacement rows in the
   same run they express overlap-resolve (`Hide`, `Shorten`) and NOTE_EDIT (an `Edit` run); B.3 shows parity by output.
   The writer must stamp NoteOff rows with their note's id.
+- **D5b — Commit does not sort.** A run's Midi rows are kept as up to `kSegmentsPerRun` sorted segments while appending
+  (same-tick class inversions fixed in place over ≤ 32 rows; a tick decrease opens a segment); composition merges
+  segments like runs. HideNote rows live in their own region, the only part ordered at commit. Overflow falls back to a
+  counted commit-time sort.
 - **D5 — Compaction is prefix-only and revision-preserving.** Merging runs `[0, k)` applies and drops the hides inside
-  the prefix (they can only target rows inside it). The compacted manifest replaces the history entry at the cursor;
+  the prefix (they can only target rows inside it). It runs in bounded steps (`stepCompaction(maxRows)`) with its
+  source pinned; at the end it publishes only if the current manifest still starts with the compacted runs, carrying
+  any runs committed meanwhile, else it is `Superseded`. The compacted manifest replaces the history entry at the cursor;
   pinned readers keep the old manifest until they unpin. Overdub admission is denied at `kRunsPerManifest` until
   compaction runs — that is the back-pressure, and it is off the commit path.
 - **D6 — Reclamation by reference count**: manifests count history entries and pins; runs count manifests; a run's
@@ -96,9 +102,8 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
 - **Q2** Overlap-resolve and ledger semantics expressed as hides + replacement rows; compare against
   `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md` cases.
 - **Q3** NOTE_EDIT / quantize as edit runs; whether that needs bar-sliced manifests (D8).
-- **Q4** Measured (B.4): seal 134 ms at 16,640 rows and compaction 67 ms for 25k rows do not fit an edge or an 8 ms
-  grain. Direction: sort-free seal (two sorted segments around the capture wrap, composed as two cursors) and
-  step-bounded compaction. [B.4](evidence/2026-11-01-b4-teensy-timing.md)
+- **Q4** Resolved (B.4b): commit is sort-free (append-time sorted segments; 15 µs for 16,640 rows) and compaction is
+  step-bounded (2,048-row step ≤ 5.4 ms on target, superseded when the prefix goes stale).
 - **Q5** Resolved: `seq` is 32-bit; the row stays 16 B (the two reserved bytes went).
 - **Q6** SysEx is explicitly unsupported in stage B; the row format is not bent around it.
 - **Q7** Persistence comes last in stage B, after semantic and timing qualification: immutable pass records/pages, a

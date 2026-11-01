@@ -353,7 +353,9 @@ void test_zero_heap_after_construction() {
   }
   gStore.undo();
   gStore.redo();
-  gStore.compactCurrentPrefix(4);
+  gStore.beginCompaction(4);
+  while (gStore.stepCompaction(64) == CompactStep::Pending) {
+  }
   gStore.unpin(pin);
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
   // Witness self-check: the counter does see an allocation, so the zero above is not vacuous.
@@ -523,6 +525,115 @@ void test_pass_spans_non_contiguous_free_pages() {
   assertSameRows(oracleWindow(r3, 0, 4 * kBarTicks), gOut, s.count);
 }
 
+// ---- Sort-free commit and step-bounded compaction (B.4 follow-up) -----------------------------------------------------
+
+// A capture-shaped take: tick-ordered from mid-loop, one wrap, and same-tick NoteOn-then-NoteOff inversions (legato).
+// Commit needs no sort: two segments, slowSeals stays 0, and the order is DEC-244.
+static OracleRevision appendCaptureShapedTake(uint32_t loopTicks, uint32_t notes) {
+  OracleRevision rev;
+  rev.passes.emplace_back();
+  OraclePass& pass = rev.passes.back();
+  const uint32_t step = loopTicks / notes;
+  uint32_t tick = loopTicks / 2;
+  uint32_t previousId = 0;
+  uint8_t previousPitch = 0;
+  for (uint32_t n = 0; n < notes; ++n, tick = (tick + step) % loopTicks) {
+    const uint8_t pitch = static_cast<uint8_t>(40 + n % 30);
+    const uint32_t id = gNextNoteId++;
+    PassEvent on;
+    on.tick = tick;
+    on.status = kNoteOn;
+    on.data1 = pitch;
+    on.data2 = 100;
+    on.noteId = id;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(on.tick, on.status, on.data1, on.data2, on.noteId));
+    pass.rows.push_back(on);
+    if (previousId != 0) {  // legato: the previous note's NoteOff arrives after this NoteOn, on the same tick
+      PassEvent off;
+      off.tick = tick;
+      off.status = kNoteOff;
+      off.data1 = previousPitch;
+      off.noteId = previousId;
+      TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(off.tick, off.status, off.data1, 0, off.noteId));
+      pass.rows.push_back(off);
+    }
+    previousId = id;
+    previousPitch = pitch;
+  }
+  return rev;
+}
+
+void test_capture_shaped_take_commits_without_sort() {
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, kLongTakeTicks));
+  const OracleRevision rev = appendCaptureShapedTake(kLongTakeTicks, 400);
+  const ManifestId m = gStore.commitPass();
+  TEST_ASSERT_EQUAL_UINT32(0, gStore.slowSeals());
+  TEST_ASSERT_EQUAL_UINT8(2, gStore.run(gStore.manifest(m).runs[0]).segCount);  // one wrap
+  assertManifestMatches(m, rev, 1, 0, kLongTakeTicks);
+  for (uint32_t from = 0; from < kLongTakeTicks; from += 2 * kBarTicks) {
+    assertManifestMatches(m, rev, 1, from, std::min(from + 2 * kBarTicks, kLongTakeTicks));
+  }
+}
+
+// Scattered appends exceed the segment budget: the commit falls back to a sort, counted, and the order is still exact.
+void test_segment_budget_overflow_falls_back_to_counted_sort() {
+  const OracleRevision rev = recordTake(200, 4 * kBarTicks);  // random ticks: far more than 8 descents
+  TEST_ASSERT_EQUAL_UINT32(1, gStore.slowSeals());
+  assertManifestMatches(gStore.current(), rev, 1, 0, 4 * kBarTicks);
+}
+
+static OracleRevision buildFiveRunTake() {
+  OracleRevision rev = recordTake(200, kLongTakeTicks);
+  for (int i = 0; i < 4; ++i) rev = overdub(rev, 25, kLongTakeTicks, {rev.passes[0].rows[4 * i].noteId});
+  return rev;
+}
+
+void test_stepped_compaction_matches_and_is_bounded_per_step() {
+  const OracleRevision rev = buildFiveRunTake();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  uint32_t steps = 0;
+  CompactStep step = CompactStep::Pending;
+  while (step == CompactStep::Pending) {
+    const uint16_t freeBefore = gStore.freePageCount();
+    step = gStore.stepCompaction(7);
+    TEST_ASSERT_TRUE(freeBefore - gStore.freePageCount() <= 1);  // at most 7 rows copied: at most one new page
+    ++steps;
+    if (step == CompactStep::Pending) assertManifestMatches(gStore.current(), rev, 5, 0, kLongTakeTicks);  // undisturbed
+  }
+  TEST_ASSERT_EQUAL(CompactStep::Published, step);
+  const uint32_t sourceRows = 400 + 4 * 50;
+  TEST_ASSERT_TRUE(steps >= sourceRows / 7);
+  TEST_ASSERT_EQUAL_UINT8(1, gStore.manifest(gStore.current()).runCount);
+  assertManifestMatches(gStore.current(), rev, 5, 0, kLongTakeTicks);
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kPageCount, gStore.ownedPageCount() + gStore.freePageCount());
+}
+
+void test_undo_during_compaction_supersedes_it_and_conserves_pages() {
+  const OracleRevision rev = buildFiveRunTake();
+  const uint32_t ownedBefore = gStore.ownedPageCount();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  TEST_ASSERT_EQUAL(CompactStep::Pending, gStore.stepCompaction(50));
+  TEST_ASSERT_TRUE(gStore.undo());  // current is now revision 4 (four runs): it no longer starts with the five runs
+  CompactStep step = CompactStep::Pending;
+  while (step == CompactStep::Pending) step = gStore.stepCompaction(50);
+  TEST_ASSERT_EQUAL(CompactStep::Superseded, step);
+  TEST_ASSERT_EQUAL_UINT32(ownedBefore, gStore.ownedPageCount());
+  TEST_ASSERT_TRUE(gStore.redo());
+  assertManifestMatches(gStore.current(), rev, 5, 0, kLongTakeTicks);
+}
+
+void test_overdub_committed_during_compaction_is_kept_on_publish() {
+  OracleRevision rev = buildFiveRunTake();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  TEST_ASSERT_EQUAL(CompactStep::Pending, gStore.stepCompaction(100));
+  rev = overdub(rev, 10, kLongTakeTicks, {rev.passes[1].rows[0].noteId});  // revision 6 commits mid-job
+  CompactStep step = CompactStep::Pending;
+  while (step == CompactStep::Pending) step = gStore.stepCompaction(100);
+  TEST_ASSERT_EQUAL(CompactStep::Published, step);
+  TEST_ASSERT_EQUAL_UINT8(2, gStore.manifest(gStore.current()).runCount);  // compacted + the new overdub
+  assertManifestMatches(gStore.current(), rev, 6, 0, kLongTakeTicks);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -542,5 +653,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_equal_tick_class_outranks_run_order);
   RUN_TEST(test_page_exhaustion_mid_pass_latches_and_leaves_committed_revision_untouched);
   RUN_TEST(test_pass_spans_non_contiguous_free_pages);
+  RUN_TEST(test_capture_shaped_take_commits_without_sort);
+  RUN_TEST(test_segment_budget_overflow_falls_back_to_counted_sort);
+  RUN_TEST(test_stepped_compaction_matches_and_is_bounded_per_step);
+  RUN_TEST(test_undo_during_compaction_supersedes_it_and_conserves_pages);
+  RUN_TEST(test_overdub_committed_during_compaction_is_kept_on_publish);
   return UNITY_END();
 }

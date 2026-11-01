@@ -71,3 +71,50 @@ which revisions in history still reference.
 - An ITCM-resident compose (the realistic hot path); the flash figures are an upper bound.
 - Seal and compose interleaved with live playback and MIDI ingress (the probe ran with the transport stopped).
 - The capacity budget (B.5): pool size, history depth, compaction peak across all slots.
+
+---
+
+## B.4b — after the fixes (same day): sort-free commit, step-bounded compaction
+
+Image HEX `5ad8e49368c1a42e…`, boot verified (`#CAP,933003,DIAG,boot_reset,crash=0`, `BOOT,load,ok`), RAM1 still
+identical to the default image. Raw rows: [`2026-11-01-b4b-revstore-probe-raw.txt`](2026-11-01-b4b-revstore-probe-raw.txt).
+
+What changed in the store:
+
+- **Sort-free commit.** Midi rows stay sorted *while appending*. A row not before its predecessor stays put. A
+  same-tick class inversion (a NoteOff after a NoteOn on the same tick) shifts back only past that tick's
+  greater-class rows, at most 32. A real tick decrease (the capture wrap) opens a new sorted segment, up to 8 per run;
+  composition merges segments like runs, so the DEC-244 order is unchanged. Only the small HideNote region, now
+  separate, is sorted at commit. If a run exceeds its segment budget, commit falls back to a sort and counts it
+  (`slowSeals()`).
+- **Step-bounded compaction.** `beginCompaction(prefix)` / `stepCompaction(maxRows)` / `abandonCompaction()`. The
+  job pins its source manifest. A writer, readers and undo may run meanwhile. On completion the result publishes only
+  if the current manifest still starts with the compacted runs (then: compacted run + the current's remaining runs,
+  at the current's revision); otherwise it is discarded as `Superseded`.
+- **Cheaper admission and construction.** No zero-fill of page directories in `beginPass`, and raw page storage, so
+  construction does not touch rows.
+- The probe input is now capture-shaped: time-ordered from mid-loop, each NoteOff emitted when it falls due. The
+  first run appended each NoteOff right after its NoteOn, which is not how capture arrives.
+
+| Operation | Before (B.4) | After (B.4b) |
+|---|---|---|
+| Store construction (1 MiB arena) | 42.3 ms | **0.25 ms** |
+| `beginPass` | 51–95 µs | **0–22 µs** |
+| Commit, 16,640-row Record | 133.8 ms | **15 µs** (`slow_seals=0`) |
+| Commit, 1,040-row overdub | 1.4–1.7 ms | **16–24 µs** |
+| Compaction, one step of 2,048 source rows | — (synchronous only) | **4.3 ms avg, 5.4 ms max** (13 steps) |
+| Compaction, synchronous, 24,961 rows | 67.4 ms | 56.6 ms (reference rate only) |
+| Compose 2-bar window, 10 runs | 2.09 / 2.79 ms | 2.58 / **3.32 ms** |
+| Compose 2-bar window, compacted | 0.85 / 1.44 ms | 0.85 / 1.43 ms |
+| Undo / redo | ≤ 2 µs | ≤ 1 µs |
+
+Reading:
+- **Every operation on the commit and undo path is now in microseconds**, independent of take size. Nothing
+  content-sized remains on an edge.
+- **Compaction fits the 8 ms child budget at a 2,048-row grain** (5.4 ms worst case, from flash), and the stepped
+  result composes identically to the synchronous one.
+- **The cost moved into composition, slightly:** each capture-shaped run now has two segments (the wrap), so a
+  10-run manifest merges 20 cursors and the worst 2-bar window rises 2.8 → 3.3 ms. That is still well inside the
+  budget, and compaction folds the segments back into one.
+- Compaction peak is unchanged: 390 extra pages while the old runs stay referenced by history. That is B.5's
+  question.
