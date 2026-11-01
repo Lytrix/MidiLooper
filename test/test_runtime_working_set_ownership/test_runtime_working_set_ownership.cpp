@@ -18656,7 +18656,8 @@ struct Result {
 inline const char* caseName(Case c) {
   return c == Case::Steady ? "steady" : c == Case::Restart ? "restart" : "revision";
 }
-Result run(uint32_t bars, Case c, uint32_t totalBars = 30, bool trace = false) {
+enum class Entry : uint8_t { RootPrewarmed, RootlessPrewarmed, RootlessBootPrewarm };
+Result run(uint32_t bars, Case c, uint32_t totalBars = 30, bool trace = false, Entry entry = Entry::RootPrewarmed) {
   using PlaybackTickContext::TickRoute;
   constexpr uint32_t kBar = Config::TICKS_PER_BAR;
   Result r{};
@@ -18666,9 +18667,11 @@ Result run(uint32_t bars, Case c, uint32_t totalBars = 30, bool trace = false) {
   track.ensureLoopsAllocated();
   commitBarSpacedPassIntoTrackSlot(track, 0, bars);
   Loop& loop = track.getActiveLoop();
-  publishBarSpacedRootForSlot(loop, bars);
+  if (entry == Entry::RootPrewarmed) publishBarSpacedRootForSlot(loop, bars);
+  else loop.storePublishedSnapshotForTest({}, 0);  // a pass-only restore: committed passes, no root
   track.forceSetState(TRACK_PLAYING);  // before the prewarm: no stopped-time oracle publication
-  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  if (entry == Entry::RootlessBootPrewarm) track.prewarmBootPlaybackRuntimeSlots();  // boot: no view set
+  else TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
   auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
   TEST_ASSERT_NOT_NULL(runtime);
   {
@@ -18696,6 +18699,7 @@ Result run(uint32_t bars, Case c, uint32_t totalBars = 30, bool trace = false) {
         ++loop.playbackRevision;  // an overdub publication: a new current root
         publishBarSpacedRootForSlot(loop, bars);
       }
+      (void)entry;
     }
     const uint64_t tick = origin + delta;
     nativePlaybackDeadlineClock = {tick, epoch};
@@ -18782,6 +18786,26 @@ void report(uint32_t bars, Case c, const Result& r) {
 /// Phase 3's classification, pinned. Each assertion marked BASELINE is a gap a later phase inverts (4.2b: successor
 /// demand; 5: live recovery); the capability assertions must keep holding. Defect A (the length gates) is inverted by
 /// DEC-242: phase 3 measured 1- and 8-bar loops never acquired (`frame_idle`) with the gates on.
+/// Task 5.0 (device finding `evidence/2026-11-01-phase4-gates.md`): a restored slot enters PLAYING the way boot leaves
+/// it. A pass-only (rootless) slot whose view set **is** prewarmed is acquired -- DEC-194's retention is enough for the
+/// source. The boot prewarm reserves **no** view set, and nothing acquires one while playing: the producer exits
+/// `win_not_servable` for the session. BASELINE (5.0 inverts it).
+void test_restored_slot_servability_while_playing_baseline() {
+  using namespace CapabilityFixture;
+  for (uint32_t bars : {8u, 20u}) {
+    setUp();
+    const Result withViews = run(bars, Case::Steady, 30, false, Entry::RootlessPrewarmed);
+    TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, withViews.acquiredAt,
+                                         "a rootless slot with a view set is served: the source is not the blocker");
+    setUp();
+    const Result boot = run(bars, Case::Steady, 30, false, Entry::RootlessBootPrewarm);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, boot.acquiredAt,
+                                     "BASELINE: the boot prewarm leaves no view set and nothing acquires one");
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PlaybackTickContext::RouteReject::FrameIdle), boot.lastReject);
+    TEST_ASSERT_EQUAL_STRING("win_not_servable", PlaybackTickContext::gState.producerExit[0]);
+  }
+}
+
 void test_capability_classification_baseline() {
   using namespace CapabilityFixture;
   using PlaybackTickContext::RouteReject;
@@ -19107,6 +19131,7 @@ int main() {
   RUN_TEST(test_route_reject_row_is_emitted_on_change_from_the_main_loop);
   RUN_TEST(test_capability_measure_every_length_and_case);
   RUN_TEST(test_capability_classification_baseline);
+  RUN_TEST(test_restored_slot_servability_while_playing_baseline);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
   // fits inside one loop; DEC-156's bounded later occurrence otherwise).

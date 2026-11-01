@@ -1,7 +1,8 @@
 # Tasks — playback tick is consume-only, served by the windowed lane
 
 Commit boundary: the working branch (`feature/unified-rolling-playback-path`), never `dev`; one reviewable commit per
-group; no PR unless requested. Phases 4–8 are **blocked** until phase 3 records its classification. The order (owner, 2026-11-01): prove one lane
+group; no PR unless requested. Phases 4–8 are **blocked** until phase 3 records its classification. After phase 4 (owner, 2026-11-01): 5.0 runs
+before 4.2b, because a restored slot that cannot become servable while playing defeats any window geometry. The order (owner, 2026-11-01): prove one lane
 for every length → remove the length gates → live recovery after restart → route all playback through the lane →
 retire the length-specific readers → consume-only on both clocks. No new buffer and no optimization before that.
 
@@ -69,7 +70,11 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
       keystone), and `serviceRollingPlaybackWindow` no longer exits `win_window_ineligible` by length; the interval slice
       lands with it (`playbackWindowInterval` loses `demoted`; its two discriminator-shaped fixtures re-derived against
       the final policy, never number-bumped).
-- [ ] 4.2b **(blocked: owner decision, DEC-242 "Open")** RED/GREEN for capability defect B (`evidence/2026-11-01-capability.md`): the successor window is requested
+- [ ] 4.2b **(owner decision 2026-11-01: one wider window, `span = clamp(preparationHorizon, loop extent)`; no deeper
+      pipeline; DEC-147 admission price not relaxed; after 5.0)** RED/GREEN for capability defect B. First prove the
+      horizon is not circular (larger window → more work → higher price → larger horizon) and that it is sound when the
+      produced interval is itself about the horizon; then the minimum span that satisfies it; then continuous coverage
+      across many seams with only the existing frame / pending demand / three views. Previously: RED/GREEN for capability defect B (`evidence/2026-11-01-capability.md`): the successor window is requested
       **while the current one serves**, positioned at its end, so a steady loop of any length stays on the lane across
       every seam (today: one two-bar window in four, the merged fallback covering the rest).
 - [x] 4.3 Full native; three env builds; device chain with both clocks: route and reason rows recorded per length.

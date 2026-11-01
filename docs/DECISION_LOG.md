@@ -13656,7 +13656,11 @@ Phase 3's `test_capability_classification_baseline` inverts defect A: every leng
   - a window span of `clamp(priced lead, loop)`, the owner's formula, with view capacity to check;
   - a deeper pipeline (new state);
   - a tighter admission price (DEC-147 / 3.7h soundness).
-  This needs an owner decision.
+  **Owner decision (2026-11-01):** the single wider window. The geometry concept is the **preparation horizon**
+  (`span = clamp(preparationHorizon, loop extent)`), of which the admission price is one input. It is not "priced lead",
+  so playback geometry is not coupled to the scheduler's pricing. The horizon must first be shown not to be circular
+  and to stay sound when the produced interval is itself about the horizon. No deeper pipeline unless that proof shows a
+  single window impossible; no relaxation of DEC-147. Sequenced after restored-slot servability (task 5.0).
 - **Restored-slot servability.** The producer must be able to acquire a view set and retain the source while playing,
   off-clock and bounded. The switch launch path already calls `prewarmRollingViews` while playing, so there is
   precedent. Phase 5.

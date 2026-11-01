@@ -74,3 +74,27 @@ t7 s3 (20 bars) still ends each transport restart as `frame_blocked(clock_epoch_
   phase 5 (acquire the view set and retain the source off-clock while playing, bounded; precedent:
   `preparePlaybackLaunchForSlot` → `prewarmRollingViews`).
 - Defect B (successor demand) needs an owner decision (DEC-242 "Open").
+
+## Task 5.0 RED (native) and the acquisition cost (device), recorded 2026-11-01
+
+- **Native.** `test_restored_slot_servability_while_playing_baseline` (`CapabilityFixture::Entry`):
+  - a **rootless** slot whose view set is prewarmed is acquired at 5,944 ticks (8 and 20 bars), so DEC-194's source
+    retention is enough;
+  - the same slot after **`prewarmBootPlaybackRuntimeSlots`** (no view set) is **never** acquired: `frame_idle`, with the
+    producer at `win_not_servable`. This is exactly the device shape.
+
+  The missing term is the view set, not the source.
+- **Device per-unit cost** (`view_prewarm_step`, `session_20261101_123322.log`, t7 s3's off-edge prewarm):
+
+  | Units (progress) | Content | Each |
+  |---|---|---|
+  | 1–10 | capture stagings | 9.0–18.5 ms |
+  | 11–13 | the 3 rolling views the lane needs | 12.0–12.4 ms |
+  | 14–17 | bridge bases and bridges (full-take admissible) | 1.0–15 ms per sub-step |
+  | 18–27 | canonical output, companions | 0–17.6 ms |
+
+  `viewSet->prewarmed`, which the lane reads, is set only at unit 17: about 190 ms per slot. Each unit is a set of
+  external-memory allocations of `kEventsPerView = 2048` events.
+- **Consequence.** No unit the lane needs fits the main loop's real-time budget during playback (DEC-212: 8 ms child
+  budget; the external-clock tick runs on the main loop). That is why `stepViewPrewarmForIdle` is gated
+  `!timingCritical`. Running it while playing is not an admissible repair as it stands.
