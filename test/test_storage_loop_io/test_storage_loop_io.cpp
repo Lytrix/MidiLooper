@@ -620,6 +620,52 @@ void test_capture_pass_read_uses_chunk_stream_batch_bound() {
   MidiEventVec flat;
   LoopEventStore::appendChunkRefEvents(restored.passes.recordPass.committedChunkIds, flat);
   TEST_ASSERT_EQUAL(expectedEventCount, flat.size());
+  // DEC-240: the load's own appends are SD-load staged -- every loaded chunk is persisted on arrival, none queued,
+  // and no staging scope outlives the read (no commit-time sweep runs in this direct path).
+  for (uint16_t id : restored.passes.recordPass.committedChunkIds) {
+    TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::Persisted),
+                      static_cast<int>(PersistenceQueue::chunkState(id)));
+  }
+  TEST_ASSERT_EQUAL_UINT16(0, PersistenceQueue::queueDepth());
+  TEST_ASSERT_FALSE(LoopEventStore::isSdLoadStaging());
+}
+
+/// DEC-240: the resumable parse step stages only its own batches. Across a multi-chunk pass parsed one grain per call,
+/// every staged chunk reads persisted before apply, nothing is queued, and no scope is open between calls -- so a
+/// capture seal between two parse steps is never mistaken for a load seal.
+void test_step_parse_load_seals_are_persisted_and_scoped_per_batch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  PersistenceQueue::resetForTests();
+  PersistedLoopSnapshot original{};
+  original.loopId = 12;
+  original.loopLengthTicks = 8192;
+  original.nextPassId = 2;
+  const size_t eventCount = static_cast<size_t>(LoopEventStoreConfig::CHUNK_CAPACITY) * 2u + 5u;
+  original.passes.recordPass = makeRecordPassWithEventCount(1, CapturePassState::Active, eventCount);
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), original));
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  PersistenceQueue::resetForTests();
+
+  PersistedLoopSnapshot staged{};
+  PersistedLoopParseState state{};
+  PersistedLoopParseStepResult result = PersistedLoopParseStepResult::MoreWork;
+  for (uint32_t steps = 0; result == PersistedLoopParseStepResult::MoreWork && steps < 256; ++steps) {
+    result = stepPersistedLoopSnapshotParse(buffer.data(), buffer.size(), staged, state, 0, 1);
+    TEST_ASSERT_FALSE_MESSAGE(LoopEventStore::isSdLoadStaging(), "no staging scope may stay open between parse steps");
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistedLoopParseStepResult::Completed), static_cast<int>(result));
+  TEST_ASSERT_TRUE(staged.passes.recordPass.committedChunkIds.size() >= 3u);
+  for (uint16_t id : staged.passes.recordPass.committedChunkIds) {
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(ChunkPersistenceState::Persisted),
+                              static_cast<int>(PersistenceQueue::chunkState(id)),
+                              "a loaded chunk must be persisted on arrival, before any commit sweep");
+  }
+  TEST_ASSERT_EQUAL_UINT16(0, PersistenceQueue::queueDepth());
+  releasePersistedLoopSnapshotChunks(staged);
 }
 
 void test_64_bar_record_snapshot_reloads_after_reboot_simulation() {
@@ -3386,6 +3432,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_corrupt_scoped_edit_tail_fails_read);
   RUN_TEST(test_capture_pass_write_uses_chunk_stream_batch_bound);
   RUN_TEST(test_capture_pass_read_uses_chunk_stream_batch_bound);
+  RUN_TEST(test_step_parse_load_seals_are_persisted_and_scoped_per_batch);
   RUN_TEST(test_64_bar_record_snapshot_reloads_after_reboot_simulation);
   RUN_TEST(test_64_bar_save_completes_at_ram2_floor_with_bounded_batch);
   RUN_TEST(test_save_note_edit_pass_marks_edit_dirty);

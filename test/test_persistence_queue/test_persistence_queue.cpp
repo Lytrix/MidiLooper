@@ -154,6 +154,25 @@ void test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persiste
   TEST_ASSERT_TRUE(PersistenceQueue::queueDepth() >= 1u);
 }
 
+
+/// DEC-240 (review): the denied `canon=1` chunk is the Record stop's **private** prepared store, whose appends hold the
+/// ephemeral seal. An ephemeral seal must win over SD-load staging: a private chunk is never "already on SD".
+void test_ephemeral_seal_inside_a_load_staging_scope_stays_unscheduled() {
+  resetPool();
+  PersistenceQueue::resetForTests();
+  const LoopEventStore::SdLoadStagingScope loading;
+  LoopEventStore::enterEphemeralSeal();
+  LoopEventStore privateStore;
+  for (uint16_t i = 0; i < LoopEventStoreConfig::CHUNK_CAPACITY + 5; ++i) {
+    TEST_ASSERT_TRUE(privateStore.append(noteOn(i)));
+  }
+  LoopEventStore::leaveEphemeralSeal();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(ChunkPersistenceState::NotScheduled),
+                            static_cast<int>(PersistenceQueue::chunkState(privateStore.chunkIds().front())),
+                            "a private (ephemeral) chunk must never be marked persisted by a load scope");
+  TEST_ASSERT_EQUAL_UINT16(0, PersistenceQueue::queueDepth());
+}
+
 void test_ephemeral_seal_does_not_enqueue_mid_pass() {
   resetPool();
   LoopEventStore::enterEphemeralSeal();
@@ -219,6 +238,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_persisted_chunk_not_re_enqueued);
   RUN_TEST(test_sd_load_staging_marks_persisted_without_queue);
   RUN_TEST(test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persisted);
+  RUN_TEST(test_ephemeral_seal_inside_a_load_staging_scope_stays_unscheduled);
   RUN_TEST(test_ephemeral_seal_does_not_enqueue_mid_pass);
   RUN_TEST(test_mark_chunk_persisted_from_sd_load_purges_queued);
   RUN_TEST(test_chunk_freed_resets_persistence_state);

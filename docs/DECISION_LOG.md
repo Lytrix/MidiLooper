@@ -13524,3 +13524,22 @@ asserts an empty chunk queue and no open staging scope after the job retires.
 
 **Not changed.** The private-order preflight, the stall's terminal-denial retirement, mid-pass admission,
 and every load/commit gate.
+
+**Review correction (same day).** The denied chunk (`canon=1`, `ref=1`, `used=256`) fits the Record stop's
+**private** prepared store better than the take's capture chunks: its appends hold the ephemeral seal, but
+`sealChunk` checked SD-load staging *before* the ephemeral seal, so under the session-long scope the private chunk
+was also marked `Persisted` (a `Queued` capture chunk would fail the same preflight too). Two changes therefore make
+the repair: (1) the scope narrowing above, and (2) **the ephemeral seal now wins in `sealChunk`** — a private chunk
+is never "already on SD". RED→GREEN `test_ephemeral_seal_inside_a_load_staging_scope_stays_unscheduled`
+(`Expected 0 Was 3`). The load guards were also strengthened where no commit sweep can mask a regression:
+`test_storage_loop_io` asserts every chunk is `Persisted` on arrival (capture-pass read and the resumable parse step,
+multi-chunk, one grain per call, no scope open between calls); removing either scope fails them.
+
+**Behaviour change for readers outside a load session (accepted).** `readCapturePassSlotFileHeader` is now always
+staged, including for `readUndoLoopSnapshot` (`RuntimeBundleFooter.cpp`), `validateRuntimeBundleForBoot`
+(`RuntimeBundleRecovery.cpp`) and the legacy `readLoopPersisted`. Before, their chunks were queued for a second
+mid-pass write unless some unrelated session happened to be alive (timing-dependent); now they are persisted on
+arrival — they *are* on SD — and, like every load append, skip `canStagePersistedEvent`'s RAM1 floor (the chunk pool
+is EXTMEM; the floor exists for capture/mid-pass). Open check: the undo-hydrate step in `processDeferredUndoSnapshots`
+under running playback. Not traced: whether an ISR (`ClockManager`'s IntervalTimer) can reach an append inside a
+staging scope; capture appends are main-loop only (`handleMidiInput`).

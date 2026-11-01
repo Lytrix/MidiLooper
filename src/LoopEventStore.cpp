@@ -414,10 +414,11 @@ void LoopEventStore::sealChunk(uint16_t id) {
     return;
   }
   poolLifecycle_[id] = ChunkLifecycleState::Sealed;
-  if (isSdLoadStaging()) {
+  if (isEphemeralSeal()) {
+    // Derived-view / private copies must not enter mid_pass, and are never "already on SD" either: a private chunk
+    // marked persisted is denied by the private-order preflight forever (DEC-240), so the ephemeral seal wins.
+  } else if (isSdLoadStaging()) {
     (void)PersistenceQueue::markChunkPersistedFromSdLoad(id);
-  } else if (isEphemeralSeal()) {
-    // Derived-view copies must not enter mid_pass.
   } else {
     PersistenceQueue::admitSealedChunk(id);
   }

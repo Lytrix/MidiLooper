@@ -32,10 +32,16 @@ The same default image ran two valid chains on 2026-10-31 (`session_20261031_232
   rows in every denied session; Record arms before the clear's save has finished") is the same signature: the
   writer had nothing to write because nothing was ever queued.
 
+**Review correction:** the denied `canon=1` chunk is more likely the Record stop's *private* prepared store, whose
+appends hold the ephemeral seal — `sealChunk` checked staging before the ephemeral seal, so that private chunk was
+also marked `Persisted`. Both the take's capture chunks and the private store were affected by the session-long scope.
+
 ## Repair (DEC-240)
 
 `LoopEventStore::SdLoadStagingScope` (RAII) around the load's own appends and tail detach in `StorageLoopIo`
-only; `SlotLoadSession` no longer enters staging. No other behaviour changed.
+only; `SlotLoadSession` no longer enters staging; and the ephemeral seal now takes precedence over staging in
+`sealChunk`. Readers outside a load session (undo snapshot, runtime-bundle validation, legacy load) are now always
+staged — see DEC-240.
 
 ## Verification
 
@@ -43,7 +49,8 @@ only; `SlotLoadSession` no longer enters staging. No other behaviour changed.
   `test_capture_seal_while_a_slot_load_session_is_alive_is_queued_not_persisted` — before:
   `Expected 1 Was 3` (Queued vs Persisted, the device's `persist=3`); after: pass. `test_storage_manager_load`
   real-load smoke now also asserts an empty chunk queue and no open staging scope after the job retires.
-- Full native: **3,822 cases / 8 skipped / 3,814 succeeded**. RAM1 unchanged in all three envs
+- Full native: **3,822 cases / 8 skipped / 3,814 succeeded**; after the review fix (ephemeral-first seal + strengthened
+  load guards) **3,824 / 8 / 3,816**. Removing either `StorageLoopIo` scope fails `test_storage_loop_io` (`Expected 3 Was 1`). RAM1 unchanged in all three envs
   (default/no-grain 96,192 / code 391,928 + 1,288; profile 392,008 + 1,208).
 - Device, default image with the fix `cbf3b47d02fe977fc06ac3cea675b4f2788d8a4a12b31eead0667570afb3588a`, same card
   state that wedged 3/3, boot proven each run (`boot_reset,crash=0`, `BOOT,load,ok`):
@@ -52,6 +59,7 @@ only; `SlotLoadSession` no longer enters staging. No other behaviour changed.
   |---|---|---|---|---|---|---|
   | chain-66 | `session_20261101_010150.log` | **12.9 s** | 12 | 0 | 0 | 3 |
   | chain-67 | `session_20261101_010518.log` | **13.0 s** | 12 | 0 | 0 | 4 |
+  | chain-68 (after the review fix, image `39f8926904bdea4e514ff80d65a1b2a7308283a4984288b30db501b4d045e3f5`) | `session_20261101_011549.log` | **13.8 s** | 12 | 0 | 0 | 3 |
 
   Both Records started *earlier* than the wedged ones, inside the fatal window. Direct confirmation in chain-66:
   at 12.92 s the writer reports `midpass_skip,reason=3` (**slot-load SD active**) with `queue=15`, growing to 19 —
