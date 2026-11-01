@@ -26,6 +26,7 @@
 #include "Utils/MidiIngressCostProbe.h"
 #include "Utils/ProfileDiagRows.h"
 #if REVISION_STORE_PROBE
+#include "RevisionStore/RevisionShadow.h"
 #include "Utils/RevisionStoreProbe.h"
 #endif
 
@@ -869,6 +870,13 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                     Serial.println("REVSTORE,denied,transport_running");
                 } else {
                     RevisionStoreProbe::run();
+                }
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REVSHADOW_STATUS") == 0) {
+                // DEC-246 C2b/C3a: shadow store status and shadow parity (stopped-only diagnostic).
+                if (clockManager.isTransportRunning()) {
+                    Serial.println("REVSHADOW,denied,transport_running");
+                } else {
+                    RevisionShadow::printStatus();
                 }
 #endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE") == 0) {

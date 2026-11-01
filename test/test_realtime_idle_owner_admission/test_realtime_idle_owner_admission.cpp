@@ -81,6 +81,21 @@ void test_riao7_1_bounded_verification_admits_the_declared_grain() {
 
 // DEC-237 Slice 3 — the staged display base is a declared, bounded idle owner child. It is a 4 ms child
 // with a 1 ms fine grain (one tile or one boundary pass per turn).
+// DEC-246 C2b: the shadow store's edit-index grain is a declared, bounded child; the header gate constants mirror it.
+void test_c2b_revision_edit_index_grain_is_declared() {
+  const IdleOwnerChildBound& bound = idleOwnerChildBound(IdleOwnerChild::RevisionEditIndexGrain);
+  TEST_ASSERT_EQUAL_STRING("revision_edit_index", bound.name);
+  TEST_ASSERT_EQUAL_UINT16(2000, bound.maxUs);
+  TEST_ASSERT_EQUAL_UINT16(500, bound.fineGrainUs);
+  TEST_ASSERT_FALSE(bound.unbounded);
+  TEST_ASSERT_EQUAL_UINT32(bound.maxUs, kRevisionEditIndexMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(bound.fineGrainUs, kRevisionEditIndexFineGrainUs);
+  TEST_ASSERT_TRUE(boundedIdleOwnerChildMayRun(true, true, kRevisionEditIndexMaxUs, kOwnerWorkBudgetUs,
+                                               kRevisionEditIndexFineGrainUs));
+  TEST_ASSERT_FALSE(boundedIdleOwnerChildMayRun(true, true, kRevisionEditIndexMaxUs,
+                                                kRevisionEditIndexFineGrainUs - 1u, kRevisionEditIndexFineGrainUs));
+}
+
 void test_dec237_display_base_grain_is_declared() {
   const IdleOwnerChildBound& bound = idleOwnerChildBound(IdleOwnerChild::DisplayBaseGrain);
   TEST_ASSERT_EQUAL_STRING("display_base_grain", bound.name);
@@ -290,6 +305,7 @@ int main(int, char**) {
   RUN_TEST(test_riao1_a_control_unbounded_child_runs_when_not_timing_critical);
   RUN_TEST(test_riao7_1_bounded_verification_admits_the_declared_grain);
   RUN_TEST(test_dec237_display_base_grain_is_declared);
+  RUN_TEST(test_c2b_revision_edit_index_grain_is_declared);
   RUN_TEST(test_riao1_not_owed_costs_nothing);
   RUN_TEST(test_riao1_b_child_that_cannot_fit_is_not_dispatched);
   RUN_TEST(test_riao1_c_finer_grain_takes_the_remaining_deadline);

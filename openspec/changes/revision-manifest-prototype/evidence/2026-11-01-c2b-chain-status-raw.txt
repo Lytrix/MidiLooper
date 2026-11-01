@@ -1,0 +1,10 @@
+REVSHADOW,import,result=0,track=7,slot=3,loop=3,prev=13,cpr=13,imports=5,last_us=136026,max_us=136026,capture_runs=13,edit_runs=0,rows=1042,hides=0,unpaired_offs=0
+REVSHADOW,index,owed=0,ready=0,grains=0,max_grain_us=0,deferred=0,published=0,capacity_denied=0,pages_used=23,store_bytes=487176
+REVSHADOW,production,source=passes,snapshot_current=0,pending_publish=1,rows=1042
+REVSHADOW,parity_revision,status=0,used_index=0,identity=13,revision=13,source_current=1,production_ok=1,production_rows=1042,shadow_rows=1042,production_only=0,shadow_only=0
+REVSHADOW,parity_compat,status=0,used_index=0,identity=13,revision=13,source_current=1,production_ok=1,production_rows=1042,shadow_rows=1022,production_only=20,shadow_only=0
+REVSHADOW,diff_compat,production_only,t=1224,s=80,d=74/0
+REVSHADOW,diff_compat,production_only,t=1304,s=80,d=48/0
+REVSHADOW,diff_compat,production_only,t=1440,s=80,d=39/0
+REVSHADOW,diff_compat,production_only,t=1456,s=80,d=45/0
+REVSHADOW,parity_done

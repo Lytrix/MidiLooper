@@ -505,6 +505,7 @@ enum class IdleOwnerChild : uint8_t {
   StoredMidiVerification,  // capture-only effective-notes dump
   SevtDump,                // capture-only stopped-event dump
   DisplayBaseGrain,        // DEC-237: one bounded staged committed-display-base grain
+  RevisionEditIndexGrain,  // DEC-246 C2b: one bounded `RevisionStore::stepEditIndex` grain (shadow store)
   Count
 };
 constexpr uint8_t kIdleOwnerChildCount = static_cast<uint8_t>(IdleOwnerChild::Count);
@@ -544,6 +545,9 @@ constexpr IdleOwnerChildBound kIdleOwnerChildBounds[kIdleOwnerChildCount] = {
     {"sevt_dump", 4000, 1000, false},
     // DEC-237 Slice 3: one bounded staged display-base grain (one tile or one boundary pass).
     {"display_base_grain", 4000, 1000, false},
+    // DEC-246 C2b: a declared start of 2 ms whole call / 0.5 ms fine grain (256 hide rows measured at 1.12 ms on
+    // device in B.5d); rebased only from device evidence.
+    {"revision_edit_index", 2000, 500, false},
 };
 
 enum class IdleOwnerChildDecision : uint8_t {
@@ -624,6 +628,9 @@ inline bool unboundedIdleOwnerChildMayRun(bool owed, bool timingCritical) {
 /// are pinned by `test_realtime_idle_owner_admission`.
 constexpr uint32_t kStoredVerificationMaxUs = 4000;
 constexpr uint32_t kStoredVerificationFineGrainUs = 1000;
+/// DEC-246 C2b gate constants for `RevisionEditIndexGrain`, mirrored from the registry for the same ODR reason.
+constexpr uint32_t kRevisionEditIndexMaxUs = 2000;
+constexpr uint32_t kRevisionEditIndexFineGrainUs = 500;
 inline bool boundedIdleOwnerChildMayRun(bool owed, bool timingCritical, uint32_t declaredMaxUs,
                                         uint32_t remainingBudgetUs, uint32_t fineGrainUs = 0) {
   if (!owed) {

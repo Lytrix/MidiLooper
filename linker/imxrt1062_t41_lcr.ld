@@ -78,6 +78,7 @@ SECTIONS
 		*SetBrowserRead*.o(.text .text.*)
 		*StorageManagerHitlSerial*.o(.text .text.*)
 		*RevisionStoreProbe*.o(.text .text.*)
+		*RevisionShadow*.o(.text .text.*)
 		*DebugSessionCapture*.o(.text .text.*)
 		*NoteEditSessionUndoStack*.o(.text .text.*)
 		/* The DIN *input* path: the `MidiInterface` parse pipeline this TU

@@ -33,6 +33,9 @@ def main():
     parser.add_argument("--boot-timeout", type=float, default=60.0)
     parser.add_argument("--probe-timeout", type=float, default=120.0)
     parser.add_argument("--no-boot-wait", action="store_true")
+    parser.add_argument("--command", default="!REVSTORE_PROBE", help="serial command (e.g. !REVSHADOW_STATUS)")
+    parser.add_argument("--prefix", default="REVSTORE,", help="row prefix to collect")
+    parser.add_argument("--done", default="REVSTORE,done", help="row that ends collection (prefix match)")
     args = parser.parse_args()
 
     port = pick_port(args.port)
@@ -53,23 +56,23 @@ def main():
             if not booted:
                 print("warning: BOOT,load,ok not seen (board may have booted before the port opened)")
         link.reset_input_buffer()
-        link.write(b"!REVSTORE_PROBE\n")
+        link.write((args.command + "\n").encode("ascii"))
         link.flush()
         deadline = time.time() + args.probe_timeout
         while time.time() < deadline:
             line = link.readline().decode("utf-8", "replace").strip()
-            if not line.startswith("REVSTORE,"):
+            if not line.startswith(args.prefix):
                 continue
             print(line)
             rows.append(line)
-            if line in ("REVSTORE,done",) or line.startswith("REVSTORE,denied"):
+            if line.startswith(args.done) or line.startswith(args.prefix + "denied") or line.startswith(args.prefix + "off"):
                 break
         else:
             print("warning: probe timeout before REVSTORE,done")
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
             handle.write("\n".join(rows) + "\n")
-    return 0 if rows and rows[-1] == "REVSTORE,done" else 1
+    return 0 if rows and rows[-1].startswith(args.done) else 1
 
 
 if __name__ == "__main__":

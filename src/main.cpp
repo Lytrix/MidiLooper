@@ -35,6 +35,9 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/BootTelemetry.h"
 #include "Utils/MidiServiceDrain.h"
+#if REVISION_STORE_PROBE
+#include "RevisionStore/RevisionShadow.h"
+#endif
 #include "BootGate.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/RuntimeProfiler.h"
@@ -881,6 +884,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       }
     }
   }
+#if REVISION_STORE_PROBE
+  // DEC-246 C2b/C3a: the shadow store's one call site, on the Snapshot owner turn in both regimes
+  // (`RevisionEditIndexGrain` bounded when timing-critical; the import runs only while the transport is stopped).
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
+    RevisionShadow::serviceIdleTurn(timingCritical, clockManager.isTransportRunning());
+  }
+#endif
   if (allTracksStopped && clockManager.isClockRunning() &&
       deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend &&
       !(deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
@@ -1170,6 +1180,9 @@ FLASHMEM void setup() {
   // DEC-239: the profiler's RAM2 state is NOLOAD; clear it, calibrate and emit the boot row before
   // `prewarmPlaybackRuntime()` below, the first call that can reach an instrumented owner.
   RuntimeProfiler::initAtBoot();
+#endif
+#if REVISION_STORE_PROBE
+  RevisionShadow::initAtBoot();  // DEC-246 Stage C shadow store: PSRAM, once
 #endif
   // DEC-190: after a fault, park **only** the slot whose restore/first paint was in flight. The file is not
   // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal

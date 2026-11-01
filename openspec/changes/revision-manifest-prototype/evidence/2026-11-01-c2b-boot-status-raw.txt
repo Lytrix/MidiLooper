@@ -1,0 +1,4 @@
+#CAP,1269005,DIAG,boot_reset,crash=0
+BOOT,load,ok
+REVSHADOW,import,result=1,track=7,slot=3,loop=3,prev=0,cpr=0,imports=1,last_us=137,max_us=137,capture_runs=0,edit_runs=0,rows=0,hides=0,unpaired_offs=0
+REVSHADOW,index,owed=0,ready=0,grains=0,max_grain_us=0,deferred=0,published=0,capacity_denied=0,pages_used=0,store_bytes=487176
