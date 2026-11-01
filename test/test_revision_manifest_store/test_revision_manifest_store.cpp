@@ -51,7 +51,7 @@ struct OracleRevision {
 struct Keyed {
   uint32_t tick;
   uint32_t pass;
-  uint16_t seq;
+  uint32_t seq;
   PassEvent row;
 };
 
@@ -59,7 +59,7 @@ static std::vector<PassEvent> oracleWindow(const OracleRevision& rev, uint32_t f
   std::vector<Keyed> keyed;
   for (uint32_t i = 0; i < rev.passes.size(); ++i) {
     const OraclePass& p = rev.passes[i];
-    for (uint16_t s = 0; s < p.rows.size(); ++s) {
+    for (uint32_t s = 0; s < p.rows.size(); ++s) {
       const PassEvent& row = p.rows[s];
       if (row.tick < from || row.tick >= to) continue;
       bool hidden = false;
@@ -72,6 +72,8 @@ static std::vector<PassEvent> oracleWindow(const OracleRevision& rev, uint32_t f
   }
   std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
     if (a.tick != b.tick) return a.tick < b.tick;
+    const uint8_t ca = equalTickClass(a.row), cb = equalTickClass(b.row);
+    if (ca != cb) return ca < cb;
     if (a.pass != b.pass) return a.pass < b.pass;
     return a.seq < b.seq;
   });
@@ -90,14 +92,16 @@ static uint32_t gNextNoteId = 1;
 
 // Appends `notes` paired notes inside [0, loopTicks) in a non-monotonic order (like a capture across the wrap) to both
 // the store writer and the oracle pass. A note whose off would pass the loop end wraps to the loop start.
-static void appendNotes(OraclePass& pass, uint32_t notes, uint32_t loopTicks, uint8_t channelStatusOffset = 0) {
+template <typename S>
+static void appendNotesTo(S& store, OraclePass& pass, uint32_t notes, uint32_t loopTicks,
+                          uint8_t channelStatusOffset = 0) {
   for (uint32_t n = 0; n < notes; ++n) {
     const uint32_t on = nextRandom() % loopTicks;
     const uint32_t off = (on + 24 + nextRandom() % 300) % loopTicks;
     const uint8_t pitch = static_cast<uint8_t>(36 + nextRandom() % 48);
     const uint32_t id = gNextNoteId++;
-    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(on, kNoteOn + channelStatusOffset, pitch, 100, id));
-    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(off, kNoteOff + channelStatusOffset, pitch, 0, id));
+    TEST_ASSERT_EQUAL(AppendResult::Ok, store.appendMidi(on, kNoteOn + channelStatusOffset, pitch, 100, id));
+    TEST_ASSERT_EQUAL(AppendResult::Ok, store.appendMidi(off, kNoteOff + channelStatusOffset, pitch, 0, id));
     PassEvent a;
     a.tick = on;
     a.status = kNoteOn + channelStatusOffset;
@@ -111,6 +115,10 @@ static void appendNotes(OraclePass& pass, uint32_t notes, uint32_t loopTicks, ui
     pass.rows.push_back(a);
     pass.rows.push_back(b);
   }
+}
+
+static void appendNotes(OraclePass& pass, uint32_t notes, uint32_t loopTicks, uint8_t channelStatusOffset = 0) {
+  appendNotesTo(gStore, pass, notes, loopTicks, channelStatusOffset);
 }
 
 static void assertSameRows(const std::vector<PassEvent>& expected, const PassEvent* got, uint32_t count) {
@@ -353,6 +361,168 @@ void test_zero_heap_after_construction() {
   TEST_ASSERT_TRUE(gHeapAllocations - before > 0);
 }
 
+// ---- Stage B qualification gates (owner review 2026-11-01) ------------------------------------------------------------
+
+// A reader holding a redo-branch manifest keeps it through undo + a new commit that discards the branch from history.
+// The branch's pages return only when that reader releases it.
+void test_reader_of_discarded_redo_branch_survives_until_released() {
+  OracleRevision r1 = recordTake(100, 8 * kBarTicks);
+  const uint32_t ownedAtR1 = gStore.ownedPageCount();
+  OracleRevision r2 = overdub(r1, 40, 8 * kBarTicks);
+  OracleRevision r3 = overdub(r2, 40, 8 * kBarTicks);
+  const ManifestId reader = gStore.pinCurrent();
+  const uint32_t readerIdentity = gStore.identityOf(reader);
+  const uint32_t branchPages = gStore.ownedPageCount() - ownedAtR1;
+  TEST_ASSERT_TRUE(gStore.undo());
+  TEST_ASSERT_TRUE(gStore.undo());
+  OracleRevision r2b = overdub(r1, 10, 8 * kBarTicks);  // discards r2, r3 from history
+  TEST_ASSERT_FALSE(gStore.canRedo());
+  const uint32_t r2bPages = gStore.ownedPageCount() - ownedAtR1 - branchPages;
+  // Branch pages are still owned: the reader holds r3, which holds r2's run too.
+  TEST_ASSERT_EQUAL_UINT32(ownedAtR1 + branchPages + r2bPages, gStore.ownedPageCount());
+  const ComposeStamp stamp = gStore.composeWindow(reader, 0, 8 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL_UINT32(readerIdentity, stamp.identity);
+  TEST_ASSERT_EQUAL_UINT32(3, stamp.revision);
+  assertSameRows(oracleWindow(r3, 0, 8 * kBarTicks), gOut, stamp.count);
+  assertManifestMatches(gStore.current(), r2b, 2, 0, 8 * kBarTicks);
+  gStore.unpin(reader);
+  TEST_ASSERT_EQUAL_UINT32(ownedAtR1 + r2bPages, gStore.ownedPageCount());
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kPageCount, gStore.ownedPageCount() + gStore.freePageCount());
+  assertManifestMatches(gStore.current(), r2b, 2, 0, 8 * kBarTicks);
+}
+
+// Logical revision and physical identity are separate: compaction keeps the revision and changes the identity, and a
+// manifest slot reused later never repeats an identity, so a window built from the old manifest cannot be mislabeled.
+void test_compaction_and_slot_reuse_change_identity_not_revision() {
+  OracleRevision rev = recordTake(50, 4 * kBarTicks);
+  rev = overdub(rev, 10, 4 * kBarTicks);
+  const ManifestId before = gStore.pinCurrent();
+  const ComposeStamp oldStamp = gStore.composeWindow(before, 0, 4 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.compactCurrentPrefix(2));
+  const ComposeStamp newStamp = gStore.composeWindow(gStore.current(), 0, 4 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL_UINT32(oldStamp.revision, newStamp.revision);
+  TEST_ASSERT_NOT_EQUAL_UINT32(oldStamp.identity, newStamp.identity);
+  gStore.unpin(before);  // the pre-compaction manifest is now unreferenced; its slot is free
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Overdub));
+  gStore.appendMidi(0, kNoteOn, 60, 100, 9999);
+  const ManifestId next = gStore.commitPass();
+  TEST_ASSERT_NOT_EQUAL_UINT32(oldStamp.identity, gStore.identityOf(next));
+  TEST_ASSERT_NOT_EQUAL_UINT32(newStamp.identity, gStore.identityOf(next));
+}
+
+// Equal-tick rows follow production's canonical class (NoteOff < NoteOn < other), and inside one class keep their
+// append ordinal through seal: the CC appended before the program change stays before it.
+void test_equal_tick_rows_follow_production_class_then_append_order() {
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, 4 * kBarTicks));
+  gStore.appendMidi(500, kNoteOn, 40, 100, 1);
+  gStore.appendMidi(96, 0xB0, 64, 127, 0);   // CC then NoteOn then NoteOff, all at tick 96
+  gStore.appendMidi(96, kNoteOn, 60, 100, 2);
+  gStore.appendMidi(96, kNoteOff, 59, 0, 3);
+  gStore.appendMidi(10, kNoteOff, 40, 0, 1);
+  gStore.appendMidi(96, 0xC0, 5, 0, 0);      // program change last on tick 96
+  gStore.commitPass();
+  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, 4 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL_UINT32(6, stamp.count);
+  const uint8_t expectedStatus[] = {kNoteOff, kNoteOff, kNoteOn, 0xB0, 0xC0, kNoteOn};
+  const uint32_t expectedTick[] = {10, 96, 96, 96, 96, 500};
+  for (uint32_t i = 0; i < 6; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expectedTick[i], gOut[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(expectedStatus[i], gOut[i].status);
+  }
+}
+
+// Across runs the class still decides first: an overdub NoteOff on the Record's NoteOn tick plays before it.
+void test_equal_tick_class_outranks_run_order() {
+  gStore.beginPass(PassKind::Record, 4 * kBarTicks);
+  gStore.appendMidi(192, kNoteOn, 60, 100, 1);
+  gStore.appendMidi(192, 0xB0, 1, 10, 0);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendMidi(192, kNoteOff + 7, 72, 0, 2);
+  gStore.appendMidi(192, 0xB0 + 7, 1, 20, 0);
+  gStore.commitPass();
+  const ComposeStamp stamp = gStore.composeWindow(gStore.current(), 0, 4 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL_UINT32(4, stamp.count);
+  const uint8_t expectedStatus[] = {kNoteOff + 7, kNoteOn, 0xB0, 0xB0 + 7};  // other-class ties keep run order
+  for (uint32_t i = 0; i < 4; ++i) TEST_ASSERT_EQUAL_UINT8(expectedStatus[i], gOut[i].status);
+}
+
+// A tiny store makes the pool, not the per-run directory, run out first.
+using TinyCap = Capacity</*pages*/ 8, /*rows per page*/ 4, /*runs*/ 6, /*pages per run*/ 8, /*manifests*/ 6,
+                         /*runs per manifest*/ 4, /*history*/ 4>;
+static Store<TinyCap> gTiny;
+
+// Page exhaustion mid-pass latches a named stop: later appends return the same reason, the committed revision is
+// untouched, and the writer can either abandon (every provisional page returns) or commit what it captured.
+void test_page_exhaustion_mid_pass_latches_and_leaves_committed_revision_untouched() {
+  gTiny.reset();
+  OracleRevision r1;
+  r1.passes.emplace_back();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gTiny.beginPass(PassKind::Record, 4 * kBarTicks));
+  appendNotesTo(gTiny, r1.passes.back(), 4, 4 * kBarTicks);  // 8 rows = 2 pages
+  const ManifestId m1 = gTiny.commitPass();
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    TEST_ASSERT_EQUAL(AdmitResult::Ok, gTiny.beginPass(PassKind::Overdub));
+    uint32_t accepted = 0;
+    AppendResult last = AppendResult::Ok;
+    while (last == AppendResult::Ok) {
+      last = gTiny.appendMidi(accepted * 7, kNoteOn, 70, 90, 500 + accepted);
+      if (last == AppendResult::Ok) ++accepted;
+    }
+    TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, last);
+    TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, gTiny.writerStop());
+    TEST_ASSERT_EQUAL_UINT32(6 * 4, accepted);  // the six pages the Record left free
+    TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, gTiny.appendMidi(1, kNoteOn, 71, 90, 9000));  // latched
+    TEST_ASSERT_EQUAL_UINT16(m1, gTiny.current());
+    const ComposeStamp s1 = gTiny.composeWindow(m1, 0, 4 * kBarTicks, gOut, 4096);
+    assertSameRows(oracleWindow(r1, 0, 4 * kBarTicks), gOut, s1.count);
+    if (attempt == 0) {
+      gTiny.abandonPass();
+      TEST_ASSERT_EQUAL(AppendResult::Ok, gTiny.writerStop());
+      TEST_ASSERT_EQUAL_UINT32(2, gTiny.ownedPageCount());
+      TEST_ASSERT_EQUAL_UINT16(TinyCap::kPageCount - 2, gTiny.freePageCount());
+    } else {
+      const ManifestId m2 = gTiny.commitPass();  // commit the captured rows: a complete, smaller revision 2
+      TEST_ASSERT_EQUAL_UINT32(2, gTiny.manifest(m2).revision);
+      const ComposeStamp s2 = gTiny.composeWindow(m2, 0, 4 * kBarTicks, gOut, 4096);
+      TEST_ASSERT_EQUAL_UINT32(8 + 24, s2.count);
+    }
+  }
+}
+
+// A pass takes any free pages by index; after a branch is discarded the next pass spans non-adjacent page ids.
+void test_pass_spans_non_contiguous_free_pages() {
+  gTiny.reset();
+  OracleRevision r1;
+  r1.passes.emplace_back();
+  gTiny.beginPass(PassKind::Record, 4 * kBarTicks);
+  appendNotesTo(gTiny, r1.passes.back(), 2, 4 * kBarTicks);  // 1 page
+  gTiny.commitPass();
+  OracleRevision scratch;
+  scratch.passes.emplace_back();
+  gTiny.beginPass(PassKind::Overdub);
+  appendNotesTo(gTiny, scratch.passes.back(), 4, 4 * kBarTicks);  // 2 pages
+  gTiny.commitPass();
+  TEST_ASSERT_TRUE(gTiny.undo());
+  OracleRevision r2 = r1;
+  r2.passes.emplace_back();
+  gTiny.beginPass(PassKind::Overdub);
+  appendNotesTo(gTiny, r2.passes.back(), 1, 4 * kBarTicks);  // 1 page; commit releases the discarded 2-page branch
+  gTiny.commitPass();
+  OracleRevision r3 = r2;
+  r3.passes.emplace_back();
+  gTiny.beginPass(PassKind::Overdub);
+  appendNotesTo(gTiny, r3.passes.back(), 6, 4 * kBarTicks);  // 3 pages from the fragmented free stack
+  const ManifestId m3 = gTiny.commitPass();
+  const auto& run = gTiny.run(gTiny.manifest(m3).runs[2]);
+  TEST_ASSERT_EQUAL_UINT16(3, run.pageCount);
+  bool adjacent = true;
+  for (uint16_t i = 1; i < run.pageCount; ++i) adjacent = adjacent && run.pages[i] == run.pages[i - 1] + 1;
+  TEST_ASSERT_FALSE(adjacent);
+  const ComposeStamp s = gTiny.composeWindow(m3, 0, 4 * kBarTicks, gOut, 4096);
+  assertSameRows(oracleWindow(r3, 0, 4 * kBarTicks), gOut, s.count);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -366,5 +536,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_full_manifest_denies_overdub_admission_until_compaction);
   RUN_TEST(test_page_exhaustion_is_a_named_denial_not_a_hang);
   RUN_TEST(test_zero_heap_after_construction);
+  RUN_TEST(test_reader_of_discarded_redo_branch_survives_until_released);
+  RUN_TEST(test_compaction_and_slot_reuse_change_identity_not_revision);
+  RUN_TEST(test_equal_tick_rows_follow_production_class_then_append_order);
+  RUN_TEST(test_equal_tick_class_outranks_run_order);
+  RUN_TEST(test_page_exhaustion_mid_pass_latches_and_leaves_committed_revision_untouched);
+  RUN_TEST(test_pass_spans_non_contiguous_free_pages);
   return UNITY_END();
 }

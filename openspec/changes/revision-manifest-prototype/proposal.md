@@ -23,23 +23,39 @@ This is an **investigation with a host-only prototype**. Nothing is wired to fir
   prefix compaction at equal revision, and window composition stamped from the manifest it read.
   Native suite `test_revision_manifest_store` proves the stage-A properties against a vector oracle, including zero
   heap allocations after construction.
-- Stage B (gated on the owner reading stage A): composition parity against today's canonical playback order for the
-  25-bar RED fixture (`44baf7be`), and the mapping of overlap-resolve onto runs.
+- Stage B (owner-approved 2026-11-01, qualification only): differential parity against the production model,
+  Teensy cost measurements with the runtime profiler, and an exact capacity budget; see `tasks.md` § B.
 - Stages C–E (each needs its own approval and a `DEC-###`): one playback reader from the manifest, recording onto the
   page pool, retirement of the old ownership machinery.
 
-## Authority conflicts (named, not resolved here)
+## Authority framing (owner review, 2026-11-01)
 
-- [`Snapshots.md`](../../../docs/Authority/Architecture/Snapshots.md) and NAMING define `LoopSnapshot` as a complete
-  effective-state object that is **not a parent-delta chain**, and require consumers never to reconstruct content from
-  a parent. A manifest of pass runs *is* a delta chain whose composition is the effective state. Adopting it is a
-  persistent-state-model change and an undo-semantics change — formal reassessment triggers. Stage A does not touch
-  `LoopSnapshot`; adoption needs a `DEC-###` that amends Snapshots.md.
-- It overlaps [`immutable-loop-snapshot-passes`](../immutable-loop-snapshot-passes/proposal.md) (complete snapshots,
-  candidate construction, deferred publication). The prototype's claim is that publication is a manifest written at
-  commit, so no construction job sits between commit and a servable revision.
-- [DEC-076 — Playhead-scheduled MVCC](../../../docs/DECISION_LOG.md) is compatible in spirit (readers pin one
-  generation); the difference is where materialisation happens (never on the correctness path).
+The manifest does **not** have to become a `LoopSnapshot`, so DEC-076 and
+[`Snapshots.md`](../../../docs/Authority/Architecture/Snapshots.md) are not overturned by this change:
+
+```
+immutable Record / overdub / edit passes   authoritative history
+          ↓
+RevisionManifest                           authoritative revision index (complete pass list of revision N)
+          ↓
+materialised LoopSnapshot / root           optional derived acceleration cache
+          ↓
+rolling playback windows                   real-time serving format
+```
+
+A manifest is a complete immutable descriptor of revision N; no reader chases a parent to establish identity. That
+differs from the parent-delta chain Snapshots.md rules out. Snapshots.md is rewritten only if stage B shows the
+manifest should replace the *semantic* role of `LoopSnapshot`.
+
+It still overlaps [`immutable-loop-snapshot-passes`](../immutable-loop-snapshot-passes/proposal.md) (deferred
+snapshot publication): under this framing a snapshot that is late is a cache miss, not a missing revision.
+
+## Stage B question
+
+> Can `RevisionManifest` + immutable passes reproduce the current authoritative semantics and fit the Teensy timing and
+> memory envelope without introducing real-time construction?
+
+Stage B is qualification, not migration. It is **not** "how do we port the firmware to `RevisionStore`".
 
 ## Non-goals
 

@@ -33,29 +33,47 @@ enum class PassEventKind : uint8_t {
   HideNote = 1,
 };
 
-/// 16-byte canonical row. `seq` is the append order inside the run, the tie-break for rows on one tick.
+/// 16-byte canonical row. `seq` is the append ordinal inside the run: immutable through seal and compaction (a
+/// compacted run renumbers in composed order), and the tie-break for rows on one tick. SysEx is not representable.
 struct PassEvent {
   uint32_t tick = 0;
   uint32_t noteId = 0;
-  uint16_t seq = 0;
+  uint32_t seq = 0;
   uint8_t status = 0;
   uint8_t data1 = 0;
   uint8_t data2 = 0;
   PassEventKind kind = PassEventKind::Midi;
-  uint8_t reserved[2] = {0, 0};
 };
 static_assert(sizeof(PassEvent) == 16, "PassEvent is a fixed 16-byte row");
+
+/// Production's equal-tick class (`LoopEventStore` canonical order, `NoteUtils::midiEventChronologicalLess`):
+/// NoteOff (incl. NoteOn velocity 0) < NoteOn < every other message.
+inline uint8_t equalTickClass(const PassEvent& e) {
+  const uint8_t type = e.status & 0xF0;
+  if (type == 0x80 || (type == 0x90 && e.data2 == 0)) return 0;
+  return type == 0x90 ? 1 : 2;
+}
+
+/// Composition key without the run index: (tick, equal-tick class). Run order and `seq` break the remaining ties.
+inline bool tickClassLess(const PassEvent& a, const PassEvent& b) {
+  if (a.tick != b.tick) return a.tick < b.tick;
+  return equalTickClass(a) < equalTickClass(b);
+}
 
 enum class PassKind : uint8_t { Record = 0, Overdub = 1, Compacted = 2 };
 
 enum class AdmitResult : uint8_t { Ok, DeniedNoRun, DeniedNoPage, DeniedNoManifest, DeniedManifestFull, DeniedWriterBusy };
+/// A capacity denial latches: the pass is stopped, every later append returns the same reason, the committed
+/// revision is untouched, and the writer may still commit the rows captured so far or abandon them (all pages return).
 enum class AppendResult : uint8_t { Ok, DeniedNoPage, DeniedRunFull, DeniedNotWriting };
 enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest };
 enum class CompactResult : uint8_t { Ok, NothingToCompact, DeniedNoRun, DeniedNoPage, DeniedNoManifest, DeniedWriterBusy };
 
 /// What a derived window can prove about itself: the manifest it read and that manifest's revision.
+/// `revision` is logical (compaction keeps it); `identity` is physical and never reused, unlike the `manifest` slot.
 struct ComposeStamp {
   ManifestId manifest = kNoManifest;
+  uint32_t identity = 0;
   uint32_t revision = 0;
   uint32_t count = 0;
   ComposeStatus status = ComposeStatus::NoManifest;
@@ -93,6 +111,7 @@ class Store {
   };
 
   struct RevisionManifest {
+    uint32_t identity = 0;  // monotonic per created manifest, never reused; 0 = none
     uint32_t revision = 0;
     uint32_t loopLengthTicks = 0;
     RunId runs[Cap::kRunsPerManifest];
@@ -123,7 +142,9 @@ class Store {
     current_ = kNoManifest;
     writer_ = kNoRun;
     writerManifest_ = kNoManifest;
+    writerStop_ = AppendResult::Ok;
     loopLengthTicks_ = 0;
+    nextIdentity_ = 1;
   }
 
   // ---- Pool accounting ---------------------------------------------------------------------------------------------
@@ -173,6 +194,7 @@ class Store {
     r.pageCount = 1;
     writer_ = run;
     writerManifest_ = manifest;
+    writerStop_ = AppendResult::Ok;
     if (kind == PassKind::Record) loopLengthTicks_ = loopLengthTicks;
     return AdmitResult::Ok;
   }
@@ -196,6 +218,8 @@ class Store {
   }
 
   bool writing() const { return writer_ != kNoRun; }
+  /// `Ok` while the writer can append; otherwise the latched capacity reason that stopped it.
+  AppendResult writerStop() const { return writerStop_; }
 
   /// Seal the writer's run and make the next revision current. The previous manifest stays intact for its readers.
   ManifestId commitPass() {
@@ -222,6 +246,7 @@ class Store {
     m.loopLengthTicks = loopLengthTicks_;
     const ManifestId committed = writerManifest_;
     writer_ = kNoRun;
+    writerStop_ = AppendResult::Ok;
     writerManifest_ = kNoManifest;
     pushHistory(committed);
     return committed;
@@ -234,11 +259,13 @@ class Store {
     runLive_[writer_] = false;
     manifests_[writerManifest_].live = false;
     writer_ = kNoRun;
+    writerStop_ = AppendResult::Ok;
     writerManifest_ = kNoManifest;
   }
 
   // ---- Readers -----------------------------------------------------------------------------------------------------
   ManifestId current() const { return current_; }
+  uint32_t identityOf(ManifestId id) const { return id == kNoManifest ? 0 : manifests_[id].identity; }
   const RevisionManifest& manifest(ManifestId id) const { return manifests_[id]; }
   const PassRun& run(RunId id) const { return runs_[id]; }
 
@@ -250,13 +277,15 @@ class Store {
   }
   void unpin(ManifestId id) { releaseManifest(id); }
 
-  /// Compose `[fromTick, toTick)` of `id` into `out`, ordered by (tick, run order, seq). Hidden notes are dropped.
+  /// Compose `[fromTick, toTick)` of `id` into `out`, ordered by (tick, equal-tick class, run order, seq).
+  /// Hidden notes are dropped.
   /// Cost is bounded by the runs in the manifest and the rows inside the interval, not by the loop length.
   ComposeStamp composeWindow(ManifestId id, uint32_t fromTick, uint32_t toTick, PassEvent* out, uint32_t capacity) const {
     ComposeStamp stamp;
     if (id == kNoManifest || !manifests_[id].live) return stamp;
     const RevisionManifest& m = manifests_[id];
     stamp.manifest = id;
+    stamp.identity = m.identity;
     stamp.revision = m.revision;
     stamp.status = ComposeStatus::Complete;
     uint32_t cursor[Cap::kRunsPerManifest];
@@ -279,7 +308,7 @@ class Store {
         }
         if (cursor[i] >= r.midiCount) continue;
         const PassEvent& row = rowAt(r, cursor[i]);
-        if (bestRow == nullptr || row.tick < bestRow->tick) {  // equal tick: the earlier run wins (stable run order)
+        if (bestRow == nullptr || tickClassLess(row, *bestRow)) {  // full tie: the earlier run wins (run order)
           best = i;
           bestRow = &row;
         }
@@ -331,7 +360,7 @@ class Store {
     merged = PassRun{};
     merged.kind = PassKind::Compacted;
     uint32_t cursor[Cap::kRunsPerManifest] = {};
-    uint16_t seq = 0;
+    uint32_t seq = 0;
     for (;;) {
       uint8_t best = 0xFF;
       const PassEvent* bestRow = nullptr;
@@ -342,7 +371,7 @@ class Store {
         }
         if (cursor[i] >= r.midiCount) continue;
         const PassEvent& row = rowAt(r, cursor[i]);
-        if (bestRow == nullptr || row.tick < bestRow->tick) {
+        if (bestRow == nullptr || tickClassLess(row, *bestRow)) {
           best = i;
           bestRow = &row;
         }
@@ -401,6 +430,7 @@ class Store {
       if (!manifests_[i].live) {
         manifests_[i] = RevisionManifest{};
         manifests_[i].live = true;
+        manifests_[i].identity = nextIdentity_++;
         return static_cast<ManifestId>(i);
       }
     }
@@ -421,13 +451,14 @@ class Store {
 
   AppendResult appendRow(PassEvent row) {
     if (writer_ == kNoRun) return AppendResult::DeniedNotWriting;
+    if (writerStop_ != AppendResult::Ok) return writerStop_;
     PassRun& r = runs_[writer_];
     const uint32_t index = r.rowCount();
     if (index >= static_cast<uint32_t>(r.pageCount) * Cap::kEventsPerPage && r.pageCount >= Cap::kPagesPerRun) {
-      return AppendResult::DeniedRunFull;
+      return writerStop_ = AppendResult::DeniedRunFull;
     }
-    row.seq = static_cast<uint16_t>(index);
-    if (!pushRow(r, row)) return AppendResult::DeniedNoPage;
+    row.seq = index;
+    if (!pushRow(r, row)) return writerStop_ = AppendResult::DeniedNoPage;
     if (row.kind == PassEventKind::Midi) {
       ++r.midiCount;
     } else {
@@ -436,10 +467,14 @@ class Store {
     return AppendResult::Ok;
   }
 
-  // Seal: Midi rows first sorted by (tick, seq), then HideNote rows sorted by noteId. In place, no allocation.
+  // Seal: Midi rows first sorted by (tick, class, seq), then HideNote rows by noteId. In place, no allocation.
   static bool midiBefore(const PassEvent& a, const PassEvent& b) {
     if (a.kind != b.kind) return a.kind == PassEventKind::Midi;
-    if (a.kind == PassEventKind::Midi) return a.tick != b.tick ? a.tick < b.tick : a.seq < b.seq;
+    if (a.kind == PassEventKind::Midi) {
+      if (tickClassLess(a, b)) return true;
+      if (tickClassLess(b, a)) return false;
+      return a.seq < b.seq;
+    }
     return a.noteId < b.noteId;
   }
 
@@ -572,7 +607,9 @@ class Store {
   ManifestId current_ = kNoManifest;
   RunId writer_ = kNoRun;
   ManifestId writerManifest_ = kNoManifest;
+  AppendResult writerStop_ = AppendResult::Ok;
   uint32_t loopLengthTicks_ = 0;
+  uint32_t nextIdentity_ = 1;
 };
 
 }  // namespace RevisionStore
