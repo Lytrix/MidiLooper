@@ -662,7 +662,18 @@ uint32_t mergedFallbackTickMissesForTest() { return PlaybackTickContext::gState.
 namespace { unsigned sOverlayLiveSelectionsForTest = 0; bool sOverlayEdgeDisabledForTest = false; }
 unsigned Track::overlayLiveSelectionCount() { return sOverlayLiveSelectionsForTest; }
 void Track::setOverlayEdgeDisabledForTest(bool disabled) { sOverlayEdgeDisabledForTest = disabled; }
+namespace { bool sWindowLengthGatesBypassedForTest = false; }
+void Track::setWindowLengthGatesBypassedForTest(bool bypassed) { sWindowLengthGatesBypassedForTest = bypassed; }
 #endif
+namespace {
+/// The windowed lane's length gate (DEC-200's keystone): true when the loop is long enough for the lane today.
+inline bool windowLaneAdmitsLength(const Loop& loop) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (sWindowLengthGatesBypassedForTest) return true;
+#endif
+  return loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+}
+}  // namespace
 
 #if defined(PIO_UNIT_TEST_NATIVE)
 /// DEC-143's cost criterion, measurable from a native suite: how many times the merged fallback actually rebuilt. A
@@ -4917,7 +4928,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
   }
   // Whole-take (undemoted) slots keep their existing route; the windowed lane's production scope is the
   // demoted shape (the 1.4 scope split). The legacy fallbacks remain for every refusal below.
-  const bool demoted = loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+  const bool demoted = windowLaneAdmitsLength(loop);
   if (!demoted) return PlaybackViewRequestResult::NotServable;
   if (playbackWindowReadinessForSlot(slot) == PlaybackWindowReadiness::Ready) {
     return PlaybackViewRequestResult::NotServable;
@@ -5669,7 +5680,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Excluded; // Re-projection does not erase the positioned debt.
   }
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
-  if (!clock.epoch || !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) ||
+  if (!clock.epoch || !windowLaneAdmitsLength(loop) ||
       loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
     // The demand requires a stamped clock, demoted content and bar-aligned geometry.
     // Odd bar counts use a clamped terminal interval, never a wrapping cursor read.

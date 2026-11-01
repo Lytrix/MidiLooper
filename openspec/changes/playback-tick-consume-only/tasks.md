@@ -43,8 +43,8 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
 
 ## 3. Capability proof — one lane, every length
 
-- [ ] 3.1 Write `evidence/EXECUTION_PACKET-phase3.md` (fixture shape, oracle, the test-only gate bypass, what a RED means).
-- [ ] 3.2 Native fixture on the production producer (`serviceRollingPlaybackWindow` / `stepPlaybackViewMaintenance`) and
+- [x] 3.1 Write `evidence/EXECUTION_PACKET-phase3.md` (fixture shape, oracle, the test-only gate bypass, what a RED means).
+- [x] 3.2 Native fixture on the production producer (`serviceRollingPlaybackWindow` / `stepPlaybackViewMaintenance`) and
       the production tick, **1-bar, 8-bar and 20-bar** loops through the **same** windowed lane, with the merged fallback
       forbidden by assertion. The two length gates are bypassed by a native-only switch so capability is measured apart
       from them; the same fixture with the switch off records today's refusal per length. Cases, each across ≥ 10 seams
@@ -55,7 +55,7 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
       - steady playback.
       Oracle: every tick served by a published window that covers it (design D3), note-on/off closure across each seam
       matches committed content, no build on a tick, and the requested window is `clamp(lookahead span, loop extent)`.
-- [ ] 3.3 Record the classification per length and per case — **routing/admission** (passes with the gates bypassed) or
+- [x] 3.3 Record the classification per length and per case — **routing/admission** (passes with the gates bypassed) or
       **capability gap** (named failure) — in `evidence/<date>-capability.md`; cite the phase-2 reasons
       (`clock_epoch_changed` on the 20-bar loop, `frame_idle` on the short loops).
 
@@ -69,13 +69,17 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
       keystone), and `serviceRollingPlaybackWindow` no longer exits `win_window_ineligible` by length; the interval slice
       lands with it (`playbackWindowInterval` loses `demoted`; its two discriminator-shaped fixtures re-derived against
       the final policy, never number-bumped).
+- [ ] 4.2b RED/GREEN for capability defect B (`evidence/2026-11-01-capability.md`): the successor window is requested
+      **while the current one serves**, positioned at its end, so a steady loop of any length stays on the lane across
+      every seam (today: one two-bar window in four, the merged fallback covering the rest).
 - [ ] 4.3 Full native; three env builds; device chain with both clocks: route and reason rows recorded per length.
 
 ## 5. Live recovery after transport start / restart (blocked on 4)
 
 - [ ] 5.1 RED: after a transport restart (new epoch) a blocked or stale frame recovers **while transport runs** — the
-      20-bar `frame_blocked(clock_epoch_changed)` shape — and a slot with no stopped-time publication is served by the
-      lane once PLAYING.
+      20-bar `frame_blocked(clock_epoch_changed)` shape (capability defect C) and the revision-change
+      `frame_blocked(candidate_rejected)` shape (defect D) — and a slot with no stopped-time publication is served by the
+      lane once PLAYING, within a stated acquisition bound (today 6.7–7.7 bars from a cold entry).
 - [ ] 5.2 GREEN in the producer (an epoch-invalidated frame re-requests instead of blocking permanently); mutation check.
 - [ ] 5.3 Device: chain with a transport restart; no slot stays on the merged fallback after the restart.
 

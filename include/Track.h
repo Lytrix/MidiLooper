@@ -456,6 +456,10 @@ public:
   /// Test-only witness: MIDI turns that selected the live overlay window (slice 3).
   static uint32_t overlayLiveSelectionCount();
   static void setOverlayEdgeDisabledForTest(bool disabled);
+  /// playback-tick-consume-only phase 3: bypass the two length gates of the windowed lane (DEC-200's keystone in
+  /// `requestCommittedPlaybackWindowForSlot` and the producer's `win_window_ineligible`), so the capability fixture
+  /// measures the lane apart from them. Native only; the target keeps both gates.
+  static void setWindowLengthGatesBypassedForTest(bool bypassed);
   /// **3.15f/C diagnostic:** the exact adoption terms witnessed at the last clock-edge adoption attempt. `firstFalse`
   /// is 0 when all terms held; otherwise the first false term in evaluation order (1 published, 2 incomplete,
   /// 3 positioned tick not reached, 4 not Preview, 5 revision, 6 coverage invalid, 7 coverage loop length,

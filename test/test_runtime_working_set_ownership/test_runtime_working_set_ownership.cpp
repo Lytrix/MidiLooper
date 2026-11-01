@@ -18606,6 +18606,231 @@ void test_3_10_the_declared_envelope_is_the_admissions_own_boundary() {
                            "the one-tick-tight demand is positioned a later occurrence by the same cost rule");
 }
 
+
+// ---- playback-tick-consume-only phase 3: one windowed lane for every length (capability, measured) ----------------
+//
+// One helper drives the production producer (`serviceRollingPlaybackWindow` + `stepPlaybackViewMaintenance`, one turn
+// per `kPlaybackViewPermittedAdvancePerTurn` ticks) and the production tick (`TrackManager::updateAllTracks`) over a
+// committed, root-published, bar-spaced slot that enters PLAYING with **no stopped-time publication**. It measures, per
+// length and case: when the lane first serves (acquisition), and after that, the consumed routes, seams, note closure
+// and merged builds. The length gates can be bypassed (`setWindowLengthGatesBypassedForTest`) so capability is
+// measured apart from them.
+namespace CapabilityFixture {
+enum class Case : uint8_t { Steady, Restart, Revision };
+struct Result {
+  uint32_t acquiredAt = 0;  // ticks from the start until the lane first served; 0 = never
+  uint32_t mergedBefore = 0;
+  uint32_t viewAfter = 0, mergedAfter = 0, noneAfter = 0;
+  uint32_t seamsAfter = 0;          // window adoptions after acquisition
+  uint32_t lostAfterEvent = 0;      // merged/none ticks after the restart or revision event
+  uint32_t reacquiredAt = 0;        // ticks after the event until the lane served again; 0 = never
+  uint32_t ons = 0, offs = 0;       // bar-spaced pitch, after acquisition
+  uint32_t barsAfter = 0;           // bar starts crossed after acquisition
+  uint32_t mergedBuildsAfter = 0;
+  uint8_t lastReject = 0, lastCause = 0;
+  bool fullLoopViewAtStart = false;
+};
+inline const char* caseName(Case c) {
+  return c == Case::Steady ? "steady" : c == Case::Restart ? "restart" : "revision";
+}
+Result run(uint32_t bars, Case c, bool bypass, uint32_t totalBars = 30, bool trace = false) {
+  using PlaybackTickContext::TickRoute;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  Result r{};
+  PlaybackTickContext::initAtBoot();
+  Track::setWindowLengthGatesBypassedForTest(bypass);
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, bars);
+  Loop& loop = track.getActiveLoop();
+  publishBarSpacedRootForSlot(loop, bars);
+  track.forceSetState(TRACK_PLAYING);  // before the prewarm: no stopped-time oracle publication
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  {
+    const PlaybackViewSourceIdentity id{loop.playbackRevision, track.getPlaybackGeneration(),
+                                        loop.publishedSnapshotIdentity()};
+    r.fullLoopViewAtStart = runtime->publishedFullLoopView(id, loop.loopLengthTicks) != nullptr;
+  }
+  auto* set = runtime->viewSetIfPrewarmed();
+  const uint64_t origin = 200;
+  uint32_t epoch = 1;
+  const uint32_t total = totalBars * kBar;
+  const uint32_t eventAt = total / 2;
+  bool acquired = false, eventDone = false;
+  uint8_t servedView = 0xFF;
+  size_t midiMark = 0;
+  resetPlaybackMergedRebuildCountForTest();
+  uint32_t buildsAtAcquire = 0;
+  MidiSendCapture::reset();
+  for (uint32_t delta = 1; delta <= total; ++delta) {
+    if (!eventDone && delta == eventAt && c != Case::Steady) {
+      eventDone = true;
+      if (c == Case::Restart) {
+        ++epoch;  // the device's `Transport started` re-stamp
+      } else {
+        ++loop.playbackRevision;  // an overdub publication: a new current root
+        publishBarSpacedRootForSlot(loop, bars);
+      }
+    }
+    const uint64_t tick = origin + delta;
+    nativePlaybackDeadlineClock = {tick, epoch};
+    clockManager.assignCurrentTickSilently(static_cast<uint32_t>(tick));
+    if (delta % Track::kPlaybackViewPermittedAdvancePerTurn == 0) {
+      track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+      track.stepPlaybackViewMaintenance(static_cast<uint32_t>(tick), nullptr, false, nativePlaybackDeadlineClock);
+    }
+    const auto before = PlaybackTickContext::routeCountsForTest();
+    trackManager.updateAllTracks(static_cast<uint32_t>(tick));
+    const auto after = PlaybackTickContext::routeCountsForTest();
+    const auto d = [&](TickRoute route) {
+      return after.route[static_cast<int>(route)] - before.route[static_cast<int>(route)];
+    };
+    const bool lane = d(TickRoute::View) != 0 && runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving;
+    if (trace) {
+      static int lastPhase = -1; static const char* lastExit = nullptr; static int lastLane = -1;
+      static uint8_t lastWhy = 0xFF;
+      const int phase = static_cast<int>(runtime->rolling.phase);
+      const char* exitToken = PlaybackTickContext::gState.producerExit[0];
+      const uint8_t why = lane ? 0 : PlaybackTickContext::gState.turnReject;
+      if (delta == 1) { lastPhase = -1; lastExit = nullptr; lastLane = -1; lastWhy = 0xFF; }
+      if (phase != lastPhase || exitToken != lastExit || int(lane) != lastLane || why != lastWhy) {
+        char line[200];
+        std::snprintf(line, sizeof(line), "trace d=%u bar=%.2f phase=%d lane=%d why=%u exit=%s start=%u dl=%llu",
+                      delta, double(delta) / kBar, phase, lane ? 1 : 0, why, exitToken ? exitToken : "-",
+                      runtime->rolling.startPhase, (unsigned long long)runtime->rolling.deadlineTick);
+        TEST_MESSAGE(line);
+        lastPhase = phase; lastExit = exitToken; lastLane = lane; lastWhy = why;
+      }
+    }
+    if (d(TickRoute::Merged) || d(TickRoute::None)) {
+      r.lastReject = PlaybackTickContext::gState.turnReject;
+      r.lastCause = PlaybackTickContext::gState.turnCause;
+    }
+    if (!acquired) {
+      r.mergedBefore += d(TickRoute::Merged);
+      if (lane) {
+        acquired = true;
+        r.acquiredAt = delta;
+        servedView = set->lifecycle.current;
+        midiMark = MidiSendCapture::count();
+        buildsAtAcquire = playbackMergedRebuildCountForTest();
+      }
+      continue;
+    }
+    r.viewAfter += d(TickRoute::View);
+    r.mergedAfter += d(TickRoute::Merged);
+    r.noneAfter += d(TickRoute::None);
+    if (eventDone) {
+      r.lostAfterEvent += d(TickRoute::Merged) + d(TickRoute::None);
+      if (r.reacquiredAt == 0 && lane && delta > eventAt) r.reacquiredAt = delta - eventAt;
+    }
+    if (lane && set->lifecycle.current != servedView) {
+      ++r.seamsAfter;
+      servedView = set->lifecycle.current;
+    }
+    if ((tick - origin) % kBar == 0) ++r.barsAfter;
+  }
+  if (acquired) {
+    r.mergedBuildsAfter = playbackMergedRebuildCountForTest() - buildsAtAcquire;
+    for (size_t i = midiMark; i < MidiSendCapture::count(); ++i) {
+      const auto e = MidiSendCapture::at(i);
+      if (e.data.noteData.note != 48) continue;
+      if (e.isNoteOn()) ++r.ons;
+      else if (e.isNoteOff()) ++r.offs;
+    }
+  }
+  Track::setWindowLengthGatesBypassedForTest(false);
+  return r;
+}
+void report(uint32_t bars, Case c, bool bypass, const Result& r) {
+  char line[320];
+  std::snprintf(line, sizeof(line),
+                "cap bars=%u case=%s gates=%s fullview0=%d acquired=%u mergedBefore=%u | after: view=%u merged=%u "
+                "none=%u seams=%u lostAfterEvent=%u reacquired=%u ons=%u offs=%u bars=%u mergedBuilds=%u "
+                "lastReject=%u cause=%u",
+                bars, caseName(c), bypass ? "bypassed" : "on", r.fullLoopViewAtStart ? 1 : 0, r.acquiredAt,
+                r.mergedBefore, r.viewAfter, r.mergedAfter, r.noneAfter, r.seamsAfter, r.lostAfterEvent,
+                r.reacquiredAt, r.ons, r.offs, r.barsAfter, r.mergedBuildsAfter, r.lastReject, r.lastCause);
+  TEST_MESSAGE(line);
+}
+}  // namespace CapabilityFixture
+
+/// Phase 3's classification, pinned as today's baseline. Each assertion marked BASELINE is a gap a later phase inverts
+/// (4: length gates and successor demand; 5: live recovery); the capability assertions must keep holding.
+void test_capability_classification_baseline() {
+  using namespace CapabilityFixture;
+  using PlaybackTickContext::RouteReject;
+  constexpr uint8_t kWaiting = static_cast<uint8_t>(RouteReject::WaitingForHandoff);
+  constexpr uint8_t kBlocked = static_cast<uint8_t>(RouteReject::FrameBlocked);
+  // Gates on: the short loops never reach the lane (DEC-200's keystone). BASELINE (phase 4).
+  for (uint32_t bars : {1u, 8u}) {
+    setUp();
+    const Result r = run(bars, Case::Steady, false);
+    TEST_ASSERT_FALSE(r.fullLoopViewAtStart);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, r.acquiredAt, "BASELINE: the length gate refuses a short loop");
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RouteReject::FrameIdle), r.lastReject);
+  }
+  // Gates bypassed: capability. Every length is acquired from a cold PLAYING entry and serves its committed content
+  // with exact closure: one bar-spaced note per bar crossed, never duplicated or lost at a seam.
+  for (uint32_t bars : {1u, 8u, 20u}) {
+    setUp();
+    const Result r = run(bars, Case::Steady, true);
+    TEST_ASSERT_FALSE(r.fullLoopViewAtStart);
+    TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, r.acquiredAt, "capability: the lane serves a cold slot of this length");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(r.barsAfter, r.offs, "capability: one NoteOff per bar crossed");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(r.barsAfter - 1, r.ons, "capability: one NoteOn per bar after acquisition");
+    TEST_ASSERT_EQUAL_UINT32(0u, r.noneAfter);
+    if (bars == 1) {
+      // The 1-bar window is the whole loop: once acquired it never leaves the lane.
+      TEST_ASSERT_EQUAL_UINT32(0u, r.mergedAfter);
+    } else {
+      // BASELINE (phase 4): the successor is requested only at expiry and a full priced lookahead ahead, so the lane
+      // serves one two-bar window in four and the merged fallback covers the rest.
+      TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(r.viewAfter, r.mergedAfter,
+                                              "BASELINE: the merged fallback still covers most ticks between windows");
+      TEST_ASSERT_EQUAL_UINT8(kWaiting, r.lastReject);
+    }
+  }
+  // Transport restart and revision change while playing, gates bypassed: the windowed frame never recovers on the
+  // two-bar shapes. BASELINE (phase 5: live recovery).
+  for (uint32_t bars : {8u, 20u}) {
+    setUp();
+    const Result restart = run(bars, Case::Restart, true);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, restart.reacquiredAt, "BASELINE: a restart blocks the frame for the session");
+    TEST_ASSERT_EQUAL_UINT8(kBlocked, restart.lastReject);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0u, restart.lastCause, "the producer blocked it (win_frame_invalidated)");
+    setUp();
+    const Result revision = run(bars, Case::Revision, true);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, revision.reacquiredAt, "BASELINE: a revision change blocks the frame");
+    TEST_ASSERT_EQUAL_UINT8(kBlocked, revision.lastReject);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(RouteReject::CandidateRejected), revision.lastCause);
+  }
+  // The whole-loop 1-bar window recovers from a revision change, and a restart does not drop it.
+  setUp();
+  TEST_ASSERT_NOT_EQUAL_UINT32(0u, run(1, Case::Revision, true).reacquiredAt);
+  setUp();
+  TEST_ASSERT_EQUAL_UINT32(0u, run(1, Case::Restart, true).lostAfterEvent);
+}
+
+void test_capability_trace_steady_long_loop() {
+  setUp();
+  CapabilityFixture::report(20, CapabilityFixture::Case::Steady, true,
+                            CapabilityFixture::run(20, CapabilityFixture::Case::Steady, true, 30, true));
+}
+
+void test_capability_measure_every_length_and_case() {
+  using namespace CapabilityFixture;
+  for (bool bypass : {false, true})
+    for (uint32_t bars : {1u, 8u, 20u})
+      for (Case c : {Case::Steady, Case::Restart, Case::Revision}) {
+        setUp();
+        report(bars, c, bypass, run(bars, c, bypass));
+      }
+}
+
 int main() {
 
 
@@ -18867,6 +19092,8 @@ int main() {
   RUN_TEST(test_route_reject_names_expiry_then_the_idle_frame);
   RUN_TEST(test_route_reject_names_an_inactive_slot);
   RUN_TEST(test_route_reject_row_is_emitted_on_change_from_the_main_loop);
+  RUN_TEST(test_capability_measure_every_length_and_case);
+  RUN_TEST(test_capability_classification_baseline);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
   // fits inside one loop; DEC-156's bounded later occurrence otherwise).
