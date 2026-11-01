@@ -13543,3 +13543,38 @@ arrival — they *are* on SD — and, like every load append, skip `canStagePers
 is EXTMEM; the floor exists for capture/mid-pass). Open check: the undo-hydrate step in `processDeferredUndoSnapshots`
 under running playback. Not traced: whether an ISR (`ClockManager`'s IntervalTimer) can reach an append inside a
 staging scope; capture appends are main-loop only (`handleMidiInput`).
+
+## DEC-241 — The internal-clock ISR tick is consume-only: playback never builds in interrupt context
+
+**Date:** 2026-11-01 · **Status:** Implemented (ISR path) — native + device verified; normal-case prewarm open.
+**Owner:** `Track::playCommittedLoopMidi` (tick route), `selectMergedPlaybackFallbackForTick`,
+`TrackManager::serviceOwedTickPlaybackFallbacks` (main-loop owner), `PlaybackTickContext` (context + state).
+
+**Evidence.** The runtime profiler (DEC-239) traced `IRQ_PIT` → `ClockManager::updateInternalClock` →
+`TrackManager::updateAllTracks` → `Track::playCommittedLoopMidi` → `buildMergedPlaybackFallbackCold` →
+`ensurePlaybackMergedMidiEventsBuilt`. On the internal clock (host clock lost), every tick entered that route and
+55–57 real merged builds per run ran **inside the interrupt** (5 ms avg / ~18 ms max on the main lane)
+(`openspec/changes/runtime-profiling-layer/evidence/2026-11-01-isr-merged-build-trace.md`).
+
+**Decision (hard RT invariant).** A playback tick in interrupt context only **consumes** a qualified source. For the
+merged fallback that means: current (the build's own reuse predicate, now shared — `mergedFallbackReuseHolds`),
+order-clean, and not being rebuilt. Otherwise the tick **owes** the build (one bit per track/slot), counts the miss,
+and contains the turn through the existing no-route path. No build, allocation, incremental admit, order rebuild,
+normalization or publication in the ISR. The main-loop owner (`loop()`, beside `drainEdgeEffects`) runs the identical
+`buildMergedPlaybackFallbackCold` body plus the order rebuild under a `servicing` flag the ISR respects, so the ISR
+never reads a half-built fallback (this also closes the latent race where an ISR tick read `mergedEvents` during a
+main-loop build).
+
+**General rule recorded.** Code reached with `IPSR ≠ 0` is consume-only unless registered ISR-safe and independently
+bounded; anything that builds, resolves, prepares, allocates, persists or publishes is suspect in PIT context. The
+profiler's per-identity ISR refusal count (`ref=`, `isr_last=<IPSR>:<id>`) is the qualification metric:
+`PlaybackWindow_build` from the ISR must be 0; `TickMergedFallback_build` from the ISR may be large (cheap checks).
+
+**Scope.** ISR context only. Main-loop ticks (external clock) still build on demand — deferring them would drop a tick
+at each window move; measured separately. The normal-case layer ("a qualified source exists before the internal clock
+takes over") is not implemented yet; without it each window move under the internal clock costs a contained tick
+until the owner builds.
+
+**Tests.** `test_runtime_profiler_sites`: ISR tick never builds and owes it, the owner builds, the next ISR tick
+consumes without building; ISR tick never rebuilds the order; main-loop tick unchanged. Mutations: restoring the cold
+build fails (`Expected 0 Was 1`); consuming an order-dirty fallback fails.
