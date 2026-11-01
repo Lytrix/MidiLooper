@@ -62,16 +62,17 @@ SHALL NOT be used.
 - **THEN** the capture names the predicate that kept the windowed lane out, with the slot it applies to
 - **AND** the reason is stable enough to drive a repair decision
 
-### Requirement: Capability is proved separately from routing
+### Requirement: Capability is proved separately from routing, for every loop length
 
-Before any new playback buffering is introduced, a native fixture SHALL drive the existing windowed lane alone on the
-long-loop shape — a 20-bar loop, a 2-bar moving coverage, publication ahead of the cursor and seam transitions with
-note closure — and SHALL record whether the lane can serve it. A repair that adds a second buffer to the merged
+Before any new playback buffering is introduced, a native fixture SHALL drive the existing windowed lane alone on 1-bar,
+8-bar and 20-bar loops — through the same producer and the same request policy — covering a cold or restored slot
+entering PLAYING, a transport restart, a source revision change while playing, and seam transitions with note closure.
+It SHALL record, per length and case, whether the lane can serve it. A repair that adds a second buffer to the merged
 fallback SHALL cite a recorded failure of this fixture.
 
 #### Scenario: The lane can serve the shape
 
-- **WHEN** the fixture passes
+- **WHEN** the fixture passes for a length and case
 - **THEN** the defect is classified as admission or routing, and the repair targets selection, demand or publication
 
 #### Scenario: The lane cannot serve the shape
@@ -79,10 +80,39 @@ fallback SHALL cite a recorded failure of this fixture.
 - **WHEN** the fixture fails on a named capability
 - **THEN** that capability gap is recorded and becomes the only justification for new buffering
 
-### Requirement: Long-loop qualification stays on the windowed lane with zero misses
+### Requirement: One window request policy for every loop length
 
-The change SHALL be accepted only on a long device run spanning many window seams, on both the external and the
-internal clock, in which the playback miss count is zero, merged-fallback route use is zero or explicitly justified per
+The windowed lane SHALL accept a committed slot of any length. The window it requests SHALL be one calculation,
+`clamp(lookahead span, loop extent)`; loop length SHALL change the window's geometry and SHALL NOT select a route, refuse
+the lane, or select a per-length policy.
+
+#### Scenario: A short loop takes the windowed lane
+
+- **WHEN** a committed 1-bar or 8-bar slot sounds in PLAYING
+- **THEN** the windowed lane requests, publishes and serves its window
+- **AND** the requested window is the loop extent clamped by the same lookahead rule a 20-bar loop uses
+
+### Requirement: A missing or stale view recovers while transport runs
+
+After transport start or restart, any missing or stale playback view SHALL be recoverable while transport is running.
+After entering PLAYING, no route SHALL depend on a publication opportunity that exists only in STOPPED.
+
+#### Scenario: Transport restart re-stamps the clock epoch
+
+- **WHEN** the transport restarts while a slot's window frame carries the previous epoch
+- **THEN** the frame re-requests a window for the new epoch instead of staying blocked
+- **AND** the slot returns to the windowed lane within the lookahead, not at the next STOPPED interval
+
+#### Scenario: A slot missed its stopped-time publication
+
+- **WHEN** a restored slot enters PLAYING without any view published while stopped
+- **THEN** the windowed lane produces and publishes its view while playing
+- **AND** the slot is not served by the merged fallback for the rest of the session
+
+### Requirement: Qualification stays on the windowed lane with zero misses, for every length
+
+The change SHALL be accepted only on a long device run spanning many window seams, with 1-bar, 8-bar and 20-bar slots
+sounding and a transport restart, on both the external and the internal clock, in which the playback miss count is zero, merged-fallback route use is zero or explicitly justified per
 occurrence, and no playback build is entered from interrupt context. MIDI timing SHALL be reported separately for the
 external-clock and internal-clock intervals.
 
@@ -90,6 +120,6 @@ external-clock and internal-clock intervals.
 
 - **WHEN** the qualification run completes
 - **THEN** `tick_playback_miss` is zero on both clocks
-- **AND** the consumed-route counts show the windowed lane serving the long loop
+- **AND** the consumed-route counts show the windowed lane serving every sounding slot, including after the restart
 - **AND** the runtime profiler reports zero `PlaybackWindow_build` entries from interrupt context
 - **AND** external- and internal-clock MIDI timing are reported as separate intervals

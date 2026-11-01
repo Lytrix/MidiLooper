@@ -29,6 +29,14 @@ purpose-built for look-ahead. This change therefore first proves **why the windo
 admission or routing so that lane owns the workload. New buffering is allowed only against a recorded capability
 failure.
 
+**Phase 2 finding (2026-11-01, `evidence/2026-11-01-route-reject.md`, `evidence/2026-11-01-length-split.md`).** The misses
+are one architectural split, not three problems: some playback sources can become ready only in particular transport or
+length states, while the only producer that stays live during playback is restricted by loop length. The 20-bar loop is
+blocked for the session by a transport restart (`clock_epoch_changed`); the restored 1- and 8-bar loops are merged from
+their first tick because their readers are published only while STOPPED and the lane refuses loops of 16 bars or fewer.
+The owner already decided the fix (DEC-200 / DEC-202, 2026-10-29: "length should not be the discriminator"); its final
+slice — the keystone flip — never landed. This change finishes that unification before anything else.
+
 ## What Changes
 
 1. **Telemetry first (report-only, default capture image).**
@@ -37,16 +45,21 @@ failure.
    - Both are emitted in the 5 s telemetry family, with state in RAM2 and literals in a carved TU.
 2. **Routing characterization.** For the long-loop shape, the route decision records the **first failed predicate**
    that keeps the windowed lane out, as a named reason (never a generic "not usable"). It is emitted on change.
-3. **Capability proof.** A native fixture drives the existing windowed lane alone on the same 20-bar loop: 2-bar moving
-   coverage, publication ahead of the cursor, and seam transitions with note closure. It decides between two causes:
+3. **Capability proof, every length.** A native fixture drives the existing windowed lane alone on 1-, 8- and 20-bar
+   loops: cold/restored entry into PLAYING, a transport restart, a revision change, seam transitions with note closure.
+   It decides, per length and case, between two causes:
    - **routing/admission bug**: the lane can serve the shape but isn't selected;
    - **capability gap**: the lane cannot serve it.
-4. **Repair, gated by 3.** Fix demand, admission or publication so the windowed lane is selected and stays one window
-   ahead. A merged `ready` buffer requires an explicit, recorded proof that the lane cannot satisfy the contract.
-5. **Unify both clocks.** Once the source is reliably ahead, the external-clock tick follows the same consume-only rule
+4. **Remove the length gates, gated by 3.** One request policy, `clamp(lookahead span, loop extent)`; DEC-200's keystone
+   and its producer twin stop refusing short loops. A merged `ready` buffer requires a recorded capability gap.
+5. **Live recovery.** A missing or stale view recovers while transport runs; an epoch change re-requests instead of
+   blocking.
+6. **Route all playback through the lane**, and retire the length-specific readers (1-bar cold frame, stopped-oracle
+   full-loop view / bridge as a playback route).
+7. **Unify both clocks.** Once the source is reliably ahead, the external-clock tick follows the same consume-only rule
    as the ISR tick (DEC-241's owed + containment path stays as the exceptional failure mode).
-6. **Qualification.**
-   - On a long device run across many window seams, on both clocks:
+8. **Qualification.**
+   - On a long device run across many window seams, with 1-, 8- and 20-bar slots and a transport restart, on both clocks:
      - `tick_playback_miss == 0`;
      - merged-fallback route use == 0, or explicitly justified per occurrence;
      - zero `PlaybackWindow_build` entered from the ISR.
@@ -89,14 +102,15 @@ No storage format, no persistence or undo change, no new playback representation
 
 ## UNKNOWN
 
-- Which predicate keeps the windowed lane out for this shape: route selection, view admission, the rolling lane's
-  dispatch, or a missing producer turn.
+- Whether the lane serves every length with the gates bypassed (phase 3); phase 2 already named the predicates
+  (`clock_epoch_changed` for the long loop, the length gates for the short loops).
 - Whether the lane's publication lead covers a 2-bar seam at 170 BPM under the measured owner-turn latency.
 
 ## Non-goals
 
-- A second merged-fallback buffer (blocked unless task 3 records a capability failure).
-- Removing the merged fallback in this change (its removal trigger is the qualification in task 6).
+- A second merged-fallback buffer, or any optimization, before phases 3–6 (blocked unless phase 3 records a capability
+  failure).
+- Removing the merged fallback in this change (its removal trigger is the qualification in phase 8).
 - Display / C6.4 tuning (parked).
 - The profiler attach-request bug.
 
