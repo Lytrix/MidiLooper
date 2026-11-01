@@ -9,8 +9,11 @@
 //   - one run per active capture pass in commit order (Record, then overdubs by `mergeSequence`), holding that pass's
 //     committed chunk rows (DEC-245 layer 1); NoteOff rows are stamped with their note's id using production's own
 //     pairing (`NoteUtils::reconstructDisplayNotes`), so a hide removes both ends of a note;
-//   - one Edit run per active Note edit pass in edit-pass id order: a hide of the target plus the target's geometry
-//     after production's own `applyNoteEditPass` of that row. Edit semantics are never re-implemented here.
+//   - ONE Edit run for all active Note edit passes: per target a hide plus its final geometry after production's own
+//     `applyNoteEditPass` of that target's rows in edit-pass id order. Edit semantics are never re-implemented here.
+//     This collapsed Edit run is a Stage-C shadow-import convenience, valid for parity only: it discards per-edit
+//     provenance and order, so it is NOT a candidate long-term representation of edits (stage D/E keeps one immutable
+//     edit run per edit, DEC-245).
 // A pass the importer cannot express, or a store that cannot hold the loop, is a named refusal and leaves the store
 // empty: there is no partial mirror, and the production reader stays authoritative.
 //

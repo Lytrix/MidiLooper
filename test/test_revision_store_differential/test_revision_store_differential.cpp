@@ -1098,6 +1098,62 @@ void test_import_refusals_are_named_and_leave_no_partial_mirror() {
   TEST_ASSERT_EQUAL_UINT32(0, gImport.ownedPageCount());
 }
 
+// ---- C1 follow-up: the production collapse depends on row provenance -------------------------------------------------
+// Matrix measured on the production path (the projection must reproduce it, and compaction must not erase the kind):
+//   capture + capture identical  -> collapse
+//   capture + edit replacement   -> both kept
+//   edit + edit replacements     -> measured here, not inferred
+uint32_t productionCountOn(const Loop& loop, uint32_t tick, uint8_t status, uint8_t pitch) {
+  SessionMidiEventVec production;
+  TEST_ASSERT_TRUE(loop.tryCopyCurrentSnapshotEditViewEvents(production));
+  uint32_t n = 0;
+  for (const MidiEvent& e : production) {
+    const Row r = rowOf(e);
+    n += (r.tick == tick && r.status == status && r.data1 == pitch) ? 1 : 0;
+  }
+  return n;
+}
+
+void test_collapse_matrix_capture_capture_collapses() {
+  Loop loop;
+  resetAll(loop);
+  commitWithChanges(loop, true, {{96, 0xB0, 1, 74, 100}, {480, 0x90, 1, 50, 100}, {600, 0x80, 1, 50, 0}}, {});
+  commitWithChanges(loop, false, {{96, 0xB0, 1, 74, 100}, {700, 0x90, 1, 52, 100}, {800, 0x80, 1, 52, 0}}, {});
+  TEST_ASSERT_EQUAL_UINT32(1, productionCountOn(loop, 96, 0xB0, 74));
+  assertParity(loop, "matrix capture+capture", EffectivePolicy::productionCompat());
+}
+
+void test_collapse_matrix_capture_and_edit_replacement_both_kept() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {96, 0x90, 1, 62, 100},
+                                 {480, 0x80, 1, 62, 0}},
+                    {}, &rec);
+  // Edit note 62 to pitch 60: its replacement is identical to the captured note 60 (on and off rows).
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 62), 1, 60, 100, 96, 480});
+  TEST_ASSERT_EQUAL_UINT32(2, productionCountOn(loop, 96, 0x90, 60));
+  assertParity(loop, "matrix capture+edit", EffectivePolicy::productionCompat());
+}
+
+void test_collapse_matrix_edit_and_edit_replacements_measured() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {96, 0x90, 1, 62, 100},
+                                 {480, 0x80, 1, 62, 0}},
+                    {}, &rec);
+  // Two edits, two different notes, identical replacements (pitch 64, same span, channel and velocity).
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 60), 1, 64, 100, 96, 480});
+  saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 62), 1, 64, 100, 96, 480});
+  const uint32_t ons = productionCountOn(loop, 96, 0x90, 64);
+  const uint32_t offs = productionCountOn(loop, 480, 0x80, 64);
+  printf("C1MATRIX edit+edit identical replacements: production NoteOn=%u NoteOff=%u\n", ons, offs);
+  TEST_ASSERT_EQUAL_UINT32(2, ons);  // named from the production measurement (see the C1 evidence)
+  TEST_ASSERT_EQUAL_UINT32(2, offs);
+  assertParity(loop, "matrix edit+edit", EffectivePolicy::productionCompat());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
@@ -1119,6 +1175,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_zero_length_note_kept_in_source_and_suppressed_by_production_projection);
   RUN_TEST(test_seeded_overlap_edit_and_undo_match_production);
   RUN_TEST(test_import_refusals_are_named_and_leave_no_partial_mirror);
+  RUN_TEST(test_collapse_matrix_capture_capture_collapses);
+  RUN_TEST(test_collapse_matrix_capture_and_edit_replacement_both_kept);
+  RUN_TEST(test_collapse_matrix_edit_and_edit_replacements_measured);
   printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);
   return UNITY_END();
 }

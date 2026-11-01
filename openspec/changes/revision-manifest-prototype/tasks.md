@@ -96,10 +96,21 @@ timing and memory envelope without introducing real-time construction?
       `productionCompat()`), it equals production's effective view on **659 / 659** states (B.2a, B.2b seeded, B.3,
       B.3 seeded). Found: production's cross-pass collapse is between capture passes only — projection fixed.
       [Evidence](evidence/2026-11-01-c1-import.md)
-- [ ] C2 Edit-index worker as its own child of the central idle/deferred owner (`RevisionEditIndexGrain`, ≤ 2 ms),
-      demand-driven; `IndexCapacityDenied` instead of evicting a reader-held index.
+- [x] C1b C1 follow-ups: collapsed Edit run documented as shadow-only; production collapse provenance matrix measured
+      (capture+capture collapse, capture+edit both kept, edit+edit both kept) and reproduced; the edit-source bit now
+      survives compaction (per-origin kind). [Evidence](evidence/2026-11-01-c2a-index-lifetime.md)
+- [x] C2a Index lifetime and capacity: reader pins per manifest; slots `Empty`/`Building(identity)`/`Ready(identity)`;
+      reclaim only unpinned `Ready`; `requestIndex` → `IndexCapacityDenied` instead of eviction; a build publishes the
+      identity it started on, never superseded except by explicit cancel. RED (pinned index evicted) → GREEN.
+      [Evidence](evidence/2026-11-01-c2a-index-lifetime.md)
+- [ ] C2b Bounded worker: one registered child of the central idle/deferred owner (`RevisionEditIndexGrain`, ≤ 2 ms
+      whole call on device, no heap), driving only `stepEditIndex()`; publication O(1); no build from playback,
+      display or tick. Device measurement needs C3's import for content.
 - [ ] C3 Shadow rolling-window producer reading the manifest with `IndexOnly`: `Ready` / `IndexOwed` /
-      `CapacityDenied`, actual manifest identity on every window; Stage-C pool ≤ 0.5 MiB.
+      `CapacityDenied`, actual manifest identity on every window; Stage-C pool ≤ 0.5 MiB. Stepwise import against a
+      frozen source identity (slot, loop identity, playbackRevision, pass inventory/generation): finish honestly as
+      that generation or cancel, never restart inside a candidate or re-stamp; capacity reserved/estimated up front
+      (atomic refusal, no late discovery).
 - [ ] C4 Device shadow compare under the owner chain: count, exact ordered stream, identity, wrap, NOTE_EDIT/hide.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.

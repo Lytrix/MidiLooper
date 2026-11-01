@@ -73,8 +73,10 @@ enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest, IndexOwed
 /// `Scan`: per row over the later runs' hide regions (the slow reference, kept as the host oracle).
 /// `IndexOrScan`: the index when published, else the scan (off-line convenience).
 enum class HideLookup : uint8_t { IndexOrScan, IndexOnly, Scan };
-/// Step outcome of the edit-index worker.
-enum class IndexStep : uint8_t { Idle, Pending, Published, DeniedNoPage };
+/// Step outcome of the edit-index worker. `CapacityDenied`: every slot holds an index some reader still pins.
+enum class IndexStep : uint8_t { Idle, Pending, Published, DeniedNoPage, CapacityDenied };
+/// Answer to a reader's demand for a manifest's edit index (C2a).
+enum class IndexRequest : uint8_t { NotNeeded, Ready, Building, Owed, IndexCapacityDenied };
 enum class CompactResult : uint8_t {
   Ok,
   NothingToCompact,
@@ -236,6 +238,7 @@ class StoreCore {
     RunId runs[Cap::kRunsPerManifest];
     uint8_t runCount = 0;
     uint16_t refs = 0;
+    uint16_t readerPins = 0;  // pins taken by readers (a subset of refs); an index is reclaimable only at zero
     bool live = false;
   };
 
@@ -276,11 +279,10 @@ class StoreCore {
   /// Commits that fell back to a sort because a run exceeded its segment budget. Expected 0 for capture input.
   uint32_t slowSeals() const { return slowSeals_; }
   /// Serial of the source pass a row of run `id` came from (its own serial unless the run is compacted).
-  uint32_t sourceSerialOf(RunId id, uint8_t origin) const {
-    const PassRun& r = runs_[id];
-    if (r.originPage == kNoPage) return r.serial;
-    return reinterpret_cast<const uint32_t*>(&pool_.row(r.originPage, 0))[origin];
-  }
+  uint32_t sourceSerialOf(RunId id, uint8_t origin) const { return originEntry(id, origin) & ~kEditOriginBit; }
+  /// Whether that source pass was an Edit pass. Kept through compaction: the production projection keeps edit
+  /// replacement rows out of its cross-pass collapse (C1 matrix).
+  bool sourceIsEdit(RunId id, uint8_t origin) const { return (originEntry(id, origin) & kEditOriginBit) != 0; }
   /// Visit every committed source row of manifest `id` (DEC-245 layer 1): `f(row, sourceSerial, isHide)`, in storage
   /// order. Off-line use (tests, persistence, diagnostics); cost is the manifest's whole content.
   template <typename F>
@@ -411,12 +413,19 @@ class StoreCore {
   const PassRun& run(RunId id) const { return runs_[id]; }
 
   /// A reader pins one manifest generation; it stays composable until unpinned, whatever commits meanwhile.
-  ManifestId pinCurrent() {
-    if (current_ == kNoManifest) return kNoManifest;
-    ++manifests_[current_].refs;
-    return current_;
+  ManifestId pinCurrent() { return pin(current_); }
+  /// A reader pin: keeps the manifest and its published edit index alive (C2a).
+  ManifestId pin(ManifestId id) {
+    if (id == kNoManifest || !manifests_[id].live) return kNoManifest;
+    ++manifests_[id].refs;
+    ++manifests_[id].readerPins;
+    return id;
   }
-  void unpin(ManifestId id) { releaseManifest(id); }
+  void unpin(ManifestId id) {
+    if (id == kNoManifest) return;
+    if (manifests_[id].readerPins != 0) --manifests_[id].readerPins;
+    releaseManifest(id);
+  }
 
   /// Compose `[fromTick, toTick)` of `id` into `out` in DEC-244 order, projected by `policy` (DEC-245 layer 2):
   /// by default hides and replacements apply; `EffectivePolicy::source()` returns the committed source rows.
@@ -459,6 +468,7 @@ class StoreCore {
     }
     // The current equal-tick group's run indices, for the two cross-row projections.
     uint8_t* groupRun = composeGroupRun_;
+    uint8_t* groupOrigin = composeGroupOrigin_;
     uint32_t groupStart = 0;
     uint32_t groupCount = 0;
     while (merge.heapSize != 0) {
@@ -472,9 +482,9 @@ class StoreCore {
         groupCount = 0;
       }
       // Production collapses between capture passes only; edit replacement rows neither collapse nor are collapsed
-      // against (a compacted run counts as capture).
-      if (policy.collapseCrossRunDuplicates && runs_[m.runs[runIndex]].kind != PassKind::Edit &&
-          collapsesWithEarlierRun(m, out + groupStart, groupRun, groupCount, row, runIndex)) {
+      // against. Decided per row from its source pass, so compaction does not change it.
+      if (policy.collapseCrossRunDuplicates && !sourceIsEdit(m.runs[runIndex], row.origin) &&
+          collapsesWithEarlierRun(m, out + groupStart, groupRun, groupOrigin, groupCount, row, runIndex)) {
         continue;
       }
       if (policy.suppressZeroLength && equalTickClass(row) == 1 && row.noteId != 0) {
@@ -489,7 +499,10 @@ class StoreCore {
         if (off != groupCount) {  // drop the pair: remove its NoteOff, skip this NoteOn
           for (uint32_t g = off; g + 1 < groupCount; ++g) {
             out[groupStart + g] = out[groupStart + g + 1];
-            if (g + 1 < kGroupCapacity) groupRun[g] = groupRun[g + 1];
+            if (g + 1 < kGroupCapacity) {
+              groupRun[g] = groupRun[g + 1];
+              groupOrigin[g] = groupOrigin[g + 1];
+            }
           }
           --groupCount;
           --stamp.count;
@@ -501,7 +514,10 @@ class StoreCore {
         break;
       }
       out[stamp.count++] = row;
-      if (groupCount < kGroupCapacity) groupRun[groupCount] = runIndex;
+      if (groupCount < kGroupCapacity) {
+        groupRun[groupCount] = runIndex;
+        groupOrigin[groupCount] = row.origin;
+      }
       ++groupCount;
     }
     return stamp;
@@ -526,13 +542,27 @@ class StoreCore {
   /// The current manifest carries hides and has no published index yet.
   bool editIndexOwed() const { return manifestHasHides(current_) && !editIndexReady(current_); }
 
-  /// Advance the edit-index worker by about `maxRows` hide rows (a run of equal noteIds is finished as a unit). It
-  /// always targets the current manifest: a job for a manifest that stopped being current is abandoned.
+  /// A reader's demand for `id`'s index. Records the demand (the worker builds it next) and answers what it can see
+  /// now. `IndexCapacityDenied`: every slot is building or holds an index that some reader pins; nothing is evicted.
+  IndexRequest requestIndex(ManifestId id) {
+    if (!manifestHasHides(id)) return IndexRequest::NotNeeded;
+    if (editIndexReady(id)) return IndexRequest::Ready;
+    if (indexJob_.active && indexJob_.manifest == id) return IndexRequest::Building;
+    demanded_ = id;
+    demandedIdentity_ = manifests_[id].identity;
+    return reclaimableSlot() != nullptr || indexJob_.active ? IndexRequest::Owed : IndexRequest::IndexCapacityDenied;
+  }
+
+  /// Advance the edit-index worker by about `maxRows` hide rows (a run of equal noteIds is finished as a unit). A job
+  /// builds the manifest it started on and publishes for exactly that identity, whatever became current meanwhile.
+  /// Target of a new job: the demanded manifest if it is still live and unresolved, else the current one if owed.
   IndexStep stepEditIndex(uint32_t maxRows) {
-    if (indexJob_.active && indexJob_.identity != identityOf(current_)) endIndexJob(false);
     if (!indexJob_.active) {
-      if (!editIndexOwed()) return IndexStep::Idle;
-      if (!beginIndexJob()) return IndexStep::DeniedNoPage;
+      const ManifestId target = nextIndexTarget();
+      if (target == kNoManifest) return IndexStep::Idle;
+      EditIndexSlot* slot = reclaimableSlot();
+      if (slot == nullptr) return IndexStep::CapacityDenied;
+      if (!beginIndexJob(target, *slot)) return IndexStep::DeniedNoPage;
     }
     const RevisionManifest& m = manifests_[indexJob_.manifest];
     uint32_t done = 0;
@@ -567,6 +597,11 @@ class StoreCore {
       }
     }
     return IndexStep::Pending;
+  }
+
+  /// Explicit cancellation of the build in progress (never implicit).
+  void cancelEditIndexBuild() {
+    if (indexJob_.active) endIndexJob(false);
   }
 
   // ---- Undo / redo: selection of an existing manifest --------------------------------------------------------------
@@ -679,7 +714,7 @@ class StoreCore {
       const RunId id = src.runs[i];
       job_.originBase[i] = merged.originCount;
       const uint8_t n = runs_[id].originPage == kNoPage ? 1 : runs_[id].originCount;
-      for (uint8_t o = 0; o < n; ++o) serials[merged.originCount++] = sourceSerialOf(id, o);
+      for (uint8_t o = 0; o < n; ++o) serials[merged.originCount++] = originEntry(id, o);
     }
     job_.active = true;
     job_.source = current_;
@@ -753,6 +788,7 @@ class StoreCore {
     for (uint16_t i = 0; i < Cap::kManifestCount; ++i) {
       manifests_[i].live = false;
       manifests_[i].refs = 0;
+      manifests_[i].readerPins = 0;
       manifests_[i].runCount = 0;
     }
     for (uint8_t i = 0; i < Cap::kHistoryDepth; ++i) history_[i] = kNoManifest;
@@ -768,12 +804,19 @@ class StoreCore {
     slowSeals_ = 0;
     job_.active = false;
     indexJob_.active = false;
-    for (uint8_t i = 0; i < kIndexSlots; ++i) indexSlots_[i].live = false;
-    indexClock_ = 0;
+    for (uint8_t i = 0; i < kIndexSlots; ++i) indexSlots_[i] = EditIndexSlot{};
+    demanded_ = kNoManifest;
+    demandedIdentity_ = 0;
   }
 
  private:
   static constexpr uint16_t kMaxCursors = static_cast<uint16_t>(Cap::kRunsPerManifest) * Cap::kSegmentsPerRun;
+  static constexpr uint32_t kEditOriginBit = 0x80000000u;  // origin-table entry: serial | (source was an Edit pass)
+  uint32_t originEntry(RunId id, uint8_t origin) const {
+    const PassRun& r = runs_[id];
+    if (r.originPage == kNoPage) return r.serial | (r.kind == PassKind::Edit ? kEditOriginBit : 0u);
+    return reinterpret_cast<const uint32_t*>(&pool_.row(r.originPage, 0))[origin];
+  }
   /// Same-tick class inversions are fixed in place while appending, but only across this many rows.
   static constexpr uint32_t kMaxLocalShift = 32;
   /// Source passes one compacted run can name (origin is a byte; the table is one page of uint32 serials).
@@ -785,13 +828,16 @@ class StoreCore {
   // Production's cross-pass collapse (`midiEventMatchesSnapshot`), between capture passes: a row matches an earlier-run row on the same tick
   // with the same type and channel; CCs also match number and value; notes also match pitch, and a NoteOn never matches
   // another NoteOn with a different id (NoteOffs carry no id in production, so they match by pitch).
+  // "Earlier pass" is earlier by (run index, origin): inside a compacted run, an earlier source pass.
   bool collapsesWithEarlierRun(const RevisionManifest& m, const PassEvent* group, const uint8_t* groupRun,
-                               uint32_t groupCount, const PassEvent& row, uint8_t runIndex) const {
+                               const uint8_t* groupOrigin, uint32_t groupCount, const PassEvent& row,
+                               uint8_t runIndex) const {
     const uint32_t tracked = groupCount < kGroupCapacity ? groupCount : kGroupCapacity;
     for (uint32_t g = 0; g < tracked; ++g) {
       const PassEvent& e = group[g];
-      if (groupRun[g] >= runIndex || e.status != row.status) continue;
-      if (runs_[m.runs[groupRun[g]]].kind == PassKind::Edit) continue;
+      const bool earlier = groupRun[g] < runIndex || (groupRun[g] == runIndex && groupOrigin[g] < row.origin);
+      if (!earlier || e.status != row.status) continue;
+      if (sourceIsEdit(m.runs[groupRun[g]], groupOrigin[g])) continue;
       const uint8_t type = row.status & 0xF0;
       if (type == 0xB0) {
         if (e.data1 == row.data1 && e.data2 == row.data2) return true;
@@ -839,12 +885,12 @@ class StoreCore {
     }
   };
 
+  enum class SlotState : uint8_t { Empty, Building, Ready };
   struct EditIndexSlot {
-    bool live = false;
-    uint32_t identity = 0;  // the manifest identity this index resolves
+    SlotState state = SlotState::Empty;
+    uint32_t identity = 0;  // the manifest identity this index resolves (Building: the one being built)
     ManifestId manifest = kNoManifest;
     RunId run = kNoRun;  // rows: noteId, tick = latest hide position
-    uint32_t lastUse = 0;
   };
   static constexpr uint8_t kIndexSlots = 2;
 
@@ -853,6 +899,7 @@ class StoreCore {
     uint32_t identity = 0;
     ManifestId manifest = kNoManifest;
     RunId out = kNoRun;
+    EditIndexSlot* slot = nullptr;
     uint8_t cursorCount = 0;
     uint8_t runIndex[Cap::kRunsPerManifest];
     uint32_t at[Cap::kRunsPerManifest];
@@ -862,12 +909,34 @@ class StoreCore {
     if (id == kNoManifest) return nullptr;
     const uint32_t identity = manifests_[id].identity;
     for (uint8_t i = 0; i < kIndexSlots; ++i) {
-      if (indexSlots_[i].live && indexSlots_[i].identity == identity && indexSlots_[i].manifest == id) {
-        indexSlots_[i].lastUse = ++indexClock_;
+      if (indexSlots_[i].state == SlotState::Ready && indexSlots_[i].identity == identity &&
+          indexSlots_[i].manifest == id) {
         return &indexSlots_[i];
       }
     }
     return nullptr;
+  }
+
+  // An Empty slot, else a Ready slot whose manifest no reader pins and that is not the current manifest's index;
+  // else a Ready unpinned slot of the current manifest. Building slots and reader-pinned slots are never reclaimed.
+  EditIndexSlot* reclaimableSlot() {
+    EditIndexSlot* fallback = nullptr;
+    for (uint8_t i = 0; i < kIndexSlots; ++i) {
+      EditIndexSlot& slot = indexSlots_[i];
+      if (slot.state == SlotState::Empty) return &slot;
+      if (slot.state != SlotState::Ready || manifests_[slot.manifest].readerPins != 0) continue;
+      if (slot.manifest != current_) return &slot;
+      fallback = &slot;
+    }
+    return fallback;
+  }
+
+  ManifestId nextIndexTarget() const {
+    if (demanded_ != kNoManifest && manifests_[demanded_].live && manifests_[demanded_].identity == demandedIdentity_ &&
+        manifestHasHides(demanded_) && !editIndexReady(demanded_)) {
+      return demanded_;
+    }
+    return editIndexOwed() ? current_ : kNoManifest;
   }
 
   bool indexLookup(const EditIndexSlot& slot, uint32_t noteId, uint32_t& latest) const {
@@ -890,16 +959,32 @@ class StoreCore {
     return false;
   }
 
-  bool beginIndexJob() {
+  void clearSlot(EditIndexSlot& slot) {
+    if (slot.state == SlotState::Ready) {
+      releaseRunPages(runs_[slot.run]);
+      runLive_[slot.run] = false;
+      releaseManifest(slot.manifest);
+    }
+    slot.state = SlotState::Empty;
+    slot.manifest = kNoManifest;
+    slot.identity = 0;
+  }
+
+  bool beginIndexJob(ManifestId target, EditIndexSlot& slot) {
+    clearSlot(slot);  // only ever called on a reclaimable slot
     const RunId out = takeRun(PassKind::EditIndex);
     if (out == kNoRun) return false;
     indexJob_.active = true;
-    indexJob_.manifest = current_;
-    indexJob_.identity = manifests_[current_].identity;
+    indexJob_.manifest = target;
+    indexJob_.identity = manifests_[target].identity;
     indexJob_.out = out;
+    indexJob_.slot = &slot;
     indexJob_.cursorCount = 0;
-    ++manifests_[current_].refs;  // the job pins the manifest it resolves
-    const RevisionManifest& m = manifests_[current_];
+    slot.state = SlotState::Building;
+    slot.identity = indexJob_.identity;
+    slot.manifest = target;
+    ++manifests_[target].refs;  // the job (then the published slot) holds the manifest it resolves
+    const RevisionManifest& m = manifests_[target];
     for (uint8_t i = 0; i < m.runCount; ++i) {
       if (runs_[m.runs[i]].hideCount == 0) continue;
       indexJob_.runIndex[indexJob_.cursorCount] = i;
@@ -914,30 +999,19 @@ class StoreCore {
       releaseRunPages(runs_[indexJob_.out]);
       runLive_[indexJob_.out] = false;
       releaseManifest(indexJob_.manifest);
+      indexJob_.slot->state = SlotState::Empty;
+      indexJob_.slot->manifest = kNoManifest;
     }
     indexJob_.active = false;
   }
 
+  // O(1) state transition: Building(identity) -> Ready(identity), for the identity the job started on.
   IndexStep publishIndexJob() {
-    EditIndexSlot* slot = nullptr;
-    for (uint8_t i = 0; i < kIndexSlots && slot == nullptr; ++i) {
-      if (!indexSlots_[i].live) slot = &indexSlots_[i];
-    }
-    if (slot == nullptr) {  // evict the least recently used index: its manifest pin goes with it
-      slot = &indexSlots_[0];
-      for (uint8_t i = 1; i < kIndexSlots; ++i) {
-        if (indexSlots_[i].lastUse < slot->lastUse) slot = &indexSlots_[i];
-      }
-      releaseRunPages(runs_[slot->run]);
-      runLive_[slot->run] = false;
-      releaseManifest(slot->manifest);
-    }
-    slot->live = true;
-    slot->identity = indexJob_.identity;
-    slot->manifest = indexJob_.manifest;  // keeps the job's pin
-    slot->run = indexJob_.out;
-    slot->lastUse = ++indexClock_;
+    EditIndexSlot& slot = *indexJob_.slot;
+    slot.state = SlotState::Ready;
+    slot.run = indexJob_.out;
     runs_[indexJob_.out].committed = true;
+    if (demanded_ == indexJob_.manifest) demanded_ = kNoManifest;
     endIndexJob(true);
     return IndexStep::Published;
   }
@@ -1100,6 +1174,7 @@ class StoreCore {
         RevisionManifest& m = manifests_[i];
         m.live = true;
         m.refs = 0;
+        m.readerPins = 0;
         m.runCount = 0;
         m.revision = 0;
         m.loopLengthTicks = 0;
@@ -1391,10 +1466,12 @@ class StoreCore {
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
   mutable Merge composeScratch_;
-  mutable EditIndexSlot indexSlots_[kIndexSlots];
-  mutable uint32_t indexClock_ = 0;
+  EditIndexSlot indexSlots_[kIndexSlots];
   IndexJob indexJob_;
+  ManifestId demanded_ = kNoManifest;
+  uint32_t demandedIdentity_ = 0;
   mutable uint8_t composeGroupRun_[kGroupCapacity];
+  mutable uint8_t composeGroupOrigin_[kGroupCapacity];
 };
 
 /// A store with its own page pool (one slot, tests, the probe). `reset()` empties both.

@@ -1037,6 +1037,128 @@ void test_thousands_of_hides_in_one_edit_run() {
   TEST_ASSERT_EQUAL_UINT32(BulkCap::kPageCount, bulk.ownedPageCount() + bulk.freePageCount());
 }
 
+// C1 follow-up: the production projection's capture/edit distinction survives compaction (per-origin kind).
+void test_compaction_keeps_the_edit_provenance_the_production_projection_needs() {
+  gStore.beginPass(PassKind::Record, kLongTakeTicks);
+  gStore.appendMidi(96, kNoteOn, 60, 100, 1);
+  gStore.appendMidi(480, kNoteOff, 60, 0, 1);
+  gStore.appendMidi(96, kNoteOn, 62, 100, 2);
+  gStore.appendMidi(480, kNoteOff, 62, 0, 2);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Edit);  // note 2 re-pitched to 60: identical to captured note 1
+  gStore.appendHide(2);
+  gStore.appendMidi(96, kNoteOn, 60, 100, 2);
+  gStore.appendMidi(480, kNoteOff, 60, 0, 2);
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);  // capture duplicate of the Record CC
+  gStore.commitPass();
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendMidi(500, 0xB0, 74, 100, 0);
+  gStore.commitPass();
+  const ManifestId before = gStore.pinCurrent();
+  const auto compatBefore = composeAll(before, EffectivePolicy::productionCompat());
+  auto count = [](const std::vector<PassEvent>& rows, uint8_t status, uint8_t d1) {
+    uint32_t n = 0;
+    for (const PassEvent& e : rows) n += (e.status == status && e.data1 == d1) ? 1 : 0;
+    return n;
+  };
+  TEST_ASSERT_EQUAL_UINT32(2, count(compatBefore, kNoteOn, 60));  // capture + edit: both kept
+  TEST_ASSERT_EQUAL_UINT32(1, count(compatBefore, 0xB0, 74));     // capture + capture: collapsed
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 3, CompactionScope::AllowCopies));  // edit + 2 ODs
+  while (gStore.stepCompaction(2) == CompactStep::Pending) {
+  }
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::productionCompat())));
+  const RunId merged = gStore.manifest(gStore.current()).runs[1];
+  TEST_ASSERT_TRUE(gStore.sourceIsEdit(merged, 0));
+  TEST_ASSERT_FALSE(gStore.sourceIsEdit(merged, 1));
+  // Merge the Record in too: every source pass now lives in one run, and the projection is still unchanged.
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(0, 2, CompactionScope::AllowCopies));
+  while (gStore.stepCompaction(2) == CompactStep::Pending) {
+  }
+  TEST_ASSERT_EQUAL_UINT8(1, gStore.manifest(gStore.current()).runCount);
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::productionCompat())));
+  gStore.unpin(before);
+}
+
+// ---- C2a: index lifetime follows reader pins (DEC-246 invariant 4) ------------------------------------------------
+
+static ManifestId commitOverdubWithHide(uint32_t hiddenId, uint32_t newId) {
+  gStore.beginPass(PassKind::Overdub);
+  gStore.appendHide(hiddenId);
+  gStore.appendMidi(100 + newId, kNoteOn + 1, 70, 100, newId);
+  gStore.appendMidi(200 + newId, kNoteOff + 1, 70, 0, newId);
+  return gStore.commitPass();
+}
+
+// RED (2026-11-01, before C2a): the LRU slot eviction dropped the index of a manifest a reader still held.
+void test_index_held_by_a_reader_is_never_evicted() {
+  const OracleRevision rev = recordTake(40, 4 * kBarTicks);
+  commitOverdubWithHide(rev.passes[0].rows[0].noteId, 1001);
+  buildIndexFully(gStore);
+  const ManifestId held = gStore.pinCurrent();  // a reader holds M1 and its index
+  commitOverdubWithHide(rev.passes[0].rows[2].noteId, 1002);
+  buildIndexFully(gStore);  // M2 takes the second slot
+  commitOverdubWithHide(rev.passes[0].rows[4].noteId, 1003);
+  buildIndexFully(gStore);  // M3: must reclaim the unpinned M2 slot, never M1's
+  const ComposeStamp stamp = gStore.composeWindow(held, 0, 4 * kBarTicks, gOut, 4096,
+                                                  EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  TEST_ASSERT_TRUE(stamp.usedIndex);
+  TEST_ASSERT_TRUE(gStore.editIndexReady(gStore.current()));
+  gStore.unpin(held);
+}
+
+void test_two_pinned_indexes_and_a_third_request_is_capacity_denied() {
+  const OracleRevision rev = recordTake(40, 4 * kBarTicks);
+  commitOverdubWithHide(rev.passes[0].rows[0].noteId, 1001);
+  buildIndexFully(gStore);
+  const ManifestId m1 = gStore.pinCurrent();
+  commitOverdubWithHide(rev.passes[0].rows[2].noteId, 1002);
+  buildIndexFully(gStore);
+  const ManifestId m2 = gStore.pinCurrent();
+  const ManifestId m3 = commitOverdubWithHide(rev.passes[0].rows[4].noteId, 1003);
+  TEST_ASSERT_EQUAL(IndexRequest::IndexCapacityDenied, gStore.requestIndex(m3));
+  TEST_ASSERT_EQUAL(IndexStep::CapacityDenied, gStore.stepEditIndex(64));
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m1));  // nothing was evicted
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m2));
+  const ComposeStamp owed = gStore.composeWindow(m3, 0, 4 * kBarTicks, gOut, 4096,
+                                                 EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::IndexOwed, owed.status);
+  gStore.unpin(m1);  // a reader lets go: its slot becomes reclaimable
+  TEST_ASSERT_EQUAL(IndexRequest::Owed, gStore.requestIndex(m3));
+  buildIndexFully(gStore);
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m3));
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m2));  // still pinned, still there
+  TEST_ASSERT_FALSE(gStore.editIndexReady(m1));
+  gStore.unpin(m2);
+}
+
+// A build that started on M41 publishes as M41 even after M42 became current; it is never re-labelled, and a newer
+// request does not supersede it.
+void test_index_build_publishes_the_identity_it_started_on() {
+  const OracleRevision rev = recordTake(60, 4 * kBarTicks);
+  gStore.beginPass(PassKind::Overdub);
+  for (uint32_t i = 0; i < 40; ++i) gStore.appendHide(rev.passes[0].rows[2 * i].noteId);
+  const ManifestId m41 = gStore.commitPass();
+  const uint32_t identity41 = gStore.identityOf(m41);
+  TEST_ASSERT_EQUAL(IndexStep::Pending, gStore.stepEditIndex(8));  // job started on M41
+  const ManifestId m42 = commitOverdubWithHide(rev.passes[0].rows[100].noteId, 2001);
+  TEST_ASSERT_EQUAL(IndexRequest::Owed, gStore.requestIndex(m42));  // demand recorded, M41's build not cancelled
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) step = gStore.stepEditIndex(8);
+  TEST_ASSERT_EQUAL(IndexStep::Published, step);
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m41));
+  TEST_ASSERT_EQUAL_UINT32(identity41, gStore.identityOf(m41));
+  TEST_ASSERT_FALSE(gStore.editIndexReady(m42));  // not re-labelled
+  const ComposeStamp owed = gStore.composeWindow(m42, 0, 4 * kBarTicks, gOut, 4096,
+                                                 EffectivePolicy::revision().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL(ComposeStatus::IndexOwed, owed.status);
+  buildIndexFully(gStore);  // the demanded M42 is built next
+  TEST_ASSERT_TRUE(gStore.editIndexReady(m42));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -1072,5 +1194,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_edit_index_is_qualified_by_manifest_identity);
   RUN_TEST(test_realtime_compose_never_builds_the_index_and_steps_are_bounded);
   RUN_TEST(test_thousands_of_hides_in_one_edit_run);
+  RUN_TEST(test_compaction_keeps_the_edit_provenance_the_production_projection_needs);
+  RUN_TEST(test_index_held_by_a_reader_is_never_evicted);
+  RUN_TEST(test_two_pinned_indexes_and_a_third_request_is_capacity_denied);
+  RUN_TEST(test_index_build_publishes_the_identity_it_started_on);
   return UNITY_END();
 }
