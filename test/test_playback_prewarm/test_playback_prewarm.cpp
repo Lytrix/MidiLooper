@@ -6,6 +6,7 @@
 #if defined(FROZEN_RECORD_READER_SURVIVAL_ORACLE)
 #define UNIFIED_RECORD_RETURN_READER_ORACLE 1
 #define main sharedCaptureFinalizationSuiteMain
+#include "Utils/PlaybackTickContext.h"
 #include "../test_shared_capture_finalization/test_shared_capture_finalization.cpp"
 #undef main
 
@@ -708,6 +709,21 @@ void test_record_note_stream_survives_four_sequential_overdub_publications() {
     TEST_ASSERT_EQUAL(recordIds[b], on.noteId);
     TEST_ASSERT_EQUAL(recordIds[b], off.noteId);
   }
+  // Owner report 2026-11-01: committed overdubs are not audible. The four overdub pitches (100..103) are committed
+  // passes of the current root, so one replay traversal must sound each of them once.
+  uint32_t overdubOns = 0, overdubOffs = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (event.data.noteData.note < 100 || event.data.noteData.note > 103) continue;
+    if (event.isNoteOn()) ++overdubOns;
+    else if (event.isNoteOff()) ++overdubOffs;
+  }
+  char detail[120];
+  snprintf(detail, sizeof(detail), "overdub replay ons=%u offs=%u passes=%u", overdubOns, overdubOffs,
+           unsigned(loop.passes.overdubPasses.size()));
+  TEST_MESSAGE(detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, overdubOns, "each committed overdub sounds once per traversal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, overdubOffs, "each committed overdub sounds once per traversal");
 }
 
 void test_record_note_stream_survives_four_stops_before_predecessor_publication() {
@@ -762,12 +778,16 @@ void test_record_note_stream_survives_four_stops_before_predecessor_publication(
   // interleave. Capture only the actual emitted MIDI; display/frame/source counters are irrelevant.
   MidiSendCapture::reset();
   const uint32_t replayStart = ((now / length) + 1) * length;
+  uint32_t routeTicks[5] = {};
   for (uint32_t tick = replayStart; tick < replayStart + length; ++tick) {
     clockManager.assignCurrentTickSilently(tick);
     nativePlaybackDeadlineClock = {tick, 1};
     (void)t.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
     (void)t.stepPlaybackViewMaintenance(tick, nullptr, true, nativePlaybackDeadlineClock);
+    const auto routeBefore = PlaybackTickContext::routeCounts();
     t.playMidiEvents(tick, true);
+    const auto routeAfter = PlaybackTickContext::routeCounts();
+    for (int r = 0; r < 5; ++r) routeTicks[r] += routeAfter.route[r] - routeBefore.route[r];
     const auto owner = (tick & 1u) ? MidiServiceDrain::DeferredIdleOwner::VisualCache
                                    : MidiServiceDrain::DeferredIdleOwner::Snapshot;
     t.processDeferredIdleMaintenance(0, false, owner, 1);
@@ -784,6 +804,23 @@ void test_record_note_stream_survives_four_stops_before_predecessor_publication(
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(50, recordEvents.size(),
       "all 25 committed Record NoteOn/Off pairs must remain in audible playback after four Stops");
+  {
+    // Owner report 2026-11-01 (long-loop shape): the four committed overdubs must also sound in the replay.
+    uint32_t overdubOns = 0;
+    for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+      const MidiEvent& event = MidiSendCapture::at(i);
+      if (event.isNoteOn() && event.data.noteData.note >= 100 && event.data.noteData.note <= 103) ++overdubOns;
+    }
+    char detail[120];
+    snprintf(detail, sizeof(detail), "long-loop overdub replay ons=%u root=%u routes view=%u bridge=%u paged=%u merged=%u none=%u",
+             overdubOns, loop.publishedSnapshotIsCurrent() ? 1u : 0u, routeTicks[0], routeTicks[1], routeTicks[2],
+             routeTicks[3], routeTicks[4]);
+    TEST_MESSAGE(detail);
+    // BASELINE (owner report 2026-11-01, overdubs not audible): with the Record publication still pending, the frozen
+    // Record readers keep serving Record-only copies over bars 0-2 after the overdubs committed there, so one replay
+    // traversal sounds 1 of the 4 committed overdubs (the 8-bar sibling sounds 4 of 4). The repair inverts this to 4.
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, overdubOns, "BASELINE: committed overdubs masked by the frozen Record readers");
+  }
   for (uint32_t b = 0; b < recordIds.size(); ++b) {
     const MidiEvent& on = recordEvents[2 * b];
     const MidiEvent& off = recordEvents[2 * b + 1];
