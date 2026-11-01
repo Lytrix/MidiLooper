@@ -155,7 +155,7 @@ void commitBoth(Loop& loop, bool record, const std::vector<Op>& ops) {
 // The Stage-C import (`RevisionStore::importLoop`) of the production Loop, read the real-time way (edit index built off
 // the edge, then `IndexOnly`) under the production projection, must equal production's effective view.
 using ImportCap = Capacity</*pages*/ 512, /*rows per page*/ 32, /*runs*/ 48, /*pages per run*/ 256, /*manifests*/ 48,
-                           /*runs per manifest*/ 48, /*history*/ 4>;  // 512 x 512 B = 256 KiB: inside the Stage-C cap
+                           /*runs per manifest*/ 48, /*history*/ 2>;  // 512 x 512 B = 256 KiB; shallow history as on device
 static Store<ImportCap> gImport;
 static uint32_t gImportChecks = 0;
 static uint32_t gImportUnpairedOffs = 0;
@@ -163,12 +163,17 @@ static uint32_t gImportUnpairedOffs = 0;
 void assertImportParity(const Loop& loop, const char* label) {
   ImportStats stats;
   const ImportResult result = importLoop(loop, gImport, &stats);
+  if (result != ImportResult::Ok) {
+    printf("C3BDBG %s result=%u free=%u owned=%u runs=%u manifests=%u steps=%u rows=%u capture_runs=%u\n", label,
+           static_cast<unsigned>(result), gImport.freePageCount(), static_cast<unsigned>(gImport.ownedPageCount()),
+           gImport.liveRunCount(), gImport.liveManifestCount(), stats.steps, stats.rows, stats.captureRuns);
+  }
   TEST_ASSERT_EQUAL_MESSAGE(ImportResult::Ok, result, label);
   gImportUnpairedOffs += stats.unpairedNoteOffs;
   IndexStep step = IndexStep::Pending;
   while (step == IndexStep::Pending) step = gImport.stepEditIndex(256);
   const ComposeStamp stamp = gImport.composeWindow(gImport.current(), 0, loop.loopLengthTicks, gOut, 8192,
-                                                   EffectivePolicy::productionCompat().with(HideLookup::IndexOnly));
+                                                   EffectivePolicy::fullRebuildSnapshotCompat().with(HideLookup::IndexOnly));
   TEST_ASSERT_EQUAL_MESSAGE(ComposeStatus::Complete, stamp.status, label);
   SessionMidiEventVec production;
   TEST_ASSERT_TRUE_MESSAGE(loop.tryCopyCurrentSnapshotEditViewEvents(production), label);
@@ -499,7 +504,7 @@ void compareRevision(Sequence& q, uint32_t seed, uint32_t step) {
   {
     // DEC-245: the store's explicit production projection reproduces production's effective content directly.
     const ComposeStamp compat =
-        gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, EffectivePolicy::productionCompat());
+        gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, EffectivePolicy::fullRebuildSnapshotCompat());
     std::vector<Row> compatRows;
     for (uint32_t i = 0; i < compat.count; ++i) compatRows.push_back(rowOf(gOut[i]));
     TEST_ASSERT_TRUE_MESSAGE(normalise(compatRows), where);
@@ -930,14 +935,14 @@ void test_two_edits_on_one_note_match_production() {
 
 // DEC-245 B.3b: a zero-length note (NoteOn + velocity-0 NoteOn on one tick) stays in the committed source (4 rows);
 // production's effective view drops it (`copyEditViewEventsFromSnapshot` keeps only notes with a span). That is
-// the store's explicit `productionCompat()` projection, not a storage rule: parity under it, 4 rows in source.
+// the store's explicit `fullRebuildSnapshotCompat()` projection, not a storage rule: parity under it, 4 rows in source.
 void test_zero_length_note_kept_in_source_and_suppressed_by_production_projection() {
   Loop loop;
   resetAll(loop);
   commitWithChanges(loop, true, {{96, 0x90, 1, 60, 100}, {480, 0x80, 1, 60, 0}, {192, 0x90, 1, 50, 100},
                                  {192, 0x90, 1, 50, 0}},
                     {});
-  assertParity(loop, "zero-length, production projection", EffectivePolicy::productionCompat());
+  assertParity(loop, "zero-length, production projection", EffectivePolicy::fullRebuildSnapshotCompat());
   const ComposeStamp source = gStore.composeWindow(gStore.current(), 0, kLength, gOut, 8192, EffectivePolicy::source());
   TEST_ASSERT_EQUAL_UINT32(4, source.count);
 }
@@ -1094,8 +1099,11 @@ void test_import_refusals_are_named_and_leave_no_partial_mirror() {
   cc.actionType = EditActionType::Update;
   cc.propertyType = EditPropertyType::Value;
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, cc, EditPassType::ControlChange));
+  const ManifestId publishedBefore = gImport.current();
+  const uint32_t pagesBefore = gImport.ownedPageCount();
   TEST_ASSERT_EQUAL(ImportResult::UnsupportedEditPass, importLoop(loop, gImport));
-  TEST_ASSERT_EQUAL_UINT32(0, gImport.ownedPageCount());
+  TEST_ASSERT_EQUAL_UINT16(publishedBefore, gImport.current());  // the published manifest is untouched
+  TEST_ASSERT_EQUAL_UINT32(pagesBefore, gImport.ownedPageCount());
 }
 
 // ---- C1 follow-up: the production collapse depends on row provenance -------------------------------------------------
@@ -1120,7 +1128,7 @@ void test_collapse_matrix_capture_capture_collapses() {
   commitWithChanges(loop, true, {{96, 0xB0, 1, 74, 100}, {480, 0x90, 1, 50, 100}, {600, 0x80, 1, 50, 0}}, {});
   commitWithChanges(loop, false, {{96, 0xB0, 1, 74, 100}, {700, 0x90, 1, 52, 100}, {800, 0x80, 1, 52, 0}}, {});
   TEST_ASSERT_EQUAL_UINT32(1, productionCountOn(loop, 96, 0xB0, 74));
-  assertParity(loop, "matrix capture+capture", EffectivePolicy::productionCompat());
+  assertParity(loop, "matrix capture+capture", EffectivePolicy::fullRebuildSnapshotCompat());
 }
 
 void test_collapse_matrix_capture_and_edit_replacement_both_kept() {
@@ -1133,7 +1141,7 @@ void test_collapse_matrix_capture_and_edit_replacement_both_kept() {
   // Edit note 62 to pitch 60: its replacement is identical to the captured note 60 (on and off rows).
   saveEditBoth(loop, {EditActionType::Update, EditPropertyType::Pitch, noteIdAt(rec, 62), 1, 60, 100, 96, 480});
   TEST_ASSERT_EQUAL_UINT32(2, productionCountOn(loop, 96, 0x90, 60));
-  assertParity(loop, "matrix capture+edit", EffectivePolicy::productionCompat());
+  assertParity(loop, "matrix capture+edit", EffectivePolicy::fullRebuildSnapshotCompat());
 }
 
 void test_collapse_matrix_edit_and_edit_replacements_measured() {
@@ -1151,7 +1159,82 @@ void test_collapse_matrix_edit_and_edit_replacements_measured() {
   printf("C1MATRIX edit+edit identical replacements: production NoteOn=%u NoteOff=%u\n", ons, offs);
   TEST_ASSERT_EQUAL_UINT32(2, ons);  // named from the production measurement (see the C1 evidence)
   TEST_ASSERT_EQUAL_UINT32(2, offs);
-  assertParity(loop, "matrix edit+edit", EffectivePolicy::productionCompat());
+  assertParity(loop, "matrix edit+edit", EffectivePolicy::fullRebuildSnapshotCompat());
+}
+
+// ---- C3b: the bounded, transactional import ------------------------------------------------------------------------
+
+static ImportJob<ImportCap> gJob;
+
+void buildImportSource(Loop& loop) {
+  resetAll(loop);
+  std::vector<Op> rec;
+  for (uint8_t n = 0; n < 40; ++n) {
+    rec.push_back({static_cast<uint32_t>(n) * 96u, 0x90, 1, static_cast<uint8_t>(40 + n), 100});
+    rec.push_back({static_cast<uint32_t>(n) * 96u + 48u, 0x80, 1, static_cast<uint8_t>(40 + n), 0});
+  }
+  commitWithChanges(loop, true, rec, {});
+  commitWithChanges(loop, false, {{100, 0x90, 2, 70, 90}, {300, 0x80, 2, 70, 0}}, {});
+}
+
+// The candidate is private: readers keep the previously published manifest until the atomic publish.
+void test_import_candidate_is_invisible_until_published() {
+  Loop loop;
+  buildImportSource(loop);
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, gImport));  // a published import, M_old
+  const ManifestId before = gImport.current();
+  const uint32_t identityBefore = gImport.identityOf(before);
+  commitWithChanges(loop, false, {{500, 0x90, 3, 72, 90}, {700, 0x80, 3, 72, 0}}, {});  // production moves on
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.begin(loop, gImport));
+  uint32_t steps = 0;
+  ImportStep step = ImportStep::Pending;
+  while (step == ImportStep::Pending) {
+    TEST_ASSERT_EQUAL_UINT16(before, gImport.current());  // nothing visible yet
+    TEST_ASSERT_EQUAL_UINT32(identityBefore, gImport.identityOf(gImport.current()));
+    step = gJob.step(16);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL(ImportStep::Published, step);
+  TEST_ASSERT_NOT_EQUAL(before, gImport.current());
+  TEST_ASSERT_TRUE(steps >= gJob.stats().rows / 16);  // bounded: at most 16 rows per step
+  assertImportParity(loop, "C3b candidate published");
+}
+
+// A production change mid-build cancels the candidate: SourceMoved, pages returned, published manifest untouched.
+void test_import_source_moving_mid_build_cancels_the_candidate() {
+  Loop loop;
+  buildImportSource(loop);
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, gImport));
+  const ManifestId published = gImport.current();
+  const uint32_t pagesPublished = gImport.ownedPageCount();
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.begin(loop, gImport));
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.step(16));
+  TEST_ASSERT_TRUE(gImport.ownedPageCount() > pagesPublished);  // the candidate holds pages
+  commitWithChanges(loop, false, {{900, 0x90, 4, 74, 90}, {1000, 0x80, 4, 74, 0}}, {});  // key moves
+  TEST_ASSERT_EQUAL(ImportStep::Refused, gJob.step(16));
+  TEST_ASSERT_EQUAL(ImportResult::SourceMoved, gJob.result());
+  TEST_ASSERT_EQUAL_UINT16(published, gImport.current());
+  TEST_ASSERT_EQUAL_UINT32(pagesPublished, gImport.ownedPageCount());
+  TEST_ASSERT_EQUAL_UINT8(0, gImport.stagedRunCount());
+}
+
+// Refusals happen before anything is written: capacity (atomic, conservative) and no committed source.
+void test_import_refusals_happen_before_anything_is_written() {
+  Loop loop;
+  buildImportSource(loop);
+  using SmallCap = Capacity</*pages*/ 4, 32, 8, 8, 8, 8, 2>;
+  static Store<SmallCap> small;
+  static ImportJob<SmallCap> smallJob;
+  small.reset();
+  TEST_ASSERT_EQUAL(ImportStep::Refused, smallJob.begin(loop, small));
+  TEST_ASSERT_EQUAL(ImportResult::DeniedCapacity, smallJob.result());
+  TEST_ASSERT_EQUAL_UINT32(0, small.ownedPageCount());
+  Loop empty;
+  resetAll(empty);
+  TEST_ASSERT_EQUAL(ImportStep::Refused, gJob.begin(empty, gImport));
+  TEST_ASSERT_EQUAL(ImportResult::NoCommittedSource, gJob.result());
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -1178,6 +1261,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_collapse_matrix_capture_capture_collapses);
   RUN_TEST(test_collapse_matrix_capture_and_edit_replacement_both_kept);
   RUN_TEST(test_collapse_matrix_edit_and_edit_replacements_measured);
+  RUN_TEST(test_import_candidate_is_invisible_until_published);
+  RUN_TEST(test_import_source_moving_mid_build_cancels_the_candidate);
+  RUN_TEST(test_import_refusals_happen_before_anything_is_written);
   printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);
   return UNITY_END();
 }

@@ -2,50 +2,74 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 
-// Stage C1 (DEC-246): import a Loop's committed passes into a disposable RevisionStore manifest.
+// Stage C (DEC-246): import a Loop's committed passes into a disposable RevisionStore manifest, as a bounded,
+// transactional candidate (C3b).
 //
 // Production keeps every write (capture, commit, undo, persistence); this only *reads* committed state after it is
-// authoritative. Layout of the imported manifest:
+// authoritative. The candidate is built privately (staged runs, no manifest) in bounded steps against a frozen source
+// key, revalidated, then published atomically; readers keep the previously published manifest until then, and a key
+// that moves cancels the candidate (`SourceMoved`) -- it never continues against mixed production state.
+//
+// Layout of the imported manifest:
 //   - one run per active capture pass in commit order (Record, then overdubs by `mergeSequence`), holding that pass's
-//     committed chunk rows (DEC-245 layer 1); NoteOff rows are stamped with their note's id using production's own
-//     pairing (`NoteUtils::reconstructDisplayNotes`), so a hide removes both ends of a note;
+//     committed chunk rows (DEC-245 layer 1), streamed one sealed event at a time
+//     (`LoopEventStore::readSealedChunkEvent`); NoteOff rows are stamped with their note's id by LIFO pairing in
+//     append (capture) order with a fixed open-note table, so a hide removes both ends of a note;
 //   - ONE Edit run for all active Note edit passes: per target a hide plus its final geometry after production's own
 //     `applyNoteEditPass` of that target's rows in edit-pass id order. Edit semantics are never re-implemented here.
 //     This collapsed Edit run is a Stage-C shadow-import convenience, valid for parity only: it discards per-edit
 //     provenance and order, so it is NOT a candidate long-term representation of edits (stage D/E keeps one immutable
 //     edit run per edit, DEC-245).
-// A pass the importer cannot express, or a store that cannot hold the loop, is a named refusal and leaves the store
-// empty: there is no partial mirror, and the production reader stays authoritative.
-//
-// Off-line / stopped use: this walks every committed row and allocates production vectors; it is not a real-time path.
+// Source: committed passes only. A loop whose content exists only as a derived snapshot/root (a boot-restored slot)
+// is `NoCommittedSource` -- the import never reconstructs layer 1 from a cache (DEC-245).
+// Every step is bounded: no whole-pass copy, no whole-pass pairing, no per-edit scan of the content. The one
+// allocation left is production's `applyNoteEditPass` working on one target's few events.
 
 #include <algorithm>
-#include <vector>
+#include <cstdint>
 
-#include "CommittedEventRange.h"
 #include "EditApply.h"
 #include "EditPass.h"
 #include "Loop.h"
+#include "LoopEventStore.h"
 #include "LoopPasses.h"
 #include "MidiEvent.h"
 #include "RevisionStore/RevisionStore.h"
-#include "Utils/NoteUtils.h"
 
 namespace RevisionStore {
 
 enum class ImportResult : uint8_t {
   Ok,
-  NoRecordPass,         // nothing committed and active to import
-  DeniedCapacity,       // the store refused a pass, a row or a manifest: the slot does not fit the Stage-C pool
+  NoCommittedSource,    // no active committed Record pass with rows (e.g. a restored slot that only has a snapshot)
+  DeniedCapacity,       // the candidate does not fit the store (checked before anything is written)
   UnsupportedEditPass,  // an active edit pass the importer does not express (ControlChange / Audio)
+  SourceMoved,          // the frozen source key changed while the candidate was building: cancelled
+  DeniedNoManifest,     // no manifest slot to publish into: cancelled
 };
+
+/// Step outcome of an import job.
+enum class ImportStep : uint8_t { Idle, Pending, Published, Refused };
 
 struct ImportStats {
   uint32_t captureRuns = 0;
   uint32_t editRuns = 0;
   uint32_t rows = 0;
   uint32_t hides = 0;
-  uint32_t unpairedNoteOffs = 0;  // NoteOff rows production pairing did not attribute to a note (kept, id 0)
+  uint32_t unpairedNoteOffs = 0;  // NoteOff rows the pairing did not attribute to a note (kept, id 0)
+  uint32_t steps = 0;
+};
+
+/// The frozen identity of the production source a candidate is built from.
+struct ImportSourceKey {
+  LoopId loopId = kInvalidLoopId;
+  uint32_t playbackRevision = 0;
+  uint32_t committedPassRevision = 0;
+  uint32_t inventory = 0;  // FNV-1a over every pass's (id, state, chunk count) and every edit pass's (id, state)
+  bool operator==(const ImportSourceKey& o) const {
+    return loopId == o.loopId && playbackRevision == o.playbackRevision &&
+           committedPassRevision == o.committedPassRevision && inventory == o.inventory;
+  }
+  bool operator!=(const ImportSourceKey& o) const { return !(*this == o); }
 };
 
 namespace detail {
@@ -53,138 +77,404 @@ namespace detail {
 inline uint8_t statusOf(const MidiEvent& e) {
   return static_cast<uint8_t>(static_cast<uint8_t>(e.type) | ((e.channel - 1) & 0x0F));
 }
-
-// The committed rows of one capture pass, with each NoteOff given its note's id by production pairing.
-inline void passRowsWithPairedIds(const CommittedChunkIdList& chunks, uint32_t loopLengthTicks, MidiEventVec& rows,
-                                  ImportStats& stats) {
-  rows.clear();
-  const CommittedChunkIdList* lists[] = {&chunks};
-  CommittedEventRange::full(lists, 1, loopLengthTicks).appendTo(rows);
-  const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(rows, loopLengthTicks, /*verboseLog=*/false, /*finishOpenNotes=*/false);
-  for (MidiEvent& e : rows) {
-    if (!e.isNoteOff() || e.noteId != kInvalidNoteId) continue;
-    for (const NoteUtils::DisplayNote& n : notes) {
-      if (n.note == e.data.noteData.note && n.endTick == e.tick) {
-        e.noteId = n.noteId;
-        break;
-      }
-    }
-    if (e.noteId == kInvalidNoteId) ++stats.unpairedNoteOffs;
+inline uint8_t eventClass(const MidiEvent& e) { return e.isNoteOff() ? 0 : (e.isNoteOn() ? 1 : 2); }
+inline void fnv(uint32_t& h, uint32_t v) {
+  for (int i = 0; i < 4; ++i) {
+    h ^= (v >> (8 * i)) & 0xFF;
+    h *= 16777619u;
   }
-}
-
-template <typename Cap>
-inline bool appendRows(StoreCore<Cap>& store, const MidiEventVec& rows) {
-  for (const MidiEvent& e : rows) {
-    if (store.appendMidi(e.tick, statusOf(e), e.data.noteData.note, e.data.noteData.velocity, e.noteId) !=
-        AppendResult::Ok) {
-      return false;
-    }
-  }
-  return true;
 }
 
 }  // namespace detail
 
-/// Replace `store`'s content with an import of `loop`'s committed, active passes. On any refusal the store is left
-/// empty and the result names why.
-template <typename Cap>
-ImportResult importLoop(const Loop& loop, StoreCore<Cap>& store, ImportStats* statsOut = nullptr) {
-  ImportStats stats;
-  store.releaseAll();
+/// O(passes + edit passes): cheap enough to revalidate on every step.
+inline ImportSourceKey importSourceKeyOf(const Loop& loop) {
+  ImportSourceKey key;
+  key.loopId = loop.loopId;
+  key.playbackRevision = loop.playbackRevision;
+  key.committedPassRevision = loop.committedPassRevision();
+  uint32_t h = 2166136261u;
   const LoopPasses& passes = loop.passes;
-  const uint32_t length = loop.loopLengthTicks;
-  if (!passes.hasRecordPass() || passes.recordPass.state != CapturePassState::Active) {
-    return ImportResult::NoRecordPass;
+  if (passes.hasRecordPass()) {
+    detail::fnv(h, passes.recordPass.id);
+    detail::fnv(h, static_cast<uint32_t>(passes.recordPass.state));
+    detail::fnv(h, static_cast<uint32_t>(passes.recordPass.committedChunkIds.size()));
   }
-  // Unsupported edit kinds refuse before anything is written.
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    detail::fnv(h, pass.id);
+    detail::fnv(h, static_cast<uint32_t>(pass.state));
+    detail::fnv(h, static_cast<uint32_t>(pass.committedChunkIds.size()));
+  }
   for (const EditPass& edit : passes.editPasses) {
-    if (edit.state == EditPassState::Active && edit.passType != EditPassType::Note) {
-      return ImportResult::UnsupportedEditPass;
-    }
+    detail::fnv(h, edit.id);
+    detail::fnv(h, static_cast<uint32_t>(edit.state));
   }
-  auto refuse = [&]() {
-    store.abandonPass();
-    store.releaseAll();
-    if (statsOut != nullptr) *statsOut = stats;
-    return ImportResult::DeniedCapacity;
+  key.inventory = h;
+  return key;
+}
+
+/// A bounded, transactional import of one Loop into `StoreCore<Cap>`. Fixed-capacity state; place it with the store.
+template <typename Cap, uint16_t MaxEditTargets = 256, uint16_t MaxEdits = 512, uint16_t MaxOpenNotes = 128>
+class ImportJob {
+ public:
+  static constexpr uint8_t kEventsPerTarget = 4;
+
+  bool active() const { return phase_ != Phase::Idle; }
+  ImportResult result() const { return result_; }
+  const ImportStats& stats() const { return stats_; }
+  const ImportSourceKey& key() const { return key_; }
+
+  /// Freeze the source key, plan the passes and edit targets, and check capacity before anything is written.
+  /// `Pending` when the candidate is under way; `Refused` with `result()` naming why otherwise (store untouched).
+  ImportStep begin(const Loop& loop, StoreCore<Cap>& store) {
+    cancel();
+    loop_ = &loop;
+    store_ = &store;
+    stats_ = ImportStats{};
+    key_ = importSourceKeyOf(loop);
+    const LoopPasses& passes = loop.passes;
+    if (!passes.hasRecordPass() || passes.recordPass.state != CapturePassState::Active ||
+        passes.recordPass.committedChunkIds.empty()) {
+      return refuse(ImportResult::NoCommittedSource);
+    }
+    // Capture passes in commit order.
+    passCount_ = 0;
+    lists_[passCount_++] = &passes.recordPass.committedChunkIds;
+    const OverdubPass* overdubs[Cap::kRunsPerManifest];
+    uint8_t overdubCount = 0;
+    for (const OverdubPass& pass : passes.overdubPasses) {
+      if (pass.state != CapturePassState::Active) continue;
+      if (overdubCount + 2 > Cap::kRunsPerManifest) return refuse(ImportResult::DeniedCapacity);
+      overdubs[overdubCount++] = &pass;
+    }
+    std::sort(overdubs, overdubs + overdubCount,
+              [](const OverdubPass* a, const OverdubPass* b) { return a->mergeSequence < b->mergeSequence; });
+    for (uint8_t i = 0; i < overdubCount; ++i) lists_[passCount_++] = &overdubs[i]->committedChunkIds;
+    // Edit passes in id order, and their distinct targets.
+    editCount_ = 0;
+    targetCount_ = 0;
+    for (const EditPass& edit : passes.editPasses) {
+      if (edit.state != EditPassState::Active) continue;
+      if (edit.passType != EditPassType::Note) return refuse(ImportResult::UnsupportedEditPass);
+      if (editCount_ >= MaxEdits) return refuse(ImportResult::DeniedCapacity);
+      edits_[editCount_++] = &edit;
+    }
+    std::sort(edits_, edits_ + editCount_, [](const EditPass* a, const EditPass* b) { return a->id < b->id; });
+    for (uint16_t e = 0; e < editCount_; ++e) {
+      const NoteId target = edits_[e]->targetNoteId;
+      if (target == kInvalidNoteId || findTarget(target) != kNoTarget) continue;
+      if (targetCount_ >= MaxEditTargets) return refuse(ImportResult::DeniedCapacity);
+      insertTarget(target);
+    }
+    for (uint16_t i = 0; i < targetCount_; ++i) targetEventCount_[i] = 0;
+    // Capacity, conservatively, before anything is written.
+    uint32_t pages = 0;
+    for (uint8_t p = 0; p < passCount_; ++p) {
+      uint32_t rows = 0;
+      for (const uint16_t chunk : *lists_[p]) rows += LoopEventStore::chunkUsedCount(chunk);
+      pages += runPagesFor(rows);
+    }
+    if (targetCount_ != 0) {
+      pages += runPagesFor(static_cast<uint32_t>(targetCount_) * kEventsPerTarget) + runPagesFor(targetCount_);
+    }
+    const uint16_t runsNeeded = static_cast<uint16_t>(passCount_ + (editCount_ != 0 ? 1 : 0));
+    if (pages > store.freePageCount() || runsNeeded > store.freeRunCount() || store.freeManifestCount() == 0) {
+      return refuse(ImportResult::DeniedCapacity);
+    }
+    // The candidate starts.
+    store.cancelStaged();
+    pass_ = 0;
+    chunk_ = 0;
+    index_ = 0;
+    openCount_ = 0;
+    editCursor_ = 0;
+    emitCursor_ = 0;
+    phase_ = Phase::Captures;
+    return ImportStep::Pending;
+  }
+
+  /// One bounded step: at most `maxRows` rows read or written (an edit counts as `kEventsPerTarget`). Revalidates the
+  /// frozen source key first; a moved key cancels the candidate (`SourceMoved`).
+  ImportStep step(uint32_t maxRows) {
+    if (phase_ == Phase::Idle) return ImportStep::Idle;
+    ++stats_.steps;
+    if (importSourceKeyOf(*loop_) != key_) return fail(ImportResult::SourceMoved);
+    uint32_t budget = maxRows;
+    while (budget != 0) {
+      switch (phase_) {
+        case Phase::Captures:
+          if (!stepCaptures(budget)) return fail(ImportResult::DeniedCapacity);
+          break;
+        case Phase::EditApply:
+          if (!stepEditApply(budget)) return fail(ImportResult::DeniedCapacity);
+          break;
+        case Phase::EditSort:
+          sortReplacements();
+          phase_ = Phase::EditEmit;
+          budget = budget > replacementCount_ ? budget - replacementCount_ : 0;
+          break;
+        case Phase::EditEmit:
+          if (!stepEditEmit(budget)) return fail(ImportResult::DeniedCapacity);
+          break;
+        case Phase::Publish: {
+          if (store_->publishStaged() == kNoManifest) return fail(ImportResult::DeniedNoManifest);
+          phase_ = Phase::Idle;
+          result_ = ImportResult::Ok;
+          return ImportStep::Published;
+        }
+        case Phase::Idle:
+          return ImportStep::Idle;
+      }
+    }
+    return ImportStep::Pending;
+  }
+
+  /// Explicit cancellation: the staged candidate is dropped, the published manifest is untouched.
+  void cancel() {
+    if (phase_ != Phase::Idle && store_ != nullptr) store_->cancelStaged();
+    phase_ = Phase::Idle;
+  }
+
+ private:
+  enum class Phase : uint8_t { Idle, Captures, EditApply, EditSort, EditEmit, Publish };
+  static constexpr uint16_t kNoTarget = 0xFFFF;
+
+  struct OpenNote {
+    uint8_t channel;
+    uint8_t pitch;
+    NoteId id;
   };
 
-  // Every source note's events, for the edit runs' starting geometry.
-  MidiEventVec allSourceRows;
-  MidiEventVec rows;
-  std::vector<const OverdubPass*> overdubs;
-  for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state == CapturePassState::Active) overdubs.push_back(&pass);
-  }
-  std::sort(overdubs.begin(), overdubs.end(),
-            [](const OverdubPass* a, const OverdubPass* b) { return a->mergeSequence < b->mergeSequence; });
-
-  for (size_t p = 0; p <= overdubs.size(); ++p) {
-    const CommittedChunkIdList& chunks = p == 0 ? passes.recordPass.committedChunkIds : overdubs[p - 1]->committedChunkIds;
-    detail::passRowsWithPairedIds(chunks, length, rows, stats);
-    if (store.beginPass(p == 0 ? PassKind::Record : PassKind::Overdub, length) != AdmitResult::Ok) return refuse();
-    if (!detail::appendRows(store, rows)) return refuse();
-    if (store.commitPass() == kNoManifest) return refuse();
-    ++stats.captureRuns;
-    stats.rows += static_cast<uint32_t>(rows.size());
-    allSourceRows.insert(allSourceRows.end(), rows.begin(), rows.end());
+  static uint32_t runPagesFor(uint32_t rows) {
+    const uint32_t data = (rows + Cap::kEventsPerPage - 1) / Cap::kEventsPerPage + 1;
+    return data + 1;  // + one directory page of margin
   }
 
-  // Note edit passes, applied in id order per target by production's own `applyNoteEditPass`. The import collapses
-  // them into ONE Edit run (a hide per edited target plus its final geometry): a disposable read view does not spend
-  // one manifest run per edit. Per-edit provenance arrives when the store owns edits (stage D/E).
-  std::vector<const EditPass*> edits;
-  for (const EditPass& edit : passes.editPasses) {
-    if (edit.state == EditPassState::Active) edits.push_back(&edit);
+  ImportStep refuse(ImportResult why) {
+    result_ = why;
+    phase_ = Phase::Idle;
+    return ImportStep::Refused;
   }
-  if (!edits.empty()) {
-    std::sort(edits.begin(), edits.end(), [](const EditPass* a, const EditPass* b) { return a->id < b->id; });
-    struct Current {
-      NoteId id;
-      MidiEventVec events;
-    };
-    std::vector<Current> current;  // each edited target's geometry, in first-edit order
-    for (const EditPass* edit : edits) {
-      const NoteId target = edit->targetNoteId;
-      Current* entry = nullptr;
-      for (Current& c : current) {
-        if (c.id == target) entry = &c;
+  ImportStep fail(ImportResult why) {
+    store_->cancelStaged();
+    return refuse(why);
+  }
+
+  uint16_t findTarget(NoteId id) const {
+    uint16_t lo = 0, hi = targetCount_;
+    while (lo < hi) {
+      const uint16_t mid = static_cast<uint16_t>((lo + hi) / 2);
+      if (targets_[mid] == id) return mid;
+      if (targets_[mid] < id) {
+        lo = static_cast<uint16_t>(mid + 1);
+      } else {
+        hi = mid;
       }
-      if (entry == nullptr) {
-        current.push_back({target, {}});
-        entry = &current.back();
-        for (const MidiEvent& e : allSourceRows) {
-          if (target != kInvalidNoteId && e.noteId == target) entry->events.push_back(e);
+    }
+    return kNoTarget;
+  }
+  void insertTarget(NoteId id) {
+    uint16_t at = targetCount_;
+    while (at > 0 && targets_[at - 1] > id) {
+      targets_[at] = targets_[at - 1];
+      --at;
+    }
+    targets_[at] = id;
+    ++targetCount_;
+  }
+
+  // Pairing in append (capture) order: a NoteOff takes the id of the latest open NoteOn of its channel and pitch.
+  void stampPairing(MidiEvent& e) {
+    if (e.isNoteOn() && e.noteId != kInvalidNoteId) {
+      if (openCount_ == MaxOpenNotes) {  // drop the oldest open note: its NoteOff will be unpaired (counted)
+        for (uint16_t i = 1; i < openCount_; ++i) open_[i - 1] = open_[i];
+        --openCount_;
+      }
+      open_[openCount_++] = {e.channel, e.data.noteData.note, e.noteId};
+      return;
+    }
+    if (!e.isNoteOff() || e.noteId != kInvalidNoteId) return;
+    for (uint16_t i = openCount_; i-- > 0;) {
+      if (open_[i].channel == e.channel && open_[i].pitch == e.data.noteData.note) {
+        e.noteId = open_[i].id;
+        for (uint16_t k = i + 1; k < openCount_; ++k) open_[k - 1] = open_[k];
+        --openCount_;
+        return;
+      }
+    }
+    ++stats_.unpairedNoteOffs;
+  }
+
+  bool appendRow(const MidiEvent& e) {
+    return store_->appendMidi(e.tick, detail::statusOf(e), e.data.noteData.note, e.data.noteData.velocity,
+                              e.noteId) == AppendResult::Ok;
+  }
+
+  bool stepCaptures(uint32_t& budget) {
+    while (budget != 0) {
+      if (pass_ >= passCount_) {
+        phase_ = editCount_ != 0 ? Phase::EditApply : Phase::Publish;
+        return true;
+      }
+      if (!store_->stagedWriterOpen()) {
+        if (store_->beginStagedRun(pass_ == 0 ? PassKind::Record : PassKind::Overdub, loop_->loopLengthTicks) !=
+            AdmitResult::Ok) {
+          return false;
+        }
+        openCount_ = 0;
+      }
+      const CommittedChunkIdList& chunks = *lists_[pass_];
+      if (chunk_ >= chunks.size()) {
+        if (!store_->sealStagedRun()) return false;
+        ++stats_.captureRuns;
+        ++pass_;
+        chunk_ = 0;
+        index_ = 0;
+        continue;
+      }
+      MidiEvent e;
+      bool atEnd = false;
+      if (!LoopEventStore::readSealedChunkEvent(chunks[chunk_], index_, e, atEnd) || atEnd) {
+        ++chunk_;
+        index_ = 0;
+        continue;
+      }
+      ++index_;
+      --budget;
+      stampPairing(e);
+      if (e.noteId != kInvalidNoteId && targetCount_ != 0) {
+        const uint16_t t = findTarget(e.noteId);
+        if (t != kNoTarget) {
+          if (targetEventCount_[t] >= kEventsPerTarget) return false;
+          targetEvents_[t][targetEventCount_[t]++] = e;
         }
       }
-      applyNoteEditPass(entry->events, *edit, length);
-      for (MidiEvent& e : entry->events) {
-        if ((e.isNoteOn() || e.isNoteOff()) && e.noteId == kInvalidNoteId) e.noteId = target;
+      if (!appendRow(e)) return false;
+      ++stats_.rows;
+    }
+    return true;
+  }
+
+  bool stepEditApply(uint32_t& budget) {
+    while (budget != 0) {
+      if (editCursor_ >= editCount_) {
+        phase_ = Phase::EditSort;
+        return true;
+      }
+      const EditPass& edit = *edits_[editCursor_++];
+      budget = budget > kEventsPerTarget ? budget - kEventsPerTarget : 0;
+      const uint16_t t = findTarget(edit.targetNoteId);
+      if (t == kNoTarget) continue;
+      MidiEventVec events(targetEvents_[t], targetEvents_[t] + targetEventCount_[t]);
+      applyNoteEditPass(events, edit, loop_->loopLengthTicks);
+      if (events.size() > kEventsPerTarget) return false;
+      targetEventCount_[t] = static_cast<uint8_t>(events.size());
+      for (uint8_t k = 0; k < targetEventCount_[t]; ++k) {
+        targetEvents_[t][k] = events[k];
+        if ((events[k].isNoteOn() || events[k].isNoteOff()) && targetEvents_[t][k].noteId == kInvalidNoteId) {
+          targetEvents_[t][k].noteId = edit.targetNoteId;
+        }
       }
     }
-    MidiEventVec replacements;
-    for (const Current& c : current) replacements.insert(replacements.end(), c.events.begin(), c.events.end());
-    std::stable_sort(replacements.begin(), replacements.end(), [](const MidiEvent& a, const MidiEvent& b) {
-      if (a.tick != b.tick) return a.tick < b.tick;
-      const int ca = a.isNoteOff() ? 0 : (a.isNoteOn() ? 1 : 2);
-      const int cb = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
-      return ca < cb;
-    });
-    if (store.beginPass(PassKind::Edit) != AdmitResult::Ok) return refuse();
-    for (const Current& c : current) {
-      if (c.id == kInvalidNoteId) continue;
-      if (store.appendHide(c.id) != AppendResult::Ok) return refuse();
-      ++stats.hides;
-    }
-    if (!detail::appendRows(store, replacements)) return refuse();
-    if (store.commitPass() == kNoManifest) return refuse();
-    ++stats.editRuns;
-    stats.rows += static_cast<uint32_t>(replacements.size());
+    return true;
   }
-  if (statsOut != nullptr) *statsOut = stats;
-  return ImportResult::Ok;
+
+  // In-place heapsort of the replacement rows by (tick, class, target order, event order): no allocation.
+  void sortReplacements() {
+    replacementCount_ = 0;
+    for (uint16_t t = 0; t < targetCount_; ++t) {
+      for (uint8_t k = 0; k < targetEventCount_[t]; ++k) {
+        replacements_[replacementCount_] = targetEvents_[t][k];
+        replacementOrder_[replacementCount_] = static_cast<uint32_t>(t) * kEventsPerTarget + k;
+        ++replacementCount_;
+      }
+    }
+    auto less = [&](uint32_t a, uint32_t b) {
+      const MidiEvent& x = replacements_[a];
+      const MidiEvent& y = replacements_[b];
+      if (x.tick != y.tick) return x.tick < y.tick;
+      if (detail::eventClass(x) != detail::eventClass(y)) return detail::eventClass(x) < detail::eventClass(y);
+      return replacementOrder_[a] < replacementOrder_[b];
+    };
+    auto swap = [&](uint32_t a, uint32_t b) {
+      std::swap(replacements_[a], replacements_[b]);
+      std::swap(replacementOrder_[a], replacementOrder_[b]);
+    };
+    auto sift = [&](uint32_t root, uint32_t n) {
+      for (;;) {
+        uint32_t child = 2 * root + 1;
+        if (child >= n) return;
+        if (child + 1 < n && less(child, child + 1)) ++child;
+        if (!less(root, child)) return;
+        swap(root, child);
+        root = child;
+      }
+    };
+    for (uint32_t i = replacementCount_ / 2; i-- > 0;) sift(i, replacementCount_);
+    for (uint32_t end = replacementCount_; end-- > 1;) {
+      swap(0, end);
+      sift(0, end);
+    }
+  }
+
+  bool stepEditEmit(uint32_t& budget) {
+    if (!store_->stagedWriterOpen() && emitCursor_ == 0) {
+      if (store_->beginStagedRun(PassKind::Edit, loop_->loopLengthTicks) != AdmitResult::Ok) return false;
+    }
+    while (budget != 0) {
+      if (emitCursor_ < targetCount_) {
+        if (store_->appendHide(targets_[emitCursor_]) != AppendResult::Ok) return false;
+        ++stats_.hides;
+      } else if (emitCursor_ < static_cast<uint32_t>(targetCount_) + replacementCount_) {
+        if (!appendRow(replacements_[emitCursor_ - targetCount_])) return false;
+        ++stats_.rows;
+      } else {
+        if (!store_->sealStagedRun()) return false;
+        ++stats_.editRuns;
+        phase_ = Phase::Publish;
+        return true;
+      }
+      ++emitCursor_;
+      --budget;
+    }
+    return true;
+  }
+
+  Phase phase_ = Phase::Idle;
+  ImportResult result_ = ImportResult::Ok;
+  ImportStats stats_;
+  ImportSourceKey key_;
+  const Loop* loop_ = nullptr;
+  StoreCore<Cap>* store_ = nullptr;
+  const CommittedChunkIdList* lists_[Cap::kRunsPerManifest];
+  uint8_t passCount_ = 0;
+  uint8_t pass_ = 0;
+  size_t chunk_ = 0;
+  size_t index_ = 0;
+  OpenNote open_[MaxOpenNotes];
+  uint16_t openCount_ = 0;
+  const EditPass* edits_[MaxEdits];
+  uint16_t editCount_ = 0;
+  uint16_t editCursor_ = 0;
+  NoteId targets_[MaxEditTargets];
+  uint16_t targetCount_ = 0;
+  MidiEvent targetEvents_[MaxEditTargets][kEventsPerTarget];
+  uint8_t targetEventCount_[MaxEditTargets];
+  MidiEvent replacements_[MaxEditTargets * kEventsPerTarget];
+  uint32_t replacementOrder_[MaxEditTargets * kEventsPerTarget];
+  uint32_t replacementCount_ = 0;
+  uint32_t emitCursor_ = 0;
+};
+
+/// Whole import, run to completion through the bounded job (tests, off-line). On refusal the store's published
+/// manifest is untouched and the candidate is dropped.
+template <typename Cap>
+ImportResult importLoop(const Loop& loop, StoreCore<Cap>& store, ImportStats* statsOut = nullptr) {
+  static ImportJob<Cap> job;  // fixed-capacity state; not on the stack
+  ImportStep step = job.begin(loop, store);
+  while (step == ImportStep::Pending) step = job.step(256);
+  if (statsOut != nullptr) *statsOut = job.stats();
+  return step == ImportStep::Published ? ImportResult::Ok : job.result();
 }
 
 }  // namespace RevisionStore

@@ -24,7 +24,7 @@ void initAtBoot();
 void serviceIdleTurn(bool timingCritical, bool transportRunning);
 
 /// Stopped-only `!REVSHADOW_STATUS`: import identity/result/timing, grain statistics, and a parity check of the
-/// shadow's `IndexOnly` `productionCompat()` view against production's effective view of the same slot.
+/// shadow's `IndexOnly` `fullRebuildSnapshotCompat()` view against production's effective view of the same slot.
 void printStatus();
 
 }  // namespace RevisionShadow

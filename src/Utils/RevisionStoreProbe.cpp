@@ -243,7 +243,7 @@ void run() {
     for (uint32_t from = 0; from < kLoopTicks; from += 2 * kBarTicks) {
       t0 = ARM_DWT_CYCCNT;
       const ComposeStamp stamp = store.composeWindow(store.current(), from, from + 2 * kBarTicks, window,
-                                                     kWindowCapacity, EffectivePolicy::productionCompat());
+                                                     kWindowCapacity, EffectivePolicy::fullRebuildSnapshotCompat());
       compose.add(ARM_DWT_CYCCNT - t0);
       rows += stamp.count;
     }

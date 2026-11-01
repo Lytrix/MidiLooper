@@ -103,21 +103,26 @@ timing and memory envelope without introducing real-time construction?
       reclaim only unpinned `Ready`; `requestIndex` → `IndexCapacityDenied` instead of eviction; a build publishes the
       identity it started on, never superseded except by explicit cancel. RED (pinned index evicted) → GREEN.
       [Evidence](evidence/2026-11-01-c2a-index-lifetime.md)
-- [~] C2b Bounded worker landed on device: registry child `RevisionEditIndexGrain` (2 ms / 0.5 ms), one call site on
-      the Snapshot owner turn, `stepEditIndex(256)` only, firmware `RevisionShadow` store (487,176 B, PSRAM, once at
-      boot). Default image RAM1 unchanged. **Open:** the owner chain carries no hides, so the whole-call grain time on
-      device is not measured yet. [Evidence](evidence/2026-11-01-c2b-c3a-device-shadow.md)
+- [x] C2b Bounded worker on device: registry child `RevisionEditIndexGrain`, one call site; **device-qualified**
+      under real hides (occupy-paint): max whole call 49–76 µs at 256 rows (declared 2 ms), indexes published for the
+      exact manifest identity, `IndexOnly` reader Ready. [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
 - [x] C3a Stopped-only shadow import of the selected slot on frozen source identity. Device, owner chain: shadow
       `revision()` read = production's passes view **1,042 / 1,042**. Findings: import is a 136–162 ms unit (C3b
       stepwise required); restored slots have no passes (`NoRecordPass`); production's collapse is a snapshot
       full-rebuild artefact (passes view and incremental snapshot keep all rows); production snapshot stayed
       un-current after the chain. [Evidence](evidence/2026-11-01-c2b-c3a-device-shadow.md)
-- [ ] C3 Shadow rolling-window producer reading the manifest with `IndexOnly`: `Ready` / `IndexOwed` /
-      `CapacityDenied`, actual manifest identity on every window; Stage-C pool ≤ 0.5 MiB. Stepwise import against a
-      frozen source identity (slot, loop identity, playbackRevision, pass inventory/generation): finish honestly as
-      that generation or cancel, never restart inside a candidate or re-stamp; capacity reserved/estimated up front
-      (atomic refusal, no late discovery).
-- [ ] C4 Device shadow compare under the owner chain: count, exact ordered stream, identity, wrap, NOTE_EDIT/hide.
+- [x] C3b Bounded transactional import: frozen `ImportSourceKey`, private staged candidate, atomic publish,
+      `SourceMoved` cancel, up-front refusal (pages, runs, manifests), own child `RevisionShadowImportGrain`; no
+      whole-pass copy/pairing/scan; restored slots `NoCommittedSource`. Native 662/662 parity through the job; device
+      import step max 683 µs at 64 rows; shadow `revision()` = production passes view **54/54** under real hides.
+      Found: production's snapshot (62) and passes view (54) disagree after overlap Shortens + undo/redo.
+      [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
+- [ ] C3c Restored slots: read-only hydration of persisted pass records (no snapshot-as-source).
+- [ ] C3d Shadow rolling-window producer reading the manifest with `IndexOnly`: `Ready` / `IndexOwed` /
+      `CapacityDenied`, actual manifest identity on every window.
+- [ ] C4 Device shadow compare under the owner chain against the **passes-derived `revision()` surface** (owner,
+      2026-11-01; `fullRebuildSnapshotCompat` is a legacy-path oracle only): count, exact ordered stream, identity,
+      wrap, NOTE_EDIT/hide.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.
 

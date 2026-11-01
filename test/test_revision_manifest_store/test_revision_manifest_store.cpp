@@ -360,7 +360,7 @@ void test_zero_heap_after_construction() {
   while (gStore.stepEditIndex(16) == IndexStep::Pending) {
   }
   gStore.composeWindow(gStore.current(), 0, kLongTakeTicks, gOut, 4096,
-                       EffectivePolicy::productionCompat().with(HideLookup::IndexOnly));
+                       EffectivePolicy::fullRebuildSnapshotCompat().with(HideLookup::IndexOnly));
   gStore.unpin(pin);
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
   // Witness self-check: the counter does see an allocation, so the zero above is not vacuous.
@@ -782,7 +782,7 @@ void test_compaction_is_lossless_for_source_rows_hides_duplicates_and_zero_lengt
   const ManifestId before = gStore.pinCurrent();
   const auto sourceBefore = sourceMultiset(gStore, before);
   const auto effectiveBefore = composeAll(before, EffectivePolicy::revision());
-  const auto compatBefore = composeAll(before, EffectivePolicy::productionCompat());
+  const auto compatBefore = composeAll(before, EffectivePolicy::fullRebuildSnapshotCompat());
   const auto rawBefore = composeAll(before, EffectivePolicy::source());
   TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 2, CompactionScope::AllowCopies));  // OD1 + OD2
   while (gStore.stepCompaction(3) == CompactStep::Pending) {
@@ -794,7 +794,7 @@ void test_compaction_is_lossless_for_source_rows_hides_duplicates_and_zero_lengt
   TEST_ASSERT_TRUE(sameRows(rawBefore, composeAll(after, EffectivePolicy::source())));
   // Layer 2: the effective outputs are unchanged under both policies.
   TEST_ASSERT_TRUE(sameRows(effectiveBefore, composeAll(after, EffectivePolicy::revision())));
-  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(after, EffectivePolicy::productionCompat())));
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(after, EffectivePolicy::fullRebuildSnapshotCompat())));
   // The hide between OD1 and OD2 still works inside the merged run: OD1's note 70 is gone, OD2's note 72 is not.
   bool has70 = false, has72 = false;
   for (const PassEvent& e : effectiveBefore) {
@@ -816,7 +816,7 @@ void test_effective_policies_are_explicit_projections_over_lossless_source() {
   };
   const auto source = composeAll(m, EffectivePolicy::source());
   const auto revision = composeAll(m, EffectivePolicy::revision());
-  const auto compat = composeAll(m, EffectivePolicy::productionCompat());
+  const auto compat = composeAll(m, EffectivePolicy::fullRebuildSnapshotCompat());
   // B.3a: three identical CC74=100 rows stay three in source and in the revision view; production collapses to one.
   TEST_ASSERT_EQUAL_UINT32(3, count(source, 0xB0, 74));
   TEST_ASSERT_EQUAL_UINT32(3, count(revision, 0xB0, 74));
@@ -872,7 +872,7 @@ static std::vector<PassEvent> composeWith(ManifestId id, EffectivePolicy policy,
 }
 
 static void assertIndexEqualsScan(ManifestId id, uint32_t to = kLongTakeTicks) {
-  for (EffectivePolicy base : {EffectivePolicy::revision(), EffectivePolicy::productionCompat()}) {
+  for (EffectivePolicy base : {EffectivePolicy::revision(), EffectivePolicy::fullRebuildSnapshotCompat()}) {
     const auto scan = composeWith(id, base.with(HideLookup::Scan), to);
     const ComposeStamp stamp = gStore.composeWindow(id, 0, to, gOut, 4096, base.with(HideLookup::IndexOnly));
     TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
@@ -1058,7 +1058,7 @@ void test_compaction_keeps_the_edit_provenance_the_production_projection_needs()
   gStore.appendMidi(500, 0xB0, 74, 100, 0);
   gStore.commitPass();
   const ManifestId before = gStore.pinCurrent();
-  const auto compatBefore = composeAll(before, EffectivePolicy::productionCompat());
+  const auto compatBefore = composeAll(before, EffectivePolicy::fullRebuildSnapshotCompat());
   auto count = [](const std::vector<PassEvent>& rows, uint8_t status, uint8_t d1) {
     uint32_t n = 0;
     for (const PassEvent& e : rows) n += (e.status == status && e.data1 == d1) ? 1 : 0;
@@ -1069,7 +1069,7 @@ void test_compaction_keeps_the_edit_provenance_the_production_projection_needs()
   TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(1, 3, CompactionScope::AllowCopies));  // edit + 2 ODs
   while (gStore.stepCompaction(2) == CompactStep::Pending) {
   }
-  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::productionCompat())));
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::fullRebuildSnapshotCompat())));
   const RunId merged = gStore.manifest(gStore.current()).runs[1];
   TEST_ASSERT_TRUE(gStore.sourceIsEdit(merged, 0));
   TEST_ASSERT_FALSE(gStore.sourceIsEdit(merged, 1));
@@ -1078,7 +1078,7 @@ void test_compaction_keeps_the_edit_provenance_the_production_projection_needs()
   while (gStore.stepCompaction(2) == CompactStep::Pending) {
   }
   TEST_ASSERT_EQUAL_UINT8(1, gStore.manifest(gStore.current()).runCount);
-  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::productionCompat())));
+  TEST_ASSERT_TRUE(sameRows(compatBefore, composeAll(gStore.current(), EffectivePolicy::fullRebuildSnapshotCompat())));
   gStore.unpin(before);
 }
 

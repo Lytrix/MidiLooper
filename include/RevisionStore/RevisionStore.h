@@ -97,15 +97,18 @@ enum class CompactStep : uint8_t { Idle, Pending, Published, Superseded, DeniedN
 enum class CompactionScope : uint8_t { HistoryClosedOnly, AllowCopies };
 
 /// DEC-245 layer 2 policy for a composed window. `revision()` is the pure effective revision (hides and
-/// replacements); `productionCompat()` adds today's production projections (zero-length suppression, cross-pass
-/// identical-event collapse); `source()` is layer 1 (no hides), for provenance and multiset checks.
+/// replacements) and the Stage-C oracle surface: it equals production's passes-derived effective content
+/// (device, C3a). `fullRebuildSnapshotCompat()` reproduces one legacy publication path only -- the full-rebuild
+/// snapshot (`requestCommittedPassesRebuild`), with zero-length suppression and cross-pass identical-event collapse --
+/// kept as a regression oracle for that path, not as production semantics (production's passes view and its
+/// incremental snapshot keep the rows). `source()` is layer 1 (no hides), for provenance and multiset checks.
 struct EffectivePolicy {
   bool applyHides = true;
   bool suppressZeroLength = false;
   bool collapseCrossRunDuplicates = false;
   HideLookup hideLookup = HideLookup::IndexOrScan;
   static EffectivePolicy revision() { return {}; }
-  static EffectivePolicy productionCompat() { return {true, true, true, HideLookup::IndexOrScan}; }
+  static EffectivePolicy fullRebuildSnapshotCompat() { return {true, true, true, HideLookup::IndexOrScan}; }
   static EffectivePolicy source() { return {false, false, false, HideLookup::IndexOrScan}; }
   EffectivePolicy with(HideLookup lookup) const {
     EffectivePolicy p = *this;
@@ -271,6 +274,8 @@ class StoreCore {
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) n += runLive_[i] ? 1 : 0;
     return n;
   }
+  uint16_t freeRunCount() const { return static_cast<uint16_t>(Cap::kRunCount - liveRunCount()); }
+  uint16_t freeManifestCount() const { return static_cast<uint16_t>(Cap::kManifestCount - liveManifestCount()); }
   uint16_t liveManifestCount() const {
     uint16_t n = 0;
     for (uint16_t i = 0; i < Cap::kManifestCount; ++i) n += manifests_[i].live ? 1 : 0;
@@ -400,11 +405,77 @@ class StoreCore {
     if (writer_ == kNoRun) return;
     releaseRunPages(runs_[writer_]);
     runLive_[writer_] = false;
-    manifests_[writerManifest_].live = false;
+    if (writerManifest_ != kNoManifest) manifests_[writerManifest_].live = false;
     writer_ = kNoRun;
     writerStop_ = AppendResult::Ok;
     writerManifest_ = kNoManifest;
   }
+
+  // ---- Staged candidate (C3b): runs built privately, published as ONE manifest -----------------------------------
+  //
+  // A staged run is sealed but belongs to no manifest, so readers keep seeing the published manifest until
+  // `publishStaged()` makes the whole candidate current atomically (it replaces the content, like a Record).
+
+  AdmitResult beginStagedRun(PassKind kind, uint32_t loopLengthTicks) {
+    if (writer_ != kNoRun) return AdmitResult::DeniedWriterBusy;
+    if (stagedCount_ >= Cap::kRunsPerManifest) return AdmitResult::DeniedManifestFull;
+    const RunId run = takeRun(kind);
+    if (run == kNoRun) return AdmitResult::DeniedNoRun;
+    const PageId page = pool_.take();
+    if (page == kNoPage) {
+      runLive_[run] = false;
+      return AdmitResult::DeniedNoPage;
+    }
+    runs_[run].inlinePages[0] = page;
+    runs_[run].pageCount = 1;
+    writer_ = run;
+    writerManifest_ = kNoManifest;
+    writerStop_ = AppendResult::Ok;
+    stagedLoopLength_ = loopLengthTicks;
+    return AdmitResult::Ok;
+  }
+  bool sealStagedRun() {
+    if (writer_ == kNoRun || writerManifest_ != kNoManifest) return false;
+    sealRun(runs_[writer_]);
+    runs_[writer_].committed = true;
+    staged_[stagedCount_++] = writer_;
+    writer_ = kNoRun;
+    writerStop_ = AppendResult::Ok;
+    return true;
+  }
+  /// Make the staged runs the current manifest (revision = previous + 1). `kNoManifest` (nothing changed) when no
+  /// manifest slot is free; the caller cancels.
+  ManifestId publishStaged() {
+    if (writer_ != kNoRun || stagedCount_ == 0) return kNoManifest;
+    const ManifestId id = takeManifest();
+    if (id == kNoManifest) return kNoManifest;
+    RevisionManifest& m = manifests_[id];
+    for (uint8_t i = 0; i < stagedCount_; ++i) {
+      m.runs[m.runCount++] = staged_[i];
+      ++runs_[staged_[i]].refs;
+    }
+    m.revision = current_ == kNoManifest ? 1 : manifests_[current_].revision + 1;
+    m.loopLengthTicks = stagedLoopLength_;
+    stagedCount_ = 0;
+    pushHistory(id);
+    return id;
+  }
+  /// Drop the candidate: the open staged run and every sealed staged run; all their pages return.
+  void cancelStaged() {
+    if (writer_ != kNoRun && writerManifest_ == kNoManifest) {
+      releaseRunPages(runs_[writer_]);
+      runLive_[writer_] = false;
+      writer_ = kNoRun;
+      writerStop_ = AppendResult::Ok;
+    }
+    for (uint8_t i = 0; i < stagedCount_; ++i) {
+      releaseRunPages(runs_[staged_[i]]);
+      runLive_[staged_[i]] = false;
+    }
+    stagedCount_ = 0;
+  }
+  uint8_t stagedRunCount() const { return stagedCount_; }
+  bool stagedWriterOpen() const { return writer_ != kNoRun && writerManifest_ == kNoManifest; }
 
   // ---- Readers -----------------------------------------------------------------------------------------------------
   ManifestId current() const { return current_; }
@@ -801,6 +872,8 @@ class StoreCore {
     loopLengthTicks_ = 0;
     nextIdentity_ = 1;
     nextSerial_ = 1;
+    stagedCount_ = 0;
+    stagedLoopLength_ = 0;
     slowSeals_ = 0;
     job_.active = false;
     indexJob_.active = false;
@@ -1463,6 +1536,9 @@ class StoreCore {
   uint32_t loopLengthTicks_ = 0;
   uint32_t nextIdentity_ = 1;
   uint32_t nextSerial_ = 1;
+  RunId staged_[Cap::kRunsPerManifest];
+  uint8_t stagedCount_ = 0;
+  uint32_t stagedLoopLength_ = 0;
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
   mutable Merge composeScratch_;
