@@ -781,6 +781,14 @@ class StoreCore {
     }
     window_.active = true;
     window_.manifest = id;
+    // Each emitted row's `origin` becomes its manifest-wide source position in merge order (the run's cumulative origin
+    // base plus the row's own origin; an uncompacted run is one origin). C5 ranks committed rows pass-major by it.
+    uint8_t base = 0;
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      window_.originBase[i] = base;
+      const uint8_t span = runs_[m.runs[i]].originCount == 0 ? 1 : runs_[m.runs[i]].originCount;
+      base = static_cast<uint8_t>(base + span);
+    }
     window_.out = out;
     window_.capacity = capacity;
     window_.toTick = toTick;
@@ -804,7 +812,9 @@ class StoreCore {
         return WindowResult::CapacityDenied;
       }
       const uint16_t k = heapPop(m, merge);
-      window_.out[window_.stamp.count++] = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
+      PassEvent& row = window_.out[window_.stamp.count++];
+      row = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
+      row.origin = static_cast<uint8_t>(window_.originBase[merge.run[k]] + row.origin);
       ++merge.at[k];
       if (advanceToVisible(m, merge, k, window_.toTick)) heapPush(m, merge, k);
     }
@@ -1702,6 +1712,7 @@ class StoreCore {
     uint32_t capacity = 0;
     uint32_t toTick = 0;
     WindowStamp stamp;
+    uint8_t originBase[Cap::kRunsPerManifest] = {};  // per manifest run: its first manifest-wide source position
   };
   WindowJob window_;
   Merge windowMerge_;

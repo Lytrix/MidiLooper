@@ -10,10 +10,15 @@
 #include "LoopSnapshot.h"
 #include "LoopEventStore.h"
 #include "RuntimeCompanionPasses.h"
+#include "CommittedWindowRowSource.h"
 
 struct Loop;
 
-enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage, RecordCoverage, SnapshotWindow };
+enum class RuntimePlaybackViewFillScope : uint8_t {
+  AllSource, PlaybackCoverage, RawCoverage, RecordCoverage, SnapshotWindow,
+  /// C5: a committed window read from a `CommittedWindowRowSource` (the RevisionManifest), same contract as SnapshotWindow.
+  ManifestWindow
+};
 
 enum class RuntimePlaybackViewFillResult : uint8_t { Pending, Complete, Denied };
 
@@ -101,6 +106,13 @@ class RuntimePlaybackViewFill {
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary);
+#if REVISION_MANIFEST_READER
+  /// C5: the same borrow contract for a manifest window; the downstream phases cannot tell the two apart.
+  bool begin(RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+             const PlaybackViewSourceIdentity& sourceIdentity,
+             const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+             const LedgerBoundarySummary& ledgerBoundary);
+#endif
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
   /// An immutable frozen source may release after copying. A *live* Capture
@@ -139,6 +151,7 @@ class RuntimePlaybackViewFill {
   union {
     const RuntimeCompanionPasses* baseline_ = nullptr;
     LoopSnapshot::EventWindowCursor* snapshotSource_;
+    CommittedWindowRowSource* manifestSource_;  // scope ManifestWindow; shares the slot (runtime size pin)
   };
   uint64_t baselineGeneration_ = 0;
   PlaybackViewSourceIdentity expected_;
@@ -155,6 +168,10 @@ class RuntimePlaybackViewFill {
   CaptureProjectionIdentity liveCaptureProjection_{};
   RuntimePlaybackViewSource::BlockMayIntersectFn blockMayIntersect_ = nullptr;
   bool inspectBlockRows_ = false;
+#if REVISION_MANIFEST_READER
+  /// C5: the snapshot window's copy loop, on the manifest cursor (flash-resident; the snapshot loop is unchanged).
+  RuntimePlaybackViewFillResult stepManifestWindow(size_t entryQuantum);
+#endif
   size_t sourceCount_ = 0;
   size_t cursor_ = 0;
   size_t copied_ = 0;

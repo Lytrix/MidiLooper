@@ -58,6 +58,16 @@ class RuntimePlaybackViewBuild {
   bool beginCoverageQualification(RuntimePlaybackView& destination,
       LoopSnapshot::EventWindowCursor& source, const PlaybackViewSourceIdentity& identity,
       const PlaybackCoverageInterval& coverage);
+#if REVISION_MANIFEST_READER
+  /// C5 (DEC-246 amendment 19): the same two entries for a manifest window. Every later phase is the snapshot path's.
+  bool begin(RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+             const PlaybackViewSourceIdentity& sourceIdentity,
+             const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+             const LedgerBoundarySummary& ledgerBoundary);
+  bool beginCoverageQualification(RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+                                  const PlaybackViewSourceIdentity& identity,
+                                  const PlaybackCoverageInterval& coverage);
+#endif
   RuntimePlaybackViewFillResult stepCoverageQualification(size_t quantum);
   size_t qualifiedEventCount() const { return fill_.copiedEventCount(); }
   bool admitCoverageQualification();
@@ -118,6 +128,12 @@ class RuntimePlaybackViewBuild {
   /// Publish the readable ordered prefix after an order completes. One 16-bit store; monotonic within a window; never
   /// beyond the retained rows. This is the live-overlay read contract (slice 3), not a second meaning for `complete`.
   void publishReadableFrontier();
+#if REVISION_MANIFEST_READER
+  bool beginManifestNow(RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+                        const PlaybackViewSourceIdentity& identity, const PlaybackCoverageInterval& coverage,
+                        const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
+                        bool qualification);
+#endif
   template <typename Work, typename Result>
   Result execute(Work&& work, Result denied) {
     if (!enterCall()) return denied;

@@ -90,7 +90,8 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
     RuntimePlaybackViewFillScope scope) {
-  if (destination_ != nullptr || destination.published || scope == RuntimePlaybackViewFillScope::SnapshotWindow) return false;
+  if (destination_ != nullptr || destination.published || scope == RuntimePlaybackViewFillScope::SnapshotWindow ||
+      scope == RuntimePlaybackViewFillScope::ManifestWindow) return false;
   baseline_ = nullptr;
   destination_ = nullptr;
   source_ = nullptr;
@@ -217,6 +218,63 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   return true;
 }
 
+#if REVISION_MANIFEST_READER
+NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
+    RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary) {
+  // C5: the snapshot window's preconditions, on the manifest cursor.
+  if (source.idle() || source.retiring() || source.complete() || source.readUnits() != 0 ||
+      source.startTick() != coverage.startPhase || source.lengthTicks() != coverage.lengthTicks ||
+      source.loopLengthTicks() != coverage.loopLengthTicks || destination.storage.capacity > UINT16_MAX ||
+      destination.passOrigins == nullptr || destination.canonicalRanks == nullptr) return false;
+  if (!begin(destination, nullptr, 0, sourceIdentity, coverage, cursorAnchor, ledgerBoundary)) return false;
+  scope_ = RuntimePlaybackViewFillScope::ManifestWindow;
+  manifestSource_ = &source;
+  baselineGeneration_ = source.traversalGeneration();
+  sourceCount_ = LoopSnapshot::EventWindowCursor::kMaximumReadUnits;
+  destination.sourceFilled = false;
+  return true;
+}
+
+NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::stepManifestWindow(size_t entryQuantum) {
+  CommittedWindowRowSource& source = *manifestSource_;
+  if (destination_->published || !(destination_->source == expected_) ||
+      destination_->storage.eventCount != copied_ || source.idle() || source.retiring() ||
+      source.traversalGeneration() != baselineGeneration_ || source.readUnits() != cursor_) {
+    if (!destination_->published) destination_->sourceFilled = false;
+    destination_ = nullptr;
+    return RuntimePlaybackViewFillResult::Denied;
+  }
+  for (size_t unit = 0; unit < entryQuantum; ++unit) {
+    LoopSnapshotEvent row{};
+    const auto result = source.step(row);
+    cursor_ = source.readUnits();
+    if (result == LoopSnapshot::EventWindowCursor::ReadResult::Event) {
+      if (!destination_->storage.append(row.value)) {
+        ++copied_; // Includes the matching row that exceeded fixed capacity.
+        destination_->sourceFilled = false;
+        destination_ = nullptr;
+        return RuntimePlaybackViewFillResult::Denied;
+      }
+      destination_->storage.phases[copied_] = row.canonicalOrder;
+      destination_->passOrigins[copied_] = {
+          static_cast<uint16_t>(row.eventId >> 16), static_cast<uint16_t>(row.eventId)};
+      ++copied_;
+    } else if (result == LoopSnapshot::EventWindowCursor::ReadResult::Complete) {
+      destination_->sourceFilled = true;
+      destination_ = nullptr;
+      return RuntimePlaybackViewFillResult::Complete;
+    } else if (result == LoopSnapshot::EventWindowCursor::ReadResult::Inactive) {
+      destination_->sourceFilled = false;
+      destination_ = nullptr;
+      return RuntimePlaybackViewFillResult::Denied;
+    }
+  }
+  return RuntimePlaybackViewFillResult::Pending;
+}
+#endif
+
 NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t entryQuantum) {
   if (destination_ == nullptr || entryQuantum == 0) {
     return RuntimePlaybackViewFillResult::Denied;
@@ -256,6 +314,9 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
     }
     return RuntimePlaybackViewFillResult::Pending;
   }
+#if REVISION_MANIFEST_READER
+  if (scope_ == RuntimePlaybackViewFillScope::ManifestWindow) return stepManifestWindow(entryQuantum);
+#endif
   bool sourceCurrent = false;
   {
     PlaybackSourceReadGuard guard(ownsLiveGuard());

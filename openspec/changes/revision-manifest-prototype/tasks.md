@@ -167,10 +167,15 @@ timing and memory envelope without introducing real-time construction?
   - **Unblocked (DEC-246 amendment 21):** prerequisite is only the landed internal-clock consume-only invariant
     (DEC-241, on this branch). The tick never imports, indexes or builds a window. Probe env only, A/B flag 0 / 1;
     with flag 0 the integration allocates nothing. After C5.3, the overdub-audibility RED is the A/B discriminator.
-  - [ ] C5.1 consumer contract fixture: the full tuple (`MidiEvent`, phase, rank, `passOrigin`, ledger/boundary)
-        through the real order builder equals the snapshot fill; a manifest `passOrigin` never collides with the
-        live-overlay origin
-  - [ ] C5.2 `ManifestWindow` fill source with named refusals and the exact identity stamp
+  - [x] C5.1 consumer contract fixture. Through the real build, over four coverages, the manifest window gives the
+        snapshot window's tuple row for row: event, playback phase, **rank** (numbered pass-major like the snapshot;
+        `RuntimePlaybackBridge` indexes masks by it), and committed provenance (never `0xFFFF`). The ledger boundary is
+        supplied by the caller, not the source. The fixture discriminates: window-index ranks fail.
+        [Evidence](evidence/2026-11-01-c5-1-2-consumer-contract.md)
+  - [x] C5.2 `ManifestWindow` fill source (`CommittedWindowRowSource`, `ManifestWindowCursor<Cap>`): named refusals
+        (`SourceMoved`, `ImportOwed`, `CapacityDenied`, with the pin released); the snapshot cursor's shapes only;
+        behind `REVISION_MANIFEST_READER`. Default and flag-0 images unchanged; flag 1 adds +144 B ITCM (160 B headroom
+        left).
   - [ ] C5.3 lane switch behind `REVISION_MANIFEST_READER` (probe env)
   - [ ] C5.4 device A/B (probe flag 0 / 1, same stimulus): current-boot owner chain + reboot-restored; timing
 - [ ] C6 Remove the corresponding old reader after device parity.

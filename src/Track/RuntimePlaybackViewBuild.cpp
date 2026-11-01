@@ -135,6 +135,42 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::beginCoverageQual
   }, false);
 }
 
+#if REVISION_MANIFEST_READER
+// C5: the manifest entries. The bodies live in one flash-resident helper; the guarded lambdas are single calls.
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::beginManifestNow(
+    RuntimePlaybackView& destination, CommittedWindowRowSource& source, const PlaybackViewSourceIdentity& identity,
+    const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+    const LedgerBoundarySummary& ledgerBoundary, bool qualification) {
+  if (active()) return false;
+  coverageOwned_ = false;
+  destination_ = nullptr;
+  phase_ = Phase::Denied;
+  if (!fill_.begin(destination, source, identity, coverage, cursorAnchor, ledgerBoundary)) return false;
+  destination_ = &destination;
+  destinationGeneration_ = destination.storageGeneration;
+  snapshotRankCursor_ = 0;
+  phase_ = qualification ? Phase::Qualification : Phase::SnapshotFill;
+  coverageOwned_ = qualification;
+  return true;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
+    RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary) {
+  return execute([&]() -> bool {
+    return beginManifestNow(destination, source, sourceIdentity, coverage, cursorAnchor, ledgerBoundary, false);
+  }, false);
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::beginCoverageQualification(
+    RuntimePlaybackView& destination, CommittedWindowRowSource& source,
+    const PlaybackViewSourceIdentity& identity, const PlaybackCoverageInterval& coverage) {
+  return execute([&]() -> bool { return beginManifestNow(destination, source, identity, coverage, {}, {}, true); },
+                 false);
+}
+#endif
+
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewFillResult
 RuntimePlaybackViewBuild::stepCoverageQualification(size_t quantum) {
   return execute([&]() -> RuntimePlaybackViewFillResult {

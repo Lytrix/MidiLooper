@@ -963,6 +963,10 @@ int main(int, char**) {
 #include "../../src/PassReclaim.cpp"
 #include "../../src/Track/TrackUndoRetirement.cpp"
 #include "../../src/Track/TrackUndoPublication.cpp"
+#include "RevisionStore/RevisionImport.h"
+#include "RevisionStore/ManifestWindowCursor.h"
+#include "../test_support/CommittedChunkIdTestHelpers.h"
+#include "../test_support/NoteIdTestFixtures.h"
 #include "../../src/Track/TrackPreparedStopCommit.cpp"
 #include "../../src/Track/TrackPreparedUndo.cpp"
 #include "Loop.h"
@@ -8772,6 +8776,173 @@ void test_snapshot_binding_empty_window_completes_and_costs_saturate() {
   TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredOrderGrains);
 }
 
+// ---- revision-manifest C5.1 (DEC-246 amendments 19-20): the consumer contract of a committed window ----
+// The same committed passes, read once through the published root's `EventWindowCursor` and once through the
+// RevisionManifest's `ManifestWindowCursor`, through the **real** build (fill -> canonical order -> ranks -> playback
+// order) must give the consumer the same ordered tuple: event, playback phase, rank, and provenance class (committed,
+// never the live-overlay origin). Shape: a cross-pass equal-tick tie, same-pitch duplicates across passes, a NoteOff and
+// a NoteOn on one tick, the loop's last bar, and a coverage that starts mid-bar.
+namespace c5 {
+constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+constexpr uint32_t kLength = 4 * kBar;
+using Cap = RevisionStore::Capacity<512, 32, 16, 128, 8, 8, 4>;
+
+void appendPass(LoopEventStore& store, const std::vector<std::tuple<uint32_t, bool, uint8_t>>& rows, NoteId& nextId) {
+  for (const auto& [tick, on, pitch] : rows) {
+    if (on) {
+      TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, tick, 1, pitch, 100, nextId++));
+    } else {
+      TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(tick, 1, pitch, 0)));
+    }
+  }
+}
+
+void buildLoop(Loop& loop) {
+  loop.loopLengthTicks = kLength;
+  NoteId nextId = 7001;
+  RecordPass record{};
+  record.id = 1;
+  LoopEventStore recordStore;
+  appendPass(recordStore,
+             {{0, true, 60}, {96, false, 60}, {96, true, 62}, {192, false, 62}, {768, true, 60}, {864, false, 60},
+              {1500, true, 65}, {1700, false, 65}, {2300, true, 67}, {2500, false, 67}, {3000, true, 69}, {3070, false, 69}},
+             nextId);
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(recordStore, record.committedChunkIds));
+  loop.passes.recordPass = std::move(record);
+  OverdubPass overdub{};
+  overdub.id = 2;
+  overdub.mergeSequence = 1;
+  LoopEventStore overdubStore;
+  // A same-tick NoteOn on another pitch (cross-pass tie), a same-pitch duplicate, and a note across the wrap region.
+  appendPass(overdubStore,
+             {{0, true, 64}, {96, false, 64}, {768, true, 60}, {800, false, 60}, {2304, true, 71}, {2400, false, 71}},
+             nextId);
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(overdubStore, overdub.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(overdub));
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+  for (unsigned turn = 0; turn < 4096 && loop.hasPendingSnapshotPublish(); ++turn) {
+    (void)loop.stepPendingSnapshotPublish(64, true, 0);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "fixture precondition: a current root from the passes");
+}
+
+template <typename Begin>
+void drive(RuntimePlaybackView& view, RuntimePlaybackViewBuild& build, Begin begin) {
+  TEST_ASSERT_TRUE(view.prewarm(128));
+  TEST_ASSERT_TRUE(begin());
+  for (unsigned turn = 0; turn < 100000 && build.active(); ++turn) {
+    if (build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) build.stepFill(3);
+    else build.stepOrder(3);
+  }
+  TEST_ASSERT_TRUE(view.complete);
+}
+}  // namespace c5
+
+void test_c5_manifest_window_gives_the_consumer_the_snapshot_windows_tuple() {
+  using namespace RevisionStore;
+  Loop loop;
+  c5::buildLoop(loop);
+  static Store<c5::Cap> store;
+  store.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, store));
+  const ManifestId m = store.current();
+  static PassEvent staging[256];
+  const PlaybackCoverageInterval coverages[] = {
+      {0, 2 * c5::kBar, c5::kLength}, {2 * c5::kBar, 2 * c5::kBar, c5::kLength}, {3 * c5::kBar, c5::kBar, c5::kLength},
+      {c5::kBar / 2, c5::kBar, c5::kLength}};
+  for (const PlaybackCoverageInterval& coverage : coverages) {
+    const auto root = loop.publishedSnapshot();
+    TEST_ASSERT_NOT_NULL(root.get());
+    RuntimePlaybackView snapshotView;
+    RuntimePlaybackViewBuild snapshotBuild;
+    LoopSnapshot::EventWindowCursor snapshotSource;
+    TEST_ASSERT_TRUE(snapshotSource.begin(*root, coverage.startPhase, coverage.lengthTicks));
+    const PlaybackViewSourceIdentity snapshotIdentity{loop.playbackRevision, 1, root.get()};
+    c5::drive(snapshotView, snapshotBuild, [&] {
+      return snapshotBuild.begin(snapshotView, snapshotSource, snapshotIdentity, coverage, {}, {});
+    });
+    retireBindingSource(snapshotSource);
+
+    RuntimePlaybackView manifestView;
+    RuntimePlaybackViewBuild manifestBuild;
+    ManifestWindowCursor<c5::Cap> manifestSource(staging, 256);
+    TEST_ASSERT_EQUAL(WindowResult::Pending,
+                      manifestSource.begin(store, m, store.identityOf(m), store.manifest(m).revision, coverage.startPhase,
+                                           coverage.lengthTicks, coverage.loopLengthTicks));
+    const PlaybackViewSourceIdentity manifestIdentity{store.manifest(m).revision, 1, nullptr};
+    c5::drive(manifestView, manifestBuild, [&] {
+      return manifestBuild.begin(manifestView, manifestSource, manifestIdentity, coverage, {}, {});
+    });
+    TEST_ASSERT_EQUAL(WindowResult::Ready, manifestSource.result());
+
+    char label[96];
+    snprintf(label, sizeof(label), "coverage start=%u: snapshot rows=%u manifest rows=%u", coverage.startPhase,
+             snapshotView.storage.eventCount, manifestView.storage.eventCount);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(snapshotView.storage.eventCount, manifestView.storage.eventCount, label);
+    TEST_ASSERT_TRUE_MESSAGE(manifestView.storage.eventCount > 0, label);
+    for (uint32_t i = 0; i < snapshotView.storage.eventCount; ++i) {
+      const uint16_t a = snapshotView.storage.order[i];
+      const uint16_t b = manifestView.storage.order[i];
+      const MidiEvent& x = snapshotView.storage.events[a];
+      const MidiEvent& y = manifestView.storage.events[b];
+      snprintf(label, sizeof(label), "start=%u order %u: snapshot t=%u %u/%u manifest t=%u %u/%u", coverage.startPhase,
+               i, x.tick, x.data.noteData.note, x.data.noteData.velocity, y.tick, y.data.noteData.note,
+               y.data.noteData.velocity);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(x.tick, y.tick, label);
+      TEST_ASSERT_EQUAL_MESSAGE(x.type, y.type, label);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(x.channel, y.channel, label);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(x.data.noteData.note, y.data.noteData.note, label);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(x.data.noteData.velocity, y.data.noteData.velocity, label);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(snapshotView.storage.phases[a], manifestView.storage.phases[b], label);
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(snapshotView.canonicalRanks[a], manifestView.canonicalRanks[b], label);
+      // Provenance class: committed on both sides, never the live-overlay origin.
+      TEST_ASSERT_NOT_EQUAL_MESSAGE(kLiveOverlayPassOrigin, snapshotView.passOrigins[a].pass, label);
+      TEST_ASSERT_NOT_EQUAL_MESSAGE(kLiveOverlayPassOrigin, manifestView.passOrigins[b].pass, label);
+    }
+    TEST_ASSERT_EQUAL(snapshotView.canonicalRanksReady, manifestView.canonicalRanksReady);
+    TEST_ASSERT_EQUAL(snapshotView.passOriginsReady, manifestView.passOriginsReady);
+  }
+}
+
+// C5.2: the cursor's named answers. A manifest that moves before the read is SourceMoved, never a window of another
+// identity; an owed index is IndexOwed, never a scan.
+void test_c5_manifest_window_cursor_refuses_by_name() {
+  using namespace RevisionStore;
+  Loop loop;
+  c5::buildLoop(loop);
+  static Store<c5::Cap> store;
+  store.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, store));
+  const ManifestId m = store.current();
+  static PassEvent staging[256];
+  ManifestWindowCursor<c5::Cap> cursor(staging, 256);
+  TEST_ASSERT_EQUAL(WindowResult::SourceMoved,
+                    cursor.begin(store, m, store.identityOf(m) + 1, store.manifest(m).revision, 0, c5::kBar, c5::kLength));
+  TEST_ASSERT_TRUE(cursor.idle());
+  TEST_ASSERT_EQUAL(WindowResult::ImportOwed,
+                    cursor.begin(store, kNoManifest, 0, 0, 0, c5::kBar, c5::kLength));
+  // The snapshot cursor's shapes only: a coverage that wraps the loop end or exceeds two bars is refused by name.
+  TEST_ASSERT_EQUAL(WindowResult::CapacityDenied,
+                    cursor.begin(store, m, store.identityOf(m), store.manifest(m).revision, 3 * c5::kBar, 2 * c5::kBar,
+                                 c5::kLength));
+  TEST_ASSERT_EQUAL(WindowResult::CapacityDenied,
+                    cursor.begin(store, m, store.identityOf(m), store.manifest(m).revision, 0, 3 * c5::kBar, c5::kLength));
+  TEST_ASSERT_FALSE(store.windowActive());
+  // A window that cannot fit its rows is a named CapacityDenied and ends Inactive, never truncated.
+  ManifestWindowCursor<c5::Cap> small(staging, 2);
+  TEST_ASSERT_EQUAL(WindowResult::Pending,
+                    small.begin(store, m, store.identityOf(m), store.manifest(m).revision, 0, 2 * c5::kBar, c5::kLength));
+  LoopSnapshotEvent row{};
+  CommittedWindowRowSource::ReadResult r = CommittedWindowRowSource::ReadResult::Progress;
+  for (unsigned i = 0; i < 100 && (r == CommittedWindowRowSource::ReadResult::Progress ||
+                                   r == CommittedWindowRowSource::ReadResult::Event); ++i) {
+    r = small.step(row);
+  }
+  TEST_ASSERT_EQUAL(CommittedWindowRowSource::ReadResult::Inactive, r);
+  TEST_ASSERT_EQUAL(WindowResult::CapacityDenied, small.result());
+  TEST_ASSERT_FALSE(store.windowActive());  // the pin is released
+}
+
 void test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins() {
   const PlaybackViewSourceIdentity capture{0, 7, nullptr, PlaybackWindowOrigin::Capture, 41};
   const PlaybackViewSourceIdentity newer{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
@@ -9827,6 +9998,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties);
   RUN_TEST(test_snapshot_binding_denies_rebound_cursor_overflow_and_published_destination);
   RUN_TEST(test_snapshot_binding_empty_window_completes_and_costs_saturate);
+  RUN_TEST(test_c5_manifest_window_gives_the_consumer_the_snapshot_windows_tuple);
+  RUN_TEST(test_c5_manifest_window_cursor_refuses_by_name);
   RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
   RUN_TEST(test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin);
   RUN_TEST(test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled);
