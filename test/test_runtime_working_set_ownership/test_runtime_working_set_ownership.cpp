@@ -18787,9 +18787,58 @@ void report(uint32_t bars, Case c, const Result& r) {
 /// demand; 5: live recovery); the capability assertions must keep holding. Defect A (the length gates) is inverted by
 /// DEC-242: phase 3 measured 1- and 8-bar loops never acquired (`frame_idle`) with the gates on.
 /// Task 5.0 (device finding `evidence/2026-11-01-phase4-gates.md`): a restored slot enters PLAYING the way boot leaves
-/// it. A pass-only (rootless) slot whose view set **is** prewarmed is acquired -- DEC-194's retention is enough for the
-/// source. The boot prewarm reserves **no** view set, and nothing acquires one while playing: the producer exits
-/// `win_not_servable` for the session. BASELINE (5.0 inverts it).
+/// it. A pass-only (rootless) slot is served once it has lane storage -- DEC-194's retention is enough for the source.
+/// RED before DEC-243: the boot prewarm reserved no view set and nothing acquires one while playing, so the producer
+/// exited `win_not_servable` for the session. DEC-243 reserves the three rolling views for an enabled slot at boot.
+void test_restored_slot_servability_while_playing() {
+  using namespace CapabilityFixture;
+  for (uint32_t bars : {8u, 20u}) {
+    setUp();
+    const Result withViews = run(bars, Case::Steady, 30, false, Entry::RootlessPrewarmed);
+    TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, withViews.acquiredAt,
+                                         "a rootless slot with a view set is served: the source is not the blocker");
+    setUp();
+    const Result boot = run(bars, Case::Steady, 30, false, Entry::RootlessBootPrewarm);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(withViews.acquiredAt, boot.acquiredAt,
+                                     "a boot-restored slot is acquired exactly as a prewarmed one");
+    TEST_ASSERT_EQUAL_UINT32(0u, boot.noneAfter);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(withViews.ons, boot.ons, "and emits exactly what a prewarmed slot emits");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(withViews.offs, boot.offs, "and emits exactly what a prewarmed slot emits");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(boot.ons, boot.offs, "no note is left sounding");
+    // BASELINE (defect E, pre-existing; inverted by 4.2b's continuous lane coverage): between windows the merged
+    // fallback serves a rootless slot only partly -- it gathers from a published root -- so some bars are silent.
+    TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(boot.barsAfter, boot.offs,
+                                         "BASELINE: a rootless slot loses bars while the merged fallback covers it");
+  }
+}
+
+void test_lane_storage_footprint_report() {
+  // Task 5.0 / standby-pool sizing: the external bytes one lane-ready set (the three rolling views) costs, beside the
+  // capture stagings and the whole-take bridges a full prewarm also reserves. Report-only; target sizes match native.
+  constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) + 1;
+  const size_t perView = RuntimePlaybackViewConfig::kEventsPerView *
+                         (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t));
+  char line[240];
+  std::snprintf(line, sizeof(line),
+                "footprint MidiEvent=%u PassOrigin=%u eventBytes=%u perView=%u lane(3 views)=%u stagingEach=%u "
+                "viewCount=%u bridgeCount=%u",
+                unsigned(sizeof(MidiEvent)), unsigned(sizeof(PlaybackPassEventOrigin)), unsigned(eventBytes),
+                unsigned(perView), unsigned(RuntimePlaybackViewConfig::kViewCount * perView),
+                unsigned(RuntimePlaybackViewConfig::kEventsPerView * eventBytes),
+                unsigned(RuntimePlaybackViewConfig::kViewCount), unsigned(RuntimePlaybackViewConfig::kBridgeCount));
+  TEST_MESSAGE(line);
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 8);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  const auto* set = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0)->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  std::snprintf(line, sizeof(line), "footprint fullPrewarm(8 bars, whole-take=%d) fixedExternalBytes=%u",
+                set->wholeTakeViewsReserved() ? 1 : 0, unsigned(set->fixedExternalBytes()));
+  TEST_MESSAGE(line);
+}
+
 void test_restored_slot_servability_while_playing_baseline() {
   using namespace CapabilityFixture;
   for (uint32_t bars : {8u, 20u}) {
@@ -19131,7 +19180,8 @@ int main() {
   RUN_TEST(test_route_reject_row_is_emitted_on_change_from_the_main_loop);
   RUN_TEST(test_capability_measure_every_length_and_case);
   RUN_TEST(test_capability_classification_baseline);
-  RUN_TEST(test_restored_slot_servability_while_playing_baseline);
+  RUN_TEST(test_restored_slot_servability_while_playing);
+  RUN_TEST(test_lane_storage_footprint_report);
   RUN_TEST(test_3_7f_a_bound_launch_survives_the_provision_owner_turn);
   // windowed-playback-generation slice 3.7h: the position pays for the work it asks for (the derived price when it
   // fits inside one loop; DEC-156's bounded later occurrence otherwise).

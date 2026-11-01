@@ -2083,6 +2083,13 @@ TRACK_COLD_MEM void Track::prewarmBootPlaybackRuntimeSlots() {
     // Boot reserves staging, not eight full view/bridge/companion bundles before SD load.
     // Explicit full prewarm remains separate.
     prewarmPlaybackForSlot(s, false);
+    // Task 5.0a (DEC-243): an **enabled** slot also gets its lane storage -- the three rolling views only
+    // (`prewarmRollingViews`, ~282 KiB; no capture staging, no whole-take bridges) -- here, before transport can run,
+    // so a restored slot is servable by the windowed lane while playing. Playback may acquire prepared capacity but
+    // never creates it (the producer exits `win_not_servable` without it). A refusal leaves the merged fallback.
+    if (trackManager.isSlotEnabled(trackIndex, s)) {
+      if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(s)) (void)runtime->prewarmRollingViews();
+    }
   }
 }
 

@@ -81,7 +81,7 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
 
 ## 5. Live recovery after transport start / restart (blocked on 4)
 
-- [ ] 5.0 RED (device finding, `evidence/2026-11-01-phase4-gates.md`): a restored slot whose boot prewarm reserved no
+- [ ] 5.0 **(5.0a landed native, DEC-243: boot reserves the three rolling views for enabled slots; device mixed, not accepted: see DEC-243 "Next")** RED (device finding, `evidence/2026-11-01-phase4-gates.md`): a restored slot whose boot prewarm reserved no
       view set and whose source is pass-only (no current root) becomes servable **while playing** — the producer acquires
       the view set and retains the source off-clock, bounded, instead of exiting `win_not_servable` for the session.
 - [ ] 5.1 RED: after a transport restart (new epoch) a blocked or stale frame recovers **while transport runs** — the

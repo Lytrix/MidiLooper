@@ -13671,3 +13671,71 @@ Phase 3's `test_capability_classification_baseline` inverts defect A: every leng
 
 DEC-193 (parked bundle, narrowed here), DEC-194 (rootless first window), DEC-200 / DEC-202 (owner direction and the
 keystone), DEC-147 / 3.7h (the priced lead), DEC-241 (ISR consume-only).
+
+## DEC-243 — Playback acquires prepared lane storage, never creates it: boot reserves the three rolling views for enabled slots
+
+**Date:** 2026-11-01
+**Owner:** `Track::prewarmBootPlaybackRuntimeSlots` (`src/Track/TrackPlaybackWindowBuild.cpp`); change
+`playback-tick-consume-only` task 5.0a.
+**Status:** Accepted as the immediate repair (owner, 2026-11-01). Native green. The device result is **mixed and not
+accepted**; see below. The final architecture is a standby pool, with grained live allocation as the fallback only.
+
+### Invariant (owner)
+
+"Playback may acquire already-prepared capacity, but must never create that capacity."
+
+Populating an already-allocated view during playback is bounded, incremental work. Allocating its backing storage
+during playback is not.
+
+### Evidence
+
+- **Native (task 5.0 RED).** A boot-restored, rootless slot is never acquired by the lane while playing (`win_not_servable`).
+  The same slot with a prewarmed view set is acquired at the same tick as a root-backed one, so the source (DEC-194) is
+  not the blocker.
+- **Device unit cost** (`view_prewarm_step`). Rolling views cost about 12 ms each. `prewarmed` is reached only after about
+  17 units (about 190 ms), and no unit fits the 8 ms real-time child budget (DEC-212). The DEC-231 stepped owner is
+  therefore correctly gated off while timing-critical.
+- **Footprint** (`test_lane_storage_footprint_report`, native sizes):
+  - one lane-ready set (3 views × 2,048 events) is 288,768 B;
+  - a full prewarm of an 8-bar slot is 1,787,904 B.
+  - On target, 8 lane sets took 2,158,752 B of PSRAM (6.75 → 4.59 MB free).
+
+### Decision
+
+- `viewSet->prewarm(false, false)` (`LoopPlaybackRuntime::prewarmRollingViews`) is already a lane-only reservation. It
+  sets `prewarmed` with only the three views; capture stagings (`captureStagingsPrewarmed`) and whole-take bridges
+  (`wholeTakeReserved`) carry their own bits. The launch path already relies on this.
+- So the readiness split the owner asked for (lane / capture / bridge) exists structurally. The coupling is only in the
+  DEC-231 stepped owner's order, which sets `prewarmed` after the stagings.
+- Boot prewarm now calls `prewarmRollingViews()` for each **enabled** slot, before transport can run. A refusal leaves
+  the merged fallback.
+
+### Device (`session_20261101_125610.log`, image `fa77ebdf…`, boot verified, valid chain)
+
+Improvements:
+- Interrupt misses drop from 433 to **6**.
+- The merged share falls from 85.6 % to 75.1 %, and view slot-ticks rise from 24,048 to 29,858.
+- Restored slots now progress through the lane (`win_requested` → `win_waiting` → `win_ready`).
+
+Not accepted:
+- **Restored slots are blocked at their first handoff:** `candidate_not_ready` on the 8-bar t1 and `candidate_rejected`
+  on the 4-bar t2. Each restart then blocks them again (defect C).
+- **Tracks 4–6 are silent again.** ch4–6 NoteOns went from 758 / 967 / 393 on DEC-242 to 0. They emit no `route_reject`
+  rows, so they are either served by the lane with empty content or not reaching route selection. The default image
+  cannot tell these apart: no per-slot route row exists.
+- **External-clock maxima rose:** `midi_gap` 285 ms and `late_on` 203 ms, in the window ending at the first overdub
+  start (73.5 s). That is one sample, not attributed.
+- **Boot cost:** about 270 ms of extra boot prewarm and about 2.1 MB of PSRAM.
+
+### Next
+
+1. A per-slot route row, or a served-empty count, to separate "served empty" from "not reached" for tracks 4–6, before
+   any further change.
+2. The first-handoff blocks on restored slots (defects D / C family).
+3. The standby pool: size N × 288,768 B against PSRAM headroom. Allocate it during non-timing-critical startup; borrow
+   in O(1).
+
+### Related
+
+DEC-231 (stepped prewarm, gated off while timing-critical), DEC-212 (8 ms child budget), DEC-194 (rootless source),
+DEC-193 (standby pools, to be promoted with this evidence), DEC-242.
