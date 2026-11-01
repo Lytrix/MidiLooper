@@ -353,7 +353,7 @@ void test_zero_heap_after_construction() {
   }
   gStore.undo();
   gStore.redo();
-  gStore.beginCompaction(4);
+  gStore.beginCompaction(0, 4, CompactionScope::AllowCopies);
   while (gStore.stepCompaction(64) == CompactStep::Pending) {
   }
   gStore.unpin(pin);
@@ -473,7 +473,8 @@ void test_page_exhaustion_mid_pass_latches_and_leaves_committed_revision_untouch
     }
     TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, last);
     TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, gTiny.writerStop());
-    TEST_ASSERT_EQUAL_UINT32(6 * 4, accepted);  // the six pages the Record left free
+    // The Record left six pages: four inline data pages, then a fifth data page that also needs a directory page.
+    TEST_ASSERT_EQUAL_UINT32(5 * 4, accepted);
     TEST_ASSERT_EQUAL(AppendResult::DeniedNoPage, gTiny.appendMidi(1, kNoteOn, 71, 90, 9000));  // latched
     TEST_ASSERT_EQUAL_UINT16(m1, gTiny.current());
     const ComposeStamp s1 = gTiny.composeWindow(m1, 0, 4 * kBarTicks, gOut, 4096);
@@ -487,7 +488,7 @@ void test_page_exhaustion_mid_pass_latches_and_leaves_committed_revision_untouch
       const ManifestId m2 = gTiny.commitPass();  // commit the captured rows: a complete, smaller revision 2
       TEST_ASSERT_EQUAL_UINT32(2, gTiny.manifest(m2).revision);
       const ComposeStamp s2 = gTiny.composeWindow(m2, 0, 4 * kBarTicks, gOut, 4096);
-      TEST_ASSERT_EQUAL_UINT32(8 + 24, s2.count);
+      TEST_ASSERT_EQUAL_UINT32(8 + 20, s2.count);
     }
   }
 }
@@ -516,10 +517,10 @@ void test_pass_spans_non_contiguous_free_pages() {
   gTiny.beginPass(PassKind::Overdub);
   appendNotesTo(gTiny, r3.passes.back(), 6, 4 * kBarTicks);  // 3 pages from the fragmented free stack
   const ManifestId m3 = gTiny.commitPass();
-  const auto& run = gTiny.run(gTiny.manifest(m3).runs[2]);
-  TEST_ASSERT_EQUAL_UINT16(3, run.pageCount);
+  const RunId runId = gTiny.manifest(m3).runs[2];
+  TEST_ASSERT_EQUAL_UINT16(3, gTiny.run(runId).pageCount);
   bool adjacent = true;
-  for (uint16_t i = 1; i < run.pageCount; ++i) adjacent = adjacent && run.pages[i] == run.pages[i - 1] + 1;
+  for (uint16_t i = 1; i < 3; ++i) adjacent = adjacent && gTiny.dataPageOf(runId, i) == gTiny.dataPageOf(runId, i - 1) + 1;
   TEST_ASSERT_FALSE(adjacent);
   const ComposeStamp s = gTiny.composeWindow(m3, 0, 4 * kBarTicks, gOut, 4096);
   assertSameRows(oracleWindow(r3, 0, 4 * kBarTicks), gOut, s.count);
@@ -590,13 +591,13 @@ static OracleRevision buildFiveRunTake() {
 
 void test_stepped_compaction_matches_and_is_bounded_per_step() {
   const OracleRevision rev = buildFiveRunTake();
-  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(0, 5, CompactionScope::AllowCopies));
   uint32_t steps = 0;
   CompactStep step = CompactStep::Pending;
   while (step == CompactStep::Pending) {
     const uint16_t freeBefore = gStore.freePageCount();
     step = gStore.stepCompaction(7);
-    TEST_ASSERT_TRUE(freeBefore - gStore.freePageCount() <= 1);  // at most 7 rows copied: at most one new page
+    TEST_ASSERT_TRUE(freeBefore - gStore.freePageCount() <= 2);  // 7 rows: at most one data page (+ its directory page)
     ++steps;
     if (step == CompactStep::Pending) assertManifestMatches(gStore.current(), rev, 5, 0, kLongTakeTicks);  // undisturbed
   }
@@ -611,7 +612,7 @@ void test_stepped_compaction_matches_and_is_bounded_per_step() {
 void test_undo_during_compaction_supersedes_it_and_conserves_pages() {
   const OracleRevision rev = buildFiveRunTake();
   const uint32_t ownedBefore = gStore.ownedPageCount();
-  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(0, 5, CompactionScope::AllowCopies));
   TEST_ASSERT_EQUAL(CompactStep::Pending, gStore.stepCompaction(50));
   TEST_ASSERT_TRUE(gStore.undo());  // current is now revision 4 (four runs): it no longer starts with the five runs
   CompactStep step = CompactStep::Pending;
@@ -624,7 +625,7 @@ void test_undo_during_compaction_supersedes_it_and_conserves_pages() {
 
 void test_overdub_committed_during_compaction_is_kept_on_publish() {
   OracleRevision rev = buildFiveRunTake();
-  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(5));
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.beginCompaction(0, 5, CompactionScope::AllowCopies));
   TEST_ASSERT_EQUAL(CompactStep::Pending, gStore.stepCompaction(100));
   rev = overdub(rev, 10, kLongTakeTicks, {rev.passes[1].rows[0].noteId});  // revision 6 commits mid-job
   CompactStep step = CompactStep::Pending;
@@ -632,6 +633,74 @@ void test_overdub_committed_during_compaction_is_kept_on_publish() {
   TEST_ASSERT_EQUAL(CompactStep::Published, step);
   TEST_ASSERT_EQUAL_UINT8(2, gStore.manifest(gStore.current()).runCount);  // compacted + the new overdub
   assertManifestMatches(gStore.current(), rev, 6, 0, kLongTakeTicks);
+}
+
+// ---- B.5a: history-closed compaction and a shared page pool -------------------------------------------------------
+
+void test_compaction_refuses_a_range_history_still_names_and_admits_a_closed_one() {
+  OracleRevision rev = recordTake(50, 4 * kBarTicks);
+  for (int i = 0; i < 3; ++i) rev = overdub(rev, 5, 4 * kBarTicks);  // history: rev1..rev4, each a prefix
+  // Overdubs 1..3: revisions 2 and 3 hold only part of that range.
+  TEST_ASSERT_FALSE(gStore.rangeIsHistoryClosed(1, 3));
+  TEST_ASSERT_EQUAL(CompactResult::NotHistoryClosed, gStore.beginCompaction(1, 3));
+  TEST_ASSERT_EQUAL_UINT8(0, gStore.largestClosedRangeFrom(1));
+  // Age the history out with a fresh store whose depth is 2: only the last two revisions remain.
+  using ShortCap = Capacity<512, 32, 24, 64, 24, 8, /*history*/ 2>;
+  static Store<ShortCap> shortStore;
+  shortStore.reset();
+  shortStore.beginPass(PassKind::Record, 4 * kBarTicks);
+  shortStore.appendMidi(0, kNoteOn, 60, 100, 1);
+  shortStore.appendMidi(96, kNoteOff, 60, 0, 1);
+  shortStore.commitPass();
+  for (uint32_t i = 0; i < 4; ++i) {
+    shortStore.beginPass(PassKind::Overdub);
+    shortStore.appendMidi(100 + i * 10, kNoteOn, 70 + i, 100, 10 + i);
+    shortStore.appendMidi(150 + i * 10, kNoteOff, 70 + i, 0, 10 + i);
+    shortStore.commitPass();
+  }
+  // History holds revisions 4 (runs R,1,2,3) and 5 (R,1,2,3,4): runs 1..3 are closed, run 4 is not.
+  TEST_ASSERT_EQUAL_UINT8(3, shortStore.largestClosedRangeFrom(1));
+  const uint32_t ownedBefore = shortStore.ownedPageCount();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, shortStore.beginCompaction(1, 3));
+  while (shortStore.stepCompaction(4) == CompactStep::Pending) {
+  }
+  // Both history entries were rewritten, so the three originals are gone: one merged run replaces three.
+  TEST_ASSERT_EQUAL_UINT8(3, shortStore.manifest(shortStore.current()).runCount);
+  TEST_ASSERT_TRUE(shortStore.ownedPageCount() < ownedBefore);
+  TEST_ASSERT_TRUE(shortStore.undo());
+  TEST_ASSERT_EQUAL_UINT8(2, shortStore.manifest(shortStore.current()).runCount);  // revision 4: R + merged
+}
+
+void test_two_slots_share_one_page_pool() {
+  using SlotCap = Capacity<512, 32, 24, 64, 24, 8, 8>;
+  static StoreCore<SlotCap>::Pool pool;
+  pool.reset();
+  static StoreCore<SlotCap> slotA(pool);
+  static StoreCore<SlotCap> slotB(pool);
+  slotA.releaseAll();
+  slotB.releaseAll();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, slotA.beginPass(PassKind::Record, 4 * kBarTicks));
+  for (uint32_t i = 0; i < 100; ++i) slotA.appendMidi(i * 30, kNoteOn, 60, 100, i + 1);
+  slotA.commitPass();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, slotB.beginPass(PassKind::Record, 4 * kBarTicks));
+  for (uint32_t i = 0; i < 40; ++i) slotB.appendMidi(i * 50, kNoteOn, 72, 100, i + 1);
+  slotB.commitPass();
+  TEST_ASSERT_EQUAL_UINT32(512, slotA.ownedPageCount() + slotB.ownedPageCount() + pool.freeCount());
+  const ComposeStamp a = slotA.composeWindow(slotA.current(), 0, 4 * kBarTicks, gOut, 4096);
+  const ComposeStamp b = slotB.composeWindow(slotB.current(), 0, 4 * kBarTicks, gOut, 4096);
+  TEST_ASSERT_EQUAL_UINT32(100, a.count);
+  TEST_ASSERT_EQUAL_UINT32(40, b.count);
+  slotA.releaseAll();
+  TEST_ASSERT_EQUAL_UINT32(512, slotB.ownedPageCount() + pool.freeCount());
+}
+
+// A run larger than the inline page ids spills into directory pages and still composes exactly.
+void test_large_run_uses_directory_pages() {
+  const OracleRevision rev = recordTake(1000, kLongTakeTicks);  // 2,000 rows = 63 data pages at 32 rows
+  const RunId run = gStore.manifest(gStore.current()).runs[0];
+  TEST_ASSERT_EQUAL_UINT16(63, gStore.run(run).pageCount);
+  TEST_ASSERT_EQUAL_UINT16(1, gStore.run(run).dirPageCount);
+  assertManifestMatches(gStore.current(), rev, 1, 0, kLongTakeTicks);
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -658,5 +727,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stepped_compaction_matches_and_is_bounded_per_step);
   RUN_TEST(test_undo_during_compaction_supersedes_it_and_conserves_pages);
   RUN_TEST(test_overdub_committed_during_compaction_is_kept_on_publish);
+  RUN_TEST(test_compaction_refuses_a_range_history_still_names_and_admits_a_closed_one);
+  RUN_TEST(test_two_slots_share_one_page_pool);
+  RUN_TEST(test_large_run_uses_directory_pages);
   return UNITY_END();
 }

@@ -28,12 +28,13 @@ constexpr uint32_t kOverdubs = 30;
 constexpr uint8_t kCompactAt = 8;
 constexpr uint32_t kStepRows = 2048;
 constexpr uint32_t kRowsPerPage = 64;
+constexpr uint32_t kInflightCapRows = 128 * kRowsPerPage;  // one compaction in flight copies at most 128 pages
 
 template <uint8_t History>
 using CapFor = Capacity</*pages*/ 4096, kRowsPerPage, /*runs*/ 255, /*pages per run*/ 1024, /*manifests*/ 255,
                         /*runs per manifest*/ 32, History, /*segments*/ 8, /*hide pages*/ 4>;
 
-enum class Policy { WholePrefix, OverdubsOnly, None };
+enum class Policy { WholePrefix, OverdubsOnly, HistoryClosed, None };
 
 struct Result {
   uint32_t peakPages = 0;
@@ -79,8 +80,31 @@ struct Session {
     if (policy == Policy::None || store.compacting()) return;
     const uint8_t runs = store.manifest(store.current()).runCount;
     if (runs < kCompactAt) return;
-    const CompactResult begun = policy == Policy::WholePrefix ? store.beginCompaction(0, runs)
-                                                              : store.beginCompaction(1, static_cast<uint8_t>(runs - 1));
+    if (policy == Policy::HistoryClosed) {
+      // Only overdub ranges that no history entry holds in part (nothing to do until history has aged out), and at
+      // most kInflightCapRows of input, so the merged copy in flight stays bounded: a range that would re-merge a
+      // large merged run starts after it instead (LSM-style levels).
+      const auto& m = store.manifest(store.current());
+      for (uint8_t first = 1; first + 1 < m.runCount; ++first) {
+        const uint8_t count = store.largestClosedRangeFrom(first);
+        uint8_t fitting = 0;
+        uint32_t rows = 0;
+        for (uint8_t i = 0; i < count; ++i) {
+          rows += store.run(m.runs[first + i]).midiCount;
+          if (rows > kInflightCapRows) break;
+          fitting = static_cast<uint8_t>(i + 1);
+        }
+        if (fitting >= 2) {
+          TEST_ASSERT_EQUAL(CompactResult::Ok, store.beginCompaction(first, fitting));
+          return;
+        }
+      }
+      return;
+    }
+    const CompactResult begun =
+        policy == Policy::WholePrefix
+            ? store.beginCompaction(0, runs, CompactionScope::AllowCopies)
+            : store.beginCompaction(1, static_cast<uint8_t>(runs - 1), CompactionScope::AllowCopies);
     TEST_ASSERT_EQUAL(CompactResult::Ok, begun);
   }
 
@@ -204,18 +228,30 @@ void test_slot_page_budget_by_compaction_policy_and_history_depth() {
   const Result ods16 = runPolicy<16>(Policy::OverdubsOnly);
   const Result whole99 = runPolicy<99>(Policy::WholePrefix);
   const Result ods99 = runPolicy<99>(Policy::OverdubsOnly);
+  const Result closed16 = runPolicy<16>(Policy::HistoryClosed);
+  const Result closed99 = runPolicy<99>(Policy::HistoryClosed);
   report("no compaction, history 16", none16);
   report("whole prefix, history 16", whole16);
   report("overdubs only, history 16", ods16);
   report("whole prefix, history 99", whole99);
   report("overdubs only, history 99", ods99);
-  printf("B5 descriptor bytes per store (history 99, excluding pages): %u\n",
-         static_cast<unsigned>(sizeof(Store<CapFor<99>>) - sizeof(typename Store<CapFor<99>>::EventPage) * 4096));
+  report("history-closed, history 16", closed16);
+  report("history-closed, history 99", closed99);
+  printf("B5 descriptor bytes per store (history 99, excluding the pool): %u; per run: %u\n",
+         static_cast<unsigned>(sizeof(StoreCore<CapFor<99>>)),
+         static_cast<unsigned>(sizeof(typename StoreCore<CapFor<99>>::PassRun)));
   // Every policy must end with exactly the same ordered stream (compaction never changes content).
   TEST_ASSERT_TRUE(none16.streamHash == whole16.streamHash);
   TEST_ASSERT_TRUE(none16.streamHash == ods16.streamHash);
   TEST_ASSERT_TRUE(none16.streamHash == whole99.streamHash);
   TEST_ASSERT_TRUE(none16.streamHash == ods99.streamHash);
+  TEST_ASSERT_TRUE(none16.streamHash == closed16.streamHash);
+  TEST_ASSERT_TRUE(none16.streamHash == closed99.streamHash);
+  // B.5a: history-closed compaction keeps no second copy once published; its peak is no compaction plus at most the
+  // capped range in flight (plus that range's directory and hide pages).
+  const uint32_t inflightCapPages = kInflightCapRows / kRowsPerPage + 8;
+  TEST_ASSERT_TRUE(closed16.peakPages <= none16.peakPages + inflightCapPages);
+  TEST_ASSERT_TRUE(closed99.peakPages <= none16.peakPages + inflightCapPages);
   TEST_ASSERT_EQUAL_UINT32(0, ods99.slowSeals);
 }
 

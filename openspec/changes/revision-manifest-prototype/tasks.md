@@ -62,9 +62,12 @@ timing and memory envelope without introducing real-time construction?
       compaction duplicates whatever history still references. Range compaction and history-wide rewrite added
       (content hash-identical under every policy). Budget ≈ 2.76 MiB store-wide at today's 131,072-event ceiling,
       about the same as today's 2.67 MB of chunk backing. [Evidence](evidence/2026-11-01-b5-capacity-budget.md)
-- [ ] B.5a Store changes from B.5: compaction only of history-closed ranges (capped in-flight range); heap-merge compose
-      that skips hide-free runs, with `kRunsPerManifest` sized to undo depth; paged run directories with one global run
-      table (descriptor ~64 B, not 2 KiB). Re-run the capacity suite and the B.4 probe.
+- [x] B.5a Store changes: history-closed compaction by default (`NotHistoryClosed`; publish rewrites every holder),
+      heap-merge compose with cached keys and hide-run skipping (store-owned scratch, not stack), paged run
+      directories (descriptor 76 B), shared `PagePool` across slot stores. Capacity: history-closed peak 1.12–1.23×
+      content (vs 2–3.4× with copies); device (HEX `8f70c93a…`, boot verified): 2-bar compose at 31 runs 5.45 ms max,
+      compaction step 4.16 ms, commit 10 µs. [Evidence](evidence/2026-11-01-b5a-store-changes.md)
+- [ ] B.5c Move the compaction planner into the store (in-flight cap, level rule); time denser/hide-heavy windows.
 - [ ] B.5b Session high-water on device: owner-rig baseline chain on the probe image, then `!REVSTORE_PROBE` for
       `acct_high`; gives the reserve the store must fit beside during migration.
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest

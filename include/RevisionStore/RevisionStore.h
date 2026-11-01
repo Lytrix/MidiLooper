@@ -7,11 +7,11 @@
 // Canonical loop content as fixed-capacity pages, immutable committed passes and tiny immutable revision
 // manifests. Every table is sized at compile time; nothing here allocates after construction.
 //
-//   EventPage        fixed array of PassEvent rows; pages move between a free stack and pass runs by index.
-//   PassRun          the content of one pass (Record, overdub, edit, or a compacted prefix). Mutable only while its
-//                    single writer appends. Its Midi rows are kept as a few sorted segments *while appending*, so
-//                    commit does not sort them (B.4: a seal-time sort cost 134 ms at 16,640 rows). HideNote rows live
-//                    in their own small region, the only part sorted at commit.
+//   PagePool         fixed array of pages; a free stack of PageIds. One pool can serve many stores (slots).
+//   PassRun          the content of one pass (Record, overdub, edit, or a compacted range). Mutable only while its
+//                    single writer appends. Midi rows are kept as a few sorted segments *while appending*, so commit
+//                    does not sort them. HideNote rows live in their own small region, the only part sorted at commit.
+//                    Page ids: the first few inline, the rest in directory pages taken from the pool.
 //   RevisionManifest the ordered run list that IS committed revision N. Created whole at commit, never edited.
 //
 // A derived window (`composeWindow`) is stamped with the manifest it read, never with a demanded revision.
@@ -77,12 +77,18 @@ enum class CompactResult : uint8_t {
   DeniedNoRun,
   DeniedNoPage,
   DeniedNoManifest,
-  DeniedWriterBusy,  // kept for API stability; compaction no longer excludes a writer
-  DeniedBusy,        // another compaction job is active
-  Superseded,        // the current manifest no longer starts with the compacted runs; result discarded
+  DeniedWriterBusy,   // kept for API stability; compaction no longer excludes a writer
+  DeniedBusy,         // another compaction job is active
+  Superseded,         // the current manifest no longer holds the compacted runs; result discarded
+  NotHistoryClosed,   // some history entry holds part of the range: compacting would keep two copies alive
 };
 /// Step outcome of a bounded compaction job.
 enum class CompactStep : uint8_t { Idle, Pending, Published, Superseded, DeniedNoPage };
+
+/// Which ranges a compaction may take. `HistoryClosedOnly` (the default) admits a range only when every history entry
+/// holds all of it at the same positions or none of it, so publishing frees the originals at once (B.5: compacting
+/// runs that history still names kept both copies alive, 2-3x content). `AllowCopies` is for tests and off-line use.
+enum class CompactionScope : uint8_t { HistoryClosedOnly, AllowCopies };
 
 /// What a derived window can prove about itself: the manifest it read and that manifest's revision.
 /// `revision` is logical (compaction keeps it); `identity` is physical and never reused, unlike the `manifest` slot.
@@ -94,7 +100,8 @@ struct ComposeStamp {
   ComposeStatus status = ComposeStatus::NoManifest;
 };
 
-/// Compile-time capacities. The target sizing is task B.5.
+/// Compile-time capacities.
+/// `PagesPerRun`: max data pages of one run (beyond `kInlinePages`, ids live in directory pages from the pool).
 /// `SegmentsPerRun`: sorted Midi segments a run may hold (a capture wrap costs one); beyond it the run falls back to a
 /// commit-time sort, counted by `slowSeals()`. `HidePagesPerRun`: pages for a run's HideNote rows.
 template <uint16_t PageCount, uint16_t EventsPerPage, uint16_t RunCount, uint16_t PagesPerRun, uint16_t ManifestCount,
@@ -111,21 +118,58 @@ struct Capacity {
   static constexpr uint8_t kHidePagesPerRun = HidePagesPerRun;
 };
 
-template <typename Cap>
-class Store {
+/// Fixed page pool. Raw row storage: constructing it does not touch the rows. Shareable by several stores.
+template <uint16_t PageCount, uint16_t EventsPerPage>
+class PagePool {
  public:
-  /// Raw row storage: constructing the store does not touch the rows (B.4: zero-filling 1 MiB cost 42 ms).
-  struct EventPage {
-    alignas(PassEvent) unsigned char raw[sizeof(PassEvent) * Cap::kEventsPerPage];
-    PassEvent& row(uint32_t i) { return reinterpret_cast<PassEvent*>(raw)[i]; }
-    const PassEvent& row(uint32_t i) const { return reinterpret_cast<const PassEvent*>(raw)[i]; }
+  static constexpr uint16_t kPageCount = PageCount;
+  static constexpr uint16_t kEventsPerPage = EventsPerPage;
+  static constexpr uint32_t kPageBytes = sizeof(PassEvent) * EventsPerPage;
+  /// Page ids a directory page holds.
+  static constexpr uint32_t kIdsPerDirPage = kPageBytes / sizeof(PageId);
+
+  PagePool() { reset(); }
+  void reset() {
+    for (uint16_t i = 0; i < PageCount; ++i) free_[i] = static_cast<PageId>(PageCount - 1 - i);
+    top_ = PageCount;
+  }
+  PageId take() { return top_ == 0 ? kNoPage : free_[--top_]; }
+  void give(PageId id) { free_[top_++] = id; }
+  uint16_t freeCount() const { return top_; }
+
+  PassEvent& row(PageId page, uint32_t i) { return reinterpret_cast<PassEvent*>(pages_[page].raw)[i]; }
+  const PassEvent& row(PageId page, uint32_t i) const { return reinterpret_cast<const PassEvent*>(pages_[page].raw)[i]; }
+  PageId& dirEntry(PageId page, uint32_t i) { return reinterpret_cast<PageId*>(pages_[page].raw)[i]; }
+  PageId dirEntry(PageId page, uint32_t i) const { return reinterpret_cast<const PageId*>(pages_[page].raw)[i]; }
+
+ private:
+  struct Page {
+    alignas(PassEvent) unsigned char raw[kPageBytes];
   };
+  Page pages_[PageCount];
+  PageId free_[PageCount];
+  uint16_t top_ = 0;
+};
+
+/// One loop's (slot's) runs, manifests and history over a page pool it may share with other slots.
+template <typename Cap>
+class StoreCore {
+  static_assert(Cap::kRunsPerManifest <= 64, "the cached merge key holds the run index in 6 bits");
+
+ public:
+  using Pool = PagePool<Cap::kPageCount, Cap::kEventsPerPage>;
+  static constexpr uint8_t kInlinePages = 4;
+  static constexpr uint32_t kIdsPerDirPage = Pool::kIdsPerDirPage;
+  static constexpr uint16_t kDirPagesPerRun = static_cast<uint16_t>(
+      Cap::kPagesPerRun <= kInlinePages ? 0 : (Cap::kPagesPerRun - kInlinePages + kIdsPerDirPage - 1) / kIdsPerDirPage);
 
   struct PassRun {
-    PageId pages[Cap::kPagesPerRun];         // Midi rows, virtual index [0, midiCount)
-    PageId hidePages[Cap::kHidePagesPerRun];  // HideNote rows, virtual index [0, hideCount), by noteId once committed
+    PageId inlinePages[kInlinePages];         // data pages 0..3
+    PageId dirPages[kDirPagesPerRun ? kDirPagesPerRun : 1];  // ids of data pages 4.. live in these pool pages
+    PageId hidePages[Cap::kHidePagesPerRun];  // HideNote rows, by noteId once committed
     uint32_t segStart[Cap::kSegmentsPerRun];  // segment s = [segStart[s], segStart[s+1] or midiCount)
-    uint16_t pageCount;
+    uint16_t pageCount;                       // data pages
+    uint16_t dirPageCount;
     uint16_t hidePageCount;
     uint32_t midiCount;
     uint32_t hideCount;
@@ -136,8 +180,8 @@ class Store {
     bool committed;
     uint32_t rowCount() const { return midiCount + hideCount; }
     uint32_t segEnd(uint8_t s) const { return s + 1 < segCount ? segStart[s + 1] : midiCount; }
-    void clear(PassKind k) {  // scalars only: the page/segment arrays are read only below their counts
-      pageCount = hidePageCount = 0;
+    void clear(PassKind k) {  // scalars only: the arrays are read only below their counts
+      pageCount = dirPageCount = hidePageCount = 0;
       midiCount = hideCount = 0;
       segCount = 0;
       needsSort = false;
@@ -157,44 +201,26 @@ class Store {
     bool live = false;
   };
 
-  Store() { reset(); }
+  explicit StoreCore(Pool& pool) : pool_(pool) { clearTables(); }
+  StoreCore(const StoreCore&) = delete;
+  StoreCore& operator=(const StoreCore&) = delete;
 
-  void reset() {
-    for (uint16_t i = 0; i < Cap::kPageCount; ++i) {
-      freePages_[i] = static_cast<PageId>(Cap::kPageCount - 1 - i);
-    }
-    freePageTop_ = Cap::kPageCount;
+  /// Return every page this store holds to the pool and forget all runs, manifests and history.
+  void releaseAll() {
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
-      runs_[i].clear(PassKind::Record);
-      runLive_[i] = false;
+      if (runLive_[i]) releaseRunPages(runs_[i]);
     }
-    for (uint16_t i = 0; i < Cap::kManifestCount; ++i) {
-      manifests_[i].live = false;
-      manifests_[i].refs = 0;
-      manifests_[i].runCount = 0;
-    }
-    for (uint8_t i = 0; i < Cap::kHistoryDepth; ++i) {
-      history_[i] = kNoManifest;
-    }
-    historyCount_ = 0;
-    historyCursor_ = 0;
-    current_ = kNoManifest;
-    writer_ = kNoRun;
-    writerManifest_ = kNoManifest;
-    writerStop_ = AppendResult::Ok;
-    loopLengthTicks_ = 0;
-    nextIdentity_ = 1;
-    slowSeals_ = 0;
-    job_.active = false;
+    clearTables();
   }
 
   // ---- Pool accounting ---------------------------------------------------------------------------------------------
-  uint16_t freePageCount() const { return freePageTop_; }
-  /// Pages held by live runs. Conservation: `ownedPageCount() + freePageCount() == kPageCount`.
+  uint16_t freePageCount() const { return pool_.freeCount(); }
+  /// Pages held by this store's live runs (data, directory and hide pages).
   uint32_t ownedPageCount() const {
     uint32_t n = 0;
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
-      n += runLive_[i] ? static_cast<uint32_t>(runs_[i].pageCount) + runs_[i].hidePageCount : 0;
+      if (!runLive_[i]) continue;
+      n += static_cast<uint32_t>(runs_[i].pageCount) + runs_[i].dirPageCount + runs_[i].hidePageCount;
     }
     return n;
   }
@@ -210,6 +236,8 @@ class Store {
   }
   /// Commits that fell back to a sort because a run exceeded its segment budget. Expected 0 for capture input.
   uint32_t slowSeals() const { return slowSeals_; }
+  /// Data page `p` of run `id` (diagnostics and tests).
+  PageId dataPageOf(RunId id, uint16_t p) const { return dataPage(runs_[id], p); }
 
   // ---- Single writer -----------------------------------------------------------------------------------------------
   /// Admission is one run descriptor, one page and the manifest slot its commit will need. Commit cannot fail.
@@ -227,14 +255,14 @@ class Store {
       runLive_[run] = false;
       return AdmitResult::DeniedNoManifest;
     }
-    const PageId page = takePage();
+    const PageId page = pool_.take();
     if (page == kNoPage) {
       runLive_[run] = false;
       manifests_[manifest].live = false;
       return AdmitResult::DeniedNoPage;
     }
     PassRun& r = runs_[run];
-    r.pages[0] = page;
+    r.inlinePages[0] = page;
     r.pageCount = 1;
     writer_ = run;
     writerManifest_ = manifest;
@@ -336,7 +364,8 @@ class Store {
   void unpin(ManifestId id) { releaseManifest(id); }
 
   /// Compose `[fromTick, toTick)` of `id` into `out` in DEC-244 order. Hidden notes are dropped.
-  /// Cost is bounded by the segments in the manifest and the rows inside the interval, not by the loop length.
+  /// Heap merge over the manifest's segments with cached keys: O(log cursors) per row, comparisons never touch pages.
+  /// Main-loop only (uses the store's scratch merge state, not the stack); never from an interrupt.
   ComposeStamp composeWindow(ManifestId id, uint32_t fromTick, uint32_t toTick, PassEvent* out, uint32_t capacity) const {
     ComposeStamp stamp;
     if (id == kNoManifest || !manifests_[id].live) return stamp;
@@ -345,36 +374,28 @@ class Store {
     stamp.identity = m.identity;
     stamp.revision = m.revision;
     stamp.status = ComposeStatus::Complete;
-    Cursors cursors;
+    Merge& merge = composeScratch_;
+    merge.reset();
+    merge.limit = m.runCount;
+    collectHideRuns(m, 0, m.runCount, merge);
     for (uint8_t i = 0; i < m.runCount; ++i) {
       const PassRun& r = runs_[m.runs[i]];
       for (uint8_t s = 0; s < r.segCount; ++s) {
-        cursors.add(i, lowerBoundTick(r, r.segStart[s], r.segEnd(s), fromTick), r.segEnd(s));
+        merge.add(i, lowerBoundTick(r, r.segStart[s], r.segEnd(s), fromTick), r.segEnd(s));
       }
     }
-    for (;;) {
-      uint16_t best = kNoCursor;
-      for (uint16_t k = 0; k < cursors.count; ++k) {
-        const PassRun& r = runs_[m.runs[cursors.run[k]]];
-        while (cursors.at[k] < cursors.end[k]) {
-          const PassEvent& row = midiAt(r, cursors.at[k]);
-          if (row.tick >= toTick) {
-            cursors.at[k] = cursors.end[k];
-            break;
-          }
-          if (!hiddenByLaterRun(m, cursors.run[k], m.runCount, row.noteId)) break;
-          ++cursors.at[k];
-        }
-        if (cursors.at[k] >= cursors.end[k]) continue;
-        if (best == kNoCursor || cursorBefore(m, cursors, k, best)) best = k;
-      }
-      if (best == kNoCursor) break;
+    for (uint16_t k = 0; k < merge.count; ++k) {
+      if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
+    }
+    while (merge.heapSize != 0) {
+      const uint16_t k = heapPop(m, merge);
       if (stamp.count >= capacity) {
         stamp.status = ComposeStatus::OutputFull;
         break;
       }
-      out[stamp.count++] = midiAt(runs_[m.runs[cursors.run[best]]], cursors.at[best]);
-      ++cursors.at[best];
+      out[stamp.count++] = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
+      ++merge.at[k];
+      if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
     }
     return stamp;
   }
@@ -396,19 +417,47 @@ class Store {
   }
 
   // ---- Compaction: same revision, fewer runs, in bounded steps -----------------------------------------------------
-  /// Start merging the first `prefixRuns` runs of the current manifest (see the range form).
-  CompactResult beginCompaction(uint8_t prefixRuns) { return beginCompaction(0, prefixRuns); }
+  /// True when every history entry holds runs [first, first + count) of the current manifest at the same positions,
+  /// or none of them.
+  bool rangeIsHistoryClosed(uint8_t first, uint8_t count) const {
+    if (current_ == kNoManifest) return false;
+    const RevisionManifest& src = manifests_[current_];
+    if (first + count > src.runCount) return false;
+    for (uint8_t h = 0; h < historyCount_; ++h) {
+      const RevisionManifest& m = manifests_[history_[h]];
+      bool any = false, all = m.runCount >= first + count;
+      for (uint8_t i = first; i < first + count; ++i) {
+        const bool samePosition = all && m.runs[i] == src.runs[i];
+        all = samePosition;
+        for (uint8_t j = 0; j < m.runCount && !any; ++j) any = m.runs[j] == src.runs[i];
+      }
+      if (any && !all) return false;
+    }
+    return true;
+  }
+
+  /// The largest history-closed range of at least two runs starting at `first`, as a count; 0 if none.
+  uint8_t largestClosedRangeFrom(uint8_t first) const {
+    if (current_ == kNoManifest) return 0;
+    for (int count = manifests_[current_].runCount - first; count >= 2; --count) {
+      if (rangeIsHistoryClosed(first, static_cast<uint8_t>(count))) return static_cast<uint8_t>(count);
+    }
+    return 0;
+  }
 
   /// Start merging runs [first, first + count) of the current manifest. Off-clock maintenance, step by step; a writer,
   /// readers and undo may run meanwhile. The source manifest is pinned until the job ends. With `first > 0` (e.g.
   /// every overdub but not the Record) the large base run is never copied, and the range's HideNote rows are carried
   /// into the merged run because they may target runs before the range.
-  CompactResult beginCompaction(uint8_t first, uint8_t count) {
+  CompactResult beginCompaction(uint8_t first, uint8_t count,
+                                CompactionScope scope = CompactionScope::HistoryClosedOnly) {
     if (job_.active) return CompactResult::DeniedBusy;
     if (current_ == kNoManifest) return CompactResult::NothingToCompact;
     const RevisionManifest& src = manifests_[current_];
     if (count < 2 || first + count > src.runCount) return CompactResult::NothingToCompact;
-    const uint8_t prefixRuns = static_cast<uint8_t>(first + count);
+    if (scope == CompactionScope::HistoryClosedOnly && !rangeIsHistoryClosed(first, count)) {
+      return CompactResult::NotHistoryClosed;
+    }
     const RunId out = takeRun(PassKind::Compacted);
     if (out == kNoRun) return CompactResult::DeniedNoRun;
     const ManifestId dst = takeManifest();
@@ -419,15 +468,21 @@ class Store {
     job_.active = true;
     job_.source = current_;
     job_.first = first;
-    job_.prefix = prefixRuns;
+    job_.end = static_cast<uint8_t>(first + count);
     job_.out = out;
     job_.dst = dst;
     job_.seq = 0;
     ++manifests_[current_].refs;
-    job_.cursors.count = 0;
-    for (uint8_t i = first; i < prefixRuns; ++i) {
+    Merge& merge = job_.merge;
+    merge.reset();
+    merge.limit = job_.end;
+    collectHideRuns(src, first, job_.end, merge);
+    for (uint8_t i = first; i < job_.end; ++i) {
       const PassRun& r = runs_[src.runs[i]];
-      for (uint8_t s = 0; s < r.segCount; ++s) job_.cursors.add(i, r.segStart[s], r.segEnd(s));
+      for (uint8_t s = 0; s < r.segCount; ++s) merge.add(i, r.segStart[s], r.segEnd(s));
+    }
+    for (uint16_t k = 0; k < merge.count; ++k) {
+      if (advanceToVisible(src, merge, k, UINT32_MAX)) heapPush(src, merge, k);
     }
     runs_[out].segCount = 1;
     runs_[out].segStart[0] = 0;
@@ -436,41 +491,37 @@ class Store {
 
   bool compacting() const { return job_.active; }
 
-  /// Advance the job by at most `maxRows` source rows (copied or dropped as hidden). Publishes when done: every history
-  /// entry that still holds the compacted runs at the same positions is replaced by one holding the merged run instead
-  /// (same revision), so the old runs are freed once no reader pins them. If the current manifest is not among them
-  /// the result is discarded (`Superseded`).
+  /// Advance the job by at most `maxRows` copied rows. Publishes when done: every history entry that still holds the
+  /// compacted runs at the same positions is replaced by one holding the merged run instead (same revision), so the
+  /// old runs are freed once no reader pins them. If the current manifest is not among them the result is discarded
+  /// (`Superseded`).
   CompactStep stepCompaction(uint32_t maxRows) {
     if (!job_.active) return CompactStep::Idle;
     const RevisionManifest& src = manifests_[job_.source];
     PassRun& merged = runs_[job_.out];
+    Merge& merge = job_.merge;
     for (uint32_t done = 0; done < maxRows; ++done) {
-      uint16_t best = kNoCursor;
-      for (uint16_t k = 0; k < job_.cursors.count; ++k) {
-        if (job_.cursors.at[k] >= job_.cursors.end[k]) continue;
-        if (best == kNoCursor || cursorBefore(src, job_.cursors, k, best)) best = k;
-      }
-      if (best == kNoCursor) return finishCompaction();
-      const PassEvent& row = midiAt(runs_[src.runs[job_.cursors.run[best]]], job_.cursors.at[best]);
-      ++job_.cursors.at[best];
-      if (hiddenByLaterRun(src, job_.cursors.run[best], job_.prefix, row.noteId)) continue;
-      PassEvent copy = row;
+      if (merge.heapSize == 0) return finishCompaction();
+      const uint16_t k = heapPop(src, merge);
+      PassEvent copy = midiAt(runs_[src.runs[merge.run[k]]], merge.at[k]);
+      ++merge.at[k];
+      if (advanceToVisible(src, merge, k, UINT32_MAX)) heapPush(src, merge, k);
       copy.seq = job_.seq++;
       if (pushMidi(merged, copy) != AppendResult::Ok) {
         endCompaction(false);
         return CompactStep::DeniedNoPage;
       }
     }
-    return CompactStep::Pending;
+    return merge.heapSize == 0 ? finishCompaction() : CompactStep::Pending;
   }
 
   void abandonCompaction() {
     if (job_.active) endCompaction(false);
   }
 
-  /// Synchronous convenience (tests, off-line): begin + run every step.
-  CompactResult compactCurrentPrefix(uint8_t runCount) {
-    const CompactResult begun = beginCompaction(runCount);
+  /// Synchronous convenience (tests, off-line): begin + run every step. Copies allowed unless asked otherwise.
+  CompactResult compactCurrentPrefix(uint8_t runCount, CompactionScope scope = CompactionScope::AllowCopies) {
+    const CompactResult begun = beginCompaction(0, runCount, scope);
     if (begun != CompactResult::Ok) return begun;
     switch (stepCompaction(UINT32_MAX)) {
       case CompactStep::Published: return CompactResult::Ok;
@@ -479,17 +530,51 @@ class Store {
     }
   }
 
+ protected:
+  void clearTables() {
+    for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
+      runs_[i].clear(PassKind::Record);
+      runLive_[i] = false;
+    }
+    for (uint16_t i = 0; i < Cap::kManifestCount; ++i) {
+      manifests_[i].live = false;
+      manifests_[i].refs = 0;
+      manifests_[i].runCount = 0;
+    }
+    for (uint8_t i = 0; i < Cap::kHistoryDepth; ++i) history_[i] = kNoManifest;
+    historyCount_ = 0;
+    historyCursor_ = 0;
+    current_ = kNoManifest;
+    writer_ = kNoRun;
+    writerManifest_ = kNoManifest;
+    writerStop_ = AppendResult::Ok;
+    loopLengthTicks_ = 0;
+    nextIdentity_ = 1;
+    slowSeals_ = 0;
+    job_.active = false;
+  }
+
  private:
-  static constexpr uint16_t kNoCursor = 0xFFFFu;
   static constexpr uint16_t kMaxCursors = static_cast<uint16_t>(Cap::kRunsPerManifest) * Cap::kSegmentsPerRun;
   /// Same-tick class inversions are fixed in place while appending, but only across this many rows.
   static constexpr uint32_t kMaxLocalShift = 32;
 
-  struct Cursors {
+  /// Cursors over segments plus a binary min-heap of cursor indices (DEC-244 order) and the runs that carry hides.
+  struct Merge {
     uint32_t at[kMaxCursors];
     uint32_t end[kMaxCursors];
+    // Cached DEC-244 key of each cursor's current row, so heap comparisons never re-read rows from (PSRAM) pages:
+    // (tick << 8) | (class << 6) | run index, then seq.
+    uint64_t key[kMaxCursors];
+    uint32_t seq[kMaxCursors];
     uint8_t run[kMaxCursors];  // index into the manifest's run list
+    uint16_t heap[kMaxCursors];
+    uint8_t hideRuns[Cap::kRunsPerManifest];
     uint16_t count = 0;
+    uint16_t heapSize = 0;
+    uint8_t hideRunCount = 0;
+    uint8_t limit = 0;  // hides are consulted from runs before this index
+    void reset() { count = heapSize = 0; hideRunCount = 0; }
     void add(uint8_t runIndex, uint32_t from, uint32_t to) {
       at[count] = from;
       end[count] = to;
@@ -502,38 +587,103 @@ class Store {
     bool active = false;
     ManifestId source = kNoManifest;
     uint8_t first = 0;
-    uint8_t prefix = 0;  // one past the last compacted run
+    uint8_t end = 0;  // one past the last compacted run
     RunId out = kNoRun;
     ManifestId dst = kNoManifest;
     uint32_t seq = 0;
-    Cursors cursors;
+    Merge merge;
   };
 
-  // DEC-244 tie-break between two cursors' current rows: (tick, class), then run order, then append order.
-  bool cursorBefore(const RevisionManifest& m, const Cursors& c, uint16_t a, uint16_t b) const {
-    const PassEvent& ra = midiAt(runs_[m.runs[c.run[a]]], c.at[a]);
-    const PassEvent& rb = midiAt(runs_[m.runs[c.run[b]]], c.at[b]);
-    if (tickClassLess(ra, rb)) return true;
-    if (tickClassLess(rb, ra)) return false;
-    if (c.run[a] != c.run[b]) return c.run[a] < c.run[b];
-    return ra.seq < rb.seq;
+  void collectHideRuns(const RevisionManifest& m, uint8_t from, uint8_t to, Merge& merge) const {
+    merge.hideRunCount = 0;
+    for (uint8_t i = from; i < to; ++i) {
+      if (runs_[m.runs[i]].hideCount != 0) merge.hideRuns[merge.hideRunCount++] = i;
+    }
   }
 
+  bool hidden(const RevisionManifest& m, const Merge& merge, uint8_t runIndex, uint32_t noteId) const {
+    if (noteId == 0) return false;
+    for (uint8_t h = 0; h < merge.hideRunCount; ++h) {
+      const uint8_t j = merge.hideRuns[h];
+      if (j > runIndex && j < merge.limit && runHides(runs_[m.runs[j]], noteId)) return true;
+    }
+    return false;
+  }
+
+  // Move cursor k to its next row that is visible and before `toTick`; false when the segment is done for this merge.
+  bool advanceToVisible(const RevisionManifest& m, Merge& merge, uint16_t k, uint32_t toTick) const {
+    const PassRun& r = runs_[m.runs[merge.run[k]]];
+    while (merge.at[k] < merge.end[k]) {
+      const PassEvent& row = midiAt(r, merge.at[k]);
+      if (row.tick >= toTick) {
+        merge.at[k] = merge.end[k];
+        return false;
+      }
+      if (!hidden(m, merge, merge.run[k], row.noteId)) {
+        merge.key[k] = (static_cast<uint64_t>(row.tick) << 8) | (static_cast<uint64_t>(equalTickClass(row)) << 6) |
+                       merge.run[k];
+        merge.seq[k] = row.seq;
+        return true;
+      }
+      ++merge.at[k];
+    }
+    return false;
+  }
+
+  // DEC-244 order between two cursors' current rows: (tick, class, run order), then append order. Cached keys only.
+  static bool cursorBefore(const RevisionManifest&, const Merge& c, uint16_t a, uint16_t b) {
+    if (c.key[a] != c.key[b]) return c.key[a] < c.key[b];
+    return c.seq[a] < c.seq[b];
+  }
+
+  void heapPush(const RevisionManifest& m, Merge& c, uint16_t k) const {
+    uint16_t i = c.heapSize++;
+    c.heap[i] = k;
+    while (i > 0) {
+      const uint16_t parent = static_cast<uint16_t>((i - 1) / 2);
+      if (!cursorBefore(m, c, c.heap[i], c.heap[parent])) break;
+      const uint16_t t = c.heap[i];
+      c.heap[i] = c.heap[parent];
+      c.heap[parent] = t;
+      i = parent;
+    }
+  }
+
+  uint16_t heapPop(const RevisionManifest& m, Merge& c) const {
+    const uint16_t top = c.heap[0];
+    c.heap[0] = c.heap[--c.heapSize];
+    uint16_t i = 0;
+    for (;;) {
+      const uint16_t l = static_cast<uint16_t>(2 * i + 1), r = static_cast<uint16_t>(2 * i + 2);
+      uint16_t best = i;
+      if (l < c.heapSize && cursorBefore(m, c, c.heap[l], c.heap[best])) best = l;
+      if (r < c.heapSize && cursorBefore(m, c, c.heap[r], c.heap[best])) best = r;
+      if (best == i) break;
+      const uint16_t t = c.heap[i];
+      c.heap[i] = c.heap[best];
+      c.heap[best] = t;
+      i = best;
+    }
+    return top;
+  }
+
+  PageId dataPage(const PassRun& r, uint32_t p) const {
+    if (p < kInlinePages) return r.inlinePages[p];
+    const uint32_t q = p - kInlinePages;
+    return pool_.dirEntry(r.dirPages[q / kIdsPerDirPage], q % kIdsPerDirPage);
+  }
   PassEvent& midiRef(PassRun& r, uint32_t index) {
-    return pages_[r.pages[index / Cap::kEventsPerPage]].row(index % Cap::kEventsPerPage);
+    return pool_.row(dataPage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
   }
   const PassEvent& midiAt(const PassRun& r, uint32_t index) const {
-    return pages_[r.pages[index / Cap::kEventsPerPage]].row(index % Cap::kEventsPerPage);
+    return pool_.row(dataPage(r, index / Cap::kEventsPerPage), index % Cap::kEventsPerPage);
   }
   PassEvent& hideRef(PassRun& r, uint32_t index) {
-    return pages_[r.hidePages[index / Cap::kEventsPerPage]].row(index % Cap::kEventsPerPage);
+    return pool_.row(r.hidePages[index / Cap::kEventsPerPage], index % Cap::kEventsPerPage);
   }
   const PassEvent& hideAt(const PassRun& r, uint32_t index) const {
-    return pages_[r.hidePages[index / Cap::kEventsPerPage]].row(index % Cap::kEventsPerPage);
+    return pool_.row(r.hidePages[index / Cap::kEventsPerPage], index % Cap::kEventsPerPage);
   }
-
-  PageId takePage() { return freePageTop_ == 0 ? kNoPage : freePages_[--freePageTop_]; }
-  void returnPage(PageId id) { freePages_[freePageTop_++] = id; }
 
   RunId takeRun(PassKind kind) {
     for (uint16_t i = 0; i < Cap::kRunCount; ++i) {
@@ -562,13 +712,32 @@ class Store {
     return kNoManifest;
   }
 
+  // Append a data page id to run `r`: inline first, then directory pages (a new directory page when one fills).
+  AppendResult addDataPage(PassRun& r) {
+    if (r.pageCount >= Cap::kPagesPerRun) return AppendResult::DeniedRunFull;
+    const uint32_t p = r.pageCount;
+    if (p >= kInlinePages && (p - kInlinePages) % kIdsPerDirPage == 0) {
+      const PageId dir = pool_.take();
+      if (dir == kNoPage) return AppendResult::DeniedNoPage;
+      r.dirPages[r.dirPageCount++] = dir;
+    }
+    const PageId page = pool_.take();
+    if (page == kNoPage) return AppendResult::DeniedNoPage;
+    if (p < kInlinePages) {
+      r.inlinePages[p] = page;
+    } else {
+      const uint32_t q = p - kInlinePages;
+      pool_.dirEntry(r.dirPages[q / kIdsPerDirPage], q % kIdsPerDirPage) = page;
+    }
+    ++r.pageCount;
+    return AppendResult::Ok;
+  }
+
   AppendResult pushMidi(PassRun& r, const PassEvent& row) {
     const uint32_t index = r.midiCount;
     if (index >= static_cast<uint32_t>(r.pageCount) * Cap::kEventsPerPage) {
-      if (r.pageCount >= Cap::kPagesPerRun) return AppendResult::DeniedRunFull;
-      const PageId page = takePage();
-      if (page == kNoPage) return AppendResult::DeniedNoPage;
-      r.pages[r.pageCount++] = page;
+      const AppendResult added = addDataPage(r);
+      if (added != AppendResult::Ok) return added;
     }
     midiRef(r, index) = row;
     ++r.midiCount;
@@ -579,7 +748,7 @@ class Store {
     const uint32_t index = r.hideCount;
     if (index >= static_cast<uint32_t>(r.hidePageCount) * Cap::kEventsPerPage) {
       if (r.hidePageCount >= Cap::kHidePagesPerRun) return AppendResult::DeniedRunFull;
-      const PageId page = takePage();
+      const PageId page = pool_.take();
       if (page == kNoPage) return AppendResult::DeniedNoPage;
       r.hidePages[r.hidePageCount++] = page;
     }
@@ -693,27 +862,18 @@ class Store {
     return false;
   }
 
-  /// Hidden by a run after `runIndex` and before `limit` in `m` (the whole manifest, or a compaction prefix).
-  bool hiddenByLaterRun(const RevisionManifest& m, uint8_t runIndex, uint8_t limit, uint32_t noteId) const {
-    if (noteId == 0) return false;
-    for (uint8_t j = runIndex + 1; j < limit; ++j) {
-      if (runs_[m.runs[j]].hideCount != 0 && runHides(runs_[m.runs[j]], noteId)) return true;
-    }
-    return false;
-  }
-
   bool holdsCompactedRange(ManifestId id) const {
     if (id == kNoManifest) return false;
     const RevisionManifest& src = manifests_[job_.source];
     const RevisionManifest& m = manifests_[id];
-    if (m.runCount < job_.prefix) return false;
-    for (uint8_t i = job_.first; i < job_.prefix; ++i) {
+    if (m.runCount < job_.end) return false;
+    for (uint8_t i = job_.first; i < job_.end; ++i) {
       if (m.runs[i] != src.runs[i]) return false;
     }
     return true;
   }
 
-  // {m.runs[0, first), merged, m.runs[prefix, end)} at m's revision, into slot `dst`.
+  // {m.runs[0, first), merged, m.runs[end, ...)} at m's revision, into slot `dst`.
   void buildCompactedManifest(ManifestId dst, const RevisionManifest& m) {
     RevisionManifest& out = manifests_[dst];
     out.revision = m.revision;
@@ -725,7 +885,7 @@ class Store {
     }
     out.runs[out.runCount++] = job_.out;
     ++runs_[job_.out].refs;
-    for (uint8_t i = job_.prefix; i < m.runCount; ++i) {
+    for (uint8_t i = job_.end; i < m.runCount; ++i) {
       out.runs[out.runCount++] = m.runs[i];
       ++runs_[m.runs[i]].refs;
     }
@@ -740,7 +900,7 @@ class Store {
     if (job_.first > 0) {
       // Carry the range's hides: they may target runs before the range. Bounded by the hide rows, not the content.
       const RevisionManifest& src = manifests_[job_.source];
-      for (uint8_t i = job_.first; i < job_.prefix; ++i) {
+      for (uint8_t i = job_.first; i < job_.end; ++i) {
         const PassRun& r = runs_[src.runs[i]];
         for (uint32_t h = 0; h < r.hideCount; ++h) {
           if (pushHide(merged, hideAt(r, h)) != AppendResult::Ok) {
@@ -781,9 +941,11 @@ class Store {
   }
 
   void releaseRunPages(PassRun& r) {
-    for (uint16_t i = 0; i < r.pageCount; ++i) returnPage(r.pages[i]);
-    for (uint16_t i = 0; i < r.hidePageCount; ++i) returnPage(r.hidePages[i]);
+    for (uint16_t p = 0; p < r.pageCount; ++p) pool_.give(dataPage(r, p));
+    for (uint16_t i = 0; i < r.dirPageCount; ++i) pool_.give(r.dirPages[i]);
+    for (uint16_t i = 0; i < r.hidePageCount; ++i) pool_.give(r.hidePages[i]);
     r.pageCount = 0;
+    r.dirPageCount = 0;
     r.hidePageCount = 0;
   }
 
@@ -828,9 +990,7 @@ class Store {
     releaseManifest(old);
   }
 
-  EventPage pages_[Cap::kPageCount];
-  PageId freePages_[Cap::kPageCount];
-  uint16_t freePageTop_ = 0;
+  Pool& pool_;
   PassRun runs_[Cap::kRunCount];
   bool runLive_[Cap::kRunCount];
   RevisionManifest manifests_[Cap::kManifestCount];
@@ -845,6 +1005,21 @@ class Store {
   uint32_t nextIdentity_ = 1;
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
+  mutable Merge composeScratch_;
+};
+
+/// A store with its own page pool (one slot, tests, the probe). `reset()` empties both.
+template <typename Cap>
+class Store : private PagePool<Cap::kPageCount, Cap::kEventsPerPage>, public StoreCore<Cap> {
+  using OwnPool = PagePool<Cap::kPageCount, Cap::kEventsPerPage>;
+
+ public:
+  using EventPage = PassEvent[Cap::kEventsPerPage];  // size reference for diagnostics
+  Store() : OwnPool(), StoreCore<Cap>(static_cast<OwnPool&>(*this)) {}
+  void reset() {
+    OwnPool::reset();
+    this->clearTables();
+  }
 };
 
 }  // namespace RevisionStore

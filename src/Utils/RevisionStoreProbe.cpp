@@ -23,7 +23,7 @@ namespace {
 
 using namespace RevisionStore;
 // 1,024 pages x 64 rows x 16 B = 1 MiB of rows; one run may span 512 pages (32,768 rows).
-using ProbeCap = Capacity<1024, 64, 32, 512, 32, 16, 16>;
+using ProbeCap = Capacity<1024, 64, 48, 512, 48, 32, 40>;  // 32 runs per manifest: undo depth means no compaction
 using ProbeStore = Store<ProbeCap>;
 
 constexpr uint32_t kBarTicks = 768;
@@ -223,24 +223,22 @@ void run() {
   }
   printStat("redo_select", 0, 10, redo);
 
+  // 3b. B.5a: with undo depth 99 nothing is history-closed, so a manifest holds every overdub. 21 more overdubs (31
+  // runs, 38,480 rows) and the heap-merge compose at that run count.
+  for (uint32_t od = 0; od < 21; ++od) {
+    Stat ignore;
+    store.beginPass(PassKind::Overdub);
+    appendTake(store, 520, static_cast<uint8_t>(0x90 | ((od % 3) + 1)), noteId, ignore);
+    store.commitPass();
+  }
+  composeAll("compose_2bar_31runs", 31);
+  Serial.printf_P(PSTR("REVSTORE,pages_used_31runs=%u\r\n"),
+                  static_cast<unsigned>(ProbeCap::kPageCount - store.freePageCount()));
+
   Serial.printf_P(PSTR("REVSTORE,slow_seals=%lu\r\n"), static_cast<unsigned long>(store.slowSeals()));
 
-  // 4a. Compaction of all ten runs in bounded steps (2,048 source rows per step), then 4b synchronous.
-  {
-    Stat steps;
-    store.beginCompaction(10);
-    CompactStep step = CompactStep::Pending;
-    while (step == CompactStep::Pending) {
-      t0 = ARM_DWT_CYCCNT;
-      step = store.stepCompaction(2048);
-      steps.add(ARM_DWT_CYCCNT - t0);
-    }
-    printStat("compact_step_2048", 16640 + 8 * 1040 + 1, 10, steps);
-    Serial.printf_P(PSTR("REVSTORE,compact_step_result=%u\r\n"), static_cast<unsigned>(step));
-    composeAll("compose_2bar_stepcompacted", 1);
-  }
-  // 4b. Synchronous, for the rows-per-ms rate, on a rebuilt store (two compacted copies do not fit the arena).
-  {
+  // Rebuild Record + 8 overdubs + a 1-row overdub (10 runs) for the compaction measurements.
+  auto rebuildTenRuns = [&]() {
     store.reset();
     gLcg = 1;
     uint32_t id = 1;
@@ -256,6 +254,26 @@ void run() {
     store.beginPass(PassKind::Overdub);
     store.appendMidi(0, 0xB0, 64, 127, 0);
     store.commitPass();
+  };
+  rebuildTenRuns();
+
+  // 4a. Compaction of all ten runs in bounded steps (2,048 source rows per step), then 4b synchronous.
+  {
+    Stat steps;
+    store.beginCompaction(0, 10, CompactionScope::AllowCopies);
+    CompactStep step = CompactStep::Pending;
+    while (step == CompactStep::Pending) {
+      t0 = ARM_DWT_CYCCNT;
+      step = store.stepCompaction(2048);
+      steps.add(ARM_DWT_CYCCNT - t0);
+    }
+    printStat("compact_step_2048", 16640 + 8 * 1040 + 1, 10, steps);
+    Serial.printf_P(PSTR("REVSTORE,compact_step_result=%u\r\n"), static_cast<unsigned>(step));
+    composeAll("compose_2bar_stepcompacted", 1);
+  }
+  // 4b. Synchronous, for the rows-per-ms rate, on a rebuilt store (two compacted copies do not fit the arena).
+  {
+    rebuildTenRuns();
     Stat compact;
     const uint16_t freeBefore = store.freePageCount();
     t0 = ARM_DWT_CYCCNT;

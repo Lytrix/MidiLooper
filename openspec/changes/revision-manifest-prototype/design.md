@@ -46,6 +46,10 @@ History     kHistoryDepth manifest ids + cursor     undo/redo move the cursor; c
   (same-tick class inversions fixed in place over ≤ 32 rows; a tick decrease opens a segment); composition merges
   segments like runs. HideNote rows live in their own region, the only part ordered at commit. Overflow falls back to a
   counted commit-time sort.
+- **D5c — Compaction takes history-closed ranges only (B.5a default).** A range qualifies when every history entry holds
+  all of it at the same positions or none of it; publish rewrites them all, so no second copy outlives the job. With
+  undo depth 99 nothing closes during a normal session: many runs, composed by a heap merge on cached keys, are the
+  steady state, and compaction only tidies aged-out history.
 - **D5 — Compaction is range-based and revision-preserving.** (Was prefix-only; B.5 added `beginCompaction(first, count)`
   with the range's hides carried into the merged run when `first > 0`, and a publish that rewrites every history entry
   holding the range.) Merging runs `[0, k)` applies and drops the hides inside
