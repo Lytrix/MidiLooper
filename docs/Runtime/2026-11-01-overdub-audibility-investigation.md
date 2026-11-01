@@ -95,6 +95,27 @@ Audible effect on ch8:
 
 **The slot goes almost silent once overdubs begin, not only its overdubs.**
 
-**Next witness (not yet captured):** the term that refused each of the two sources at `req=7`:
-- the overlay: extent not ready, unreadable, or empty;
-- the committed-pass copy: retention refused, or paged.
+## The two refusal terms (2026-11-01, image `1535c011…`, `session_20261101_145146.log`, valid chain, 12 overdubs)
+
+The witness row now carries `ovt` (why the Record overlay did not serve) and `pst` (the committed-pass copy's answer).
+
+| t | `req` | path | overlay | overdubs | `ev` | `exp` | `ovt` | `pst` |
+|---|---|---|---|---|---|---|---|---|
+| 71.6 s | 1 | Record overlay | 1 | 0 | 64 | 64 | 0 | 0 |
+| **72.0 s** | **1** | Record overlay | 1 | 0 | **18** | **64** | 0 | 0 |
+| 77.6 s | 3 | hold empty | 0 | 2 | 18 | 64 | 0 | **14** |
+| 78.5 s | 3 | Record overlay | 1 | 2 | 20 | 64 | 0 | 0 |
+| 85.6 s | 5 | hold empty | 0 | 4 | 20 | 64 | 0 | **14** |
+| 141.2 s | 13 | hold empty | 0 | 12 | 22 | 98 | 0 | **14** |
+
+1. **The committed-pass copy is refused by retention capacity.** `pst=14` is 10 + `RoleCapacityReached`
+   (`retainPlaybackSourceForSlot`: "the role set is full and every entry is still needed"). With no root and the
+   overlay inactive, the build falls to hold-empty.
+2. **The Record overlay reports success with an incomplete take, before any overdub.** At `req=1`, window 896+1536, the
+   overlay gives 18 events where the Record pass gives 64. It also never carries the committed overdubs.
+3. **The overlay alternates** (`ovl` 1 → 0 → 1) between builds, so the served source switches between a partial Record
+   take and a held window.
+
+Neither source is revision-complete, and neither declares that it is not. This is the owner's contract violation
+exactly: a source is served as current for `req=N` without holding revision N's events. The repair is the single
+revision-complete composition, not a fix to either branch.

@@ -1504,26 +1504,28 @@ SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, ui
 SC_MEM_ATTR void mergedBuildWitnessRow(uint8_t track, uint8_t slot, uint32_t winStart, uint32_t winLen, uint32_t req,
                                        uint8_t path, bool rootCurrent, uint32_t rootCoveredRevision, bool recordOverlay,
                                        bool recordPassCommitted, uint32_t overdubPasses, uint32_t events,
-                                       uint32_t expectedEvents) {
+                                       uint32_t expectedEvents, uint8_t overlayTerm, uint8_t passTerm) {
   if (serialWriteRoom(200)) {
     Serial.printf(SC_FMT("#CAP,%lu,DIAG,merged_build,t=%u,s=%u,win=%lu+%lu,req=%lu,path=%u,root=%u,rootcov=%lu,ovl=%u,"
-                         "rec=%u,od=%lu,ev=%lu,exp=%lu\r\n"),
+                         "rec=%u,od=%lu,ev=%lu,exp=%lu,ovt=%u,pst=%u\r\n"),
                   static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
                   static_cast<unsigned long>(winStart), static_cast<unsigned long>(winLen),
                   static_cast<unsigned long>(req), static_cast<unsigned>(path), rootCurrent ? 1u : 0u,
                   static_cast<unsigned long>(rootCoveredRevision), recordOverlay ? 1u : 0u,
                   recordPassCommitted ? 1u : 0u, static_cast<unsigned long>(overdubPasses),
-                  static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents));
+                  static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents),
+                  static_cast<unsigned>(overlayTerm), static_cast<unsigned>(passTerm));
     return;
   }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,merged_build,t=%u,s=%u,win=%lu+%lu,req=%lu,path=%u,root=%u,rootcov=%lu,ovl=%u,"
-                       "rec=%u,od=%lu,ev=%lu,exp=%lu\r\n"),
+                       "rec=%u,od=%lu,ev=%lu,exp=%lu,ovt=%u,pst=%u\r\n"),
                 static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
                 static_cast<unsigned long>(winStart), static_cast<unsigned long>(winLen),
                 static_cast<unsigned long>(req), static_cast<unsigned>(path), rootCurrent ? 1u : 0u,
                 static_cast<unsigned long>(rootCoveredRevision), recordOverlay ? 1u : 0u,
                 recordPassCommitted ? 1u : 0u, static_cast<unsigned long>(overdubPasses),
-                static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents));
+                static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents),
+                static_cast<unsigned>(overlayTerm), static_cast<unsigned>(passTerm));
 }
 
 SC_MEM_ATTR void routeRejectRow(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason,

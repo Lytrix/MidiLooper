@@ -711,7 +711,8 @@ namespace {
 TRACK_COLD_MEM __attribute__((noinline)) void reportMergedBuildWitness(Track& track, Loop& loop,
                                                                        const LoopPlaybackRuntime& runtime,
                                                                        uint32_t requiredRevision, uint8_t path,
-                                                                       bool recordOverlay, bool servedFromPasses) {
+                                                                       bool recordOverlay, bool servedFromPasses,
+                                                                       uint8_t passTerm) {
 #if defined(SESSION_CAPTURE)
   uint32_t overdubs = 0;
   for (const OverdubPass& pass : loop.passes.overdubPasses)
@@ -724,14 +725,33 @@ TRACK_COLD_MEM __attribute__((noinline)) void reportMergedBuildWitness(Track& tr
                                              runtime.mergedMidiEvents.windowLengthTicks);
     expected = static_cast<uint32_t>(oracle.size());
   }
+  // Why the DEC-143 Record overlay did not serve, re-derived from the predicates its gather reads (pure reads).
+  uint8_t overlayTerm = 0;
+  if (recordOverlay &&
+      path != static_cast<uint8_t>(RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedRecordOverlay) &&
+      !loop.publishedSnapshot()) {
+    const Loop::CaptureReadSource readSource = loop.captureReadSource();
+    if (!readSource.finalizingReady()) {
+      overlayTerm = 1;
+    } else if (loop.passes.hasRecordPass() && loop.passes.recordPass.state != CapturePassState::Active) {
+      overlayTerm = 2;
+    } else if (readSource.finalizing->chunkCount() == 0) {
+      overlayTerm = 3;
+    } else {
+      SessionMidiEventVec probe;
+      overlayTerm = loop.tryGatherPublishedSnapshotEventsInWindow(probe, runtime.mergedMidiEvents.windowStartTick,
+                                                                  runtime.mergedMidiEvents.windowLengthTicks,
+                                                                  nullptr, nullptr, true) ? 5 : 4;
+    }
+  }
   SC_MERGED_BUILD_WITNESS(playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
                           runtime.mergedMidiEvents.windowStartTick, runtime.mergedMidiEvents.windowLengthTicks,
                           requiredRevision, path, loop.publishedSnapshotIsCurrent(),
                           loop.publishedSnapshotCoveredRevision(), recordOverlay, loop.passes.hasRecordPass(),
-                          overdubs, events, expected);
+                          overdubs, events, expected, overlayTerm, passTerm);
 #else
   (void)track; (void)loop; (void)runtime; (void)requiredRevision; (void)path; (void)recordOverlay;
-  (void)servedFromPasses;
+  (void)servedFromPasses; (void)passTerm;
 #endif
 }
 }  // namespace
@@ -840,7 +860,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 #endif
     reportMergedBuildWitness(track, loop, runtime, windowRevision,
                              static_cast<uint8_t>(RuntimeTimingTelemetry::PlaybackRebuildPath::IncrementalOverdubSeal),
-                             recordOverlayIdentity != nullptr, false);
+                             recordOverlayIdentity != nullptr, false, 0);
     return false;
   }
   loop.clearLastOverdubSealAdmitReceipt();
@@ -857,6 +877,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   const void* usedSnapshotIdentity = nullptr;
   Loop::SnapshotWindowGatherPath gatherPath = Loop::SnapshotWindowGatherPath::None;
   bool servedFromCommittedPasses = false;
+  uint8_t passCopyTerm = 0;  // report-only witness: the committed-pass copy's answer (see `mergedBuildWitnessRow`)
   if (noteEditPreview && loop.publishedSnapshotIsCurrent()) {
     // A current-root NoteEditSession stores only its edit delta. Keep the committed
     // interval as playback base and replace just identities the session changed.
@@ -911,17 +932,22 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       if (committedSlot >= Config::MAX_LOOPS_PER_TRACK || !loop.hasCommittedPasses() ||
           runtime.pagedActive ||
           runtime.pagedOutcome != LoopPlaybackRuntime::PagedPlaybackOutcome::None) {
+        // Report-only witness term (the same terms, in order).
+        passCopyTerm = committedSlot >= Config::MAX_LOOPS_PER_TRACK ? 1 : !loop.hasCommittedPasses() ? 2
+                       : runtime.pagedActive ? 3 : 4;
         // An over-capacity interval is the pager's answer (refused by name), never a reason to serve a pass copy.
         return false;
       }
       // The fallback establishes the source it is about to read (DEC-194), for this slot and revision only, instead of
       // requiring another lane to have retained it first. Retention is pass/chunk pins, idempotent for a repeat attempt.
       if (track.playbackWindowSourceIsCurrentForSlot(committedSlot)) {
+        passCopyTerm = 5;
         return true;
       }
-      return track.retainPlaybackSourceForSlot(committedSlot, loop.playbackRevision,
-                                              track.getPlaybackGeneration()) ==
-          Track::PlaybackSourceRetainResult::Admitted;
+      const Track::PlaybackSourceRetainResult retained =
+          track.retainPlaybackSourceForSlot(committedSlot, loop.playbackRevision, track.getPlaybackGeneration());
+      passCopyTerm = static_cast<uint8_t>(10 + static_cast<uint8_t>(retained));
+      return retained == Track::PlaybackSourceRetainResult::Admitted;
     };
     // A root that exists but is not current is the **stale** case (an undo/redo/enable/disable moved the inventory
     // under it). Presence has to be read from the coverage stamp, not from `publishedSnapshotIdentity()` -- that
@@ -990,7 +1016,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                            : gatherPath == Loop::SnapshotWindowGatherPath::RecordOverlay
                                ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedRecordOverlay
                                : RuntimeTimingTelemetry::PlaybackRebuildPath::GatherMissHoldEmpty),
-      recordOverlayIdentity != nullptr, servedFromCommittedPasses);
+      recordOverlayIdentity != nullptr, servedFromCommittedPasses, passCopyTerm);
   mergedMidiEventsBuildInProgress = false;
   return true;
 }
