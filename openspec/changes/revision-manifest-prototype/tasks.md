@@ -1,8 +1,8 @@
 # Tasks — revision manifests over fixed event pages (investigation)
 
 Commit boundary: `feature/revision-manifest-prototype` (host-tooling/prototype; never `dev`), no PR unless requested.
-Stage B is qualification only (owner, 2026-11-01). Stages C–E are not authorized; each needs its own approval and a
-`DEC-###` (amending `Snapshots.md` only if the manifest takes over the snapshot's semantic role).
+Stage B is qualification only (owner, 2026-11-01). Stage C is authorized by DEC-246 (one read path; writes stay with
+today's firmware). Stages D–E are not authorized; each needs its own approval and a `DEC-###`.
 
 ## A. Prove the data model (host-only)
 
@@ -87,8 +87,24 @@ timing and memory envelope without introducing real-time construction?
 - [ ] B.6 Persistence design (after B.2–B.5 are green): pass records, manifest record, atomic current-manifest
       marker, crash consistency, garbage collection, persisted undo history.
 
-## C–E. Production stages (not authorized)
+## C. One authoritative read path (DEC-246; writes stay with today's firmware)
 
-- [ ] C Merged fallback derives from the manifest (one reader).
+- [x] C0 DEC-246, `CURRENT_WORK` scope, these tasks.
+- [x] C1 Import committed `Loop::passes` into a disposable manifest (`RevisionStore::importLoop`): capture runs in
+      commit order with production-paired NoteOff ids, one Edit run per import (hide + final geometry via production's
+      `applyNoteEditPass`), named refusals with no partial mirror. Read the real-time way (edit index, `IndexOnly`,
+      `productionCompat()`), it equals production's effective view on **659 / 659** states (B.2a, B.2b seeded, B.3,
+      B.3 seeded). Found: production's cross-pass collapse is between capture passes only — projection fixed.
+      [Evidence](evidence/2026-11-01-c1-import.md)
+- [ ] C2 Edit-index worker as its own child of the central idle/deferred owner (`RevisionEditIndexGrain`, ≤ 2 ms),
+      demand-driven; `IndexCapacityDenied` instead of evicting a reader-held index.
+- [ ] C3 Shadow rolling-window producer reading the manifest with `IndexOnly`: `Ready` / `IndexOwed` /
+      `CapacityDenied`, actual manifest identity on every window; Stage-C pool ≤ 0.5 MiB.
+- [ ] C4 Device shadow compare under the owner chain: count, exact ordered stream, identity, wrap, NOTE_EDIT/hide.
+- [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
+- [ ] C6 Remove the corresponding old reader after device parity.
+
+## D–E. Production stages (not authorized)
+
 - [ ] D Recording onto the page pool; retire the per-slot 1.79 MB record prewarm.
 - [ ] E Retire frozen Record readers, overlay readers and redundant publication/adoption state.

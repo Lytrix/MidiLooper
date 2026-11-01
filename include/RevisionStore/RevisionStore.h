@@ -471,8 +471,10 @@ class StoreCore {
         groupStart = stamp.count;
         groupCount = 0;
       }
-      if (policy.collapseCrossRunDuplicates && collapsesWithEarlierRun(out + groupStart, groupRun, groupCount, row,
-                                                                     runIndex)) {
+      // Production collapses between capture passes only; edit replacement rows neither collapse nor are collapsed
+      // against (a compacted run counts as capture).
+      if (policy.collapseCrossRunDuplicates && runs_[m.runs[runIndex]].kind != PassKind::Edit &&
+          collapsesWithEarlierRun(m, out + groupStart, groupRun, groupCount, row, runIndex)) {
         continue;
       }
       if (policy.suppressZeroLength && equalTickClass(row) == 1 && row.noteId != 0) {
@@ -780,15 +782,16 @@ class StoreCore {
   /// Equal-tick group size tracked for the cross-row projections; beyond it, collapse sees only the first rows.
   static constexpr uint32_t kGroupCapacity = 256;
 
-  // Production's cross-pass collapse (`midiEventMatchesSnapshot`): a row matches an earlier-run row on the same tick
+  // Production's cross-pass collapse (`midiEventMatchesSnapshot`), between capture passes: a row matches an earlier-run row on the same tick
   // with the same type and channel; CCs also match number and value; notes also match pitch, and a NoteOn never matches
   // another NoteOn with a different id (NoteOffs carry no id in production, so they match by pitch).
-  static bool collapsesWithEarlierRun(const PassEvent* group, const uint8_t* groupRun, uint32_t groupCount,
-                                      const PassEvent& row, uint8_t runIndex) {
+  bool collapsesWithEarlierRun(const RevisionManifest& m, const PassEvent* group, const uint8_t* groupRun,
+                               uint32_t groupCount, const PassEvent& row, uint8_t runIndex) const {
     const uint32_t tracked = groupCount < kGroupCapacity ? groupCount : kGroupCapacity;
     for (uint32_t g = 0; g < tracked; ++g) {
       const PassEvent& e = group[g];
       if (groupRun[g] >= runIndex || e.status != row.status) continue;
+      if (runs_[m.runs[groupRun[g]]].kind == PassKind::Edit) continue;
       const uint8_t type = row.status & 0xF0;
       if (type == 0xB0) {
         if (e.data1 == row.data1 && e.data2 == row.data2) return true;

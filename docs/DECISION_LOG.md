@@ -13824,3 +13824,42 @@ tasks B.3a, B.3b, B.5c). No production behaviour changes with this entry.
 ### Related
 
 DEC-244 (one equal-tick order), DEC-076. Evidence: `revision-manifest-prototype` B.2a, B.2b, B.3.
+
+## DEC-246 — Stage C: one authoritative read path from `RevisionManifest`; every write stays with today's firmware
+
+**Date:** 2026-11-01
+**Owner:** `RevisionStore` (new prototype owner, change `revision-manifest-prototype`, tasks C0–C6). Formal triggers:
+new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the manifest is the revision index and
+`LoopSnapshot` stays a derived cache (proposal § Authority framing).
+**Status:** Accepted as the Stage-C scope (owner, 2026-11-01). C1 is host-verified; C2–C6 are each gated.
+
+### Sequence
+
+- C1 import committed `Loop::passes` into a disposable manifest (no recording, persistence or authority change).
+- C2 a RevisionStore-owned edit-index worker as its own child of the central idle/deferred owner.
+- C3 one shadow reader (the rolling playback-window producer) using `IndexOnly`.
+- C4 device shadow compare under the owner chain.
+- C5 that reader becomes manifest-authoritative.
+- C6 the old reader is removed only after device parity.
+
+### Invariants (owner)
+
+1. Every real-time firmware caller uses `HideLookup::IndexOnly`. `Scan` is host oracle / off-line only;
+   `IndexOrScan` never enters a production playback or window path.
+2. No RevisionStore construction from the PIT/ISR; the tick stays consume-only (DEC-241). The window worker answers
+   `Ready(window, actualManifestIdentity)`, `IndexOwed` or `CapacityDenied`, never "empty but labelled current".
+3. A window carries the identity it **actually** read (manifest identity, revision, interval). A build that started on
+   manifest 41 is published as 41 or discarded, never re-stamped 42.
+4. Index lifetime follows manifest lifetime. When every index slot is held by a live reader, the result is a named
+   `IndexCapacityDenied`; an index a reader still uses is never evicted. Two slots for Stage C.
+5. Edit-index grain: declared ≤ 2 ms (fine grain 0.5–1 ms) until device evidence rebases it. Demand order:
+   playback manifest > display-only > speculative.
+6. Recording, commit ownership, chunk storage, undo/redo authority and the SD format do not change in Stage C.
+7. PSRAM coexistence: the Stage-C pool is capped (≤ 0.5 MiB) and imported history is shallow (current, previous,
+   reader-held). A slot that does not fit is a named refusal; the old path stays authoritative. No partial mirror.
+8. No heap after startup in the store; acceptance gates also include exact semantic parity over the owner chain
+   (DEC-244 order) and the window producer staying inside its existing real-time budget.
+
+### Related
+
+DEC-241 (consume-only tick), DEC-244 (equal-tick order), DEC-245 (lossless source, explicit projections), DEC-243.

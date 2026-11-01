@@ -43,6 +43,7 @@
 #include "EditPass.h"
 #include "PendingNoteChange.h"
 #include "RevisionStore/RevisionStore.h"
+#include "RevisionStore/RevisionImport.h"
 
 namespace {
 
@@ -150,6 +151,61 @@ void commitBoth(Loop& loop, bool record, const std::vector<Op>& ops) {
   finishPublication(loop);
 }
 
+// ---- C1: import parity ----------------------------------------------------------------------------------------------
+// The Stage-C import (`RevisionStore::importLoop`) of the production Loop, read the real-time way (edit index built off
+// the edge, then `IndexOnly`) under the production projection, must equal production's effective view.
+using ImportCap = Capacity</*pages*/ 512, /*rows per page*/ 32, /*runs*/ 48, /*pages per run*/ 256, /*manifests*/ 48,
+                           /*runs per manifest*/ 48, /*history*/ 4>;  // 512 x 512 B = 256 KiB: inside the Stage-C cap
+static Store<ImportCap> gImport;
+static uint32_t gImportChecks = 0;
+static uint32_t gImportUnpairedOffs = 0;
+
+void assertImportParity(const Loop& loop, const char* label) {
+  ImportStats stats;
+  const ImportResult result = importLoop(loop, gImport, &stats);
+  TEST_ASSERT_EQUAL_MESSAGE(ImportResult::Ok, result, label);
+  gImportUnpairedOffs += stats.unpairedNoteOffs;
+  IndexStep step = IndexStep::Pending;
+  while (step == IndexStep::Pending) step = gImport.stepEditIndex(256);
+  const ComposeStamp stamp = gImport.composeWindow(gImport.current(), 0, loop.loopLengthTicks, gOut, 8192,
+                                                   EffectivePolicy::productionCompat().with(HideLookup::IndexOnly));
+  TEST_ASSERT_EQUAL_MESSAGE(ComposeStatus::Complete, stamp.status, label);
+  SessionMidiEventVec production;
+  TEST_ASSERT_TRUE_MESSAGE(loop.tryCopyCurrentSnapshotEditViewEvents(production), label);
+  std::vector<Row> a, b;
+  for (const MidiEvent& e : production) a.push_back(rowOf(e));
+  for (uint32_t i = 0; i < stamp.count; ++i) b.push_back(rowOf(gOut[i]));
+  TEST_ASSERT_TRUE_MESSAGE(normalise(a), label);
+  TEST_ASSERT_TRUE_MESSAGE(normalise(b), label);
+  char msg[160];
+  snprintf(msg, sizeof(msg), "%s: import rows %u vs production %u", label, static_cast<unsigned>(b.size()),
+           static_cast<unsigned>(a.size()));
+  if (a.size() != b.size()) {
+    std::vector<Row> sa = a, sb = b, onlyProd, onlyImport;
+    std::sort(sa.begin(), sa.end());
+    std::sort(sb.begin(), sb.end());
+    std::set_difference(sa.begin(), sa.end(), sb.begin(), sb.end(), std::back_inserter(onlyProd));
+    std::set_difference(sb.begin(), sb.end(), sa.begin(), sa.end(), std::back_inserter(onlyImport));
+    for (const Row& r : onlyProd) printf("C1DIFF %s production-only t=%u s=%02X d=%u/%u\n", label, r.tick, r.status, r.data1, r.data2);
+    for (const Row& r : onlyImport) printf("C1DIFF %s import-only t=%u s=%02X d=%u/%u\n", label, r.tick, r.status, r.data1, r.data2);
+    for (const EditPass& e : loop.passes.editPasses) {
+      printf("C1DIFF %s edit id=%u state=%d action=%d prop=%d target=%u start=%u end=%u pitch=%u\n", label,
+             static_cast<unsigned>(e.id), static_cast<int>(e.state), static_cast<int>(e.actionType),
+             static_cast<int>(e.propertyType), static_cast<unsigned>(e.targetNoteId), e.startTick, e.endTick, e.pitch);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(a.size(), b.size(), msg);
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (!(a[i] == b[i])) {
+      snprintf(msg, sizeof(msg), "%s: import row %u t=%u s=%02X d=%u/%u vs production t=%u s=%02X d=%u/%u", label,
+               static_cast<unsigned>(i), b[i].tick, b[i].status, b[i].data1, b[i].data2, a[i].tick, a[i].status,
+               a[i].data1, a[i].data2);
+      TEST_FAIL_MESSAGE(msg);
+    }
+  }
+  ++gImportChecks;
+}
+
 // Returns the number of groups compared; fails the test on the first divergence, naming it.
 void assertParity(const Loop& loop, const char* label, EffectivePolicy policy = EffectivePolicy::revision()) {
   SessionMidiEventVec production;
@@ -176,6 +232,7 @@ void assertParity(const Loop& loop, const char* label, EffectivePolicy policy = 
   snprintf(sizes, sizeof(sizes), "%s: production %u rows, store %u rows", label, static_cast<unsigned>(a.size()),
            static_cast<unsigned>(b.size()));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(a.size(), b.size(), sizes);
+  assertImportParity(loop, label);
 }
 
 void resetAll(Loop& loop) {
@@ -451,6 +508,7 @@ void compareRevision(Sequence& q, uint32_t seed, uint32_t step) {
       TEST_ASSERT_TRUE_MESSAGE(compatRows[i] == prodSorted[i], where);
     }
   }
+  assertImportParity(q.loop, where);
   for (size_t i = 0; i < expectedProd.size();) {
     size_t j = i + 1;
     while (j < expectedProd.size() && expectedProd[j].tick == expectedProd[i].tick && expectedProd[j].cls == expectedProd[i].cls) ++j;
@@ -1013,6 +1071,33 @@ void test_seeded_overlap_edit_and_undo_match_production() {
   TEST_ASSERT_TRUE(changes > 10 && edits > 10 && undos > 5);
 }
 
+// C1 refusals: a slot that does not fit the Stage-C pool, or an edit kind the import does not express, is a named
+// refusal and leaves the store empty (no partial mirror; the production reader stays authoritative).
+void test_import_refusals_are_named_and_leave_no_partial_mirror() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<Op> ops;
+  for (uint8_t n = 0; n < 60; ++n) {
+    ops.push_back({static_cast<uint32_t>(n) * 96u, 0x90, 1, static_cast<uint8_t>(30 + n), 100});
+    ops.push_back({static_cast<uint32_t>(n) * 96u + 48u, 0x80, 1, static_cast<uint8_t>(30 + n), 0});
+  }
+  commitWithChanges(loop, true, ops, {});
+  using TinyImportCap = Capacity</*pages*/ 3, 32, 8, 8, 8, 8, 4>;  // 96 rows: the 120-row take does not fit
+  static Store<TinyImportCap> tiny;
+  tiny.reset();
+  TEST_ASSERT_EQUAL(ImportResult::DeniedCapacity, importLoop(loop, tiny));
+  TEST_ASSERT_EQUAL_UINT32(0, tiny.ownedPageCount());
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, tiny.current());
+  // A ControlChange edit pass is refused before anything is written.
+  EditPass cc{};
+  cc.passType = EditPassType::ControlChange;
+  cc.actionType = EditActionType::Update;
+  cc.propertyType = EditPropertyType::Value;
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, cc, EditPassType::ControlChange));
+  TEST_ASSERT_EQUAL(ImportResult::UnsupportedEditPass, importLoop(loop, gImport));
+  TEST_ASSERT_EQUAL_UINT32(0, gImport.ownedPageCount());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
@@ -1033,5 +1118,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_two_edits_on_one_note_match_production);
   RUN_TEST(test_zero_length_note_kept_in_source_and_suppressed_by_production_projection);
   RUN_TEST(test_seeded_overlap_edit_and_undo_match_production);
+  RUN_TEST(test_import_refusals_are_named_and_leave_no_partial_mirror);
+  printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);
   return UNITY_END();
 }
