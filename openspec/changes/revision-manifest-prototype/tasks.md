@@ -125,8 +125,14 @@ timing and memory envelope without introducing real-time construction?
       [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md)
 - [~] C4 Device shadow compare against the **passes-derived `revision()` surface** (DEC-246 amendment 9), gate-valid
       owner chain: **10/10 windows** match, whole loop 1,042/1,042, grains ≤ 256 µs import / 243 µs window, 0 duplicate
-      publications. **Open:** a gate-valid hide-carrying stimulus (occupy-paint fails its own verdict on this image).
-      [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md)
+      publications. **With hides (gate-valid same-pitch owner chain, 33 hides): NOT clean** — whole loop 1,138 vs
+      1,136 (2 NoteOffs misattributed by the streaming pairing; windows 10/10 only because production's windowed gather
+      shares the blind spot), import step 3,212 µs (> 2 ms), and PSRAM exhaustion over long uptime with the 0.49 MB
+      shadow. [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md),
+      [hides](evidence/2026-11-01-c4-hides-not-clean.md)
+- [ ] C4a Host repro + fix of NoteOff misattribution (pairing equal to production's, bounded); bound the import step
+      with edits; C4 acceptance includes the whole-loop comparison; smaller shadow footprint; HITL validity re-check
+      on the default image.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.
 
