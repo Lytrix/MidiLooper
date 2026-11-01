@@ -182,6 +182,15 @@ SC_MEM_ATTR void midiOutEvent(const MidiEvent& e);
 /// clock, as deltas since the previous window. Tier-A (`DIAG,tick_route,`), direct-first with ring fallback.
 SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, uint32_t merged, uint32_t none,
                               uint32_t missInterrupt, uint32_t missExternal);
+/// Overdub-audibility witness (2026-11-01): one row per actual merged-fallback build (and per incremental overdub-seal
+/// admit). `path` is `RuntimeTimingTelemetry::PlaybackRebuildPath`; `req` the committed revision the build was for;
+/// `rootcov` the published root's covered revision (UINT32_MAX: none); `od` the Active committed overdub passes; `ev` the
+/// built event count; `exp` the event count the committed passes give for the same window (the content oracle).
+/// Tier-A (`DIAG,merged_build,`), direct-first.
+SC_MEM_ATTR void mergedBuildWitnessRow(uint8_t track, uint8_t slot, uint32_t winStart, uint32_t winLen, uint32_t req,
+                                       uint8_t path, bool rootCurrent, uint32_t rootCoveredRevision, bool recordOverlay,
+                                       bool recordPassCommitted, uint32_t overdubPasses, uint32_t events,
+                                       uint32_t expectedEvents);
 /// playback-tick-consume-only phase 2: a slot's merged-fallback reason changed (`PlaybackTickContext::RouteReject`
 /// ordinals; `prod` is the rolling producer's last exit token). Tier-A (`DIAG,route_reject,`), direct-first.
 SC_MEM_ATTR void routeRejectRow(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason,

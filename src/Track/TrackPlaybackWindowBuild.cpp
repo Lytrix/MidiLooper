@@ -32,6 +32,13 @@
 #include "Utils/RuntimeProfiler.h"
 #include "Utils/PlaybackTickContext.h"
 // Phase 2's reason row seam: harnesses that stub the capture header compile the row out.
+#ifndef SC_MERGED_BUILD_WITNESS
+#if defined(SESSION_CAPTURE)
+#define SC_MERGED_BUILD_WITNESS(...) DebugSessionCapture::mergedBuildWitnessRow(__VA_ARGS__)
+#else
+#define SC_MERGED_BUILD_WITNESS(...) ((void)0)
+#endif
+#endif
 #ifndef SC_ROUTE_REJECT
 #define SC_ROUTE_REJECT(track, slot, reason, cause, prevReason, prevTicks, sinceTick, changes, loopLengthTicks, exit) \
   ((void)0)
@@ -697,6 +704,39 @@ struct MergedFallbackKey {
   uint32_t playhead;
 };
 
+}  // namespace
+namespace {
+/// Overdub-audibility witness (2026-11-01, report-only, capture images): one row per merged-fallback build naming the
+/// source it used and, as the content oracle, what the committed passes give for the same window.
+TRACK_COLD_MEM __attribute__((noinline)) void reportMergedBuildWitness(Track& track, Loop& loop,
+                                                                       const LoopPlaybackRuntime& runtime,
+                                                                       uint32_t requiredRevision, uint8_t path,
+                                                                       bool recordOverlay, bool servedFromPasses) {
+#if defined(SESSION_CAPTURE)
+  uint32_t overdubs = 0;
+  for (const OverdubPass& pass : loop.passes.overdubPasses)
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) ++overdubs;
+  const uint32_t events = static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size());
+  uint32_t expected = events;
+  if (!servedFromPasses && loop.hasCommittedPasses()) {
+    SessionMidiEventVec oracle;
+    loop.copyEffectiveCommittedEventsInRange(oracle, runtime.mergedMidiEvents.windowStartTick,
+                                             runtime.mergedMidiEvents.windowLengthTicks);
+    expected = static_cast<uint32_t>(oracle.size());
+  }
+  SC_MERGED_BUILD_WITNESS(playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
+                          runtime.mergedMidiEvents.windowStartTick, runtime.mergedMidiEvents.windowLengthTicks,
+                          requiredRevision, path, loop.publishedSnapshotIsCurrent(),
+                          loop.publishedSnapshotCoveredRevision(), recordOverlay, loop.passes.hasRecordPass(),
+                          overdubs, events, expected);
+#else
+  (void)track; (void)loop; (void)runtime; (void)requiredRevision; (void)path; (void)recordOverlay;
+  (void)servedFromPasses;
+#endif
+}
+}  // namespace
+
+namespace {
 /// The same key `ensurePlaybackMergedMidiEventsBuilt` derives for a tick build (`prepareLaunch == false`).
 TRACK_COLD_MEM MergedFallbackKey mergedFallbackTickKey(Track& track, Loop& loop, uint32_t currentTick) {
   const bool noteEditPreview = editManager.isNoteEditActive() && &track == &trackManager.getSelectedTrack();
@@ -798,6 +838,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
         windowRevision, playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop), 1,
         "incremental");
 #endif
+    reportMergedBuildWitness(track, loop, runtime, windowRevision,
+                             static_cast<uint8_t>(RuntimeTimingTelemetry::PlaybackRebuildPath::IncrementalOverdubSeal),
+                             recordOverlayIdentity != nullptr, false);
     return false;
   }
   loop.clearLastOverdubSealAdmitReceipt();
@@ -936,6 +979,18 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                                : RuntimeTimingTelemetry::PlaybackRebuildPath::GatherMissHoldEmpty))),
       playbackBuildStartUs, loop.lastTickInLoop, playhead,
       static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()));
+  reportMergedBuildWitness(
+      track, loop, runtime, windowRevision,
+      static_cast<uint8_t>(noteEditPreview ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
+                           : servedFromCommittedPasses ? RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses
+                           : gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
+                               ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
+                           : gatherPath == Loop::SnapshotWindowGatherPath::Overlay
+                               ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
+                           : gatherPath == Loop::SnapshotWindowGatherPath::RecordOverlay
+                               ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedRecordOverlay
+                               : RuntimeTimingTelemetry::PlaybackRebuildPath::GatherMissHoldEmpty),
+      recordOverlayIdentity != nullptr, servedFromCommittedPasses);
   mergedMidiEventsBuildInProgress = false;
   return true;
 }

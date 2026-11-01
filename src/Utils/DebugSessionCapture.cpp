@@ -350,6 +350,7 @@ static const char kPlaybackReadTierPrefix[] PROGMEM = "DIAG,playback_read,";
 // playback-tick-consume-only phase 1: the consumed-route / miss window row (flash-resident, like the others here).
 static const char kTickRouteTierPrefix[] PROGMEM = "DIAG,tick_route,";
 static const char kRouteRejectTierPrefix[] PROGMEM = "DIAG,route_reject,";
+static const char kMergedBuildTierPrefix[] PROGMEM = "DIAG,merged_build,";
 static const char kPlaybackAvailableTierPrefix[] PROGMEM = "DIAG,playback_available,";
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // The window lane's **service-gap sample** (task 3.10) is Tier-A, and its tag is classified **here** rather than in
@@ -384,6 +385,7 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
          CaptureLineTier::tagStartsWith(line, kPlaybackReadTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kTickRouteTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kRouteRejectTierPrefix) ||
+         CaptureLineTier::tagStartsWith(line, kMergedBuildTierPrefix) ||
          CaptureLineTier::tagStartsWith(line, kPlaybackAvailableTierPrefix) ||
 #if defined(PIO_UNIT_TEST_NATIVE) || (PLAYBACK_WINDOW_ROLLING_ENABLED && PLAYBACK_WINDOW_ROLLING_QUALIFICATION)
          CaptureLineTier::tagStartsWith(line, kRollingRecordTierPrefix) ||
@@ -1497,6 +1499,31 @@ SC_MEM_ATTR void tickRouteRow(uint32_t view, uint32_t bridge, uint32_t paged, ui
                 static_cast<unsigned long>(bridge), static_cast<unsigned long>(paged),
                 static_cast<unsigned long>(merged), static_cast<unsigned long>(none),
                 static_cast<unsigned long>(missInterrupt), static_cast<unsigned long>(missExternal));
+}
+
+SC_MEM_ATTR void mergedBuildWitnessRow(uint8_t track, uint8_t slot, uint32_t winStart, uint32_t winLen, uint32_t req,
+                                       uint8_t path, bool rootCurrent, uint32_t rootCoveredRevision, bool recordOverlay,
+                                       bool recordPassCommitted, uint32_t overdubPasses, uint32_t events,
+                                       uint32_t expectedEvents) {
+  if (serialWriteRoom(200)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,merged_build,t=%u,s=%u,win=%lu+%lu,req=%lu,path=%u,root=%u,rootcov=%lu,ovl=%u,"
+                         "rec=%u,od=%lu,ev=%lu,exp=%lu\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                  static_cast<unsigned long>(winStart), static_cast<unsigned long>(winLen),
+                  static_cast<unsigned long>(req), static_cast<unsigned>(path), rootCurrent ? 1u : 0u,
+                  static_cast<unsigned long>(rootCoveredRevision), recordOverlay ? 1u : 0u,
+                  recordPassCommitted ? 1u : 0u, static_cast<unsigned long>(overdubPasses),
+                  static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,merged_build,t=%u,s=%u,win=%lu+%lu,req=%lu,path=%u,root=%u,rootcov=%lu,ovl=%u,"
+                       "rec=%u,od=%lu,ev=%lu,exp=%lu\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                static_cast<unsigned long>(winStart), static_cast<unsigned long>(winLen),
+                static_cast<unsigned long>(req), static_cast<unsigned>(path), rootCurrent ? 1u : 0u,
+                static_cast<unsigned long>(rootCoveredRevision), recordOverlay ? 1u : 0u,
+                recordPassCommitted ? 1u : 0u, static_cast<unsigned long>(overdubPasses),
+                static_cast<unsigned long>(events), static_cast<unsigned long>(expectedEvents));
 }
 
 SC_MEM_ATTR void routeRejectRow(uint8_t track, uint8_t slot, uint8_t reason, uint8_t cause, uint8_t prevReason,

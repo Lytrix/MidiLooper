@@ -953,6 +953,23 @@ void test_tick_route_row_is_tier_a_and_fits_the_head_read() {
   TEST_ASSERT_TRUE(captureSerial.output.size() < 192);
 }
 
+void test_merged_build_witness_row_is_tier_a_and_fits_the_head_read() {
+  // Overdub-audibility witness (2026-11-01): one row per merged-fallback build, at field maxima.
+  captureSerial.output.clear(); captureSerial.room = 4096;
+  mergedBuildWitnessRow(7, 7, 4294967295u, 4294967295u, 4294967295u, 6, true, 4294967295u, true, true, 4294967295u,
+                        4294967295u, 4294967295u);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,merged_build,t=7,s=7,win=4294967295+4294967295,req=4294967295,"
+                                             "path=6,root=1,rootcov=4294967295,ovl=1,rec=1,od=4294967295,"
+                                             "ev=4294967295,exp=4294967295\r\n") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.size() < 220);
+  TEST_ASSERT_TRUE(isTierATextLine("#CAP,4294967295,DIAG,merged_build,t=0"));
+  captureSerial.output.clear(); captureSerial.room = 8;  // no room: the row falls back to the ring
+  mergedBuildWitnessRow(7, 3, 0, 1536, 14, 6, false, 1, true, false, 12, 63, 140);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  captureSerial.room = 4096; flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,merged_build,t=7,s=3,win=0+1536,req=14,path=6,") != std::string::npos);
+}
+
 void test_route_reject_row_is_tier_a_and_fits_the_head_read() {
   // playback-tick-consume-only phase 2: the merged-fallback reason row.
   captureSerial.output.clear(); captureSerial.room = 4096;
@@ -1096,6 +1113,7 @@ int main() {
   RUN_TEST(test_rolling_record_tier_exact_prefix_and_max_timestamp_fit);
   RUN_TEST(test_tick_route_row_is_tier_a_and_fits_the_head_read);
   RUN_TEST(test_route_reject_row_is_tier_a_and_fits_the_head_read);
+  RUN_TEST(test_merged_build_witness_row_is_tier_a_and_fits_the_head_read);
   RUN_TEST(test_runtime_profiler_rows_are_tier_a_in_the_source_list_only);
   RUN_TEST(test_ingress_cost_delivery_tier_parser_and_fit);
   RUN_TEST(test_pit_motion_delivery_tier_parser_and_fit);

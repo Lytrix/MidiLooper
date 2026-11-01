@@ -62,3 +62,39 @@ The board is back on the committed image `fa77ebdf…` (boot verified, `session_
   a per-build source and event-count row for the merged fallback is the next witness.
 - **The repair** has to hand a pending Record take's frozen readers over to a source that includes committed overdubs,
   without breaking the Record job's retirement. That is a lifecycle design point, not a one-line gate.
+
+## Device witness (2026-11-01, image `9ddaea2c…`, `session_20261101_143559.log`)
+
+Image: the committed tree plus the report-only `DIAG,merged_build` row. Boot verified (`boot_reset,crash=0`,
+`BOOT,load,ok`). Track 8 / slot 4 was seeded with a take by hand, then the pre-12:00 rig (`94278d67`) ran unchanged:
+- Record at 55.96–95.60 s;
+- 12 overdubs at 110.1–152.9 s;
+- the rig's content gate reported `cap=7 < 13`, so the rig does not count the run as content evidence.
+
+t7 s3 merged-fallback builds:
+
+| t | `req` | path | root / cov | overlay | Record pass | overdubs | `ev` built | `exp` (committed passes, same window) |
+|---|---|---|---|---|---|---|---|---|
+| 107.6 s | 1 | 6 `record_overlay` | none | 1 | 1 | 0 | 63 | 63 |
+| 181.1 s | 7 | **1 `GatherMissHoldEmpty`** | none | 1 | 1 | 6 | **0** | **98** |
+| 211.4 s | 7 | **1 `GatherMissHoldEmpty`** | none | 1 | 1 | 6 | **0** | **101** |
+
+**Classification: the merged fallback serves a revision-incomplete source, and here an empty one.**
+- At revision 7 there is still no published root, and the Record overlay is active.
+- The overlay gather misses, and the committed-pass copy (`committedPassesServeWindow`) is refused, so the build falls
+  through to "hold empty".
+- The empty build is stamped with the overlay's identity (DEC-143's bounded-work rule), so the reuse rule keeps serving
+  the empty window for the whole revision.
+
+Audible effect on ch8:
+
+| | before the overdubs | during | after |
+|---|---|---|---|
+| Record 16ths | 398 | 43 | 8 |
+| chord notes | 0 | 0 | 0 |
+
+**The slot goes almost silent once overdubs begin, not only its overdubs.**
+
+**Next witness (not yet captured):** the term that refused each of the two sources at `req=7`:
+- the overlay: extent not ready, unreadable, or empty;
+- the committed-pass copy: retention refused, or paged.
