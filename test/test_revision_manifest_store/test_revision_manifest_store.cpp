@@ -1,0 +1,370 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+//
+// Stage A of openspec/changes/revision-manifest-prototype: fixed event pages, immutable committed passes and
+// immutable revision manifests. The oracle is a plain vector model of "the committed passes of revision N".
+
+#include <unity.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <new>
+#include <vector>
+
+#include "RevisionStore/RevisionStore.h"
+
+// ---- Heap witness: every operator new in this process is counted ----------------------------------------------------
+static unsigned long gHeapAllocations = 0;
+void* operator new(std::size_t size) {
+  ++gHeapAllocations;
+  if (void* p = std::malloc(size == 0 ? 1 : size)) return p;
+  throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return operator new(size); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+
+using namespace RevisionStore;
+
+using TestCap = Capacity</*pages*/ 512, /*rows per page*/ 32, /*runs*/ 24, /*pages per run*/ 64, /*manifests*/ 24,
+                         /*runs per manifest*/ 8, /*history*/ 8>;
+using TestStore = Store<TestCap>;
+static TestStore gStore;
+
+constexpr uint32_t kBarTicks = 768;
+constexpr uint32_t kLongTakeBars = 25;
+constexpr uint32_t kLongTakeTicks = kBarTicks * kLongTakeBars;
+constexpr uint8_t kNoteOn = 0x90;
+constexpr uint8_t kNoteOff = 0x80;
+
+// ---- Oracle -----------------------------------------------------------------------------------------------------------
+struct OraclePass {
+  std::vector<PassEvent> rows;     // Midi rows in append order
+  std::vector<uint32_t> hides;     // noteIds hidden in earlier passes
+};
+struct OracleRevision {
+  std::vector<OraclePass> passes;  // in commit order
+};
+
+struct Keyed {
+  uint32_t tick;
+  uint32_t pass;
+  uint16_t seq;
+  PassEvent row;
+};
+
+static std::vector<PassEvent> oracleWindow(const OracleRevision& rev, uint32_t from, uint32_t to) {
+  std::vector<Keyed> keyed;
+  for (uint32_t i = 0; i < rev.passes.size(); ++i) {
+    const OraclePass& p = rev.passes[i];
+    for (uint16_t s = 0; s < p.rows.size(); ++s) {
+      const PassEvent& row = p.rows[s];
+      if (row.tick < from || row.tick >= to) continue;
+      bool hidden = false;
+      for (uint32_t j = i + 1; j < rev.passes.size() && !hidden && row.noteId != 0; ++j) {
+        const auto& h = rev.passes[j].hides;
+        hidden = std::find(h.begin(), h.end(), row.noteId) != h.end();
+      }
+      if (!hidden) keyed.push_back({row.tick, i, s, row});
+    }
+  }
+  std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
+    if (a.tick != b.tick) return a.tick < b.tick;
+    if (a.pass != b.pass) return a.pass < b.pass;
+    return a.seq < b.seq;
+  });
+  std::vector<PassEvent> out;
+  for (const Keyed& k : keyed) out.push_back(k.row);
+  return out;
+}
+
+static uint32_t gLcg = 1;
+static uint32_t nextRandom() {
+  gLcg = gLcg * 1664525u + 1013904223u;
+  return gLcg >> 8;
+}
+
+static uint32_t gNextNoteId = 1;
+
+// Appends `notes` paired notes inside [0, loopTicks) in a non-monotonic order (like a capture across the wrap) to both
+// the store writer and the oracle pass. A note whose off would pass the loop end wraps to the loop start.
+static void appendNotes(OraclePass& pass, uint32_t notes, uint32_t loopTicks, uint8_t channelStatusOffset = 0) {
+  for (uint32_t n = 0; n < notes; ++n) {
+    const uint32_t on = nextRandom() % loopTicks;
+    const uint32_t off = (on + 24 + nextRandom() % 300) % loopTicks;
+    const uint8_t pitch = static_cast<uint8_t>(36 + nextRandom() % 48);
+    const uint32_t id = gNextNoteId++;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(on, kNoteOn + channelStatusOffset, pitch, 100, id));
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(off, kNoteOff + channelStatusOffset, pitch, 0, id));
+    PassEvent a;
+    a.tick = on;
+    a.status = kNoteOn + channelStatusOffset;
+    a.data1 = pitch;
+    a.data2 = 100;
+    a.noteId = id;
+    PassEvent b = a;
+    b.tick = off;
+    b.status = kNoteOff + channelStatusOffset;
+    b.data2 = 0;
+    pass.rows.push_back(a);
+    pass.rows.push_back(b);
+  }
+}
+
+static void assertSameRows(const std::vector<PassEvent>& expected, const PassEvent* got, uint32_t count) {
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), count);
+  for (uint32_t i = 0; i < count; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, got[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].status, got[i].status);
+    TEST_ASSERT_EQUAL_UINT8(expected[i].data1, got[i].data1);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].noteId, got[i].noteId);
+  }
+}
+
+static PassEvent gOut[4096];
+
+static void assertManifestMatches(ManifestId id, const OracleRevision& rev, uint32_t expectedRevision, uint32_t from,
+                                  uint32_t to) {
+  const ComposeStamp stamp = gStore.composeWindow(id, from, to, gOut, 4096);
+  TEST_ASSERT_EQUAL(ComposeStatus::Complete, stamp.status);
+  TEST_ASSERT_EQUAL_UINT16(id, stamp.manifest);
+  TEST_ASSERT_EQUAL_UINT32(expectedRevision, stamp.revision);
+  assertSameRows(oracleWindow(rev, from, to), gOut, stamp.count);
+}
+
+static OracleRevision recordTake(uint32_t notes, uint32_t loopTicks) {
+  OracleRevision rev;
+  rev.passes.emplace_back();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, loopTicks));
+  appendNotes(rev.passes.back(), notes, loopTicks);
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, gStore.commitPass());
+  return rev;
+}
+
+static OracleRevision overdub(const OracleRevision& parent, uint32_t notes, uint32_t loopTicks,
+                              const std::vector<uint32_t>& hides = {}) {
+  OracleRevision rev = parent;
+  rev.passes.emplace_back();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Overdub));
+  for (uint32_t h : hides) {
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendHide(h));
+    rev.passes.back().hides.push_back(h);
+  }
+  appendNotes(rev.passes.back(), notes, loopTicks, 7);  // overdub chords on ch8
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, gStore.commitPass());
+  return rev;
+}
+
+void setUp() {
+  gStore.reset();
+  gLcg = 1;
+  gNextNoteId = 1;
+}
+void tearDown() {}
+
+// ---- Tests ----------------------------------------------------------------------------------------------------------
+
+void test_record_commit_is_revision_one_and_tick_ordered() {
+  const OracleRevision rev = recordTake(200, 4 * kBarTicks);
+  const ManifestId current = gStore.current();
+  TEST_ASSERT_EQUAL_UINT32(1, gStore.manifest(current).revision);
+  TEST_ASSERT_EQUAL_UINT8(1, gStore.manifest(current).runCount);
+  assertManifestMatches(current, rev, 1, 0, 4 * kBarTicks);
+}
+
+// The owner's property: Record + four overdubs committed back to back; every revision is a complete immutable state
+// at its commit, and every older manifest that a reader pinned still composes exactly its own committed passes.
+void test_every_revision_is_exactly_its_committed_passes_and_old_pins_survive() {
+  std::vector<OracleRevision> revisions;
+  std::vector<ManifestId> pins;
+  revisions.push_back(recordTake(300, kLongTakeTicks));
+  pins.push_back(gStore.pinCurrent());
+  for (int i = 0; i < 4; ++i) {
+    revisions.push_back(overdub(revisions.back(), 40, kLongTakeTicks));
+    pins.push_back(gStore.pinCurrent());
+  }
+  TEST_ASSERT_EQUAL_UINT32(5, gStore.manifest(gStore.current()).revision);
+  for (uint32_t r = 0; r < revisions.size(); ++r) {
+    assertManifestMatches(pins[r], revisions[r], r + 1, 0, kLongTakeTicks);
+  }
+  for (ManifestId pin : pins) gStore.unpin(pin);
+}
+
+// The device witness: revision 7 served an EMPTY window. Here every two-bar window of the long take at the newest
+// revision contains Record plus every committed overdub inside it, and the stamp names the manifest it read.
+void test_two_bar_windows_of_long_take_contain_record_and_all_overdubs() {
+  OracleRevision rev = recordTake(300, kLongTakeTicks);
+  for (int i = 0; i < 6; ++i) rev = overdub(rev, 30, kLongTakeTicks);
+  const ManifestId current = gStore.current();
+  TEST_ASSERT_EQUAL_UINT32(7, gStore.manifest(current).revision);
+  uint32_t total = 0;
+  for (uint32_t from = 0; from < kLongTakeTicks; from += 2 * kBarTicks) {
+    const uint32_t to = std::min(from + 2 * kBarTicks, kLongTakeTicks);
+    assertManifestMatches(current, rev, 7, from, to);
+    total += static_cast<uint32_t>(oracleWindow(rev, from, to).size());
+  }
+  TEST_ASSERT_EQUAL_UINT32(600 + 6 * 60, total);
+}
+
+void test_uncommitted_overdub_never_changes_current() {
+  OracleRevision rev = recordTake(100, 8 * kBarTicks);
+  rev = overdub(rev, 20, 8 * kBarTicks);
+  const ManifestId before = gStore.current();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Overdub));
+  OracleRevision scratch;
+  scratch.passes.emplace_back();
+  appendNotes(scratch.passes.back(), 50, 8 * kBarTicks);
+  TEST_ASSERT_EQUAL_UINT16(before, gStore.current());
+  assertManifestMatches(before, rev, 2, 0, 8 * kBarTicks);
+  const uint16_t freeWhileWriting = gStore.freePageCount();
+  gStore.abandonPass();
+  TEST_ASSERT_TRUE(gStore.freePageCount() > freeWhileWriting);
+  TEST_ASSERT_EQUAL_UINT16(before, gStore.current());
+  assertManifestMatches(before, rev, 2, 0, 8 * kBarTicks);
+}
+
+void test_hide_masks_earlier_runs_only_and_older_revision_keeps_the_note() {
+  OracleRevision r1 = recordTake(50, 4 * kBarTicks);
+  const ManifestId pin1 = gStore.pinCurrent();
+  const uint32_t hidden = r1.passes[0].rows[10].noteId;
+  OracleRevision r2 = overdub(r1, 10, 4 * kBarTicks, {hidden});
+  assertManifestMatches(gStore.current(), r2, 2, 0, 4 * kBarTicks);
+  const ComposeStamp s2 = gStore.composeWindow(gStore.current(), 0, 4 * kBarTicks, gOut, 4096);
+  for (uint32_t i = 0; i < s2.count; ++i) TEST_ASSERT_NOT_EQUAL_UINT32(hidden, gOut[i].noteId);
+  assertManifestMatches(pin1, r1, 1, 0, 4 * kBarTicks);
+  gStore.unpin(pin1);
+}
+
+void test_undo_redo_select_existing_manifests_and_commit_after_undo_reclaims_redo_branch() {
+  const uint16_t freeAtStart = gStore.freePageCount();
+  OracleRevision r1 = recordTake(100, 8 * kBarTicks);
+  OracleRevision r2 = overdub(r1, 40, 8 * kBarTicks);
+  const ManifestId m2 = gStore.current();
+  TEST_ASSERT_TRUE(gStore.undo());
+  assertManifestMatches(gStore.current(), r1, 1, 0, 8 * kBarTicks);
+  TEST_ASSERT_TRUE(gStore.redo());
+  TEST_ASSERT_EQUAL_UINT16(m2, gStore.current());
+  assertManifestMatches(gStore.current(), r2, 2, 0, 8 * kBarTicks);
+
+  TEST_ASSERT_TRUE(gStore.undo());
+  const uint16_t freeBeforeBranch = gStore.freePageCount();
+  OracleRevision r2b = overdub(r1, 5, 8 * kBarTicks);
+  // The abandoned redo branch (40 notes = 80 rows = 3 pages) went back to the pool; the new branch took 1 page.
+  TEST_ASSERT_EQUAL_UINT16(freeBeforeBranch + 3 - 1, gStore.freePageCount());
+  TEST_ASSERT_FALSE(gStore.canRedo());
+  assertManifestMatches(gStore.current(), r2b, 2, 0, 8 * kBarTicks);
+  TEST_ASSERT_TRUE(freeAtStart > gStore.freePageCount());
+}
+
+void test_compaction_keeps_revision_content_and_reclaims_after_last_reader() {
+  OracleRevision rev = recordTake(200, kLongTakeTicks);
+  for (int i = 0; i < 4; ++i) rev = overdub(rev, 25, kLongTakeTicks, {rev.passes[0].rows[4 * i].noteId});
+  const ManifestId reader = gStore.pinCurrent();  // playback pinned the 5-run manifest
+  const uint16_t freeBefore = gStore.freePageCount();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.compactCurrentPrefix(4));
+  const ManifestId compacted = gStore.current();
+  TEST_ASSERT_NOT_EQUAL(reader, compacted);
+  TEST_ASSERT_EQUAL_UINT8(2, gStore.manifest(compacted).runCount);
+  for (uint32_t from = 0; from < kLongTakeTicks; from += 3 * kBarTicks) {
+    const uint32_t to = std::min(from + 3 * kBarTicks, kLongTakeTicks);
+    assertManifestMatches(compacted, rev, 5, from, to);  // same revision, same content
+    assertManifestMatches(reader, rev, 5, from, to);     // the pinned reader is undisturbed
+  }
+  TEST_ASSERT_TRUE(gStore.freePageCount() < freeBefore);  // both representations coexist while pinned
+  gStore.unpin(reader);
+  // Undo history still holds revisions 1..4, which share every old run, so nothing is reclaimable yet; what must hold
+  // is conservation: no page is lost or double-freed.
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kPageCount, gStore.ownedPageCount() + gStore.freePageCount());
+  assertManifestMatches(gStore.current(), rev, 5, 0, kLongTakeTicks);
+}
+
+// With no history behind it (a lone Record + overdubs, then the older revisions age out), compaction plus the last
+// reader leaving returns the superseded runs' pages to the pool.
+void test_compaction_reclaims_superseded_runs_when_no_revision_references_them() {
+  OracleRevision rev = recordTake(200, 8 * kBarTicks);
+  for (int i = 0; i < 3; ++i) rev = overdub(rev, 30, 8 * kBarTicks);
+  const uint32_t ownedBefore = gStore.ownedPageCount();
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.compactCurrentPrefix(4));
+  // Old runs are still referenced by revisions 1..3 in history, so pages grew by the compacted run only.
+  const uint32_t ownedAfter = gStore.ownedPageCount();
+  TEST_ASSERT_TRUE(ownedAfter > ownedBefore);
+  // A new Record replaces the content; history keeps eight entries, so commit eight Records to age out revs 1..5.
+  for (int i = 0; i < TestCap::kHistoryDepth; ++i) {
+    TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, 4 * kBarTicks));
+    gStore.appendMidi(0, kNoteOn, 60, 100, 0);
+    gStore.commitPass();
+  }
+  // Only the eight one-page Record runs remain.
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kHistoryDepth, gStore.ownedPageCount());
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kPageCount, gStore.ownedPageCount() + gStore.freePageCount());
+  TEST_ASSERT_EQUAL_UINT16(TestCap::kHistoryDepth, gStore.liveManifestCount());
+  (void)rev;
+}
+
+void test_full_manifest_denies_overdub_admission_until_compaction() {
+  OracleRevision rev = recordTake(20, 4 * kBarTicks);
+  for (int i = 0; i < TestCap::kRunsPerManifest - 1; ++i) rev = overdub(rev, 2, 4 * kBarTicks);
+  TEST_ASSERT_EQUAL(AdmitResult::DeniedManifestFull, gStore.beginPass(PassKind::Overdub));
+  TEST_ASSERT_EQUAL(CompactResult::Ok, gStore.compactCurrentPrefix(TestCap::kRunsPerManifest));
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Overdub));
+  gStore.abandonPass();
+  assertManifestMatches(gStore.current(), rev, TestCap::kRunsPerManifest, 0, 4 * kBarTicks);
+}
+
+void test_page_exhaustion_is_a_named_denial_not_a_hang() {
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, kLongTakeTicks));
+  AppendResult last = AppendResult::Ok;
+  uint32_t appended = 0;
+  while (last == AppendResult::Ok && appended < 100000) {
+    last = gStore.appendMidi(appended % kLongTakeTicks, kNoteOn, 60, 100, appended + 1);
+    if (last == AppendResult::Ok) ++appended;
+  }
+  TEST_ASSERT_EQUAL(AppendResult::DeniedRunFull, last);  // per-run page directory bound reached first
+  TEST_ASSERT_EQUAL_UINT32(TestCap::kPagesPerRun * TestCap::kEventsPerPage, appended);
+  gStore.abandonPass();
+  TEST_ASSERT_EQUAL_UINT16(TestCap::kPageCount, gStore.freePageCount());
+}
+
+// Stage A acceptance: after construction, record + overdubs + commit + compose + undo + compaction allocate nothing.
+void test_zero_heap_after_construction() {
+  const unsigned long before = gHeapAllocations;
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginPass(PassKind::Record, kLongTakeTicks));
+  for (uint32_t i = 0; i < 400; ++i) gStore.appendMidi((i * 97) % kLongTakeTicks, kNoteOn, 60, 100, i + 1);
+  gStore.commitPass();
+  for (int od = 0; od < 5; ++od) {
+    gStore.beginPass(PassKind::Overdub);
+    gStore.appendHide(static_cast<uint32_t>(od + 1));
+    for (uint32_t i = 0; i < 60; ++i) gStore.appendMidi((i * 131 + od) % kLongTakeTicks, kNoteOn + 7, 64, 90, 1000 + i);
+    gStore.commitPass();
+  }
+  const ManifestId pin = gStore.pinCurrent();
+  for (uint32_t from = 0; from < kLongTakeTicks; from += 2 * kBarTicks) {
+    gStore.composeWindow(pin, from, from + 2 * kBarTicks, gOut, 4096);
+  }
+  gStore.undo();
+  gStore.redo();
+  gStore.compactCurrentPrefix(4);
+  gStore.unpin(pin);
+  TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
+  // Witness self-check: the counter does see an allocation, so the zero above is not vacuous.
+  std::vector<int> probe(1);
+  TEST_ASSERT_TRUE(gHeapAllocations - before > 0);
+}
+
+int main(int /*argc*/, char** /*argv*/) {
+  UNITY_BEGIN();
+  RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
+  RUN_TEST(test_every_revision_is_exactly_its_committed_passes_and_old_pins_survive);
+  RUN_TEST(test_two_bar_windows_of_long_take_contain_record_and_all_overdubs);
+  RUN_TEST(test_uncommitted_overdub_never_changes_current);
+  RUN_TEST(test_hide_masks_earlier_runs_only_and_older_revision_keeps_the_note);
+  RUN_TEST(test_undo_redo_select_existing_manifests_and_commit_after_undo_reclaims_redo_branch);
+  RUN_TEST(test_compaction_keeps_revision_content_and_reclaims_after_last_reader);
+  RUN_TEST(test_compaction_reclaims_superseded_runs_when_no_revision_references_them);
+  RUN_TEST(test_full_manifest_denies_overdub_admission_until_compaction);
+  RUN_TEST(test_page_exhaustion_is_a_named_denial_not_a_hang);
+  RUN_TEST(test_zero_heap_after_construction);
+  return UNITY_END();
+}
