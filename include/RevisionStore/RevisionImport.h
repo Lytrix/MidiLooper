@@ -13,8 +13,10 @@
 // Layout of the imported manifest:
 //   - one run per active capture pass in commit order (Record, then overdubs by `mergeSequence`), holding that pass's
 //     committed chunk rows (DEC-245 layer 1), streamed one sealed event at a time
-//     (`LoopEventStore::readSealedChunkEvent`); NoteOff rows are stamped with their note's id by LIFO pairing in
-//     append (capture) order with a fixed open-note table, so a hide removes both ends of a note;
+//     (`LoopEventStore::readSealedChunkEvent`); after a pass is sealed its NoteOff rows are stamped with their note's
+//     id by `LanePairer`, production's own attribution rule (EditApply `findNoteOffForOnIndex`): a tick-ordered walk
+//     per (channel, pitch) lane, Off before On at an equal tick, LIFO, then each still-open NoteOn takes the unique
+//     unpaired earlier NoteOff (the wrap). Append-order pairing diverged from it across the wrap (C4a, device);
 //   - ONE Edit run for all active Note edit passes: per target a hide plus its final geometry after production's own
 //     `applyNoteEditPass` of that target's rows in edit-pass id order. Edit semantics are never re-implemented here.
 //     This collapsed Edit run is a Stage-C shadow-import convenience, valid for parity only: it discards per-edit
@@ -116,6 +118,106 @@ inline ImportSourceKey importSourceKeyOf(const Loop& loop) {
   return key;
 }
 
+/// Production's NoteOff attribution (EditApply `findNoteOffForOnIndex`) with fixed tables. Feed a pass's note rows in
+/// tick order with NoteOffs before NoteOns at an equal tick (DEC-244 store order); then call `wrapStep` until it returns
+/// false. Not modelled: `findWrapHeadOffForOnIndex`'s extra preferred-wrap-tail removal on Delete (named limitation).
+template <uint16_t MaxOpen, uint16_t MaxUnpaired>
+class LanePairer {
+ public:
+  struct Stats {
+    uint32_t openOverflow = 0;      // a NoteOn dropped from the open table (its NoteOff stays unpaired)
+    uint32_t unpairedOverflow = 0;  // an unpaired NoteOff not recorded for the wrap step
+    uint32_t contestedWraps = 0;    // an open NoteOn whose unique wrap NoteOff another NoteOn already took
+    uint32_t unpaired = 0;          // NoteOffs left without a note after the wrap step
+  };
+  void reset() {
+    openCount_ = unpairedCount_ = 0;
+    wrapCursor_ = 0;
+    stats_ = Stats{};
+  }
+  void onNoteOn(uint8_t channel, uint8_t pitch, uint32_t tick, uint32_t noteId) {
+    if (openCount_ == MaxOpen) {
+      for (uint16_t i = 1; i < openCount_; ++i) open_[i - 1] = open_[i];
+      --openCount_;
+      ++stats_.openOverflow;
+    }
+    open_[openCount_++] = {channel, pitch, tick, noteId};
+  }
+  /// The noteId this NoteOff belongs to, or 0 (then it is remembered for the wrap step under `index`).
+  uint32_t onNoteOff(uint8_t channel, uint8_t pitch, uint32_t tick, uint32_t index) {
+    for (uint16_t i = openCount_; i-- > 0;) {
+      if (open_[i].channel == channel && open_[i].pitch == pitch) {
+        const uint32_t id = open_[i].noteId;
+        for (uint16_t k = i + 1; k < openCount_; ++k) open_[k - 1] = open_[k];
+        --openCount_;
+        return id;
+      }
+    }
+    if (unpairedCount_ < MaxUnpaired) {
+      unpaired_[unpairedCount_++] = {channel, pitch, tick, index, false};
+    } else {
+      ++stats_.unpairedOverflow;
+    }
+    return 0;
+  }
+  /// Resolve one still-open NoteOn: `stamp(offIndex, noteId)` when exactly one unpaired NoteOff of its lane lies
+  /// earlier in ticks. Returns false when every open NoteOn has been considered.
+  template <typename Stamp>
+  bool wrapStep(Stamp&& stamp) {
+    if (wrapCursor_ >= openCount_) {
+      if (wrapCursor_ == openCount_) {
+        for (uint16_t u = 0; u < unpairedCount_; ++u) stats_.unpaired += unpaired_[u].used ? 0 : 1;
+        stats_.unpaired += stats_.unpairedOverflow;
+        ++wrapCursor_;
+      }
+      return false;
+    }
+    const Open& on = open_[wrapCursor_++];
+    uint16_t candidate = 0xFFFF;
+    uint16_t count = 0;
+    bool contested = false;
+    for (uint16_t u = 0; u < unpairedCount_; ++u) {
+      const Unpaired& off = unpaired_[u];
+      if (off.channel != on.channel || off.pitch != on.pitch || off.tick >= on.tick) continue;
+      if (off.used) {
+        contested = true;
+        continue;
+      }
+      candidate = u;
+      ++count;
+    }
+    if (count == 1) {
+      unpaired_[candidate].used = true;
+      stamp(unpaired_[candidate].index, on.noteId);
+    } else if (count == 0 && contested) {
+      ++stats_.contestedWraps;
+    }
+    return true;
+  }
+  const Stats& stats() const { return stats_; }
+
+ private:
+  struct Open {
+    uint8_t channel;
+    uint8_t pitch;
+    uint32_t tick;
+    uint32_t noteId;
+  };
+  struct Unpaired {
+    uint8_t channel;
+    uint8_t pitch;
+    uint32_t tick;
+    uint32_t index;
+    bool used;
+  };
+  Open open_[MaxOpen];
+  Unpaired unpaired_[MaxUnpaired];
+  uint16_t openCount_ = 0;
+  uint16_t unpairedCount_ = 0;
+  uint16_t wrapCursor_ = 0;
+  Stats stats_;
+};
+
 /// A bounded, transactional import of one Loop into `StoreCore<Cap>`. Fixed-capacity state; place it with the store.
 template <typename Cap, uint16_t MaxEditTargets = 256, uint16_t MaxEdits = 512, uint16_t MaxOpenNotes = 128>
 class ImportJob {
@@ -123,6 +225,8 @@ class ImportJob {
   static constexpr uint8_t kEventsPerTarget = 4;
 
   bool active() const { return phase_ != Phase::Idle; }
+  /// Diagnostic: the phase the next `step` starts in (0 = idle; 1..7 = Captures .. Publish).
+  uint8_t phaseCode() const { return static_cast<uint8_t>(phase_); }
   ImportResult result() const { return result_; }
   const ImportStats& stats() const { return stats_; }
   const ImportSourceKey& key() const { return key_; }
@@ -189,7 +293,6 @@ class ImportJob {
     pass_ = 0;
     chunk_ = 0;
     index_ = 0;
-    openCount_ = 0;
     editCursor_ = 0;
     emitCursor_ = 0;
     phase_ = Phase::Captures;
@@ -207,6 +310,12 @@ class ImportJob {
       switch (phase_) {
         case Phase::Captures:
           if (!stepCaptures(budget)) return fail(ImportResult::DeniedCapacity);
+          break;
+        case Phase::PairWalk:
+          if (!stepPairWalk(budget)) return fail(ImportResult::DeniedCapacity);
+          break;
+        case Phase::PairWrap:
+          if (!stepPairWrap(budget)) return fail(ImportResult::DeniedCapacity);
           break;
         case Phase::EditApply:
           if (!stepEditApply(budget)) return fail(ImportResult::DeniedCapacity);
@@ -239,14 +348,9 @@ class ImportJob {
   }
 
  private:
-  enum class Phase : uint8_t { Idle, Captures, EditApply, EditSort, EditEmit, Publish };
+  enum class Phase : uint8_t { Idle, Captures, PairWalk, PairWrap, EditApply, EditSort, EditEmit, Publish };
+  using Pairer = LanePairer<MaxOpenNotes, MaxOpenNotes * 2>;
   static constexpr uint16_t kNoTarget = 0xFFFF;
-
-  struct OpenNote {
-    uint8_t channel;
-    uint8_t pitch;
-    NoteId id;
-  };
 
   static uint32_t runPagesFor(uint32_t rows) {
     const uint32_t data = (rows + Cap::kEventsPerPage - 1) / Cap::kEventsPerPage + 1;
@@ -286,26 +390,25 @@ class ImportJob {
     ++targetCount_;
   }
 
-  // Pairing in append (capture) order: a NoteOff takes the id of the latest open NoteOn of its channel and pitch.
-  void stampPairing(MidiEvent& e) {
-    if (e.isNoteOn() && e.noteId != kInvalidNoteId) {
-      if (openCount_ == MaxOpenNotes) {  // drop the oldest open note: its NoteOff will be unpaired (counted)
-        for (uint16_t i = 1; i < openCount_; ++i) open_[i - 1] = open_[i];
-        --openCount_;
-      }
-      open_[openCount_++] = {e.channel, e.data.noteData.note, e.noteId};
-      return;
-    }
-    if (!e.isNoteOff() || e.noteId != kInvalidNoteId) return;
-    for (uint16_t i = openCount_; i-- > 0;) {
-      if (open_[i].channel == e.channel && open_[i].pitch == e.data.noteData.note) {
-        e.noteId = open_[i].id;
-        for (uint16_t k = i + 1; k < openCount_; ++k) open_[k - 1] = open_[k];
-        --openCount_;
-        return;
-      }
-    }
-    ++stats_.unpairedNoteOffs;
+  static MidiEvent toMidi(const PassEvent& p) {
+    MidiEvent e{};
+    e.tick = p.tick;
+    e.type = static_cast<midi::MidiType>(p.status & 0xF0);
+    e.channel = static_cast<uint8_t>((p.status & 0x0F) + 1);
+    e.data.noteData.note = p.data1;
+    e.data.noteData.velocity = p.data2;
+    e.noteId = p.noteId;
+    return e;
+  }
+
+  // An edit target's row, once its id is final (after pairing).
+  bool collectTarget(const PassEvent& row) {
+    if (targetCount_ == 0 || row.noteId == kInvalidNoteId) return true;
+    const uint16_t t = findTarget(row.noteId);
+    if (t == kNoTarget) return true;
+    if (targetEventCount_[t] >= kEventsPerTarget) return false;
+    targetEvents_[t][targetEventCount_[t]++] = toMidi(row);
+    return true;
   }
 
   bool appendRow(const MidiEvent& e) {
@@ -324,16 +427,24 @@ class ImportJob {
             AdmitResult::Ok) {
           return false;
         }
-        openCount_ = 0;
       }
       const CommittedChunkIdList& chunks = *lists_[pass_];
       if (chunk_ >= chunks.size()) {
-        if (!store_->sealStagedRun()) return false;
+        const SealStep sealed = store_->stepSealStagedRun(budget);  // bounded: an over-budget run sorts in steps
+        if (sealed == SealStep::Failed) return false;
+        if (sealed == SealStep::Pending) return true;
         ++stats_.captureRuns;
-        ++pass_;
-        chunk_ = 0;
-        index_ = 0;
-        continue;
+        // Attribute this pass's NoteOffs the production way, walking the sealed run in tick order.
+        pairRun_ = store_->stagedRun(static_cast<uint8_t>(store_->stagedRunCount() - 1));
+        const auto& run = store_->run(pairRun_);
+        pairSegments_ = run.segCount;
+        for (uint8_t sgm = 0; sgm < pairSegments_; ++sgm) {
+          pairAt_[sgm] = run.segStart[sgm];
+          pairEnd_[sgm] = run.segEnd(sgm);
+        }
+        pairer_.reset();
+        phase_ = Phase::PairWalk;
+        return true;
       }
       MidiEvent e;
       bool atEnd = false;
@@ -344,16 +455,70 @@ class ImportJob {
       }
       ++index_;
       --budget;
-      stampPairing(e);
-      if (e.noteId != kInvalidNoteId && targetCount_ != 0) {
-        const uint16_t t = findTarget(e.noteId);
-        if (t != kNoTarget) {
-          if (targetEventCount_[t] >= kEventsPerTarget) return false;
-          targetEvents_[t][targetEventCount_[t]++] = e;
-        }
-      }
+      if (e.isNoteOff()) e.noteId = kInvalidNoteId;  // attribution is the pair phase's job (production rule)
       if (!appendRow(e)) return false;
       ++stats_.rows;
+    }
+    return true;
+  }
+
+  // Tick-order walk of the sealed run (store order: tick, then NoteOff before NoteOn, then append order).
+  bool stepPairWalk(uint32_t& budget) {
+    while (budget != 0) {
+      uint8_t best = 0xFF;
+      for (uint8_t sgm = 0; sgm < pairSegments_; ++sgm) {
+        if (pairAt_[sgm] >= pairEnd_[sgm]) continue;
+        if (best == 0xFF) {
+          best = sgm;
+          continue;
+        }
+        const PassEvent& a = store_->stagedRow(pairRun_, pairAt_[sgm]);
+        const PassEvent& b = store_->stagedRow(pairRun_, pairAt_[best]);
+        if (tickClassLess(a, b) || (!tickClassLess(b, a) && a.seq < b.seq)) best = sgm;
+      }
+      if (best == 0xFF) {
+        phase_ = Phase::PairWrap;
+        return true;
+      }
+      const uint32_t index = pairAt_[best]++;
+      --budget;
+      const PassEvent row = store_->stagedRow(pairRun_, index);
+      const uint8_t cls = equalTickClass(row);
+      const uint8_t channel = static_cast<uint8_t>((row.status & 0x0F) + 1);
+      if (cls == 1) {
+        pairer_.onNoteOn(channel, row.data1, row.tick, row.noteId);
+        if (!collectTarget(row)) return false;
+      } else if (cls == 0) {
+        const uint32_t id = pairer_.onNoteOff(channel, row.data1, row.tick, index);
+        if (id != 0) {
+          store_->setStagedRowNoteId(pairRun_, index, id);
+          PassEvent stamped = row;
+          stamped.noteId = id;
+          if (!collectTarget(stamped)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool stepPairWrap(uint32_t& budget) {
+    bool ok = true;
+    while (budget != 0) {
+      --budget;
+      const bool more = pairer_.wrapStep([&](uint32_t index, uint32_t id) {
+        store_->setStagedRowNoteId(pairRun_, index, id);
+        PassEvent stamped = store_->stagedRow(pairRun_, index);
+        ok = ok && collectTarget(stamped);
+      });
+      if (!ok) return false;
+      if (!more) {
+        stats_.unpairedNoteOffs += pairer_.stats().unpaired;
+        ++pass_;
+        chunk_ = 0;
+        index_ = 0;
+        phase_ = Phase::Captures;
+        return true;
+      }
     }
     return true;
   }
@@ -368,7 +533,8 @@ class ImportJob {
       budget = budget > kEventsPerTarget ? budget - kEventsPerTarget : 0;
       const uint16_t t = findTarget(edit.targetNoteId);
       if (t == kNoTarget) continue;
-      MidiEventVec events(targetEvents_[t], targetEvents_[t] + targetEventCount_[t]);
+      MidiEventVec& events = editScratch_;  // reserved with the job (at boot on the device): no per-edit allocation
+      events.assign(targetEvents_[t], targetEvents_[t] + targetEventCount_[t]);
       applyNoteEditPass(events, edit, loop_->loopLengthTicks);
       if (events.size() > kEventsPerTarget) return false;
       targetEventCount_[t] = static_cast<uint8_t>(events.size());
@@ -432,7 +598,9 @@ class ImportJob {
         if (!appendRow(replacements_[emitCursor_ - targetCount_])) return false;
         ++stats_.rows;
       } else {
-        if (!store_->sealStagedRun()) return false;
+        const SealStep sealed = store_->stepSealStagedRun(budget);
+        if (sealed == SealStep::Failed) return false;
+        if (sealed == SealStep::Pending) return true;
         ++stats_.editRuns;
         phase_ = Phase::Publish;
         return true;
@@ -444,6 +612,11 @@ class ImportJob {
   }
 
   Phase phase_ = Phase::Idle;
+  MidiEventVec editScratch_ = [] {
+    MidiEventVec v;
+    v.reserve(16);
+    return v;
+  }();
   ImportResult result_ = ImportResult::Ok;
   ImportStats stats_;
   ImportSourceKey key_;
@@ -454,8 +627,11 @@ class ImportJob {
   uint8_t pass_ = 0;
   size_t chunk_ = 0;
   size_t index_ = 0;
-  OpenNote open_[MaxOpenNotes];
-  uint16_t openCount_ = 0;
+  Pairer pairer_;
+  RunId pairRun_ = kNoRun;
+  uint8_t pairSegments_ = 0;
+  uint32_t pairAt_[Cap::kSegmentsPerRun];
+  uint32_t pairEnd_[Cap::kSegmentsPerRun];
   const EditPass* edits_[MaxEdits];
   uint16_t editCount_ = 0;
   uint16_t editCursor_ = 0;

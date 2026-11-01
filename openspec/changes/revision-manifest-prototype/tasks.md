@@ -130,9 +130,20 @@ timing and memory envelope without introducing real-time construction?
       shares the blind spot), import step 3,212 µs (> 2 ms), and PSRAM exhaustion over long uptime with the 0.49 MB
       shadow. [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md),
       [hides](evidence/2026-11-01-c4-hides-not-clean.md)
-- [ ] C4a Host repro + fix of NoteOff misattribution (pairing equal to production's, bounded); bound the import step
+- [~] C4a Host repro + fix of NoteOff misattribution (pairing equal to production's, bounded); bound the import step
       with edits; C4 acceptance includes the whole-loop comparison; smaller shadow footprint; HITL validity re-check
       on the default image.
+  - [x] `LanePairer` = production's tick-ordered lane walk + unique-earlier wrap NoteOff, shared by importer
+        (`PairWalk`/`PairWrap`) and host oracle; wrap-overlap repro RED → GREEN; zero-length suppression no longer
+        needs a stamped id; 664 parity checks.
+  - [x] Bounded seal (`stepSealStagedRun`, resumable heapsort); no per-edit allocation in `EditApply`;
+        per-phase import timing.
+  - [x] Whole-loop comparison in `!REVSHADOW_WINDOWS` (`windows_whole_loop`, `c4_clean`). Device, two fresh boots
+        on the same-pitch owner chain: `c4_clean=1`, whole loop 1,204/1,204 and 1,206/1,206, import max 197 µs —
+        **but 0 hides** (production produced no companion edits either run).
+        [Evidence](evidence/2026-11-01-c4a-pairing-and-whole-loop.md)
+  - [ ] Hide-carrying device run with `c4_clean=1` and an `import_phases` reading (names the 3,212 µs phase).
+  - [ ] Smaller shadow footprint; HITL validity re-check on the default image.
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.
 

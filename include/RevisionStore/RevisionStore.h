@@ -74,6 +74,7 @@ enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest, IndexOwed
 /// `IndexOrScan`: the index when published, else the scan (off-line convenience).
 enum class HideLookup : uint8_t { IndexOrScan, IndexOnly, Scan };
 /// Step outcome of the edit-index worker. `CapacityDenied`: every slot holds an index some reader still pins.
+enum class SealStep : uint8_t { Pending, Sealed, Failed };
 enum class IndexStep : uint8_t { Idle, Pending, Published, DeniedNoPage, CapacityDenied };
 /// C3d window producer results. `Ready` carries the identity actually read. Nothing here builds an import or an
 /// index, and there is no scan fallback: a missing prerequisite is a named answer.
@@ -445,13 +446,59 @@ class StoreCore {
     return AdmitResult::Ok;
   }
   bool sealStagedRun() {
-    if (writer_ == kNoRun || writerManifest_ != kNoManifest) return false;
-    sealRun(runs_[writer_]);
+    uint32_t unbounded = UINT32_MAX;
+    return stepSealStagedRun(unbounded) == SealStep::Sealed;
+  }
+  /// Bounded seal of the open staged run (C4a): the commit-time sort of an over-budget run and the hide sort are a
+  /// resumable heapsort, one sift per unit of `budget`. `Pending` until the run is sealed and staged.
+  SealStep stepSealStagedRun(uint32_t& budget) {
+    if (writer_ == kNoRun || writerManifest_ != kNoManifest) return SealStep::Failed;
+    PassRun& r = runs_[writer_];
+    if (seal_.phase == SealPhase::None) {
+      seal_.phase = r.needsSort ? SealPhase::MidiHeapify : SealPhase::HideHeapify;
+      if (r.needsSort) ++slowSeals_;
+      seal_.cursor = (r.needsSort ? r.midiCount : r.hideCount) / 2;
+    }
+    while (seal_.phase != SealPhase::Done) {
+      const bool hides = seal_.phase == SealPhase::HideHeapify || seal_.phase == SealPhase::HideExtract;
+      const uint32_t n = hides ? r.hideCount : r.midiCount;
+      if (seal_.phase == SealPhase::MidiHeapify || seal_.phase == SealPhase::HideHeapify) {
+        if (seal_.cursor == 0) {
+          seal_.phase = hides ? SealPhase::HideExtract : SealPhase::MidiExtract;
+          seal_.cursor = n;
+          continue;
+        }
+        if (budget == 0) return SealStep::Pending;
+        --budget;
+        siftDown(r, --seal_.cursor, n, hides);
+        continue;
+      }
+      if (seal_.cursor <= 1) {
+        if (hides) {
+          seal_.phase = SealPhase::Done;
+        } else {
+          r.segCount = r.midiCount == 0 ? 0 : 1;
+          r.segStart[0] = 0;
+          r.needsSort = false;
+          seal_.phase = SealPhase::HideHeapify;
+          seal_.cursor = r.hideCount / 2;
+        }
+        continue;
+      }
+      if (budget == 0) return SealStep::Pending;
+      --budget;
+      const uint32_t end = --seal_.cursor;
+      const PassEvent t = rowRef(r, 0, hides);
+      rowRef(r, 0, hides) = rowRef(r, end, hides);
+      rowRef(r, end, hides) = t;
+      siftDown(r, 0, end, hides);
+    }
+    seal_ = SealJob{};
     runs_[writer_].committed = true;
     staged_[stagedCount_++] = writer_;
     writer_ = kNoRun;
     writerStop_ = AppendResult::Ok;
-    return true;
+    return SealStep::Sealed;
   }
   /// Make the staged runs the current manifest (revision = previous + 1). `kNoManifest` (nothing changed) when no
   /// manifest slot is free; the caller cancels.
@@ -472,6 +519,7 @@ class StoreCore {
   }
   /// Drop the candidate: the open staged run and every sealed staged run; all their pages return.
   void cancelStaged() {
+    seal_ = SealJob{};
     if (writer_ != kNoRun && writerManifest_ == kNoManifest) {
       releaseRunPages(runs_[writer_]);
       runLive_[writer_] = false;
@@ -485,6 +533,11 @@ class StoreCore {
     stagedCount_ = 0;
   }
   uint8_t stagedRunCount() const { return stagedCount_; }
+  /// Staged (unpublished) run `i`, and in-place access to its rows: a private candidate may still be annotated
+  /// (C4a: NoteOff ids are stamped after the pass is sealed, in tick order). Never valid for a published run.
+  RunId stagedRun(uint8_t i) const { return staged_[i]; }
+  const PassEvent& stagedRow(RunId id, uint32_t index) const { return midiAt(runs_[id], index); }
+  void setStagedRowNoteId(RunId id, uint32_t index, uint32_t noteId) { midiRef(runs_[id], index).noteId = noteId; }
   bool stagedWriterOpen() const { return writer_ != kNoRun && writerManifest_ == kNoManifest; }
 
   // ---- Readers -----------------------------------------------------------------------------------------------------
@@ -572,7 +625,13 @@ class StoreCore {
         uint32_t off = groupCount;
         for (uint32_t g = 0; g < groupCount; ++g) {
           const PassEvent& e = out[groupStart + g];
-          if (equalTickClass(e) == 0 && e.noteId == row.noteId) {
+          // Its own NoteOff, or an unattributed NoteOff of the same lane on the same tick (production attribution
+          // leaves a zero-length note's NoteOff unpaired: it precedes the NoteOn at an equal tick). A legato NoteOff of
+          // the previous note carries that note's id and is not taken.
+          const bool sameLane = e.status == static_cast<uint8_t>((row.status & 0x0F) | 0x80) ||
+                                e.status == static_cast<uint8_t>((row.status & 0x0F) | 0x90);
+          if (equalTickClass(e) == 0 &&
+              (e.noteId == row.noteId || (e.noteId == 0 && sameLane && e.data1 == row.data1))) {
             off = g;
             break;
           }
@@ -962,6 +1021,7 @@ class StoreCore {
     stagedCount_ = 0;
     stagedLoopLength_ = 0;
     slowSeals_ = 0;
+    seal_ = SealJob{};
     job_.active = false;
     indexJob_.active = false;
     window_.active = false;
@@ -1628,6 +1688,11 @@ class StoreCore {
   uint8_t stagedCount_ = 0;
   uint32_t stagedLoopLength_ = 0;
   uint32_t slowSeals_ = 0;
+  enum class SealPhase : uint8_t { None, MidiHeapify, MidiExtract, HideHeapify, HideExtract, Done };
+  struct SealJob {
+    SealPhase phase = SealPhase::None;
+    uint32_t cursor = 0;
+  } seal_;
   CompactionJob job_;
   mutable Merge composeScratch_;
   struct WindowJob {

@@ -1,0 +1,8 @@
+REVSHADOW,import,last_result=0,track=7,slot=3,loop=3,prev=13,cpr=13,publishes=13,source_moved=1,refusals=2,building=0,capture_runs=13,edit_runs=0,rows=1204,hides=0,unpaired_offs=0,job_steps=38
+REVSHADOW,grains,import_calls=415,import_max_us=197,import_deferred=0,index_calls=0,index_max_us=0,index_deferred=0,index_owed=0,index_ready=0,indexes_published=0,capacity_denied=0,pages_used=45,shadow_total_bytes=494940
+REVSHADOW,import_phases,begin_us=145,captures_us=176,pair_walk_us=197,pair_wrap_us=0,edit_apply_us=0,edit_sort_us=0,edit_emit_us=0,publish_us=0,slow_seals=0
+REVSHADOW,windows,calls=263,max_us=238,deferred=0,ready=130,index_owed=0,capacity_denied=0,source_moved=0,duplicate_publishes=0
+REVSHADOW,production,snapshot_current=0,pending_publish=1,snapshot_rows=0,passes_rows=1204
+REVSHADOW,parity_rev_vs_snapshot,unavailable
+REVSHADOW,parity_rev_vs_passes,status=0,used_index=0,identity=13,revision=13,source_current=1,production_rows=1204,shadow_rows=1204,production_only=0,shadow_only=0
+REVSHADOW,parity_done

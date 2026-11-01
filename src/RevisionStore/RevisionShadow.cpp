@@ -65,6 +65,12 @@ struct Digest {
     sum += h;
     x ^= h;
   }
+  // Disjoint windows combine into the digest of their union (the C4 whole-loop comparison).
+  void merge(const Digest& o) {
+    count += o.count;
+    sum += o.sum;
+    x ^= o.x;
+  }
   bool operator==(const Digest& o) const { return count == o.count && sum == o.sum && x == o.x; }
 };
 struct WindowDigest {
@@ -100,6 +106,7 @@ struct State {
   uint32_t sourceMoved = 0;
   uint32_t refusals = 0;
   Grain importGrain;
+  uint32_t importPhaseMaxUs[8] = {};  // by the phase a call started in: 0 = begin, 1..7 = Captures .. Publish
   Grain indexGrain;
   Grain windowGrain;
   PassEvent* producerOut = nullptr;  // the producer's window buffer, allocated at boot
@@ -232,6 +239,7 @@ void serviceIdleTurn(bool timingCritical, bool /*transportRunning*/) {
                                                     MidiServiceDrain::kOwnerWorkBudgetUs,
                                                     MidiServiceDrain::kRevisionShadowImportFineGrainUs)) {
     const uint32_t t0 = ARM_DWT_CYCCNT;
+    const uint8_t phaseAtEntry = job.phaseCode();
     ImportStep step = ImportStep::Pending;
     if (!job.active()) {
       gState.lastAttempt = source;
@@ -240,7 +248,9 @@ void serviceIdleTurn(bool timingCritical, bool /*transportRunning*/) {
     } else {
       step = job.step(kImportRowsPerGrain);
     }
-    gState.importGrain.record(cyclesToUs(ARM_DWT_CYCCNT - t0));
+    const uint32_t us = cyclesToUs(ARM_DWT_CYCCNT - t0);
+    gState.importGrain.record(us);
+    if (phaseAtEntry < 8 && us > gState.importPhaseMaxUs[phaseAtEntry]) gState.importPhaseMaxUs[phaseAtEntry] = us;
     if (step == ImportStep::Published) {
       const uint32_t keyHash = gState.building.key.inventory ^ (gState.building.key.playbackRevision * 2654435761u) ^
                                (static_cast<uint32_t>(gState.building.track) << 24) ^ gState.building.slot;
@@ -321,6 +331,16 @@ void printStatus() {
                   static_cast<unsigned>(ShadowCap::kPageCount - store.freePageCount()),
                   static_cast<unsigned long>(sizeof(ShadowStore) + sizeof(ShadowImportJob) +
                                              sizeof(PassEvent) * (kWindowCapacity + kProducerCapacity)));
+  {
+    const uint32_t* m = gState.importPhaseMaxUs;
+    Serial.printf_P(PSTR("REVSHADOW,import_phases,begin_us=%lu,captures_us=%lu,pair_walk_us=%lu,pair_wrap_us=%lu,"
+                         "edit_apply_us=%lu,edit_sort_us=%lu,edit_emit_us=%lu,publish_us=%lu,slow_seals=%lu\r\n"),
+                    static_cast<unsigned long>(m[0]), static_cast<unsigned long>(m[1]),
+                    static_cast<unsigned long>(m[2]), static_cast<unsigned long>(m[3]),
+                    static_cast<unsigned long>(m[4]), static_cast<unsigned long>(m[5]),
+                    static_cast<unsigned long>(m[6]), static_cast<unsigned long>(m[7]),
+                    static_cast<unsigned long>(store.slowSeals()));
+  }
   Serial.printf_P(PSTR("REVSHADOW,windows,calls=%lu,max_us=%lu,deferred=%lu,ready=%lu,index_owed=%lu,capacity_denied=%lu,"
                        "source_moved=%lu,duplicate_publishes=%lu\r\n"),
                   static_cast<unsigned long>(gState.windowGrain.calls),
@@ -439,8 +459,23 @@ void printWindows() {
   const uint32_t currentIdentity = store.identityOf(store.current());
   uint32_t compared = 0, matched = 0, stale = 0;
   bool firstMismatchShown = false;
+  // Whole loop (C4a): a windowed gather keeps the NoteOff of a note whose NoteOn lies outside the window, so per-window
+  // agreement can hide a misattributed NoteOff on both sides. The union of the shadow's windows is compared against
+  // production's whole-loop passes gather as well.
+  Digest shadowWhole, productionWhole;
+  uint32_t coveredTicks = 0, loopTicks = 0;
+  bool wholeAvailable = false;
   if (id.track < trackManager.getTrackCount()) {
     const Loop& loop = trackManager.getTrack(id.track).getLoop(id.slot);
+    loopTicks = loop.loopLengthTicks;
+    SessionMidiEventVec whole;
+    loop.copyEffectiveCommittedEventsInRange(whole, 0, loopTicks);
+    for (const MidiEvent& e : whole) {
+      if (e.tick >= loopTicks) continue;
+      const uint8_t status = static_cast<uint8_t>(static_cast<uint8_t>(e.type) | ((e.channel - 1) & 0x0F));
+      productionWhole.add(e.tick, status, e.data.noteData.note, e.data.noteData.velocity);
+    }
+    wholeAvailable = true;
     for (uint8_t i = 0; i < kDigestCount; ++i) {
       const WindowDigest& w = gState.digests[i];
       if (!w.valid) continue;
@@ -458,6 +493,8 @@ void printWindows() {
         p.add(e.tick, status, e.data.noteData.note, e.data.noteData.velocity);
       }
       ++compared;
+      shadowWhole.merge(w.digest);
+      coveredTicks += w.toTick - w.fromTick;
       if (p == w.digest) {
         ++matched;
       } else if (!firstMismatchShown) {
@@ -473,6 +510,13 @@ void printWindows() {
                   sourceCurrent ? 1u : 0u, static_cast<unsigned long>(currentIdentity),
                   static_cast<unsigned long>(compared), static_cast<unsigned long>(matched),
                   static_cast<unsigned long>(stale));
+  const bool covered = wholeAvailable && loopTicks > 0 && coveredTicks == loopTicks;
+  const bool wholeMatch = covered && shadowWhole == productionWhole;
+  Serial.printf_P(PSTR("REVSHADOW,windows_whole_loop,covered=%u,shadow_rows=%lu,production_rows=%lu,match=%u,"
+                       "c4_clean=%u\r\n"),
+                  covered ? 1u : 0u, static_cast<unsigned long>(shadowWhole.count),
+                  static_cast<unsigned long>(productionWhole.count), wholeMatch ? 1u : 0u,
+                  (sourceCurrent && compared > 0 && matched == compared && wholeMatch) ? 1u : 0u);
 }
 
 }  // namespace RevisionShadow

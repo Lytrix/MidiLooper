@@ -658,14 +658,23 @@ std::vector<PassEvent> committedPassRows(const Loop& loop, bool record) {
     p.noteId = e.isNoteOn() ? e.noteId : 0;
     out.push_back(p);
   }
-  for (PassEvent& off : out) {
-    if (equalTickClass(off) != 0) continue;
-    for (const PassEvent& on : out) {
-      if (equalTickClass(on) == 1 && (on.status & 0x0F) == (off.status & 0x0F) && on.data1 == off.data1) {
-        off.noteId = on.noteId;
-        break;
-      }
+  // Production's attribution (the importer's LanePairer): tick order, NoteOff before NoteOn at an equal tick, LIFO
+  // per lane, then the unique earlier unpaired NoteOff for a still-open NoteOn.
+  std::vector<uint32_t> order(out.size());
+  for (uint32_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return tickClassLess(out[a], out[b]); });
+  static LanePairer<256, 512> pairer;
+  pairer.reset();
+  for (uint32_t i : order) {
+    PassEvent& e = out[i];
+    const uint8_t channel = static_cast<uint8_t>((e.status & 0x0F) + 1);
+    if (equalTickClass(e) == 1) {
+      pairer.onNoteOn(channel, e.data1, e.tick, e.noteId);
+    } else if (equalTickClass(e) == 0) {
+      e.noteId = pairer.onNoteOff(channel, e.data1, e.tick, i);
     }
+  }
+  while (pairer.wrapStep([&](uint32_t index, uint32_t id) { out[index].noteId = id; })) {
   }
   return out;
 }
@@ -1237,6 +1246,30 @@ void test_import_refusals_happen_before_anything_is_written() {
   TEST_ASSERT_EQUAL(ImportResult::NoCommittedSource, gJob.result());
 }
 
+// ---- C4a: NoteOff attribution must follow production's tick-ordered lane walk (EditApply findNoteOffForOnIndex) ----
+// Device (2026-11-01, same-pitch 16ths overdubbed onto themselves): two NoteOffs of hidden notes were kept by the shadow.
+// Append-order LIFO and production's tick walk diverge when same-pitch notes overlap across the loop wrap.
+
+void test_wrap_overlapping_same_pitch_notes_are_attributed_like_production() {
+  Loop loop;
+  resetAll(loop);
+  std::vector<PassEvent> rec;
+  // Capture order: A on @1400, B on @1450 (overlap), the loop wraps, A's and B's offs at 20 and 60; then C, D.
+  commitWithChanges(loop, true,
+                    {{100, 0x90, 1, 50, 100}, {300, 0x80, 1, 50, 0}, {1400, 0x90, 1, 79, 100}, {1450, 0x90, 1, 79, 90},
+                     {20, 0x80, 1, 79, 0}, {60, 0x80, 1, 79, 0}, {500, 0x90, 1, 72, 100}, {600, 0x80, 1, 72, 0}},
+                    {}, &rec);
+  NoteId a = kInvalidNoteId;
+  for (const PassEvent& p : rec) {
+    if (equalTickClass(p) == 1 && p.data1 == 79 && p.tick == 1400) a = p.noteId;
+  }
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, a);
+  // An overdub hides A (as an overlap companion would).
+  commitWithChanges(loop, false, {{900, 0x90, 2, 40, 100}, {950, 0x80, 2, 40, 0}},
+                    {{PendingNoteChangeKind::Hide, a, 1, 79, 100, 1400, 20}});
+  assertParity(loop, "wrap-overlap hide");  // includes the import-parity check against the passes view
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_and_overdubs_without_overlap_match_production);
@@ -1264,6 +1297,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_import_candidate_is_invisible_until_published);
   RUN_TEST(test_import_source_moving_mid_build_cancels_the_candidate);
   RUN_TEST(test_import_refusals_happen_before_anything_is_written);
+  RUN_TEST(test_wrap_overlapping_same_pitch_notes_are_attributed_like_production);
   printf("C1 import_parity_checks=%u unpaired_noteoffs=%u\n", gImportChecks, gImportUnpairedOffs);
   return UNITY_END();
 }

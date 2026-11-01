@@ -588,6 +588,35 @@ void test_segment_budget_overflow_falls_back_to_counted_sort() {
   assertManifestMatches(gStore.current(), rev, 1, 0, 4 * kBarTicks);
 }
 
+// C4a: the seal of a staged over-budget run is a resumable heapsort -- one sift per budget unit, never the whole run in
+// one step -- and its result is the same exact order.
+void test_staged_seal_is_bounded_per_step_and_exact() {
+  gStore.reset();
+  TEST_ASSERT_EQUAL(AdmitResult::Ok, gStore.beginStagedRun(PassKind::Record, 4 * kBarTicks));
+  uint32_t x = 12345;
+  for (uint32_t i = 0; i < 300; ++i) {
+    x = x * 1664525u + 1013904223u;
+    const uint32_t tick = (x >> 8) % (4 * kBarTicks);
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gStore.appendMidi(tick, (i & 1) ? 0x80 : 0x90, 60 + (i % 12), 100, i + 1));
+  }
+  uint32_t steps = 0;
+  SealStep result = SealStep::Pending;
+  while (result == SealStep::Pending) {
+    uint32_t budget = 8;
+    result = gStore.stepSealStagedRun(budget);
+    ++steps;
+    TEST_ASSERT_TRUE(steps < 1000);
+  }
+  TEST_ASSERT_EQUAL(SealStep::Sealed, result);
+  TEST_ASSERT_TRUE(steps >= 50);  // 300 rows: 150 heapify + 299 extract sifts, at most 8 per step
+  TEST_ASSERT_EQUAL_UINT32(1, gStore.slowSeals());
+  const ManifestId m = gStore.publishStaged();
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  const ComposeStamp stamp = gStore.composeWindow(m, 0, 4 * kBarTicks, gOut, 4096, EffectivePolicy::source());
+  TEST_ASSERT_EQUAL_UINT32(300, stamp.count);
+  for (uint32_t i = 1; i < stamp.count; ++i) TEST_ASSERT_FALSE(tickClassLess(gOut[i], gOut[i - 1]));
+}
+
 static OracleRevision buildFiveRunTake() {
   OracleRevision rev = recordTake(200, kLongTakeTicks);
   for (int i = 0; i < 4; ++i) rev = overdub(rev, 25, kLongTakeTicks, {rev.passes[0].rows[4 * i].noteId});
@@ -1279,5 +1308,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_window_ready_equals_scan_composition_and_carries_actual_identity);
   RUN_TEST(test_window_named_answers_never_build_and_never_scan);
   RUN_TEST(test_window_started_on_one_manifest_finishes_honestly_as_that_manifest);
+  RUN_TEST(test_staged_seal_is_bounded_per_step_and_exact);
   return UNITY_END();
 }
