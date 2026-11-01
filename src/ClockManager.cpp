@@ -8,6 +8,7 @@
 #include "LooperState.h"
 #include "StorageManager.h"
 #include <IntervalTimer.h>
+#include "Utils/PlaybackTickContext.h"
 #include "TrackManager.h"
 #include "Logger.h"
 #include "MidiHandler.h"
@@ -225,7 +226,11 @@ void ClockManager::updateInternalClock() {
     midiHandler.sendClock();
   }
   trackManager.advanceJamTicks(1);
-  trackManager.updateAllTracks(currentTick);
+  {
+    // DEC-241: this tick runs in the PIT ISR -- playback on it is consume-only (Utils/PlaybackTickContext.h).
+    const PlaybackTickContext::InterruptScope interruptTick;
+    trackManager.updateAllTracks(currentTick);
+  }
   lastInternalTickTime = micros();
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   InvestigationAllocProbe::recordIntervalTimerSpan(micros() - intervalTimerStartUs);

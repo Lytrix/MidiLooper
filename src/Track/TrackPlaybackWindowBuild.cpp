@@ -30,6 +30,7 @@
 #include "WindowPagedStream.h"  // task 3.7a (I1): the paged stream's page capacity is the gather's slice size
 #include "PlaybackMergedMidiEvents.h"
 #include "Utils/RuntimeProfiler.h"
+#include "Utils/PlaybackTickContext.h"
 
 namespace {
 /// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
@@ -577,6 +578,26 @@ void reanchorFixedPlaybackIndex(Loop& loop, const FixedPlaybackEventStorage& sto
 }
 
 namespace { bool mergedMidiEventsBuildInProgress = false; }
+
+// DEC-241: the internal-clock ISR tick is consume-only (Utils/PlaybackTickContext.h). RAM2, cleared at boot.
+#ifndef DMAMEM
+#define DMAMEM
+#endif
+DMAMEM PlaybackTickContext::State PlaybackTickContext::gState;
+static_assert(Config::NUM_TRACKS <= 8 && Config::MAX_LOOPS_PER_TRACK <= 8, "owed bits: one byte per track");
+TRACK_COLD_MEM void PlaybackTickContext::initAtBoot() {
+  gState.inInterrupt = false;
+  gState.servicing = false;
+  for (auto& bits : gState.owed) bits = 0;
+  gState.misses = 0;
+}
+#if defined(PIO_UNIT_TEST_NATIVE)
+bool mergedFallbackOwedForTest(uint8_t trackIndex, uint8_t slotIndex) {
+  return trackIndex < Config::NUM_TRACKS && slotIndex < 8 &&
+         (PlaybackTickContext::gState.owed[trackIndex] & (1u << slotIndex)) != 0;
+}
+uint32_t mergedFallbackTickMissesForTest() { return PlaybackTickContext::gState.misses; }
+#endif
 #if defined(PIO_UNIT_TEST_NATIVE)
 // Test-only witness: MIDI turns that selected the live overlay window. No target path reads it.
 namespace { unsigned sOverlayLiveSelectionsForTest = 0; bool sOverlayEdgeDisabledForTest = false; }
@@ -592,6 +613,51 @@ namespace { unsigned sMergedRebuildsForTest = 0; }
 unsigned playbackMergedRebuildCountForTest() { return sMergedRebuildsForTest; }
 void resetPlaybackMergedRebuildCountForTest() { sMergedRebuildsForTest = 0; }
 #endif
+
+namespace {
+/// The merged fallback's one reuse rule: same identity **and** the window still covers the playhead (DEC-197). Shared by
+/// the build (`ensurePlaybackMergedMidiEventsBuilt`) and the interrupt tick's consume check (DEC-241), so the two can
+/// never disagree about whether a built fallback is current.
+TRACK_COLD_MEM bool mergedFallbackReuseHolds(const LoopPlaybackRuntime& runtime, uint32_t windowRevision,
+                                             const void* buildIdentity, uint32_t playhead, bool prepareLaunch) {
+  if (runtime.mergedMidiEvents.builtFromRevision != windowRevision ||
+      runtime.mergedMidiEvents.builtFromSnapshotIdentity != buildIdentity ||
+      (buildIdentity == nullptr && runtime.mergedMidiEvents.empty()) ||
+      runtime.mergedMidiEvents.windowLengthTicks == 0) {
+    return false;
+  }
+  const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
+  const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
+  const uint32_t margin = Config::TICKS_PER_BAR / 2;
+  return (prepareLaunch ? playhead >= winStart : playhead + margin >= winStart) && playhead < winEnd;
+}
+
+struct MergedFallbackKey {
+  uint32_t windowRevision;
+  const void* buildIdentity;
+  uint32_t playhead;
+};
+
+/// The same key `ensurePlaybackMergedMidiEventsBuilt` derives for a tick build (`prepareLaunch == false`).
+TRACK_COLD_MEM MergedFallbackKey mergedFallbackTickKey(Track& track, Loop& loop, uint32_t currentTick) {
+  const bool noteEditPreview = editManager.isNoteEditActive() && &track == &trackManager.getSelectedTrack();
+  MergedFallbackKey key{};
+  key.windowRevision = noteEditPreview ? editManager.sessionPlaybackPreviewRevision() : loop.playbackRevision;
+  const void* snapshotIdentity = noteEditPreview ? nullptr : loop.publishedSnapshotIdentity();
+  if (loop.loopLengthTicks > 0) {
+    key.playhead = IntervalProjection::tickPhaseInProjectionCycle(currentTick, track.getProjectionCycleStartTick(),
+                                                                  loop.loopLengthTicks);
+  }
+  const uint8_t recordOverlaySlot = playbackRebuildSlotIndex(track, loop);
+  const bool publishedRecordOverlay = !noteEditPreview && loop.hasSealedCaptureBorrow() &&
+                                      track.hasPublishedRecordPresentationForSlot(recordOverlaySlot);
+  const void* const recordOverlayIdentity =
+      publishedRecordOverlay ? static_cast<const void*>(loop.captureReadSource().finalizing) : nullptr;
+  key.buildIdentity = snapshotIdentity != nullptr ? snapshotIdentity : recordOverlayIdentity;
+  return key;
+}
+
+}  // namespace
 
 bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackRuntime& runtime,
                                bool /*allowHeavyBuild*/, uint32_t currentTick, bool prepareLaunch) {
@@ -647,18 +713,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 
   // One reuse rule: same identity **and** the window still covers the playhead. The coverage half is what lets the
   // windowed path move; without it a window is frozen at wherever it was first built (DEC-197).
-  if (runtime.mergedMidiEvents.builtFromRevision == windowRevision &&
-      runtime.mergedMidiEvents.builtFromSnapshotIdentity == buildIdentity &&
-      (buildIdentity != nullptr || !runtime.mergedMidiEvents.empty()) &&
-      runtime.mergedMidiEvents.windowLengthTicks > 0) {
-    const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
-    const uint32_t winEnd = winStart + runtime.mergedMidiEvents.windowLengthTicks;
-    const uint32_t margin = Config::TICKS_PER_BAR / 2;
-    if ((prepareLaunch ? playhead >= winStart : playhead + margin >= winStart) &&
-        playhead < winEnd) {
-      DIAG_COUNTER_INC(PlaybackDeferredReuse);
-      return false;
-    }
+  if (mergedFallbackReuseHolds(runtime, windowRevision, buildIdentity, playhead, prepareLaunch)) {
+    DIAG_COUNTER_INC(PlaybackDeferredReuse);
+    return false;
   }
   // DEC-239 profile scope (long: window-shaped but content-sized, no hard event cap; synchronous). After the
   // reuse return above: on device that cheap path was ~32,000 calls per chain at ~17 us, i.e. the poll.
@@ -1016,6 +1073,32 @@ const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
   track.observePlaybackSnapshotAvailability(playbackRebuildSlotIndex(track, loop), currentTick);
 #endif
   return &runtime.mergedMidiEvents.mergedEvents;
+}
+
+/// DEC-241: the tick's merged-fallback route. On the main-loop tick (external clock) it is the cold build above,
+/// unchanged. In the internal-clock **interrupt** it is consume-only: a current, order-clean fallback that nobody is
+/// rebuilding is served; anything else is owed to `TrackManager::serviceOwedTickPlaybackFallbacks` and the tick gets no
+/// merged source (the caller contains the turn). No build, allocation, incremental admit, order rebuild or publication.
+TRACK_COLD_MEM const SessionMidiEventVec* selectMergedPlaybackFallbackForTick(
+    Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint8_t slotIndex, uint32_t currentTick) {
+  if (!PlaybackTickContext::inInterrupt()) {
+    return buildMergedPlaybackFallbackCold(track, loop, runtime, currentTick);
+  }
+  bool consumable = !mergedMidiEventsBuildInProgress && !PlaybackTickContext::gState.servicing && !loop.playbackOrderDirty;
+  if (consumable) {
+    const MergedFallbackKey key = mergedFallbackTickKey(track, loop, currentTick);
+    consumable = mergedFallbackReuseHolds(runtime, key.windowRevision, key.buildIdentity, key.playhead, false);
+  }
+  if (consumable) {
+    return &runtime.mergedMidiEvents.mergedEvents;
+  }
+  const uint8_t trackIndex = playbackRebuildTrackIndex(track);
+  if (trackIndex < Config::NUM_TRACKS && slotIndex < 8) {
+    PlaybackTickContext::gState.owed[trackIndex] =
+        static_cast<uint8_t>(PlaybackTickContext::gState.owed[trackIndex] | (1u << slotIndex));
+  }
+  PlaybackTickContext::gState.misses = PlaybackTickContext::gState.misses + 1u;
+  return nullptr;
 }
 
 PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
@@ -2202,6 +2285,36 @@ TRACK_COLD_MEM uint16_t Track::viewPrewarmProgressForSlot(uint8_t slotIndex) con
 TRACK_COLD_MEM bool Track::hasPlaybackOccupancyForSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
   return playbackRuntime.slotIfAllocated(slotIndex) != nullptr;
+}
+
+TRACK_COLD_MEM void Track::serviceOwedTickPlaybackFallback(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) return;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) return;
+  Loop& loop = loopForSlot(slotIndex);
+  const uint32_t currentTick = clockManager.getCurrentTick();
+  // The interrupt tick sees `servicing` and owes again instead of reading a half-built fallback.
+  PlaybackTickContext::gState.servicing = true;
+  (void)buildMergedPlaybackFallbackCold(*this, loop, *runtime, currentTick);  // the exact body the tick would have run
+  if (loop.playbackOrderDirty) {
+    const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+    ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
+    reanchorPlaybackIndex(loop, runtime->mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(), playbackContext);
+  }
+  PlaybackTickContext::gState.servicing = false;
+}
+
+TRACK_COLD_MEM void TrackManager::serviceOwedTickPlaybackFallbacks() {
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS && trackIndex < getTrackCount(); ++trackIndex) {
+    const uint8_t owed = PlaybackTickContext::gState.owed[trackIndex];
+    if (owed == 0) continue;
+    // Clear before building: an interrupt tick that lands during the build owes again, and the next turn finds the
+    // fallback current (a cheap reuse) instead of losing the request.
+    PlaybackTickContext::gState.owed[trackIndex] = 0;
+    for (uint8_t slot = 0; slot < 8; ++slot) {
+      if ((owed & (1u << slot)) != 0) getTrack(trackIndex).serviceOwedTickPlaybackFallback(slot);
+    }
+  }
 }
 
 TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {

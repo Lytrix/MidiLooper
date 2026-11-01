@@ -348,7 +348,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (useMergedFallback) {
     // DEC-239 diagnostic: names this tick-path route into the merged build (entered from IRQ_PIT on internal clock).
     PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::TickMergedFallback_build);
-    mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
+    mergedEvents = selectMergedPlaybackFallbackForTick(*this, loop, runtime, slotIndex, currentTick);
+    if (mergedEvents == nullptr) {
+      // DEC-241: an interrupt tick with no consumable fallback owes the build and ends the turn, contained.
+      (void)containPlaybackTurnIfNoRouteForSlot(slotIndex, currentTick, isActive);
+      return;
+    }
   }
 
   // ---- Task 4.5: the owner-level **"no serving route at all"** predicate, beside route selection ---------------------

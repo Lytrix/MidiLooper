@@ -1276,12 +1276,18 @@ public:
   /// and output ports; cursor and ledger always run.
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
   void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput);
+  /// DEC-241: main-loop build of a merged fallback an interrupt-context tick owed (see TrackManager).
+  void serviceOwedTickPlaybackFallback(uint8_t slotIndex);
 #if defined(PIO_UNIT_TEST_NATIVE)
 /// **DEC-143's cost criterion, observable from a native suite.** The merged playback fallback may rebuild only when the
 /// published identity it is built from changed; a maintenance turn that finds the same identity must reuse. Counted at
 /// the rebuild point itself so a suite can prove "bounded work", not merely "no silence".
 unsigned playbackMergedRebuildCountForTest();
 void resetPlaybackMergedRebuildCountForTest();
+/// DEC-241: whether an interrupt-context tick owes the main loop this slot's merged fallback, and how many
+/// interrupt ticks found no consumable fallback.
+bool mergedFallbackOwedForTest(uint8_t trackIndex, uint8_t slotIndex);
+uint32_t mergedFallbackTickMissesForTest();
 #endif
 #if defined(PIO_UNIT_TEST_NATIVE)
   /// 3.7a (I4): **the MIDI edge's own record of what committed playback put on the wire.**

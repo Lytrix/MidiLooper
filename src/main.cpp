@@ -38,6 +38,7 @@
 #include "BootGate.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/RuntimeProfiler.h"
+#include "Utils/PlaybackTickContext.h"
 #include <cstdio>
 
 static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
@@ -1163,6 +1164,8 @@ FLASHMEM void setup() {
 #if defined(SESSION_CAPTURE)
   emitBootResetCapture(hadCrashReport);
 #endif
+  // DEC-241: the tick-context state is RAM2 (NOLOAD); clear it before the clock or any playback can run.
+  PlaybackTickContext::initAtBoot();
 #if RUNTIME_PROFILE_SCOPES
   // DEC-239: the profiler's RAM2 state is NOLOAD; clear it, calibrate and emit the boot row before
   // `prewarmPlaybackRuntime()` below, the first call that can reach an instrumented owner.
@@ -1302,6 +1305,8 @@ void loop() {
   // this is where that work is done, beside the other deferred outbound work. It sits here so a row is
   // emitted before this iteration's `SC_CAPTURE_FLUSH` rather than after it.
   trackManager.drainEdgeEffects();
+  // DEC-241: build, off-clock, any merged playback fallback the internal-clock ISR tick found stale (it never builds).
+  trackManager.serviceOwedTickPlaybackFallbacks();
 
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();

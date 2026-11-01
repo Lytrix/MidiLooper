@@ -67,6 +67,9 @@ public:
 
   // --- Track Updates ---
   void updateAllTracks(uint32_t currentTick);  // Update all tracks and handle pending operations
+  /// DEC-241: main-loop owner of the merged playback fallbacks an interrupt-context tick could not consume. Cheap when
+  /// nothing is owed; builds each owed slot off-clock so the next interrupt tick can consume it.
+  void serviceOwedTickPlaybackFallbacks();
   void advanceJamTicks(uint32_t delta);         // Advance jamTick for all jam-active tracks
 
   // --- Recording ---

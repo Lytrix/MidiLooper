@@ -168,6 +168,11 @@ TRACK_INTERNAL_MEM PlaybackEventStream makePagedEmissionStream(PagedEmissionStre
 /// clock-path detector counts that build, so this fallback cannot grow silently.
 TRACK_INTERNAL_MEM const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
     Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint32_t currentTick);
+/// DEC-241: the tick's route into that fallback. Main-loop tick: the cold build above, unchanged. Internal-clock
+/// interrupt tick: consume a current fallback or owe it to `TrackManager::serviceOwedTickPlaybackFallbacks` and return
+/// nullptr -- never build.
+TRACK_INTERNAL_MEM const SessionMidiEventVec* selectMergedPlaybackFallbackForTick(
+    Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint8_t slotIndex, uint32_t currentTick);
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeCapturePlaybackStream(Loop& loop);
 

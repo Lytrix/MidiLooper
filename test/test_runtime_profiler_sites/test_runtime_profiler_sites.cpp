@@ -10,6 +10,7 @@
 #include "../test_support/capture_storage_harness.inc"
 
 #include "Utils/RuntimeProfiler.h"
+#include "Utils/PlaybackTickContext.h"
 
 namespace {
 uint32_t gProfileCycles = 0;
@@ -177,6 +178,66 @@ void test_load_step_is_not_profiled_without_a_job() {
   TEST_ASSERT_EQUAL_UINT32(0, calls(ProfileId::LoadStep));
 }
 
+
+// ---- DEC-241: the internal-clock ISR tick is consume-only ----
+
+/// Device trace 2026-11-01: IRQ_PIT -> updateAllTracks -> playCommittedLoopMidi -> buildMergedPlaybackFallbackCold ->
+/// ensurePlaybackMergedMidiEventsBuilt ran real 5-18 ms builds inside the interrupt. A tick in interrupt context may
+/// consume a current merged fallback but must never build one: it owes the build to the main-loop owner instead.
+void test_isr_tick_never_builds_the_merged_fallback_and_owes_it() {
+  Track& t = playingTrackWithContent();
+  resetPlaybackMergedRebuildCountForTest();
+  const uint32_t missesBefore = mergedFallbackTickMissesForTest();
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(96, false);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, playbackMergedRebuildCountForTest(),
+                                 "an interrupt-context tick must not build the merged fallback");
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeProfiler::stat(ProfileId::PlaybackWindow_build).calls);
+  TEST_ASSERT_TRUE_MESSAGE(mergedFallbackOwedForTest(0, 0), "the missed source must be owed to the main loop");
+  TEST_ASSERT_TRUE(mergedFallbackTickMissesForTest() > missesBefore);
+
+  // The main-loop owner builds it off-clock; the next interrupt tick consumes it without building.
+  trackManager.serviceOwedTickPlaybackFallbacks();
+  TEST_ASSERT_EQUAL_UINT(1, playbackMergedRebuildCountForTest());
+  TEST_ASSERT_FALSE(mergedFallbackOwedForTest(0, 0));
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(120, false);
+  }
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, playbackMergedRebuildCountForTest(), "a current fallback is consumed, not rebuilt");
+  TEST_ASSERT_FALSE(mergedFallbackOwedForTest(0, 0));
+}
+
+/// The main-loop tick (external clock) keeps today's behaviour in this slice: it still builds on demand.
+void test_main_loop_tick_still_builds_the_merged_fallback() {
+  Track& t = playingTrackWithContent();
+  resetPlaybackMergedRebuildCountForTest();
+  t.playMidiEvents(96, false);
+  TEST_ASSERT_EQUAL_UINT(1, playbackMergedRebuildCountForTest());
+  TEST_ASSERT_FALSE(mergedFallbackOwedForTest(0, 0));
+}
+
+
+/// DEC-241: an order-dirty fallback is not consumable in the interrupt either -- the tick would otherwise sort the
+/// playback order inside the ISR. It is owed, and the owner rebuilds the order off-clock.
+void test_isr_tick_never_rebuilds_the_playback_order() {
+  Track& t = playingTrackWithContent();
+  t.playMidiEvents(96, false);  // main-loop tick: builds the fallback and its order
+  Loop& loop = t.getLoop(0);
+  loop.playbackOrderDirty = true;
+  {
+    PlaybackTickContext::InterruptScope isr;
+    t.playMidiEvents(120, false);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.playbackOrderDirty, "the interrupt tick must not rebuild the playback order");
+  TEST_ASSERT_TRUE(mergedFallbackOwedForTest(0, 0));
+  trackManager.serviceOwedTickPlaybackFallbacks();
+  TEST_ASSERT_FALSE_MESSAGE(loop.playbackOrderDirty, "the main-loop owner rebuilds the order");
+  TEST_ASSERT_FALSE(mergedFallbackOwedForTest(0, 0));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_slot_prewarm_and_monolithic_views_are_profiled);
@@ -187,5 +248,8 @@ int main(int, char**) {
   RUN_TEST(test_overdub_start_is_profiled_on_every_exit);
   RUN_TEST(test_save_work_item_step_is_profiled);
   RUN_TEST(test_load_step_is_not_profiled_without_a_job);
+  RUN_TEST(test_isr_tick_never_builds_the_merged_fallback_and_owes_it);
+  RUN_TEST(test_main_loop_tick_still_builds_the_merged_fallback);
+  RUN_TEST(test_isr_tick_never_rebuilds_the_playback_order);
   return UNITY_END();
 }
