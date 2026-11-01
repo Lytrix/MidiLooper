@@ -13720,17 +13720,24 @@ Improvements:
 Not accepted:
 - **Restored slots are blocked at their first handoff:** `candidate_not_ready` on the 8-bar t1 and `candidate_rejected`
   on the 4-bar t2. Each restart then blocks them again (defect C).
-- **Tracks 4–6 are silent again.** ch4–6 NoteOns went from 758 / 967 / 393 on DEC-242 to 0. They emit no `route_reject`
-  rows, so they are either served by the lane with empty content or not reaching route selection. The default image
-  cannot tell these apart: no per-slot route row exists.
+- **ch4–6 are silent again** (NoteOns 758 / 967 / 393 on DEC-242 → 0). The owner reports that tracks 4 and 6 are
+  **empty slots** (2026-11-01). The DEC-242 run's ch4 output was the rig's own 16ths + chords mix (pitches 74 / 78 / 80 /
+  45 / 48 / 51) and ch6 was drum-like (60 / 12 / 26), so that output must be explained as well. Either the channel ↔
+  track mapping differs from the owner's numbering, or the card holds content the owner does not expect. Not counted as
+  a DEC-243 regression until the mapping is established.
 - **External-clock maxima rose:** `midi_gap` 285 ms and `late_on` 203 ms, in the window ending at the first overdub
   start (73.5 s). That is one sample, not attributed.
 - **Boot cost:** about 270 ms of extra boot prewarm and about 2.1 MB of PSRAM.
 
 ### Next
 
-1. A per-slot route row, or a served-empty count, to separate "served empty" from "not reached" for tracks 4–6, before
-   any further change.
+1. Establish the channel ↔ track mapping and the card's actual slot contents. Add a per-slot route row only if
+   "served empty" versus "not reached" still matters after that.
+0. **Owner report (2026-11-01): overdubs are not audible since 2026-10-31.** Across the owner-chain captures, ch8 (t7 s3,
+   the overdub target) emits the overdub chord pitches (39 / 45 / 48 / 51 / 59) in `session_20261030_220124` (326) and
+   `session_20261031_001418` (227), and **0–16 from `session_20261031_121645` onward**, including every chain on
+   2026-11-01. Its 16ths are intact. No commit lands between those runs (working-tree images were flashed). This
+   predates DEC-241 / DEC-242 / DEC-243 and is handled as its own investigation.
 2. The first-handoff blocks on restored slots (defects D / C family).
 3. The standby pool: size N × 288,768 B against PSRAM headroom. Allocate it during non-timing-critical startup; borrow
    in O(1).
