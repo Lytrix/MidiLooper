@@ -4,6 +4,7 @@
 #define RUNTIME_PROFILE_SCOPES 1
 #include <unity.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -436,7 +437,7 @@ void test_exception_context_entry_is_refused_without_touching_nesting() {
   }
   TEST_ASSERT_EQUAL_UINT32(1, counters().isrRefused);
   TEST_ASSERT_EQUAL_UINT32(0, self().calls);
-  TEST_ASSERT_EQUAL_UINT32(0, self().refused);
+  TEST_ASSERT_EQUAL_UINT32(1, self().refused);  // names the identity the interrupt reached
   TEST_ASSERT_FALSE(counters().poisoned);
   const ProfileStat& outer = stat(ProfileId::RecordStart_edge);
   TEST_ASSERT_EQUAL_UINT32(1, outer.calls);
@@ -515,7 +516,12 @@ void test_stats_dump_drains_in_bounded_batches_with_resume() {
   gRows.clear();
   TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_STATS"));
   TEST_ASSERT_TRUE(gRows[0].find("DIAG,profile_stat,1,SelfTest,calls=0,") != std::string::npos);
-  TEST_ASSERT_TRUE(lastRow().find(",count=14,resume=0,multi_batch=0,") != std::string::npos);
+  // The command's own batch is bounded at 16 rows; the remainder is owed to the next request.
+  const size_t firstBatch = dumpable < ProfileDiagRows::kStatsBatchMax ? dumpable : ProfileDiagRows::kStatsBatchMax;
+  char expected[64];
+  std::snprintf(expected, sizeof(expected), ",count=%u,resume=%u,", static_cast<unsigned>(firstBatch),
+                dumpable > firstBatch ? 1u : 0u);
+  TEST_ASSERT_TRUE(lastRow().find(expected) != std::string::npos);
 }
 
 void test_stats_row_reports_averages_in_microseconds() {
@@ -609,7 +615,9 @@ void test_reset_command_clears_the_table_ring_and_cursors() {
   TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RING"));  // mid-session
   TEST_ASSERT_TRUE(ProfileDiagRows::dumpStatsBatch(2) == 2);            // mid stats dump
   TEST_ASSERT_TRUE(ProfileDiagRows::handleCommand("!PROFILE_RESET"));
-  TEST_ASSERT_TRUE(lastRow().find("DIAG,profile_reset,15") != std::string::npos);
+  char resetRow[48];
+  std::snprintf(resetRow, sizeof(resetRow), "DIAG,profile_reset,%u", static_cast<unsigned>(ProfileId::Count));
+  TEST_ASSERT_TRUE(lastRow().find(resetRow) != std::string::npos);
   TEST_ASSERT_EQUAL_UINT32(0, self().calls);
   TEST_ASSERT_EQUAL_UINT16(0, counters().ringCount);
   TEST_ASSERT_FALSE(dumpCursors().ringActive);

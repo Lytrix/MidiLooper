@@ -52,6 +52,18 @@ enum class ProfileId : uint16_t {
   Display_frame_phase = 12,
   LoadStep = 13,
   OverdubStart_body = 14,
+  // Children of OverdubStart_body (2026-11-01: the start edge measured 66 ms avg / 159 ms max).
+  OverdubStart_handoff = 15,
+  OverdubStart_staging = 16,
+  OverdubStart_workingSet = 17,
+  OverdubStart_memAdmit = 18,
+  OverdubStart_interval = 19,
+  OverdubStart_capture = 20,
+  OverdubStart_undo = 21,
+  // Children of OverdubStart_capture (55 ms avg on device).
+  OverdubStart_openSession = 22,
+  OverdubStart_beginCapture = 23,
+  OverdubStart_bindPredecessor = 24,
   Count
 };
 

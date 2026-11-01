@@ -4357,7 +4357,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // producer. Hand it off **before** this Start prewarms, resets staging or claims a session-exit
   // obligation. Only genuine physical cut exhaustion retains the Start as a distinct intent beside the
   // Stop: the Stop is never overwritten, and the successor opens as soon as its own role is available.
-  if (!handOffRetainedStopBeforeSuccessorStart(currentTick)) {
+  bool handedOff;
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_handoff);
+    handedOff = handOffRetainedStopBeforeSuccessorStart(currentTick);
+  }
+  if (!handedOff) {
     retainSuccessorStartIntent();
     return;
   }
@@ -4370,6 +4375,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   LoopPlaybackRuntime* stagingAdmission = playbackRuntime.trySlot(activeLoopIndex);
   bool stagingAdmitted = false;
   if (stagingAdmission != nullptr) {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_staging);
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
     stagingAdmitted = stagingAdmission->prewarmCaptureStaging();
     ExternalPoolAccounting::endTag();
@@ -4384,6 +4390,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // `ensureCapacity` only grows, so a sparse slot keeps the smaller reserve.
   bool companionRowsAdmitted = false;
   if (stagingAdmission != nullptr) {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_staging);
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
     companionRowsAdmitted = stagingAdmission->frozenCaptureCompanions.ensureCapacity(
         loopRef.companionRowHorizonBound());
@@ -4398,7 +4405,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // is an allocation-bearing cold turn, so it lives in FLASH with the other cold admission helpers:
   // inlining it here cost ~300 B of ITCM and took the RAM1 padding line from 872 to 568. The
   // canonical copy stays lazy -- START is deliberately not gated on it; the stop's park acquires it.
-  if (!admitOverdubStartWorkingSet()) return;
+  bool workingSetAdmitted;
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_workingSet);
+    workingSetAdmitted = admitOverdubStartWorkingSet();
+  }
+  if (!workingSetAdmitted) return;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
@@ -4418,7 +4430,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // operation-level denial, so refuse here with the loop still playing and no
   // ownership, reservation or state change to unwind. Emits `#MEM_DENIED` with the
   // operation, the reason, the requested margin and the measured availability.
-  if (!MemoryMonitor::admitOperationMemory(MemoryMonitor::OperationKind::OverdubStart, 0)) {
+  bool memoryAdmitted;
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_memAdmit);
+    memoryAdmitted = MemoryMonitor::admitOperationMemory(MemoryMonitor::OperationKind::OverdubStart, 0);
+  }
+  if (!memoryAdmitted) {
     return;
   }
   // The frozen order/rewrite builders are the STOP's scratch, not the start's: a pending
@@ -4446,11 +4463,21 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // no mutation of the interval is reachable without a durable destination for its stop. The claim and
   // its named refusal live in FLASH: this function is ITCM and every instruction here is RAM1 padding.
   // The interval's own open stamps the identity the claim is held for.
-  if (!claimOverdubSessionExitObligation()) {
+  bool obligationClaimed;
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_interval);
+    obligationClaimed = claimOverdubSessionExitObligation();
+  }
+  if (!obligationClaimed) {
     return;
   }
   const uint32_t stateAdvanceStartUs = micros();
-  if (!beginCaptureInterval(TRACK_OVERDUBBING)) {
+  bool intervalBegun;
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_interval);
+    intervalBegun = beginCaptureInterval(TRACK_OVERDUBBING);
+  }
+  if (!intervalBegun) {
     SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                   DebugSessionCapture::kUnsampledHeapBytes,
                   DebugSessionCapture::kUnsampledHeapBytes, "failed");
@@ -4481,13 +4508,25 @@ void Track::startOverdubbing(uint32_t currentTick) {
   const uint32_t captureStartUs = micros();
   // DEC-068: a pending predecessor's session tail is captured in its own receipt, so this
   // interval must not join the draining session state.
-  loop.openOverdubSession(playheadPhase, hasPendingDeferredOverdubStop());
-  loop.beginCapture(CapturePhase::Overdub, playheadPhase);
+  {
+  PROFILE_SCOPE_LONG(captureChildScope, RuntimeProfiler::ProfileId::OverdubStart_capture);
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_openSession);
+    loop.openOverdubSession(playheadPhase, hasPendingDeferredOverdubStop());
+  }
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_beginCapture);
+    loop.beginCapture(CapturePhase::Overdub, playheadPhase);
+  }
   // CONTRACTS.md C3.1/C3.2: qualify this session's private predecessor at its open edge, before any
   // note-on can ask for a hold decision. Binding performs no content work -- it records the identity
   // (receipt, interval, frozen content generation) the deferred grains will scan, so a note-on that
   // arrives before the first grain still knows a private source is owed and retains its intent.
-  (void)bindPrivatePredecessorSourceForOverdub(loop);
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_bindPredecessor);
+    (void)bindPrivatePredecessorSourceForOverdub(loop);
+  }
+  }
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -4498,7 +4537,10 @@ void Track::startOverdubbing(uint32_t currentTick) {
         static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
   }
   const uint32_t undoStartUs = micros();
-  TrackUndo::beginOverdubSession(*this);
+  {
+    PROFILE_SCOPE_LONG(childScope, RuntimeProfiler::ProfileId::OverdubStart_undo);
+    TrackUndo::beginOverdubSession(*this);
+  }
   SC_ODUB_STAGE("undo_session", micros() - undoStartUs, DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
   logger.info("Overdub session opened: events=%d, undo_entries=%d",

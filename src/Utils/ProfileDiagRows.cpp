@@ -41,6 +41,16 @@ PDR_FLASH const char* profileName(ProfileId id) {
     case ProfileId::Display_frame_phase: return "Display_frame_phase";
     case ProfileId::LoadStep: return "LoadStep";
     case ProfileId::OverdubStart_body: return "OverdubStart_body";
+    case ProfileId::OverdubStart_handoff: return "OverdubStart_handoff";
+    case ProfileId::OverdubStart_staging: return "OverdubStart_staging";
+    case ProfileId::OverdubStart_workingSet: return "OverdubStart_workingSet";
+    case ProfileId::OverdubStart_memAdmit: return "OverdubStart_memAdmit";
+    case ProfileId::OverdubStart_interval: return "OverdubStart_interval";
+    case ProfileId::OverdubStart_capture: return "OverdubStart_capture";
+    case ProfileId::OverdubStart_undo: return "OverdubStart_undo";
+    case ProfileId::OverdubStart_openSession: return "OverdubStart_openSession";
+    case ProfileId::OverdubStart_beginCapture: return "OverdubStart_beginCapture";
+    case ProfileId::OverdubStart_bindPredecessor: return "OverdubStart_bindPredecessor";
     case ProfileId::Count: break;
   }
   return "Unknown";
