@@ -215,4 +215,6 @@ compare).
 
    Never `playbackRevision` alone.
 
-**C5 status: blocked on `playback-tick-consume-only`** (DEC-246 amendment 20). Nothing is implemented.
+**C5 status: unblocked (DEC-246 amendment 21).** The prerequisite is the landed internal-clock consume-only invariant
+only. The rest of `playback-tick-consume-only` (4.2b, 5.x, 6.x, 7, 8) is re-qualified against the manifest-backed
+lane, and 5.0 is deferred. The overdub-audibility RED becomes the flag-off / flag-on discriminator.

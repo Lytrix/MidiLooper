@@ -13958,6 +13958,25 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - **Currency.** A served window is current iff its actual manifest identity equals the demanded manifest identity,
       the frozen production source identity still qualifies, and the requested interval is covered. A matching
       `playbackRevision` alone is never enough: compaction keeps the revision and changes the identity.
+21. **Sequencing reversed (owner, 2026-11-01): C5 needs the hard consume-only safety boundary, not completion of the
+    old reader/lane migration.**
+    - **Prerequisite** is only the landed internal-clock consume-only invariant (DEC-241), which is on this branch
+      (it contains `feature/unified-rolling-playback-path` at `83e7b60c`). The C5 tick contract is: consume a
+      qualified manifest window, or mark/request it owed; **never** import, build an `EditIndex` or build a manifest
+      window on either tick path.
+    - **Order:** C5.1 → C5.2 → C5.3 (probe flag) → the overdub-audibility A/B → `playback-tick-consume-only` 4.2b /
+      5.x / 6.x against the manifest-backed lane → 7 external-clock consume-only → one combined device
+      qualification → default switch / C6.
+    - **Overdub audibility:** no further legacy-reader repair. Its RED becomes the C5 A/B discriminator.
+      - If flag ON plays the overdubs, the defect is in the old source/publication machinery, and the old RED is
+        recorded as superseded.
+      - If flag ON still loses them, the defect is downstream (role capacity, admission, ledger, adoption), and it
+        blocks C5.
+    - **`playback-tick-consume-only` 5.0** (DEC-243 restored-slot snapshot serving) is deferred pending C5. If the
+      manifest reader's reboot qualification passes, it is superseded rather than completed.
+    - **5.1–5.3** (restart / revision recovery) are written once, against manifest identity.
+    - **4.2b and 6.x** stay, as source-independent lane qualification after C5.
+    - **7** (external-clock consume-only) stays. **8** runs once, on the combined architecture.
 
 ### Related
 

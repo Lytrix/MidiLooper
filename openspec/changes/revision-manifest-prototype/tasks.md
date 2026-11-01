@@ -164,8 +164,9 @@ timing and memory envelope without introducing real-time construction?
 - [ ] C5 One manifest-backed rolling-window reader (DEC-246 amendment 19; authorized 2026-11-01). Seam and G2 packet:
       [design.md § C5](design.md). The committed lane's **snapshot-window fill** becomes a manifest-window fill with a
       metadata-only currency test; owed states are named and there is no real-time fallback.
-  - **Blocked on `playback-tick-consume-only`** landing and device qualification; then rebase this branch onto its
-    routing (DEC-246 amendment 20). Probe env only, A/B flag 0 / 1; with flag 0 the integration allocates nothing.
+  - **Unblocked (DEC-246 amendment 21):** prerequisite is only the landed internal-clock consume-only invariant
+    (DEC-241, on this branch). The tick never imports, indexes or builds a window. Probe env only, A/B flag 0 / 1;
+    with flag 0 the integration allocates nothing. After C5.3, the overdub-audibility RED is the A/B discriminator.
   - [ ] C5.1 consumer contract fixture: the full tuple (`MidiEvent`, phase, rank, `passOrigin`, ledger/boundary)
         through the real order builder equals the snapshot fill; a manifest `passOrigin` never collides with the
         live-overlay origin

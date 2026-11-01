@@ -81,7 +81,14 @@ retire the length-specific readers → consume-only on both clocks. No new buffe
 
 ## 5. Live recovery after transport start / restart (blocked on 4)
 
-- [ ] 5.0 **(5.0a landed native, DEC-243: boot reserves the three rolling views for enabled slots; device mixed, not accepted: see DEC-243 "Next")** RED (device finding, `evidence/2026-11-01-phase4-gates.md`): a restored slot whose boot prewarm reserved no
+> **Resequenced (DEC-246 amendment 21, owner 2026-11-01):**
+> - revision-manifest C5.1–C5.3 land first, behind the probe flag;
+> - then 4.2b, 5.1–5.3 and 6.x are done against the manifest-backed committed lane, with recovery keyed on manifest
+>   identity;
+> - 7 stays;
+> - 8 runs once, on the combined architecture.
+
+- [ ] 5.0 **DEFERRED pending revision-manifest C5 (DEC-246 amendment 21): superseded rather than completed if the manifest reader passes reboot qualification.** **(5.0a landed native, DEC-243: boot reserves the three rolling views for enabled slots; device mixed, not accepted: see DEC-243 "Next")** RED (device finding, `evidence/2026-11-01-phase4-gates.md`): a restored slot whose boot prewarm reserved no
       view set and whose source is pass-only (no current root) becomes servable **while playing** — the producer acquires
       the view set and retains the source off-clock, bounded, instead of exiting `win_not_servable` for the session.
 - [ ] 5.1 RED: after a transport restart (new epoch) a blocked or stale frame recovers **while transport runs** — the
