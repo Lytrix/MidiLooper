@@ -871,6 +871,13 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 } else {
                     RevisionStoreProbe::run();
                 }
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REVSHADOW_WINDOWS") == 0) {
+                // DEC-246 C4: shadow window digests vs production's passes-derived view (stopped-only).
+                if (clockManager.isTransportRunning()) {
+                    Serial.println("REVSHADOW,denied,transport_running");
+                } else {
+                    RevisionShadow::printWindows();
+                }
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REVSHADOW_STATUS") == 0) {
                 // DEC-246 C2b/C3a: shadow store status and shadow parity (stopped-only diagnostic).
                 if (clockManager.isTransportRunning()) {

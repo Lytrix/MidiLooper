@@ -117,12 +117,16 @@ timing and memory envelope without introducing real-time construction?
       import step max 683 µs at 64 rows; shadow `revision()` = production passes view **54/54** under real hides.
       Found: production's snapshot (62) and passes view (54) disagree after overlap Shortens + undo/redo.
       [Evidence](evidence/2026-11-01-c3b-transactional-import.md)
-- [ ] C3c Restored slots: read-only hydration of persisted pass records (no snapshot-as-source).
-- [ ] C3d Shadow rolling-window producer reading the manifest with `IndexOnly`: `Ready` / `IndexOwed` /
-      `CapacityDenied`, actual manifest identity on every window.
-- [ ] C4 Device shadow compare under the owner chain against the **passes-derived `revision()` surface** (owner,
-      2026-11-01; `fullRebuildSnapshotCompat` is a legacy-path oracle only): count, exact ordered stream, identity,
-      wrap, NOTE_EDIT/hide.
+- [ ] C3c Restored slots (after C4, owner order): read-only hydration of persisted pass records through the same
+      importer source abstraction (`LivePassesSource` / `PersistedPassesSource`); never a snapshot as source.
+- [x] C3d Shadow window producer: store `beginWindow`/`stepWindow` (`Ready` with actual identity, `IndexOwed`,
+      `ImportOwed`, `CapacityDenied`, `SourceMoved`; no build, no scan; honest finish); firmware child
+      `RevisionShadowWindowGrain` (2 ms / 0.5 ms), each window produced once per manifest identity, digests in PSRAM.
+      [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md)
+- [~] C4 Device shadow compare against the **passes-derived `revision()` surface** (DEC-246 amendment 9), gate-valid
+      owner chain: **10/10 windows** match, whole loop 1,042/1,042, grains ≤ 256 µs import / 243 µs window, 0 duplicate
+      publications. **Open:** a gate-valid hide-carrying stimulus (occupy-paint fails its own verdict on this image).
+      [Evidence](evidence/2026-11-01-c3d-c4-window-producer.md)
 - [ ] C5 That producer becomes manifest-authoritative (old reader = diagnostic oracle, not an RT fallback).
 - [ ] C6 Remove the corresponding old reader after device parity.
 

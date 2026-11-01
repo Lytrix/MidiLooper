@@ -27,4 +27,8 @@ void serviceIdleTurn(bool timingCritical, bool transportRunning);
 /// shadow's `IndexOnly` `fullRebuildSnapshotCompat()` view against production's effective view of the same slot.
 void printStatus();
 
+/// Stopped-only `!REVSHADOW_WINDOWS` (C4): compare each produced window's digest (labelled with the identity it read)
+/// with production's passes-derived effective view of the same interval.
+void printWindows();
+
 }  // namespace RevisionShadow

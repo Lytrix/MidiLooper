@@ -75,6 +75,16 @@ enum class ComposeStatus : uint8_t { Complete, OutputFull, NoManifest, IndexOwed
 enum class HideLookup : uint8_t { IndexOrScan, IndexOnly, Scan };
 /// Step outcome of the edit-index worker. `CapacityDenied`: every slot holds an index some reader still pins.
 enum class IndexStep : uint8_t { Idle, Pending, Published, DeniedNoPage, CapacityDenied };
+/// C3d window producer results. `Ready` carries the identity actually read. Nothing here builds an import or an
+/// index, and there is no scan fallback: a missing prerequisite is a named answer.
+enum class WindowResult : uint8_t { Idle, Pending, Ready, IndexOwed, ImportOwed, CapacityDenied, SourceMoved };
+struct WindowStamp {
+  uint32_t identity = 0;  // the manifest identity actually read
+  uint32_t revision = 0;
+  uint32_t fromTick = 0;
+  uint32_t toTick = 0;
+  uint32_t count = 0;
+};
 /// Answer to a reader's demand for a manifest's edit index (C2a).
 enum class IndexRequest : uint8_t { NotNeeded, Ready, Building, Owed, IndexCapacityDenied };
 enum class CompactResult : uint8_t {
@@ -675,6 +685,83 @@ class StoreCore {
     if (indexJob_.active) endIndexJob(false);
   }
 
+  // ---- C3d: resumable window producer (revision() / source() projections) -------------------------------------
+  //
+  // Request = (manifest, expected identity, expected revision, interval). A manifest that is gone or no longer has
+  // that identity/revision is `SourceMoved`; no current manifest is `ImportOwed`; hides without a published index for
+  // that exact manifest are `IndexOwed` (the index is never built here). The job pins the manifest, so it finishes
+  // honestly as the identity it started on even if another manifest becomes current meanwhile.
+
+  WindowResult beginWindow(ManifestId id, uint32_t expectedIdentity, uint32_t expectedRevision, uint32_t fromTick,
+                           uint32_t toTick, PassEvent* out, uint32_t capacity, bool applyHides = true) {
+    if (window_.active) return WindowResult::CapacityDenied;  // one producer at a time
+    if (id == kNoManifest) return WindowResult::ImportOwed;
+    if (!manifests_[id].live || manifests_[id].identity != expectedIdentity ||
+        manifests_[id].revision != expectedRevision) {
+      return WindowResult::SourceMoved;
+    }
+    const EditIndexSlot* slot = nullptr;
+    if (applyHides && manifestHasHides(id)) {
+      slot = findIndexSlot(id);
+      if (slot == nullptr) return WindowResult::IndexOwed;
+    }
+    pin(id);
+    const RevisionManifest& m = manifests_[id];
+    Merge& merge = windowMerge_;
+    merge.reset();
+    merge.limit = m.runCount;
+    merge.index = slot;
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      const PassRun& r = runs_[m.runs[i]];
+      for (uint8_t s = 0; s < r.segCount; ++s) {
+        merge.add(i, lowerBoundTick(r, r.segStart[s], r.segEnd(s), fromTick), r.segEnd(s));
+      }
+    }
+    for (uint16_t k = 0; k < merge.count; ++k) {
+      if (advanceToVisible(m, merge, k, toTick)) heapPush(m, merge, k);
+    }
+    window_.active = true;
+    window_.manifest = id;
+    window_.out = out;
+    window_.capacity = capacity;
+    window_.toTick = toTick;
+    window_.stamp = WindowStamp{m.identity, m.revision, fromTick, toTick, 0};
+    return WindowResult::Pending;
+  }
+
+  /// Emit at most `maxRows` rows. `Ready` when the interval is complete (stamp = what was read); `CapacityDenied` if
+  /// the caller's buffer cannot hold the window (the job ends; nothing is labelled complete).
+  WindowResult stepWindow(uint32_t maxRows) {
+    if (!window_.active) return WindowResult::Idle;
+    const RevisionManifest& m = manifests_[window_.manifest];
+    Merge& merge = windowMerge_;
+    for (uint32_t n = 0; n < maxRows; ++n) {
+      if (merge.heapSize == 0) {
+        endWindow();
+        return WindowResult::Ready;
+      }
+      if (window_.stamp.count >= window_.capacity) {
+        endWindow();
+        return WindowResult::CapacityDenied;
+      }
+      const uint16_t k = heapPop(m, merge);
+      window_.out[window_.stamp.count++] = midiAt(runs_[m.runs[merge.run[k]]], merge.at[k]);
+      ++merge.at[k];
+      if (advanceToVisible(m, merge, k, window_.toTick)) heapPush(m, merge, k);
+    }
+    if (merge.heapSize == 0) {
+      endWindow();
+      return WindowResult::Ready;
+    }
+    return WindowResult::Pending;
+  }
+
+  void cancelWindow() {
+    if (window_.active) endWindow();
+  }
+  bool windowActive() const { return window_.active; }
+  const WindowStamp& windowStamp() const { return window_.stamp; }
+
   // ---- Undo / redo: selection of an existing manifest --------------------------------------------------------------
   bool canUndo() const { return historyCursor_ > 0; }
   bool canRedo() const { return historyCursor_ + 1 < historyCount_; }
@@ -877,6 +964,7 @@ class StoreCore {
     slowSeals_ = 0;
     job_.active = false;
     indexJob_.active = false;
+    window_.active = false;
     for (uint8_t i = 0; i < kIndexSlots; ++i) indexSlots_[i] = EditIndexSlot{};
     demanded_ = kNoManifest;
     demandedIdentity_ = 0;
@@ -1542,6 +1630,20 @@ class StoreCore {
   uint32_t slowSeals_ = 0;
   CompactionJob job_;
   mutable Merge composeScratch_;
+  struct WindowJob {
+    bool active = false;
+    ManifestId manifest = kNoManifest;
+    PassEvent* out = nullptr;
+    uint32_t capacity = 0;
+    uint32_t toTick = 0;
+    WindowStamp stamp;
+  };
+  WindowJob window_;
+  Merge windowMerge_;
+  void endWindow() {
+    window_.active = false;
+    unpin(window_.manifest);
+  }
   EditIndexSlot indexSlots_[kIndexSlots];
   IndexJob indexJob_;
   ManifestId demanded_ = kNoManifest;

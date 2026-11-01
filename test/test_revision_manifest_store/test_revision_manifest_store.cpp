@@ -1159,6 +1159,84 @@ void test_index_build_publishes_the_identity_it_started_on() {
   TEST_ASSERT_TRUE(gStore.editIndexReady(m42));
 }
 
+// ---- C3d: the window producer ------------------------------------------------------------------------------------
+
+static PassEvent gWin[4096];
+
+static WindowResult produceWindow(ManifestId m, uint32_t from, uint32_t to, uint32_t stepRows, uint32_t* steps = nullptr) {
+  WindowResult r = gStore.beginWindow(m, gStore.identityOf(m), gStore.manifest(m).revision, from, to, gWin, 4096);
+  uint32_t n = 0;
+  while (r == WindowResult::Pending) {
+    const uint32_t before = gStore.windowStamp().count;
+    r = gStore.stepWindow(stepRows);
+    TEST_ASSERT_TRUE(gStore.windowStamp().count - before <= stepRows);  // bounded
+    ++n;
+  }
+  if (steps != nullptr) *steps = n;
+  return r;
+}
+
+void test_window_ready_equals_scan_composition_and_carries_actual_identity() {
+  OracleRevision rev = recordTake(200, kLongTakeTicks);
+  for (int i = 0; i < 3; ++i) rev = overdub(rev, 20, kLongTakeTicks, {rev.passes[0].rows[2 * i].noteId});
+  buildIndexFully(gStore);
+  const ManifestId m = gStore.current();
+  for (uint32_t from = 0; from < kLongTakeTicks; from += 2 * kBarTicks) {
+    const uint32_t to = from + 2 * kBarTicks;
+    TEST_ASSERT_EQUAL(WindowResult::Ready, produceWindow(m, from, to, 7));
+    const WindowStamp stamp = gStore.windowStamp();
+    TEST_ASSERT_EQUAL_UINT32(gStore.identityOf(m), stamp.identity);
+    TEST_ASSERT_EQUAL_UINT32(4, stamp.revision);
+    const auto scan = composeWith(m, EffectivePolicy::revision().with(HideLookup::Scan), kLongTakeTicks);
+    std::vector<PassEvent> expected;
+    for (const PassEvent& e : scan) {
+      if (e.tick >= from && e.tick < to) expected.push_back(e);
+    }
+    TEST_ASSERT_TRUE(sameRows(expected, std::vector<PassEvent>(gWin, gWin + stamp.count)));
+    assertSameRows(oracleWindow(rev, from, to), gWin, stamp.count);
+  }
+}
+
+void test_window_named_answers_never_build_and_never_scan() {
+  TEST_ASSERT_EQUAL(WindowResult::ImportOwed, gStore.beginWindow(kNoManifest, 0, 0, 0, 100, gWin, 4096));
+  OracleRevision rev = recordTake(50, 4 * kBarTicks);
+  rev = overdub(rev, 5, 4 * kBarTicks, {rev.passes[0].rows[0].noteId});
+  const ManifestId m = gStore.current();
+  // Hides but no index: IndexOwed, and the request builds nothing.
+  TEST_ASSERT_EQUAL(WindowResult::IndexOwed, gStore.beginWindow(m, gStore.identityOf(m), 2, 0, 768, gWin, 4096));
+  TEST_ASSERT_TRUE(gStore.editIndexOwed());
+  TEST_ASSERT_FALSE(gStore.editIndexReady(m));
+  // A stale identity or revision: SourceMoved.
+  buildIndexFully(gStore);
+  TEST_ASSERT_EQUAL(WindowResult::SourceMoved, gStore.beginWindow(m, gStore.identityOf(m) + 99, 2, 0, 768, gWin, 4096));
+  TEST_ASSERT_EQUAL(WindowResult::SourceMoved, gStore.beginWindow(m, gStore.identityOf(m), 7, 0, 768, gWin, 4096));
+  // A buffer too small: CapacityDenied, nothing labelled complete.
+  TEST_ASSERT_EQUAL(WindowResult::Pending, gStore.beginWindow(m, gStore.identityOf(m), 2, 0, 4 * kBarTicks, gWin, 3));
+  WindowResult r = WindowResult::Pending;
+  while (r == WindowResult::Pending) r = gStore.stepWindow(2);
+  TEST_ASSERT_EQUAL(WindowResult::CapacityDenied, r);
+  TEST_ASSERT_FALSE(gStore.windowActive());
+}
+
+// A window that started on M41 finishes as M41 after M42 became current; it is never re-stamped.
+void test_window_started_on_one_manifest_finishes_honestly_as_that_manifest() {
+  OracleRevision rev = recordTake(120, 4 * kBarTicks);
+  const ManifestId m41 = gStore.current();
+  const uint32_t identity41 = gStore.identityOf(m41);
+  TEST_ASSERT_EQUAL(WindowResult::Pending,
+                    gStore.beginWindow(m41, identity41, 1, 0, 4 * kBarTicks, gWin, 4096));
+  TEST_ASSERT_EQUAL(WindowResult::Pending, gStore.stepWindow(10));
+  const OracleRevision rev42 = overdub(rev, 30, 4 * kBarTicks);  // M42 becomes current mid-build
+  TEST_ASSERT_NOT_EQUAL(m41, gStore.current());
+  WindowResult r = WindowResult::Pending;
+  while (r == WindowResult::Pending) r = gStore.stepWindow(10);
+  TEST_ASSERT_EQUAL(WindowResult::Ready, r);
+  TEST_ASSERT_EQUAL_UINT32(identity41, gStore.windowStamp().identity);
+  TEST_ASSERT_EQUAL_UINT32(1, gStore.windowStamp().revision);
+  assertSameRows(oracleWindow(rev, 0, 4 * kBarTicks), gWin, gStore.windowStamp().count);  // M41's content, not M42's
+  (void)rev42;
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_record_commit_is_revision_one_and_tick_ordered);
@@ -1198,5 +1276,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_index_held_by_a_reader_is_never_evicted);
   RUN_TEST(test_two_pinned_indexes_and_a_third_request_is_capacity_denied);
   RUN_TEST(test_index_build_publishes_the_identity_it_started_on);
+  RUN_TEST(test_window_ready_equals_scan_composition_and_carries_actual_identity);
+  RUN_TEST(test_window_named_answers_never_build_and_never_scan);
+  RUN_TEST(test_window_started_on_one_manifest_finishes_honestly_as_that_manifest);
   return UNITY_END();
 }

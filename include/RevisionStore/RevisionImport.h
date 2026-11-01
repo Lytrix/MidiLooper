@@ -87,7 +87,10 @@ inline void fnv(uint32_t& h, uint32_t v) {
 
 }  // namespace detail
 
-/// O(passes + edit passes): cheap enough to revalidate on every step.
+/// Revalidation contract (DEC-246, owner 2026-11-01): the key is computed from bounded **metadata** only -- each
+/// pass's id, state and chunk *count*, each edit pass's id and state, and three scalars. It never reads an event row
+/// or hashes content, so its cost is O(capture passes + edit passes), part of every import step's <= 2 ms contract.
+/// A future field must keep that property (a generation stamp, not a content hash).
 inline ImportSourceKey importSourceKeyOf(const Loop& loop) {
   ImportSourceKey key;
   key.loopId = loop.loopId;

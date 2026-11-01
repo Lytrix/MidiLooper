@@ -25,15 +25,18 @@ namespace RevisionShadow {
 namespace {
 
 using namespace RevisionStore;
-// Pool 416 pages x 64 rows x 16 B = 416 KiB; with tables and the import job's fixed state the shadow stays inside the
-// DEC-246 cap of 0.5 MiB (the boot row prints the exact bytes). History 2: current + previous only.
-using ShadowCap = Capacity</*pages*/ 416, /*rows per page*/ 64, /*runs*/ 48, /*pages per run*/ 416, /*manifests*/ 16,
+// Pool 320 pages x 64 rows x 16 B = 320 KiB. Store + import job + status window + producer window together stay inside
+// the DEC-246 cap of 0.5 MiB (`!REVSHADOW_STATUS` prints the total). History 2: current + previous only.
+using ShadowCap = Capacity</*pages*/ 320, /*rows per page*/ 64, /*runs*/ 48, /*pages per run*/ 320, /*manifests*/ 16,
                            /*runs per manifest*/ 48, /*history*/ 2>;
 using ShadowStore = Store<ShadowCap>;
 using ShadowImportJob = ImportJob<ShadowCap, /*edit targets*/ 128, /*edits*/ 256, /*open notes*/ 128>;
 
 constexpr uint32_t kEditIndexRowsPerGrain = 256;  // B.5d: 256 rows measured at 1.12 ms max
 constexpr uint32_t kImportRowsPerGrain = 64;      // declared start; rebased only from device evidence
+constexpr uint32_t kWindowRowsPerGrain = 128;     // C3d producer step; declared start
+constexpr uint32_t kProducerCapacity = 2048;      // one 2-bar window (dense measured ~1,600 rows); more = CapacityDenied
+constexpr uint8_t kDigestCount = 64;              // 64 two-bar windows = 128 bars
 
 struct SourceIdentity {
   uint8_t track = 0xFF;
@@ -42,7 +45,36 @@ struct SourceIdentity {
   bool operator==(const SourceIdentity& o) const { return track == o.track && slot == o.slot && key == o.key; }
 };
 
-constexpr uint32_t kWindowCapacity = 8192;
+constexpr uint32_t kWindowCapacity = 4096;
+
+// Order-independent multiset digest of a window's rows (tick, status, data1, data2): count, sum and xor of a per-row
+// mix. Both sides (shadow window, production passes window) are digested the same way.
+struct Digest {
+  uint32_t count = 0;
+  uint64_t sum = 0;
+  uint64_t x = 0;
+  void add(uint32_t tick, uint8_t status, uint8_t d1, uint8_t d2) {
+    uint64_t h = (static_cast<uint64_t>(tick) << 24) ^ (static_cast<uint64_t>(status) << 16) ^
+                 (static_cast<uint64_t>(d1) << 8) ^ d2;
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdull;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53ull;
+    h ^= h >> 33;
+    ++count;
+    sum += h;
+    x ^= h;
+  }
+  bool operator==(const Digest& o) const { return count == o.count && sum == o.sum && x == o.x; }
+};
+struct WindowDigest {
+  bool valid = false;
+  uint32_t identity = 0;  // the manifest identity the window actually read
+  uint32_t revision = 0;
+  uint32_t fromTick = 0;
+  uint32_t toTick = 0;
+  Digest digest;
+};
 
 struct Grain {
   uint32_t calls = 0;
@@ -69,6 +101,21 @@ struct State {
   uint32_t refusals = 0;
   Grain importGrain;
   Grain indexGrain;
+  Grain windowGrain;
+  PassEvent* producerOut = nullptr;  // the producer's window buffer, allocated at boot
+  uint32_t producerIdentity = 0;     // the manifest identity the digest table describes
+  uint32_t producerNextFrom = 0;
+  bool producerComplete = false;     // every window of `producerIdentity` produced once: idle until the identity moves
+  uint32_t producerHashed = 0;       // rows of the current window already digested
+  Digest producerDigest;
+  uint32_t windowsReady = 0;
+  uint32_t windowsIndexOwed = 0;
+  uint32_t windowsCapacityDenied = 0;
+  uint32_t windowsSourceMoved = 0;
+  WindowDigest* digests = nullptr;   // kDigestCount entries in PSRAM, allocated at boot (kept out of DTCM)
+  uint32_t recentKeys[8] = {};       // inventory hashes of recent publications, for the churn rule
+  uint8_t recentKeyCount = 0;
+  uint32_t duplicatePublishes = 0;   // a publication of a source identity already published (DEC-246 amendment 12)
   uint32_t indexesPublished = 0;
   uint32_t capacityDenied = 0;
 } gState;
@@ -91,16 +138,84 @@ void initAtBoot() {
   void* arena = extmem_malloc(sizeof(ShadowStore));
   void* job = extmem_malloc(sizeof(ShadowImportJob));
   void* window = extmem_malloc(sizeof(PassEvent) * kWindowCapacity);
-  if (arena == nullptr || job == nullptr || window == nullptr) {
+  void* producer = extmem_malloc(sizeof(PassEvent) * kProducerCapacity);
+  void* digests = extmem_malloc(sizeof(WindowDigest) * kDigestCount);
+  if (arena == nullptr || job == nullptr || window == nullptr || producer == nullptr || digests == nullptr) {
+    if (digests != nullptr) extmem_free(digests);
     if (arena != nullptr) extmem_free(arena);
     if (job != nullptr) extmem_free(job);
     if (window != nullptr) extmem_free(window);
+    if (producer != nullptr) extmem_free(producer);
     gState.initRefused = true;
     return;
   }
   gState.store = new (arena) ShadowStore();  // once, at boot; nothing is allocated afterwards
   gState.job = new (job) ShadowImportJob();
   gState.window = static_cast<PassEvent*>(window);
+  gState.producerOut = static_cast<PassEvent*>(producer);
+  gState.digests = static_cast<WindowDigest*>(digests);
+  for (uint8_t i = 0; i < kDigestCount; ++i) new (&gState.digests[i]) WindowDigest();
+}
+
+// C3d: the registered `RevisionShadowWindowGrain` child. Consecutive 2-bar windows of the current shadow manifest,
+// each digested and labelled with the identity it actually read. A new manifest identity restarts the table.
+static void serviceWindowProducer(bool timingCritical) {
+  ShadowStore& store = *gState.store;
+  const ManifestId current = store.current();
+  // One manifest identity -> each window produced once; a complete table is not rebuilt until the identity moves.
+  const bool identityMoved = current != kNoManifest && store.identityOf(current) != gState.producerIdentity;
+  const bool owed = store.windowActive() || (current != kNoManifest && (identityMoved || !gState.producerComplete));
+  if (!MidiServiceDrain::boundedIdleOwnerChildMayRun(owed, timingCritical, MidiServiceDrain::kRevisionShadowWindowMaxUs,
+                                                     MidiServiceDrain::kOwnerWorkBudgetUs,
+                                                     MidiServiceDrain::kRevisionShadowWindowFineGrainUs)) {
+    if (owed) ++gState.windowGrain.deferred;
+    return;
+  }
+  const uint32_t t0 = ARM_DWT_CYCCNT;
+  WindowResult r = WindowResult::Pending;
+  if (!store.windowActive()) {
+    const uint32_t identity = store.identityOf(current);
+    const uint32_t length = store.manifest(current).loopLengthTicks;
+    if (identity != gState.producerIdentity) {
+      for (uint8_t i = 0; i < kDigestCount; ++i) gState.digests[i].valid = false;
+      gState.producerIdentity = identity;
+      gState.producerNextFrom = 0;
+      gState.producerComplete = false;
+    }
+    if (length == 0) return;
+    const uint32_t windowTicks = 2u * Config::TICKS_PER_BAR;
+    const uint32_t from = gState.producerNextFrom;
+    const uint32_t to = from + windowTicks < length ? from + windowTicks : length;
+    gState.producerHashed = 0;
+    gState.producerDigest = Digest{};
+    r = store.beginWindow(current, identity, store.manifest(current).revision, from, to, gState.producerOut,
+                          kProducerCapacity);
+  } else {
+    r = store.stepWindow(kWindowRowsPerGrain);
+  }
+  // Digest the rows emitted so far (incremental: bounded by this step's rows).
+  const WindowStamp& stamp = store.windowStamp();
+  for (; gState.producerHashed < stamp.count; ++gState.producerHashed) {
+    const PassEvent& e = gState.producerOut[gState.producerHashed];
+    gState.producerDigest.add(e.tick, e.status, e.data1, e.data2);
+  }
+  if (r == WindowResult::Ready) {
+    const uint32_t slot = (stamp.fromTick / (2u * Config::TICKS_PER_BAR)) % kDigestCount;
+    gState.digests[slot] = WindowDigest{true, stamp.identity, stamp.revision, stamp.fromTick, stamp.toTick,
+                                        gState.producerDigest};
+    gState.producerNextFrom = stamp.toTick;
+    gState.producerComplete = stamp.toTick >= store.manifest(current).loopLengthTicks;
+    ++gState.windowsReady;
+  } else if (r == WindowResult::IndexOwed) {
+    ++gState.windowsIndexOwed;
+  } else if (r == WindowResult::CapacityDenied) {
+    ++gState.windowsCapacityDenied;
+    gState.producerNextFrom = stamp.toTick;  // skip this window; it is named, never labelled complete
+    gState.producerComplete = stamp.toTick >= store.manifest(current).loopLengthTicks;
+  } else if (r == WindowResult::SourceMoved) {
+    ++gState.windowsSourceMoved;
+  }
+  gState.windowGrain.record(cyclesToUs(ARM_DWT_CYCCNT - t0));
 }
 
 void serviceIdleTurn(bool timingCritical, bool /*transportRunning*/) {
@@ -127,6 +242,13 @@ void serviceIdleTurn(bool timingCritical, bool /*transportRunning*/) {
     }
     gState.importGrain.record(cyclesToUs(ARM_DWT_CYCCNT - t0));
     if (step == ImportStep::Published) {
+      const uint32_t keyHash = gState.building.key.inventory ^ (gState.building.key.playbackRevision * 2654435761u) ^
+                               (static_cast<uint32_t>(gState.building.track) << 24) ^ gState.building.slot;
+      for (uint8_t i = 0; i < gState.recentKeyCount; ++i) {
+        if (gState.recentKeys[i] == keyHash) ++gState.duplicatePublishes;
+      }
+      gState.recentKeys[gState.recentKeyCount % 8] = keyHash;
+      if (gState.recentKeyCount < 8) ++gState.recentKeyCount;
       gState.published = gState.building;
       gState.lastResult = ImportResult::Ok;
       gState.lastStats = job.stats();
@@ -147,17 +269,22 @@ void serviceIdleTurn(bool timingCritical, bool /*transportRunning*/) {
   }
   // C2b: the registered `RevisionEditIndexGrain` child.
   const bool owed = store.editIndexOwed();
-  if (!MidiServiceDrain::boundedIdleOwnerChildMayRun(owed, timingCritical, MidiServiceDrain::kRevisionEditIndexMaxUs,
-                                                     MidiServiceDrain::kOwnerWorkBudgetUs,
-                                                     MidiServiceDrain::kRevisionEditIndexFineGrainUs)) {
-    if (owed) ++gState.indexGrain.deferred;
+  if (owed && !MidiServiceDrain::boundedIdleOwnerChildMayRun(owed, timingCritical,
+                                                              MidiServiceDrain::kRevisionEditIndexMaxUs,
+                                                              MidiServiceDrain::kOwnerWorkBudgetUs,
+                                                              MidiServiceDrain::kRevisionEditIndexFineGrainUs)) {
+    ++gState.indexGrain.deferred;
     return;
   }
-  const uint32_t t0 = ARM_DWT_CYCCNT;
-  const IndexStep step = store.stepEditIndex(kEditIndexRowsPerGrain);
-  gState.indexGrain.record(cyclesToUs(ARM_DWT_CYCCNT - t0));
-  if (step == IndexStep::Published) ++gState.indexesPublished;
-  if (step == IndexStep::CapacityDenied) ++gState.capacityDenied;
+  if (owed) {
+    const uint32_t t0 = ARM_DWT_CYCCNT;
+    const IndexStep step = store.stepEditIndex(kEditIndexRowsPerGrain);
+    gState.indexGrain.record(cyclesToUs(ARM_DWT_CYCCNT - t0));
+    if (step == IndexStep::Published) ++gState.indexesPublished;
+    if (step == IndexStep::CapacityDenied) ++gState.capacityDenied;
+    return;
+  }
+  serviceWindowProducer(timingCritical);
 }
 
 void printStatus() {
@@ -181,7 +308,7 @@ void printStatus() {
                   static_cast<unsigned long>(gState.lastStats.steps));
   Serial.printf_P(PSTR("REVSHADOW,grains,import_calls=%lu,import_max_us=%lu,import_deferred=%lu,index_calls=%lu,"
                        "index_max_us=%lu,index_deferred=%lu,index_owed=%u,index_ready=%u,indexes_published=%lu,"
-                       "capacity_denied=%lu,pages_used=%u,shadow_bytes=%lu\r\n"),
+                       "capacity_denied=%lu,pages_used=%u,shadow_total_bytes=%lu\r\n"),
                   static_cast<unsigned long>(gState.importGrain.calls),
                   static_cast<unsigned long>(gState.importGrain.maxUs),
                   static_cast<unsigned long>(gState.importGrain.deferred),
@@ -192,7 +319,17 @@ void printStatus() {
                   static_cast<unsigned long>(gState.indexesPublished),
                   static_cast<unsigned long>(gState.capacityDenied),
                   static_cast<unsigned>(ShadowCap::kPageCount - store.freePageCount()),
-                  static_cast<unsigned long>(sizeof(ShadowStore) + sizeof(ShadowImportJob)));
+                  static_cast<unsigned long>(sizeof(ShadowStore) + sizeof(ShadowImportJob) +
+                                             sizeof(PassEvent) * (kWindowCapacity + kProducerCapacity)));
+  Serial.printf_P(PSTR("REVSHADOW,windows,calls=%lu,max_us=%lu,deferred=%lu,ready=%lu,index_owed=%lu,capacity_denied=%lu,"
+                       "source_moved=%lu,duplicate_publishes=%lu\r\n"),
+                  static_cast<unsigned long>(gState.windowGrain.calls),
+                  static_cast<unsigned long>(gState.windowGrain.maxUs),
+                  static_cast<unsigned long>(gState.windowGrain.deferred),
+                  static_cast<unsigned long>(gState.windowsReady), static_cast<unsigned long>(gState.windowsIndexOwed),
+                  static_cast<unsigned long>(gState.windowsCapacityDenied),
+                  static_cast<unsigned long>(gState.windowsSourceMoved),
+                  static_cast<unsigned long>(gState.duplicatePublishes));
   // Shadow parity (stopped-only diagnostic): the shadow's real-time read vs production's effective view.
   if (gState.publishes == 0 || id.track >= trackManager.getTrackCount()) return;
   const Track& track = trackManager.getTrack(id.track);
@@ -291,6 +428,53 @@ void printStatus() {
   Serial.println(F("REVSHADOW,parity_done"));
 }
 
+void printWindows() {
+  if (gState.store == nullptr) {
+    Serial.println(F("REVSHADOW,windows_off"));
+    return;
+  }
+  ShadowStore& store = *gState.store;
+  const SourceIdentity& id = gState.published;
+  const bool sourceCurrent = identityOfSelected() == id;
+  const uint32_t currentIdentity = store.identityOf(store.current());
+  uint32_t compared = 0, matched = 0, stale = 0;
+  bool firstMismatchShown = false;
+  if (id.track < trackManager.getTrackCount()) {
+    const Loop& loop = trackManager.getTrack(id.track).getLoop(id.slot);
+    for (uint8_t i = 0; i < kDigestCount; ++i) {
+      const WindowDigest& w = gState.digests[i];
+      if (!w.valid) continue;
+      if (w.identity != currentIdentity) {
+        ++stale;
+        continue;
+      }
+      // The C4 oracle: production's passes-derived effective view of the same interval.
+      SessionMidiEventVec production;
+      loop.copyEffectiveCommittedEventsInRange(production, w.fromTick, w.toTick - w.fromTick);
+      Digest p;
+      for (const MidiEvent& e : production) {
+        if (e.tick < w.fromTick || e.tick >= w.toTick) continue;
+        const uint8_t status = static_cast<uint8_t>(static_cast<uint8_t>(e.type) | ((e.channel - 1) & 0x0F));
+        p.add(e.tick, status, e.data.noteData.note, e.data.noteData.velocity);
+      }
+      ++compared;
+      if (p == w.digest) {
+        ++matched;
+      } else if (!firstMismatchShown) {
+        firstMismatchShown = true;
+        Serial.printf_P(PSTR("REVSHADOW,window_mismatch,from=%lu,to=%lu,shadow_rows=%lu,production_rows=%lu\r\n"),
+                        static_cast<unsigned long>(w.fromTick), static_cast<unsigned long>(w.toTick),
+                        static_cast<unsigned long>(w.digest.count), static_cast<unsigned long>(p.count));
+      }
+    }
+  }
+  Serial.printf_P(PSTR("REVSHADOW,windows_compare,source_current=%u,identity=%lu,compared=%lu,matched=%lu,"
+                       "stale_identity=%lu\r\n"),
+                  sourceCurrent ? 1u : 0u, static_cast<unsigned long>(currentIdentity),
+                  static_cast<unsigned long>(compared), static_cast<unsigned long>(matched),
+                  static_cast<unsigned long>(stale));
+}
+
 }  // namespace RevisionShadow
 
 #else
@@ -299,6 +483,7 @@ namespace RevisionShadow {
 void initAtBoot() {}
 void serviceIdleTurn(bool, bool) {}
 void printStatus() {}
+void printWindows() {}
 }  // namespace RevisionShadow
 
 #endif

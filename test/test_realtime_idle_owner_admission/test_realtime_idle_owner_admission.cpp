@@ -107,6 +107,16 @@ void test_c3b_revision_shadow_import_grain_is_declared() {
   TEST_ASSERT_EQUAL_UINT32(bound.fineGrainUs, kRevisionShadowImportFineGrainUs);
 }
 
+// DEC-246 C3d: the shadow window producer is its own declared, bounded child.
+void test_c3d_revision_shadow_window_grain_is_declared() {
+  const IdleOwnerChildBound& bound = idleOwnerChildBound(IdleOwnerChild::RevisionShadowWindowGrain);
+  TEST_ASSERT_EQUAL_STRING("revision_shadow_window", bound.name);
+  TEST_ASSERT_EQUAL_UINT16(2000, bound.maxUs);
+  TEST_ASSERT_EQUAL_UINT16(500, bound.fineGrainUs);
+  TEST_ASSERT_EQUAL_UINT32(bound.maxUs, kRevisionShadowWindowMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(bound.fineGrainUs, kRevisionShadowWindowFineGrainUs);
+}
+
 void test_dec237_display_base_grain_is_declared() {
   const IdleOwnerChildBound& bound = idleOwnerChildBound(IdleOwnerChild::DisplayBaseGrain);
   TEST_ASSERT_EQUAL_STRING("display_base_grain", bound.name);
@@ -318,6 +328,7 @@ int main(int, char**) {
   RUN_TEST(test_dec237_display_base_grain_is_declared);
   RUN_TEST(test_c2b_revision_edit_index_grain_is_declared);
   RUN_TEST(test_c3b_revision_shadow_import_grain_is_declared);
+  RUN_TEST(test_c3d_revision_shadow_window_grain_is_declared);
   RUN_TEST(test_riao1_not_owed_costs_nothing);
   RUN_TEST(test_riao1_b_child_that_cannot_fit_is_not_dispatched);
   RUN_TEST(test_riao1_c_finer_grain_takes_the_remaining_deadline);

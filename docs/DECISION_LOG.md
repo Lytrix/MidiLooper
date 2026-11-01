@@ -13860,6 +13860,19 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
 8. No heap after startup in the store; acceptance gates also include exact semantic parity over the owner chain
    (DEC-244 order) and the window producer staying inside its existing real-time budget.
 
+### Amendments (owner, 2026-11-01, after C3a/C3b)
+
+9. **The Stage-C semantic oracle is the authoritative committed-pass effective view** (production's passes gather),
+   judged with `revision()`. The published snapshot and the full-rebuild path are separately pinned legacy
+   representations and may diverge (device: passes 54 = RevisionStore 54, snapshot 62, after overlap + undo/redo).
+   `fullRebuildSnapshotCompat()` is a regression oracle for that path only.
+10. **C4 evidence counts only when the stimulus's own content/acceptance gate passes** on that image.
+11. **Import revalidation is metadata-only:** the frozen source key is computed from bounded pass/edit metadata,
+    never a content hash, as part of every step's bound.
+12. **One source identity → at most one successful shadow publication** unless explicitly evicted and requested again.
+13. **Restored slots:** C3c hydrates persisted pass records read-only through the same importer source abstraction
+    (`LivePassesSource` / `PersistedPassesSource`); a derived snapshot is never imported as source.
+
 ### Related
 
 DEC-241 (consume-only tick), DEC-244 (equal-tick order), DEC-245 (lossless source, explicit projections), DEC-243.
