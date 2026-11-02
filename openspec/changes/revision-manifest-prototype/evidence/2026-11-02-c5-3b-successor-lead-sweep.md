@@ -130,3 +130,19 @@ Each level was measured twice, because each failure fell on a tail seam (actual 
   rate, does not. The tail's lead and the wrap successor's work are mismatched.
 - **The restart stuck-role shape did not reproduce.** The new `busy,roles` rows at the restart show only
   `BuildActive` (refusal 2) on other tracks, with no stuck role.
+
+## The equal partition (`4f151551`), the enforced bound, injected deny 4
+
+- **Image.** `d9afc37d78d8bf7f`. The routed 33-bar loop is now 6 × 1,496 + 11 × 1,488 ticks: no window shorter than
+  its successor by more than one 8-tick quantum.
+- **Run.** `--lane-cadence-points 4:1536:60`: the injector withholds 4 grants after every grant, and the 3-denial
+  bound forces the 4th.
+
+| seams | missed | max request → ready | max request → admit | min ready margin | min actual lead | grants withheld |
+|---|---|---|---|---|---|---|
+| **60/60** | **0** | 1,104 | 496 | **368** | 1,464 | 2,001 |
+
+- **Reading.** The owner's qualification shape holds: 33 bars, 300 BPM, the bounded successor service (at most 3
+  consecutive denials), a forced deny-4 injector, 50+ seams, 0 misses.
+- The margin is 368 ticks, against 40 at the balanced tail's deny 3. One-window lookahead suffices under the enforced
+  bound once the partition has no short-to-long seam.
