@@ -333,6 +333,8 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
     start = len(log_lines())
     capture.send_command(f"!SUCC_PROBE {SWEEP_SPAN_TICKS} {track0} 0", nonce=nonce, end_nonce=end)
+    # Collect the fenced reply: it also releases the capture's one outstanding-request slot for the sweep's probes.
+    capture.fenced_response(nonce, end, timeout_s=5.0, poll_s=0.05)
     t0 = time.monotonic()
     first = None
     while time.monotonic() < t0 + 90 and first is None:
@@ -358,7 +360,9 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         accepted, detail = capture.send_command(f"!SUCC_PROBE {lead} {track0} {deny}", nonce=nonce, end_nonce=end)
         if not accepted:
             raise RuntimeError("succ_probe_command_refused: " + str(detail))
-        if _wait_line(log_lines, start, ("SUCC_PROBE,ok",), 5.0) is None:
+        rows = capture.fenced_response(nonce, end, timeout_s=5.0, poll_s=0.05)  # releases the request slot
+        if not any(r.strip().startswith("SUCC_PROBE,ok") for r in (rows or [])) and \
+                _wait_line(log_lines, start, ("SUCC_PROBE,ok",), 1.0) is None:
             raise RuntimeError("succ_probe_not_acknowledged")
         t0 = time.monotonic()
         # A miss repositions the lane at the full priced lookahead (about 30 s at 300 BPM), so allow for one.
