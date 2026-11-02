@@ -96,3 +96,22 @@ Points (lead, seams: handed/missed, actual minimum lead):
 - **Deny 7 fails on a full two-bar window** with full lead: admission alone took 1,192 ticks. This is the genuine
   scheduling question amendment 26 names: a bounded service guarantee for deadline-bearing successors, or deeper
   lookahead.
+
+### Deny 4–6 (same image, `--lane-cadence-points 4:1536:50,5:1536:50,6:1536:50`)
+
+Each level was measured twice, because each failure fell on a tail seam (actual lead 1,120–1,144, the balanced
+1.5-bar window).
+
+| deny | attempt 1: handed/missed, max ready, min margin | attempt 2 | miss is on |
+|---|---|---|---|
+| 4 | 1/1, ready 1,032, margin 88 | 1/1, ready 904, margin 224 | a 1,152-tick tail seam |
+| 5 | 1/1, ready 1,056, margin 64 | 1/1, ready 1,088, margin 48 | a 1,152-tick tail seam |
+| 6 | 0/1, admit 824 | 0/1, admit 648 | a 1,152-tick tail seam (the first seam) |
+
+**Reading:**
+- With the balanced tail, the largest clean allowance for a dense manifest successor at 300 BPM is **3 consecutive
+  withheld grants** (50/50, margin 40).
+- From 4 up, the **1.5-bar tail windows** are what miss: about 1,120 ticks of lead against preparation that grows with
+  denials (request to ready about 900–1,090 at 4–5, plus the turn variance).
+- Full two-bar seams handed off at 4 and 5 before the tail missed. The answer is therefore partly geometric (the tail
+  is the shortest lead) and partly the service rate.
