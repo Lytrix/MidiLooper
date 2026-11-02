@@ -204,6 +204,30 @@ Loop& recordTake(Track& t, uint32_t bars, uint32_t notesPerBar) {
   return loop;
 }
 
+/// Production's Delete edit of the first committed note of `pitch` (as NOTE_EDIT commits it); the root is republished.
+void hideFirstNoteOfPitch(Loop& loop, uint8_t pitch) {
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  const MidiEvent* on = nullptr;
+  for (const MidiEvent& e : rows)
+    if (e.isNoteOn() && e.data.noteData.note == pitch) { on = &e; break; }
+  TEST_ASSERT_NOT_NULL_MESSAGE(on, "no committed NoteOn of that pitch");
+  uint32_t off = on->tick + 1;
+  for (const MidiEvent& e : rows)
+    if (e.isNoteOff() && e.data.noteData.note == pitch && e.tick > on->tick) { off = e.tick; break; }
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Delete;
+  row.targetNoteId = on->noteId;
+  row.startTick = on->tick;
+  row.endTick = off;
+  row.pitch = pitch;
+  row.velocity = 100;
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, loop.saveNoteEditPass(0, row));
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+  for (uint32_t grain = 0; grain < 4096 && loop.hasPendingSnapshotPublish(); ++grain) loop.stepPendingSnapshotPublish(1);
+}
+
 struct PlaybackObservation {
   std::vector<std::pair<uint32_t, MidiEvent>> sent;  // every MIDI event the track emitted, with its send tick
   uint32_t manifestServedTicks = 0;

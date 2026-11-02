@@ -14098,6 +14098,18 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - **Do not turn the 117 ms outlier into a constant** before its cause is known; the direct lead sweep includes such
       stalls on its own.
     - Keep the restored-slot / DEC-243 work separate.
+27. **Pull `playback-tick-consume-only` 5.1 forward, narrowly: a source-stale Blocked frame recovers while playing
+    (owner, 2026-11-02).**
+    - **The device diagnosis.** On a fresh dense take, `win_blocked` is not the 7-grain pricing chain.
+      1. The frozen Record reader serves the take for about 45 s.
+      2. At the committed takeover the resolver judges the served view `ServingViewSourceStale` and blocks the frame.
+      3. A Blocked frame never recovers while the transport runs.
+      - `evidence/2026-11-02-c5-3b-device-300bpm-three-states.md`; capture `captures/c5-3b-sweep-smoke-03`.
+    - **Scope.** Only a frame the resolver blocked because its served view's source went stale is recovered. The
+      producer cancels it and requests afresh from the current source, bounded by the producer's own turn. Epoch,
+      generation and projection invalidation, and the rest of 5.x, keep their sequencing (amendment 21).
+    - **Why now.** It blocks the device successor-lead sweep (amendment 26) on dense content, the case the admission
+      decision depends on.
 
 ### Related
 

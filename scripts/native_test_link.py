@@ -26,6 +26,7 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # Track/Loop/storage closure with the rolling reader enabled.
     "test_revision_manifest_lane",
     "test_rolling_successor_lead",
+    "test_rolling_stale_recovery",
     "test_playback_read_witness",
     # S3 gate: the runtime working-set acceptance suite drives the production admission paths
     # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the

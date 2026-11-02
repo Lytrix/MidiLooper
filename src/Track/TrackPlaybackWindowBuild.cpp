@@ -6236,6 +6236,27 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     reportPlaybackRollingGateRow("win_not_servable", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
+  // playback-tick-consume-only 5.1, pulled forward (DEC-246 amendment 27): an **unpositioned** committed demand -- no
+  // clock stamp, no deadline, e.g. the record-stop commit's lead request (`TrackCaptureStopCommit.cpp`) -- can never
+  // qualify (`gate_unqualified`), and left in place it holds this requester at `win_busy` for the rest of the
+  // transport (measured on device: the fresh dense take never reached committed serving). This requester owns the
+  // active slot's committed demand, so it replaces that one with a positioned demand below. Never a demand someone
+  // else waits on: a cold or launch request, the bound Record reader's private root successor (owed without a
+  // deadline by design, DEC-136), or anything already being qualified or built.
+  {
+    auto& pending = runtime->pendingViewRequest_;
+    // Only a demand left unqualified for more than a whole traversal: the main loop's own per-turn demand
+    // (`requestActiveCommittedPlaybackWindow`) is renewed every turn and must keep its route.
+    if (pending.active && pending.clockEpoch == 0 && pending.deadlineTick == 0 &&
+        clock.tick > uint64_t(pending.work.admittedTick) + loop.loopLengthTicks &&
+        pending.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        !runtime->frozenViewRequest.active && !runtime->ownsCoverageSource() && !runtime->viewBuild.active() &&
+        !coldRollingRequest(*runtime, pending) && !rootReturnSuccessorIsOwedForSlot(activeLoopIndex, pending, clock) &&
+        playbackBuildGateRefusal(activeLoopIndex, clock) == PlaybackBuildRefusal::Unqualified) {
+      runtime->clearViewPendingRequest();
+      reportPlaybackRollingGateRow("win_unpositioned_replaced", clock.epoch != 0);
+    }
+  }
   // Existing promises and shared owners take precedence. Never coalesce a new
   // rolling target over someone else's debt merely to gain a later deadline.
   if (runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||

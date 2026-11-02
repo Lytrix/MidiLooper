@@ -1,3 +1,18 @@
+**2026-11-02 — playback 5.1 pulled forward (DEC-246 amendment 27), host fix; the device block is not yet cleared.**
+- **Host RED → GREEN** (`test_rolling_stale_recovery`). A dense take stopped into play left an unpositioned committed
+  demand (the record-stop commit's lead request: no clock stamp, no deadline).
+  - It never qualified (`gate_unqualified`).
+  - It held the rolling requester at `win_busy` for 64 traversals.
+- **Fix.** The requester replaces a committed demand left unqualified for more than a traversal with a positioned one.
+  - Not touched: cold or launch requests, the Record reader's private root successor, or the main loop's per-turn
+    demand.
+  - A first, broader version broke `test_playing_pass_only_slots_recover_their_missing_playback_source`; the
+    traversal bound fixed it.
+- **FULL** 3,935 cases, 8 skipped, 3,927 passed.
+- **Device** (`9df01a4b`, before the traversal bound): track 8's frame still ends `win_blocked` after the
+  Record-return takeover (`ServingViewSourceStale`), a step the host fixture does not reproduce. The sweep stays
+  blocked; the device run was stopped for time.
+
 **2026-11-02 — revision-manifest C5.3b-e (device): 300 BPM, three states; 128 lane turns take up to 2,304 ticks in Overdub, more than a two-bar span.**
 - **Setup** (DEC-246 amendment 25, owner's most intense setup): every track with content playing, plus the HITL take
   (32 bars) and an overdub (200 bars) on track 8 slot 4, then 200 s of play. Measurement image `34472436…`, boot
