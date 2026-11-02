@@ -52,6 +52,10 @@ class Reader {
                                                 uint32_t lengthTicks, uint32_t loopLengthTicks, State& refusal) = 0;
   /// The named reason the last read ended without completing (`Ready` while reading or complete).
   virtual State windowResult() const = 0;
+  /// Metadata for pricing a window before it is read: the most rows any window of `spanTicks` starting on a bar of the
+  /// manifest `identity` can emit (non-wrapping, clamped at the loop end: the snapshot bound's own shape). 0 when
+  /// `identity` is not the reader's current manifest. Never imports, indexes or starts a window job.
+  virtual uint32_t densestWindowRows(uint32_t identity, uint32_t loopLengthTicks, uint32_t spanTicks) = 0;
   /// End the read and release the manifest pin. Idempotent.
   virtual void endWindow() = 0;
 };

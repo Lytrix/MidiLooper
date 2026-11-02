@@ -200,8 +200,10 @@ timing and memory envelope without introducing real-time construction?
       - it is linear in the owner cadence (A=8: 112 / 952 ticks).
     - 50-seam continuity gate green in both source configurations: 0 lane-owned merged ticks, gaps, duplicates and
       stale serves.
-    - Found and not fixed (owner question): the manifest route prices its first window from the declared floor and is
-      budget-blocked on dense takes.
+    - Fixed (owner, 2026-11-02): the manifest route priced its first window from the declared floor and was
+      budget-blocked on dense takes. It now prices from the manifest's densest window (`Reader::densestWindowRows`,
+      `StoreCore::rowsInRange`, metadata). `test_revision_manifest_lane` case 10 went RED → GREEN. Dense manifest
+      lead: 16 turns, 121–128 under the worst arbitration, 50-seam gate green.
     - [Evidence](evidence/2026-11-02-c5-3b-successor-lead-measurement.md)
   - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds. Waits on the
         owner's choice of an evidence-based successor price (amendment 24's "afterwards").

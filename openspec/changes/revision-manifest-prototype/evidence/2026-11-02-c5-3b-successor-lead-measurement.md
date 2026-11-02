@@ -138,19 +138,47 @@ The same 4-bar slot was 83 % merged fallback before C5.3a (7,680 of 9,216 ticks)
   - a frame blocked while serving now discards its successor by name.
 - The suite's `main` ran a debug case when the review read it; it now registers all five cases.
 
-## Found, not fixed: the manifest route cannot acquire a dense take (C5.3a defect, owner question)
+## Fixed (owner, 2026-11-02, "fix dense manifest first"): the manifest route could not acquire a dense take (C5.3a defect)
 
-On the routed track, a dense 4-bar take is never served.
-- **Mechanism.** The routed slot prices its first window from the declared contract only, because it must never read
-  the root: 3/3/1 = 7 grains. The window really costs about 14 grains.
-- **What happens.** The admission refuses it (`win_repositioned`) twice, and the DEC-147 traversal budget then blocks
-  the frame for good (`win_blocked_by_budget`).
-- **The successor primitive is not involved:** the first window never serves.
-- **Impact.** On the device, a dense take on the designated track would stay silent. The manifest half of this
-  measurement is therefore on sparse shapes only.
-- **Repair options:**
-  - the reader owner records a densest-span bound when it imports (metadata, off-clock), and the lane prices from it;
-  - a conservative bound: the manifest's row count clamped to the window admission limit.
+**Before.** On the routed track, a dense 4-bar take was never served.
+- The routed slot never reads the root, so it priced its first window from the declared contract only: 3/3/1 = 7
+  grains. A dense window costs about 14.
+- The admission refused it (`win_repositioned`) twice, and the DEC-147 traversal budget then blocked the frame for
+  good (`win_blocked_by_budget`).
+
+**Repair.** The routed slot prices its position from the manifest's own densest window, in the root bound's own
+shape (`boundRollingWindowWork`): a window of one span starting on every bar, non-wrapping, clamped at the loop end.
+- `RevisionStore::StoreCore::rowsInRange` counts the rows in `[from, to)` with binary searches over each run's sorted
+  segments (the same walk `beginWindow` does). Hidden rows are counted, so it is an upper bound. Nothing is copied and
+  no job starts.
+- `CommittedManifestLane::Reader::densestWindowRows` is metadata for the lane. It is answered by the reader owner
+  (`RevisionShadow`'s reader on the device, the fixture reader on the host) for the servable manifest identity only.
+  It is asked once per window position by the Idle requester, never by the tick.
+- `manifestWindowWorkBound` turns the result into the admission's own units: a manifest read is `2E + 1` read units
+  (one per row handed out, one per job step), with no retirement units. The position is then priced exactly as the
+  snapshot path prices it.
+
+**Test.** `test_revision_manifest_lane` case 10, `test_c5_3_a_dense_take_is_served_from_the_manifest`: a 4-bar take
+with 32 notes per bar, 16 traversals.
+- **RED before the fix:** 0 manifest-served ticks, the frame `Blocked` by the producer, two reads begun.
+- **GREEN after:** served from the manifest only (no snapshot-served tick, no root-cursor tick, no wrong identity), and
+  inside every served interval the MIDI equals the snapshot lane's, event for event.
+- The first window arrives about ten traversals in on both lanes: the dense window's own price is about 55 grains.
+
+**Dense shapes on the manifest source** (the sweep and the gate now include them):
+
+| Case | Minimum lead (owner turns) | 50-seam gate |
+|---|---|---|
+| 4-bar dense | 16 (snapshot: 14; the manifest read has two more qualification turns) | green |
+| 20-bar dense | 16 | green |
+| 4-bar dense + Hide (index) | 16 | — |
+| 4-bar dense, 7 denials per grain | 128 | — |
+| 4-bar dense, 8 real tracks | 121 | green |
+| source move during preparation (dense) | — | named miss; 0 stale adoptions; resumes (19/20); 32,256 ticks of named silence before recovery |
+
+**Images** (checked once here; from now on only the slice's own env is checked):
+- the default and flag-0 probe HEX are unchanged (`b4ee9921…`, `37e5ebc1…`);
+- the flag-1 reader HEX `8a0cdf37…` keeps ITCM at 392,280 + 936 (floor 840), so the new code is flash-resident.
 
 ## What this does not show
 
@@ -163,7 +191,7 @@ On the routed track, a dense 4-bar take is never served.
     2-bar span at 120 BPM (4 s). The single-successor question is therefore **not settled by the host**.
 - **Not exercised on the host:** display and save owners competing for the main loop. The host has no such pressure;
   `deny7` and `press7` stand in for it.
-- **Not covered:** manifest dense shapes (the defect above), production Undo/Redo (the next fixture), and the device.
+- **Not covered:** production Undo/Redo (the next fixture) and the device.
 
 ## Decision inputs for the owner (amendment 24, "afterwards")
 

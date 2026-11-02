@@ -19,8 +19,9 @@
 - **Open, for the owner:**
   - **Ticks per owner turn on the device.** This decides whether 119 turns fit a 1,536-tick span (they do only at
     12.9 ticks per turn or less, about 34 ms at 120 BPM).
-  - **A C5.3a defect.** The manifest route prices its first window from the declared floor, so a dense take is
-    budget-blocked and never served.
+  - The C5.3a dense-take defect is now **fixed**. The manifest route priced its first window from the declared floor,
+    so a dense take was budget-blocked and never served. It now prices from the manifest's densest window (metadata).
+    RED → GREEN; dense manifest lead 16 turns; 50-seam gate green on dense manifest shapes.
 - Nothing flashed.
 - [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-successor-lead-measurement.md)
 

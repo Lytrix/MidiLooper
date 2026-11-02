@@ -83,6 +83,16 @@ struct FixtureReader final : CommittedManifestLane::Reader {
     return &cursor;
   }
   LaneState windowResult() const override { return laneStateOf(cursor.result()); }
+  uint32_t densestCalls = 0;
+  uint32_t densestWindowRows(uint32_t identity, uint32_t loopLength, uint32_t span) override {
+    ++densestCalls;
+    const RevisionStore::ManifestId m = store.current();
+    if (m == RevisionStore::kNoManifest || store.identityOf(m) != identity || loopLength == 0) return 0;
+    uint32_t densest = 0;
+    for (uint32_t start = 0; start < loopLength; start += Config::TICKS_PER_BAR)
+      densest = std::max(densest, store.rowsInRange(m, start, std::min(loopLength, start + span)));
+    return densest;
+  }
   void endWindow() override { cursor.cancel(); }
 
   /// The deferred owner's turn: import a moved source, then build an owed edit index. Never from the lane.
@@ -164,6 +174,32 @@ Loop& recordFourBarTake(Track& t) {
   driveStopToRetirement(t);
   Loop& loop = t.getLoop(0);
   TEST_ASSERT_EQUAL_UINT32(kLength, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  return loop;
+}
+
+/// `bars` bars on `t` slot 0, `notesPerBar` evenly spaced notes per bar (bar 0 also carries the recorder's own first
+/// note), stopped to STOPPED with its Record job retired and its root published.
+Loop& recordTake(Track& t, uint32_t bars, uint32_t notesPerBar) {
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  const uint32_t step = kBar / notesPerBar;
+  const uint32_t hold = std::max<uint32_t>(6, step / 2);
+  for (uint32_t b = 0; b < bars; ++b)
+    for (uint32_t n = 0; n < notesPerBar; ++n) {
+      const uint32_t on = b * kBar + n * step + 3;
+      if (b == 0 && on < 100) continue;  // the recorder's own note owns bar 0's head
+      const uint8_t pitch = static_cast<uint8_t>(61 + (b * notesPerBar + n) % 24);
+      t.noteOn(1, pitch, 100, on);
+      t.noteOff(1, pitch, 0, on + hold);
+    }
+  const uint32_t length = bars * kBar;
+  clockManager.assignCurrentTickSilently(length);
+  t.stopRecordingToStopped(length);
+  driveStopToRetirement(t);
+  Loop& loop = t.getLoop(0);
+  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   return loop;
 }

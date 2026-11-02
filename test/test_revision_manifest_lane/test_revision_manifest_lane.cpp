@@ -349,6 +349,54 @@ void test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed() {
   TEST_ASSERT_EQUAL_UINT32(reader().identity(), readyView()->source.manifestIdentity);
 }
 
+// 10. A dense take on the routed track. The routed slot never reads the root, so its first window is priced from the
+//     manifest's own densest span (the reader owner's `densestWindowRows`), not the declared 7-grain floor that a dense
+//     window (~14 grains) cannot meet -- which repositioned the frame twice and then blocked it for good
+//     (`win_blocked_by_budget`). Served from the manifest only; inside every served interval the MIDI is the snapshot
+//     lane's for the same take.
+// The dense window's own priced lead (~55 grains after qualification) puts its first position about ten traversals
+// out; the merged fallback covers the traversals in between on the snapshot lane.
+constexpr uint32_t kDenseTraversals = 16;
+
+void test_c5_3_a_dense_take_is_served_from_the_manifest() {
+  PlaybackObservation snapshotLane;
+  {
+    Track& t = trackManager.getTrack(0);
+    recordTake(t, kBars, 32);
+    startTransport(t);
+    play(t, 0, kDenseTraversals * kLength, snapshotLane, 0);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, snapshotLane.snapshotServedTicks);
+  }
+  sharedCaptureFinalizationSuiteSetUp();
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, kBars, 32);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation lane;
+  play(t, 0, kDenseTraversals * kLength, lane);
+  const auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  char detail[200];
+  snprintf(detail, sizeof(detail), "served manifest=%u snapshot=%u cursor=%u phase=%u blockedBy=%u begun=%u",
+           lane.manifestServedTicks, lane.snapshotServedTicks, lane.snapshotCursorTicks,
+           unsigned(runtime.rolling.phase), unsigned(runtime.rolling.blockedBy),
+           CommittedManifestLane::gCounters.windowsBegun);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, lane.manifestServedTicks, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, lane.snapshotServedTicks, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, lane.snapshotCursorTicks, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, lane.wrongIdentityTicks, detail);
+  const auto servedAt = [&](uint32_t tick) {
+    return std::binary_search(lane.manifestTicks.begin(), lane.manifestTicks.end(), tick);
+  };
+  std::vector<std::tuple<uint32_t, uint8_t, uint8_t>> expected, actual;
+  for (const auto& [tick, e] : snapshotLane.sent)
+    if (servedAt(tick)) expected.emplace_back(tick, static_cast<uint8_t>(e.type), e.data.noteData.note);
+  for (const auto& [tick, e] : lane.sent)
+    if (servedAt(tick)) actual.emplace_back(tick, static_cast<uint8_t>(e.type), e.data.noteData.note);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(32, expected.size(), detail);
+  TEST_ASSERT_TRUE_MESSAGE(expected == actual, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_c5_3_current_boot_content_is_served_from_the_manifest_only);
@@ -360,5 +408,6 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_source_move_while_serving_cannot_publish_a_stale_window);
   RUN_TEST(test_c5_3_a_note_sounding_into_a_gap_is_closed_not_left_hanging);
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
+  RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
   return UNITY_END();
 }

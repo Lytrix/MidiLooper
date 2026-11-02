@@ -58,32 +58,6 @@ struct RunResult {
   uint64_t ticks = 0;
 };
 
-/// `bars` bars on `t` slot 0, `notesPerBar` evenly spaced notes per bar (bar 0 also carries the recorder's own first
-/// note), stopped to STOPPED with its Record job retired and its root published.
-Loop& recordTake(Track& t, uint32_t bars, uint32_t notesPerBar) {
-  prepareSlot(t, 0, false);
-  t.forceSetState(TRACK_STOPPED);
-  start(t, 0, false, 0, 60);
-  const uint32_t step = kBar / notesPerBar;
-  const uint32_t hold = std::max<uint32_t>(6, step / 2);
-  for (uint32_t b = 0; b < bars; ++b)
-    for (uint32_t n = 0; n < notesPerBar; ++n) {
-      const uint32_t on = b * kBar + n * step + 3;
-      if (b == 0 && on < 100) continue;  // the recorder's own note owns bar 0's head
-      const uint8_t pitch = static_cast<uint8_t>(61 + (b * notesPerBar + n) % 24);
-      t.noteOn(1, pitch, 100, on);
-      t.noteOff(1, pitch, 0, on + hold);
-    }
-  const uint32_t length = bars * kBar;
-  clockManager.assignCurrentTickSilently(length);
-  t.stopRecordingToStopped(length);
-  driveStopToRetirement(t);
-  Loop& loop = t.getLoop(0);
-  TEST_ASSERT_EQUAL_UINT32(length, loop.loopLengthTicks);
-  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
-  return loop;
-}
-
 /// Production's Delete edit of the first committed note of `pitch` (as NOTE_EDIT commits it); the root is republished.
 void hideFirstNoteOfPitch(Loop& loop, uint8_t pitch) {
   SessionMidiEventVec rows;
@@ -369,12 +343,17 @@ void test_c5_3b_minimum_successor_lead_sweep() {
       {"20bar_dense", 20, 32, 1, 0, 0, false, false},
       {"4bar_hide", 4, 32, 1, 0, 0, true, false},
       {"4bar_hide", 4, 1, 1, 0, 0, true, true},
+      {"4bar_dense", 4, 32, 1, 0, 0, false, true},
+      {"20bar_dense", 20, 32, 1, 0, 0, false, true},
+      {"4bar_hide", 4, 32, 1, 0, 0, true, true},
       // qualified: the declared seven denials per grain, and eight real tracks on the round-robin lane
       {"4bar_deny7", 4, 32, 1, 7, 0, false, false},
       {"20bar_deny7", 20, 32, 1, 7, 0, false, false},
       {"4bar_deny7", 4, 1, 1, 7, 0, false, true},
+      {"4bar_deny7", 4, 32, 1, 7, 0, false, true},
       {"4bar_press7", 4, 32, 1, 0, 7, false, false},
       {"4bar_press7", 4, 1, 1, 0, 7, false, true},
+      {"4bar_press7", 4, 32, 1, 0, 7, false, true},
       {"20bar_press7", 20, 32, 1, 0, 7, false, false},
       // the owner cadence scales the lead: eight ticks per owner turn
       {"4bar_dense_A8", 4, 32, 8, 0, 0, false, false},
@@ -407,6 +386,7 @@ void test_c5_3b_fifty_seams_are_continuous_in_both_source_configurations() {
       {"4bar_sparse", 4, 1, 0, false}, {"4bar_sparse", 4, 1, 0, true},   {"4bar_dense", 4, 32, 0, false},
       {"8bar_dense", 8, 32, 0, false}, {"20bar_dense", 20, 32, 0, false}, {"20bar_sparse", 20, 1, 0, true},
       {"4bar_press7", 4, 32, 7, false}, {"4bar_press7", 4, 1, 7, true},
+      {"4bar_dense", 4, 32, 0, true},   {"20bar_dense", 20, 32, 0, true}, {"4bar_press7", 4, 32, 7, true},
   };
   for (const Case& k : cases) {
     RunConfig c;
@@ -439,7 +419,7 @@ void test_c5_3b_a_source_move_during_preparation_is_named_and_never_served_stale
   for (bool manifest : {false, true}) {
     RunConfig c;
     c.manifest = manifest;
-    c.notesPerBar = manifest ? 1 : 32;
+    c.notesPerBar = 32;
     c.lead = kSpan;
     c.seams = 20;
     c.moveAtSeam = 4;
@@ -453,7 +433,9 @@ void test_c5_3b_a_source_move_during_preparation_is_named_and_never_served_stale
   }
 }
 
-// The one-bar loop's committed window covers the whole loop: once served, every traversal is served. Checked over the
+// The one-bar loop: once its first window is served, every traversal is served. (The snapshot lane serves it from its
+// cold whole-loop window; the routed slot cancels that snapshot candidate (C5.3a case 9) and is served by successive
+// positioned windows instead.) Checked over the
 // same run length as fifty seams, in both source configurations.
 void test_c5_3b_the_one_bar_loop_is_continuous_without_a_successor() {
   for (bool manifest : {false, true}) {

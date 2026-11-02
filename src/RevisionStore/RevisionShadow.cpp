@@ -217,6 +217,17 @@ class ShadowReader final : public CommittedManifestLane::Reader {
   void endWindow() override {
     if (cursor != nullptr) cursor->cancel();
   }
+  /// Asked once per window position (the lane's Idle requester), never per tick: binary searches only.
+  uint32_t densestWindowRows(uint32_t identity, uint32_t loopLengthTicks, uint32_t spanTicks) override {
+    if (gState.store == nullptr || loopLengthTicks == 0) return 0;
+    const ShadowStore& store = *gState.store;
+    const ManifestId m = store.current();
+    if (m == kNoManifest || store.identityOf(m) != identity) return 0;
+    uint32_t densest = 0;
+    for (uint32_t start = 0; start < loopLengthTicks; start += Config::TICKS_PER_BAR)
+      densest = std::max(densest, store.rowsInRange(m, start, std::min(loopLengthTicks, start + spanTicks)));
+    return densest;
+  }
   bool reading() const { return cursor != nullptr && !cursor->idle(); }
 };
 ShadowReader gReader;

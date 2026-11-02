@@ -825,6 +825,21 @@ class StoreCore {
     return WindowResult::Pending;
   }
 
+  /// The rows of manifest `id` with a tick in `[fromTick, toTick)`, hidden or not: an upper bound on what a window of
+  /// that interval emits. Binary searches over each run's sorted segments only; no row is copied and no job starts.
+  uint32_t rowsInRange(ManifestId id, uint32_t fromTick, uint32_t toTick) const {
+    if (id == kNoManifest || !manifests_[id].live || toTick <= fromTick) return 0;
+    const RevisionManifest& m = manifests_[id];
+    uint32_t rows = 0;
+    for (uint8_t i = 0; i < m.runCount; ++i) {
+      const PassRun& r = runs_[m.runs[i]];
+      for (uint8_t s = 0; s < r.segCount; ++s)
+        rows += lowerBoundTick(r, r.segStart[s], r.segEnd(s), toTick) -
+                lowerBoundTick(r, r.segStart[s], r.segEnd(s), fromTick);
+    }
+    return rows;
+  }
+
   void cancelWindow() {
     if (window_.active) endWindow();
   }

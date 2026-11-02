@@ -5993,6 +5993,29 @@ TRACK_COLD_MEM bool boundRollingWindowWork(const LoopSnapshot& snapshot, uint32_
   return true;
 }
 
+#if REVISION_MANIFEST_READER
+/// C5.3: the routed slot's position price, from the servable manifest's densest bar-aligned window
+/// (`Reader::densestWindowRows`, metadata) -- the same shape `boundRollingWindowWork` prices from the root. A manifest
+/// window read costs one unit per row handed out and one per job step (`ManifestWindowCursor::step`), so `2E + 1`, and
+/// has no retirement steps (its pin ends with the job).
+TRACK_COLD_MEM bool manifestWindowWorkBound(uint32_t loopLengthTicks, uint32_t windowTicks,
+                                           RollingWindowWorkBound& out) {
+  using CommittedManifestLane::State;
+  if (CommittedManifestLane::gReader == nullptr || CommittedManifestLane::gServable.identity == 0 ||
+      static_cast<State>(CommittedManifestLane::gServable.state) != State::Ready || loopLengthTicks == 0 ||
+      windowTicks == 0)
+    return false;
+  const uint32_t rows = CommittedManifestLane::gReader->densestWindowRows(CommittedManifestLane::gServable.identity,
+                                                                         loopLengthTicks, windowTicks);
+  // A window the admission cannot hold is not a candidate position, as for the root bound.
+  if (rows == 0 || rows > RuntimePlaybackViewConfig::kWindowAdmissionLimit) return false;
+  out.events = rows;
+  out.readUnits = 2u * size_t(rows) + 1u;
+  out.releaseUnits = 0;
+  return true;
+}
+#endif
+
 TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(PlaybackDeadlineClock clock) {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
   (void)clock;
@@ -6269,12 +6292,18 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   {
     RollingWindowWorkBound bound{};
 #if REVISION_MANIFEST_READER
-    // C5.3: the routed slot prices its position from the declared contract only; it never reads the root.
-    const auto snapshot = manifestLaneRoutesSlot(activeLoopIndex) ? ImmutableLoopSnapshotRef{} : loop.publishedSnapshot();
+    // C5.3: the routed slot never reads the root. It prices its position from the manifest's own densest span, the
+    // reader owner's metadata (the declared 7-grain floor cannot hold a dense window, whose admission then
+    // repositions it until the traversal budget blocks the frame for good).
+    const bool routed = manifestLaneRoutesSlot(activeLoopIndex);
+    const auto snapshot = routed ? ImmutableLoopSnapshotRef{} : loop.publishedSnapshot();
+    const bool bounded = routed ? manifestWindowWorkBound(loop.loopLengthTicks, span, bound)
+                                : snapshot && boundRollingWindowWork(*snapshot, loop.loopLengthTicks, span, bound);
+    if (bounded) {
 #else
     const auto snapshot = loop.publishedSnapshot();
-#endif
     if (snapshot && boundRollingWindowWork(*snapshot, loop.loopLengthTicks, span, bound)) {
+#endif
       CoverageServiceContract priced = contract;
       priced.deriveWindowGrainsFrom(bound.readUnits, bound.events, bound.releaseUnits,
                                     kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
