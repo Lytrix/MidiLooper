@@ -14110,6 +14110,33 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
       generation and projection invalidation, and the rest of 5.x, keep their sequencing (amendment 21).
     - **Why now.** It blocks the device successor-lead sweep (amendment 26) on dense content, the case the admission
       decision depends on.
+    - **Ownership handoffs and admission (owner rulings, same day).** Each of the following is narrow and named, and
+      none changes another rejection's consequence.
+      - The routed slot's Record presentation retires once the manifest is servable for the loop's current revision
+        (`manifestTakesOverRecordReturn`), because waiting for a served window of it was circular.
+      - An Idle frame reclaims a complete, unpublished `ready` that nothing owns (`win_orphan_successor_reclaimed`).
+      - **A terminal admission refusal may stop a window from being promised, but it may not leave an undischargeable
+        demand owning the lane.** On the routed slot a DEC-147 price refusal of a committed demand discharges it into
+        a quiescent `PriceRefusal` {source, epoch, interval, price, available lead}. The same demand is not re-issued
+        until one of those changes. Elsewhere DEC-108 §13(c)'s retained-refusal promise is unchanged; generalising
+        needs its own ruling.
+      - The first manifest window is priced from the requested 1,536-tick interval's work (densest bar-aligned span
+        from manifest metadata), never from the loop's extent.
+    - **Playhead continuity (owner ruling, 2026-11-02).** Playhead continuity is defined against the **next
+      clock-reachable playback frontier**, not the immediately preceding internal tick.
+      - A candidate adopts at its start `S` only when:
+        - the last accounted phase is exactly one clock step behind `S` in this traversal (1 tick on the internal
+          clock; `TICKS_PER_CLOCK` = 8 on external MIDI clock, 24 PPQN against 192);
+        - nothing at or past `S` was consumed;
+        - the gap carried no playback obligation (it was the routed lane's own silent miss).
+      - Adoption remains a hard correctness condition.
+      - A failed continuity proof (`CandidateRejected`, term 6) retires the candidate and retries; it no longer blocks
+        the frame terminally. No restamp, no merged fallback.
+      - Device: the exact `start - 1` rule refused every aligned external-clock handoff (`lastTickInLoop` 19,960 at
+        `S` = 19,968). With the frontier, the first post-restart manifest window played: 1,536 window-served ticks of
+        the routed slot, no term-6 refusal (`captures/session_20261102_175059.log`).
+      - The 192-PPQN musical timeline is unaffected: event times between pulses stay what they are; this rule is
+        only about the transport's continuity proof.
 
 ### Related
 

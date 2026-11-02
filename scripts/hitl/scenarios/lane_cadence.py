@@ -226,7 +226,35 @@ def _succ_latest(lines, start, track0):
     return found
 
 
-def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS):
+_TICK_ROUTE_RE = re.compile(r"^#CAP,(\d+),DIAG,tick_route,(.*)$")
+SWEEP_TRACKS = 8              # slot-ticks per clock pulse in `tick_route` (every track counts once)
+SWEEP_TICKS_PER_PULSE = 8     # external MIDI clock: 24 PPQN against 192 internal
+
+
+def _routed_window_served_ticks(lines, start):
+    """Window-served ticks of the routed slot since line `start`, from the live `tick_route` rows.
+
+    `tick_route` reaches the log while the transport runs (the per-track lane rows are retained until it stops). On
+    this card the routed slot is the only one whose misses are `none` (the lane's silent contained miss; every other
+    track plays merged), so each row's pulses minus its `none` count are the pulses the routed slot was served from a
+    window. Assumption of this card, stated: no other track produces `none`.
+    """
+    served = 0
+    for line in lines[start:]:
+        m = _TICK_ROUTE_RE.match(line.strip())
+        if not m:
+            continue
+        fields = dict(kv.split("=", 1) for kv in m.group(2).split(",") if "=" in kv)
+        try:
+            counts = [int(fields[k]) for k in ("view", "bridge", "paged", "merged", "none")]
+        except (KeyError, ValueError):
+            continue
+        pulses = sum(counts) // SWEEP_TRACKS
+        served += max(0, pulses - counts[4]) * SWEEP_TICKS_PER_PULSE
+    return served
+
+
+def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS, hold_s=0.0):
     """Amendment 26: for each denial level (0-7 withheld grants after every grain served to track 8), the smallest
     successor lead at which every seam hands off cleanly -- 20-seam bisection points, then 50/50 at the answer.
 
@@ -309,10 +337,15 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     first = None
     while time.monotonic() < t0 + 90 and first is None:
         time.sleep(1.0)
-        row = _succ_latest(log_lines(), start, track0)
-        if row and row["requested"] > 0:
-            first = row
+        current = log_lines()
+        # The live signal: one whole span of the routed slot served from a window (owner ruling, amendment 27). The
+        # successor probe's `succ` row is retained until the transport stops, so it can only confirm afterwards.
+        served = _routed_window_served_ticks(current, start)
+        row = _succ_latest(current, start, track0)
+        if served >= SWEEP_SPAN_TICKS or (row and row["requested"] > 0):
+            first = dict(window_served_ticks=served, succ=row)
     leg["first_window_served_s"] = None if first is None else round(time.monotonic() - t0, 1)
+    leg["first_window_evidence"] = first
     save()
     if first is None:
         raise RuntimeError("restart_no_first_manifest_window_within_90s")
@@ -348,8 +381,10 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     if not deny_levels:
         # The takeover check (amendment 27): the take plays past the frozen Record reader's period and the committed
         # takeover; the capture's lane rows answer whether a committed window serves. No sweep.
-        leg["takeover_play_s"] = 120
-        time.sleep(120)
+        # Stops promptly once the first window has served; `--lane-cadence-hold` keeps playing to observe steady state.
+        leg["takeover_play_s"] = hold_s
+        if hold_s > 0:
+            time.sleep(hold_s)
     coarse = max(5, int(10 * scale))
     boundary = max(10, int(20 * scale))
     verify = max(10, int(SWEEP_VERIFY_SEAMS * scale))
@@ -401,6 +436,8 @@ def run_lane_cadence(args):
     parser.add_argument("--lane-cadence-scale", type=float, default=1.0, help="leg duration multiplier (smoke runs)")
     parser.add_argument("--lane-cadence-mode", choices=("legs", "intense", "sweep"), default="intense")
     parser.add_argument("--lane-cadence-deny", default="0,3,7", help="sweep: denial levels (comma list; 'none': setup only)")
+    parser.add_argument("--lane-cadence-hold", type=float, default=0.0,
+                        help="sweep with deny none: seconds to keep playing after the first window serves")
     ns, _ = parser.parse_known_args(legacy)
     config.out_dir.mkdir(parents=True, exist_ok=True)
     path = config.out_dir / "lane-cadence.json"
@@ -428,7 +465,8 @@ def run_lane_cadence(args):
                 run_intense(ctx, session, capture, master, report, save, ns.lane_cadence_scale)
             else:
                 run_sweep(ctx, session, capture, master, report, save, ns.lane_cadence_scale,
-                          tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip() and x.strip() != "none"))
+                          tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip() and x.strip() != "none"),
+                          hold_s=ns.lane_cadence_hold)
         for bpm, seconds in (LEGS if ns.lane_cadence_mode == "legs" else ()):
             seconds = max(5.0, seconds * ns.lane_cadence_scale)
             leg = dict(bpm=bpm, planned_s=seconds, start_monotonic=time.monotonic(), start_us_hint=None)
