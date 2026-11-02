@@ -283,7 +283,9 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     # manifest-served committed lane, never from the Record-return path.
     time.sleep(45.0)
     master.stop()
-    time.sleep(4.0)
+    # The Record presentation retires only while stopped (playing, it waits for a committed window that it itself
+    # blocks: the open ownership-handoff defect), in several deferred steps -- 4 s was not enough on the device.
+    time.sleep(20.0)
     status = {}
     for command in ("!STOP_STATUS", "!REVSHADOW_STATUS"):
         nonce, end = uuid.uuid4().hex, uuid.uuid4().hex

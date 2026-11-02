@@ -793,6 +793,10 @@ struct LoopPlaybackRuntime {
   struct RollingFrame {
     RollingPhase phase = RollingPhase::Idle;
     uint8_t boundView = RuntimePlaybackViewLifecycle::kNoView;
+    /// Report-only (DEC-246 amendment 27): the first `rollingCandidateReadyAtBoundary` term that refused this frame's
+    /// candidate (`rollingCandidateRejectTerm`), 0 when none. Sits in existing padding; the producer reports it as the
+    /// `win_blocked` row's `rq`.
+    uint8_t rejectTerm = 0;
     uint32_t epoch = 0;
     uint32_t generation = 0;
     uint32_t loopLength = 0;

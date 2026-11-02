@@ -5768,6 +5768,41 @@ TRACK_COLD_MEM void cancelRollingSuccessor(LoopPlaybackRuntime& runtime, uint8_t
 // Boundary-only validation is flash-resident; steady serving stays in ITCM.
 // Fixed metadata reads only, under RollingMetadataGuard. Device duration remains
 // a qualification obligation; this placement is not a timing claim.
+/// Report-only: the **first** term of `rollingCandidateReadyAtBoundary` that fails, in its own order (1-based; 0: none).
+/// Read only on the reject path, so the hot path pays nothing. Kept term for term with the predicate below.
+TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
+    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase) {
+  const auto& frame = runtime.rolling;
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (!set) return 1;
+  if (runtime.ownsCoverageSource()) return 2;
+  if (runtime.completedPromisePendingJudgement) return 3;
+  if (runtime.admittedPromiseInvalidated) return 4;
+  if (runtime.countedMissedTraversals != 0) return 5;
+  if (loop.lastTickInLoop != (phase == 0 ? loop.loopLengthTicks - 1 : phase - 1)) return 6;
+  if (set->lifecycle.ready >= set->views.size()) return 7;
+  const auto& work = runtime.viewBuildWork;
+  const auto& ready = set->views[set->lifecycle.ready];
+  if (work.clockEpoch != frame.epoch) return 8;
+  if (work.deadlineTick != frame.deadlineTick) return 9;
+  if (runtime.viewBuildOperationGeneration != frame.generation) return 10;
+  if (!sourceCurrent) return 11;
+  if (runtime.cachedLoopRevision != loop.playbackRevision) return 12;
+  if (runtime.cachedTrackGeneration != frame.generation) return 13;
+  if (!ready.complete) return 14;
+  if (ready.published) return 15;
+  if (ready.rawCoveragePrepared) return 16;
+  if (ready.source.origin != PlaybackWindowOrigin::Committed) return 17;
+  if (ready.source.sourceGeneration != frame.generation) return 18;
+  if (ready.source.playbackRevision != loop.playbackRevision) return 19;
+  if (ready.coverage.startPhase != frame.startPhase) return 20;
+  if (frame.startPhase >= frame.loopLength) return 21;
+  if (ready.coverage.lengthTicks != std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase))
+    return 22;
+  if (ready.coverage.loopLengthTicks != frame.loopLength) return 23;
+  return 0;
+}
+
 TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
     const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase) {
   const auto& frame = runtime.rolling;
@@ -5861,6 +5896,17 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
     auto& ready = set->views[set->lifecycle.ready];
     if (!ready.published && ready.source.sourceGeneration == frame.generation &&
         ready.coverage.startPhase == frame.startPhase) ready.resetMetadata();
+  }
+  // DEC-246 amendment 27 (5.1): with a retained view, current and successor alternate over two views and a ready
+  // successor's publication took the build role. A cancelled frame's ready role then holds only an incomplete shell; it
+  // must become the build role again (as `handoff` reclaims a retired view), or every later request answers `win_busy`
+  // (`role_build_out_of_range`) for the rest of the transport -- measured across a Stop and Start.
+  if (set && set->lifecycle.build >= set->views.size() && set->lifecycle.ready < set->views.size() &&
+      set->lifecycle.ready != set->lifecycle.current && set->lifecycle.ready != set->lifecycle.retained &&
+      !set->views[set->lifecycle.ready].complete && !set->views[set->lifecycle.ready].published) {
+    set->lifecycle.build = set->lifecycle.ready;
+    set->lifecycle.ready = RuntimePlaybackViewLifecycle::kNoView;
+    set->views[set->lifecycle.build].resetMetadata();
   }
   // Cancellation ends this operation, not its interval's lag/fault history.
   runtime->rolling = LoopPlaybackRuntime::RollingFrame{};
@@ -6207,7 +6253,10 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       return RollingOutcome::Serving;
     }
     if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
-      reportPlaybackRollingGateRow("win_blocked", clock.epoch != 0);
+      // `rq` names the refusing candidate term when the resolver blocked on `CandidateRejected` (0 otherwise).
+      reportPlaybackRollingGateRow("win_blocked", clock.epoch != 0, /*reprojectedTick=*/false,
+          frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::CandidateRejected)
+              ? frame.rejectTerm : 0);
       return RollingOutcome::Rejected;
     }
     const auto* request = runtime->pendingViewRequest();
@@ -6645,15 +6694,27 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
 #if REVISION_MANIFEST_READER
       !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot) &&
           (!manifestLaneRoutesSlot(slot) || (set->lifecycle.ready < set->views.size() &&
-           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase))
+           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase)) {
 #else
-      !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase))
+      !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase)) {
 #endif
+    if (clock.tick == frame.deadlineTick && frame.phase == LoopPlaybackRuntime::RollingPhase::Ready &&
+        phase == frame.startPhase) {
+      // Report-only: name the refusing term (the predicate's own inputs, re-read on this reject path only).
+#if REVISION_MANIFEST_READER
+      frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot) &&
+          (!manifestLaneRoutesSlot(slot) || (set->lifecycle.ready < set->views.size() &&
+           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase);
+#else
+      frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase);
+#endif
+    }
     return rejectRollingFrame(*runtime, loop,
         clock.tick != frame.deadlineTick ? RouteReject::HandoffMissed
         : frame.phase != LoopPlaybackRuntime::RollingPhase::Ready ? RouteReject::CandidateNotReady
         : phase != frame.startPhase ? RouteReject::HandoffPhaseMismatch
                                     : RouteReject::CandidateRejected);
+  }
   if (!adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop, RouteReject::AdoptRefused);
   loop.nextEventIndex = 0; // First event in the new half-open interval, no inline search/build.
   frame.boundView = set->lifecycle.current;

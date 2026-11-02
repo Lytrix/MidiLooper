@@ -242,11 +242,86 @@ void test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serve
                                 static_cast<int>(runtime.rolling.phase), detail);
 }
 
+// The post-restart handoff (DEC-246 amendment 27; device captures/c5-3b-sweep-01): a committed manifest slot, Ready
+// before the restart, is stopped and started again (the device's MIDI Start: tick 0, a new clock epoch). Its first
+// window after the restart is prepared and Ready; at its handoff the resolver refused it (`CandidateRejected`) and the
+// frame stayed blocked. The first assertion names the refusing term; the slot must then serve.
+void test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const auto drive = [&](uint32_t from, uint32_t to, uint32_t epoch, uint32_t& served, uint8_t& term, uint32_t& blocked) {
+    for (uint32_t tick = from; tick < to; ++tick) {
+      nativePlaybackDeadlineClock = {tick, epoch};
+      clockManager.assignCurrentTickSilently(tick);
+      reader().serviceOwner(loop);
+      lane.serviceTracks(tick);
+      t.playMidiEvents(tick, true);
+      if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+        ++blocked;
+        if (runtime.rolling.rejectTerm) term = runtime.rolling.rejectTerm;
+      }
+      PlaybackViewSourceIdentity src{};
+      PlaybackCoverageInterval cov{};
+      if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+          t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+        ++served;
+    }
+  };
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t served1 = 0, blocked1 = 0;
+  uint8_t term1 = 0;
+  drive(0, 20 * loop.loopLengthTicks, 1, served1, term1, blocked1);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served1, "precondition: the manifest lane serves before the restart");
+
+  // Stop, then Start: tick 0 and a new clock epoch, as the device's MIDI Start.
+  t.stopPlaying();
+  nativePlaybackDeadlineClock = {0, 2};
+  clockManager.assignCurrentTickSilently(0);
+  lane.serviceTracks(0);
+  t.startPlaying(0);
+  uint32_t served2 = 0, blocked2 = 0;
+  uint8_t term2 = 0;
+  drive(0, 20 * loop.loopLengthTicks, 2, served2, term2, blocked2);
+  char detail[260];
+  snprintf(detail, sizeof(detail),
+           "after restart: served=%u blocked=%u rejectTerm=%u blockedBy=%u phase=%u exit=%s playing=%u lane=%u",
+           served2, blocked2, unsigned(term2), unsigned(runtime.rolling.blockedBy), unsigned(runtime.rolling.phase),
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-",
+           t.isPlaying() ? 1u : 0u, unsigned(CommittedManifestLane::gServable.state));
+  printf("RESTART %s\n", detail);
+  {
+    const auto* ls = runtime.viewSetIfPrewarmed();
+    printf("RESTART roles: c=%u r=%u b=%u i=%u ret=%u v0=%d%d v1=%d%d v2=%d%d\n", ls->lifecycle.current,
+           ls->lifecycle.ready, ls->lifecycle.build, ls->lifecycle.idle, ls->lifecycle.retained, ls->views[0].complete,
+           ls->views[0].published, ls->views[1].complete, ls->views[1].published, ls->views[2].complete,
+           ls->views[2].published);
+  }
+  printf("RESTART busy: pend=%d reason=%u kind=%u epoch=%u deadline=%llu admitted=%llu froz=%d role=%u grains=%u own=%d "
+         "bld=%d gate=%s\n", runtime.pendingViewRequest_.active, unsigned(runtime.pendingViewRequest_.reason),
+         unsigned(runtime.pendingViewRequest_.sourceKind), runtime.pendingViewRequest_.clockEpoch,
+         (unsigned long long)runtime.pendingViewRequest_.deadlineTick,
+         (unsigned long long)runtime.pendingViewRequest_.work.admittedTick, runtime.frozenViewRequest.active,
+         unsigned(runtime.coverageRoleRefusal(false)), unsigned(t.playbackViewOutstandingGrains(0)),
+         runtime.ownsCoverageSource(), runtime.viewBuild.active(),
+         playbackBuildRefusalName(t.playbackBuildGateRefusal(0, clockManager.getPlaybackDeadlineClock())));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, term2, detail);  // no candidate term refused the first window
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served2, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
   RUN_TEST(test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving);
   RUN_TEST(test_5_1_a_long_dense_take_stopped_into_play_reaches_committed_serving);
   RUN_TEST(test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves);
+  RUN_TEST(test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route);
   return UNITY_END();
 }
