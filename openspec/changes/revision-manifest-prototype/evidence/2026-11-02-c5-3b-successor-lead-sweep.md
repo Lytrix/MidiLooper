@@ -233,3 +233,52 @@ about 100. The real cost model is therefore:
 - **Budget at E = 93, 11 grants** in a 1,488-tick window: a guaranteed grant gap of at most 128 ticks fits
   (1,408). The observed maximum of 144 does not (1,584). So the grant deadline needs **enforcing**, not just
   observing.
+
+## `buildGrantBound(E)` from the code (owner ruling: prove the 7 first)
+
+The post-admission build of a committed manifest window runs (`RuntimePlaybackViewBuild::stepOrder`, fill already
+done during qualification, `requiredFillGrains = 0`):
+
+1. **Canonical order** (`SnapshotCanonicalOrder`, 48 entries per grant).
+2. **Ranks** (`SnapshotRanks`): E entries at 48 per grant.
+3. **Playback order** (`SnapshotPlaybackOrder`, 48 entries per grant).
+4. **Publication**: one grant at `Complete`.
+
+Each order pass (`RuntimePlaybackOrderBuilder::step`):
+- starts with a **fill pass** of one unit per row, detecting already-ordered input (`orderedDuringFill_`, initially
+  true);
+- if the input arrives in the pass's own order, the merge completes immediately (`runWidth_ = orderedEventCount_`);
+- otherwise it runs a bottom-up merge sort from width 1: about `E × ⌈log₂ E⌉` more units, plus a copy-back when the
+  last merge lands in scratch.
+
+Whether each pass's input is ordered follows from the store's merge order, `(tick, equal-tick class, run)` then
+`(origin, seq)`: the DEC-244 order, NoteOff before NoteOn at equal ticks.
+
+- **Playback order** `(phase, kind Off < On < other, rank)`: inside a non-wrapping window, phase is monotonic in tick
+  and the class order is the kind order, so the input is **already ordered**: `ceil(E / 48)` grants.
+- **Canonical order** `(raw tick, pass, event)`: ordered **unless** an equal-tick pair's class order disagrees with its
+  pass order (for example a later pass's NoteOff and an earlier pass's NoteOn at the same tick). Then the pass merge-
+  sorts.
+
+**Grant bound for a committed manifest window:**
+
+```
+G(E) = ceil((2E + 1) / 64)            qualification (read units 2E + 1, 64 per grant)
+     + 1                              admission
+     + C(E)                           canonical order
+     + ceil(E / 48)                   ranks
+     + ceil(E / 48)                   playback order (input ordered by construction)
+     + 1                              publication
+
+C(E) = ceil(E / 48)                              no equal-tick class/pass inversion in the window
+C(E) <= ceil(E * (2 + ceil(log2 E)) / 48)        otherwise (fill + merge passes + copy-back)
+```
+
+- **Against the device** (no equal-tick inversions in the dense take): G(57) = 2 + 1 + 2 + 2 + 2 + 1 = 10, and
+  G(83) = G(93) = G(94) = 3 + 1 + 2 + 2 + 2 + 1 = 11. These are **exactly** the measured 10 and 11. The flat 7 is
+  `3 · ceil(E / 48) + 1` staying constant for E in 49–96. It steps to 10 at E = 97–144, and so on.
+- **The adversarial branch matters.** At E = 93, an inversion makes C(93) ≤ ceil(93 × 9 / 48) = 18 instead of 2, so
+  G(93) ≤ **27**. At 27 grants a 1,488-tick window needs a grant gap of at most 55 ticks.
+- **Not yet verified on host:** the inverted branch, i.e. how many units the merge actually uses, and whether
+  publication ever needs a second grant. A host fixture that counts grants for a window with an equal-tick cross-pass
+  Off/On pair would pin it.
