@@ -353,8 +353,8 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         raise RuntimeError("restart_no_first_manifest_window_within_90s")
     print(f"[lane_cadence] first manifest window serving {leg['first_window_served_s']}s after restart", flush=True)
 
-    def probe(lead, deny, seams):
-        """Configure, then wait for `seams` closed successors on track 8 (or the first miss/discard)."""
+    def configure(lead, deny):
+        """`!SUCC_PROBE` (it resets the probe's counters); returns the log line the new counters start after."""
         nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
         start = len(log_lines())
         accepted, detail = capture.send_command(f"!SUCC_PROBE {lead} {track0} {deny}", nonce=nonce, end_nonce=end)
@@ -364,6 +364,34 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         if not any(r.strip().startswith("SUCC_PROBE,ok") for r in (rows or [])) and \
                 _wait_line(log_lines, start, ("SUCC_PROBE,ok",), 1.0) is None:
             raise RuntimeError("succ_probe_not_acknowledged")
+        return start
+
+    def probe(lead, deny, seams):
+        """One honest point: a failure whose smallest actual lead fell more than one resolution step short of `lead` is
+        the configure-phase artefact, so it is measured once more before it counts."""
+        ok, row = probe_once(lead, deny, seams)
+        if not ok and row and row["min_lead"] < lead - SWEEP_RESOLUTION:
+            print(f"[lane_cadence] sweep deny={deny} lead={lead}: short actual lead {row['min_lead']}, measuring again",
+                  flush=True)
+            ok, row = probe_once(lead, deny, seams)
+        return ok
+
+    def probe_once(lead, deny, seams):
+        """Configure, then wait for `seams` closed successors on track 8 (or the first miss/discard).
+
+        A configure lands at an arbitrary phase of the serving window N, so N's own successor is requested at once with
+        whatever lead is left, not `lead` (device: actual 752 at configured 768, 1152 and 1344). That first seam is a
+        method artefact: it is let resolve, then the probe is configured again -- the counters reset at a point where
+        no successor of the current window is owed yet -- and only the seams after it are judged.
+        """
+        start = configure(lead, deny)
+        warm_deadline = time.monotonic() + seam_s * 3 + 45
+        while time.monotonic() < warm_deadline:
+            time.sleep(0.25)
+            warm = _succ_latest(log_lines(), start, track0)
+            if warm and (warm["handed"] + warm["missed"] + warm["cancelled"]) >= 1:
+                break
+        start = configure(lead, deny)
         t0 = time.monotonic()
         # A miss repositions the lane at the full priced lookahead (about 30 s at 300 BPM), so allow for one.
         deadline = t0 + seams * seam_s * 3 + 45
@@ -376,11 +404,14 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
             if row and (row["missed"] or row["cancelled"] or row["handed"] >= seams):
                 break
         ok = bool(row) and row["missed"] == 0 and row["cancelled"] == 0 and row["handed"] >= seams
-        point = dict(lead=lead, deny=deny, seams=seams, ok=ok, row=row, seconds=round(time.monotonic() - t0, 1))
+        honest = bool(row) and row["min_lead"] >= lead - SWEEP_RESOLUTION
+        point = dict(lead=lead, deny=deny, seams=seams, ok=ok, honest=honest, row=row,
+                     seconds=round(time.monotonic() - t0, 1))
         leg["points"].append(point)
         save()
-        print(f"[lane_cadence] sweep deny={deny} lead={lead}: {'ok' if ok else 'FAIL'} {row}", flush=True)
-        return ok
+        print(f"[lane_cadence] sweep deny={deny} lead={lead}: {'ok' if ok else 'FAIL'}"
+              f"{'' if honest else ' (short actual lead)'} {row}", flush=True)
+        return ok, row
 
     if not deny_levels:
         # The takeover check (amendment 27): the take plays past the frozen Record reader's period and the committed
