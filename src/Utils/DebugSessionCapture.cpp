@@ -2246,7 +2246,9 @@ SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample
   // The limit is part of the row so an observation is self-describing: a reader never has to know
   // the declaration to see whether a gap was an overrun.
   // Aggregate off-clock; no direct USB write inside the timed worker span.
-  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,3\r\n",
+  // Schema 4 (C5.3b, DEC-246 amendment 24) appends, after the schema number so fields 4..19 keep their positions, the
+  // most ticks any 16 / 128 consecutive running dispatches spanned in the block and the microseconds of that 128 span.
+  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,4,%lu,%lu,%lu\r\n",
       static_cast<unsigned long>(micros()),
       static_cast<unsigned long>(sample.maxDeltaTicks), static_cast<unsigned long>(sample.opportunities),
       static_cast<unsigned long>(phase), static_cast<unsigned>(transportRunning),
@@ -2255,7 +2257,8 @@ SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample
       static_cast<unsigned long>(sample.deniedTurns), static_cast<unsigned long>(sample.maxWorkerUs),
       static_cast<unsigned long>(epoch), static_cast<unsigned long>(sample.saturatedGaps),
       static_cast<unsigned long>(sample.permittedAdvanceTicks), static_cast<unsigned long>(sample.overruns),
-      static_cast<unsigned long>(sample.overrunMaxTicks));
+      static_cast<unsigned long>(sample.overrunMaxTicks), static_cast<unsigned long>(sample.span16MaxTicks),
+      static_cast<unsigned long>(sample.span128MaxTicks), static_cast<unsigned long>(sample.span128MaxUs));
 }
 
 SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,

@@ -31,7 +31,7 @@ READINESS_ROW = "DIAG,win_readiness,"
 FROZEN_READINESS_ROW = "DIAG,win_frozen_readiness,"
 #: `#CAP,<us>,DIAG,win_gap,<maxDelta>,<opportunities>,<phase>,<running>,<discontinuities>,<eligibleMax>,<eligibleTurns>,`
 #: `<progressTurns>,<deniedTurns>,<maxWorkerUs>,<epoch>,<saturatedGaps>,<permitted>,<overruns>,<overrunMax>,<schema>`
-#: (fields 4..19; the trailing `3` is the schema number the emitter writes)
+#: (fields 4..19; field 19 is the schema number the emitter writes: 3, or 4 with the C5.3b span fields 20..22 after it)
 GAP_ROW = "DIAG,win_gap,"
 #: `#CAP,<us>,DIAG,win_gap_overrun,<permitted>,<overruns>,<overrunMax>,<running>,<epoch>` — the **named** overrun.
 GAP_OVERRUN_ROW = "DIAG,win_gap_overrun,"
@@ -363,6 +363,11 @@ def gap_rows(lines: list[str]) -> list[dict[str, Any]]:
                 "overruns": fields[17],
                 "overrun_max_ticks": fields[18],
                 "schema": fields[19],
+                # Schema 4 (C5.3b): the most ticks any 16 / 128 consecutive running dispatches spanned, and the
+                # microseconds of that 128 span; absent from older rows.
+                "span16_max_ticks": fields[20] if len(fields) > 22 else None,
+                "span128_max_ticks": fields[21] if len(fields) > 22 else None,
+                "span128_max_us": fields[22] if len(fields) > 22 else None,
             }
         )
     return rows

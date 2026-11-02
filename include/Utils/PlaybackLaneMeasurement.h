@@ -26,12 +26,47 @@ struct PlaybackLaneMeasurement {
   uint32_t permittedAdvanceTicks = 0;
   uint32_t overruns = 0;
   uint32_t overrunMaxTicks = 0;
+  /// C5.3b (DEC-246 amendment 24): the device's ticks per owner turn, in the unit the successor-lead measurement counts.
+  /// The most ticks (and microseconds) any `kShortSpan` / `kLongSpan` **consecutive** running dispatches of one epoch
+  /// spanned in this block: the host measured a successor window at 14-16 owner turns idle and 112-128 under
+  /// eight-track arbitration, so these two spans turn those counts into ticks. A discontinuity or a stopped dispatch
+  /// restarts the run, so no span crosses one.
+  static constexpr uint32_t kShortSpan = 16;
+  static constexpr uint32_t kLongSpan = 128;
+  uint32_t span16MaxTicks = 0;
+  uint32_t span128MaxTicks = 0;
+  uint32_t span128MaxUs = 0;
 
   /// `permittedAdvanceTicksIn` defaults to **0 = no comparison**: a caller that does not know the declaration (the
   /// clock-plumbing fixtures, which observe the epoch/tick rule on its own) records no overrun rather than inventing one.
   void observe(PlaybackDeadlineClock clock, bool running, bool eligible,
-               bool progressed, bool denied, uint32_t workerUs, uint32_t permittedAdvanceTicksIn = 0) {
+               bool progressed, bool denied, uint32_t workerUs, uint32_t permittedAdvanceTicksIn = 0,
+               uint32_t nowUs = 0) {
     permittedAdvanceTicks = permittedAdvanceTicksIn;
+    // The consecutive-dispatch spans: a running dispatch of the same epoch with a non-decreasing tick extends the run;
+    // anything else starts a new one at this dispatch (a stopped one leaves it empty).
+    if (!running || clock.epoch == 0 || (runLength_ != 0 && (clock.epoch != runEpoch_ ||
+        static_cast<uint32_t>(clock.tick) < spanTick_[(runLength_ - 1) % kLongSpan])))
+      runLength_ = 0;
+    if (running && clock.epoch != 0) {
+      const uint32_t tick = static_cast<uint32_t>(clock.tick);
+      runEpoch_ = clock.epoch;
+      const uint32_t slot = runLength_ % kLongSpan;
+      ++runLength_;
+      if (runLength_ > kShortSpan) {
+        const uint32_t back = spanTick_[(runLength_ - 1 - kShortSpan) % kLongSpan];
+        if (tick - back > span16MaxTicks) span16MaxTicks = tick - back;
+      }
+      if (runLength_ > kLongSpan) {
+        // The oldest entry still in the ring is exactly `kLongSpan` dispatches back: read it before overwriting it.
+        const uint32_t back = spanTick_[slot];
+        const uint32_t backUs = spanUs_[slot];
+        if (tick - back > span128MaxTicks) span128MaxTicks = tick - back;
+        if (nowUs != 0 && nowUs - backUs > span128MaxUs) span128MaxUs = nowUs - backUs;
+      }
+      spanTick_[slot] = tick;
+      spanUs_[slot] = nowUs;
+    }
     if (seen_) {
       if (clock.epoch == 0 || clock.epoch != last_.epoch || clock.tick < last_.tick) {
         ++discontinuities;
@@ -66,8 +101,13 @@ struct PlaybackLaneMeasurement {
     maxDeltaTicks = eligiblePredecessorMax = eligibleTurns = progressTurns = 0;
     deniedTurns = maxWorkerUs = discontinuities = saturatedGaps = 0;
     overruns = overrunMaxTicks = 0;
+    span16MaxTicks = span128MaxTicks = span128MaxUs = 0;  // the run itself continues across blocks
   }
  private:
+  uint32_t spanTick_[kLongSpan] = {};
+  uint32_t spanUs_[kLongSpan] = {};
+  uint32_t runLength_ = 0;
+  uint32_t runEpoch_ = 0;
   PlaybackDeadlineClock last_{};
   bool seen_ = false;
   bool wasRunning_ = false;

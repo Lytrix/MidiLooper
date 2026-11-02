@@ -7592,7 +7592,8 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
   // It is read from the declaration itself (not restated), so the bound and the observation cannot drift apart.
   sLaneMeasurement.observe(clock, running, eligible,
       result == PlaybackViewTurnResult::GrainServed || result == PlaybackViewTurnResult::BuildComplete,
-      result == PlaybackViewTurnResult::GrainDenied, workerUs, kPlaybackViewPermittedAdvancePerTurn);
+      result == PlaybackViewTurnResult::GrainDenied, workerUs, kPlaybackViewPermittedAdvancePerTurn,
+      static_cast<uint32_t>(micros()));
   // First row then every 256 dispatches, and on an eligible->idle completion.
   // Idle dispatches are now counted, so the former 16-turn cadence would flood capture.
   if (sLaneMeasurement.opportunities == 1 || sLaneMeasurement.opportunities % 256 == 0 ||

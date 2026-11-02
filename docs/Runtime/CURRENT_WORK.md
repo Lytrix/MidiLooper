@@ -1,5 +1,19 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-02 — revision-manifest C5.3b-d (device): 128 window-lane turns take at most 1,265 ticks (3.26 s) at about 125 BPM; 16 turns take at most 285.**
+- **Instrument.** `win_gap` schema 4 adds the worst ticks and µs over 16 / 128 consecutive running lane turns (a RAM2
+  ring; code in flash; RAM1 unchanged).
+- **Run.** Reader image `6d7bb3af…`, boot verified, `STIM-WINDOW-CONTENT-01` on track 8 slot 4 (one sounding track),
+  `captures/c5-3b-cadence-01/`.
+- **Reading.** The worst cadence is one lane turn per about 25 ms.
+  - The host's dense successor (14–16 turns) fits one span (1,536 ticks) easily.
+  - Its worst-arbitration count (112–128 turns) fits with 18 % margin at this tempo. The cadence is wall time, so the
+    fit holds only below about 147 BPM at 128 turns.
+  - Eight sounding tracks are not measured yet.
+- **Correction.** The earlier chat claim of a lane turn "every 36–103 µs" misread a cumulative counter.
+- **Gates.** FAST 8/8; AFFECTED 349/349. FULL not run for this slice (last full at `c327abcb`: 3,931 / 8 / 3,923).
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-device-turn-cadence.md)
+
 **2026-11-02 — revision-manifest C5.3b-m (host): the successor window needs 6–14 owner turns, and 119 under the worst arbitration (DEC-246 amendment 24).**
 - **Ruling (amendment 24).** C5.3a is accepted. Before changing admission, measure the successor lead. Bypass only the
   DEC-147 lead price, only in a host fixture.

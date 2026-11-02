@@ -87,6 +87,33 @@ void test_lane_measurement_counts_idle_dispatches_without_inventing_pending_work
   TEST_ASSERT_EQUAL_UINT32(0, sample.maxWorkerUs);
 }
 
+// C5.3b (DEC-246 amendment 24): the spans of 16 / 128 consecutive running dispatches -- the ticks per owner turn the
+// successor-lead measurement needs. A stall inside the run is charged to every span that covers it; a stop or a new
+// epoch restarts the run, so no span crosses one; the block clear keeps the run.
+void test_lane_measurement_spans_consecutive_running_dispatches() {
+  PlaybackLaneMeasurement sample;
+  uint64_t tick = 100;
+  uint32_t us = 1000;
+  for (int i = 0; i < 200; ++i) {
+    tick += (i == 150) ? 90 : 1;  // one 90-tick stall at dispatch 150
+    us += 50;
+    sample.observe({tick, 1}, true, false, false, false, 0, 64, us);
+  }
+  TEST_ASSERT_EQUAL_UINT32(16 - 1 + 90, sample.span16MaxTicks);    // 15 one-tick turns plus the stall
+  TEST_ASSERT_EQUAL_UINT32(128 - 1 + 90, sample.span128MaxTicks);
+  TEST_ASSERT_EQUAL_UINT32(128 * 50, sample.span128MaxUs);
+  // A stopped dispatch and a new epoch each restart the run: 128 more dispatches (127 intervals) never complete a 128
+  // span (a span of N turns is N intervals, N + 1 dispatches).
+  sample.clearBlock();
+  sample.observe({tick + 1, 1}, false, false, false, false, 0, 64, us);
+  for (int i = 0; i < 128; ++i) sample.observe({tick + 2000 + i, 2}, true, false, false, false, 0, 64, us + i);
+  TEST_ASSERT_EQUAL_UINT32(0, sample.span128MaxTicks);
+  TEST_ASSERT_EQUAL_UINT32(16, sample.span16MaxTicks);
+  // One more makes the first span of the new run: no tick from before the stop is in it.
+  sample.observe({tick + 2000 + 128, 2}, true, false, false, false, 0, 64, us + 128);
+  TEST_ASSERT_EQUAL_UINT32(128, sample.span128MaxTicks);
+}
+
 void test_lane_measurement_discriminates_wrap_reset_stopped_and_saturation() {
   PlaybackLaneMeasurement sample;
   sample.observe({UINT32_MAX,1}, true, true, true, false, 1);
@@ -115,5 +142,6 @@ int main(int, char**) {
   RUN_TEST(test_deadline_clock_invalidates_same_forward_and_unobserved_resets);
   RUN_TEST(test_lane_measurement_counts_idle_dispatches_without_inventing_pending_work);
   RUN_TEST(test_lane_measurement_discriminates_wrap_reset_stopped_and_saturation);
+  RUN_TEST(test_lane_measurement_spans_consecutive_running_dispatches);
   return UNITY_END();
 }

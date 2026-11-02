@@ -205,6 +205,11 @@ timing and memory envelope without introducing real-time construction?
       `StoreCore::rowsInRange`, metadata). `test_revision_manifest_lane` case 10 went RED → GREEN. Dense manifest
       lead: 16 turns, 121–128 under the worst arbitration, 50-seam gate green.
     - [Evidence](evidence/2026-11-02-c5-3b-successor-lead-measurement.md)
+  - [x] C5.3b-d device owner-turn cadence (`win_gap` schema 4: worst ticks over 16 / 128 consecutive lane turns).
+    - Reader image `6d7bb3af…`, boot verified, `STIM-WINDOW-CONTENT-01`, one sounding track, about 125 BPM.
+    - 16 turns: at most 285 ticks. 128 turns: at most 1,265 ticks (3.26 s) of one span's 1,536.
+    - That fits at this tempo, but only below about 147 BPM at 128 turns. Eight sounding tracks are not measured.
+    - [Evidence](evidence/2026-11-02-c5-3b-device-turn-cadence.md)
   - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds. Waits on the
         owner's choice of an evidence-based successor price (amendment 24's "afterwards").
     - The rule: serving does not suppress successor demand. While window N serves, request N+1 at
