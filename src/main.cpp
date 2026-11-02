@@ -758,11 +758,18 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     const uint32_t windowWorkerStart = micros();
 #endif
     Track::PlaybackViewTurnResult windowResult = Track::PlaybackViewTurnResult::Idle;
-    if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
+    // DEC-246 amendment 27 (owner ruling): round-robin, bounded so a deadline successor is denied at most three
+    // consecutive eligible opportunities.
+    if (MidiServiceDrain::selectPlaybackHolderBounded(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE
-      // DEC-246 amendment 26 (measurement image): a withheld grant serves no one this turn.
-      if (RollingSuccessorProbe::denyThisGrant(chosenTrack, windowClock.tick)) {
+      // DEC-246 amendment 26 (measurement image): a withheld grant serves no one this turn. The injector models a
+      // competing owner, so it too is bound by the successor's service contract.
+      const bool boundForces =
+          MidiServiceDrain::playbackHolderMustBeServed(sWindowHolderCursor, chosenTrack, offers[chosenTrack]);
+      if (boundForces) RollingSuccessorProbe::noteForcedGrant(chosenTrack);
+      if (!boundForces && RollingSuccessorProbe::denyThisGrant(chosenTrack, windowClock.tick)) {
+        MidiServiceDrain::notePlaybackHolderWithheld(sWindowHolderCursor, chosenTrack, offers[chosenTrack]);
         chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
       } else {
 #endif
@@ -770,6 +777,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       windowResult =
           trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock,
               []() { return clockManager.getPlaybackDeadlineClock(); });
+      MidiServiceDrain::notePlaybackHolderServed(sWindowHolderCursor, chosenTrack);
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE
       RollingSuccessorProbe::noteGrant(chosenTrack, windowClock.tick);
       }

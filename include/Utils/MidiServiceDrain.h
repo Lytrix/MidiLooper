@@ -301,7 +301,16 @@ struct PlaybackHolder {
   uint32_t handoffLeadTicks = 0;
   /// False means "no outstanding deadline" -- ordered after every holder that has one.
   bool hasDeadline = false;
+  /// DEC-246 amendment 27 (owner ruling): the holder's owed work is a **rolling successor with an active handoff
+  /// deadline** -- liveness-critical, so it may be denied at most `kDeadlineSuccessorMaxConsecutiveDenials`
+  /// consecutive eligible opportunities (`selectPlaybackHolderBounded`). Every other holder keeps round-robin.
+  bool deadlineSuccessor = false;
 };
+
+/// DEC-246 amendment 27 (owner ruling, measured on device at 300 BPM with the balanced tail: 3 holds 50/50 seams, 4-6
+/// miss): the most consecutive eligible opportunities a deadline successor may be denied. The successor's admission
+/// price may count on this bound because the scheduler enforces it.
+constexpr uint8_t kDeadlineSuccessorMaxConsecutiveDenials = 3;
 
 /// An earlier outstanding deadline wins, where "earlier" means **fewer ticks to go**, not a smaller phase. A
 /// holder that has a deadline beats one that does not; two holders with none keep the rotation's order, so
@@ -321,6 +330,9 @@ inline bool playbackHolderDeadlineIsEarlier(const PlaybackHolder& candidate,
 /// resumed *after*, which is what makes the fairness bound below hold without any per-holder state.
 struct PlaybackHolderCursor {
   uint8_t next = 0;
+  /// Consecutive eligible opportunities each holder's deadline successor was denied (by another holder's turn or a
+  /// withheld grant); reset when it is served or stops being a deadline successor.
+  uint8_t successorDenials[8] = {};
 };
 
 /// What the selection did, named -- so "nothing was owed", "a holder was served" and "every owed holder was
@@ -422,6 +434,19 @@ inline PlaybackHolderSelection selectPlaybackHolderRoundRobin(PlaybackHolderCurs
   cursor.next = static_cast<uint8_t>((cursor.next + 1u) % count);
   return sawEligible ? PlaybackHolderSelection::AllBlocked : PlaybackHolderSelection::None;
 }
+/// **The bounded selection** (DEC-246 amendment 27): `selectPlaybackHolderRoundRobin`, except that an eligible deadline
+/// successor that can progress and has already been denied `kDeadlineSuccessorMaxConsecutiveDenials` opportunities is
+/// served first. It is not unconditional priority: below the bound the rotation decides. Every eligible deadline
+/// successor passed over is counted as denied; a holder that is not one has its count reset. Flash-resident.
+PlaybackHolderSelection selectPlaybackHolderBounded(PlaybackHolderCursor& cursor, const PlaybackHolder* holders,
+                                                    uint8_t count, uint8_t& holderOut);
+/// True when the chosen holder's grant may not be withheld (its successor has used its whole denial allowance).
+bool playbackHolderMustBeServed(const PlaybackHolderCursor& cursor, uint8_t index, const PlaybackHolder& holder);
+/// The chosen holder was served: its deadline successor's count resets.
+void notePlaybackHolderServed(PlaybackHolderCursor& cursor, uint8_t index);
+/// The chosen holder's grant was withheld by a competing owner: one more denial for its deadline successor.
+void notePlaybackHolderWithheld(PlaybackHolderCursor& cursor, uint8_t index, const PlaybackHolder& holder);
+
 inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain, bool overdubStopping = false) {
   return postOverdubPlayingDrain || overdubStopping;
 }

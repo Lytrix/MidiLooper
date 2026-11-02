@@ -103,6 +103,10 @@ ROLLING_SUCCESSOR_PROBE_MEM void noteGrant(uint8_t track, uint64_t tick) {
   if (gKnobs.enabled && track == gKnobs.denyTrack) gKnobs.denyLeft = gKnobs.denyPerGrain;
 }
 
+ROLLING_SUCCESSOR_PROBE_MEM void noteForcedGrant(uint8_t track) {
+  if (track < kTracks && gCounters.seam[track].forcedGrants != 255) ++gCounters.seam[track].forcedGrants;
+}
+
 ROLLING_SUCCESSOR_PROBE_MEM void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain) {
   gCounters = Counters{};
   gKnobs.enabled = true;

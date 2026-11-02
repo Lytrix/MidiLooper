@@ -57,46 +57,6 @@
   ((void)0)
 #endif
 
-/// DEC-246 amendment 27 (owner ruling): the rolling partition of a loop into non-wrapping windows of the nominal span
-/// S (two bars). When the loop is not a multiple of S, the default partition ends in a short window, and the successor
-/// at the wrap gets only that window's length as lead (measured on device: 768 ticks on a 33-bar loop). The **balanced
-/// tail** instead splits the last two windows evenly (on the sixteenth grid): `... | S | S | (S + r) / 2 | rest`, so
-/// the shortest window -- and the wrap successor's lead -- is as long as it can be without a wrapping view.
-/// `balancedTail` is set for the manifest-routed slot only, until the device proof is green.
-static TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingTailSplit(uint32_t loopLength, uint32_t& pairStart) {
-  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR, grain = Config::TICKS_PER_BAR / 16;
-  const uint32_t whole = (loopLength - 1) / S;  // windows before the last one on the plain grid (>= 1 when L > S)
-  pairStart = (whole - 1) * S;
-  return ((loopLength - pairStart) / 2) / grain * grain;
-}
-
-TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool balancedTail) {
-  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
-  if (loopLength == 0 || start >= loopLength) return 0;
-  const uint32_t rest = loopLength - start;
-  if (!balancedTail || loopLength <= S || loopLength % S == 0 || start + 2 * S < loopLength)
-    return std::min(S, rest);
-  uint32_t pairStart = 0;
-  const uint32_t first = rollingTailSplit(loopLength, pairStart);
-  if (start < pairStart) return std::min(S, rest);
-  return start < pairStart + first ? pairStart + first - start : rest;
-}
-
-/// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
-TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool balancedTail) {
-  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
-  const uint32_t grid = std::min(loopLength, ((phase + S - 1) / S) * S);
-  if (!balancedTail || loopLength <= S || loopLength % S == 0) return grid;
-  uint32_t pairStart = 0;
-  const uint32_t first = rollingTailSplit(loopLength, pairStart);
-  const uint32_t tailSplit = pairStart + first;
-  if (phase <= pairStart) return grid;
-  return phase <= tailSplit ? tailSplit : loopLength;
-}
-
-TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame) {
-  return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.balancedTail != 0);
-}
 
 namespace {
 /// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
@@ -6192,6 +6152,36 @@ ContinuityRejectMeasure gContinuityReject[Config::NUM_TRACKS];
 /// DEC-246 amendment 27 (owner ruling): one measurement per Blocked episode -- the frame's own state and its roles, the
 /// two identities, the candidate interval, the playhead and the owners -- so a steady-state block after a successful
 /// handoff is named, not inferred. Report-only; the dedupe key is the episode (reason, deadline, start).
+/// DEC-246 amendment 27: one row per busy episode with no free coverage role -- the refusal, each role's view, and each
+/// view's complete (bit 0) / published (bit 1) state -- so a stuck role is named, not inferred. Report-only.
+TRACK_COLD_MEM void Track::reportRollingBusyRoles(const LoopPlaybackRuntime& runtime, uint8_t roleRefusal) {
+  const uint8_t track = playbackRebuildTrackIndex(*this);
+  if (track >= Config::NUM_TRACKS) return;
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (set == nullptr) return;
+  const auto& life = set->lifecycle;
+  uint32_t viewState = 0;  // 2 bits per view, view 0 lowest
+  for (uint8_t i = 0; i < set->views.size() && i < 16; ++i)
+    viewState |= uint32_t((set->views[i].complete ? 1u : 0u) | (set->views[i].published ? 2u : 0u)) << (2 * i);
+#if defined(__IMXRT1062__)
+  DMAMEM static uint32_t sKey[Config::NUM_TRACKS];
+#else
+  static uint32_t sKey[Config::NUM_TRACKS];
+#endif
+  const uint32_t key = (uint32_t(roleRefusal) << 24) ^ (uint32_t(life.current) << 16) ^ (uint32_t(life.ready) << 12) ^
+      (uint32_t(life.build) << 8) ^ (uint32_t(life.idle) << 4) ^ life.retained ^ (viewState << 1) ^ 0x80000000u;
+  if (sKey[track] == key) return;
+  sKey[track] = key;
+  // busy,roles: refusal, current, ready, build, (view states, 2 bits per view), idle, retained, owners
+  // (coverage|build|pending|frozen|promise|launch|record-return).
+  const uint8_t owners = uint8_t((runtime.ownsCoverageSource() ? 1u : 0u) | (runtime.viewBuild.active() ? 2u : 0u) |
+      (runtime.pendingViewRequest_.active ? 4u : 0u) | (runtime.frozenViewRequest.active ? 8u : 0u) |
+      (runtime.completedPromisePendingJudgement ? 16u : 0u) | (runtime.ownsLaunchPreparation() ? 32u : 0u) |
+      (runtime.hasBoundRecordReturnWindowForPendingJob() ? 64u : 0u));
+  SC_FROZEN_WINDOW_READINESS(track, activeLoopIndex, "busy", "roles", roleRefusal, life.current, life.ready, viewState,
+                             life.build, life.idle, life.retained, owners, 0u, 0u);
+}
+
 TRACK_COLD_MEM void Track::reportRollingBlockMeasure(const LoopPlaybackRuntime& runtime, const Loop& loop) {
   const auto& frame = runtime.rolling;
   const uint8_t track = playbackRebuildTrackIndex(*this);
@@ -6573,7 +6563,11 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   // rolling target over someone else's debt merely to gain a later deadline.
   if (runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
       !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(activeLoopIndex) != 0) {
-    reportPlaybackRollingGateRow("win_busy", clock.epoch != 0);
+    // DEC-246 amendment 27: `rq` is the coverage-role refusal (`PlaybackCoverageRoleRefusal`, 0 when the role is free),
+    // and one roles row per busy episode names every role's view and its complete/published state.
+    const uint8_t roleRefusal = static_cast<uint8_t>(runtime->coverageRoleRefusal(false));
+    if (roleRefusal != 0) reportRollingBusyRoles(*runtime, roleRefusal);
+    reportPlaybackRollingGateRow("win_busy", clock.epoch != 0, /*reprojectedTick=*/false, roleRefusal);
     return RollingOutcome::Busy;
   }
   const uint32_t effective = getEffectivePlaybackTick(static_cast<uint32_t>(clock.tick));
@@ -7948,6 +7942,58 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
   }
 }
 
+namespace MidiServiceDrain {
+TRACK_COLD_MEM __attribute__((noinline)) PlaybackHolderSelection selectPlaybackHolderBounded(
+    PlaybackHolderCursor& cursor, const PlaybackHolder* holders, uint8_t count, uint8_t& holderOut) {
+  constexpr uint8_t kTracked = sizeof(cursor.successorDenials) / sizeof(cursor.successorDenials[0]);
+  uint8_t forced = kNoPlaybackHolder;
+  if (holders != nullptr) {
+    for (uint8_t step = 0; step < count && forced == kNoPlaybackHolder; ++step) {
+      const uint8_t index = static_cast<uint8_t>((cursor.next + step) % count);
+      const PlaybackHolder& h = holders[index];
+      if (index < kTracked && h.eligible && h.canProgress && h.deadlineSuccessor &&
+          cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials)
+        forced = index;
+    }
+  }
+  PlaybackHolderSelection selection;
+  if (forced != kNoPlaybackHolder) {
+    // The bound takes a turn, not the rotation's position: whoever the rotation was about to serve is next.
+    holderOut = forced;
+    selection = PlaybackHolderSelection::Service;
+  } else {
+    selection = selectPlaybackHolderRoundRobin(cursor, holders, count, holderOut);
+  }
+  if (holders != nullptr) {
+    for (uint8_t index = 0; index < count && index < kTracked; ++index) {
+      const PlaybackHolder& h = holders[index];
+      if (!h.deadlineSuccessor || !h.eligible) {
+        cursor.successorDenials[index] = 0;
+      } else if (index != holderOut && h.canProgress && cursor.successorDenials[index] != 255) {
+        ++cursor.successorDenials[index];  // an eligible opportunity it did not get
+      }
+    }
+  }
+  return selection;
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) bool playbackHolderMustBeServed(const PlaybackHolderCursor& cursor,
+                                                                        uint8_t index, const PlaybackHolder& holder) {
+  return holder.deadlineSuccessor && index < sizeof(cursor.successorDenials) &&
+         cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials;
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void notePlaybackHolderServed(PlaybackHolderCursor& cursor, uint8_t index) {
+  if (index < sizeof(cursor.successorDenials)) cursor.successorDenials[index] = 0;
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) void notePlaybackHolderWithheld(PlaybackHolderCursor& cursor, uint8_t index,
+                                                                        const PlaybackHolder& holder) {
+  if (holder.deadlineSuccessor && index < sizeof(cursor.successorDenials) && cursor.successorDenials[index] != 255)
+    ++cursor.successorDenials[index];
+}
+}  // namespace MidiServiceDrain
+
 TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffer(
     uint32_t currentPhase, PlaybackDeadlineClock clock) const {
   // The **most urgent** owing holder, read without serving: the cross-track counterpart of the turn below. The one
@@ -7966,6 +8012,23 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
       offer = holder;
     }
   }
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // DEC-246 amendment 27: the active slot's owed work is the serving frame's own successor with an active handoff
+  // deadline (its demand, its frozen qualification or its build carries that deadline). Only the successor pipeline
+  // produces one, so outside it no holder is a deadline successor.
+  if (offer.eligible) {
+    if (const auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
+      // Any of the three records may carry it: main's per-turn demand can sit in `pending` while the successor is in
+      // frozen qualification or being built. No lambda: a lambda in a flash function lands in ITCM.
+      const uint64_t pendingDeadline = runtime->pendingViewRequest_.active ? runtime->pendingViewRequest_.deadlineTick : 0;
+      const uint64_t frozenDeadline = runtime->frozenViewRequest.active ? runtime->frozenViewRequest.deadlineTick : 0;
+      const uint64_t buildDeadline = runtime->viewBuild.active() ? runtime->viewBuildWork.deadlineTick : 0;
+      offer.deadlineSuccessor = (pendingDeadline != 0 && rollingSuccessorDemandIs(*runtime, pendingDeadline)) ||
+          (frozenDeadline != 0 && rollingSuccessorDemandIs(*runtime, frozenDeadline)) ||
+          (buildDeadline != 0 && rollingSuccessorDemandIs(*runtime, buildDeadline));
+    }
+  }
+#endif
   return offer;
 }
 
@@ -8035,7 +8098,8 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     // grant, N.end, request->admit, request->ready, the lead left at the request, blocked turns, gates, last role
     // refusal, request->first withheld grant (low byte of ticks/8).
     // succ_seam,<outcome>: (from N's adoption) first Serving turn, eligible, request; request->first grant; N.end;
-    // request->admit, request->ready (from the record), the lead left at the request, gates, last role refusal,
+    // request->admit, request->ready (from the record), the lead left at the request, gates, grants the service bound
+    // forced,
     // request->first withheld grant (ticks/8).
     for (auto& log = RollingSuccessorProbe::gCounters; log.seamLogCount != 0;) {
       const auto seam = log.seamLog[log.seamLogHead];
@@ -8053,7 +8117,7 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
           from(nStart, seam.servingSeenTick), from(nStart, seam.eligibleTick), from(nStart, seam.requestTick),
           seam.deadline, from(seam.requestTick, seam.firstGrantTick), r ? from(seam.requestTick, r->readyTick) : UINT32_MAX,
           seam.deadline > seam.requestTick ? static_cast<uint32_t>(seam.deadline - seam.requestTick) : 0,
-          seam.blockMask, seam.lastRole,
+          seam.blockMask, seam.forcedGrants,
           static_cast<uint8_t>(from(seam.requestTick, seam.firstDenyTick) == UINT32_MAX
                                    ? 0xFF : from(seam.requestTick, seam.firstDenyTick) / 8));
     }

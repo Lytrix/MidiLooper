@@ -764,6 +764,104 @@ void test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows() { ba
 // [1152, 2304). It must close once, in its traversal, with no stuck or doubled note.
 void test_5_1_a_note_held_across_the_balanced_seam_closes_once() { balancedThreeBarTake(3); }
 
+// The deadline-successor service bound (DEC-246 amendment 27/26, owner ruling): an eligible rolling successor with an
+// active handoff deadline may be denied at most three consecutive eligible opportunities (measured on device: 3 holds
+// 50/50 seams at 300 BPM with the balanced tail; 4-6 miss). Ordinary holders keep round-robin, and are never starved.
+void test_5_1_a_deadline_successor_is_never_denied_more_than_three_opportunities() {
+  using namespace MidiServiceDrain;
+  constexpr uint8_t kHolders = 8, kSuccessor = 5;
+  PlaybackHolder holders[kHolders] = {};
+  for (uint8_t i = 0; i < kHolders; ++i) holders[i].eligible = true;
+  holders[kSuccessor].deadlineSuccessor = true;
+  holders[kSuccessor].hasDeadline = true;
+  // Round-robin alone: the successor waits a whole rotation (7 denials).
+  {
+    PlaybackHolderCursor cursor{};
+    uint32_t streak = 0, worst = 0;
+    for (unsigned turn = 0; turn < 400; ++turn) {
+      uint8_t chosen = kNoPlaybackHolder;
+      (void)selectPlaybackHolderRoundRobin(cursor, holders, kHolders, chosen);
+      streak = chosen == kSuccessor ? 0 : streak + 1;
+      worst = std::max(worst, streak);
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(kHolders - 1, worst, "precondition: round-robin alone denies the successor 7 times");
+  }
+  // The bounded selection, with a competing owner that withholds every grant it may (the device injector's model).
+  PlaybackHolderCursor cursor{};
+  uint32_t streak = 0, worst = 0, served[kHolders] = {};
+  for (unsigned turn = 0; turn < 4000; ++turn) {
+    uint8_t chosen = kNoPlaybackHolder;
+    (void)selectPlaybackHolderBounded(cursor, holders, kHolders, chosen);
+    TEST_ASSERT_NOT_EQUAL(kNoPlaybackHolder, chosen);
+    const bool withheld = chosen == kSuccessor && !playbackHolderMustBeServed(cursor, chosen, holders[chosen]);
+    if (withheld) {
+      notePlaybackHolderWithheld(cursor, chosen, holders[chosen]);
+    } else {
+      notePlaybackHolderServed(cursor, chosen);
+      ++served[chosen];
+    }
+    streak = (chosen == kSuccessor && !withheld) ? 0 : (holders[kSuccessor].eligible ? streak + 1 : 0);
+    worst = std::max(worst, streak);
+  }
+  char detail[96];
+  snprintf(detail, sizeof(detail), "worst=%u served %u %u %u %u %u %u %u %u", worst, served[0], served[1], served[2],
+           served[3], served[4], served[5], served[6], served[7]);
+  printf("BOUND %s\n", detail);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kDeadlineSuccessorMaxConsecutiveDenials, worst, detail);
+  for (uint8_t i = 0; i < kHolders; ++i) TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served[i], detail);  // no starvation
+  // Not a successor any more (retired, cancelled, moved): the count resets and nothing is forced.
+  holders[kSuccessor].deadlineSuccessor = false;
+  uint8_t chosen = kNoPlaybackHolder;
+  (void)selectPlaybackHolderBounded(cursor, holders, kHolders, chosen);
+  TEST_ASSERT_EQUAL_UINT8(0, cursor.successorDenials[kSuccessor]);
+}
+
+// The offer names the deadline successor while it is owed (DEC-246 amendment 27). On the device main's per-turn demand can
+// hold `pending` while the successor is in frozen qualification or being built; the flag must still be set, or the
+// service bound never engages (device: deny 4 with the bound missed on a full lead).
+void test_5_1_the_offer_names_the_deadline_successor_beside_main_s_demand() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 3, 16);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  RollingSuccessorProbe::configure(2 * Config::TICKS_PER_BAR, 0xFF, 0);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t owedTurns = 0, flaggedTurns = 0, besideMainDemand = 0;
+  for (uint32_t tick = 0; tick < 30 * loop.loopLengthTicks; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) {
+      const auto clock = clockManager.getPlaybackDeadlineClock();
+      (void)t.requestActiveCommittedPlaybackWindow(static_cast<uint32_t>(clock.tick), clock);  // main's demand
+      const bool frozenOwed = runtime.frozenViewRequest.active &&
+          rollingSuccessorDemandIs(runtime, runtime.frozenViewRequest.deadlineTick);
+      const bool buildOwed = runtime.viewBuild.active() && rollingSuccessorDemandIs(runtime, runtime.viewBuildWork.deadlineTick);
+      const auto offer = t.playbackWindowServiceOffer(static_cast<uint32_t>(clock.tick), clock);
+      if (offer.eligible && (frozenOwed || buildOwed)) {
+        ++owedTurns;
+        flaggedTurns += offer.deadlineSuccessor ? 1u : 0u;
+        besideMainDemand += runtime.pendingViewRequest_.active &&
+            !rollingSuccessorDemandIs(runtime, runtime.pendingViewRequest_.deadlineTick);
+      }
+      lane.serviceTracks(tick);
+    }
+    t.playMidiEvents(tick, true);
+  }
+  RollingSuccessorProbe::gKnobs = RollingSuccessorProbe::Knobs{};
+  char detail[120];
+  snprintf(detail, sizeof(detail), "owed=%u flagged=%u besideMainDemand=%u", owedTurns, flaggedTurns, besideMainDemand);
+  printf("OFFERFLAG %s\n", detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, owedTurns, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(owedTurns, flaggedTurns, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -781,5 +879,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_balanced_tail_partition_tiles_odd_loops_without_a_short_window);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
+  RUN_TEST(test_5_1_a_deadline_successor_is_never_denied_more_than_three_opportunities);
+  RUN_TEST(test_5_1_the_offer_names_the_deadline_successor_beside_main_s_demand);
   return UNITY_END();
 }

@@ -104,6 +104,7 @@ struct Counters {
     uint8_t outcome = 0;          // `Outcome` once resolved
     uint8_t resolved = 0;         // 1: resolved and not yet reported
     uint64_t servingSeenTick = 0; // the first producer turn that saw N Serving under this key
+    uint8_t forcedGrants = 0;     // grants the service bound kept the injector from withholding (owner ruling)
   } seam[kTracks] = {};
   /// Resolved seams waiting for the main-loop report (a handed-off seam's trace is replaced by the next one at once).
   static constexpr uint8_t kSeamLog = 8;
@@ -129,6 +130,8 @@ void noteOutcome(Record& r, Outcome outcome);
 /// Amendment 26 (device): true when this grant to `track` is withheld by the injector; `noteGrant` after a served one.
 bool denyThisGrant(uint8_t track, uint64_t tick);
 void noteGrant(uint8_t track, uint64_t tick);
+/// The service bound overrode a withheld grant for `track` (counted on the seam being traced).
+void noteForcedGrant(uint8_t track);
 /// Reconfigure the measurement (lead, denied track, denials per grain) and reset every counter.
 void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain);
 

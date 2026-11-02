@@ -309,6 +309,8 @@ public:
   enum class RollingOutcome : uint8_t { Disabled, Excluded, Busy, Requested, Waiting, Ready, Serving, Expired, Rejected };
   /// DEC-246 am. 27: one report-only measurement row pair per Blocked episode of the active slot's frame.
   void reportRollingBlockMeasure(const LoopPlaybackRuntime& runtime, const Loop& loop);
+  /// DEC-246 am. 27: one report-only roles row per busy episode with no free coverage role.
+  void reportRollingBusyRoles(const LoopPlaybackRuntime& runtime, uint8_t roleRefusal);
   RollingOutcome serviceRollingPlaybackWindow(PlaybackDeadlineClock clock);
   /// windowed-playback-generation 3.7e: **why the rolling frame did not adopt a bound launch window.** The seed is a
   /// silent "no" for every slot that carries no launch at all (the ordinary case), but a slot whose launch exists and

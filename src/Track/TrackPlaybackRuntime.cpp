@@ -25,6 +25,47 @@
 #define TRACK_PLAYBACK_RUNTIME_COLD_MEM
 #endif
 
+/// DEC-246 amendment 27 (owner ruling): the rolling partition of a loop into non-wrapping windows of the nominal span
+/// S (two bars). When the loop is not a multiple of S, the default partition ends in a short window, and the successor
+/// at the wrap gets only that window's length as lead (measured on device: 768 ticks on a 33-bar loop). The **balanced
+/// tail** instead splits the last two windows evenly (on the sixteenth grid): `... | S | S | (S + r) / 2 | rest`, so
+/// the shortest window -- and the wrap successor's lead -- is as long as it can be without a wrapping view.
+/// `balancedTail` is set for the manifest-routed slot only, until the device proof is green.
+static TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingTailSplit(uint32_t loopLength, uint32_t& pairStart) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR, grain = Config::TICKS_PER_BAR / 16;
+  const uint32_t whole = (loopLength - 1) / S;  // windows before the last one on the plain grid (>= 1 when L > S)
+  pairStart = (whole - 1) * S;
+  return ((loopLength - pairStart) / 2) / grain * grain;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool balancedTail) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
+  if (loopLength == 0 || start >= loopLength) return 0;
+  const uint32_t rest = loopLength - start;
+  if (!balancedTail || loopLength <= S || loopLength % S == 0 || start + 2 * S < loopLength)
+    return std::min(S, rest);
+  uint32_t pairStart = 0;
+  const uint32_t first = rollingTailSplit(loopLength, pairStart);
+  if (start < pairStart) return std::min(S, rest);
+  return start < pairStart + first ? pairStart + first - start : rest;
+}
+
+/// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool balancedTail) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
+  const uint32_t grid = std::min(loopLength, ((phase + S - 1) / S) * S);
+  if (!balancedTail || loopLength <= S || loopLength % S == 0) return grid;
+  uint32_t pairStart = 0;
+  const uint32_t first = rollingTailSplit(loopLength, pairStart);
+  const uint32_t tailSplit = pairStart + first;
+  if (phase <= pairStart) return grid;
+  return phase <= tailSplit ? tailSplit : loopLength;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame) {
+  return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.balancedTail != 0);
+}
+
 static inline uint32_t replenishNowUs();
 
 namespace {

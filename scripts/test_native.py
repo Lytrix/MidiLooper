@@ -273,7 +273,11 @@ def run(suites, jobs: int, label: str) -> int:
     for name in missing:
         print(f"  NO RESULT: {name}")
     passed = parsed["cases"] - parsed["skipped"] - parsed["failed"]
+    errored = sum(1 for st, _ in parsed["suites"].values() if st == "ERRORED")
+    # The summary names errored and missing suites itself: a suite that errored contributes no cases, so "0 failed"
+    # alone read as green (2026-11-02: an ERRORED suite's 252 cases were missing from a FULL that "passed").
     print(f"[{label}] {parsed['cases']} cases: {parsed['skipped']} skipped, {passed} passed, {parsed['failed']} failed; "
+          f"{errored} suites errored, {len(missing)} missing; "
           f"{len(parsed['suites'])}/{len(suites)} suites reported; wall {wall:.0f}s "
           f"(suite time {sum(t for _, t in parsed['suites'].values()):.0f}s)")
     # A suite that failed, errored or never reported (a shard that died) fails the gate; pio's own rc is not needed.
