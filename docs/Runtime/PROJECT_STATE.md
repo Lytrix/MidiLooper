@@ -1,3 +1,20 @@
+**2026-11-02 — a price-refused routed demand is discharged into a quiescent `PriceRefusal` (5.1, DEC-246 amendment 27, owner ruling B); the device gate is still owed.**
+- **A (first-window price input).** Already interval-based: the position bound is `densestWindowRows(identity, loop,
+  1536)`, the densest bar-aligned 1,536-tick span from manifest metadata. Admission prices the counted requested
+  interval. 25,344 is the loop extent only. This is now asserted (`priceRefusal.coverage.lengthTicks == 2 bars <
+  loop`).
+- **B.** `main.cpp`'s per-turn committed demand asks for the playhead's own window (lead about zero). DEC-147 refused
+  it, and the refusal left it pending forever (`win_busy`). On the routed slot the refused demand is now discharged and
+  a `PriceRefusal` {source, epoch, interval, price, available lead} stays in its place. The per-turn requester does not
+  re-issue a demand whose interval starts inside the refused one: one refusal per span, not per turn.
+- **Scope.** Other slots keep DEC-108 §13(c)'s retained-refusal promise; three fixtures in
+  `test_runtime_working_set_ownership` pin it. Making the invariant general needs an owner ruling on DEC-108.
+- **Host.** RED `test_5_1_a_price_refused_demand_leaves_no_pending_owner` (the lane drives main's per-turn demand):
+  GREEN, and the mutation fails it. FULL 3,941 cases, 8 skipped, 3,933 passed. Per-slot runtime +64 B on the reader
+  image and +56 B on the default image (extmem); RAM1 unchanged.
+- **Device.** Image `db23c569a8d88e80` flashed. The first gate attempt was refused at attach (transport running), and
+  the second stalled in the harness before its scenario started, so there is no outcome yet.
+
 **2026-11-02 — orphaned ready successor reclaimed (5.1, DEC-246 amendment 27); track 8 is now blocked by the DEC-147 lead price, not by roles.**
 - **The leak** (device `session_20261102_155425`). The Record presentation retired while its owed successor was still
   being built. The build was published as `ready` at 88.0 s, but its adopter was gone, so no frame owned it. Beside the
