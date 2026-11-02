@@ -60,7 +60,9 @@ path and confidence when alternatives exist; do not block on vagueness.
   rename on the card only with explicit permission in the same session. The
   firmware has no restore command, so quarantine is one-way in practice — see
   [`Destructive-SD-Operations.mdc`](.cursor/rules/Destructive-SD-Operations.mdc).
-- **Host tests:** run `pio test -e native` before push, merge, or finishing a PR.
+- **Host tests:** run the full native suite (`scripts/test_native.py full`, sharded, or `pio test -e native`) before
+  push, merge, or finishing a PR, and once per completed slice; iterate with the FAST / AFFECTED tiers in
+  [`Testing-Workflow.mdc`](.cursor/rules/Testing-Workflow.mdc#test-tiers-owner-2026-11-02).
   **Always run it in parallel with the target build and HITL when the slice needs a
   device gate:** start the native suite in the background, build/flash, then run
   the HITL while it continues; collect both results before checkoff. Native is the

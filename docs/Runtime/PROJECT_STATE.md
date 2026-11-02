@@ -1,3 +1,17 @@
+**2026-11-02 — test tooling: tiered native runner (`scripts/test_native.py`); sharded FULL in 80 s warm / 163 s cold (was 741 s).**
+- **Tiers** (owner): FAST `suites <s>`, AFFECTED `affected`, FULL `full`. Documented in
+  `.cursor/rules/Testing-Workflow.mdc`; AGENTS.md points there.
+- **AFFECTED** is mechanical, from the diff and `scripts/test_map.json`:
+  - suites whose own test files reach the change, plus the map's closures;
+  - an unmapped firmware file falls back to its compile closure;
+  - `full` paths force FULL, and `no_gate` paths need no native gate;
+  - 9 sentinel suites always run.
+- **FULL** runs on 6 shards, each with its own `PLATFORMIO_BUILD_DIR`, because every native suite links the same
+  `native/program`. Sharing a build directory between parallel `pio test` runs is a race.
+- **Sweep made opt-in.** `test_rolling_successor_lead`'s full evidence sweep now needs `C53B_FULL_SWEEP=1`; by default it
+  runs representative cases (169 s → 46 s).
+- **Gates.** Runner host test 12/12. FULL (sharded) 3,932 cases, 8 skipped, 3,924 passed, 146/146 suites.
+
 **2026-11-02 — revision-manifest C5.3b-d (device): 128 window-lane turns take at most 1,265 ticks (3.26 s) at about 125 BPM; 16 turns take at most 285.**
 - **Instrument.** `win_gap` schema 4 adds the worst ticks and µs over 16 / 128 consecutive running lane turns (a RAM2
   ring; code in flash; RAM1 unchanged).

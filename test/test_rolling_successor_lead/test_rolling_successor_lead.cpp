@@ -359,7 +359,15 @@ void test_c5_3b_minimum_successor_lead_sweep() {
       {"4bar_dense_A8", 4, 32, 8, 0, 0, false, false},
       {"4bar_deny7_A8", 4, 32, 8, 7, 0, false, false},
   };
+  // The evidence sweep (every case above) runs with `C53B_FULL_SWEEP=1`, about 2.5 minutes. By default the FULL gate runs
+  // the representative cases only: sparse and dense on both sources, and the worst arbitration.
+  const bool fullSweep = getenv("C53B_FULL_SWEEP") != nullptr;
+  const auto representative = [](const Case& k) {
+    const std::string label = k.label;
+    return label == "4bar_sparse" || label == "4bar_dense" || (label == "4bar_deny7" && k.npb == 32 && !k.manifest);
+  };
   for (const Case& k : cases) {
+    if (!fullSweep && !representative(k)) continue;
     RunConfig c;
     c.bars = k.bars;
     c.notesPerBar = k.npb;

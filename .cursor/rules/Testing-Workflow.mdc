@@ -5,6 +5,43 @@ alwaysApply: true
 
 # Testing before push or merge
 
+## Test tiers (owner, 2026-11-02)
+
+The full native suite is a **gate**, not the inner loop. Run by tier, and report each tier with the commit it ran at.
+`FULL last at <sha>` keeps a stale full run visible instead of implied:
+`FAST 29/29 · AFFECTED 311/311 · FULL last at abc123: 3925/8/3917`.
+
+| Tier | When | Command |
+|---|---|---|
+| **FAST** | every edit | `scripts/test_native.py suites <the failing fixture's suite> [...]` (or `pio test -e native -f <suite>`) |
+| **AFFECTED** | when the local RED goes green | `scripts/test_native.py affected [--base <ref>]`: the diff's suites plus the architecture sentinels |
+| **FULL** | once per completed RED→GREEN slice, before push / merge / PR, before device qualification | `scripts/test_native.py full` (sharded; same suites as `pio test -e native`) |
+
+**AFFECTED is mechanical.** `scripts/test_native.py` reads the diff (`--base` to the branch point, plus the working
+tree) and `scripts/test_map.json`:
+- a `test/<suite>/` edit runs that suite, plus every suite whose harness includes the edited file;
+- a firmware file runs the suites whose own test files name it, plus its `closures`. An **unmapped** firmware file
+  falls back to every suite that compiles it;
+- `no_gate` paths (docs, OpenSpec, captures, HITL scripts) need no native gate;
+- the `sentinels` (manifest identity / consume-only tick, read witness, undo/redo isolation, size pins, deferred-owner
+  obligations, holder fairness) always run.
+
+`--dry-run` prints the selection and why each suite was chosen.
+
+**FULL is required now**, not at the slice end, when a change touches any of these (the map's `full` paths force it):
+- shared ownership or scheduler logic, or `Loop` / `Track` state transitions;
+- widely included headers;
+- undo or persistence;
+- memory layout or global clocks;
+- the test infrastructure itself (`platformio.ini`, `native_test_link.py`, `test_support`, this runner and its map).
+
+**Why sharding needs separate build directories.** Every native suite links to the same `<build_dir>/native/program`,
+so two `pio test` processes must never share a build directory. `scripts/test_native.py` gives each shard its own
+`PLATFORMIO_BUILD_DIR` (`<build_dir>-shard<k>`). Each suite keeps its shard (`<build_dir>-shards/shards.json`), so its
+incremental build stays warm. A shard that dies shows as `NO RESULT` and fails the gate, like `[ERRORED]`.
+
+The rest of this file is the FULL gate's contract.
+
 ## Expectation
 
 Before **push**, **merge**, or **finishing a PR**, run the **host (native) unit test suite** so logic changes are validated without a Teensy connected.
@@ -72,7 +109,7 @@ information than "0 failures":
 
 ## Focused runs and sandboxed agents
 
-- Run one suite while iterating: `pio test -e native -f <suite>`.
+- Run one suite while iterating: `pio test -e native -f <suite>` (FAST).
 - The default PlatformIO cache (`~/Library/Caches/pio-build-<project>`) sits
   outside a workspace-only sandbox. Set
   `PLATFORMIO_BUILD_DIR="$PWD/.pio-build-local-fw"` (gitignored) when needed.
