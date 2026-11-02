@@ -6085,6 +6085,26 @@ TRACK_COLD_MEM bool manifestWindowWorkBound(uint32_t loopLengthTicks, uint32_t w
 }
 #endif
 
+namespace {
+/// DEC-246 amendment 27: the playhead-continuity refusal's measurement (`CandidateRejected`, term 6), written by the
+/// resolver on that reject path only and reported once by the main-loop producer. RAM2 on the target (NOLOAD): every
+/// field is written before the frame names term 6, and nothing reads it otherwise. Report-only.
+struct ContinuityRejectMeasure {
+  uint32_t start;        // the candidate's first phase
+  uint32_t lastTick;     // `loop.lastTickInLoop` at the handoff
+  uint32_t tickInLoop;   // the handoff tick's phase
+  uint32_t loopLength;
+  uint32_t prevSince;    // when the slot's previous fallback reason took effect
+  uint64_t absTick;      // the absolute handoff tick
+  uint8_t prevReason;    // the slot's previous fallback reason (`RouteReject`): the preceding tick's route
+};
+#if defined(__IMXRT1062__)
+DMAMEM ContinuityRejectMeasure gContinuityReject[Config::NUM_TRACKS];
+#else
+ContinuityRejectMeasure gContinuityReject[Config::NUM_TRACKS];
+#endif
+}  // namespace
+
 TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(PlaybackDeadlineClock clock) {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
   (void)clock;
@@ -6265,6 +6285,28 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
         !coldRollingRequest(*runtime, pending) && !rootReturnSuccessorIsOwedForSlot(activeLoopIndex, pending, clock))
       runtime->clearViewPendingRequest();
     reportPlaybackRollingGateRow("win_stale_serving_retired", clock.epoch != 0);
+  }
+  // DEC-246 amendment 27 (owner ruling): a **playhead-continuity** refusal at the handoff (`CandidateRejected`, term 6:
+  // the playhead did not account for `start - 1`) is one missed boundary, not a dead slot. The candidate is never
+  // adopted; the frame is retired once -- the candidate with it -- and the requester positions a fresh window for a
+  // later legal boundary. No restamp, no merged fallback. Only this named term: every other rejection stays terminal.
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
+      frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::CandidateRejected) &&
+      frame.rejectTerm == 6) {
+    const uint8_t measureTrack = playbackRebuildTrackIndex(*this);
+    if (measureTrack < Config::NUM_TRACKS) {
+      const auto& m = gContinuityReject[measureTrack];
+      const uint32_t expectedPrev = m.loopLength == 0 ? 0 : (m.start + m.loopLength - 1) % m.loopLength;
+      const uint32_t behind = m.loopLength == 0 || m.lastTick >= m.loopLength ? UINT32_MAX
+          : (expectedPrev + m.loopLength - m.lastTick) % m.loopLength;
+      // continuity,term6: start, expected start-1, lastTickInLoop, absolute tick, handoff phase, ticks behind, loop,
+      // the preceding tick's fallback reason (`RouteReject`) and since when.
+      SC_FROZEN_WINDOW_READINESS(measureTrack, activeLoopIndex, "continuity", "term6", m.start, expectedPrev,
+                                 m.lastTick, m.absTick, m.tickInLoop, behind, m.loopLength, m.prevReason,
+                                 static_cast<uint8_t>(m.prevSince & 0xFFu), 0u);
+    }
+    cancelRollingPlaybackWindow(activeLoopIndex);
+    reportPlaybackRollingGateRow("win_continuity_retired", clock.epoch != 0);
   }
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) {
     if (frame.epoch != clock.epoch || frame.generation != playbackGeneration ||
@@ -6760,6 +6802,14 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
 #else
       frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase);
 #endif
+      const uint8_t measureTrack = playbackRebuildTrackIndex(*this);
+      if (frame.rejectTerm == 6 && measureTrack < Config::NUM_TRACKS) {
+        auto& m = gContinuityReject[measureTrack];
+        const auto& prior = PlaybackTickContext::gState.reject[measureTrack][slot];
+        m.start = frame.startPhase; m.lastTick = loop.lastTickInLoop; m.tickInLoop = phase;
+        m.loopLength = frame.loopLength; m.absTick = clock.tick; m.prevReason = prior.reason;
+        m.prevSince = prior.sinceTick;
+      }
     }
     return rejectRollingFrame(*runtime, loop,
         clock.tick != frame.deadlineTick ? RouteReject::HandoffMissed

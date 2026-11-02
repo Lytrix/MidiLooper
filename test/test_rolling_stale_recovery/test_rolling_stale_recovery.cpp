@@ -438,6 +438,57 @@ void test_5_1_a_price_refused_demand_leaves_no_pending_owner() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, runtime.priceRefusal.price, detail);
 }
 
+// A continuity miss at the handoff (DEC-246 amendment 27; device captures/session_20261102_172043 at 140.6 s): the
+// first manifest window after a restart was Ready, and at its boundary the playhead proof failed
+// (`CandidateRejected`, term 6: `lastTickInLoop != start - 1`), leaving the frame Blocked for the rest of the
+// transport. The fixture skips the playback turn on the tick before the handoff, as one scheduler turn spanning two
+// ticks. The candidate must not be served, the frame must not stay Blocked, and a later window must serve.
+void test_5_1_a_continuity_miss_at_the_handoff_recovers() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint64_t skipAt = 0;
+  uint8_t sawTerm = 0;
+  uint32_t blockedTicks = 0, servedAfter = 0;
+  const uint32_t end = 40 * loop.loopLengthTicks;
+  for (uint32_t tick = 0; tick < end; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) lane.serviceTracks(tick);
+    if (skipAt == 0 && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready &&
+        runtime.rolling.deadlineTick > tick + 1)
+      skipAt = runtime.rolling.deadlineTick - 1;
+    if (tick != skipAt) t.playMidiEvents(tick, true);  // the skipped turn: the playhead misses start - 1
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+      ++blockedTicks;
+      if (runtime.rolling.rejectTerm) sawTerm = runtime.rolling.rejectTerm;
+    }
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (skipAt != 0 && tick > skipAt + 1 && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++servedAfter;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "skipAt=%llu term=%u blockedTicks=%u servedAfter=%u phase=%u exit=%s",
+           (unsigned long long)skipAt, unsigned(sawTerm), blockedTicks, servedAfter, unsigned(runtime.rolling.phase),
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-");
+  printf("CONTINUITY %s\n", detail);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, skipAt, "precondition: a Ready frame with a future handoff");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(6, sawTerm, detail);  // the named continuity term, not another rejection
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(loop.loopLengthTicks, blockedTicks, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedAfter, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -448,5 +499,6 @@ int main(int, char**) {
   RUN_TEST(test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane);
   RUN_TEST(test_5_1_an_orphaned_ready_successor_returns_its_build_role);
   RUN_TEST(test_5_1_a_price_refused_demand_leaves_no_pending_owner);
+  RUN_TEST(test_5_1_a_continuity_miss_at_the_handoff_recovers);
   return UNITY_END();
 }
