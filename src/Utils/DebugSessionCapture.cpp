@@ -2302,14 +2302,16 @@ SC_MEM_ATTR void laneFairnessImmediate(const PlaybackLaneMeasurement& sample, ui
 
 SC_MEM_ATTR void successorProbeImmediate(uint8_t track, uint32_t requested, uint32_t handedOff, uint32_t missed,
                                          uint32_t cancelled, uint32_t priceRefused, uint32_t maxReady,
-                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains) {
+                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains,
+                                         uint32_t minLead, uint32_t denied) {
   // `succ,<track>,<requested>,<handedOff>,<missed>,<cancelled>,<priceRefused>,<maxReady>,<maxAdmit>,<minMargin>,
-  // <maxGrains>`: cumulative since boot (DEC-246 amendment 25, measurement image only).
-  emitCapPrintfDirectOrRing("#CAP,%lu,DIAG,succ,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n", static_cast<unsigned long>(micros()),
+  // <maxGrains>,<minLead>,<deniedGrants>`: cumulative since boot or the last `!SUCC_PROBE` (DEC-246 amendments 25-26,
+  // measurement image only).
+  emitCapPrintfDirectOrRing("#CAP,%lu,DIAG,succ,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n", static_cast<unsigned long>(micros()),
       unsigned(track), static_cast<unsigned long>(requested), static_cast<unsigned long>(handedOff),
       static_cast<unsigned long>(missed), static_cast<unsigned long>(cancelled), static_cast<unsigned long>(priceRefused),
       static_cast<unsigned long>(maxReady), static_cast<unsigned long>(maxAdmit), static_cast<unsigned long>(minMargin),
-      static_cast<unsigned long>(maxGrains));
+      static_cast<unsigned long>(maxGrains), static_cast<unsigned long>(minLead), static_cast<unsigned long>(denied));
 }
 
 SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,

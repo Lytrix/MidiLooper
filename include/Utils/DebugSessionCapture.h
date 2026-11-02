@@ -652,7 +652,8 @@ SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint3
 SC_MEM_ATTR void laneFairnessImmediate(const PlaybackLaneMeasurement& sample, uint32_t phase, uint32_t epoch);
 SC_MEM_ATTR void successorProbeImmediate(uint8_t track, uint32_t requested, uint32_t handedOff, uint32_t missed,
                                          uint32_t cancelled, uint32_t priceRefused, uint32_t maxReady,
-                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains);
+                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains,
+                                         uint32_t minLead, uint32_t denied);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -924,9 +925,9 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 /// N.end, and the largest admission price in grains.
 #ifndef SC_SUCCESSOR_PROBE
 #define SC_SUCCESSOR_PROBE(track, requested, handedOff, missed, cancelled, priceRefused, maxReady, maxAdmit, minMargin, \
-                           maxGrains) \
+                           maxGrains, minLead, denied) \
   DebugSessionCapture::successorProbeImmediate(track, requested, handedOff, missed, cancelled, priceRefused, maxReady, \
-                                               maxAdmit, minMargin, maxGrains)
+                                               maxAdmit, minMargin, maxGrains, minLead, denied)
 #endif
 /// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
 /// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native

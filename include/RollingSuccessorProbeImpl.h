@@ -33,7 +33,12 @@ ROLLING_SUCCESSOR_PROBE_MEM Record* openRecord(uint8_t track, uint64_t deadline,
   r.requestTick = requestTick;
   r.startPhase = startPhase;
   r.track = track;
-  if (track < kTracks) ++gCounters.perTrack[track].requested;
+  if (track < kTracks) {
+    auto& a = gCounters.perTrack[track];
+    ++a.requested;
+    const uint64_t lead = deadline > requestTick ? deadline - requestTick : 0;
+    if (lead < a.minRequestLead) a.minRequestLead = static_cast<uint32_t>(lead);
+  }
   return &r;
 }
 
@@ -67,6 +72,27 @@ ROLLING_SUCCESSOR_PROBE_MEM void noteOutcome(Record& r, Outcome outcome) {
     case Outcome::PriceRefused: ++gCounters.priceRefused; if (a) ++a->priceRefused; break;
     default: ++gCounters.cancelled; if (a) ++a->cancelled; break;
   }
+}
+
+ROLLING_SUCCESSOR_PROBE_MEM bool denyThisGrant(uint8_t track) {
+  if (!gKnobs.enabled || track != gKnobs.denyTrack || gKnobs.denyLeft == 0) return false;
+  --gKnobs.denyLeft;
+  if (track < kTracks) ++gCounters.perTrack[track].deniedGrants;
+  return true;
+}
+
+ROLLING_SUCCESSOR_PROBE_MEM void noteGrant(uint8_t track) {
+  if (gKnobs.enabled && track == gKnobs.denyTrack) gKnobs.denyLeft = gKnobs.denyPerGrain;
+}
+
+ROLLING_SUCCESSOR_PROBE_MEM void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain) {
+  gCounters = Counters{};
+  gKnobs.enabled = true;
+  gKnobs.bypassLeadPrice = true;
+  gKnobs.requestLeadTicks = requestLeadTicks;
+  gKnobs.denyTrack = denyTrack;
+  gKnobs.denyPerGrain = denyPerGrain;
+  gKnobs.denyLeft = 0;
 }
 
 }  // namespace RollingSuccessorProbe

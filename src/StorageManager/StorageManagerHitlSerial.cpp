@@ -886,6 +886,31 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                     RevisionShadow::printStatus();
                 }
 #endif
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!SUCC_PROBE ", 12) == 0) {
+                // DEC-246 amendment 26 (measurement image only): `!SUCC_PROBE <leadTicks> <track0> <denyPerGrain>`
+                // reconfigures the successor-lead probe and its deterministic denial injector and resets every
+                // counter. Scalar and not transport-gated: the sweep reconfigures while the set plays.
+                // Hand-parsed: `sscanf` would link newlib's scanf family into ITCM (measured: +15.5 KB code).
+                unsigned long values[3] = {0, 0, 0};
+                const char* cursor = sHitlSerialLineBuffer + 12;
+                uint8_t parsed = 0;
+                for (; parsed < 3; ++parsed) {
+                    while (*cursor == ' ') ++cursor;
+                    if (*cursor < '0' || *cursor > '9') break;
+                    unsigned long v = 0;
+                    while (*cursor >= '0' && *cursor <= '9' && v < 100000000ul) v = v * 10ul + (*cursor++ - '0');
+                    values[parsed] = v;
+                }
+                const unsigned long lead = values[0], track = values[1], deny = values[2];
+                if (parsed == 3 && track <= 0xFF && deny <= 32) {
+                    RollingSuccessorProbe::configure(static_cast<uint32_t>(lead), static_cast<uint8_t>(track),
+                                                     static_cast<uint8_t>(deny));
+                    Serial.printf("SUCC_PROBE,ok,lead=%lu,track=%lu,deny=%lu\r\n", lead, track, deny);
+                } else {
+                    Serial.println("SUCC_PROBE,denied,usage");
+                }
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE") == 0) {
                 // `restored-library-stability` 1.3: request the bounded on-demand library observation.
                 // Deliberately not transport-gated: the states it must explain include a restore waiting

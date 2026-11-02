@@ -14083,6 +14083,21 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
         impossible.
     - **"No lead price" is rejected,** unless the device data shows the scheduler is too variable for any predictive
       bound. That would point at owner arbitration, not admission arithmetic.
+26. **Measure arbitration directly on the device; do not fix restored-slot routing for it (owner, 2026-11-02).**
+    - **Method.**
+      - A deterministic denial injector, in the measurement image only: 0–7 withheld grants after every grain served
+        to the designated track.
+      - The real dense successor on committed content (no overdub: its 1,348 heap-below-reserve rejections make it no
+        clean scheduler environment), with normal display and save activity, at 300 BPM.
+      - For each denial level, the smallest device lead that gives 50/50 clean seams. No conversion from milliseconds.
+    - **Then decide:**
+      - `Lmin(7) < 1,536`: an evidence-based successor price;
+      - otherwise: first ask whether a deadline-bearing successor should be allowed seven denials. A bounded
+        "served at least every N opportunities" guarantee may keep a single-window pipeline before a deeper
+        lookahead is considered.
+    - **Do not turn the 117 ms outlier into a constant** before its cause is known; the direct lead sweep includes such
+      stalls on its own.
+    - Keep the restored-slot / DEC-243 work separate.
 
 ### Related
 

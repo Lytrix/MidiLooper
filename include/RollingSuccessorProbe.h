@@ -34,6 +34,11 @@ struct Knobs {
   bool bypassLeadPrice = false;
   /// Open the successor demand no earlier than this many ticks before its deadline (`N.end`).
   uint32_t requestLeadTicks = UINT32_MAX;
+  /// DEC-246 amendment 26 (device measurement): deterministic arbitration. After every holder grain served to
+  /// `denyTrack` (0-based; 0xFF: off), its next `denyPerGrain` grants are withheld (the lane turn serves no one).
+  uint8_t denyTrack = 0xFF;
+  uint8_t denyPerGrain = 0;
+  uint8_t denyLeft = 0;
 };
 
 /// One successor demand's life, in absolute ticks (0: did not happen).
@@ -60,6 +65,8 @@ struct Aggregate {
   uint32_t maxRequestToAdmit = 0;        // ticks
   uint32_t minReadyMargin = UINT32_MAX;  // ticks from ready to N.end
   uint32_t maxPricedGrains = 0;
+  uint32_t minRequestLead = UINT32_MAX;  // ticks from the demand's opening to N.end (the lead actually given)
+  uint32_t deniedGrants = 0;             // grants withheld by the injector (amendment 26)
   uint32_t reported = 0;  // `requested + closed outcomes` at the last row
 };
 
@@ -97,6 +104,11 @@ Record* openRecord(uint8_t track, uint64_t deadline, uint64_t requestTick, uint3
 void noteAdmitted(Record& r, uint64_t tick);
 void noteReady(Record& r, uint64_t tick);
 void noteOutcome(Record& r, Outcome outcome);
+/// Amendment 26 (device): true when this grant to `track` is withheld by the injector; `noteGrant` after a served one.
+bool denyThisGrant(uint8_t track);
+void noteGrant(uint8_t track);
+/// Reconfigure the measurement (lead, denied track, denials per grain) and reset every counter.
+void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain);
 
 #if defined(__IMXRT1062__)
 /// The measurement image enables the probe at boot: one successor per served window, at N's start (lead = one span),

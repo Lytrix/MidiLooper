@@ -760,10 +760,20 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     Track::PlaybackViewTurnResult windowResult = Track::PlaybackViewTurnResult::Idle;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+      // DEC-246 amendment 26 (measurement image): a withheld grant serves no one this turn.
+      if (RollingSuccessorProbe::denyThisGrant(chosenTrack)) {
+        chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
+      } else {
+#endif
       // The turn also consumes the clock: the deadlines the admission promised are serviced there (blocker 3, half 2).
       windowResult =
           trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock,
               []() { return clockManager.getPlaybackDeadlineClock(); });
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+      RollingSuccessorProbe::noteGrant(chosenTrack);
+      }
+#endif
     }
 #if defined(SESSION_CAPTURE)
     uint8_t windowWantMask = 0;

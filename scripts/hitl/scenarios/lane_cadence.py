@@ -73,6 +73,26 @@ def _wait_line(log_lines, start, patterns, timeout_s, refuse=()):
     return None
 
 
+_RRQ_RE = re.compile(r"^#CAP,\d+,RRQ,(\d+),(\d+),\d+,\d+,([a-z_]+),")
+
+
+def _wait_restores_settled(log_lines, timeout_s=90.0, quiet_s=3.0):
+    """Wait until no slot restore is queued or running (`RRQ` rows), then `quiet_s` more. The device buffers MIDI while
+    it restores, so a gesture sent earlier arrives late and out of order (a long-press clear lands as a short press)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        state = {}
+        for line in log_lines():
+            m = _RRQ_RE.match(line.strip())
+            if m:
+                state[(m.group(1), m.group(2))] = m.group(3)
+        if state and all(v not in ("queued", "running") for v in state.values()):
+            time.sleep(quiet_s)
+            return True
+        time.sleep(1.0)
+    return False
+
+
 def run_intense(action, session, capture, master, report, save, scale):
     """Three states at 300 BPM with every track that has content playing: Record, Overdub, Play.
 
@@ -91,7 +111,7 @@ def run_intense(action, session, capture, master, report, save, scale):
     report["legs"].append(leg)
 
     # 1. Stopped and settled: clear the HITL slot (a clear drains the owed save, which a playing set keeps blocked).
-    time.sleep(6.0)
+    leg["restores_settled"] = _wait_restores_settled(log_lines)
     press_track(action, HITL_TRACK)
     time.sleep(0.6)
     cleared = None
@@ -182,6 +202,132 @@ def run_intense(action, session, capture, master, report, save, scale):
     save()
 
 
+#: DEC-246 amendment 26: the device successor-lead sweep with deterministic arbitration.
+SWEEP_DENY_LEVELS = tuple(range(8))
+SWEEP_SPAN_TICKS = 1536       # one successor span (two bars)
+SWEEP_RESOLUTION = 48         # a sixteenth
+SWEEP_SEARCH_SEAMS = 20
+SWEEP_VERIFY_SEAMS = 50
+_SUCC_RE = re.compile(r"^#CAP,(\d+),DIAG,succ,(\d+),(.*)$")
+
+
+def _succ_latest(lines, start, track0):
+    """The latest `DIAG,succ` row for `track0` after line `start`, as a dict (or None)."""
+    found = None
+    for line in lines[start:]:
+        m = _SUCC_RE.match(line.strip())
+        if not m or int(m.group(2)) != track0:
+            continue
+        f = [int(x) for x in m.group(3).split(",")]
+        if len(f) < 11:
+            continue
+        found = dict(requested=f[0], handed=f[1], missed=f[2], cancelled=f[3], refused=f[4], max_ready=f[5],
+                     max_admit=f[6], min_margin=f[7], max_grains=f[8], min_lead=f[9], denied=f[10])
+    return found
+
+
+def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS):
+    """Amendment 26: for each denial level (0-7 withheld grants after every grain served to track 8), the smallest
+    successor lead at which every seam hands off cleanly -- 20-seam bisection points, then 50/50 at the answer.
+
+    Load: the HITL take on track 8 slot 4 (32 dense bars, the only lane-served slot on this card), the rest of the set
+    playing, normal display and save activity, 300 BPM. No overdub (it is a known heap-pressure defect).
+    """
+    import uuid
+    from hitl.actions.slots import _slot_note, press_slot_clear, press_slot_record, press_track
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.transport_clock import stream_pattern_for_bars
+
+    def log_lines():
+        return capture.session_log.read_text(errors="replace").splitlines()
+
+    bar_s = 4 * 60.0 / INTENSE_BPM
+    seam_s = SWEEP_SPAN_TICKS / (INTENSE_BPM * 192 / 60.0)
+    track0 = HITL_TRACK - 1
+    leg = dict(bpm=INTENSE_BPM, mode="sweep", points=[], table={})
+    report["legs"].append(leg)
+
+    # The take: clear while stopped, arm while stopped, Start, 32 dense bars, stop on the grid (as the intense mode).
+    leg["restores_settled"] = _wait_restores_settled(log_lines)
+    press_track(action, HITL_TRACK)
+    time.sleep(0.6)
+    for attempt in range(6):
+        start = len(log_lines())
+        press_slot_clear(action, HITL_SLOT)
+        if _wait_line(log_lines, start, ("Clear refused", "Clear aborted"), 2.5) is None:
+            break
+        time.sleep(2.0)
+    else:
+        raise RuntimeError("hitl_slot_clear_refused")
+    lines = log_lines()
+    press_slot_record(action, HITL_SLOT)
+    if _wait_line(log_lines, len(lines), ("waiting for clock to start recording",), 20.0) is None:
+        raise RuntimeError("record_arm_not_confirmed")
+    lines = log_lines()
+    master.start(bpm=INTENSE_BPM)
+    if _wait_line(log_lines, len(lines), ("Transport started",), 5.0) is None:
+        raise RuntimeError("record_not_confirmed")
+    stream_pattern_for_bars(
+        session.out_port, session.in_port, midi_channel_1based=1, low_note=36, high_note=71,
+        step_clocks=STEP_16TH_CLOCKS, gate_clocks=3, target_bars=INTENSE_RECORD_BARS, cc_number=74, cc_step=9,
+        pitch_cycle_bars=2, phase_start_delay_bars=0, phase_start_delay_beats=0, max_seconds_guard=120.0,
+        stop_press_advance_clocks=12, stop_press_note=_slot_note(HITL_SLOT),
+        stop_press_channel_1based=CONTROL_CHANNEL_1BASED, emit_immediate_first_step=True, master=master,
+        grid_origin_pulse=master.grid_origin_pulse())
+    if _wait_line(log_lines, len(lines), ("Stop Recording",), 4 * bar_s + 3) is None:
+        raise RuntimeError("record_stop_not_confirmed")
+    save()
+
+    def probe(lead, deny, seams):
+        """Configure, then wait for `seams` closed successors on track 8 (or the first miss/discard)."""
+        nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
+        start = len(log_lines())
+        accepted, detail = capture.send_command(f"!SUCC_PROBE {lead} {track0} {deny}", nonce=nonce, end_nonce=end)
+        if not accepted:
+            raise RuntimeError("succ_probe_command_refused: " + str(detail))
+        if _wait_line(log_lines, start, ("SUCC_PROBE,ok",), 5.0) is None:
+            raise RuntimeError("succ_probe_not_acknowledged")
+        t0 = time.monotonic()
+        # A miss repositions the lane at the full priced lookahead (about 30 s at 300 BPM), so allow for one.
+        deadline = t0 + seams * seam_s * 3 + 45
+        row = None
+        while time.monotonic() < deadline:
+            time.sleep(1.0)
+            if master.pump_error() is not None:
+                raise RuntimeError("clock_pump_failed: " + str(master.pump_error()))
+            row = _succ_latest(log_lines(), start, track0)
+            if row and (row["missed"] or row["cancelled"] or row["handed"] >= seams):
+                break
+        ok = bool(row) and row["missed"] == 0 and row["cancelled"] == 0 and row["handed"] >= seams
+        point = dict(lead=lead, deny=deny, seams=seams, ok=ok, row=row, seconds=round(time.monotonic() - t0, 1))
+        leg["points"].append(point)
+        save()
+        print(f"[lane_cadence] sweep deny={deny} lead={lead}: {'ok' if ok else 'FAIL'} {row}", flush=True)
+        return ok
+
+    search = max(5, int(SWEEP_SEARCH_SEAMS * scale))
+    verify = max(10, int(SWEEP_VERIFY_SEAMS * scale))
+    for deny in deny_levels:
+        if not probe(SWEEP_SPAN_TICKS, deny, search):
+            leg["table"][deny] = dict(lmin=None, note="even a request at N's start (one span) misses")
+            save()
+            continue
+        lo, hi = 0, SWEEP_SPAN_TICKS
+        while hi - lo > SWEEP_RESOLUTION:
+            mid = (lo + hi) // 2
+            if probe(mid, deny, search):
+                hi = mid
+            else:
+                lo = mid
+        while hi <= SWEEP_SPAN_TICKS and not probe(hi, deny, verify):
+            hi += SWEEP_RESOLUTION
+        leg["table"][deny] = dict(lmin=hi if hi <= SWEEP_SPAN_TICKS else None, failing_below=lo, verify_seams=verify)
+        save()
+    master.stop()
+    leg["pulses_sent"] = master.pulses_sent()
+    save()
+
+
 def run_lane_cadence(args):
     from hitl.layered_cli import config_from_runner_args
     from hitl.managed_capture import active_managed_capture
@@ -194,7 +340,8 @@ def run_lane_cadence(args):
     config = config_from_runner_args(args, legacy)
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--lane-cadence-scale", type=float, default=1.0, help="leg duration multiplier (smoke runs)")
-    parser.add_argument("--lane-cadence-mode", choices=("legs", "intense"), default="intense")
+    parser.add_argument("--lane-cadence-mode", choices=("legs", "intense", "sweep"), default="intense")
+    parser.add_argument("--lane-cadence-deny", default="0,1,2,3,4,5,6,7", help="sweep: denial levels (comma list)")
     ns, _ = parser.parse_known_args(legacy)
     config.out_dir.mkdir(parents=True, exist_ok=True)
     path = config.out_dir / "lane-cadence.json"
@@ -215,10 +362,14 @@ def run_lane_cadence(args):
         session = open_midi_session(midi_out_name=config.midi_out_name, midi_in_name=config.midi_in_name, serial_port=None)
         session.collector = collector
         master = MidiClockMaster(session.out_port)
-        if ns.lane_cadence_mode == "intense":
+        if ns.lane_cadence_mode in ("intense", "sweep"):
             from hitl.context import ActionContext
-            run_intense(ActionContext(session=session, config=config), session, capture, master, report, save,
-                        ns.lane_cadence_scale)
+            ctx = ActionContext(session=session, config=config)
+            if ns.lane_cadence_mode == "intense":
+                run_intense(ctx, session, capture, master, report, save, ns.lane_cadence_scale)
+            else:
+                run_sweep(ctx, session, capture, master, report, save, ns.lane_cadence_scale,
+                          tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip()))
         for bpm, seconds in (LEGS if ns.lane_cadence_mode == "legs" else ()):
             seconds = max(5.0, seconds * ns.lane_cadence_scale)
             leg = dict(bpm=bpm, planned_s=seconds, start_monotonic=time.monotonic(), start_us_hint=None)

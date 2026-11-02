@@ -7617,11 +7617,12 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     // DEC-246 amendment 25: each track's successor aggregates, when they moved since its last row.
     for (uint8_t t = 0; t < RollingSuccessorProbe::kTracks; ++t) {
       auto& a = RollingSuccessorProbe::gCounters.perTrack[t];
-      const uint32_t mark = a.requested + a.handedOff + a.missed + a.cancelled + a.priceRefused;
+      const uint32_t mark = a.requested + a.handedOff + a.missed + a.cancelled + a.priceRefused + a.deniedGrants;
       if (mark == a.reported) continue;
       a.reported = mark;
       SC_SUCCESSOR_PROBE(t, a.requested, a.handedOff, a.missed, a.cancelled, a.priceRefused, a.maxRequestToReady,
-                         a.maxRequestToAdmit, a.minReadyMargin == UINT32_MAX ? 0 : a.minReadyMargin, a.maxPricedGrains);
+                         a.maxRequestToAdmit, a.minReadyMargin == UINT32_MAX ? 0 : a.minReadyMargin, a.maxPricedGrains,
+                         a.minRequestLead == UINT32_MAX ? 0 : a.minRequestLead, a.deniedGrants);
     }
 #endif
     if (sLaneMeasurement.overruns > 0) {

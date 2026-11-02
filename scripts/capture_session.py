@@ -128,6 +128,9 @@ def is_allowed_hitl_command(command: str) -> bool:
         "!PIT_MOTION": (4294967295,),
         "!INGRESS_COST": (4294967295,),
         "!ROLLING_RECORD_STATUS": (4294967295,),
+        # DEC-246 amendment 26: not read-only, but it touches only the measurement image's successor-lead probe
+        # (lead ticks, 0-based track, denials per grain) and resets its counters; other images ignore the line.
+        "!SUCC_PROBE": (100000, 7, 32),
     }.get(parts[0])
     if limits is None or len(parts) != len(limits) + 1:
         return False
