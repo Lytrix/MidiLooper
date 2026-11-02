@@ -762,7 +762,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
         MidiServiceDrain::PlaybackHolderSelection::Service) {
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE
       // DEC-246 amendment 26 (measurement image): a withheld grant serves no one this turn.
-      if (RollingSuccessorProbe::denyThisGrant(chosenTrack)) {
+      if (RollingSuccessorProbe::denyThisGrant(chosenTrack, windowClock.tick)) {
         chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
       } else {
 #endif
@@ -771,7 +771,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock,
               []() { return clockManager.getPlaybackDeadlineClock(); });
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE
-      RollingSuccessorProbe::noteGrant(chosenTrack);
+      RollingSuccessorProbe::noteGrant(chosenTrack, windowClock.tick);
       }
 #endif
     }

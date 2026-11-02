@@ -5988,6 +5988,16 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
       frame.successorState != 0 || clock.epoch != frame.epoch)
     return;
   const RollingSuccessorKey key = rollingSuccessorKey(frame);
+  {
+    // The trace starts on the first producer turn that sees N Serving under this key, before any lead test.
+    const uint8_t traceTrack = playbackRebuildTrackIndex(*this);
+    if (traceTrack < probe::kTracks && probe::gCounters.seam[traceTrack].deadline != key.deadline) {
+      auto& fresh = probe::gCounters.seam[traceTrack];
+      fresh = probe::Counters::SeamTrace{};
+      fresh.deadline = key.deadline;
+      fresh.servingSeenTick = clock.tick;
+    }
+  }
   if (clock.tick >= key.deadline || key.deadline - clock.tick > probe::gKnobs.requestLeadTicks) return;
   // One successor per served window: its key is the served window's own absolute end.
   const uint8_t track = playbackRebuildTrackIndex(*this);
@@ -5997,10 +6007,20 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
     return;
   }
   const auto* set = runtime->viewSetIfPrewarmed();
-  if (!set || runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
-      !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(activeLoopIndex) != 0 ||
-      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete))
+  auto& seam = probe::gCounters.seam[track < probe::kTracks ? track : 0];
+  if (track < probe::kTracks && seam.eligibleTick == 0) seam.eligibleTick = clock.tick;
+  const uint8_t gates = uint8_t((runtime->pendingViewRequest_.active ? 1u : 0u) |
+      (runtime->frozenViewRequest.active ? 2u : 0u) | (!runtime->coverageRoleAvailable() ? 4u : 0u) |
+      (playbackViewOutstandingGrains(activeLoopIndex) != 0 ? 8u : 0u) |
+      (set && set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete ? 16u : 0u));
+  if (!set || gates != 0) {
+    if (track < probe::kTracks) {
+      ++seam.blockedTurns;
+      seam.blockMask |= gates;
+      if (gates & 4u) seam.lastRole = static_cast<uint8_t>(runtime->coverageRoleRefusal(false));
+    }
     return;  // another promise owns the lane this turn
+  }
   const auto& loop = getActiveLoop();
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
@@ -6018,6 +6038,7 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
   positioned.work.positionedLater = false;
   frame.successorState = 1;
   ++probe::gCounters.requested;
+  if (track < probe::kTracks) seam.requestTick = clock.tick;
   (void)probe::openRecord(track, key.deadline, clock.tick, key.startPhase);
 #else
   (void)clock;
@@ -7965,6 +7986,32 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
       SC_SUCCESSOR_PROBE(t, a.requested, a.handedOff, a.missed, a.cancelled, a.priceRefused, a.maxRequestToReady,
                          a.maxRequestToAdmit, a.minReadyMargin == UINT32_MAX ? 0 : a.minReadyMargin, a.maxPricedGrains,
                          a.minRequestLead == UINT32_MAX ? 0 : a.minRequestLead, a.deniedGrants);
+    }
+    // The owner's trace: one row per resolved seam. succ_seam,<outcome>: eligible->request delay, request->first
+    // grant, N.end, request->admit, request->ready, the lead left at the request, blocked turns, gates, last role
+    // refusal, request->first withheld grant (low byte of ticks/8).
+    // succ_seam,<outcome>: (from N's adoption) first Serving turn, eligible, request; request->first grant; N.end;
+    // request->admit, request->ready (from the record), the lead left at the request, gates, last role refusal,
+    // request->first withheld grant (ticks/8).
+    for (auto& log = RollingSuccessorProbe::gCounters; log.seamLogCount != 0;) {
+      const auto seam = log.seamLog[log.seamLogHead];
+      const uint8_t t = log.seamLogTrack[log.seamLogHead];
+      log.seamLogHead = uint8_t((log.seamLogHead + 1) % RollingSuccessorProbe::Counters::kSeamLog);
+      --log.seamLogCount;
+      const RollingSuccessorProbe::Record* r = RollingSuccessorProbe::recordFor(t, seam.deadline);
+      const uint64_t nStart = seam.deadline > RollingSuccessorProbe::kSpanTicks
+          ? seam.deadline - RollingSuccessorProbe::kSpanTicks : 0;
+      const auto from = [&](uint64_t base, uint64_t at) -> uint32_t {
+        return at == 0 || at < base ? UINT32_MAX : static_cast<uint32_t>(at - base);
+      };
+      SC_FROZEN_WINDOW_READINESS(t, 0, "succ_seam",
+          seam.outcome == 1 ? "handed" : seam.outcome == 2 ? "missed" : seam.outcome == 3 ? "refused" : "cancelled",
+          from(nStart, seam.servingSeenTick), from(nStart, seam.eligibleTick), from(nStart, seam.requestTick),
+          seam.deadline, from(seam.requestTick, seam.firstGrantTick), r ? from(seam.requestTick, r->readyTick) : UINT32_MAX,
+          seam.deadline > seam.requestTick ? static_cast<uint32_t>(seam.deadline - seam.requestTick) : 0,
+          seam.blockMask, seam.lastRole,
+          static_cast<uint8_t>(from(seam.requestTick, seam.firstDenyTick) == UINT32_MAX
+                                   ? 0xFF : from(seam.requestTick, seam.firstDenyTick) / 8));
     }
 #endif
     if (sLaneMeasurement.overruns > 0) {

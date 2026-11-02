@@ -76,6 +76,7 @@ constexpr uint32_t kRecords = 64;  // a ring: a lookup only ever needs the track
 constexpr uint32_t kRecords = 4096;
 #endif
 constexpr uint8_t kTracks = 8;
+constexpr uint32_t kSpanTicks = 2 * 768;  // one successor span (two bars at 192 PPQN), for the trace only
 struct Counters {
   uint32_t requested = 0;
   uint32_t admitted = 0;
@@ -88,6 +89,27 @@ struct Counters {
   uint32_t recordCount = 0;     // records ever opened (the ring index on the device)
   Aggregate perTrack[kTracks] = {};
   Record records[kRecords] = {};
+  /// Owner ruling (amendment 26 follow-up): where a successor's lead goes before its demand opens. One per track, for
+  /// the window being served: when the lead was first reached, which gates held the demand and for how many turns,
+  /// when it opened, and the first grant and first withheld grant after that. Reported once when the seam resolves.
+  struct SeamTrace {
+    uint64_t deadline = 0;        // N.end of the seam traced
+    uint64_t eligibleTick = 0;    // the first turn the requested lead was reached
+    uint64_t requestTick = 0;     // the demand opened
+    uint64_t firstGrantTick = 0;  // the first lane grant to the track after the demand opened
+    uint64_t firstDenyTick = 0;   // the first grant the injector withheld after it opened
+    uint32_t blockedTurns = 0;    // eligible turns the demand was held by a gate
+    uint8_t blockMask = 0;        // gates seen: 1 pending, 2 frozen, 4 coverage role, 8 outstanding grains, 16 ready
+    uint8_t lastRole = 0;         // `PlaybackCoverageRoleRefusal` at the last role block
+    uint8_t outcome = 0;          // `Outcome` once resolved
+    uint8_t resolved = 0;         // 1: resolved and not yet reported
+    uint64_t servingSeenTick = 0; // the first producer turn that saw N Serving under this key
+  } seam[kTracks] = {};
+  /// Resolved seams waiting for the main-loop report (a handed-off seam's trace is replaced by the next one at once).
+  static constexpr uint8_t kSeamLog = 8;
+  SeamTrace seamLog[kSeamLog] = {};
+  uint8_t seamLogTrack[kSeamLog] = {};
+  uint8_t seamLogHead = 0, seamLogCount = 0;
 };
 
 #if defined(__IMXRT1062__)
@@ -105,8 +127,8 @@ void noteAdmitted(Record& r, uint64_t tick);
 void noteReady(Record& r, uint64_t tick);
 void noteOutcome(Record& r, Outcome outcome);
 /// Amendment 26 (device): true when this grant to `track` is withheld by the injector; `noteGrant` after a served one.
-bool denyThisGrant(uint8_t track);
-void noteGrant(uint8_t track);
+bool denyThisGrant(uint8_t track, uint64_t tick);
+void noteGrant(uint8_t track, uint64_t tick);
 /// Reconfigure the measurement (lead, denied track, denials per grain) and reset every counter.
 void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain);
 

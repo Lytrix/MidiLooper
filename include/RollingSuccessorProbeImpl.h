@@ -65,6 +65,16 @@ ROLLING_SUCCESSOR_PROBE_MEM void noteReady(Record& r, uint64_t tick) {
 ROLLING_SUCCESSOR_PROBE_MEM void noteOutcome(Record& r, Outcome outcome) {
   if (r.outcome != static_cast<uint8_t>(Outcome::Open)) return;
   r.outcome = static_cast<uint8_t>(outcome);
+  if (r.track < kTracks && gCounters.seam[r.track].deadline == r.deadline) {
+    auto& seam = gCounters.seam[r.track];
+    seam.outcome = static_cast<uint8_t>(outcome);
+    if (gCounters.seamLogCount < Counters::kSeamLog) {  // full: the oldest unreported seams are kept, later ones lost
+      const uint8_t at = uint8_t((gCounters.seamLogHead + gCounters.seamLogCount) % Counters::kSeamLog);
+      gCounters.seamLog[at] = seam;
+      gCounters.seamLogTrack[at] = r.track;
+      ++gCounters.seamLogCount;
+    }
+  }
   Aggregate* a = r.track < kTracks ? &gCounters.perTrack[r.track] : nullptr;
   switch (outcome) {
     case Outcome::HandedOff: ++gCounters.handedOff; if (a) ++a->handedOff; break;
@@ -74,14 +84,22 @@ ROLLING_SUCCESSOR_PROBE_MEM void noteOutcome(Record& r, Outcome outcome) {
   }
 }
 
-ROLLING_SUCCESSOR_PROBE_MEM bool denyThisGrant(uint8_t track) {
+ROLLING_SUCCESSOR_PROBE_MEM bool denyThisGrant(uint8_t track, uint64_t tick) {
   if (!gKnobs.enabled || track != gKnobs.denyTrack || gKnobs.denyLeft == 0) return false;
   --gKnobs.denyLeft;
-  if (track < kTracks) ++gCounters.perTrack[track].deniedGrants;
+  if (track < kTracks) {
+    ++gCounters.perTrack[track].deniedGrants;
+    auto& seam = gCounters.seam[track];
+    if (seam.requestTick != 0 && seam.firstDenyTick == 0) seam.firstDenyTick = tick;
+  }
   return true;
 }
 
-ROLLING_SUCCESSOR_PROBE_MEM void noteGrant(uint8_t track) {
+ROLLING_SUCCESSOR_PROBE_MEM void noteGrant(uint8_t track, uint64_t tick) {
+  if (track < kTracks) {
+    auto& seam = gCounters.seam[track];
+    if (seam.requestTick != 0 && seam.firstGrantTick == 0) seam.firstGrantTick = tick;
+  }
   if (gKnobs.enabled && track == gKnobs.denyTrack) gKnobs.denyLeft = gKnobs.denyPerGrain;
 }
 

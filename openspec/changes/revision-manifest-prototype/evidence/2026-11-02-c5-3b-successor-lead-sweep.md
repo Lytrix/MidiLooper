@@ -63,3 +63,19 @@ Points (lead, seams: handed/missed, actual minimum lead):
 - The cause of the ~770-tick request delay under denials (one trace of role release against request time would name
   it).
 - Denial levels 1, 2 and 4–6.
+
+## Follow-up trace: the "late request" is the loop's terminal one-bar window (owner ruling, same day)
+
+- **Image and capture.** Image `092b3bc7a7456f8c` (the probe's per-seam `succ_seam` trace). Main log
+  `captures/session_20261102_*` from `trace2`, plus a read-only drain of the device ring. Points `0:1536:6` and
+  `3:1536:6`.
+- **The five gates never held a demand** (pending, frozen, coverage role, outstanding grains, ready): `gates=0` on
+  every seam. Each demand opened on its first eligible producer turn, 16–32 ticks after N's adoption.
+- **Every missed seam is the successor of the loop's last window.** The loop is 25,344 ticks = 33 bars, so two-bar
+  windows leave a final **one-bar** window [24,576, 25,344), and its successor gets at most 768 ticks of lead. The
+  misses are at N.end 50,688, 76,032 and 101,376, each 768 after the previous seam.
+- **Mid-loop seams at deny 3 all handed off:** lead 1,504–1,520, request to ready 440–1,032, margin at least 480.
+  At deny 0 request to ready is 224–248, and the terminal seam hands off too (lead 768, ready 224).
+- **Correction to the reading above.** The one-window pipeline fits a two-bar span at 3 denials. What fails is the
+  successor of a **short terminal window** (odd-bar loops), whose lead is bounded by that window's own length.
+  Neither arbitration nor role release is the cause.

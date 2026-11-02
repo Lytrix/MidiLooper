@@ -254,7 +254,8 @@ def _routed_window_served_ticks(lines, start):
     return served
 
 
-def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS, hold_s=0.0):
+def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS, hold_s=0.0,
+              points=()):
     """Amendment 26: for each denial level (0-7 withheld grants after every grain served to track 8), the smallest
     successor lead at which every seam hands off cleanly -- 20-seam bisection points, then 50/50 at the answer.
 
@@ -420,6 +421,14 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         leg["takeover_play_s"] = hold_s
         if hold_s > 0:
             time.sleep(hold_s)
+    if points:
+        # Fixed points (deny, lead, seams), no search: the per-seam trace (`succ_seam`) is the measurement.
+        for deny, lead, seams in points:
+            probe(lead, deny, seams)
+        master.stop()
+        leg["pulses_sent"] = master.pulses_sent()
+        save()
+        return
     coarse = max(5, int(10 * scale))
     boundary = max(10, int(20 * scale))
     verify = max(10, int(SWEEP_VERIFY_SEAMS * scale))
@@ -471,6 +480,8 @@ def run_lane_cadence(args):
     parser.add_argument("--lane-cadence-scale", type=float, default=1.0, help="leg duration multiplier (smoke runs)")
     parser.add_argument("--lane-cadence-mode", choices=("legs", "intense", "sweep"), default="intense")
     parser.add_argument("--lane-cadence-deny", default="0,3,7", help="sweep: denial levels (comma list; 'none': setup only)")
+    parser.add_argument("--lane-cadence-points", default="",
+                        help="sweep: fixed probes deny:lead:seams,... instead of the search")
     parser.add_argument("--lane-cadence-hold", type=float, default=0.0,
                         help="sweep with deny none: seconds to keep playing after the first window serves")
     ns, _ = parser.parse_known_args(legacy)
@@ -501,7 +512,9 @@ def run_lane_cadence(args):
             else:
                 run_sweep(ctx, session, capture, master, report, save, ns.lane_cadence_scale,
                           tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip() and x.strip() != "none"),
-                          hold_s=ns.lane_cadence_hold)
+                          hold_s=ns.lane_cadence_hold,
+                          points=tuple(tuple(int(v) for v in p.split(":")) for p in ns.lane_cadence_points.split(",")
+                                       if p.strip()))
         for bpm, seconds in (LEGS if ns.lane_cadence_mode == "legs" else ()):
             seconds = max(5.0, seconds * ns.lane_cadence_scale)
             leg = dict(bpm=bpm, planned_s=seconds, start_monotonic=time.monotonic(), start_us_hint=None)
