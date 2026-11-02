@@ -112,6 +112,12 @@ struct Counters {
     uint64_t lastServedTick = 0;
     uint32_t maxOpportunityGap = 0;
     uint32_t maxGrantGap = 0;
+    // Owner ruling (grant bound): grants served while owed, of them before admission, and the counted window (rows E
+    // and read units) the admission priced -- to compare grants with ceil((2E+1)/64) + ceil(E/48) + fixed.
+    uint16_t grantsServed = 0;
+    uint16_t grantsAtAdmit = 0;
+    uint32_t rows = 0;
+    uint32_t readUnits = 0;
   } seam[kTracks] = {};
   /// Resolved seams waiting for the main-loop report (a handed-off seam's trace is replaced by the next one at once).
   static constexpr uint8_t kSeamLog = 8;

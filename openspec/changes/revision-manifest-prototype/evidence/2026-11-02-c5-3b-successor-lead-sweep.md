@@ -206,3 +206,30 @@ about 100. The real cost model is therefore:
   - the lane opportunity is enforced at a cadence of about 33 ticks or better (1,488 / (11 × 4)), or
   - the grant count per window drops.
 - Otherwise the price needs either an enforced cadence or earlier preparation.
+
+## The grant bound per window (owner ruling: price grants × grant gap)
+
+- **Image.** `f186c5471dad8f6e`; per-seam grants served, grants at admission, and the counted rows E and read units.
+- **Run.** `--lane-cadence-points 0:1536:30,4:1536:30`: 30/30 at deny 0 and 30/30 at bounded deny 4, 0 missed.
+- **Data.** 64 seam rows.
+
+| rows E | read units | grants to admission | grants after admission | total grants | seams |
+|---|---|---|---|---|---|
+| 57 | 115 | 3 | 7 | 10 | 3 |
+| 83 | 167 | 4 | 7 | 11 | 3 |
+| 93 | 187 | 4 | 7 | 11 | 53 |
+| 94 | 189 | 4 | 7 | 11 | 4 |
+
+- **A grant is a fixed unit of work.** The total is the same at deny 0 and at bounded deny 4, so it does not depend on
+  the service rate.
+- **Read units are exactly `2E + 1`** (the manifest cursor's documented cost).
+- **Fitted bound over this range:** `grants = ceil((2E + 1) / 64) + 1 + 7`, i.e. qualification at the 64-unit fill
+  quantum, one admission grant, and a build that took a constant 7 grants for E 57–94.
+- **Not yet proven:** how the 7 build grants scale with E. The view's cap is 2,048 events, where qualification alone
+  is 65 grants. A single worst case for every window therefore cannot fit one window; admission has to price the
+  counted candidate.
+- **Gaps in this run:** opportunity gap up to **56** ticks, grant gap up to **144** at bounded deny 4 (40 / 40 at
+  deny 0).
+- **Budget at E = 93, 11 grants** in a 1,488-tick window: a guaranteed grant gap of at most 128 ticks fits
+  (1,408). The observed maximum of 144 does not (1,584). So the grant deadline needs **enforcing**, not just
+  observing.
