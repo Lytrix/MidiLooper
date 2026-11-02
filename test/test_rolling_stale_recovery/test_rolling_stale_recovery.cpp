@@ -554,6 +554,70 @@ void test_5_1_the_routed_lane_serves_on_external_clock_pulses() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
 
+// An expired demand must not own the lane (DEC-246 amendment 27, owner invariant B; device
+// captures/session_20261102_182701): a committed demand's deadline expired while its window was qualifying
+// (`demand_invalidated` at 85.2 s). The build was dropped but the demand stayed pending (`DeadlineExpired`), through the
+// stop and the restart, so the requester answered `win_busy` for the whole 90 s and the routed slot never served. The
+// fixture injects that state (an Idle frame beside a pending demand whose deadline passed, no build), then restarts.
+void test_5_1_an_expired_routed_demand_is_discharged_after_a_restart() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const uint32_t len = loop.loopLengthTicks;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  const uint32_t at = 2 * len + 100;
+  nativePlaybackDeadlineClock = {at, 1};
+  clockManager.assignCurrentTickSilently(at);
+  t.cancelRollingPlaybackWindow(0);
+  runtime.clearViewPendingRequest();
+  TEST_ASSERT_EQUAL(Track::PlaybackViewRequestResult::DeferredSourceQualification,
+                    t.requestCommittedPlaybackWindow(0, PlaybackCoverageInterval{1536, 1536, len}, 100,
+                                                     nativePlaybackDeadlineClock));
+  auto& demand = runtime.pendingViewRequest_;
+  TEST_ASSERT_TRUE_MESSAGE(demand.active && demand.clockEpoch == 1 && demand.deadlineTick != 0,
+                           "precondition: a positioned committed demand");
+  demand.deadlineTick = at - 1;  // the device's shape: the deadline passed while it qualified
+  demand.work.deadlineTick = at - 1;
+  demand.reason = PlaybackViewPendingReason::DeadlineExpired;
+  demand.positionInvalidated = true;
+
+  t.stopPlaying();
+  nativePlaybackDeadlineClock = {0, 2};
+  clockManager.assignCurrentTickSilently(0);
+  lane.serviceTracks(0);
+  t.startPlaying(0);
+  uint32_t served = 0, busyTicks = 0;
+  for (uint32_t tick = 0; tick < 20 * len; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 2};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    // The rolling requester alone: on the device nothing else replaced the demand (no qualification began after the
+    // restart), so the slot's own requester is the owner that must discharge it.
+    if (tick % 4 == 0) lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    const char* ex = PlaybackTickContext::gState.producerExit[0];
+    busyTicks += ex != nullptr && strcmp(ex, "win_busy") == 0;
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++served;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "served=%u busyTicks=%u pend=%d/%u epoch=%u exit=%s", served, busyTicks,
+           demand.active, unsigned(demand.reason), demand.clockEpoch,
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-");
+  printf("EXPIRED %s\n", detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -567,5 +631,6 @@ int main(int, char**) {
   RUN_TEST(test_5_1_a_continuity_miss_at_the_handoff_recovers);
   RUN_TEST(test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only);
   RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
+  RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
   return UNITY_END();
 }

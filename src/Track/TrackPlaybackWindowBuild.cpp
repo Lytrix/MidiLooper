@@ -6469,6 +6469,23 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       runtime->clearViewPendingRequest();
       reportPlaybackRollingGateRow("win_unpositioned_replaced", clock.epoch != 0);
     }
+#if REVISION_MANIFEST_READER
+    // DEC-246 amendment 27 (owner invariant B): an **unservable** committed demand may not own the routed lane. A
+    // positioned demand whose promise can no longer be kept -- its deadline passed, or its clock epoch or loop geometry
+    // changed -- is discharged here, the slot's own requester, and a fresh window is positioned below. Measured on
+    // device: a demand that expired while qualifying stayed pending through a stop and restart, `win_busy` for 90 s.
+    // Same exclusions as above: never one being qualified or built, a frozen request, or the Record-return route's.
+    if (pending.active && pending.clockEpoch != 0 && manifestLaneRoutesSlot(activeLoopIndex) &&
+        pending.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        (pending.clockEpoch != clock.epoch || pending.loopLengthTicks != loop.loopLengthTicks ||
+         clock.tick >= pending.deadlineTick || pending.positionInvalidated) &&
+        !runtime->frozenViewRequest.active && !runtime->ownsCoverageSource() && !runtime->viewBuild.active() &&
+        !runtime->completedPromisePendingJudgement && !coldRollingRequest(*runtime, pending) &&
+        !rootReturnSuccessorIsOwedForSlot(activeLoopIndex, pending, clock)) {
+      runtime->clearViewPendingRequest();
+      reportPlaybackRollingGateRow("win_unservable_demand_discharged", clock.epoch != 0);
+    }
+#endif
   }
   // DEC-246 amendment 27 (5.1): an **orphaned** successor. This frame is Idle, so no rolling frame owns the `ready`
   // role; when that role still holds a complete, unpublished window that no other owner can adopt either (no demand or
