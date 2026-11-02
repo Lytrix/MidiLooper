@@ -714,6 +714,10 @@ public:
   /// The routed slot's currency for a window identity: the actual manifest identity is the servable one, imported from
   /// the loop's current source revision. Reads the tick words only (consume-only, either context).
   bool manifestIdentityServable(uint8_t slotIndex, const PlaybackViewSourceIdentity& source) const;
+  /// DEC-246 am. 27: the routed slot's Record-return takeover. A manifest servable for the loop's current revision is
+  /// the onward source, so a Record job / presentation stops waiting for the root or for a served window of it (its own
+  /// hold kept that window from building). Main-loop only: refreshes the tick words first.
+  bool manifestTakesOverRecordReturn(uint8_t slotIndex);
   /// The routed slot's producer turn: stamp the demand with the servable identity and begin its window read.
   PlaybackViewTurnResult beginManifestQualificationForSlot(uint8_t slotIndex, bool keepCaptureReady);
   /// A Committed window's identity against the slot's live committed source: the servable manifest identity on the

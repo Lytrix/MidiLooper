@@ -3783,6 +3783,13 @@ TRACK_COLD_MEM bool Track::manifestIdentityServable(uint8_t slotIndex,
          CommittedManifestLane::gServable.sourceRevision == loopForSlot(slotIndex).playbackRevision;
 }
 
+TRACK_COLD_MEM bool Track::manifestTakesOverRecordReturn(uint8_t slotIndex) {
+  if (!manifestLaneRoutesSlot(slotIndex)) return false;
+  (void)refreshManifestLane(slotIndex);
+  return CommittedManifestLane::gServable.identity != 0 &&
+         CommittedManifestLane::gServable.sourceRevision == loopForSlot(slotIndex).playbackRevision;
+}
+
 /// C5.3: the routed slot's producer turn. The demand is stamped with the servable manifest identity (the snapshot
 /// path stamps its root the same way), then the reader's one window read is begun for exactly that identity and
 /// handed to the runtime's qualification. Every refusal is named; nothing else is read in its place.

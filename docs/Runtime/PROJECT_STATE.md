@@ -1,3 +1,22 @@
+**2026-11-02 — Record presentation deadlock on the manifest route fixed (5.1, DEC-246 amendment 27); a restart build-role leak remains.**
+- **The deadlock.** On the routed slot, the Record job and its presentation waited for the root snapshot's session exit
+  and then for a served window carrying the manifest identity. Their own hold kept that window from building, so a
+  dense take stopped into play never reached manifest serving (host: `win_blocked_by_budget` after two refused spans,
+  because the non-cold request paid the DEC-147 lead price).
+- **Fix.** `Track::manifestTakesOverRecordReturn`: a manifest servable for the loop's current revision is the routed
+  slot's takeover, in the presentation loop's gate, its snapshot-exit hold, and the retirement step's snapshot-exit
+  and served-window holds. The frozen-Capture-still-serving hold and the frozen-window release are unchanged; unrouted
+  slots are unchanged.
+- **Host.** New RED `test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane` (GREEN; the mutation with the
+  helper forced false fails). FULL 3,939 cases, 8 skipped, 3,931 passed. RAM1 unchanged (padding 936).
+- **Device** (succprobe `4931646dca91c158`, `captures/session_20261102_155425.log`, sweep with `--lane-cadence-deny none`):
+  - During play after the take, `rw` dropped to 0 and the manifest build took ownership (`ow=1,bld=1`), so the
+    deadlock is cleared.
+  - After the stop and restart, track 8 sat at `win_busy` with `dm=0,bld=0,ow=0,rl=0` for 90 s, so there was no first
+    manifest window. The stop tore down the in-flight build without returning its build role. That is a separate
+    defect and is next.
+  - Tracks 1–7 were lane-served after the restart in this run.
+
 **2026-11-02 — playback 5.1 pulled forward (DEC-246 amendment 27), host fix; the device block is not yet cleared.**
 - **Host RED → GREEN** (`test_rolling_stale_recovery`). A dense take stopped into play left an unpositioned committed
   demand (the record-stop commit's lead request: no clock stamp, no deadline).

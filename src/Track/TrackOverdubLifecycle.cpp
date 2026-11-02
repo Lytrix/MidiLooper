@@ -1177,14 +1177,16 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
       PlaybackCoverageInterval coverage{};
       const Loop* loop = presentation.owner;
 #if REVISION_MANIFEST_READER
-      // C5.3: on the routed slot the takeover reader is the servable manifest window, never the root.
-      if (loop == nullptr ||
-          (manifestLaneRoutesSlot(slot) ? false : !loop->publishedSnapshotIsCurrent()) ||
+      // C5.3 / DEC-246 am. 27: on the routed slot the takeover reader is the manifest, never the root. Waiting for a
+      // committed window of it to serve first is circular (the presentation's hold keeps that window from building),
+      // so the routed slot retires once the manifest is servable for the loop's current revision.
+      if (manifestLaneRoutesSlot(slot)) {
+        if (loop == nullptr || !manifestTakesOverRecordReturn(slot)) continue;
+      } else if (loop == nullptr || !loop->publishedSnapshotIsCurrent() ||
           !publishedPlaybackWindowForSlot(slot, served, coverage) ||
           served.playbackRevision != loop->playbackRevision ||
           served.sourceGeneration != playbackGeneration ||
-          (manifestLaneRoutesSlot(slot) ? !manifestIdentityServable(slot, served)
-                                        : served.snapshotIdentity != loop->publishedSnapshotIdentity())) continue;
+          served.snapshotIdentity != loop->publishedSnapshotIdentity()) continue;
 #else
       if (loop == nullptr || !loop->publishedSnapshotIsCurrent() ||
           !publishedPlaybackWindowForSlot(slot, served, coverage) ||
@@ -1195,7 +1197,11 @@ TRACK_COLD_MEM bool Track::serviceCaptureStopPresentations() {
     }
     if (!cancelled && presentation.owner != nullptr &&
         presentation.owner->pendingSnapshotSessionExitQueued() &&
-        !presentation.owner->publishedSnapshotIsCurrent()) {
+        !presentation.owner->publishedSnapshotIsCurrent()
+#if REVISION_MANIFEST_READER
+        && !manifestTakesOverRecordReturn(slot)  // the routed slot's onward source is the manifest, not the root
+#endif
+        ) {
       return true;
     }
     CaptureStopJob worker{};
@@ -2900,7 +2906,12 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // both it and the bound return-window owner so the hot path can prepare/serve successive
   // intervals while the Snapshot owner advances independently. Empty/filtered takes have
   // no interval geometry and keep the existing immediate-retirement behavior.
-  if (runtime != nullptr && intervalHasGeometry && loop.hasCommittedPasses() &&
+#if REVISION_MANIFEST_READER
+  const bool manifestTakeover = manifestTakesOverRecordReturn(job.slot);
+#else
+  constexpr bool manifestTakeover = false;
+#endif
+  if (runtime != nullptr && intervalHasGeometry && loop.hasCommittedPasses() && !manifestTakeover &&
       loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent()) {
     // A refused first-bar bind does not cancel this source. The playback holder
     // may still build the current bar from the frozen range before the next edge.
@@ -3081,8 +3092,14 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
     // frozen range while this active playback owner is still preparing the
     // first current-root window; its complete adoption is the release edge.
     // An older served revision is not this job's borrowed source.
+#if REVISION_MANIFEST_READER
+    // DEC-246 am. 27: on the routed slot the takeover window cannot build while this job holds the slot, so waiting for
+    // it served is circular. A servable manifest of the current revision is the takeover; the frozen-Capture hold above
+    // still keeps a range-backed reader alive, and the release below still drops a range-derived window first.
+    if (manifestTakeover) currentRootWindowServed = true;
+#endif
     if ((sameCommittedRevision && !currentRootWindowServed) ||
-        (!hasServedWindow && job.slot == activeLoopIndex && isPlaying() &&
+        (!hasServedWindow && !currentRootWindowServed && job.slot == activeLoopIndex && isPlaying() &&
          runtime->hasBoundRecordReturnWindowForPendingJob()))
       return LoopEventStoreRewriteResult::Pending;
   }

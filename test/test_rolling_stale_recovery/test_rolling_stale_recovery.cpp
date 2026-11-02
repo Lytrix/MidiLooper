@@ -83,8 +83,9 @@ void test_5_1_a_source_stale_blocked_frame_recovers_while_playing() {
 // request) but never positions it: no clock stamp, no deadline. It could never qualify (`gate_unqualified`) and held
 // the active slot's rolling requester at `win_busy` for the rest of the transport -- 64 traversals, no committed window
 // (the RED). The requester now replaces a demand left unqualified for more than a traversal with a positioned one.
-void denseTakeStoppedIntoPlay(uint32_t bars) {
+void denseTakeStoppedIntoPlay(uint32_t bars, bool routed = false) {
   constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  if (routed) installReader();
   Track& t = trackManager.getTrack(0);
   prepareSlot(t, 0, false);
   t.forceSetState(TRACK_STOPPED);
@@ -116,6 +117,7 @@ void denseTakeStoppedIntoPlay(uint32_t bars) {
     nativePlaybackDeadlineClock = {tick, 1};
     clockManager.assignCurrentTickSilently(tick);
     if (tick % 4 == 0) {
+      if (routed && CommittedManifestLane::gReader == &reader()) reader().serviceOwner(loop);
       lane.serviceTracks(tick);
       const bool backlog = t.hasSnapshotPublicationBacklogOnAnySlot();
       t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::selectDeferredIdleOwner(idleCursor, backlog, false), 1);
@@ -127,7 +129,7 @@ void denseTakeStoppedIntoPlay(uint32_t bars) {
     PlaybackCoverageInterval coverage{};
     const bool current = runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
         t.publishedPlaybackWindowForSlot(0, served, coverage) && served.origin == PlaybackWindowOrigin::Committed &&
-        served.playbackRevision == loop.playbackRevision;
+        served.playbackRevision == loop.playbackRevision && (!routed || served.manifestIdentity != 0);
     servedCurrent += current;
     if (tick + 8 * loop.loopLengthTicks >= end) servedCurrentTail += current;
   }
@@ -147,7 +149,13 @@ void denseTakeStoppedIntoPlay(uint32_t bars) {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedCurrentTail, detail);
   TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
                                 static_cast<int>(runtime.rolling.phase), detail);
+  if (routed)  // the Record presentation must not keep the routed slot once the manifest serves it
+    TEST_ASSERT_FALSE_MESSAGE(runtime.hasBoundRecordReturnWindowForPendingJob(), detail);
 }
+
+// The device deadlock (DEC-246 amendment 27): on the manifest-routed slot the Record presentation retired only once a
+// committed window already served, while its own hold kept the committed lane from building one.
+void test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane() { denseTakeStoppedIntoPlay(4, true); }
 
 void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() { denseTakeStoppedIntoPlay(4); }
 
@@ -323,5 +331,6 @@ int main(int, char**) {
   RUN_TEST(test_5_1_a_long_dense_take_stopped_into_play_reaches_committed_serving);
   RUN_TEST(test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves);
   RUN_TEST(test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route);
+  RUN_TEST(test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane);
   return UNITY_END();
 }
