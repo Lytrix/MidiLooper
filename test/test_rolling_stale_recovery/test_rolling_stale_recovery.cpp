@@ -83,9 +83,8 @@ void test_5_1_a_source_stale_blocked_frame_recovers_while_playing() {
 // request) but never positions it: no clock stamp, no deadline. It could never qualify (`gate_unqualified`) and held
 // the active slot's rolling requester at `win_busy` for the rest of the transport -- 64 traversals, no committed window
 // (the RED). The requester now replaces a demand left unqualified for more than a traversal with a positioned one.
-void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() {
+void denseTakeStoppedIntoPlay(uint32_t bars) {
   constexpr uint32_t bar = Config::TICKS_PER_BAR;
-  constexpr uint32_t bars = 4;
   Track& t = trackManager.getTrack(0);
   prepareSlot(t, 0, false);
   t.forceSetState(TRACK_STOPPED);
@@ -112,7 +111,7 @@ void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() {
   RollingOwnerLane lane;
   MidiServiceDrain::DeferredIdleOwnerCursor idleCursor{};
   uint32_t rootCurrentAt = 0, blockedTicks = 0, servedCurrent = 0, servedCurrentTail = 0;
-  const uint32_t end = tick + 64 * loop.loopLengthTicks;
+  const uint32_t end = tick + (bars >= 16 ? 12 : 64) * loop.loopLengthTicks;
   for (; tick < end; ++tick) {
     nativePlaybackDeadlineClock = {tick, 1};
     clockManager.assignCurrentTickSilently(tick);
@@ -150,6 +149,13 @@ void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() {
                                 static_cast<int>(runtime.rolling.phase), detail);
 }
 
+void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() { denseTakeStoppedIntoPlay(4); }
+
+// The device's own shape: a 32-bar dense take (the device's 33-bar HITL take, 16ths) stopped into play.
+void test_5_1_a_long_dense_take_stopped_into_play_reaches_committed_serving() {
+  denseTakeStoppedIntoPlay(32);
+}
+
 // Defect B (DEC-246 amendment 27): a deadline-free whole-loop frame -- the shape a Record-return or launch-bound frame
 // serves with (`deadlineTick == 0`, the resolver's own currency check) -- whose served source becomes obsolete while the
 // transport runs. The resolver blocks it once (`ServingViewSourceStale`); the producer must retire that frame once and
@@ -184,10 +190,18 @@ void test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serve
   TEST_ASSERT_TRUE(t.publishedPlaybackWindowForSlot(0, before, coverage));
   const uint32_t revisionBefore = before.playbackRevision;
 
+  // The device also held the record stop's lead request: an unpositioned committed demand (no clock stamp, no
+  // deadline), here retained the way `requestCommittedPlaybackWindow` retains it outside the rolling requester.
+  TEST_ASSERT_EQUAL(Track::PlaybackViewRequestResult::DeferredSourceQualification,
+                    t.requestCommittedPlaybackWindow(0, PlaybackCoverageInterval{0, len, len}, 0,
+                                                     PlaybackDeadlineClock{tick, 0}));  // fresh, unstamped
+  TEST_ASSERT_TRUE(runtime.pendingViewRequest_.active);
+  TEST_ASSERT_EQUAL_UINT32(0, runtime.pendingViewRequest_.clockEpoch);
+
   hideFirstNoteOfPitch(loop, 62);  // the committed source moves: R -> C
   TEST_ASSERT_NOT_EQUAL(revisionBefore, loop.playbackRevision);
 
-  uint32_t staleBlocks = 0, blockedTicks = 0, servedFromC = 0;
+  uint32_t staleBlocks = 0, blockedTicks = 0, servedFromC = 0, staleAt = 0, positionedAt = 0;
   bool wasStaleBlocked = false;
   const uint32_t end = tick + 48 * len;
   for (++tick; tick < end; ++tick) {
@@ -197,7 +211,12 @@ void test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serve
     t.playMidiEvents(tick, true);
     const bool staleBlocked = runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
         runtime.rolling.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale);
-    if (staleBlocked && !wasStaleBlocked) ++staleBlocks;
+    if (staleBlocked && !wasStaleBlocked) {
+      ++staleBlocks;
+      staleAt = tick;
+    }
+    if (staleAt && !positionedAt && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested)
+      positionedAt = tick;  // a positioned demand of the current source replaced the frame
     wasStaleBlocked = staleBlocked;
     if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) ++blockedTicks;
     PlaybackViewSourceIdentity served{};
@@ -207,12 +226,17 @@ void test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serve
       ++servedFromC;
   }
   char detail[200];
-  snprintf(detail, sizeof(detail), "staleBlocks=%u blockedTicks=%u servedFromC=%u phase=%u blockedBy=%u rev %u->%u",
+  snprintf(detail, sizeof(detail),
+           "staleBlocks=%u blockedTicks=%u servedFromC=%u phase=%u blockedBy=%u rev %u->%u requested %u ticks after",
            staleBlocks, blockedTicks, servedFromC, unsigned(runtime.rolling.phase), unsigned(runtime.rolling.blockedBy),
-           revisionBefore, loop.playbackRevision);
+           revisionBefore, loop.playbackRevision, positionedAt ? positionedAt - staleAt : 0);
   printf("STALE3 %s\n", detail);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, staleBlocks, detail);       // the edge, once
   TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(4, blockedTicks, detail);  // retired on the producer's next turn
+  // ... and the obsolete unpositioned demand does not hold the requester for a traversal: the next window is
+  // requested right away (well inside one loop), not after the one-traversal timeout.
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, positionedAt, detail);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(len / 2, positionedAt - staleAt, detail);
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedFromC, detail);
   TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
                                 static_cast<int>(runtime.rolling.phase), detail);
@@ -222,6 +246,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
   RUN_TEST(test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving);
+  RUN_TEST(test_5_1_a_long_dense_take_stopped_into_play_reaches_committed_serving);
   RUN_TEST(test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves);
   return UNITY_END();
 }

@@ -6179,6 +6179,15 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
       frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale)) {
     cancelRollingPlaybackWindow(activeLoopIndex);
+    // The retirement is direct evidence that the slot's old demand is obsolete too: an unpositioned committed demand
+    // left beside it (the record stop's lead request on the device) would otherwise hold this requester at `win_busy`
+    // until the one-traversal timeout below. Same exclusions as there, without the wait.
+    auto& pending = runtime->pendingViewRequest_;
+    if (pending.active && pending.clockEpoch == 0 && pending.deadlineTick == 0 &&
+        pending.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        !runtime->frozenViewRequest.active && !runtime->ownsCoverageSource() && !runtime->viewBuild.active() &&
+        !coldRollingRequest(*runtime, pending) && !rootReturnSuccessorIsOwedForSlot(activeLoopIndex, pending, clock))
+      runtime->clearViewPendingRequest();
     reportPlaybackRollingGateRow("win_stale_serving_retired", clock.epoch != 0);
   }
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) {
