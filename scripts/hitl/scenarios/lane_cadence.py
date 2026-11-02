@@ -278,6 +278,44 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         raise RuntimeError("record_stop_not_confirmed")
     save()
 
+    # Measurement workaround (amendments 26-27): avoid the open Record-return ownership handoff. Let the Record job
+    # retire and the committed source publish, stop, record the state, then restart: the sweep starts from a clean
+    # manifest-served committed lane, never from the Record-return path.
+    time.sleep(45.0)
+    master.stop()
+    time.sleep(4.0)
+    status = {}
+    for command in ("!STOP_STATUS", "!REVSHADOW_STATUS"):
+        nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
+        accepted, _ = capture.send_command(command, nonce=nonce, end_nonce=end)
+        rows = capture.fenced_response(nonce, end, timeout_s=5.0, poll_s=0.05) if accepted else None
+        status[command] = [r.strip() for r in (rows or []) if r.strip().startswith(("#STOP_STATUS", "REVSHADOW,lane"))]
+    leg["pre_restart_status"] = status
+    save()
+    print(f"[lane_cadence] pre-restart status: {status}", flush=True)
+    lines = log_lines()
+    master.start(bpm=INTENSE_BPM)
+    if _wait_line(log_lines, len(lines), ("Transport started",), 5.0) is None:
+        raise RuntimeError("restart_not_confirmed")
+    # The first manifest window must already serve before any successor is timed: a successor is only requested while
+    # a positioned window serves, so the first `succ` demand after a reset is that proof. A restart that never serves is
+    # a separate recovery defect, not a successor failure.
+    nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
+    start = len(log_lines())
+    capture.send_command(f"!SUCC_PROBE {SWEEP_SPAN_TICKS} {track0} 0", nonce=nonce, end_nonce=end)
+    t0 = time.monotonic()
+    first = None
+    while time.monotonic() < t0 + 90 and first is None:
+        time.sleep(1.0)
+        row = _succ_latest(log_lines(), start, track0)
+        if row and row["requested"] > 0:
+            first = row
+    leg["first_window_served_s"] = None if first is None else round(time.monotonic() - t0, 1)
+    save()
+    if first is None:
+        raise RuntimeError("restart_no_first_manifest_window_within_90s")
+    print(f"[lane_cadence] first manifest window serving {leg['first_window_served_s']}s after restart", flush=True)
+
     def probe(lead, deny, seams):
         """Configure, then wait for `seams` closed successors on track 8 (or the first miss/discard)."""
         nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
@@ -310,24 +348,38 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         # takeover; the capture's lane rows answer whether a committed window serves. No sweep.
         leg["takeover_play_s"] = 120
         time.sleep(120)
-    search = max(5, int(SWEEP_SEARCH_SEAMS * scale))
+    coarse = max(5, int(10 * scale))
+    boundary = max(10, int(20 * scale))
     verify = max(10, int(SWEEP_VERIFY_SEAMS * scale))
     for deny in deny_levels:
-        if not probe(SWEEP_SPAN_TICKS, deny, search):
+        # Coarse: one span halved until the first failure; then bisect between the last pass and that failure.
+        passing, failing = None, None
+        lead = SWEEP_SPAN_TICKS
+        while lead >= SWEEP_RESOLUTION:
+            if probe(lead, deny, coarse):
+                passing = lead
+                lead //= 2
+            else:
+                failing = lead
+                break
+        if passing is None:
             leg["table"][deny] = dict(lmin=None, note="even a request at N's start (one span) misses")
             save()
             continue
-        lo, hi = 0, SWEEP_SPAN_TICKS
+        lo, hi = (failing or 0), passing
         while hi - lo > SWEEP_RESOLUTION:
             mid = (lo + hi) // 2
-            if probe(mid, deny, search):
+            if probe(mid, deny, coarse):
                 hi = mid
             else:
                 lo = mid
+        while hi <= SWEEP_SPAN_TICKS and not probe(hi, deny, boundary):
+            hi += SWEEP_RESOLUTION
         while hi <= SWEEP_SPAN_TICKS and not probe(hi, deny, verify):
             hi += SWEEP_RESOLUTION
         leg["table"][deny] = dict(lmin=hi if hi <= SWEEP_SPAN_TICKS else None, failing_below=lo, verify_seams=verify)
         save()
+        print(f"[lane_cadence] deny={deny}: Lmin={leg['table'][deny]['lmin']} ticks", flush=True)
     master.stop()
     leg["pulses_sent"] = master.pulses_sent()
     save()
@@ -346,7 +398,7 @@ def run_lane_cadence(args):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--lane-cadence-scale", type=float, default=1.0, help="leg duration multiplier (smoke runs)")
     parser.add_argument("--lane-cadence-mode", choices=("legs", "intense", "sweep"), default="intense")
-    parser.add_argument("--lane-cadence-deny", default="0,1,2,3,4,5,6,7", help="sweep: denial levels (comma list)")
+    parser.add_argument("--lane-cadence-deny", default="0,3,7", help="sweep: denial levels (comma list; 'none': setup only)")
     ns, _ = parser.parse_known_args(legacy)
     config.out_dir.mkdir(parents=True, exist_ok=True)
     path = config.out_dir / "lane-cadence.json"

@@ -22,6 +22,7 @@ ALLOWED_HITL_COMMANDS = frozenset({
     "!HEAP_STATS",
     "!LIB_OBSERVE_STATUS",
     "!STOP_STATUS",
+    "!REVSHADOW_STATUS",  # DEC-246 C2b/C5: stopped-only, read-only shadow store and lane routing status
     "!TRACK_STATUS",
     "!OVERLAY_STATUS",
     # Read-only ring flush. The observation family is emitted through the capture
