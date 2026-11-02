@@ -3639,10 +3639,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 #if REVISION_MANIFEST_READER
 // C5.3 (DEC-246 amendment 22): 7,848 -> 8,024 B (+176) on the flag-1 probe, compiler measured: the manifest identity in
 // every view source identity the runtime holds. Extmem per slot, no RAM1 byte; the default image (flag 0) is unchanged.
-static_assert(sizeof(LoopPlaybackRuntime) == 8024,
+// DEC-246 amendment 27: + the quiescent price refusal (`PriceRefusal`), 8,024 -> 8,088 (+64) here and 7,848 -> 7,904
+// (+56) on the default image, compiler measured; extmem per slot, RAM1 unchanged.
+static_assert(sizeof(LoopPlaybackRuntime) == 8088,
               "I5/C5.3: target per-slot runtime with the manifest identity in each view source identity");
 #else
-static_assert(sizeof(LoopPlaybackRuntime) == 7848,
+static_assert(sizeof(LoopPlaybackRuntime) == 7904,
               "I5: target per-slot runtime measured after the committed-history certification");
 #endif
 // CONTRACTS.md C3 (P-B): the private-predecessor source cursor moves the shell 1,008 -> 1,784 B
@@ -3707,7 +3709,9 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // C5.3 (DEC-246 amendment 22): 9,984 -> 10,160 host (+176 B), compiler measured: the manifest identity (4 B, 8 with
 // this ABI's padding) in every view source identity the runtime holds. Extmem per slot; the default device image does
 // not carry the field (flag 0).
-static_assert(sizeof(LoopPlaybackRuntime) == 10160,
+// DEC-246 amendment 27: + the quiescent price refusal (`PriceRefusal`), 10,160 -> 10,232 host (+72 B), compiler
+// measured; extmem per slot, RAM1 unchanged.
+static_assert(sizeof(LoopPlaybackRuntime) == 10232,
               "I5/C5.3: host per-slot runtime with the manifest identity in each view source identity");
 #else
 static_assert(sizeof(LoopPlaybackRuntime) == 9984,

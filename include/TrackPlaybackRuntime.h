@@ -788,6 +788,19 @@ struct LoopPlaybackRuntime {
   /// work a build already owes. Only committed recipes may enter bounded qualification;
   /// borrowed requests cannot be replayed without their original caller.
   PlaybackViewPendingRequest pendingViewRequest_;
+  /// DEC-246 amendment 27 (owner ruling): a **terminal** DEC-147 price refusal of a committed demand. The refusal may
+  /// stop the window from being promised, but it may not leave an undischargeable demand owning the lane: the demand is
+  /// discharged and this quiescent record stays instead. The per-turn requester does not re-issue the same demand while
+  /// the record matches; any material change (source, transport epoch, interval) ends the quiescence. Report-only
+  /// fields `price` (required grains) and `availableLead` (ticks) name what was refused.
+  struct PriceRefusal {
+    bool active = false;
+    uint32_t clockEpoch = 0;
+    PlaybackViewSourceIdentity source{};
+    PlaybackCoverageInterval coverage{};
+    uint32_t price = 0;
+    uint32_t availableLead = 0;
+  } priceRefusal;
   // One experimental episode, not a second active-slot or source-currency owner.
   enum class RollingPhase : uint8_t { Idle, Requested, Ready, Serving, Blocked };
   struct RollingFrame {

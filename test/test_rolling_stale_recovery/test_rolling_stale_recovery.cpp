@@ -381,6 +381,63 @@ void test_5_1_an_orphaned_ready_successor_returns_its_build_role() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, requested, detail);
 }
 
+// A price-refused demand must not stay an owner (DEC-246 amendment 27, owner ruling): main.cpp's per-turn committed
+// demand asks for the playhead's own window, so its lead is about zero and DEC-147 refuses it (`handoff_unreachable`,
+// device captures/session_20261102_161218 at 88.07 s). The refusal left it pending (`CannotCompleteBeforeHandoff`), so
+// the rolling requester answered `win_busy` for the rest of the transport and the routed slot never served. The lane
+// here makes main's per-turn demand on every turn, as the device does.
+void test_5_1_a_price_refused_demand_leaves_no_pending_owner() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t served = 0, refusedPendingTicks = 0, refusals = 0;
+  bool wasRefused = false;
+  const uint32_t end = 40 * loop.loopLengthTicks;
+  for (uint32_t tick = 0; tick < end; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) {
+      const auto clock = clockManager.getPlaybackDeadlineClock();
+      if (t.isPlaying()) (void)t.requestActiveCommittedPlaybackWindow(static_cast<uint32_t>(clock.tick), clock);
+      lane.serviceTracks(tick);
+    }
+    t.playMidiEvents(tick, true);
+    const bool refused = runtime.pendingViewRequest_.active &&
+        runtime.pendingViewRequest_.reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
+    refusedPendingTicks += refused;
+    refusals += refused && !wasRefused;
+    wasRefused = refused;
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (tick >= end / 2 && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++served;
+  }
+  char detail[240];
+  snprintf(detail, sizeof(detail), "servedTail=%u refusedPendingTicks=%u refusals=%u exit=%s phase=%u pend=%d/%u",
+           served, refusedPendingTicks, refusals,
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-",
+           unsigned(runtime.rolling.phase), runtime.pendingViewRequest_.active,
+           unsigned(runtime.pendingViewRequest_.reason));
+  printf("PRICEREF %s\n", detail);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(loop.loopLengthTicks, refusedPendingTicks, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
+  // The refusal is named, and what it priced is the requested rolling interval's work -- never the loop's extent.
+  TEST_ASSERT_TRUE_MESSAGE(runtime.priceRefusal.active, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2 * Config::TICKS_PER_BAR, runtime.priceRefusal.coverage.lengthTicks, detail);
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(loop.loopLengthTicks, runtime.priceRefusal.coverage.lengthTicks, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, runtime.priceRefusal.price, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -390,5 +447,6 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route);
   RUN_TEST(test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane);
   RUN_TEST(test_5_1_an_orphaned_ready_successor_returns_its_build_role);
+  RUN_TEST(test_5_1_a_price_refused_demand_leaves_no_pending_owner);
   return UNITY_END();
 }

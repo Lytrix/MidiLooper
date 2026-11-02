@@ -5177,6 +5177,28 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
 }
 
 
+TRACK_COLD_MEM bool Track::committedDemandPriceRefused(uint8_t slotIndex, const PlaybackCoverageInterval& coverage,
+                                                      PlaybackDeadlineClock clock) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->priceRefusal.active) return false;
+  const auto& refused = runtime->priceRefusal;
+  const Loop& loop = loopForSlot(slotIndex);
+  // The per-turn demand's interval starts at the playhead and slides with it, so the same impossible demand arrives
+  // with a new start every turn. A start inside the refused interval is that demand, not a material change; the next
+  // interval the playhead reaches is one.
+  const uint32_t loopTicks = coverage.loopLengthTicks;
+  const uint32_t into = loopTicks == 0 ? 0
+      : (coverage.startPhase + loopTicks - refused.coverage.startPhase % loopTicks) % loopTicks;
+  if (refused.clockEpoch != clock.epoch || refused.coverage.loopLengthTicks != loopTicks ||
+      into >= refused.coverage.lengthTicks ||
+      refused.source.playbackRevision != loop.playbackRevision || refused.source.sourceGeneration != playbackGeneration)
+    return false;
+#if REVISION_MANIFEST_READER
+  if (manifestLaneRoutesSlot(slotIndex)) return refused.source.manifestIdentity == CommittedManifestLane::gServable.identity;
+#endif
+  return refused.source.snapshotIdentity == loop.publishedSnapshotIdentity();
+}
+
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestActiveCommittedPlaybackWindow(
     uint32_t playheadPhase, PlaybackDeadlineClock clock) {
   return requestCommittedPlaybackWindowForSlot(getActiveLoopIndex(), playheadPhase, clock);
@@ -5268,6 +5290,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
       return PlaybackViewRequestResult::DeferredSourceQualification;
     }
   }
+  if (committedDemandPriceRefused(slot, coverage, clock)) return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
   return requestCommittedPlaybackWindow(slot, coverage, phase, clock);
 #else
   (void)playheadPhase;
@@ -7372,9 +7395,33 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
       reportPlaybackRollingGateRow("win_repositioned", clock.epoch != 0, /*reprojectedTick=*/false, attemptOrdinal);
       return PlaybackViewTurnResult::GrainDenied;
     }
+    // Read before the retirement, which releases the demand's source. Routed slot only: everywhere else DEC-108
+    // §13(c) keeps the refused demand as a promise (its deadline-miss accounting and DEC-147's no-coalesce rule read it).
+#if REVISION_MANIFEST_READER
+    const bool priceRefusedCommitted = leadTooShort && !siblingBroken && manifestLaneRoutesSlot(slotIndex) &&
+        request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot;
+#else
+    constexpr bool priceRefusedCommitted = false;
+#endif
+    const PlaybackViewPendingRequest refusedDemand = request;
     const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);
     runtime->retireCoverageSource();
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::HandoffUnreachable, dropBefore);
+    // DEC-246 amendment 27 (owner ruling): on the routed slot a lead refusal of a committed demand is terminal for *this*
+    // demand, so it is discharged rather than left owning the lane (it held the rolling requester at `win_busy` for the rest of the
+    // transport: device session_20261102_161218). A quiescent record stays in its place, and the per-turn requester
+    // does not re-issue it until its source, epoch or interval changes. A broken sibling promise keeps its path.
+    if (priceRefusedCommitted) {
+      auto& refused = runtime->priceRefusal;
+      refused.active = true;
+      refused.clockEpoch = refusedDemand.clockEpoch;
+      refused.source = refusedDemand.source;
+      refused.coverage = refusedDemand.coverage;
+      refused.price = contract.requiredGrains();
+      const uint64_t lead = refusedDemand.deadlineTick > clock.tick ? refusedDemand.deadlineTick - clock.tick : 0;
+      refused.availableLead = lead > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(lead);
+      runtime->clearViewPendingRequest();
+    }
     return PlaybackViewTurnResult::GrainDenied;
   }
   const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);

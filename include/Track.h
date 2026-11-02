@@ -621,6 +621,10 @@ public:
   /// turn, with the qualified transport clock and the turn's playhead phase. A whole-take (undemoted) slot
   /// returns `NotServable` and keeps its existing route; a `Ready` window is left alone. The request is
   /// additive: the legacy bridge/merged fallbacks stay reachable while the lane is not ready.
+  /// DEC-246 am. 27: true while the slot's quiescent price refusal (`LoopPlaybackRuntime::PriceRefusal`) still matches
+  /// this demand's source, epoch and interval, so the same impossible demand is not re-issued.
+  bool committedDemandPriceRefused(uint8_t slotIndex, const PlaybackCoverageInterval& coverage,
+                                   PlaybackDeadlineClock clock) const;
   PlaybackViewRequestResult requestActiveCommittedPlaybackWindow(uint32_t playheadPhase,
                                                                 PlaybackDeadlineClock clock);
   /// The same demand for a named slot, used at the **record-stop finalize** (before the PLAYING transition) so
