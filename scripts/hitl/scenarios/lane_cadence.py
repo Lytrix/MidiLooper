@@ -305,6 +305,11 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         print(f"[lane_cadence] sweep deny={deny} lead={lead}: {'ok' if ok else 'FAIL'} {row}", flush=True)
         return ok
 
+    if not deny_levels:
+        # The takeover check (amendment 27): the take plays past the frozen Record reader's period and the committed
+        # takeover; the capture's lane rows answer whether a committed window serves. No sweep.
+        leg["takeover_play_s"] = 120
+        time.sleep(120)
     search = max(5, int(SWEEP_SEARCH_SEAMS * scale))
     verify = max(10, int(SWEEP_VERIFY_SEAMS * scale))
     for deny in deny_levels:
@@ -369,7 +374,7 @@ def run_lane_cadence(args):
                 run_intense(ctx, session, capture, master, report, save, ns.lane_cadence_scale)
             else:
                 run_sweep(ctx, session, capture, master, report, save, ns.lane_cadence_scale,
-                          tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip()))
+                          tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip() and x.strip() != "none"))
         for bpm, seconds in (LEGS if ns.lane_cadence_mode == "legs" else ()):
             seconds = max(5.0, seconds * ns.lane_cadence_scale)
             leg = dict(bpm=bpm, planned_s=seconds, start_monotonic=time.monotonic(), start_us_hint=None)

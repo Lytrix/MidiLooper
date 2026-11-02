@@ -6170,6 +6170,17 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Rejected;
   }
 #endif
+  // playback-tick-consume-only 5.1, pulled forward (DEC-246 amendment 27), Defect B: the resolver blocked this frame
+  // because its **served view's source went stale** (a deadline-free Record-return / launch frame whose committed
+  // source moved). That reason is evidence the window is obsolete, not that the slot cannot be served, so the producer
+  // retires the frame once -- this turn, main-loop owned -- and positions a window of the current source below. The
+  // frame leaves `Blocked` here, so later turns see ordinary request ownership; every other `Blocked` reason stays
+  // terminal until it is shown recoverable.
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
+      frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale)) {
+    cancelRollingPlaybackWindow(activeLoopIndex);
+    reportPlaybackRollingGateRow("win_stale_serving_retired", clock.epoch != 0);
+  }
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) {
     if (frame.epoch != clock.epoch || frame.generation != playbackGeneration ||
         frame.loopLength != loop.loopLengthTicks ||

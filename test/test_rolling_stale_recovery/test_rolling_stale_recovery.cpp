@@ -150,9 +150,78 @@ void test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving() {
                                 static_cast<int>(runtime.rolling.phase), detail);
 }
 
+// Defect B (DEC-246 amendment 27): a deadline-free whole-loop frame -- the shape a Record-return or launch-bound frame
+// serves with (`deadlineTick == 0`, the resolver's own currency check) -- whose served source becomes obsolete while the
+// transport runs. The resolver blocks it once (`ServingViewSourceStale`); the producer must retire that frame once and
+// serve the current source again, not leave it `Blocked` for the rest of the transport.
+void test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves() {
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 2, 4);  // two bars: a two-bar window is the whole loop
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const uint32_t len = loop.loopLengthTicks;
+  RollingOwnerLane lane;
+  uint32_t tick = 0;
+  // Play until a whole-loop window serves.
+  for (; tick < 64 * len; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && runtime.rolling.startPhase == 0 &&
+        tick % len == len / 2)
+      break;
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
+                            static_cast<int>(runtime.rolling.phase), "precondition: a whole-loop window serves");
+  // The deadline-free shape of a bound Record-return / launch frame: its currency is judged on every serving tick.
+  runtime.rolling.deadlineTick = 0;
+  PlaybackViewSourceIdentity before{};
+  PlaybackCoverageInterval coverage{};
+  TEST_ASSERT_TRUE(t.publishedPlaybackWindowForSlot(0, before, coverage));
+  const uint32_t revisionBefore = before.playbackRevision;
+
+  hideFirstNoteOfPitch(loop, 62);  // the committed source moves: R -> C
+  TEST_ASSERT_NOT_EQUAL(revisionBefore, loop.playbackRevision);
+
+  uint32_t staleBlocks = 0, blockedTicks = 0, servedFromC = 0;
+  bool wasStaleBlocked = false;
+  const uint32_t end = tick + 48 * len;
+  for (++tick; tick < end; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    const bool staleBlocked = runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
+        runtime.rolling.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale);
+    if (staleBlocked && !wasStaleBlocked) ++staleBlocks;
+    wasStaleBlocked = staleBlocked;
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) ++blockedTicks;
+    PlaybackViewSourceIdentity served{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, served, coverage) && served.origin == PlaybackWindowOrigin::Committed &&
+        served.playbackRevision == loop.playbackRevision && served.snapshotIdentity == loop.publishedSnapshotIdentity())
+      ++servedFromC;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "staleBlocks=%u blockedTicks=%u servedFromC=%u phase=%u blockedBy=%u rev %u->%u",
+           staleBlocks, blockedTicks, servedFromC, unsigned(runtime.rolling.phase), unsigned(runtime.rolling.blockedBy),
+           revisionBefore, loop.playbackRevision);
+  printf("STALE3 %s\n", detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, staleBlocks, detail);       // the edge, once
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(4, blockedTicks, detail);  // retired on the producer's next turn
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedFromC, detail);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Blocked),
+                                static_cast<int>(runtime.rolling.phase), detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
   RUN_TEST(test_5_1_a_dense_take_stopped_into_play_reaches_committed_serving);
+  RUN_TEST(test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves);
   return UNITY_END();
 }
