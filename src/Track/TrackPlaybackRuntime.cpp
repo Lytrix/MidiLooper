@@ -2397,6 +2397,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   // applies, so the window is only ever prepared privately and never served before it is valid.
   const bool privateRootReturn =
       frozenViewRequest.reason == PlaybackViewPendingReason::PrivateRootReturnPreparation;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  // C5.3b host probe: the same DEC-147 lead price `Track::stepCommittedPlaybackRetry` skips for the serving frame's own
+  // successor demand is skipped here too -- it is one decision charged twice, not a second rule.
+  const bool successorPriceWaived = RollingSuccessorProbe::gKnobs.enabled &&
+      RollingSuccessorProbe::gKnobs.bypassLeadPrice && frame.phase == RollingPhase::Serving &&
+      frame.successorState == 1 && frame.deadlineTick != 0 && frame.startPhase < frame.loopLength &&
+      frozenViewRequest.deadlineTick ==
+          frame.deadlineTick + std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase);
+#else
+  constexpr bool successorPriceWaived = false;
+#endif
 #if REVISION_MANIFEST_READER
   if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSourceComplete() ||
 #else
@@ -2407,7 +2418,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
        (clock.epoch == 0 || clock.epoch != frozenViewRequest.clockEpoch ||
         clock.tick < frozenViewRequest.work.admittedTick ||
         clock.tick >= frozenViewRequest.deadlineTick ||
-        !contract.canCompleteWithinLead(frozenViewRequest.deadlineTick - clock.tick)))) return false;
+        (!successorPriceWaived && !contract.canCompleteWithinLead(frozenViewRequest.deadlineTick - clock.tick))))) return false;
   auto* set = viewSetIfPrewarmed();
   // Qualification may run privately beside a Capture ready, but admission
   // cannot discharge that request until the single successor role is free.

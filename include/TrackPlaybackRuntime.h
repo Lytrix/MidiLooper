@@ -25,6 +25,7 @@
 #include "RuntimeCompanionPasses.h"
 #include "RuntimeCanonicalPassInputs.h"
 #include "RuntimeNotePairLookup.h"
+#include "RollingSuccessorProbe.h"  // C5.3b host-only successor-lead probe (macro only on the target)
 #include "Utils/WorkingSetLease.h"
 #include "Utils/OverdubOverlayLane.h"
 #include "Utils/PlaybackSourceReadGuard.h"
@@ -813,6 +814,11 @@ struct LoopPlaybackRuntime {
     /// playback-tick-consume-only phase 2 (report-only): the `PlaybackTickContext::RouteReject` the resolver blocked
     /// this frame with; 0 when the producer blocked it. Sits in existing padding; dies with the frame.
     uint8_t blockedBy = 0;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+    /// C5.3b host probe (`RollingSuccessorProbe.h`): 0 none, 1 this Serving window's one successor is demanded, 2 it was
+    /// missed at `N.end` (the requester cancels it by name). Sits in existing padding; dies with the frame.
+    uint8_t successorState = 0;
+#endif
   } rolling;
   // Window-only pins; never a root lease or another event buffer. Destruction on
   // active transport is forbidden until the lane drains explicit retirement.

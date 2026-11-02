@@ -189,7 +189,22 @@ timing and memory envelope without introducing real-time construction?
     - Builds: the default and flag-0 probe HEX are byte-identical to `HEAD` (pinned date, same path); flag 1 is
       392,280 + 936.
     - [Evidence](evidence/2026-11-01-c5-3a-manifest-lane-source-authority.md)
-  - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds.
+  - [x] C5.3b-m successor-lead measurement (DEC-246 amendment 24), host only, nothing flashed.
+    - Host-only probe (`RollingSuccessorProbe.h`, compiled out on the device).
+      - While N serves, one successor `[N.end, N.end + span)` with deadline `N.end`, keyed by its absolute end.
+      - It runs through the production retry, qualification, admission, build and handoff. Only the DEC-147 lead
+        price is waived, and only for that demand.
+    - Measured minimum lead, in owner turns, well below one span:
+      - physical: 6 (sparse), 14 (dense);
+      - qualified: 119 (seven denials per grain), 112 (eight real tracks);
+      - it is linear in the owner cadence (A=8: 112 / 952 ticks).
+    - 50-seam continuity gate green in both source configurations: 0 lane-owned merged ticks, gaps, duplicates and
+      stale serves.
+    - Found and not fixed (owner question): the manifest route prices its first window from the declared floor and is
+      budget-blocked on dense takes.
+    - [Evidence](evidence/2026-11-02-c5-3b-successor-lead-measurement.md)
+  - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds. Waits on the
+        owner's choice of an evidence-based successor price (amendment 24's "afterwards").
     - The rule: serving does not suppress successor demand. While window N serves, request N+1 at
       `begin = N.end` with the existing span, build it off-clock, and hand off atomically at N's end.
     - A missed successor is a named miss: no merged fallback, no tick build.

@@ -1,5 +1,29 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-02 — revision-manifest C5.3b-m (host): the successor window needs 6–14 owner turns, and 119 under the worst arbitration (DEC-246 amendment 24).**
+- **Ruling (amendment 24).** C5.3a is accepted. Before changing admission, measure the successor lead. Bypass only the
+  DEC-147 lead price, only in a host fixture.
+- **Probe.** `RollingSuccessorProbe.h`, compiled out on the device (all three device images byte-identical to `HEAD`).
+  - While N serves, one successor `[N.end, N.end + span)` with deadline `N.end`.
+  - It takes the production retry, qualification, admission, build and handoff.
+- **Measured** (`test_rolling_successor_lead`), in owner turns:
+  - 6 for a sparse window and 14 for a dense one, whatever the loop length;
+  - 119 with seven denials per grain, 112 with eight real tracks;
+  - linear in ticks per turn.
+  - The declared price for the same dense window is 55 grains, a 28,928-tick lead.
+- **Continuity gate green** on both sources over 50 seams, including 8 tracks: 0 lane-owned merged ticks, gaps,
+  duplicates, stale serves and leaked demands.
+- **Source move during preparation.** A named miss, then recovery on the new source. Recovery costs a full priced
+  lookahead.
+- **Review.** An independent review found two blocking defects, both fixed and mutation-checked.
+- **Open, for the owner:**
+  - **Ticks per owner turn on the device.** This decides whether 119 turns fit a 1,536-tick span (they do only at
+    12.9 ticks per turn or less, about 34 ms at 120 BPM).
+  - **A C5.3a defect.** The manifest route prices its first window from the declared floor, so a dense take is
+    budget-blocked and never served.
+- Nothing flashed.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-successor-lead-measurement.md)
+
 **2026-11-01 — revision-manifest C5.3a (host): the designated track's committed lane reads RevisionManifest only (DEC-246 amendments 22–23).**
 - **Routing.** Track `REVISION_MANIFEST_READER_TRACK`'s active slot is served from the manifest through
   `CommittedManifestLane`. Other tracks keep the snapshot reader, and selection never moves this.

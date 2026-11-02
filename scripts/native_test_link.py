@@ -25,6 +25,7 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # revision-manifest-prototype C5.3: the designated track's manifest-backed committed lane over the same real
     # Track/Loop/storage closure with the rolling reader enabled.
     "test_revision_manifest_lane",
+    "test_rolling_successor_lead",
     "test_playback_read_witness",
     # S3 gate: the runtime working-set acceptance suite drives the production admission paths
     # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the

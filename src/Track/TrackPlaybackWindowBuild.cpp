@@ -5697,6 +5697,74 @@ TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingF
   return {Track::RollingOutcome::Rejected, nullptr};
 }
 
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+/// C5.3b host probe: the one successor of the window a positioned frame serves -- `[N.end, N.end + span)`, absolute and
+/// unwrapped (`deadline` is `N.end`), derived from the served window's own start and span, never from the playhead.
+struct RollingSuccessorKey {
+  uint64_t deadline;
+  uint32_t startPhase;
+  uint32_t lengthTicks;
+};
+TRACK_COLD_MEM RollingSuccessorKey rollingSuccessorKey(const LoopPlaybackRuntime::RollingFrame& frame) {
+  const uint32_t span = std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase);
+  const uint32_t start = (frame.startPhase + span) % frame.loopLength;
+  return {frame.deadlineTick + span, start, std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - start)};
+}
+
+TRACK_COLD_MEM bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline) {
+  const auto& frame = runtime.rolling;
+  return RollingSuccessorProbe::gKnobs.enabled && frame.successorState == 1 &&
+         frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.deadlineTick != 0 &&
+         frame.loopLength != 0 && rollingSuccessorKey(frame).deadline == deadline;
+}
+
+/// Discard the successor demand keyed `key` and everything it owns -- the retained record, the frozen read, an admitted
+/// build, an unpublished ready candidate -- without touching the window being served. Named by `outcome`.
+TRACK_COLD_MEM void cancelRollingSuccessor(LoopPlaybackRuntime& runtime, uint8_t track, const RollingSuccessorKey& key,
+                                          RollingSuccessorProbe::Outcome outcome) {
+  namespace probe = RollingSuccessorProbe;
+  const auto& frame = runtime.rolling;
+  const auto matches = [&](const PlaybackViewPendingRequest& request) {
+    return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        request.operationGeneration == frame.generation && request.deadlineTick == key.deadline &&
+        request.coverage.startPhase == key.startPhase;
+  };
+  if (matches(runtime.pendingViewRequest_)) runtime.clearViewPendingRequest();
+  if (matches(runtime.frozenViewRequest)) {
+    // Clear the frozen record first: retiring a held source hands an active frozen demand back as pending.
+    runtime.frozenViewRequest = {};
+    if (runtime.ownsCoverageSource()) runtime.retireCoverageSource();
+    if (matches(runtime.pendingViewRequest_)) runtime.clearViewPendingRequest();
+  }
+  if (runtime.viewBuild.coverageOwned() && runtime.viewBuildOperationGeneration == frame.generation &&
+      runtime.viewBuildWork.deadlineTick == key.deadline)
+    runtime.discardCoverageBuild();
+  auto* set = runtime.viewSetIfPrewarmed();
+  if (set && set->lifecycle.ready < set->views.size()) {
+    auto& life = set->lifecycle;
+    auto& ready = set->views[life.ready];
+    // The successor's own view: its complete candidate, or the shell a revision change already reset. It goes back to
+    // the build role when that role is empty -- with a retained view, current and successor alternate over two views
+    // and the successor's publication took the build role, so without this the lane could never build again.
+    if (life.ready != life.current && life.ready != life.retained && !ready.published &&
+        (!ready.complete ||
+         (ready.source.sourceGeneration == frame.generation && ready.coverage.startPhase == key.startPhase))) {
+      ready.resetMetadata();
+      if (life.build >= set->views.size()) {
+        life.build = life.ready;
+        life.ready = RuntimePlaybackViewLifecycle::kNoView;
+      }
+    }
+  }
+  if (auto* record = probe::recordFor(track, key.deadline); record && record->outcome == uint8_t(probe::Outcome::Open)) {
+    record->outcome = uint8_t(outcome);
+    if (outcome == probe::Outcome::Missed) ++probe::gCounters.missed;
+    else if (outcome == probe::Outcome::PriceRefused) ++probe::gCounters.priceRefused;
+    else ++probe::gCounters.cancelled;
+  }
+}
+#endif
+
 // Boundary-only validation is flash-resident; steady serving stays in ITCM.
 // Fixed metadata reads only, under RollingMetadataGuard. Device duration remains
 // a qualification obligation; this placement is not a timing claim.
@@ -5746,6 +5814,16 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
     return;
   }
   if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle) return;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // C5.3b probe: a serving frame's demanded successor dies with it, by name (a missed one is keyed by the frame itself).
+  if (runtime->rolling.successorState == 1 && runtime->rolling.deadlineTick != 0 && runtime->rolling.loopLength != 0)
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(runtime->rolling),
+                           RollingSuccessorProbe::Outcome::Cancelled);
+  if (runtime->rolling.successorState == 2)
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this),
+                           {runtime->rolling.deadlineTick, runtime->rolling.startPhase, 0},
+                           RollingSuccessorProbe::Outcome::Missed);
+#endif
   const auto frame = runtime->rolling;
   const auto matches = [&](const PlaybackViewPendingRequest& request) {
     return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
@@ -5790,6 +5868,69 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
   (void)slot;
 #endif
 }
+
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock clock) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  namespace probe = RollingSuccessorProbe;
+  if (!probe::gKnobs.enabled) return;
+  auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (!runtime || !loopsAllocated()) return;
+  auto& frame = runtime->rolling;
+  // A missed successor: the resolver re-keyed the frame to it and blocked it at `N.end`. Discard it by name; the lane
+  // then positions a fresh window as it does after any expiry.
+  if (frame.successorState == 2) {
+    RollingMetadataGuard guard;
+    cancelRollingPlaybackWindow(activeLoopIndex);
+    return;
+  }
+  if (frame.phase != LoopPlaybackRuntime::RollingPhase::Serving || frame.deadlineTick == 0 || frame.loopLength == 0 ||
+      frame.successorState != 0 || clock.epoch != frame.epoch)
+    return;
+  const RollingSuccessorKey key = rollingSuccessorKey(frame);
+  if (clock.tick >= key.deadline || key.deadline - clock.tick > probe::gKnobs.requestLeadTicks) return;
+  // One successor per served window: its key is the served window's own absolute end.
+  const uint8_t track = playbackRebuildTrackIndex(*this);
+  if (probe::recordFor(track, key.deadline) != nullptr) {
+    ++probe::gCounters.duplicateStarts;
+    frame.successorState = 3;  // never a second demand for the same window: N expires as it does today
+    return;
+  }
+  const auto* set = runtime->viewSetIfPrewarmed();
+  if (!set || runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
+      !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(activeLoopIndex) != 0 ||
+      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete))
+    return;  // another promise owns the lane this turn
+  const auto& loop = getActiveLoop();
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  const PlaybackCoverageInterval coverage{key.startPhase, key.lengthTicks, loop.loopLengthTicks};
+  if (requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock) !=
+          PlaybackViewRequestResult::DeferredSourceQualification ||
+      !runtime->pendingViewRequest_.active)
+    return;
+  RollingMetadataGuard guard;
+  auto& positioned = runtime->pendingViewRequest_;
+  positioned.deadlineTick = key.deadline;  // the real handoff; never repositioned, never restamped
+  positioned.clockEpoch = clock.epoch;
+  positioned.work.deadlineTick = key.deadline;
+  positioned.work.clockEpoch = clock.epoch;
+  positioned.work.positionedLater = false;
+  frame.successorState = 1;
+  ++probe::gCounters.requested;
+  if (probe::gCounters.recordCount < probe::kRecords) {
+    auto& record = probe::gCounters.records[probe::gCounters.recordCount++];
+    record = {};
+    record.deadline = key.deadline;
+    record.requestTick = clock.tick;
+    record.startPhase = key.startPhase;
+    record.track = track;
+  }
+#else
+  (void)clock;
+#endif
+}
+#endif
 
 /// **Task 3.7h -- the densest span-aligned window of this loop, priced before it is read.** The window cursor pins
 /// at most the bars the interval intersects (`kMaximumWindowTicks` is two bars), so the three quantities the
@@ -5999,6 +6140,20 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     reportPlaybackRollingGateRow("win_window_ineligible", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (frame.successorState == 1 && frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
+      frame.deadlineTick != 0 && frame.loopLength != 0) {
+    // C5.3b probe: a blocked frame serves nothing, so its successor has no handoff: discard it by name.
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(frame),
+                           RollingSuccessorProbe::Outcome::Cancelled);
+    frame.successorState = 3;
+  }
+  if (frame.successorState == 2) {
+    serviceRollingSuccessorDemand(clock);  // C5.3b probe: the named miss is cancelled; the next turn positions afresh
+    reportPlaybackRollingGateRow("win_successor_missed", clock.epoch != 0);
+    return RollingOutcome::Rejected;
+  }
+#endif
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) {
     if (frame.epoch != clock.epoch || frame.generation != playbackGeneration ||
         frame.loopLength != loop.loopLengthTicks ||
@@ -6010,6 +6165,9 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
       frame.refusedHandoffValid = false;
       reportPlaybackRollingGateRow("win_serving", clock.epoch != 0);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+      serviceRollingSuccessorDemand(clock);  // C5.3b probe: serving does not suppress the one successor demand
+#endif
       return RollingOutcome::Serving;
     }
     if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
@@ -6313,6 +6471,25 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     PlaybackTickContext::noteTurnReject(RouteReject::ColdWaiting);
     return {RollingOutcome::Waiting, nullptr};
   }
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // C5.3b probe: at `N.end` a frame whose successor is demanded **becomes that successor's frame** -- Ready if its
+  // candidate is prepared, Requested otherwise -- and takes the one existing handoff below. Adopted, it serves N+1 from
+  // this very tick; anything else is the named miss (the handoff rejects and blocks the re-keyed frame, and the
+  // requester cancels it). No build, no reader call: fixed metadata only.
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.successorState == 1 &&
+      frame.deadlineTick != 0 && frame.startPhase < frame.loopLength && clock.tick >= frame.deadlineTick &&
+      clock.tick - frame.deadlineTick >=
+          std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase)) {
+    const RollingSuccessorKey key = rollingSuccessorKey(frame);
+    const bool prepared = set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete &&
+        !set->views[set->lifecycle.ready].published &&
+        set->views[set->lifecycle.ready].coverage.startPhase == key.startPhase;
+    frame.startPhase = key.startPhase;
+    frame.deadlineTick = key.deadline;
+    frame.phase = prepared ? LoopPlaybackRuntime::RollingPhase::Ready : LoopPlaybackRuntime::RollingPhase::Requested;
+    frame.successorState = 2;  // a miss unless the handoff below adopts it
+  }
+#endif
   const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength :
       (frame.startPhase < frame.loopLength
           ? std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) : 0u);
@@ -6351,6 +6528,9 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
               : RouteReject::ServingViewSourceStale);
     if (frame.deadlineTick != 0 && clock.tick >= frame.deadlineTick && clock.tick - frame.deadlineTick >= span) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+      frame.successorState = 0;
+#endif
       loop.nextEventIndex = 0; // Fallback's crossing predicate excludes the already-served interval.
       PlaybackTickContext::noteTurnReject(RouteReject::ServingExpired);
       return {RollingOutcome::Expired, nullptr};
@@ -6416,6 +6596,14 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   frame.boundView = set->lifecycle.current;
   frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (frame.successorState == 2) {
+    frame.successorState = 0;  // N+1 is now the served window; its own successor is demanded afresh
+    ++RollingSuccessorProbe::gCounters.handedOff;
+    if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), frame.deadlineTick))
+      record->outcome = uint8_t(RollingSuccessorProbe::Outcome::HandedOff);
+  }
+#endif
   // Task 4.5's **eligible boundary, and its only recovery**: the replacement prepared for this traversal was adopted
   // here, so this traversal *may serve the current revision* -- the episode ends and a latched deadline-contract fault
   // clears, because the serving path really recovered rather than because a later edit forgave it.
@@ -6969,12 +7157,36 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
   constexpr uint32_t spanTicks = 2 * Config::TICKS_PER_BAR;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // C5.3b probe: the serving frame's own successor demand. Only the DEC-147 lead price may be skipped for it (the
+  // measurement's one change); its deadline, the sibling term and every other check stay.
+  const bool successorDemand = rollingSuccessorDemandIs(*runtime, request.deadlineTick);
+  if (successorDemand)
+    if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), request.deadlineTick))
+      record->pricedGrains = contract.requiredGrains();
+  const bool leadTooShort = !launch && !cold &&
+      !(successorDemand && RollingSuccessorProbe::gKnobs.bypassLeadPrice) &&
+      !contract.canCompleteWithinLead(request.deadlineTick - clock.tick,
+                                      playbackViewOutstandingGrains(slotIndex));
+#else
   const bool leadTooShort = !launch && !cold &&
       !contract.canCompleteWithinLead(request.deadlineTick - clock.tick,
                                       playbackViewOutstandingGrains(slotIndex));
+#endif
   const bool siblingBroken = !launch && !cold &&
       !playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
                                                    contract.requiredGrains(), clock);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (successorDemand && (leadTooShort || siblingBroken)) {
+    // Refused by the price (or by a sibling's promise): named, discarded, never repositioned. N still serves to its
+    // end and then expires as it does today.
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(runtime->rolling),
+                           leadTooShort ? RollingSuccessorProbe::Outcome::PriceRefused
+                                        : RollingSuccessorProbe::Outcome::Cancelled);
+    runtime->rolling.successorState = 3;
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+#endif
   if (leadTooShort || siblingBroken) {
     request.reason = PlaybackViewPendingReason::CannotCompleteBeforeHandoff;
     // DEC-147: only the **lead** term is a *position* refusal, and only the lane's own demand may be re-positioned.
@@ -7016,6 +7228,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
   const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
   traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (admitted && successorDemand) {
+    ++RollingSuccessorProbe::gCounters.admitted;
+    if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this),
+                                                        runtime->viewBuildWork.deadlineTick))
+      record->admitTick = clock.tick;
+  }
+#endif
   return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
 }
 
@@ -8105,6 +8325,29 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views))
         runtime->rolling.phase = LoopPlaybackRuntime::RollingPhase::Ready;
     }
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+    // C5.3b probe: the serving frame's successor completed. It becomes the **ready** successor -- never the current
+    // window, which is N's until `N.end` -- or, if the frame or the transport moved, is discarded by name.
+    else if (rollingSuccessorDemandIs(*runtime, runtime->viewBuildWork.deadlineTick) &&
+             runtime->viewBuildWork.clockEpoch == runtime->rolling.epoch) {
+      RollingMetadataGuard guard;
+      auto* set = runtime->viewSetIfPrewarmed();
+      const RollingSuccessorKey key = rollingSuccessorKey(runtime->rolling);
+      if (runtime->rolling.generation != playbackGeneration || slot != activeLoopIndex || !isPlaying() ||
+          runtime->completedPromisePendingJudgement || runtime->admittedPromiseInvalidated || !set ||
+          !set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views)) {
+        // A completion at or after `N.end` is the miss itself (its judgement stays pending); anything else moved.
+        cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), key,
+                               finished.tick >= key.deadline ? RollingSuccessorProbe::Outcome::Missed
+                                                             : RollingSuccessorProbe::Outcome::Cancelled);
+        runtime->rolling.successorState = 3;
+      } else {
+        ++RollingSuccessorProbe::gCounters.ready;
+        if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), key.deadline))
+          record->readyTick = finished.tick;
+      }
+    }
+#endif
 #endif
     else (void)publishCompletedPlaybackWindow(slot);
     if (runtime->ownsCoverageSource()) {

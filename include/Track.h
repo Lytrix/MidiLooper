@@ -342,6 +342,11 @@ public:
   uint8_t playbackSlotIndexForLoop(const Loop& loop) const;
   RollingResolution resolveRollingPlaybackWindow(uint8_t slot, uint32_t tick, PlaybackDeadlineClock clock);
   void cancelRollingPlaybackWindow(uint8_t slot);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  /// C5.3b host probe (`RollingSuccessorProbe.h`): while the active slot's frame serves N, open its one successor
+  /// demand for `[N.end, N.end + span)`; after a named miss, cancel it. Main-loop requester only.
+  void serviceRollingSuccessorDemand(PlaybackDeadlineClock clock);
+#endif
   // Off-clock initial launch preparation; no absolute promise before binding.
   bool preparePlaybackLaunchForSlot(uint8_t slotIndex);
   bool playbackLaunchReadyForSlot(uint8_t slotIndex) const;

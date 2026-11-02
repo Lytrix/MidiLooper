@@ -14017,6 +14017,43 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
       epoch/revision changes (the rest of 4.2b / 5.x / 6.x).
     - Revised order: C5.3a → successor preparation → continuous handoff proven with flag 0 and 1 → C5.4
       overdub-audibility A/B → the remaining 4.2b / 5.x / 6.x.
+24. **C5.3a accepted; amendment 23 confirmed. C5.3b measures the successor lead before any admission change (owner,
+    2026-11-02).**
+    - **The finding.** The declared DEC-147 price (grains x (denied turns + 1) x advance per turn + lead) is at least
+      7 x 8 x 64 + 768 = 4,352 ticks. One successor at `N.end` has at most one span (1,536 ticks) of lead, so the
+      price refuses it by construction (`leadTooShort`).
+    - **Ruling.** Do not add best-effort admission and do not waive DEC-147 yet.
+      - Measure the actual minimum successor lead first: the 4,352-tick figure is a worst-case analytical bound, not a
+        demonstrated requirement.
+      - Only in a host measurement fixture, bypass only the `leadTooShort` decision for the successor demand. Keep the
+        real deadline and every other scheduling and admission rule.
+      - Successor semantics are unchanged:
+        - interval `[N.end, N.end + N.span)`, deadline `N.end`;
+        - one successor per served window, keyed by its absolute end;
+        - frozen source identity, never restamped;
+        - absolute, unwrapped intervals;
+        - a miss is named; the playhead advances and gap closure applies;
+        - no merged fallback and no tick-side build.
+      - Sweep the lead downward (48-tick coarse grid, then finer) until the first failures. Measure two numbers:
+        - the **physical minimum** (idle, simple case);
+        - the **qualified minimum**: real arbitration and worst representative content, under adversarial pressure.
+          That means sparse and dense, 4- and 20-bar, a real Hide / edit index, other owners, forced denials, a source
+          change during preparation, and both the snapshot and the manifest source.
+      - Do not choose a safety margin in advance; record the distribution, the maximum, and why the worst run is worst.
+    - **Afterwards:**
+      - a measured bound below the window span → successors get their own evidence-based DEC-147 price;
+      - a bound at or above the span → a deeper lookahead (option C) is authorized;
+      - a widely variable or unbounded result → investigate owner arbitration before changing admission.
+    - **Qualification gate for the continuity slice:**
+      - steady committed playback over at least 50 consecutive seams;
+      - lane-owned merged ticks, tick-side builds, duplicate successor starts, stale-source serves and unexpected gaps
+        all 0;
+      - first on the 4-bar shape that produced the 83 % fallback, then 1-, 8- and 20-bar shapes, in both flag
+        configurations.
+    - **Afterwards, before C5.4:** a production `TrackUndo` Undo/Redo host fixture. An old served N may finish; every
+      successor after the revision transition carries the new identity.
+    - **Constraint.** The flag-1 image has 96 B of ITCM headroom (padding 936, floor 840). Continuity machinery lives
+      in flash / main-loop code. Do not rebase the floor.
 
 ### Related
 
