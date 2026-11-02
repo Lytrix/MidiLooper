@@ -146,3 +146,34 @@ Each level was measured twice, because each failure fell on a tail seam (actual 
   consecutive denials), a forced deny-4 injector, 50+ seams, 0 misses.
 - The margin is 368 ticks, against 40 at the balanced tail's deny 3. One-window lookahead suffices under the enforced
   bound once the partition has no short-to-long seam.
+
+## Re-measured leads under the equal partition and the enforced bound (pricing input)
+
+- **Image.** `d9afc37d78d8bf7f` (equal partition and 3-denial bound), freshly flashed and boot-verified.
+- **Run.** `--lane-cadence-deny 0,4` (full search; deny 4 is capped at 3 effective by the bound).
+  `captures/session_20261102_2216*`.
+- **First-window gate.** 25.4 s after the restart. The gate now waits 240 s, because the generic DEC-147 price can
+  place the first window more than 90 s ahead.
+
+| injected deny (effective) | Lmin, 50/50 seams | fails at | max request → ready | margin at Lmin |
+|---|---|---|---|---|
+| 0 (0) | **288 ticks** | 240 | 264 | 8 |
+| 4 (3, bounded) | **1,152 ticks** | 1,104 (8/9) | 1,104 | 40 |
+
+**Against DEC-147's formula** (`grains × (D + 1) × advance + leadTicks`), with the dense window's 39 grains, the
+declared 64-tick advance and the 768-tick lead:
+
+| D | formula price | measured Lmin | measured ticks per opportunity |
+|---|---|---|---|
+| 0 | 3,264 | 288 | 264 / 39 ≈ 6.8 |
+| 3 | 10,752 | 1,152 | 1,104 / (39 × 4) ≈ 7.1 |
+| 7 | 20,736 | — | — |
+
+**Reading:**
+- The denial term is **not** what makes the generic price unreachable. The declared per-turn advance is: 64 ticks
+  against about 7 measured at 300 BPM under this load, with the fixed 768-tick lead on top.
+- A price written as `grains × (3 + 1) × advance + overhead` fits the one-window lookahead (1,488-tick windows) only
+  with an advance near the measured opportunity cadence: about 7 ticks, or 8 with the observed margin.
+- The 64-tick declared advance cannot fit (39 × 4 × 64 = 9,984).
+- Choosing that advance, a measured and enforced opportunity cadence or the declared turn bound, is the remaining
+  pricing decision.

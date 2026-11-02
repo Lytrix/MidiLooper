@@ -208,6 +208,7 @@ SWEEP_SPAN_TICKS = 1536       # one successor span (two bars)
 SWEEP_RESOLUTION = 48         # a sixteenth
 SWEEP_SEARCH_SEAMS = 20
 SWEEP_VERIFY_SEAMS = 50
+FIRST_WINDOW_WAIT_S = 240
 _SUCC_RE = re.compile(r"^#CAP,(\d+),DIAG,succ,(\d+),(.*)$")
 
 
@@ -338,7 +339,9 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     capture.fenced_response(nonce, end, timeout_s=5.0, poll_s=0.05)
     t0 = time.monotonic()
     first = None
-    while time.monotonic() < t0 + 90 and first is None:
+    # The first window after a restart is placed by the generic DEC-147 price, which can put it several traversals
+    # ahead (about 26 s each for the 33-bar take at 300 BPM); 240 s covers that placement, not a stuck lane.
+    while time.monotonic() < t0 + FIRST_WINDOW_WAIT_S and first is None:
         time.sleep(1.0)
         current = log_lines()
         # The live signal: one whole span of the routed slot served from a window (owner ruling, amendment 27). The
@@ -351,7 +354,7 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     leg["first_window_evidence"] = first
     save()
     if first is None:
-        raise RuntimeError("restart_no_first_manifest_window_within_90s")
+        raise RuntimeError(f"restart_no_first_manifest_window_within_{FIRST_WINDOW_WAIT_S}s")
     print(f"[lane_cadence] first manifest window serving {leg['first_window_served_s']}s after restart", flush=True)
 
     def configure(lead, deny):
