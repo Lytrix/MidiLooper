@@ -114,6 +114,32 @@ void test_lane_measurement_spans_consecutive_running_dispatches() {
   TEST_ASSERT_EQUAL_UINT32(128, sample.span128MaxTicks);
 }
 
+// DEC-246 amendment 25: per-track arbitration. Track 0 wants a grain on every dispatch; track 1 is served three times
+// in a row, then track 0: streak 3, and the ticks between track 0's two served grains. A dispatch on which it wants
+// nothing ends the run, so idle time is never charged as a gap.
+void test_lane_measurement_tracks_denial_streaks_and_inter_grain_ticks() {
+  PlaybackLaneMeasurement sample;
+  sample.observeHolders({100, 1}, true, 0b11, 0);   // track 0 served
+  sample.observeHolders({110, 1}, true, 0b11, 1);
+  sample.observeHolders({120, 1}, true, 0b11, 1);
+  sample.observeHolders({130, 1}, true, 0b11, 1);   // track 0 denied three times
+  sample.observeHolders({140, 1}, true, 0b11, 0);   // served again, 40 ticks after the last
+  TEST_ASSERT_EQUAL_UINT16(3, sample.maxDeniedStreak[0]);
+  TEST_ASSERT_EQUAL_UINT32(40, sample.maxInterGrainTicks[0]);
+  TEST_ASSERT_EQUAL_UINT16(1, sample.maxDeniedStreak[1]);
+  // Idle: track 0 wants nothing for a while; its next served grain starts a fresh interval.
+  sample.observeHolders({5000, 1}, true, 0b10, 1);
+  sample.observeHolders({5010, 1}, true, 0b11, 0);
+  sample.observeHolders({5020, 1}, true, 0b11, 0);
+  TEST_ASSERT_EQUAL_UINT32(40, sample.maxInterGrainTicks[0]);
+  // A stopped transport counts nothing; the block clear keeps the running state.
+  sample.observeHolders({5030, 1}, false, 0b11, 1);
+  TEST_ASSERT_EQUAL_UINT16(3, sample.maxDeniedStreak[0]);
+  sample.clearBlock();
+  TEST_ASSERT_EQUAL_UINT16(0, sample.maxDeniedStreak[0]);
+  TEST_ASSERT_EQUAL_UINT32(0, sample.maxInterGrainTicks[0]);
+}
+
 void test_lane_measurement_discriminates_wrap_reset_stopped_and_saturation() {
   PlaybackLaneMeasurement sample;
   sample.observe({UINT32_MAX,1}, true, true, true, false, 1);
@@ -143,5 +169,6 @@ int main(int, char**) {
   RUN_TEST(test_lane_measurement_counts_idle_dispatches_without_inventing_pending_work);
   RUN_TEST(test_lane_measurement_discriminates_wrap_reset_stopped_and_saturation);
   RUN_TEST(test_lane_measurement_spans_consecutive_running_dispatches);
+  RUN_TEST(test_lane_measurement_tracks_denial_streaks_and_inter_grain_ticks);
   return UNITY_END();
 }

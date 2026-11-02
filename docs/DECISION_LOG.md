@@ -14054,6 +14054,35 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
       successor after the revision transition carries the new identity.
     - **Constraint.** The flag-1 image has 96 B of ITCM headroom (padding 936, floor 840). Continuity machinery lives
       in flash / main-loop code. Do not rebase the floor.
+25. **Measure eight sounding tracks at high tempo first, then land a measured successor price in ticks (owner,
+    2026-11-02).**
+    - **Evidence so far.**
+      - Host: a dense successor needs 14 productive grains. The worst declared arbitration stretches that to 119 owner
+        turns, and eight real tracks to 112 (`evidence/2026-11-02-c5-3b-successor-lead-measurement.md`).
+      - Device: one sounding track at about 125 BPM: 128 turns take at most 1,265 ticks (3.26 s); the worst turn is about
+        25 ms (`evidence/2026-11-02-c5-3b-device-turn-cadence.md`).
+    - **The critical unknown is arbitration:** the worst real ticks between *useful* owner turns under multi-track
+      pressure. Content cost is not the unknown.
+    - **Next, a device measurement.**
+      - Load: eight sounding tracks with dense content, 170–200 BPM plus 240 as a stress point, and normal display/save
+        activity. On this card (owner): the set already on the card, with no recording.
+      - Record, over 100 or more seams at the high-load condition:
+        - the maximum interval between useful owner turns;
+        - the longest denial streak;
+        - successor request → ready ticks;
+        - the minimum lead actually required;
+        - the miss count.
+    - **Then the production rule** (C5.3b), requested at `N.start`:
+      - `requiredLeadTicks = derivedGrains x (qualifiedDeniedTurns + 1) x qualifiedWorstTurnTicks + qualificationLead`.
+      - `qualifiedWorstTurnTicks = ceil(worstTurnSeconds x ticksPerSecond(currentTempo))`: the bound is qualified in
+        time, but the admission is computed in ticks.
+      - Calibrate both parameters, the denial count and the worst turn, from the device data, rounding up. Do not keep
+        DEC-147's theoretical 7 denials if the device shows something materially different.
+      - Choose the margin only after seeing the distribution.
+      - When the price exceeds the lead, refuse by name (`SuccessorLeadInsufficient`). Never admit work known to be
+        impossible.
+    - **"No lead price" is rejected,** unless the device data shows the scheduler is too variable for any predictive
+      bound. That would point at owner arbitration, not admission arithmetic.
 
 ### Related
 

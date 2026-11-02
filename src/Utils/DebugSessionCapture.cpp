@@ -373,6 +373,8 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // Measured: the first device runs of the launch row carried it in the firmware and delivered **none** of them.
   // (A duplicated `launch_gate` clause used to sit after the `return` here, unreachable; removed 2026-10-05.)
   return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,lane_fair,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,succ,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,pit_obs,") ||
          CaptureLineTier::tagStartsWith(line, kPitMotionTierPrefix) ||
 #if MIDI_INGRESS_COST_QUALIFICATION
@@ -561,6 +563,27 @@ SC_MEM_ATTR void emitCapPrintf(const char* fmt, ...) {
   if (len <= 0) {
     return;
   }
+  emitCapLineOrSerial(line);
+}
+
+/// The two delivery rules for a decisive row raised **while playing** (`docs/Agents/hitl_authoring_traps.md` §1): write
+/// it directly when USB has room, and only otherwise queue it on the ring -- under transport the ring is retained and
+/// can shed what it holds, so it must never be the only copy (DEC-246 amendment 25's lane rows).
+SC_MEM_ATTR static void emitCapPrintfDirectOrRing(const char* fmt, ...) {
+  char line[kMaxCaptureTextBytes];
+  va_list args;
+  va_start(args, fmt);
+  const int len = vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+  if (len <= 0) return;
+#if defined(PLAYBACK_ROLLING_SUCCESSOR_PROBE) && PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  // Only the measurement image (its build flag): every other image keeps these rows on the ring as before.
+  const size_t n = static_cast<size_t>(len) < sizeof(line) ? static_cast<size_t>(len) : sizeof(line) - 1;
+  if (serialWriteRoom(n)) {
+    Serial.write(reinterpret_cast<const uint8_t*>(line), n);
+    return;
+  }
+#endif
   emitCapLineOrSerial(line);
 }
 
@@ -2248,7 +2271,7 @@ SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample
   // Aggregate off-clock; no direct USB write inside the timed worker span.
   // Schema 4 (C5.3b, DEC-246 amendment 24) appends, after the schema number so fields 4..19 keep their positions, the
   // most ticks any 16 / 128 consecutive running dispatches spanned in the block and the microseconds of that 128 span.
-  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,4,%lu,%lu,%lu\r\n",
+  emitCapPrintfDirectOrRing("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,4,%lu,%lu,%lu\r\n",
       static_cast<unsigned long>(micros()),
       static_cast<unsigned long>(sample.maxDeltaTicks), static_cast<unsigned long>(sample.opportunities),
       static_cast<unsigned long>(phase), static_cast<unsigned>(transportRunning),
@@ -2259,6 +2282,34 @@ SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample
       static_cast<unsigned long>(sample.permittedAdvanceTicks), static_cast<unsigned long>(sample.overruns),
       static_cast<unsigned long>(sample.overrunMaxTicks), static_cast<unsigned long>(sample.span16MaxTicks),
       static_cast<unsigned long>(sample.span128MaxTicks), static_cast<unsigned long>(sample.span128MaxUs));
+}
+
+SC_MEM_ATTR void laneFairnessImmediate(const PlaybackLaneMeasurement& sample, uint32_t phase, uint32_t epoch) {
+  // `lane_fair,<phase>,<epoch>,<streak0>,<gap0>,...,<streak7>,<gap7>`: per track, the longest denial streak (dispatches)
+  // and the worst ticks between its served grains while it kept wanting one (DEC-246 amendment 25).
+  const auto& m = sample;
+  emitCapPrintfDirectOrRing("#CAP,%lu,DIAG,lane_fair,%lu,%lu,%u,%lu,%u,%lu,%u,%lu,%u,%lu,%u,%lu,%u,%lu,%u,%lu,%u,%lu\r\n",
+      static_cast<unsigned long>(micros()), static_cast<unsigned long>(phase), static_cast<unsigned long>(epoch),
+      unsigned(m.maxDeniedStreak[0]), static_cast<unsigned long>(m.maxInterGrainTicks[0]),
+      unsigned(m.maxDeniedStreak[1]), static_cast<unsigned long>(m.maxInterGrainTicks[1]),
+      unsigned(m.maxDeniedStreak[2]), static_cast<unsigned long>(m.maxInterGrainTicks[2]),
+      unsigned(m.maxDeniedStreak[3]), static_cast<unsigned long>(m.maxInterGrainTicks[3]),
+      unsigned(m.maxDeniedStreak[4]), static_cast<unsigned long>(m.maxInterGrainTicks[4]),
+      unsigned(m.maxDeniedStreak[5]), static_cast<unsigned long>(m.maxInterGrainTicks[5]),
+      unsigned(m.maxDeniedStreak[6]), static_cast<unsigned long>(m.maxInterGrainTicks[6]),
+      unsigned(m.maxDeniedStreak[7]), static_cast<unsigned long>(m.maxInterGrainTicks[7]));
+}
+
+SC_MEM_ATTR void successorProbeImmediate(uint8_t track, uint32_t requested, uint32_t handedOff, uint32_t missed,
+                                         uint32_t cancelled, uint32_t priceRefused, uint32_t maxReady,
+                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains) {
+  // `succ,<track>,<requested>,<handedOff>,<missed>,<cancelled>,<priceRefused>,<maxReady>,<maxAdmit>,<minMargin>,
+  // <maxGrains>`: cumulative since boot (DEC-246 amendment 25, measurement image only).
+  emitCapPrintfDirectOrRing("#CAP,%lu,DIAG,succ,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n", static_cast<unsigned long>(micros()),
+      unsigned(track), static_cast<unsigned long>(requested), static_cast<unsigned long>(handedOff),
+      static_cast<unsigned long>(missed), static_cast<unsigned long>(cancelled), static_cast<unsigned long>(priceRefused),
+      static_cast<unsigned long>(maxReady), static_cast<unsigned long>(maxAdmit), static_cast<unsigned long>(minMargin),
+      static_cast<unsigned long>(maxGrains));
 }
 
 SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,

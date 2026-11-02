@@ -484,6 +484,15 @@ STIM_PIT_MOTION_TEMP_01 = StimulusSpec(
     human_checks=(),
 )
 
+STIM_LANE_CADENCE_TEMP_01 = StimulusSpec(
+    stimulus_id="STIM-LANE-CADENCE-TEMP-01", version=1, kind=KIND_TEMPORARY,
+    scenario_id="lane_cadence", description="Host-clocked 180/240 BPM legs over the card's own set; no content gestures; automatic persistence possible",
+    generator="scenario:lane_cadence", base_bars=0, base_pattern="none", base_stimulus_id=None,
+    overdubs=(), interactions=("MidiClockMaster",),
+    must_prove=("win_gap_schema4", "lane_fair_rows", "canonical_shutdown"),
+    human_checks=(),
+)
+
 STIM_INGRESS_COST_TEMP_01 = StimulusSpec(
     stimulus_id="STIM-INGRESS-COST-TEMP-01", version=1, kind=KIND_TEMPORARY,
     scenario_id="ingress_cost", description="Stopped Clock-only 120/300 BPM instrumented ingress observations; automatic persistence possible",
@@ -525,6 +534,7 @@ SCENARIO_STIMULUS: dict[str, str] = {
     "rolling_record": STIM_ROLLING_RECORD_TEMP_01.stimulus_id,
     "ingress_cost": STIM_INGRESS_COST_TEMP_01.stimulus_id,
     "pit_motion": STIM_PIT_MOTION_TEMP_01.stimulus_id,
+    "lane_cadence": STIM_LANE_CADENCE_TEMP_01.stimulus_id,
     "pit_clock": STIM_PIT_CLOCK_TEMP_01.stimulus_id,
     "i4_overlay_load": STIM_I4_OVERLAY_LOAD_01.stimulus_id,
     "i4_stopped_focus": STIM_I4_STOPPED_FOCUS_01.stimulus_id,
@@ -562,6 +572,8 @@ def get_stimulus(stimulus_id: str) -> StimulusSpec:
         return STIM_INGRESS_COST_TEMP_01
     if stimulus_id == STIM_PIT_MOTION_TEMP_01.stimulus_id:
         return STIM_PIT_MOTION_TEMP_01
+    if stimulus_id == STIM_LANE_CADENCE_TEMP_01.stimulus_id:
+        return STIM_LANE_CADENCE_TEMP_01
     if stimulus_id == STIM_PIT_CLOCK_TEMP_01.stimulus_id:
         return STIM_PIT_CLOCK_TEMP_01
     try:
@@ -598,7 +610,7 @@ def _authorization_text(spec: StimulusSpec) -> str:
     return "undeclared" if declared is None else declared.targets_text()
 
 def format_stimulus_list_lines(*, include_temporary: bool = False) -> list[str]:
-    specs = list_stimuli() + ([STIM_PIT_CLOCK_TEMP_01, STIM_PIT_MOTION_TEMP_01, STIM_INGRESS_COST_TEMP_01, STIM_ROLLING_RECORD_TEMP_01] if include_temporary else [])
+    specs = list_stimuli() + ([STIM_PIT_CLOCK_TEMP_01, STIM_PIT_MOTION_TEMP_01, STIM_LANE_CADENCE_TEMP_01, STIM_INGRESS_COST_TEMP_01, STIM_ROLLING_RECORD_TEMP_01] if include_temporary else [])
     return [
         f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.generator}  "
         f"targets={_authorization_text(spec)}  {spec.description}"

@@ -649,6 +649,10 @@ SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample
                                          bool transportRunning, uint32_t epoch);
 SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,
                                            bool transportRunning, uint32_t epoch);
+SC_MEM_ATTR void laneFairnessImmediate(const PlaybackLaneMeasurement& sample, uint32_t phase, uint32_t epoch);
+SC_MEM_ATTR void successorProbeImmediate(uint8_t track, uint32_t requested, uint32_t handedOff, uint32_t missed,
+                                         uint32_t cancelled, uint32_t priceRefused, uint32_t maxReady,
+                                         uint32_t maxAdmit, uint32_t minMargin, uint32_t maxGrains);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -908,6 +912,21 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #ifndef SC_WINDOW_GAP_OVERRUN
 #define SC_WINDOW_GAP_OVERRUN(permitted, overruns, overrunMax, running, epoch) \
   DebugSessionCapture::windowGapOverrunImmediate(permitted, overruns, overrunMax, running, epoch)
+#endif
+/// DEC-246 amendment 25: the window lane's **per-track arbitration** in one block -- per track, the longest run of
+/// dispatches that served another track while it could progress, and the most ticks between two grains served to it.
+/// Emitted beside `win_gap`, only for a block where some track was kept waiting.
+#ifndef SC_LANE_FAIRNESS
+#define SC_LANE_FAIRNESS(sample, phase, epoch) DebugSessionCapture::laneFairnessImmediate(sample, phase, epoch)
+#endif
+/// DEC-246 amendment 25 (measurement image): one track's successor-lead aggregates -- demands, handoffs, misses,
+/// discards, price refusals, the worst request->ready and request->admission ticks, the smallest ready margin before
+/// N.end, and the largest admission price in grains.
+#ifndef SC_SUCCESSOR_PROBE
+#define SC_SUCCESSOR_PROBE(track, requested, handedOff, missed, cancelled, priceRefused, maxReady, maxAdmit, minMargin, \
+                           maxGrains) \
+  DebugSessionCapture::successorProbeImmediate(track, requested, handedOff, missed, cancelled, priceRefused, maxReady, \
+                                               maxAdmit, minMargin, maxGrains)
 #endif
 /// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
 /// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native
@@ -1179,6 +1198,12 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_WINDOW_GAP_OVERRUN
 #define SC_WINDOW_GAP_OVERRUN(permitted, overruns, overrunMax, running, epoch) ((void)0)
+#endif
+#ifndef SC_LANE_FAIRNESS
+#define SC_LANE_FAIRNESS(sample, phase, epoch) ((void)0)
+#endif
+#ifndef SC_SUCCESSOR_PROBE
+#define SC_SUCCESSOR_PROBE(...) ((void)0)
 #endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is

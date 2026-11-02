@@ -5720,21 +5720,24 @@ TRACK_COLD_MEM bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime,
 
 /// Discard the successor demand keyed `key` and everything it owns -- the retained record, the frozen read, an admitted
 /// build, an unpublished ready candidate -- without touching the window being served. Named by `outcome`.
+/// The successor's own demand record (a function, not a lambda: lambdas in a flash function land in ITCM).
+TRACK_COLD_MEM bool successorRequestMatches(const PlaybackViewPendingRequest& request, uint32_t generation,
+                                            const RollingSuccessorKey& key) {
+  return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      request.operationGeneration == generation && request.deadlineTick == key.deadline &&
+      request.coverage.startPhase == key.startPhase;
+}
+
 TRACK_COLD_MEM void cancelRollingSuccessor(LoopPlaybackRuntime& runtime, uint8_t track, const RollingSuccessorKey& key,
                                           RollingSuccessorProbe::Outcome outcome) {
   namespace probe = RollingSuccessorProbe;
   const auto& frame = runtime.rolling;
-  const auto matches = [&](const PlaybackViewPendingRequest& request) {
-    return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
-        request.operationGeneration == frame.generation && request.deadlineTick == key.deadline &&
-        request.coverage.startPhase == key.startPhase;
-  };
-  if (matches(runtime.pendingViewRequest_)) runtime.clearViewPendingRequest();
-  if (matches(runtime.frozenViewRequest)) {
+  if (successorRequestMatches(runtime.pendingViewRequest_, frame.generation, key)) runtime.clearViewPendingRequest();
+  if (successorRequestMatches(runtime.frozenViewRequest, frame.generation, key)) {
     // Clear the frozen record first: retiring a held source hands an active frozen demand back as pending.
     runtime.frozenViewRequest = {};
     if (runtime.ownsCoverageSource()) runtime.retireCoverageSource();
-    if (matches(runtime.pendingViewRequest_)) runtime.clearViewPendingRequest();
+    if (successorRequestMatches(runtime.pendingViewRequest_, frame.generation, key)) runtime.clearViewPendingRequest();
   }
   if (runtime.viewBuild.coverageOwned() && runtime.viewBuildOperationGeneration == frame.generation &&
       runtime.viewBuildWork.deadlineTick == key.deadline)
@@ -5756,11 +5759,8 @@ TRACK_COLD_MEM void cancelRollingSuccessor(LoopPlaybackRuntime& runtime, uint8_t
       }
     }
   }
-  if (auto* record = probe::recordFor(track, key.deadline); record && record->outcome == uint8_t(probe::Outcome::Open)) {
-    record->outcome = uint8_t(outcome);
-    if (outcome == probe::Outcome::Missed) ++probe::gCounters.missed;
-    else if (outcome == probe::Outcome::PriceRefused) ++probe::gCounters.priceRefused;
-    else ++probe::gCounters.cancelled;
+  if (auto* record = probe::recordFor(track, key.deadline)) {
+    probe::noteOutcome(*record, outcome);
   }
 }
 #endif
@@ -5918,14 +5918,7 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
   positioned.work.positionedLater = false;
   frame.successorState = 1;
   ++probe::gCounters.requested;
-  if (probe::gCounters.recordCount < probe::kRecords) {
-    auto& record = probe::gCounters.records[probe::gCounters.recordCount++];
-    record = {};
-    record.deadline = key.deadline;
-    record.requestTick = clock.tick;
-    record.startPhase = key.startPhase;
-    record.track = track;
-  }
+  (void)probe::openRecord(track, key.deadline, clock.tick, key.startPhase);
 #else
   (void)clock;
 #endif
@@ -6628,9 +6621,8 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
   if (frame.successorState == 2) {
     frame.successorState = 0;  // N+1 is now the served window; its own successor is demanded afresh
-    ++RollingSuccessorProbe::gCounters.handedOff;
     if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), frame.deadlineTick))
-      record->outcome = uint8_t(RollingSuccessorProbe::Outcome::HandedOff);
+      RollingSuccessorProbe::noteOutcome(*record, RollingSuccessorProbe::Outcome::HandedOff);
   }
 #endif
   // Task 4.5's **eligible boundary, and its only recovery**: the replacement prepared for this traversal was adopted
@@ -7262,7 +7254,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     ++RollingSuccessorProbe::gCounters.admitted;
     if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this),
                                                         runtime->viewBuildWork.deadlineTick))
-      record->admitTick = clock.tick;
+      RollingSuccessorProbe::noteAdmitted(*record, clock.tick);
   }
 #endif
   return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
@@ -7570,6 +7562,22 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
   return offer;
 }
 
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && defined(__IMXRT1062__)
+#define ROLLING_SUCCESSOR_PROBE_MEM TRACK_COLD_MEM
+#include "RollingSuccessorProbeImpl.h"
+namespace RollingSuccessorProbe {
+DMAMEM Knobs gKnobs;
+DMAMEM Counters gCounters;
+TRACK_COLD_MEM void installAtBoot() {
+  gCounters = Counters{};
+  gKnobs = Knobs{};
+  gKnobs.enabled = true;          // one successor per served window ...
+  gKnobs.bypassLeadPrice = true;  // ... with only the DEC-147 lead price waived for it
+  gKnobs.requestLeadTicks = UINT32_MAX;  // requested at N's start
+}
+}  // namespace RollingSuccessorProbe
+#endif
+
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 #if defined(__IMXRT1062__)
 DMAMEM static PlaybackLaneMeasurement sLaneMeasurement;
@@ -7586,7 +7594,7 @@ TRACK_COLD_MEM void Track::resetPlaybackLaneMeasurement() {
 
 TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     PlaybackDeadlineClock clock, bool running, bool eligible,
-    PlaybackViewTurnResult result, uint32_t workerUs) {
+    PlaybackViewTurnResult result, uint32_t workerUs, uint8_t wantMask, uint8_t chosenTrack) {
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   // DEC-108 §13b / task 3.10 (blocker 3): the **declared permitted limit** is the comparison this sampler applies.
   // It is read from the declaration itself (not restated), so the bound and the observation cannot drift apart.
@@ -7594,11 +7602,28 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
       result == PlaybackViewTurnResult::GrainServed || result == PlaybackViewTurnResult::BuildComplete,
       result == PlaybackViewTurnResult::GrainDenied, workerUs, kPlaybackViewPermittedAdvancePerTurn,
       static_cast<uint32_t>(micros()));
+  sLaneMeasurement.observeHolders(clock, running, wantMask, chosenTrack);
   // First row then every 256 dispatches, and on an eligible->idle completion.
   // Idle dispatches are now counted, so the former 16-turn cadence would flood capture.
   if (sLaneMeasurement.opportunities == 1 || sLaneMeasurement.opportunities % 256 == 0 ||
       result == PlaybackViewTurnResult::BuildComplete || result == PlaybackViewTurnResult::GrainDenied) {
     SC_WINDOW_SERVICE_GAP(sLaneMeasurement, static_cast<uint32_t>(clock.tick), running, clock.epoch);
+    // DEC-246 amendment 25: the per-track arbitration of the same block, only when some track was kept waiting.
+    bool contended = false;
+    for (uint8_t t = 0; t < PlaybackLaneMeasurement::kTracks; ++t)
+      contended = contended || sLaneMeasurement.maxDeniedStreak[t] != 0;
+    if (running && contended) SC_LANE_FAIRNESS(sLaneMeasurement, static_cast<uint32_t>(clock.tick), clock.epoch);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && defined(SESSION_CAPTURE)
+    // DEC-246 amendment 25: each track's successor aggregates, when they moved since its last row.
+    for (uint8_t t = 0; t < RollingSuccessorProbe::kTracks; ++t) {
+      auto& a = RollingSuccessorProbe::gCounters.perTrack[t];
+      const uint32_t mark = a.requested + a.handedOff + a.missed + a.cancelled + a.priceRefused;
+      if (mark == a.reported) continue;
+      a.reported = mark;
+      SC_SUCCESSOR_PROBE(t, a.requested, a.handedOff, a.missed, a.cancelled, a.priceRefused, a.maxRequestToReady,
+                         a.maxRequestToAdmit, a.minReadyMargin == UINT32_MAX ? 0 : a.minReadyMargin, a.maxPricedGrains);
+    }
+#endif
     if (sLaneMeasurement.overruns > 0) {
       // Named **before** the block is cleared, and only when the block saw one: the limit's exceedance is an event in
       // the stream (blocker 3's "operationally reported"), not a number a reader has to derive from a maximum.
@@ -7608,7 +7633,7 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     sLaneMeasurement.clearBlock();
   }
 #else
-  (void)clock; (void)running; (void)eligible; (void)result; (void)workerUs;
+  (void)clock; (void)running; (void)eligible; (void)result; (void)workerUs; (void)wantMask; (void)chosenTrack;
 #endif
 }
 
@@ -8374,7 +8399,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       } else {
         ++RollingSuccessorProbe::gCounters.ready;
         if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), key.deadline))
-          record->readyTick = finished.tick;
+          RollingSuccessorProbe::noteReady(*record, finished.tick);
       }
     }
 #endif

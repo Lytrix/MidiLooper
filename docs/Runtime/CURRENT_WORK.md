@@ -1,5 +1,16 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-02 — revision-manifest C5.3b-e (device): 300 BPM, three states; 128 lane turns take up to 2,304 ticks in Overdub, more than a two-bar span.**
+- **Setup** (DEC-246 amendment 25, owner's most intense setup): every track with content playing, plus the HITL take
+  (32 bars) and an overdub (200 bars) on track 8 slot 4, then 200 s of play. Measurement image `34472436…`, boot
+  verified.
+- **128 lane turns:** at most 1,920 ticks (Record) and 2,304 ticks (Overdub), i.e. 2.0–2.4 s, about 16–19 ms per turn.
+  16 turns: at most 416 / 456 ticks.
+- **Not measurable on this card:** 8-track arbitration and the device successor timing (0 `lane_fair` / `succ` rows).
+  Restored slots are not lane-served (DEC-243 / 5.0), so the set plays merged (`view` 4,579 vs `merged` 132,130).
+- **Production finding:** 1,348 `saveNoteEditPass rejected: heap below reserve` during the dense overdub.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-device-300bpm-three-states.md)
+
 **2026-11-02 — revision-manifest C5.3b-d (device): 128 window-lane turns take at most 1,265 ticks (3.26 s) at about 125 BPM; 16 turns take at most 285.**
 - **Instrument.** `win_gap` schema 4 adds the worst ticks and µs over 16 / 128 consecutive running lane turns (a RAM2
   ring; code in flash; RAM1 unchanged).

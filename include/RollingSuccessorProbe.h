@@ -3,9 +3,10 @@
 
 #pragma once
 
-// C5.3b (DEC-246 amendment 24): the successor-lead measurement probe. **Host only** -- the device image compiles none
-// of it (`PLAYBACK_ROLLING_SUCCESSOR_PROBE` is 0 on the target), and on the host it is inert until a fixture sets
-// `gKnobs.enabled`.
+// C5.3b (DEC-246 amendments 24-25): the successor-lead measurement probe. On the host it is compiled in and inert
+// until a fixture sets `gKnobs.enabled`. On the device it exists only in a **measurement image**
+// (`-D PLAYBACK_ROLLING_SUCCESSOR_PROBE=1`, env `teensy41-capture-serial-revstore-succprobe`), which enables it at boot
+// (`installAtBoot`); every other image compiles none of it.
 //
 // While the rolling frame serves window N (`[N.start, N.end)`, absolute ticks), the probe requester opens **one**
 // successor demand for `[N.end, N.end + span)` with its absolute deadline at `N.end`, no earlier than `requestLeadTicks`
@@ -34,7 +35,6 @@ struct Knobs {
   /// Open the successor demand no earlier than this many ticks before its deadline (`N.end`).
   uint32_t requestLeadTicks = UINT32_MAX;
 };
-inline Knobs gKnobs{};
 
 /// One successor demand's life, in absolute ticks (0: did not happen).
 struct Record {
@@ -49,7 +49,26 @@ struct Record {
 };
 enum class Outcome : uint8_t { Open = 0, HandedOff = 1, Missed = 2, PriceRefused = 3, Cancelled = 4 };
 
+/// Per-track running aggregates: what the device reports (`DIAG,succ`), since it keeps only a short record ring.
+struct Aggregate {
+  uint32_t requested = 0;
+  uint32_t handedOff = 0;
+  uint32_t missed = 0;
+  uint32_t cancelled = 0;
+  uint32_t priceRefused = 0;
+  uint32_t maxRequestToReady = 0;        // ticks
+  uint32_t maxRequestToAdmit = 0;        // ticks
+  uint32_t minReadyMargin = UINT32_MAX;  // ticks from ready to N.end
+  uint32_t maxPricedGrains = 0;
+  uint32_t reported = 0;  // `requested + closed outcomes` at the last row
+};
+
+#if defined(__IMXRT1062__)
+constexpr uint32_t kRecords = 64;  // a ring: a lookup only ever needs the track's open demand
+#else
 constexpr uint32_t kRecords = 4096;
+#endif
+constexpr uint8_t kTracks = 8;
 struct Counters {
   uint32_t requested = 0;
   uint32_t admitted = 0;
@@ -59,19 +78,38 @@ struct Counters {
   uint32_t priceRefused = 0;    // the DEC-147 lead price refused it (bypass off)
   uint32_t cancelled = 0;       // a stale or invalidated candidate was discarded by name
   uint32_t duplicateStarts = 0; // a second demand for an N.end that already had one
-  uint32_t recordCount = 0;
+  uint32_t recordCount = 0;     // records ever opened (the ring index on the device)
+  Aggregate perTrack[kTracks] = {};
   Record records[kRecords] = {};
 };
-inline Counters gCounters{};
 
-/// The record of `track`'s demand whose deadline is `deadline`, or nullptr.
-inline Record* recordFor(uint8_t track, uint64_t deadline) {
-  const uint32_t n = gCounters.recordCount < kRecords ? gCounters.recordCount : kRecords;
-  for (uint32_t i = n; i-- > 0;)
-    if (gCounters.records[i].track == track && gCounters.records[i].deadline == deadline) return &gCounters.records[i];
-  return nullptr;
-}
+#if defined(__IMXRT1062__)
+// RAM2 (`DMAMEM`, NOLOAD): defined once in TrackPlaybackWindowBuild.cpp and written by `installAtBoot`.
+extern Knobs gKnobs;
+extern Counters gCounters;
+#else
+inline Knobs gKnobs{};
+inline Counters gCounters{};
+#endif
+
+Record* recordFor(uint8_t track, uint64_t deadline);
+Record* openRecord(uint8_t track, uint64_t deadline, uint64_t requestTick, uint32_t startPhase);
+void noteAdmitted(Record& r, uint64_t tick);
+void noteReady(Record& r, uint64_t tick);
+void noteOutcome(Record& r, Outcome outcome);
+
+#if defined(__IMXRT1062__)
+/// The measurement image enables the probe at boot: one successor per served window, at N's start (lead = one span),
+/// with only the DEC-147 lead price waived for it. NOLOAD storage, so everything is written here.
+void installAtBoot();
+#endif
 
 }  // namespace RollingSuccessorProbe
+
+#if !defined(__IMXRT1062__)
+// The host defines the helpers inline here; the device defines them once, in flash, in TrackPlaybackWindowBuild.cpp.
+#define ROLLING_SUCCESSOR_PROBE_MEM inline
+#include "RollingSuccessorProbeImpl.h"
+#endif
 
 #endif

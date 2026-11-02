@@ -766,9 +766,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
               []() { return clockManager.getPlaybackDeadlineClock(); });
     }
 #if defined(SESSION_CAPTURE)
+    uint8_t windowWantMask = 0;
+    for (uint8_t i = 0; i < offerCount && i < 8; ++i)
+      if (offers[i].eligible && offers[i].canProgress) windowWantMask = static_cast<uint8_t>(windowWantMask | (1u << i));
     Track::samplePlaybackLaneOpportunity(windowClock, windowRunning,
         chosenTrack != MidiServiceDrain::kNoPlaybackHolder, windowResult,
-        chosenTrack != MidiServiceDrain::kNoPlaybackHolder ? micros() - windowWorkerStart : 0);
+        chosenTrack != MidiServiceDrain::kNoPlaybackHolder ? micros() - windowWorkerStart : 0, windowWantMask,
+        chosenTrack);
 #else
     (void)windowResult;
 #endif
@@ -1183,6 +1187,10 @@ FLASHMEM void setup() {
 #endif
 #if REVISION_STORE_PROBE
   RevisionShadow::initAtBoot();  // DEC-246 Stage C shadow store: PSRAM, once
+#endif
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  // DEC-246 amendment 25 (measurement image only): the successor-lead probe's RAM2 state, before any playback.
+  RollingSuccessorProbe::installAtBoot();
 #endif
   // DEC-190: after a fault, park **only** the slot whose restore/first paint was in flight. The file is not
   // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal

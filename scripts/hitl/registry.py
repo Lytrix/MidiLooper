@@ -27,6 +27,7 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "rolling_record": ("rolling_record",),
     "ingress_cost": ("ingress_cost",),
     "pit_motion": ("pit_motion",),
+    "lane_cadence": ("lane_cadence",),
     "pit_clock": ("pit_clock",),
     "i4_checkpoint": ("i4_checkpoint",),
     "base": ("base",),
@@ -60,6 +61,7 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.rolling_record import run_rolling_record
     from hitl.scenarios.ingress_cost import run_ingress_cost
     from hitl.scenarios.pit_motion import run_pit_motion
+    from hitl.scenarios.lane_cadence import run_lane_cadence
     from hitl.scenarios.pit_clock import run_pit_clock
     from hitl.scenarios.i4_checkpoint import run_i4_checkpoint
     from hitl.scenarios.i4_overlay_load import run_i4_overlay_load
@@ -110,6 +112,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
         "pit_motion": ScenarioSpec(
             scenario_id="pit_motion", description="Temporary guarded internal/external moving PIT observations",
             run=run_pit_motion,
+        ),
+        "lane_cadence": ScenarioSpec(
+            scenario_id="lane_cadence", description="Temporary window-lane cadence legs (180/240 BPM host clock) over the card's own set",
+            run=run_lane_cadence,
         ),
         "pit_clock": ScenarioSpec(
             scenario_id="pit_clock", description="Managed stopped-only temporary PIT elapsed-reference qualification",

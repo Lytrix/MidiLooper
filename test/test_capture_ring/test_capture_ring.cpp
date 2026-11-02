@@ -434,6 +434,13 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
   TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap,5000,32,123456"),
                            "the service-gap sample survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gapx,1"), "and a longer subtag is not swept in");
+  // DEC-246 amendment 25: the per-track arbitration row beside it.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,1234567890,DIAG,lane_fair,1286,2,7,90,0,0,0,0,0,0,0,0,0,0,0,0,0,0"),
+                           "the lane fairness row is Tier-A");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,lane_fairx,1"), "and a longer subtag is not swept in");
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,1234567890,DIAG,succ,3,120,118,2,0,0,904,312,8,52"),
+                           "the successor-probe row is Tier-A");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,success,1"), "and a longer word is not swept in");
   // ...and the family's **named overrun row** with it: the row that reports an *exceedance* of the permitted advance can
   // only be raised while the lane serves (i.e. under transport, the budget-8 regime), so it is the one that must survive
   // most -- and it does not share its sibling's prefix, which is why it needs its own entry and its own boundary.

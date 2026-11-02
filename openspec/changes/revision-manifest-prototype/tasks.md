@@ -210,8 +210,18 @@ timing and memory envelope without introducing real-time construction?
     - 16 turns: at most 285 ticks. 128 turns: at most 1,265 ticks (3.26 s) of one span's 1,536.
     - That fits at this tempo, but only below about 147 BPM at 128 turns. Eight sounding tracks are not measured.
     - [Evidence](evidence/2026-11-02-c5-3b-device-turn-cadence.md)
+  - [x] C5.3b-e device three-state run at 300 BPM (amendment 25).
+    - Every content track playing, plus the HITL record and overdub on track 8 slot 4.
+    - Measurement image `teensy41-capture-serial-revstore-succprobe`, rows `lane_fair` and `succ`.
+    - 128 lane turns: at most 1,920 ticks in Record and 2,304 in Overdub (about 16–19 ms per turn); 16 turns: at most
+      416 / 456.
+    - The 8-track arbitration and the device successor timing could not be measured: restored slots are not
+      lane-served (5.0 gap), and the set plays merged.
+    - Production finding: 1,348 `saveNoteEditPass ... heap below reserve` during the overdub.
+    - [Evidence](evidence/2026-11-02-c5-3b-device-300bpm-three-states.md)
   - [ ] C5.3b successor preparation (amendment 23), source-independent and common to both probe builds. Waits on the
-        owner's choice of an evidence-based successor price (amendment 24's "afterwards").
+        owner's choice of an evidence-based successor price (amendments 24–25: denied-turn parameter still
+        uncalibrated on device).
     - The rule: serving does not suppress successor demand. While window N serves, request N+1 at
       `begin = N.end` with the existing span, build it off-clock, and hand off atomically at N's end.
     - A missed successor is a named miss: no merged fallback, no tick build.

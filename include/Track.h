@@ -487,8 +487,10 @@ public:
   static PreviewAdoptionWitness previewAdoptionWitnessForTest();
 #endif
   static void resetPlaybackLaneMeasurement();
+  /// `wantMask`: the tracks whose offer could progress this dispatch; `chosenTrack`: the one served (0xFF: none).
   static void samplePlaybackLaneOpportunity(PlaybackDeadlineClock clock, bool running, bool eligible,
-                                            PlaybackViewTurnResult result, uint32_t workerUs);
+                                            PlaybackViewTurnResult result, uint32_t workerUs, uint8_t wantMask = 0,
+                                            uint8_t chosenTrack = 0xFF);
   PlaybackViewTurnResult stepPlaybackViewMaintenance(
       uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr,
       bool transportRunning = false, PlaybackDeadlineClock clock = {},

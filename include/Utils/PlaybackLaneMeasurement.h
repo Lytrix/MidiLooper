@@ -36,6 +36,34 @@ struct PlaybackLaneMeasurement {
   uint32_t span16MaxTicks = 0;
   uint32_t span128MaxTicks = 0;
   uint32_t span128MaxUs = 0;
+  /// DEC-246 amendment 25: **per-track fairness**, the arbitration half of a successor's lead. For each track whose
+  /// offer could progress this dispatch (`wantMask`): the longest run of consecutive dispatches that served another
+  /// track (`maxDeniedStreak`), and the most ticks between two grains served to it while it kept wanting one
+  /// (`maxInterGrainTicks`). A dispatch on which the track wants nothing ends both, so idle time is never counted.
+  static constexpr uint8_t kTracks = 8;
+  uint16_t maxDeniedStreak[kTracks] = {};
+  uint32_t maxInterGrainTicks[kTracks] = {};
+  void observeHolders(PlaybackDeadlineClock clock, bool running, uint8_t wantMask, uint8_t chosen) {
+    for (uint8_t t = 0; t < kTracks; ++t) {
+      const bool wants = running && clock.epoch != 0 && (wantMask & (1u << t)) != 0;
+      if (!wants || (servedValid_[t] && servedEpoch_[t] != clock.epoch)) {
+        deniedStreak_[t] = 0;
+        servedValid_[t] = false;
+        if (!wants) continue;
+      }
+      const uint32_t tick = static_cast<uint32_t>(clock.tick);
+      if (chosen == t) {
+        if (servedValid_[t] && tick - servedTick_[t] > maxInterGrainTicks[t]) maxInterGrainTicks[t] = tick - servedTick_[t];
+        servedTick_[t] = tick;
+        servedEpoch_[t] = clock.epoch;
+        servedValid_[t] = true;
+        deniedStreak_[t] = 0;
+      } else {
+        if (deniedStreak_[t] != UINT16_MAX) ++deniedStreak_[t];
+        if (deniedStreak_[t] > maxDeniedStreak[t]) maxDeniedStreak[t] = deniedStreak_[t];
+      }
+    }
+  }
 
   /// `permittedAdvanceTicksIn` defaults to **0 = no comparison**: a caller that does not know the declaration (the
   /// clock-plumbing fixtures, which observe the epoch/tick rule on its own) records no overrun rather than inventing one.
@@ -102,8 +130,16 @@ struct PlaybackLaneMeasurement {
     deniedTurns = maxWorkerUs = discontinuities = saturatedGaps = 0;
     overruns = overrunMaxTicks = 0;
     span16MaxTicks = span128MaxTicks = span128MaxUs = 0;  // the run itself continues across blocks
+    for (uint8_t t = 0; t < kTracks; ++t) {  // the streaks and served stamps continue across blocks
+      maxDeniedStreak[t] = 0;
+      maxInterGrainTicks[t] = 0;
+    }
   }
  private:
+  uint32_t servedTick_[kTracks] = {};
+  uint32_t servedEpoch_[kTracks] = {};
+  uint16_t deniedStreak_[kTracks] = {};
+  bool servedValid_[kTracks] = {};
   uint32_t spanTick_[kLongSpan] = {};
   uint32_t spanUs_[kLongSpan] = {};
   uint32_t runLength_ = 0;

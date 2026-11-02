@@ -1,3 +1,14 @@
+**2026-11-02 — revision-manifest C5.3b-e (device): 300 BPM, three states; 128 lane turns take up to 2,304 ticks in Overdub, more than a two-bar span.**
+- **Setup** (DEC-246 amendment 25, owner's most intense setup): every track with content playing, plus the HITL take
+  (32 bars) and an overdub (200 bars) on track 8 slot 4, then 200 s of play. Measurement image `34472436…`, boot
+  verified.
+- **128 lane turns:** at most 1,920 ticks (Record) and 2,304 ticks (Overdub), i.e. 2.0–2.4 s, about 16–19 ms per turn.
+  16 turns: at most 416 / 456 ticks.
+- **Not measurable on this card:** 8-track arbitration and the device successor timing (0 `lane_fair` / `succ` rows).
+  Restored slots are not lane-served (DEC-243 / 5.0), so the set plays merged (`view` 4,579 vs `merged` 132,130).
+- **Production finding:** 1,348 `saveNoteEditPass rejected: heap below reserve` during the dense overdub.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-device-300bpm-three-states.md)
+
 **2026-11-02 — test tooling: tiered native runner (`scripts/test_native.py`); sharded FULL in 80 s warm / 163 s cold (was 741 s).**
 - **Tiers** (owner): FAST `suites <s>`, AFFECTED `affected`, FULL `full`. Documented in
   `.cursor/rules/Testing-Workflow.mdc`; AGENTS.md points there.
