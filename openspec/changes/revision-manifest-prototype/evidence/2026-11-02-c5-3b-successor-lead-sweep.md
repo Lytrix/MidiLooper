@@ -79,3 +79,20 @@ Points (lead, seams: handed/missed, actual minimum lead):
 - **Correction to the reading above.** The one-window pipeline fits a two-bar span at 3 denials. What fails is the
   successor of a **short terminal window** (odd-bar loops), whose lead is bounded by that window's own length.
   Neither arbitration nor role release is the cause.
+
+## After the balanced tail (owner ruling, same day; `b592fccd`)
+
+- **Image.** `c15d71fe68c93ab5`. On the routed slot the 33-bar partition now ends `... | 2 | 1.5 | 1.5 bars`, so
+  every traversal has two 1,152-tick tail windows instead of a 768-tick one.
+- **Run.** Fixed points of 50 seams each at a full-span lead: `--lane-cadence-points 0:1536:50,3:1536:50,7:1536:50`.
+
+| deny | seams | missed | max request → ready | max request → admit | min ready margin | min actual lead |
+|---|---|---|---|---|---|---|
+| 0 | 50/50 | 0 | 288 | 136 | 880 | 1,136 (the tail) |
+| 3 | 50/50 | 0 | 1,208 | 592 | **40** | 1,120 (the tail) |
+| 7 | 0/1 | **1** | — | 1,192 | — | 1,520 (a full span) |
+
+- **Deny 3** is now clean: the wrap miss was the partition. The margin is thin (40 ticks at the tail).
+- **Deny 7 fails on a full two-bar window** with full lead: admission alone took 1,192 ticks. This is the genuine
+  scheduling question amendment 26 names: a bounded service guarantee for deadline-bearing successors, or deeper
+  lookahead.
