@@ -489,6 +489,71 @@ void test_5_1_a_continuity_miss_at_the_handoff_recovers() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedAfter, detail);
 }
 
+// The handoff frontier (DEC-246 amendment 27, owner ruling): continuity means the candidate starts at the next position
+// the clock can reach with nothing owed in between, not that the previous internal tick was `S - 1`. On external MIDI
+// clock (24 PPQN against 192 internal) one pulse advances 8 ticks: device captures/session_20261102_173023 measured
+// `lastTickInLoop = 19960` at `S = 19968` (7 behind `S - 1`), and the exact rule refused every such handoff.
+void test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only() {
+  Loop& loop = trackManager.getTrack(1).getLoop(1);
+  const uint32_t savedLength = loop.loopLengthTicks, savedLast = loop.lastTickInLoop;
+  constexpr uint32_t S = 19968, step = Config::TICKS_PER_CLOCK;
+  loop.loopLengthTicks = 25344;
+  const auto holds = [&](uint32_t last, uint32_t phase, uint32_t clockStep, bool silent) {
+    loop.lastTickInLoop = last;
+    return rollingHandoffFrontierHolds(loop, phase, clockStep, silent);
+  };
+  TEST_ASSERT_TRUE_MESSAGE(holds(S - step, S, step, true), "the measured case: one pulse behind, a silent gap");
+  TEST_ASSERT_TRUE_MESSAGE(holds(25344 - step, 0, step, true), "across the wrap: the last pulse of the traversal");
+  TEST_ASSERT_TRUE_MESSAGE(holds(S - 1, S, 1, false), "internal clock: the exact predecessor, as before");
+  TEST_ASSERT_FALSE_MESSAGE(holds(S - 2 * step, S, step, true), "two pulses behind: a pulse was missed");
+  TEST_ASSERT_FALSE_MESSAGE(holds(S, S, step, true), "S already consumed");
+  TEST_ASSERT_FALSE_MESSAGE(holds(S + step, S, step, true), "past S");
+  TEST_ASSERT_FALSE_MESSAGE(holds(S - step, S, step, false), "the gap was served by another route: content is owed there");
+  TEST_ASSERT_FALSE_MESSAGE(holds(UINT32_MAX, S, step, true), "no accounted phase (reset, re-anchored projection)");
+  TEST_ASSERT_FALSE_MESSAGE(holds(S - 2, S, 1, true), "internal clock: a tick was missed");
+  loop.loopLengthTicks = savedLength;
+  loop.lastTickInLoop = savedLast;
+}
+
+// End to end on external clock: the routed lane advanced in 8-tick pulses must adopt its manifest windows (no term 6).
+void test_5_1_the_routed_lane_serves_on_external_clock_pulses() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  gNativeFrontierStepForTest = Config::TICKS_PER_CLOCK;  // external MIDI clock: one pulse is 8 internal ticks
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t served = 0, term6 = 0;
+  const uint32_t end = 40 * loop.loopLengthTicks;
+  for (uint32_t tick = 0; tick < end; tick += Config::TICKS_PER_CLOCK) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    term6 += runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked && runtime.rolling.rejectTerm == 6;
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++served;
+  }
+  gNativeFrontierStepForTest = 0;
+  char detail[160];
+  snprintf(detail, sizeof(detail), "served=%u term6=%u phase=%u exit=%s", served, term6,
+           unsigned(runtime.rolling.phase),
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-");
+  printf("EXTCLOCK %s\n", detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, term6, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -500,5 +565,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_an_orphaned_ready_successor_returns_its_build_role);
   RUN_TEST(test_5_1_a_price_refused_demand_leaves_no_pending_owner);
   RUN_TEST(test_5_1_a_continuity_miss_at_the_handoff_recovers);
+  RUN_TEST(test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only);
+  RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
   return UNITY_END();
 }

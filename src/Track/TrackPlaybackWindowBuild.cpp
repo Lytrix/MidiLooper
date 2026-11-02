@@ -5795,13 +5795,35 @@ TRACK_COLD_MEM void cancelRollingSuccessor(LoopPlaybackRuntime& runtime, uint8_t
 }
 #endif
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native seam: the host clock stub cannot select the external source, so a fixture names the clock step directly.
+inline uint32_t gNativeFrontierStepForTest = 0;
+#endif
+/// DEC-246 amendment 27 (owner ruling): **playhead continuity is a frontier, not an exact predecessor.** A candidate may
+/// adopt at its first phase `S` only when playback has accounted for everything before `S` in this traversal, and `S`
+/// is the next position the clock can reach: the last accounted phase is exactly one clock step behind `S`
+/// (`frontierStep`: 1 on the internal clock, `TICKS_PER_CLOCK` on external MIDI clock, which advances 8 ticks per pulse
+/// at 192 PPQN), nothing at or past `S` was consumed, and the phases between them carried no playback obligation
+/// (`gapSilent`: the preceding tick was the lane's own contained, silent miss -- any route that serves the gap owes
+/// its content there). Epoch and traversal identity stay with the frame's own terms. Report-only callers read the same
+/// function, so the predicate and its named term never disagree.
+TRACK_COLD_MEM __attribute__((noinline)) bool rollingHandoffFrontierHolds(const Loop& loop, uint32_t phase,
+                                                                          uint32_t frontierStep, bool gapSilent) {
+  const uint32_t len = loop.loopLengthTicks;
+  const uint32_t last = loop.lastTickInLoop;
+  if (len == 0 || last >= len || frontierStep == 0 || frontierStep > len || phase >= len) return false;
+  const uint32_t behind = (phase + len - last) % len;  // 0: S already consumed
+  return behind == frontierStep && (frontierStep == 1 || gapSilent);
+}
+
 // Boundary-only validation is flash-resident; steady serving stays in ITCM.
 // Fixed metadata reads only, under RollingMetadataGuard. Device duration remains
 // a qualification obligation; this placement is not a timing claim.
 /// Report-only: the **first** term of `rollingCandidateReadyAtBoundary` that fails, in its own order (1-based; 0: none).
 /// Read only on the reject path, so the hot path pays nothing. Kept term for term with the predicate below.
 TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
-    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase) {
+    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase,
+    uint32_t frontierStep, bool gapSilent) {
   const auto& frame = runtime.rolling;
   const auto* set = runtime.viewSetIfPrewarmed();
   if (!set) return 1;
@@ -5809,7 +5831,7 @@ TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
   if (runtime.completedPromisePendingJudgement) return 3;
   if (runtime.admittedPromiseInvalidated) return 4;
   if (runtime.countedMissedTraversals != 0) return 5;
-  if (loop.lastTickInLoop != (phase == 0 ? loop.loopLengthTicks - 1 : phase - 1)) return 6;
+  if (!rollingHandoffFrontierHolds(loop, phase, frontierStep, gapSilent)) return 6;
   if (set->lifecycle.ready >= set->views.size()) return 7;
   const auto& work = runtime.viewBuildWork;
   const auto& ready = set->views[set->lifecycle.ready];
@@ -5834,12 +5856,13 @@ TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
-    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase) {
+    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase,
+    uint32_t frontierStep, bool gapSilent) {
   const auto& frame = runtime.rolling;
   const auto* set = runtime.viewSetIfPrewarmed();
   if (!set || runtime.ownsCoverageSource() || runtime.completedPromisePendingJudgement ||
       runtime.admittedPromiseInvalidated || runtime.countedMissedTraversals != 0 ||
-      loop.lastTickInLoop != (phase == 0 ? loop.loopLengthTicks - 1 : phase - 1) ||
+      !rollingHandoffFrontierHolds(loop, phase, frontierStep, gapSilent) ||
       set->lifecycle.ready >= set->views.size()) return false;
   const auto& work = runtime.viewBuildWork;
   const auto& ready = set->views[set->lifecycle.ready];
@@ -6783,14 +6806,37 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     PlaybackTickContext::noteTurnReject(RouteReject::WaitingForHandoff);
     return {RollingOutcome::Waiting, nullptr};
   }
+  // DEC-246 am. 27: the frontier's inputs. The clock step is the external clock's pulse; the gap is silent only when the
+  // slot's preceding tick was the routed lane's own contained miss (no other route served, so nothing is owed there).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  // Native: no clock-source state exists in the host build; the internal clock's step unless a fixture names one.
+  const uint32_t frontierStep = gNativeFrontierStepForTest != 0 ? gNativeFrontierStepForTest : 1u;
+#else
+  const uint32_t frontierStep = clockManager.getClockSource() == CLOCK_EXTERNAL ? Config::TICKS_PER_CLOCK : 1u;
+#endif
+  bool gapSilent = false;
+#if REVISION_MANIFEST_READER
+  if (manifestLaneRoutesSlot(slot)) {
+    const uint8_t frontierTrack = playbackRebuildTrackIndex(*this);
+    const uint8_t prior = frontierTrack < Config::NUM_TRACKS
+        ? PlaybackTickContext::gState.reject[frontierTrack][slot].reason : 0;
+    using PlaybackTickContext::RouteReject;
+    gapSilent = prior >= static_cast<uint8_t>(RouteReject::FrameIdle) &&
+        prior != static_cast<uint8_t>(RouteReject::GateNotActiveSlot) &&
+        !(prior >= static_cast<uint8_t>(RouteReject::GateNotPlaying) &&
+          prior <= static_cast<uint8_t>(RouteReject::GateDeferredOverdubStop));
+  }
+#endif
   if (clock.tick != frame.deadlineTick || frame.phase != LoopPlaybackRuntime::RollingPhase::Ready ||
       phase != frame.startPhase ||
 #if REVISION_MANIFEST_READER
       !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot) &&
           (!manifestLaneRoutesSlot(slot) || (set->lifecycle.ready < set->views.size() &&
-           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase)) {
+           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase, frontierStep,
+          gapSilent)) {
 #else
-      !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase)) {
+      !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase, frontierStep,
+                                       gapSilent)) {
 #endif
     if (clock.tick == frame.deadlineTick && frame.phase == LoopPlaybackRuntime::RollingPhase::Ready &&
         phase == frame.startPhase) {
@@ -6798,9 +6844,11 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
 #if REVISION_MANIFEST_READER
       frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot) &&
           (!manifestLaneRoutesSlot(slot) || (set->lifecycle.ready < set->views.size() &&
-           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase);
+           manifestIdentityServable(slot, set->views[set->lifecycle.ready].source))), loop, phase, frontierStep,
+          gapSilent);
 #else
-      frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase);
+      frame.rejectTerm = rollingCandidateRejectTerm(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase,
+                                                    frontierStep, gapSilent);
 #endif
       const uint8_t measureTrack = playbackRebuildTrackIndex(*this);
       if (frame.rejectTerm == 6 && measureTrack < Config::NUM_TRACKS) {
