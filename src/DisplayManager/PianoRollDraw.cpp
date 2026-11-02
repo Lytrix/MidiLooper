@@ -332,12 +332,15 @@ void DisplayManager::drawOverviewStrip(uint32_t fullLoopLength, uint32_t loopOri
         return;
     }
     const int width = pianoRollWidth();
+    // Levels 1-3 are close to black on the panel (owner report 2026-11-02: "the window isn't
+    // rendered" while the framebuffer held it at 0-3), so notes and the window box sit in the
+    // panel's visible range, below the detailed roll's notes.
     constexpr uint8_t kOverviewRestInsideBrightness = 1;
     constexpr uint8_t kOverviewRestOutsideBrightness = 0;
-    constexpr uint8_t kOverviewNoteInsideBrightness = 2;
-    constexpr uint8_t kOverviewNoteOutsideBrightness = 1;
-    constexpr uint8_t kOverviewWindowSideBrightness = 3;
-    constexpr uint8_t kOverviewWindowEdgeBrightness = 2;
+    constexpr uint8_t kOverviewNoteInsideBrightness = 6;
+    constexpr uint8_t kOverviewNoteOutsideBrightness = 3;
+    constexpr uint8_t kOverviewWindowSideBrightness = 8;
+    constexpr uint8_t kOverviewWindowEdgeBrightness = 5;
 
     const uint32_t windowEnd = windowStart + windowLength;
     const auto windowCoverage =

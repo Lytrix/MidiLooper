@@ -126,3 +126,20 @@ void DisplayManager::finishBootSetup() {
     Serial.println("DisplayManager: Boot setup complete");
     bootSetupComplete_ = true;
 }
+
+#if defined(SESSION_CAPTURE)
+// `!FB_DUMP` (capture builds): the framebuffer as drawn, one row per line. Blocking serial output
+// (~8 KB of hex), so it is an operator command, never called from the paint path.
+FLASHMEM void DisplayManager::emitFrameBufferDump() {
+    const uint8_t* fb = _display.api.getFrameBuffer();
+    constexpr int kRowBytes = DISPLAY_WIDTH / 2;
+    for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
+        Serial.printf("#FB,%02d,", y);
+        for (int b = 0; b < kRowBytes; ++b) {
+            Serial.printf("%02x", fb[y * kRowBytes + b]);
+        }
+        Serial.print("\r\n");
+    }
+    Serial.flush();
+}
+#endif

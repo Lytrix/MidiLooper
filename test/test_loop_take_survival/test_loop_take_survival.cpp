@@ -6059,6 +6059,24 @@ void test_stopped_draw_source_snapshot_append_wrap_held_183741() {
   TEST_ASSERT_TRUE(completedSawTail);
   TEST_ASSERT_TRUE(completedSawHead);
   TEST_ASSERT_GREATER_THAN(candidate.size(), completed.size());
+
+  // The STOPPED frame merges a wrap-held set built once per loop content
+  // (`DisplayManager::stoppedWrapHeldCompletion`) instead of re-walking every
+  // committed event per frame (`session_20261102_164414`: ~40 ms resolve).
+  // Merging that set must paint the same frame as the direct append, twice.
+  NoteUtils::DisplayNoteVec wrapHeld;
+  loop.appendOverdubPassDisplayNotes(wrapHeld);
+  for (int frame = 0; frame < 2; ++frame) {
+    NoteUtils::DisplayNoteVec memoized = candidate;
+    DisplayWindowUtils::mergeWrapHeldDisplayNotes(memoized, wrapHeld, kLoopLength);
+    TEST_ASSERT_EQUAL(completed.size(), memoized.size());
+    for (size_t i = 0; i < completed.size(); ++i) {
+      TEST_ASSERT_EQUAL(completed[i].noteId, memoized[i].noteId);
+      TEST_ASSERT_EQUAL(completed[i].note, memoized[i].note);
+      TEST_ASSERT_EQUAL(completed[i].startTick, memoized[i].startTick);
+      TEST_ASSERT_EQUAL(completed[i].endTick, memoized[i].endTick);
+    }
+  }
 }
 
 /// Same NoteId wrap head+tail must both survive unique-by-id gather

@@ -1026,6 +1026,38 @@ inline bool isWrapHeldDisplayNote(const NoteUtils::DisplayNote& note, uint32_t l
   return note.startTick == 0 && note.endTick <= wrapWindow;
 }
 
+/// The wrap-held append's merge rule for one row: the first row at the same pitch+start is replaced
+/// when it is a body row and kept when it is already wrap-held; with no such row the wrap-held row is
+/// appended. Non-wrap-held candidates are ignored.
+inline void mergeWrapHeldDisplayNote(NoteUtils::DisplayNoteVec& notes,
+                                     const NoteUtils::DisplayNote& candidate,
+                                     uint32_t loopLength) {
+  if (!isWrapHeldDisplayNote(candidate, loopLength)) {
+    return;
+  }
+  for (NoteUtils::DisplayNote& existing : notes) {
+    if (existing.note != candidate.note || existing.startTick != candidate.startTick) {
+      continue;
+    }
+    if (!isWrapHeldDisplayNote(existing, loopLength)) {
+      existing = candidate;
+    }
+    return;
+  }
+  notes.push_back(candidate);
+}
+
+/// Merge a precomputed wrap-held set (the result of the wrap-held append on an empty vector) into
+/// `notes`. Equivalent to running the append against `notes` directly: the set is already
+/// deduplicated first-wins, which is what the append's own same-pitch+start check yields.
+inline void mergeWrapHeldDisplayNotes(NoteUtils::DisplayNoteVec& notes,
+                                      const NoteUtils::DisplayNoteVec& wrapHeld,
+                                      uint32_t loopLength) {
+  for (const NoteUtils::DisplayNote& candidate : wrapHeld) {
+    mergeWrapHeldDisplayNote(notes, candidate, loopLength);
+  }
+}
+
 /// Replace same valid `NoteId`; append a new valid ID. Invalid-ID rows keep
 /// pitch+start uniqueness.
 inline void upsertDisplayNoteByNoteId(NoteUtils::DisplayNoteVec& notes,

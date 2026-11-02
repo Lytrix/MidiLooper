@@ -1028,23 +1028,7 @@ LOOP_COLD_MEM static void appendWrapPairedPassNotes(NoteUtils::DisplayNoteVec& n
     // so two passes may share pitch+start (`183043`). A linear same-start
     // remnant from non-wrap pairing is replaced, not skipped (`225200`).
     if (wrapHeldOnly) {
-      if (!DisplayWindowUtils::isWrapHeldDisplayNote(note, loopLengthTicks)) {
-        continue;
-      }
-      bool replaced = false;
-      for (NoteUtils::DisplayNote& existing : notes) {
-        if (existing.note != note.note || existing.startTick != note.startTick) {
-          continue;
-        }
-        if (!DisplayWindowUtils::isWrapHeldDisplayNote(existing, loopLengthTicks)) {
-          existing = note;
-        }
-        replaced = true;
-        break;
-      }
-      if (!replaced) {
-        notes.push_back(note);
-      }
+      DisplayWindowUtils::mergeWrapHeldDisplayNote(notes, note, loopLengthTicks);
       continue;
     }
     if (DisplayWindowUtils::displayNoteIdentityPresent(notes, note)) {

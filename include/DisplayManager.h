@@ -97,6 +97,10 @@ public:
     void openRevisionHistoryFromHitl(uint16_t setId);
     /// HITL: long-press back from revision history or loop pick drill-down.
     void navigateLoadSaveOverlayBackFromHitl();
+    /// HITL `!FB_DUMP`: print the current framebuffer as 64 `#FB,<row>,<hex>` lines (128 bytes, two 4-bit
+    /// pixels per byte, high nibble first). Render with `scripts/render_display_dump.py`. Debug aid for
+    /// display bugs: it shows what was drawn, separately from how the panel shows it.
+    void emitFrameBufferDump();
 #endif
 
     /// Force cached note rebuild after edit mutations (D2 display refresh).
@@ -271,6 +275,18 @@ private:
     /// Paint copy with pending Hide/Shorten applied. `liveDisplayNotes` stays the
     /// un-hidden compose so capture-layer index math stays valid.
     DisplayNoteVec liveDisplayPendingPaintNotes_;
+    /// Stage 3B memo: the wrap-held rows of every active committed pass, reconstructed once per loop
+    /// content. Rebuilding them walks every committed event of the loop, which cost ~40 ms on each
+    /// STOPPED frame of a 25,344-tick loop (`session_20261102_164414`: 9 fps, dim/flickering OLED).
+    /// Keyed on what the reconstruction reads; `playbackRevision` moves on every pass-inventory change
+    /// and `canonicalStorageGeneration` on every loop reset.
+    const DisplayNoteVec& stoppedWrapHeldCompletion(const Loop& loop);
+    DisplayNoteVec stoppedWrapHeldNotes_;
+    const Loop* stoppedWrapHeldLoop_ = nullptr;
+    LoopId stoppedWrapHeldLoopId_ = kInvalidLoopId;
+    uint32_t stoppedWrapHeldPlaybackRevision_ = UINT32_MAX;
+    uint64_t stoppedWrapHeldStorageGeneration_ = UINT64_MAX;
+    uint32_t stoppedWrapHeldLoopLength_ = 0;
     std::vector<NoteUtils::OpenNoteOn> liveDisplayCacheOpenNotes;
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
     /// Committed-layer note count in `liveDisplayNotes` before capturePreview overlay (overdub).

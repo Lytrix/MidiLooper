@@ -1149,6 +1149,23 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
 
 }  // namespace
 
+const DisplayNoteVec& DisplayManager::stoppedWrapHeldCompletion(const Loop& loop) {
+    if (stoppedWrapHeldLoop_ == &loop && stoppedWrapHeldLoopId_ == loop.loopId &&
+        stoppedWrapHeldPlaybackRevision_ == loop.playbackRevision &&
+        stoppedWrapHeldStorageGeneration_ == loop.canonicalStorageGeneration &&
+        stoppedWrapHeldLoopLength_ == loop.loopLengthTicks) {
+        return stoppedWrapHeldNotes_;
+    }
+    stoppedWrapHeldNotes_.clear();
+    loop.appendOverdubPassDisplayNotes(stoppedWrapHeldNotes_);
+    stoppedWrapHeldLoop_ = &loop;
+    stoppedWrapHeldLoopId_ = loop.loopId;
+    stoppedWrapHeldPlaybackRevision_ = loop.playbackRevision;
+    stoppedWrapHeldStorageGeneration_ = loop.canonicalStorageGeneration;
+    stoppedWrapHeldLoopLength_ = loop.loopLengthTicks;
+    return stoppedWrapHeldNotes_;
+}
+
 DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDrawSource(
     const Track& track, uint8_t displaySlot, uint32_t currentTick, uint8_t pitchLow,
     uint8_t pitchHigh) {
@@ -1386,9 +1403,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     if (DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
             track.isStopped(), loop.captureActive(),
             loop.publishedSnapshotIsCurrent())) {
-        Loop& mutLoop = const_cast<Loop&>(loop);
         const size_t beforeComplete = liveDisplayNotes.size();
-        mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
+        DisplayWindowUtils::mergeWrapHeldDisplayNotes(
+            liveDisplayNotes, stoppedWrapHeldCompletion(loop), loop.loopLengthTicks);
         if (liveDisplayNotes.size() != beforeComplete) {
             committedDisplayEnd = liveDisplayNotes.size();
             storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,

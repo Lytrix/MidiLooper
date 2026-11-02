@@ -57,6 +57,20 @@ Expected behavior: length rounds to the **nearest** bar.
 
 If any other bug or oddity shows up during the session, keep playing through it (the capture gets it) and note the time + one line of what you saw.
 
+## Display bugs: framebuffer dump
+
+Capture builds accept `!FB_DUMP` (plus newline) on the USB serial port. The firmware prints the OLED
+framebuffer as drawn, as 64 lines `#FB,<row>,<hex>`: 256 x 64 pixels, 4-bit gray, two pixels per byte,
+high nibble first. Render the last dump in a capture with:
+
+```bash
+.venv/bin/python scripts/render_display_dump.py captures/session_X.log -o frame.png --ascii
+```
+
+This separates "what was drawn" from "how the panel shows it". On this panel gray levels 1–3 look
+almost black even though they are in the framebuffer (2026-11-02 overview-strip finding). The dump
+blocks while it prints (~8 KB), so send it only once, not as a stream.
+
 ## Afterwards
 
 Drop the capture file path(s) and your per-bug notes into the chat. The capture is parsed offline; B1/B2 evidence is read directly from `RECS`/`BPM` lines, B3 from the `MI`/`MO` stream around the stall.

@@ -1035,6 +1035,8 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 HitlDisplayBridge::confirmLoadSaveFocusedRow();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_CONFIRM") == 0) {
                 HitlDisplayBridge::confirmLoadSaveFocusedRow();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!FB_DUMP") == 0) {
+                displayManager.emitFrameBufferDump();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_ENTER") == 0) {
                 looperState.enterLoadSaveMode();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_EXIT") == 0) {
