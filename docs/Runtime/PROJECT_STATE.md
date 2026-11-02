@@ -1,3 +1,20 @@
+**2026-11-02 — orphaned ready successor reclaimed (5.1, DEC-246 amendment 27); track 8 is now blocked by the DEC-147 lead price, not by roles.**
+- **The leak** (device `session_20261102_155425`). The Record presentation retired while its owed successor was still
+  being built. The build was published as `ready` at 88.0 s, but its adopter was gone, so no frame owned it. Beside the
+  retained view it held the role every build publishes into (`role_ready_occupied`), giving `win_busy rl=0` across the
+  stop and the restart.
+- **Fix.** On an Idle frame, `serviceRollingPlaybackWindow` retires a complete, unpublished `ready` that nothing else
+  can adopt: no demand, no build, no Record-return job, no launch, no pending promise. It goes through
+  `retireSupersededReady`, or straight to the build role when the slot has none. The new row is
+  `win_orphan_successor_reclaimed`.
+- **Host.** RED `test_5_1_an_orphaned_ready_successor_returns_its_build_role` (injected state; failed before the fix,
+  GREEN now). FULL 3,940 cases, 8 skipped, 3,932 passed.
+- **Device** (succprobe `e19471b492a9c901`, boot `crash=0` and `BOOT,load,ok`, `captures/session_20261102_161218.log`):
+  - The role stays free throughout (`rl=1`).
+  - Track 8's committed demand was refused as `handoff_unreachable` at 88.07 s and stays pending (`dm=1`, no build),
+    so the requester sits at `win_busy` before and after the restart. No first manifest window serves.
+  - This is the lead price for a dense 25,344-tick window: the pending C5.3b measured-price decision.
+
 **2026-11-02 — Record presentation deadlock on the manifest route fixed (5.1, DEC-246 amendment 27); a restart build-role leak remains.**
 - **The deadlock.** On the routed slot, the Record job and its presentation waited for the root snapshot's session exit
   and then for a served window carrying the manifest identity. Their own hold kept that window from building, so a

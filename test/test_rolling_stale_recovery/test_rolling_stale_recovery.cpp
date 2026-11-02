@@ -324,6 +324,63 @@ void test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served2, detail);
 }
 
+// An orphaned successor (device captures/session_20261102_155425): the Record presentation retired while its owed
+// successor was still being built; the build was published as the `ready` successor at 88.0 s, but its adopter (the
+// Record-return reader's boundary) was gone, so no frame owned it. With the retained view it held the last free role:
+// `win_busy` with `dm=0,bld=0,ow=0,rl=0` from then on, across the stop and the restart. The fixture injects that state
+// (an Idle frame, a complete unpublished `ready` that nothing owns); the requester must reclaim the role and re-request.
+void test_5_1_an_orphaned_ready_successor_returns_its_build_role() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  const auto readyWaits = [&] {
+    const auto* vs = runtime.viewSetIfPrewarmed();
+    return vs && vs->lifecycle.ready < vs->views.size() && vs->views[vs->lifecycle.ready].complete &&
+           !vs->views[vs->lifecycle.ready].published;
+  };
+  uint32_t tick = 0;
+  bool orphanable = false;
+  for (; tick < 40 * loop.loopLengthTicks && !orphanable; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    orphanable = runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready && readyWaits() &&
+                 !runtime.pendingViewRequest_.active && !runtime.viewBuild.active();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(orphanable, "precondition: a complete successor waits in the ready role");
+  runtime.rolling = {};  // its owner is gone: the device's Idle frame beside an unadopted ready
+  TEST_ASSERT_TRUE_MESSAGE(readyWaits(), "precondition: the orphan holds the ready role");
+  TEST_ASSERT_NOT_EQUAL_UINT8_MESSAGE(0, runtime.coverageRoleRefusal(false), "precondition: no build role is free");
+
+  uint32_t requested = 0;
+  const uint32_t end = tick + 2 * loop.loopLengthTicks;
+  for (; tick < end; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    requested += runtime.rolling.phase != LoopPlaybackRuntime::RollingPhase::Idle;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "requested=%u role=%u exit=%s phase=%u", requested,
+           unsigned(runtime.coverageRoleRefusal(false)),
+           PlaybackTickContext::gState.producerExit[0] ? PlaybackTickContext::gState.producerExit[0] : "-",
+           unsigned(runtime.rolling.phase));
+  printf("ORPHAN %s\n", detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, requested, detail);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -332,5 +389,6 @@ int main(int, char**) {
   RUN_TEST(test_5_1_a_stale_serving_frame_is_retired_once_and_the_current_source_serves);
   RUN_TEST(test_5_1_the_first_window_after_a_restart_serves_on_the_manifest_route);
   RUN_TEST(test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane);
+  RUN_TEST(test_5_1_an_orphaned_ready_successor_returns_its_build_role);
   return UNITY_END();
 }

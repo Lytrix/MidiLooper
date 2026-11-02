@@ -6333,6 +6333,28 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       reportPlaybackRollingGateRow("win_unpositioned_replaced", clock.epoch != 0);
     }
   }
+  // DEC-246 amendment 27 (5.1): an **orphaned** successor. This frame is Idle, so no rolling frame owns the `ready`
+  // role; when that role still holds a complete, unpublished window that no other owner can adopt either (no demand or
+  // build, no Record-return job, no launch, no completed promise awaiting judgement), it is the remnant of an owner that
+  // is gone -- measured on device: a Record-return successor published after its presentation retired. With a retained
+  // view it held the role every build publishes into (`role_ready_occupied`) for the rest of the transport. Retire it
+  // through the lifecycle's own superseded-ready path, or straight to the build role when the slot has none.
+  if (set->lifecycle.ready < set->views.size() &&
+      set->lifecycle.ready != set->lifecycle.current && set->lifecycle.ready != set->lifecycle.retained &&
+      set->lifecycle.ready != set->lifecycle.build &&
+      set->views[set->lifecycle.ready].complete && !set->views[set->lifecycle.ready].published &&
+      !runtime->pendingViewRequest_.active && !runtime->frozenViewRequest.active && !runtime->ownsCoverageSource() &&
+      !runtime->viewBuild.active() && !runtime->completedPromisePendingJudgement &&
+      !runtime->ownsLaunchPreparation() && !runtime->hasBoundRecordReturnWindowForPendingJob()) {
+    if (set->lifecycle.build >= set->views.size()) {
+      set->lifecycle.build = set->lifecycle.ready;
+      set->lifecycle.ready = RuntimePlaybackViewLifecycle::kNoView;
+      set->views[set->lifecycle.build].resetMetadata();
+    } else {
+      (void)set->lifecycle.retireSupersededReady(set->views);
+    }
+    reportPlaybackRollingGateRow("win_orphan_successor_reclaimed", clock.epoch != 0);
+  }
   // Existing promises and shared owners take precedence. Never coalesce a new
   // rolling target over someone else's debt merely to gain a later deadline.
   if (runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
