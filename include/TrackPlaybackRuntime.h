@@ -813,9 +813,9 @@ struct LoopPlaybackRuntime {
     /// Report-only (DEC-246 amendment 27): the phase the resolver found this frame in when it blocked it
     /// (`RollingPhase`). Sits in existing padding.
     uint8_t blockedFromPhase : 4;
-    /// DEC-246 amendment 27 (owner ruling): this frame follows the balanced-tail partition
-    /// (`rollingWindowLengthAt`); set by the requester for the manifest-routed slot only. Shares the byte above.
-    uint8_t balancedTail : 1;
+    /// DEC-246 amendment 27 (owner ruling): this frame follows the equal partition (`rollingWindowLengthAt`); set by
+    /// the requester for the manifest-routed slot only. Shares the byte above.
+    uint8_t equalPartition : 1;
     uint32_t epoch = 0;
     uint32_t generation = 0;
     uint32_t loopLength = 0;
@@ -1777,12 +1777,12 @@ struct LoopPlaybackRuntime {
 };
 
 /// DEC-246 amendment 27 (owner ruling): the rolling partition of a loop into non-wrapping windows of the nominal span
-/// S (two bars), with the **balanced tail** for odd loops on the manifest-routed slot: the last two windows are split
-/// evenly (sixteenth grid) instead of ending in a short window, whose successor at the wrap would get only that window's
-/// length as lead. One implementation (flash, never inlined into the hot path); see TrackPlaybackWindowBuild.cpp.
-uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool balancedTail);
+/// S (two bars), with the **equal partition** for odd loops on the manifest-routed slot: the fewest windows that fit S,
+/// sized evenly in clock quanta, so no short window precedes a longer one. One implementation (flash, never inlined
+/// into the hot path); see TrackPlaybackRuntime.cpp.
+uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool equalPartition);
 /// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
-uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool balancedTail);
+uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool equalPartition);
 /// The frame's own window length under the partition it was positioned on.
 uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame);
 

@@ -5740,7 +5740,7 @@ struct RollingSuccessorKey {
 TRACK_COLD_MEM RollingSuccessorKey rollingSuccessorKey(const LoopPlaybackRuntime::RollingFrame& frame) {
   const uint32_t span = rollingFrameSpan(frame);
   const uint32_t start = (frame.startPhase + span) % frame.loopLength;
-  return {frame.deadlineTick + span, start, rollingWindowLengthAt(start, frame.loopLength, frame.balancedTail != 0)};
+  return {frame.deadlineTick + span, start, rollingWindowLengthAt(start, frame.loopLength, frame.equalPartition != 0)};
 }
 
 TRACK_COLD_MEM bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline) {
@@ -6639,12 +6639,12 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   // bar the next legal boundary is phase zero, then the same loop-local grid again.
   const uint64_t target = uint64_t(phase) + lookahead;
 #if REVISION_MANIFEST_READER
-  const bool balancedTail = manifestLaneRoutesSlot(activeLoopIndex);
+  const bool equalPartition = manifestLaneRoutesSlot(activeLoopIndex);
 #else
-  constexpr bool balancedTail = false;
+  constexpr bool equalPartition = false;
 #endif
   const uint64_t localBoundary = rollingBoundaryAtOrAfter(
-      static_cast<uint32_t>(target % loop.loopLengthTicks), loop.loopLengthTicks, balancedTail);
+      static_cast<uint32_t>(target % loop.loopLengthTicks), loop.loopLengthTicks, equalPartition);
   uint64_t boundary = (target / loop.loopLengthTicks) * loop.loopLengthTicks + localBoundary;
   if (frame.refusedHandoffValid) {
     // DEC-147: start at the refused span's handoff, so the retry can never land on the position that was just measured
@@ -6693,7 +6693,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   }
   const uint32_t startPhase = static_cast<uint32_t>((phase + positionLead) % loop.loopLengthTicks);
   const PlaybackCoverageInterval coverage{startPhase,
-                                           rollingWindowLengthAt(startPhase, loop.loopLengthTicks, balancedTail),
+                                           rollingWindowLengthAt(startPhase, loop.loopLengthTicks, equalPartition),
                                            loop.loopLengthTicks};
   const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock);
   if (requested != PlaybackViewRequestResult::DeferredSourceQualification) {
@@ -6722,7 +6722,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   frame.loopLength = loop.loopLengthTicks;
   frame.projectionStart = getProjectionCycleStartTick();
   frame.startPhase = coverage.startPhase;
-  frame.balancedTail = balancedTail ? 1u : 0u;
+  frame.equalPartition = equalPartition ? 1u : 0u;
   frame.deadlineTick = pending->deadlineTick;
   frame.lastTick = clock.tick;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Requested; // Publish metadata last.

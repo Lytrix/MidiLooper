@@ -25,45 +25,74 @@
 #define TRACK_PLAYBACK_RUNTIME_COLD_MEM
 #endif
 
-/// DEC-246 amendment 27 (owner ruling): the rolling partition of a loop into non-wrapping windows of the nominal span
-/// S (two bars). When the loop is not a multiple of S, the default partition ends in a short window, and the successor
-/// at the wrap gets only that window's length as lead (measured on device: 768 ticks on a 33-bar loop). The **balanced
-/// tail** instead splits the last two windows evenly (on the sixteenth grid): `... | S | S | (S + r) / 2 | rest`, so
-/// the shortest window -- and the wrap successor's lead -- is as long as it can be without a wrapping view.
-/// `balancedTail` is set for the manifest-routed slot only, until the device proof is green.
-static TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingTailSplit(uint32_t loopLength, uint32_t& pairStart) {
-  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR, grain = Config::TICKS_PER_BAR / 16;
-  const uint32_t whole = (loopLength - 1) / S;  // windows before the last one on the plain grid (>= 1 when L > S)
-  pairStart = (whole - 1) * S;
-  return ((loopLength - pairStart) / 2) / grain * grain;
+/// DEC-246 amendment 27 (owner ruling): the **equal partition**. A loop longer than the nominal span S (two bars) is
+/// split into the fewest non-wrapping windows that each fit in S -- `N = ceil(L / S)` -- and the loop is distributed
+/// evenly among them in clock quanta (Q = `TICKS_PER_CLOCK`, the external clock's 8-tick pulse): the first `L % N`
+/// windows get one quantum more. Integer only, so the windows tile the loop exactly, every boundary is clock-reachable,
+/// adjacent windows differ by at most one quantum, and no successor follows a shorter window into a longer one (a
+/// local tail scheme always has such a seam somewhere in the cycle; device: the 1.5 -> 2-bar wrap missed under the
+/// 3-denial service bound). A 33-bar loop is 6 x 1,496 + 11 x 1,488 ticks. Loops that are a multiple of S, shorter
+/// than S, or not on the quantum grid keep the default partition. Set for the manifest-routed slot only, until the
+/// device proof is green.
+namespace {
+struct RollingEqualPartition {
+  uint32_t windows = 0, baseTicks = 0, longer = 0;  // `longer` windows of `baseTicks + Q`, then the rest of `baseTicks`
+  bool applies = false;
+};
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) RollingEqualPartition rollingEqualPartition(
+    uint32_t loopLength) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR, Q = Config::TICKS_PER_CLOCK;
+  RollingEqualPartition p{};
+  if (loopLength <= S || loopLength % S == 0 || loopLength % Q != 0) return p;
+  const uint32_t quanta = loopLength / Q, spanQuanta = S / Q;
+  p.windows = (quanta + spanQuanta - 1) / spanQuanta;
+  p.baseTicks = (quanta / p.windows) * Q;
+  p.longer = quanta % p.windows;
+  p.applies = true;
+  return p;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool balancedTail) {
+/// The index of the window containing `phase`, and that window's start.
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingEqualWindowAt(
+    const RollingEqualPartition& p, uint32_t phase, uint32_t& start) {
+  const uint32_t longTicks = p.baseTicks + Config::TICKS_PER_CLOCK;
+  const uint32_t longSpan = p.longer * longTicks;
+  const uint32_t index = phase < longSpan ? phase / longTicks : p.longer + (phase - longSpan) / p.baseTicks;
+  start = index < p.longer ? index * longTicks : longSpan + (index - p.longer) * p.baseTicks;
+  return index;
+}
+}  // namespace
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingWindowLengthAt(uint32_t start,
+                                                                                        uint32_t loopLength,
+                                                                                        bool equalPartition) {
   constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
   if (loopLength == 0 || start >= loopLength) return 0;
-  const uint32_t rest = loopLength - start;
-  if (!balancedTail || loopLength <= S || loopLength % S == 0 || start + 2 * S < loopLength)
-    return std::min(S, rest);
-  uint32_t pairStart = 0;
-  const uint32_t first = rollingTailSplit(loopLength, pairStart);
-  if (start < pairStart) return std::min(S, rest);
-  return start < pairStart + first ? pairStart + first - start : rest;
+  const RollingEqualPartition p = equalPartition ? rollingEqualPartition(loopLength) : RollingEqualPartition{};
+  if (!p.applies) return std::min(S, loopLength - start);
+  uint32_t windowStart = 0;
+  const uint32_t index = rollingEqualWindowAt(p, start, windowStart);
+  const uint32_t windowTicks = p.baseTicks + (index < p.longer ? Config::TICKS_PER_CLOCK : 0u);
+  return windowStart + windowTicks - start;  // to the window's own end (a mid-window start keeps its end)
 }
 
 /// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
-TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool balancedTail) {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingBoundaryAtOrAfter(uint32_t phase,
+                                                                                           uint32_t loopLength,
+                                                                                           bool equalPartition) {
   constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
-  const uint32_t grid = std::min(loopLength, ((phase + S - 1) / S) * S);
-  if (!balancedTail || loopLength <= S || loopLength % S == 0) return grid;
-  uint32_t pairStart = 0;
-  const uint32_t first = rollingTailSplit(loopLength, pairStart);
-  const uint32_t tailSplit = pairStart + first;
-  if (phase <= pairStart) return grid;
-  return phase <= tailSplit ? tailSplit : loopLength;
+  const RollingEqualPartition p = equalPartition ? rollingEqualPartition(loopLength) : RollingEqualPartition{};
+  if (!p.applies) return std::min(loopLength, ((phase + S - 1) / S) * S);
+  if (phase >= loopLength) return loopLength;
+  uint32_t windowStart = 0;
+  const uint32_t index = rollingEqualWindowAt(p, phase, windowStart);
+  if (windowStart == phase) return phase;
+  return windowStart + p.baseTicks + (index < p.longer ? Config::TICKS_PER_CLOCK : 0u);
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame) {
-  return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.balancedTail != 0);
+  return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.equalPartition != 0);
 }
 
 static inline uint32_t replenishNowUs();

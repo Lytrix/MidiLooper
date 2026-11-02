@@ -268,14 +268,20 @@ void test_c5_3_a_source_move_while_serving_cannot_publish_a_stale_window() {
 void test_c5_3_a_note_sounding_into_a_gap_is_closed_not_left_hanging() {
   installReader();
   Track& t = trackManager.getTrack(0);
-  constexpr uint32_t length = 5 * kBar;  // windows on the loop-local grid: 0, 1536, 3072 (terminal one bar)
+  constexpr uint32_t length = 5 * kBar;
+  // The routed slot's windows follow the equal partition (DEC-246 amendment 27): 5 bars are 3 x 1,280 ticks, seams at
+  // 1,280 and 2,560. Read from the partition itself, so the notes cross the seams the lane actually uses.
+  const uint32_t seam1 = rollingWindowLengthAt(0, length, true);
+  const uint32_t seam2 = seam1 + rollingWindowLengthAt(seam1, length, true);
   prepareSlot(t, 0, false);
   t.forceSetState(TRACK_STOPPED);
   start(t, 0, false, 0, 60);
-  t.noteOn(1, 71, 100, 2 * kBar - 120);  // each crosses a window boundary, so a window ends with it sounding
-  t.noteOff(1, 71, 0, 2 * kBar + 150);
-  t.noteOn(1, 70, 100, 4 * kBar - 120);
-  t.noteOff(1, 70, 0, 4 * kBar + 150);
+  t.noteOn(1, 71, 100, seam1 - 120);  // each crosses a window boundary, so a window ends with it sounding
+  t.noteOff(1, 71, 0, seam1 + 150);
+  t.noteOn(1, 70, 100, seam2 - 120);
+  t.noteOff(1, 70, 0, seam2 + 150);
+  t.noteOn(1, 72, 100, 4 * kBar + 300);  // content in bar 5, so the take keeps its 5-bar length
+  t.noteOff(1, 72, 0, 4 * kBar + 330);
   clockManager.assignCurrentTickSilently(length);
   t.stopRecordingToStopped(length);
   driveStopToRetirement(t);

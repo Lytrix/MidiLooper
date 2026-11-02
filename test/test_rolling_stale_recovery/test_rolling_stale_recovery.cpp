@@ -618,36 +618,47 @@ void test_5_1_an_expired_routed_demand_is_discharged_after_a_restart() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
 
-// The balanced tail (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling partition must not end in a short
-// window, whose successor at the wrap gets only that window's length as lead (device: 768 ticks on 33 bars, every
-// deny-3 miss). The last two windows are split evenly instead, never wrapping. The default partition is unchanged.
-void test_5_1_the_balanced_tail_partition_tiles_odd_loops_without_a_short_window() {
-  constexpr uint32_t bar = Config::TICKS_PER_BAR, S = 2 * bar;
-  struct Shape { uint32_t bars; uint32_t shortest; };
-  for (const Shape shape : {Shape{3, 1152}, Shape{33, 1152}, Shape{35, 1152}, Shape{32, S}, Shape{1, bar},
-                            Shape{2, S}, Shape{5, 1152}}) {
-    const uint32_t len = shape.bars * bar;
-    for (bool balanced : {false, true}) {
-      uint32_t at = 0, shortest = UINT32_MAX, windows = 0;
+// The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
+// the nominal span, sized evenly in 8-tick clock quanta, so no successor follows a shorter window into a longer one
+// (a local tail scheme always has that seam; device: the 1.5 -> 2-bar wrap missed under the 3-denial bound). Never
+// wrapping; the default partition is unchanged.
+void test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, S = 2 * bar, Q = Config::TICKS_PER_CLOCK;
+  for (const uint32_t bars : {1u, 2u, 3u, 4u, 5u, 32u, 33u, 35u}) {
+    const uint32_t len = bars * bar;
+    for (bool equal : {false, true}) {
+      uint32_t at = 0, shortest = UINT32_MAX, longest = 0, windows = 0, longWindows = 0, shortWindows = 0;
       while (at < len) {
-        const uint32_t w = rollingWindowLengthAt(at, len, balanced);
+        const uint32_t w = rollingWindowLengthAt(at, len, equal);
         char detail[96];
-        snprintf(detail, sizeof(detail), "bars=%u balanced=%d at=%u w=%u", shape.bars, balanced, at, w);
+        snprintf(detail, sizeof(detail), "bars=%u equal=%d at=%u w=%u", bars, equal, at, w);
         TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, w, detail);
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(S, w, detail);           // never larger than the nominal span
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(len - at, w, detail);    // never wraps the loop's end
-        TEST_ASSERT_EQUAL_UINT32_MESSAGE(at, rollingBoundaryAtOrAfter(at, len, balanced), detail);  // a boundary
-        if (at + w < len) TEST_ASSERT_EQUAL_UINT32_MESSAGE(at + w, rollingBoundaryAtOrAfter(at + 1, len, balanced),
-                                                           detail);   // and the next one: no gap, no overlap
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(S, w, detail);          // never larger than the nominal span
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(len - at, w, detail);   // never wraps the loop's end
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, at % Q, detail);             // every boundary is clock-reachable
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(at, rollingBoundaryAtOrAfter(at, len, equal), detail);
+        if (at + w < len)
+          TEST_ASSERT_EQUAL_UINT32_MESSAGE(at + w, rollingBoundaryAtOrAfter(at + 1, len, equal), detail);  // no gap
         shortest = std::min(shortest, w);
+        longest = std::max(longest, w);
+        longWindows += w == 1496;
+        shortWindows += w == 1488;
         at += w;
         ++windows;
       }
-      TEST_ASSERT_EQUAL_UINT32(len, at);  // the windows tile the loop exactly
-      char detail[64];
-      snprintf(detail, sizeof(detail), "bars=%u balanced=%d windows=%u", shape.bars, balanced, windows);
-      TEST_ASSERT_EQUAL_UINT32_MESSAGE(balanced ? shape.shortest : std::min(S, len % S ? len % S : S), shortest,
-                                       detail);
+      char detail[96];
+      snprintf(detail, sizeof(detail), "bars=%u equal=%d windows=%u shortest=%u longest=%u", bars, equal, windows,
+               shortest, longest);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(len, at, detail);                       // the windows tile the loop exactly
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE((len + S - 1) / S, windows, detail);    // the fewest windows that fit S
+      if (equal) TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(Q, longest - shortest, detail);  // evenly sized
+      if (equal && bars == 3) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1152, shortest, detail);
+      if (equal && bars == 5) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1280, shortest, detail);
+      if (equal && bars == 33) {
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(6, longWindows, detail);   // 6 x 1,496
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(11, shortWindows, detail); // + 11 x 1,488
+      }
+      if (bars % 2 == 0) TEST_ASSERT_EQUAL_UINT32_MESSAGE(S, shortest, detail);  // even loops: unchanged
     }
   }
 }
@@ -681,12 +692,12 @@ uint32_t referenceNoteOnsPerTraversal(uint32_t bars, uint32_t notesPerBar) {
   return ons;
 }
 
-void balancedThreeBarTake(uint32_t notesPerBar) {
-  const uint32_t reference = referenceNoteOnsPerTraversal(3, notesPerBar);
+void balancedThreeBarTake(uint32_t notesPerBar, uint32_t bars = 3) {
+  const uint32_t reference = referenceNoteOnsPerTraversal(bars, notesPerBar);
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, reference, "precondition: the unrouted reference plays the take");
   installReader();
   Track& t = trackManager.getTrack(0);
-  Loop& loop = recordTake(t, 3, notesPerBar);
+  Loop& loop = recordTake(t, bars, notesPerBar);
   reader().serviceOwner(loop);
   reader().serviceOwner(loop);
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
@@ -694,7 +705,7 @@ void balancedThreeBarTake(uint32_t notesPerBar) {
   const uint32_t len = loop.loopLengthTicks;
   // The successor pipeline the device measures: N+1 demanded while N serves, a full span ahead, no denials.
   RollingSuccessorProbe::configure(2 * Config::TICKS_PER_BAR, 0xFF, 0);
-  TEST_ASSERT_EQUAL_UINT32(3 * Config::TICKS_PER_BAR, len);
+  TEST_ASSERT_EQUAL_UINT32(bars * Config::TICKS_PER_BAR, len);
   nativePlaybackDeadlineClock = {0, 1};
   clockManager.assignCurrentTickSilently(0);
   t.startPlaying(0);
@@ -716,9 +727,12 @@ void balancedThreeBarTake(uint32_t notesPerBar) {
         t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0;
     if (serving) {
       if (firstServed == UINT32_MAX) firstServed = tick;
-      if (cov.startPhase == 0 && cov.lengthTicks == 1152) ++w0;
-      else if (cov.startPhase == 1152 && cov.lengthTicks == 1152) ++w1;
-      else ++other;
+      // Every served window is exactly one window of the equal partition (3 bars: [0, 1152) and [1152, 2304)).
+      const bool partitionWindow = rollingBoundaryAtOrAfter(cov.startPhase, len, true) == cov.startPhase &&
+          cov.lengthTicks == rollingWindowLengthAt(cov.startPhase, len, true);
+      if (!partitionWindow) ++other;
+      else if (cov.startPhase == 0) ++w0;
+      else ++w1;
     } else if (firstServed != UINT32_MAX && tick < end - len) {
       ++gapTicks;
     }
@@ -733,7 +747,11 @@ void balancedThreeBarTake(uint32_t notesPerBar) {
       minOns = std::min(minOns, lastTraversalOns);
       ++traversalsCounted;
     }
-    if (tick % len == len - 1) onsAtTraversal = MidiSendCapture::count();
+    // One traversal per capture window: the capture holds 8,192 events, fewer than a long dense run.
+    if (tick % len == len - 1) {
+      MidiSendCapture::reset();
+      onsAtTraversal = 0;
+    }
   }
   const auto& succ = RollingSuccessorProbe::gCounters.perTrack[0];
   char detail[260];
@@ -763,6 +781,13 @@ void test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows() { ba
 // A note held across the balanced seam: at 3 notes a bar the note at 1,027 sounds until 1,155, across [0, 1152) |
 // [1152, 2304). It must close once, in its traversal, with no stuck or doubled note.
 void test_5_1_a_note_held_across_the_balanced_seam_closes_once() { balancedThreeBarTake(3); }
+
+// A 5-bar loop under the equal partition: 3 x 1,280 ticks, seams at 1,280 and 2,560 -- not the default 2 | 2 | 1.
+void test_5_1_the_routed_slot_serves_a_5_bar_loop_in_three_equal_windows() {
+  TEST_ASSERT_EQUAL_UINT32(1280, rollingWindowLengthAt(0, 5 * Config::TICKS_PER_BAR, true));
+  TEST_ASSERT_EQUAL_UINT32(2560, rollingBoundaryAtOrAfter(1281, 5 * Config::TICKS_PER_BAR, true));
+  balancedThreeBarTake(16, 5);
+}
 
 // The deadline-successor service bound (DEC-246 amendment 27/26, owner ruling): an eligible rolling successor with an
 // active handoff deadline may be denied at most three consecutive eligible opportunities (measured on device: 3 holds
@@ -876,9 +901,10 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only);
   RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
   RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
-  RUN_TEST(test_5_1_the_balanced_tail_partition_tiles_odd_loops_without_a_short_window);
+  RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
+  RUN_TEST(test_5_1_the_routed_slot_serves_a_5_bar_loop_in_three_equal_windows);
   RUN_TEST(test_5_1_a_deadline_successor_is_never_denied_more_than_three_opportunities);
   RUN_TEST(test_5_1_the_offer_names_the_deadline_successor_beside_main_s_demand);
   return UNITY_END();
