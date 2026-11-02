@@ -115,3 +115,18 @@ Each level was measured twice, because each failure fell on a tail seam (actual 
   denials (request to ready about 900–1,090 at 4–5, plus the turn variance).
 - Full two-bar seams handed off at 4 and 5 before the tail missed. The answer is therefore partly geometric (the tail
   is the shortest lead) and partly the service rate.
+
+## The enforced bound (`5424079e`): deny 4 injected, at most 3 effective
+
+- **Image.** `dbc29983085e1b57`, run `4:1536:20` (twice); per-seam rows drained from the device ring.
+- **The bound engages:** 6–12 grants forced per seam, so the successor is served at least every fourth opportunity.
+- **Mid-loop seams** (two-bar N, lead 1,504–1,528) all handed off, with request to ready 1,184–1,392 ticks.
+- **Every miss is the wrap successor.** It is the next traversal's first two-bar window, requested at the start of
+  the second 1.5-bar tail window, with a lead of 1,128–1,152 ticks. It needs about 1,300–1,400 ticks to prepare
+  under the 3-denial service rate (N.end 50,688, 76,032 and 101,376). The first tail window's successor (the second
+  tail window, 1.5 bars) handed off: ready 704–776.
+- **Reading.** Under the enforced 3-denial contract, a full two-bar window needs more preparation than the balanced
+  tail's 1,152-tick lead. The earlier plain deny-3 run passed with a 40-tick margin; this run, at the same service
+  rate, does not. The tail's lead and the wrap successor's work are mismatched.
+- **The restart stuck-role shape did not reproduce.** The new `busy,roles` rows at the restart show only
+  `BuildActive` (refusal 2) on other tracks, with no stuck role.
