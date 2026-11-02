@@ -810,6 +810,9 @@ struct LoopPlaybackRuntime {
     /// candidate (`rollingCandidateRejectTerm`), 0 when none. Sits in existing padding; the producer reports it as the
     /// `win_blocked` row's `rq`.
     uint8_t rejectTerm = 0;
+    /// Report-only (DEC-246 amendment 27): the phase the resolver found this frame in when it blocked it
+    /// (`RollingPhase`). Sits in existing padding.
+    uint8_t blockedFromPhase = 0;
     uint32_t epoch = 0;
     uint32_t generation = 0;
     uint32_t loopLength = 0;

@@ -5719,6 +5719,7 @@ TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingF
   // playback-tick-consume-only phase 2 (report-only): the predicate that blocks this frame, for the ticks after it.
   PlaybackTickContext::noteTurnReject(why);
   frame.blockedBy = static_cast<uint8_t>(why);
+  frame.blockedFromPhase = static_cast<uint8_t>(frame.phase);
   const auto* set = runtime.viewSetIfPrewarmed();
   if (set && set->lifecycle.current == frame.boundView && frame.boundView < set->views.size() &&
       set->views[frame.boundView].storageGeneration == frame.boundStorageGeneration)
@@ -6128,6 +6129,53 @@ ContinuityRejectMeasure gContinuityReject[Config::NUM_TRACKS];
 #endif
 }  // namespace
 
+/// DEC-246 amendment 27 (owner ruling): one measurement per Blocked episode -- the frame's own state and its roles, the
+/// two identities, the candidate interval, the playhead and the owners -- so a steady-state block after a successful
+/// handoff is named, not inferred. Report-only; the dedupe key is the episode (reason, deadline, start).
+TRACK_COLD_MEM void Track::reportRollingBlockMeasure(const LoopPlaybackRuntime& runtime, const Loop& loop) {
+  const auto& frame = runtime.rolling;
+  const uint8_t track = playbackRebuildTrackIndex(*this);
+  if (track >= Config::NUM_TRACKS) return;
+#if defined(__IMXRT1062__)
+  DMAMEM static uint64_t sReported[Config::NUM_TRACKS];
+#else
+  static uint64_t sReported[Config::NUM_TRACKS];
+#endif
+  const uint64_t key = (uint64_t(frame.blockedBy) << 56) ^ (frame.deadlineTick << 8) ^ frame.startPhase ^ 1u;
+  if (sReported[track] == key) return;
+  sReported[track] = key;
+  const auto* set = runtime.viewSetIfPrewarmed();
+  const uint8_t none = RuntimePlaybackViewLifecycle::kNoView;
+  const uint8_t current = set ? set->lifecycle.current : none, ready = set ? set->lifecycle.ready : none;
+  const uint8_t build = set ? set->lifecycle.build : none;
+  uint32_t readyIdentity = 0, currentIdentity = 0, readyStart = 0, readyLength = 0;
+  uint8_t readyFlags = 0;
+#if REVISION_MANIFEST_READER
+  if (set && ready < set->views.size()) {
+    readyIdentity = set->views[ready].source.manifestIdentity;
+    readyStart = set->views[ready].coverage.startPhase;
+    readyLength = set->views[ready].coverage.lengthTicks;
+    readyFlags = uint8_t((set->views[ready].complete ? 1u : 0u) | (set->views[ready].published ? 2u : 0u));
+  }
+  if (set && current < set->views.size()) currentIdentity = set->views[current].source.manifestIdentity;
+#endif
+  const uint8_t owners = uint8_t((runtime.ownsCoverageSource() ? 1u : 0u) | (runtime.viewBuild.active() ? 2u : 0u) |
+      (runtime.pendingViewRequest_.active ? 4u : 0u) | (runtime.frozenViewRequest.active ? 8u : 0u) |
+      (runtime.completedPromisePendingJudgement ? 16u : 0u) | (runtime.ownsLaunchPreparation() ? 32u : 0u) |
+      (runtime.hasBoundRecordReturnWindowForPendingJob() ? 64u : 0u) | (runtime.admittedPromiseInvalidated ? 128u : 0u));
+  // blocked,frame: why (RouteReject), from (RollingPhase), start, deadline, lastTickInLoop, frame loop, owners
+  // (coverage|build|pending|frozen|promise|launch|record-return|invalidated), the reject term.
+  SC_FROZEN_WINDOW_READINESS(track, activeLoopIndex, "blocked", "frame", frame.blockedBy, frame.blockedFromPhase,
+                             frame.startPhase, frame.deadlineTick, loop.lastTickInLoop, frame.loopLength,
+                             loop.loopLengthTicks, owners, frame.rejectTerm, 0u);
+  // blocked,roles: current, ready, build, (current manifest identity << 32 | ready manifest identity), ready interval,
+  // build-work deadline low word, ready complete|published, retained, idle.
+  SC_FROZEN_WINDOW_READINESS(track, activeLoopIndex, "blocked", "roles", current, ready, build,
+                             (uint64_t(currentIdentity) << 32) | readyIdentity, readyStart, readyLength,
+                             static_cast<uint32_t>(runtime.viewBuildWork.deadlineTick), readyFlags,
+                             set ? set->lifecycle.retained : none, set ? set->lifecycle.idle : none);
+}
+
 TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(PlaybackDeadlineClock clock) {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
   (void)clock;
@@ -6348,6 +6396,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       return RollingOutcome::Serving;
     }
     if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+      reportRollingBlockMeasure(*runtime, loop);
       // `rq` names the refusing candidate term when the resolver blocked on `CandidateRejected` (0 otherwise).
       reportPlaybackRollingGateRow("win_blocked", clock.epoch != 0, /*reprojectedTick=*/false,
           frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::CandidateRejected)

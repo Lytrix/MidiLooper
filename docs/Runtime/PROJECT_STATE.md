@@ -1,3 +1,21 @@
+**2026-11-02 — restart handoff closed on the device (5.1, DEC-246 amendment 27): the first post-restart manifest window serves, and steady state holds for 150 s at 300 BPM.**
+- **Landed.**
+  - `95d49ed7`: a term-6 continuity refusal is measured and recoverable.
+  - `e9cb6c24`: handoff continuity is the next clock-reachable frontier. On external MIDI clock one pulse is 8
+    ticks; the device measured `lastTickInLoop` 19,960 at `S` = 19,968.
+  - `90446539`: the restart gate passes on live window-served ticks or a live `succ` row, and stops promptly
+    (`--lane-cadence-hold` for steady state). DEC-246 records the rulings.
+  - This commit: one `blocked,frame` / `blocked,roles` measurement per Blocked episode.
+- **Host.** FULL 3,944 cases, 8 skipped, 3,936 passed.
+- **Device** (succprobe `b053a5937ea65710`, `captures/session_20261102_180417.log`, sweep `--lane-cadence-deny none
+  --lane-cadence-hold 150`):
+  - The first manifest window served 24.4 s after the restart.
+  - Track 8 then served continuously from 140.4 s to 290.8 s, with no Blocked episode and no continuity refusal.
+  - Successor probe: 98 requested, 97 handed off, 0 missed, 1 cancelled (the stop), 0 price-refused. Max request to
+    ready was 360 ticks; the min ready margin was 432 ticks.
+  - The earlier 274.7 s block (`session_20261102_172043`, the transport left running past the gate) did not recur.
+- **Next.** Resume the 0/3/7 successor-lead sweep (amendment 26).
+
 **2026-11-02 — OLED dim/flicker with the overview strip: the STOPPED wrap-held completion re-walked the whole loop every frame (owner report); fixed.**
 - **Cause.** Stage 3B in `resolveDisplayNotesByDrawSource` (from `8849c5e1`) called `Loop::appendOverdubPassDisplayNotes` on every STOPPED frame: every committed event of every active pass was read, edit-applied and reconstructed to find the few loop-crossing rows. On track 8 slot 3 (25,344 ticks, 256 notes; `session_20261102_164414`) resolve went from ~0.5 ms while playing to ~40 ms per frame once STOPPED, so the OLED ran at ~9 fps (pulse of the selected track label slowed, flicker).
 - **Fix.** `DisplayManager::stoppedWrapHeldCompletion` memoises the wrap-held set per loop content (`loopId`, `playbackRevision`, `canonicalStorageGeneration`, length; dropped by `invalidateLiveDisplayCache`); the frame merges it with `DisplayWindowUtils::mergeWrapHeldDisplayNotes`, the same rule the append uses (now shared).
