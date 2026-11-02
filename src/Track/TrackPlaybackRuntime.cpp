@@ -2403,8 +2403,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   const bool successorPriceWaived = RollingSuccessorProbe::gKnobs.enabled &&
       RollingSuccessorProbe::gKnobs.bypassLeadPrice && frame.phase == RollingPhase::Serving &&
       frame.successorState == 1 && frame.deadlineTick != 0 && frame.startPhase < frame.loopLength &&
-      frozenViewRequest.deadlineTick ==
-          frame.deadlineTick + std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase);
+      frozenViewRequest.deadlineTick == frame.deadlineTick + rollingFrameSpan(frame);
 #else
   constexpr bool successorPriceWaived = false;
 #endif

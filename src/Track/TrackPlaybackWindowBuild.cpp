@@ -57,6 +57,47 @@
   ((void)0)
 #endif
 
+/// DEC-246 amendment 27 (owner ruling): the rolling partition of a loop into non-wrapping windows of the nominal span
+/// S (two bars). When the loop is not a multiple of S, the default partition ends in a short window, and the successor
+/// at the wrap gets only that window's length as lead (measured on device: 768 ticks on a 33-bar loop). The **balanced
+/// tail** instead splits the last two windows evenly (on the sixteenth grid): `... | S | S | (S + r) / 2 | rest`, so
+/// the shortest window -- and the wrap successor's lead -- is as long as it can be without a wrapping view.
+/// `balancedTail` is set for the manifest-routed slot only, until the device proof is green.
+static TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingTailSplit(uint32_t loopLength, uint32_t& pairStart) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR, grain = Config::TICKS_PER_BAR / 16;
+  const uint32_t whole = (loopLength - 1) / S;  // windows before the last one on the plain grid (>= 1 when L > S)
+  pairStart = (whole - 1) * S;
+  return ((loopLength - pairStart) / 2) / grain * grain;
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool balancedTail) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
+  if (loopLength == 0 || start >= loopLength) return 0;
+  const uint32_t rest = loopLength - start;
+  if (!balancedTail || loopLength <= S || loopLength % S == 0 || start + 2 * S < loopLength)
+    return std::min(S, rest);
+  uint32_t pairStart = 0;
+  const uint32_t first = rollingTailSplit(loopLength, pairStart);
+  if (start < pairStart) return std::min(S, rest);
+  return start < pairStart + first ? pairStart + first - start : rest;
+}
+
+/// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
+TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool balancedTail) {
+  constexpr uint32_t S = 2 * Config::TICKS_PER_BAR;
+  const uint32_t grid = std::min(loopLength, ((phase + S - 1) / S) * S);
+  if (!balancedTail || loopLength <= S || loopLength % S == 0) return grid;
+  uint32_t pairStart = 0;
+  const uint32_t first = rollingTailSplit(loopLength, pairStart);
+  const uint32_t tailSplit = pairStart + first;
+  if (phase <= pairStart) return grid;
+  return phase <= tailSplit ? tailSplit : loopLength;
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame) {
+  return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.balancedTail != 0);
+}
+
 namespace {
 /// **DEC-203** -- the two-bar span the merged-window policy clamps to. File-local because both callers live here, so
 /// the builder and the readiness predicate cannot be handed different constants.
@@ -5737,9 +5778,9 @@ struct RollingSuccessorKey {
   uint32_t lengthTicks;
 };
 TRACK_COLD_MEM RollingSuccessorKey rollingSuccessorKey(const LoopPlaybackRuntime::RollingFrame& frame) {
-  const uint32_t span = std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase);
+  const uint32_t span = rollingFrameSpan(frame);
   const uint32_t start = (frame.startPhase + span) % frame.loopLength;
-  return {frame.deadlineTick + span, start, std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - start)};
+  return {frame.deadlineTick + span, start, rollingWindowLengthAt(start, frame.loopLength, frame.balancedTail != 0)};
 }
 
 TRACK_COLD_MEM bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline) {
@@ -5850,8 +5891,7 @@ TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
   if (ready.source.playbackRevision != loop.playbackRevision) return 19;
   if (ready.coverage.startPhase != frame.startPhase) return 20;
   if (frame.startPhase >= frame.loopLength) return 21;
-  if (ready.coverage.lengthTicks != std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase))
-    return 22;
+  if (ready.coverage.lengthTicks != rollingFrameSpan(frame)) return 22;
   if (ready.coverage.loopLengthTicks != frame.loopLength) return 23;
   return 0;
 }
@@ -5873,8 +5913,7 @@ TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
       ready.complete && !ready.published && !ready.rawCoveragePrepared &&
       ready.source.origin == PlaybackWindowOrigin::Committed && ready.source.sourceGeneration == frame.generation &&
       ready.source.playbackRevision == loop.playbackRevision && ready.coverage.startPhase == frame.startPhase &&
-      frame.startPhase < frame.loopLength && ready.coverage.lengthTicks ==
-          std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) &&
+      frame.startPhase < frame.loopLength && ready.coverage.lengthTicks == rollingFrameSpan(frame) &&
       ready.coverage.loopLengthTicks == frame.loopLength;
 }
 }
@@ -6605,8 +6644,13 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   // Align within the loop, not on an infinite two-bar grid: after an odd terminal
   // bar the next legal boundary is phase zero, then the same loop-local grid again.
   const uint64_t target = uint64_t(phase) + lookahead;
-  const uint64_t localBoundary = std::min(uint64_t(loop.loopLengthTicks),
-      ((target % loop.loopLengthTicks + span - 1) / span) * span);
+#if REVISION_MANIFEST_READER
+  const bool balancedTail = manifestLaneRoutesSlot(activeLoopIndex);
+#else
+  constexpr bool balancedTail = false;
+#endif
+  const uint64_t localBoundary = rollingBoundaryAtOrAfter(
+      static_cast<uint32_t>(target % loop.loopLengthTicks), loop.loopLengthTicks, balancedTail);
   uint64_t boundary = (target / loop.loopLengthTicks) * loop.loopLengthTicks + localBoundary;
   if (frame.refusedHandoffValid) {
     // DEC-147: start at the refused span's handoff, so the retry can never land on the position that was just measured
@@ -6654,7 +6698,8 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Rejected;
   }
   const uint32_t startPhase = static_cast<uint32_t>((phase + positionLead) % loop.loopLengthTicks);
-  const PlaybackCoverageInterval coverage{startPhase, std::min(span, loop.loopLengthTicks - startPhase),
+  const PlaybackCoverageInterval coverage{startPhase,
+                                           rollingWindowLengthAt(startPhase, loop.loopLengthTicks, balancedTail),
                                            loop.loopLengthTicks};
   const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock);
   if (requested != PlaybackViewRequestResult::DeferredSourceQualification) {
@@ -6683,6 +6728,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   frame.loopLength = loop.loopLengthTicks;
   frame.projectionStart = getProjectionCycleStartTick();
   frame.startPhase = coverage.startPhase;
+  frame.balancedTail = balancedTail ? 1u : 0u;
   frame.deadlineTick = pending->deadlineTick;
   frame.lastTick = clock.tick;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Requested; // Publish metadata last.
@@ -6794,8 +6840,7 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   // requester cancels it). No build, no reader call: fixed metadata only.
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.successorState == 1 &&
       frame.deadlineTick != 0 && frame.startPhase < frame.loopLength && clock.tick >= frame.deadlineTick &&
-      clock.tick - frame.deadlineTick >=
-          std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase)) {
+      clock.tick - frame.deadlineTick >= rollingFrameSpan(frame)) {
     const RollingSuccessorKey key = rollingSuccessorKey(frame);
     const bool prepared = set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete &&
         !set->views[set->lifecycle.ready].published &&
@@ -6807,8 +6852,7 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   }
 #endif
   const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength :
-      (frame.startPhase < frame.loopLength
-          ? std::min(uint32_t(2 * Config::TICKS_PER_BAR), frame.loopLength - frame.startPhase) : 0u);
+      (frame.startPhase < frame.loopLength ? rollingFrameSpan(frame) : 0u);
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
     if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView)
       return rejectRollingFrame(*runtime, loop, RouteReject::ServingViewNotBound);
@@ -7564,7 +7608,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
       // retirement calls that follow.
       const uint8_t attemptOrdinal = frame.refusedSpanAttempts;
       frame.refusedHandoffPhase = static_cast<uint32_t>(
-          (request.coverage.startPhase + spanTicks) % loop.loopLengthTicks);
+          (request.coverage.startPhase + rollingFrameSpan(frame)) % loop.loopLengthTicks);
       frame.refusedHandoffValid = true;
       frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
       const uint32_t dropBefore = probeCoverageBuildDrop(slotIndex);

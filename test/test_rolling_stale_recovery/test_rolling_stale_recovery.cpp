@@ -618,6 +618,152 @@ void test_5_1_an_expired_routed_demand_is_discharged_after_a_restart() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
 
+// The balanced tail (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling partition must not end in a short
+// window, whose successor at the wrap gets only that window's length as lead (device: 768 ticks on 33 bars, every
+// deny-3 miss). The last two windows are split evenly instead, never wrapping. The default partition is unchanged.
+void test_5_1_the_balanced_tail_partition_tiles_odd_loops_without_a_short_window() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR, S = 2 * bar;
+  struct Shape { uint32_t bars; uint32_t shortest; };
+  for (const Shape shape : {Shape{3, 1152}, Shape{33, 1152}, Shape{35, 1152}, Shape{32, S}, Shape{1, bar},
+                            Shape{2, S}, Shape{5, 1152}}) {
+    const uint32_t len = shape.bars * bar;
+    for (bool balanced : {false, true}) {
+      uint32_t at = 0, shortest = UINT32_MAX, windows = 0;
+      while (at < len) {
+        const uint32_t w = rollingWindowLengthAt(at, len, balanced);
+        char detail[96];
+        snprintf(detail, sizeof(detail), "bars=%u balanced=%d at=%u w=%u", shape.bars, balanced, at, w);
+        TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, w, detail);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(S, w, detail);           // never larger than the nominal span
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(len - at, w, detail);    // never wraps the loop's end
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(at, rollingBoundaryAtOrAfter(at, len, balanced), detail);  // a boundary
+        if (at + w < len) TEST_ASSERT_EQUAL_UINT32_MESSAGE(at + w, rollingBoundaryAtOrAfter(at + 1, len, balanced),
+                                                           detail);   // and the next one: no gap, no overlap
+        shortest = std::min(shortest, w);
+        at += w;
+        ++windows;
+      }
+      TEST_ASSERT_EQUAL_UINT32(len, at);  // the windows tile the loop exactly
+      char detail[64];
+      snprintf(detail, sizeof(detail), "bars=%u balanced=%d windows=%u", shape.bars, balanced, windows);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(balanced ? shape.shortest : std::min(S, len % S ? len % S : S), shortest,
+                                       detail);
+    }
+  }
+}
+
+// End to end on the routed slot: a dense 3-bar take serves [0, 1152) and [1152, 2304) -- no one-bar window -- plays
+// continuously once a window serves, and sends every note of the take in each traversal.
+// The authoritative reference: the same take on the unrouted lane (no reader installed), NoteOns in one late traversal.
+uint32_t referenceNoteOnsPerTraversal(uint32_t bars, uint32_t notesPerBar) {
+  uninstallReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, bars, notesPerBar);
+  RollingOwnerLane lane;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  const uint32_t len = loop.loopLengthTicks;
+  size_t mark = 0;
+  uint32_t ons = 0;
+  MidiSendCapture::reset();
+  for (uint32_t tick = 0; tick < 12 * len; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    if (tick % 4 == 0) lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    if (tick == 10 * len - 1) mark = MidiSendCapture::count();
+    if (tick == 11 * len - 1)
+      for (size_t i = mark; i < MidiSendCapture::count(); ++i) ons += MidiSendCapture::at(i).isNoteOn() ? 1u : 0u;
+  }
+  t.stopPlaying();
+  return ons;
+}
+
+void balancedThreeBarTake(uint32_t notesPerBar) {
+  const uint32_t reference = referenceNoteOnsPerTraversal(3, notesPerBar);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, reference, "precondition: the unrouted reference plays the take");
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 3, notesPerBar);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const uint32_t len = loop.loopLengthTicks;
+  // The successor pipeline the device measures: N+1 demanded while N serves, a full span ahead, no denials.
+  RollingSuccessorProbe::configure(2 * Config::TICKS_PER_BAR, 0xFF, 0);
+  TEST_ASSERT_EQUAL_UINT32(3 * Config::TICKS_PER_BAR, len);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t firstServed = UINT32_MAX, gapTicks = 0, other = 0, w0 = 0, w1 = 0;
+  const uint32_t end = 60 * len;
+  size_t onsAtTraversal = 0;
+  uint32_t lastTraversalOns = 0, traversalsCounted = 0, minOns = UINT32_MAX, unmatched = 0;
+  MidiSendCapture::reset();
+  for (uint32_t tick = 0; tick < end; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    const bool serving = runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0;
+    if (serving) {
+      if (firstServed == UINT32_MAX) firstServed = tick;
+      if (cov.startPhase == 0 && cov.lengthTicks == 1152) ++w0;
+      else if (cov.startPhase == 1152 && cov.lengthTicks == 1152) ++w1;
+      else ++other;
+    } else if (firstServed != UINT32_MAX && tick < end - len) {
+      ++gapTicks;
+    }
+    if (tick % len == len - 1 && firstServed != UINT32_MAX && tick > firstServed + 2 * len && tick < end - len) {
+      size_t ons = 0, offs = 0;
+      for (size_t i = onsAtTraversal; i < MidiSendCapture::count(); ++i) {
+        ons += MidiSendCapture::at(i).isNoteOn() ? 1u : 0u;
+        offs += MidiSendCapture::at(i).isNoteOff() ? 1u : 0u;
+      }
+      unmatched += ons > offs ? uint32_t(ons - offs) : uint32_t(offs - ons);
+      lastTraversalOns = static_cast<uint32_t>(ons);
+      minOns = std::min(minOns, lastTraversalOns);
+      ++traversalsCounted;
+    }
+    if (tick % len == len - 1) onsAtTraversal = MidiSendCapture::count();
+  }
+  const auto& succ = RollingSuccessorProbe::gCounters.perTrack[0];
+  char detail[260];
+  snprintf(detail, sizeof(detail), "firstServed=%u w0=%u w1=%u other=%u gap=%u traversals=%u minOns=%u lastOns=%u "
+           "succ req=%u handed=%u missed=%u minLead=%u", firstServed, w0, w1, other, gapTicks, traversalsCounted,
+           minOns, lastTraversalOns, succ.requested, succ.handedOff, succ.missed,
+           succ.minRequestLead == UINT32_MAX ? 0u : succ.minRequestLead);
+  RollingSuccessorProbe::gKnobs = RollingSuccessorProbe::Knobs{};
+  printf("BALANCED %s\n", detail);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(UINT32_MAX, firstServed, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, other, detail);  // no one-bar window, no other shape
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, w0, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, w1, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, traversalsCounted, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, succ.missed, detail);
+  // The wrap successor's lead is the balanced window's (1,152 ticks less the request's own turn), not one bar.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(Config::TICKS_PER_BAR, succ.minRequestLead, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, gapTicks, detail);          // continuous once the first window serves
+  // Every note of the take, every traversal: exactly the unrouted (authoritative) lane's count.
+  printf("BALANCED reference=%u\n", reference);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(reference, minOns, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, unmatched, detail);        // each NoteOn closed in its traversal
+}
+
+void test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows() { balancedThreeBarTake(16); }
+
+// A note held across the balanced seam: at 3 notes a bar the note at 1,027 sounds until 1,155, across [0, 1152) |
+// [1152, 2304). It must close once, in its traversal, with no stuck or doubled note.
+void test_5_1_a_note_held_across_the_balanced_seam_closes_once() { balancedThreeBarTake(3); }
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_5_1_a_source_stale_blocked_frame_recovers_while_playing);
@@ -632,5 +778,8 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only);
   RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
   RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
+  RUN_TEST(test_5_1_the_balanced_tail_partition_tiles_odd_loops_without_a_short_window);
+  RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
+  RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
   return UNITY_END();
 }
