@@ -783,6 +783,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       }
 #endif
     }
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+    RollingSuccessorProbe::noteSuccessorOpportunities(offers, offerCount, chosenTrack, windowClock.tick);
+#endif
 #if defined(SESSION_CAPTURE)
     uint8_t windowWantMask = 0;
     for (uint8_t i = 0; i < offerCount && i < 8; ++i)

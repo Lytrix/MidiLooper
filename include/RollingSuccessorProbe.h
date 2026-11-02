@@ -105,6 +105,13 @@ struct Counters {
     uint8_t resolved = 0;         // 1: resolved and not yet reported
     uint64_t servingSeenTick = 0; // the first producer turn that saw N Serving under this key
     uint8_t forcedGrants = 0;     // grants the service bound kept the injector from withholding (owner ruling)
+    // Owner ruling (cadence contract): while the successor is owed, the largest transport-tick gap between eligible
+    // lane opportunities (main-loop starvation; contract <= 8) and between grants served to it (arbitration
+    // starvation; contract <= 32).
+    uint64_t lastOpportunityTick = 0;
+    uint64_t lastServedTick = 0;
+    uint32_t maxOpportunityGap = 0;
+    uint32_t maxGrantGap = 0;
   } seam[kTracks] = {};
   /// Resolved seams waiting for the main-loop report (a handed-off seam's trace is replaced by the next one at once).
   static constexpr uint8_t kSeamLog = 8;
@@ -132,6 +139,14 @@ bool denyThisGrant(uint8_t track, uint64_t tick);
 void noteGrant(uint8_t track, uint64_t tick);
 /// The service bound overrode a withheld grant for `track` (counted on the seam being traced).
 void noteForcedGrant(uint8_t track);
+}  // namespace RollingSuccessorProbe
+namespace MidiServiceDrain { struct PlaybackHolder; }
+namespace RollingSuccessorProbe {
+/// One lane turn (owner ruling, cadence contract): every holder whose deadline successor is owed had an eligible
+/// opportunity at `tick`; `servedTrack` is the track that was actually served (`0xFF`: none). Measurement image only;
+/// defined beside the lane (flash).
+void noteSuccessorOpportunities(const MidiServiceDrain::PlaybackHolder* offers, uint8_t count, uint8_t servedTrack,
+                                uint64_t tick);
 /// Reconfigure the measurement (lead, denied track, denials per grain) and reset every counter.
 void configure(uint32_t requestLeadTicks, uint8_t denyTrack, uint8_t denyPerGrain);
 

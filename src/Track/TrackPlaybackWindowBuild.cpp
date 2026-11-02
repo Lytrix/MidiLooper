@@ -7942,6 +7942,36 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
   }
 }
 
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+namespace RollingSuccessorProbe {
+TRACK_COLD_MEM __attribute__((noinline)) void noteSuccessorOpportunities(const MidiServiceDrain::PlaybackHolder* offers,
+                                                                        uint8_t count, uint8_t servedTrack,
+                                                                        uint64_t tick) {
+  if (offers == nullptr) return;
+  for (uint8_t t = 0; t < count && t < kTracks; ++t) {
+    auto& seam = gCounters.seam[t];
+    const bool owed = offers[t].eligible && offers[t].canProgress && offers[t].deadlineSuccessor &&
+        seam.requestTick != 0 && seam.outcome == 0;
+    if (!owed) {
+      seam.lastOpportunityTick = 0;  // the gap is measured only while the successor is owed
+      continue;
+    }
+    if (seam.lastOpportunityTick != 0 && tick > seam.lastOpportunityTick) {
+      const uint64_t gap = tick - seam.lastOpportunityTick;
+      if (gap > seam.maxOpportunityGap) seam.maxOpportunityGap = gap > UINT32_MAX ? UINT32_MAX : uint32_t(gap);
+    }
+    seam.lastOpportunityTick = tick;
+    if (servedTrack == t) {
+      const uint64_t from = seam.lastServedTick != 0 ? seam.lastServedTick : seam.requestTick;
+      if (tick > from && tick - from > seam.maxGrantGap)
+        seam.maxGrantGap = tick - from > UINT32_MAX ? UINT32_MAX : uint32_t(tick - from);
+      seam.lastServedTick = tick;
+    }
+  }
+}
+}  // namespace RollingSuccessorProbe
+#endif
+
 namespace MidiServiceDrain {
 TRACK_COLD_MEM __attribute__((noinline)) PlaybackHolderSelection selectPlaybackHolderBounded(
     PlaybackHolderCursor& cursor, const PlaybackHolder* holders, uint8_t count, uint8_t& holderOut) {
@@ -8097,7 +8127,8 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     // The owner's trace: one row per resolved seam. succ_seam,<outcome>: eligible->request delay, request->first
     // grant, N.end, request->admit, request->ready, the lead left at the request, blocked turns, gates, last role
     // refusal, request->first withheld grant (low byte of ticks/8).
-    // succ_seam,<outcome>: (from N's adoption) first Serving turn, eligible, request; request->first grant; N.end;
+    // succ_seam,<outcome>: max opportunity gap, max grant gap (ticks, while owed); request (from N's adoption);
+    // request->first grant; N.end;
     // request->admit, request->ready (from the record), the lead left at the request, gates, grants the service bound
     // forced,
     // request->first withheld grant (ticks/8).
@@ -8114,7 +8145,7 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
       };
       SC_FROZEN_WINDOW_READINESS(t, 0, "succ_seam",
           seam.outcome == 1 ? "handed" : seam.outcome == 2 ? "missed" : seam.outcome == 3 ? "refused" : "cancelled",
-          from(nStart, seam.servingSeenTick), from(nStart, seam.eligibleTick), from(nStart, seam.requestTick),
+          seam.maxOpportunityGap, seam.maxGrantGap, from(nStart, seam.requestTick),
           seam.deadline, from(seam.requestTick, seam.firstGrantTick), r ? from(seam.requestTick, r->readyTick) : UINT32_MAX,
           seam.deadline > seam.requestTick ? static_cast<uint32_t>(seam.deadline - seam.requestTick) : 0,
           seam.blockMask, seam.forcedGrants,

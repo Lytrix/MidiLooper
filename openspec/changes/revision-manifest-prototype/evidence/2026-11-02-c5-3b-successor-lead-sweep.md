@@ -177,3 +177,32 @@ declared 64-tick advance and the 768-tick lead:
 - The 64-tick declared advance cannot fit (39 × 4 × 64 = 9,984).
 - Choosing that advance, a measured and enforced opportunity cadence or the declared turn bound, is the remaining
   pricing decision.
+
+## The cadence contract measured directly (owner ruling: <= 8-tick opportunity, <= 32-tick grant)
+
+- **Image.** `03596c3c5c11cddb` (equal partition, 3-denial bound, per-seam gap probe). Freshly flashed and
+  boot-verified.
+- **Run.** `--lane-cadence-points 4:1536:50`: 50/50 handed off, 0 missed, margin 504.
+- **Data.** 53 seams' `succ_seam` rows, drained from the device ring.
+
+| per seam, while the successor is owed | max | typical | contract proposed |
+|---|---|---|---|
+| eligible-opportunity gap | **40 ticks** (17 seams; the other 36 seams: 32) | 32–40 | ≤ 8 |
+| served-grant gap | **104 ticks** | 96–104 | ≤ 32 |
+| grants to finish the dense window | 11 (48 seams; 10 on 4) | 11 | — |
+
+**Correction to the earlier "7 ticks per opportunity" reading.** That figure divided ticks by the window's 39 grains,
+but the build completes in about **11 grants**, not 39. The lane opportunity actually comes every **32–40 transport
+ticks** (4–5 external-clock pulses, about 35–42 ms at 300 BPM). With the 3-denial bound, the grant gap is 4 × that,
+about 100. The real cost model is therefore:
+
+- request to ready ≈ grants × grant gap ≈ 11 × ~100 ≈ 1,100 ticks, which is what was measured (976–1,104).
+
+**Reading:**
+- An `<= 8`-tick opportunity contract is **not** what the scheduler provides today: it is 4–5 times that.
+- At the current cadence a formal worst case is 11 × (3 + 1) × 40 = **1,760 ticks**, more than the 1,488-tick
+  windows, even though every measured seam fits (worst 1,104).
+- One-window lookahead is therefore formally guaranteed only if either:
+  - the lane opportunity is enforced at a cadence of about 33 ticks or better (1,488 / (11 × 4)), or
+  - the grant count per window drops.
+- Otherwise the price needs either an enforced cadence or earlier preparation.
