@@ -1346,6 +1346,40 @@ void test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot() {
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
 }
 
+/// Probe image 047d6779 boot loop (2026-11-03, DACCVIOL at 0x103 in `SlotLoadSession::fail()`): both job instances
+/// are `DMAMEM` (`.bss.dma`, NOLOAD), and their static initializer writes only the members whose constructors need it --
+/// GCC relies on zeroed static storage for the rest, which RAM2 never is. `session` held the previous image's bytes
+/// (0x100), and the bundle load's first `clearLoadLoopJob()` ran `fail()`/`delete` on it. The boot init must discard
+/// such bytes without releasing them, so the first clear releases nothing and the load starts from no job.
+void test_boot_init_discards_noload_job_bytes_without_releasing_them() {
+  using namespace StorageManagerInternal;
+  LoadLoopJob* const jobs[] = {&loadLoopJob_, &parkedLoadLoopJob_};
+  for (LoadLoopJob* job : jobs) {
+    // The device's leftover state; the constructor-initialised members (File, buffer, snapshot ref) stay valid.
+    job->session = reinterpret_cast<SlotLoadSession*>(uintptr_t{0x100});
+    job->active = true;
+    job->track = 0xA5;
+    job->slot = 0xA5;
+    job->payloadSize = 0xA5A5A5A5u;
+    job->bytesRead = 0xA5A5A5A5u;
+    job->requestTracked = true;
+    job->requestGeneration = 0xA5A5A5A5u;
+  }
+  initLoadLoopJobsAtBoot();
+  for (LoadLoopJob* job : jobs) {
+    TEST_ASSERT_NULL_MESSAGE(job->session, "a NOLOAD session pointer must never reach fail()/delete");
+    TEST_ASSERT_FALSE(job->active);
+    TEST_ASSERT_FALSE(job->requestTracked);
+    TEST_ASSERT_EQUAL_UINT32(0, job->payloadSize);
+  }
+  TEST_ASSERT_FALSE(anyLoadLoopJobActive());
+  TEST_ASSERT_EQUAL_UINT8(0, SlotLoadSession::activeCount());
+  clearLoadLoopJob();  // the bundle load's first call releases nothing
+  TEST_ASSERT_FALSE(anyLoadLoopJobActive());
+  TEST_ASSERT_TRUE_MESSAGE(appendBootLoopSlotRestore(7, 3, 0), "the set still restores after the boot init");
+  clearPendingLoopSlotRestoresAtBoot();
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
@@ -1394,5 +1428,7 @@ int main(int, char**) {
   RUN_TEST(test_a34a_guard_is_released_and_a_later_drain_can_take_it);
   RUN_TEST(test_a34a_guard_predicate_is_false_without_an_owner);
   RUN_TEST(test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot);
+  // Last: while RED, the scribbled session would reach the next fixture's `setUp` clear.
+  RUN_TEST(test_boot_init_discards_noload_job_bytes_without_releasing_them);
   return UNITY_END();
 }

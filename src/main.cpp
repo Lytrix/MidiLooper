@@ -1350,6 +1350,7 @@ FLASHMEM void setup() {
   // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal
   // reboot leaves no crash report, so a stale breadcrumb is ignored and cleared.
   StorageManagerInternal::resetRestoreFaultSkips();
+  StorageManagerInternal::initLoadLoopJobsAtBoot();  // RAM2 NOLOAD: before any storage load clears a job
   if (hadCrashReport) {
     uint8_t faultTrack = 0;
     uint8_t faultSlot = 0;

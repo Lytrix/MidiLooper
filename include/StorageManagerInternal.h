@@ -381,6 +381,8 @@ struct DeferredLoopSlotRestore {
 };
 
 void clearLoadLoopJob();
+/// Boot, before any storage load: both job instances are `DMAMEM` (NOLOAD), so re-construct them without reading them.
+void initLoadLoopJobsAtBoot();
 void demoteActiveLoadLoopJobForFocus(uint8_t focusTrack, uint8_t focusSlot);
 void resumeParkedLoadLoopJobIfFocus(uint8_t focusTrack, uint8_t focusSlot);
 void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uint8_t focusSlot);

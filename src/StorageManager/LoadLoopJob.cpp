@@ -20,6 +20,7 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <cstring>
+#include <new>
 
 extern bool sequencerRunning;
 
@@ -175,6 +176,15 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     job.requestTracked = false;
     job.requestGeneration = 0;
     job.requestSetEpoch = 0;
+}
+
+/// `.bss.dma` is NOLOAD on Teensy, and the jobs' static initializer writes only the members whose constructors need it
+/// (GCC relies on zeroed static storage for the rest), so `session` and the plain fields start as the previous image's
+/// RAM2 bytes -- probe image 047d6779 faulted in `SlotLoadSession::fail()` on `session == 0x100`. Re-construct both jobs
+/// at boot, before the first `clearLoadLoopJob()`, without reading or releasing anything they hold: nothing is owned yet.
+STORAGE_PERSIST_MEM void initLoadLoopJobsAtBoot() {
+    new (&loadLoopJob_) LoadLoopJob{};
+    new (&parkedLoadLoopJob_) LoadLoopJob{};
 }
 
 STORAGE_PERSIST_MEM void clearLoadLoopJob() {
