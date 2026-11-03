@@ -14202,3 +14202,59 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
 ### Related
 
 DEC-241 (consume-only tick), DEC-244 (equal-tick order), DEC-245 (lossless source, explicit projections), DEC-243.
+
+## DEC-247 — A full deferred overdub completion set keeps the completion owed; it is never derived on the NoteOff
+
+**Date:** 2026-11-03
+**Owner:** `Loop` touched-coverage obligations (`accumulatePendingNoteChangesForIncomingNote`,
+`dischargeDeferredOverdubCompletions`, `materializeDeferredOverdubCompletionsAtDeadline`). Formal trigger: an
+ownership change of the overflow work, from MIDI dispatch to the worker lane and the C3.4 deadline.
+**Status:** Accepted by owner (2026-11-03); implemented (`c0e8cbd8`), host and device verified.
+
+### Problem
+
+The bounded `DeferredOverdubCompletion` set (16) fills legitimately after a source-generation move: the DEC-159 /
+C3.5 Record publication supersession and the wrap commit both clear prepared coverage. A NoteOff that then found the
+set full resolved its overlap consequence synchronously from a windowed derive of `passes` in MIDI dispatch, at
+46-78 ms per NoteOff. The slow NoteOffs starved the idle worker, so the set stayed full for the rest of the overdub
+(about 350 NoteOffs, 16-17.6 s per HITL overdub sweep). In a host fixture the synchronous answer also differed from
+the retained path: no transform where the retained path shortens or hides the source note.
+
+### Decision
+
+1. Capacity exhaustion never hands the completion back to MIDI dispatch. The NoteOff records the note's `Add` row with
+   `consequenceOwed`; a `uint16_t` count lives in padding of the pinned `Loop` shell.
+2. The worker promotes owed rows into the set's freed capacity on the discharge lane.
+3. The C3.4 seal deadline answers any remainder with the retained path's rule (`applyDeferredOverdubCompletion`), so
+   no decision is dropped and none is applied twice.
+4. Unchanged: capacity 16, generation invalidation (`changeGeneration`), wrap semantics, DEC-159, and C3.1 / C3.2 /
+   C3.5 of `immediate-record-overdub-handoff/CONTRACTS.md`. The owner withdrew the alternative of delaying session
+   open until the Record publication lands: it contradicts DEC-159 and would delay the overdub by about 5.8 bars.
+
+### Rationale and alternatives
+
+| Alternative | Rejected because |
+|---|---|
+| Delay the overdub open until the Record publication | Reverses DEC-159 (immediate handoff); 4,488 ticks of start latency in the measured run. |
+| Raise capacity | Postpones the same failure and spends the pinned shell; the set filled because the worker was starved. |
+| Skip generation invalidation at publication/wrap | Both moves change the committed overlap source (a wrap commits notes later laps must see). |
+| Refuse the NoteOff's consequence | Loses an accepted overlap decision (C3.4: losing a decision is a defect). |
+
+### Constraints created
+
+- `PendingNoteChange` gains a trailing `consequenceOwed` (20 -> 24 B per row). It is trailing because positional
+  initializers depend on the existing member order.
+- The owed state is worker-lane state only: promotion never runs on the MIDI path. A swapped or cleared pending set
+  resets the count.
+- **Open (owner decision).** The C3.4 wrap deadline runs inside the wrap's Clock dispatch (`commitOverdubWrap`). On
+  the device the wrap Clock grew from 3.0 s to 4.30 s, because the still-owed completions are answered there. The
+  deferred stop route swaps the pending set to the job before any touched-coverage materialization; that gap is
+  pre-existing, and owed rows travel with the job unanswered, like retained set entries.
+
+### Related / verification
+
+`test_pending_note_change`: `test_full_deferred_set_noteoff_derives_nothing_and_stays_owed`, `…answered_by_the_worker…`
+and `…answered_at_the_seal_deadline…` (RED -> GREEN). Native full 3,968 / 0 failed. Device image `d4579ca9`,
+`captures/session_20261103_171618.log`: overdub Note messages 17.95 s / max 78 ms -> 0.81 s / 5.5 ms; worker
+discharges 3 -> 50. Evidence: `openspec/changes/revision-manifest-prototype/evidence/2026-11-03-c5-3b-successor-grant-budget.md`.
+DEC-159, DEC-162, DEC-217.

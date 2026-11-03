@@ -415,3 +415,37 @@ All three reach `completePreparedCapturePassAtomic` → `notifyCommittedContentC
   (move 1: the previous interval's own pass; move 2: the session's own captured notes) should not have to invalidate
   coverage the session already prepared. Whether either move actually changes the committed content that overlap
   decisions read is the open question for the owner.
+
+## The full-set fallback leaves the MIDI path (2026-11-03, `c0e8cbd8`, DEC-247)
+
+Owner ruling: keep DEC-159 and C3 (Record publication and its coverage invalidation are legitimate). Remove the
+synchronous full-set derive from MIDI dispatch, and change no capacity, generation or wrap semantics.
+
+- **Host.** In `test_pending_note_change` the RED failed for the right reason: one window derive on the NoteOff.
+  Probing the old code showed its synchronous answer produced **no** transform where the retained path
+  shortens/hides the source note. That makes it a second, semantic defect, host-only so far.
+- **GREEN.**
+  - No derive on the NoteOff.
+  - The worker answers the owed completion with the retained path's transform.
+  - The seal deadline answers it with the same transform.
+- **Native full** 3,968 / 0 failed. The default image is within budget (padding 1,144). Probe padding 904 ≥ 840.
+
+Device image `d4579ca9`, same sweep, `captures/session_20261103_171618.log` (OBSERVED, `crash=0`). Two earlier
+attempts were attach refusals during a boot slot restore; nothing ran in them.
+
+| overdub phase | before (4 runs) | after |
+|---|---|---|
+| NoteOff, full set | 350-391 fallbacks, 16.0-17.6 s, max 74-85 ms | 64 overflow, 2 ms total, max 0.10 ms |
+| overdub Note messages | 16.8-17.9 s / max 75-84 ms | **0.81 s / max 5.5 ms** |
+| NoteOffs at occupancy 16 | 352-378 | 67 |
+| worker discharges | 3 | 50 (34 not full, 16 full) |
+| overdub Clock total / max | 5.2 s / 2.9-3.0 s | 6.97 s / **4.30 s** (wrap commit 4.11 s) |
+
+- **The NoteOff invariant holds.** Capacity exhaustion no longer runs content-sized work in the NoteOff.
+- **New, open: the wrap Clock grew by 1.3 s.**
+  - The C3.4 seal deadline runs in `commitOverdubWrap`, inside the Clock dispatch. It answers every completion still
+    owed there: the set and now the overflow rows.
+  - The set reads empty at the wrap's generation event (tick 50,688), just after that materialization.
+  - The number answered at the wrap is not measured. The arithmetic (113 obligations, 50 discharged by the worker) is
+    consistent with about 27 windowed derives at about 46 ms.
+  - So the deadline is the next MIDI-path owner, and that is the separately open wrap-Clock item.
