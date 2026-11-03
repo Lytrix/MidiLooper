@@ -574,7 +574,13 @@ def run_lane_cadence(args):
         except Exception as exc:
             report["issues"].append(f"clock_stop: {exc}")
         try:
-            if session is not None:
+            # The MIDI close is deferred to the managed shutdown (as `rolling_record` does): a native
+            # rtmidi `MidiIn.close_port` here hung the scenario before its verdict line (2026-11-03),
+            # and the managed path closes it after the capture with a native watchdog.
+            capture_owner = active_managed_capture()
+            if session is not None and capture_owner is not None:
+                capture_owner.defer_midi_close(session)
+            elif session is not None:
                 session.close()
             elif collector is not None:
                 collector.stop()
