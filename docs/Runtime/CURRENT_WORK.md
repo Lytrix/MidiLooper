@@ -1,5 +1,25 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-03 — DEC-247: a full deferred overdub completion set keeps the completion owed, and the NoteOff derives nothing (`c0e8cbd8`).**
+- **Cause chain** (C5.3b overdub-phase traces):
+  - The overdub MIDI cost was the full-set synchronous derive: 46-78 ms per NoteOff, 16-17.6 s per sweep.
+  - The set filled after a source-generation move. That move is the DEC-159 / C3.5 Record publication supersession,
+    which the owner kept as legitimate (the alternative of delaying session open was withdrawn), or the wrap commit.
+  - The slow NoteOffs starved the worker, so the set stayed full.
+- **Fix.**
+  - On a full set, the note's `Add` row carries `consequenceOwed`. The worker promotes those rows into freed capacity,
+    and the C3.4 seal deadline answers the rest with the retained path's rule.
+  - Unchanged: capacity, generation invalidation, wrap semantics.
+- **Host.** RED → GREEN (3 fixtures). The old synchronous answer also dropped a transform the retained path makes.
+  Native full 3,968 / 0 failed.
+- **Device** (`d4579ca9`, `captures/session_20261103_171618.log`):
+  - Overdub Note messages: 17.95 s / max 78 ms → 0.81 s / 5.5 ms.
+  - Worker discharges: 3 → 50.
+- **Open (owner).** The wrap Clock grew from 3.0 to 4.30 s: the C3.4 wrap deadline answers the still-owed completions
+  inside the Clock dispatch (`commitOverdubWrap`). Also open: the deferred stop route's swap does not materialize
+  touched-coverage obligations (pre-existing).
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-c5-3b-successor-grant-budget.md)
+
 **2026-11-02 — playback 5.1 pulled forward (DEC-246 amendment 27), host fix; the device block is not yet cleared.**
 - **Host RED → GREEN** (`test_rolling_stale_recovery`). A dense take stopped into play left an unpositioned committed
   demand (the record-stop commit's lead request: no clock stamp, no deadline).
