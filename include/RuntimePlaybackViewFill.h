@@ -133,6 +133,8 @@ class RuntimePlaybackViewFill {
   bool appendStableCapture() const { return testFlag(kAppendStableCaptureBit); }
   /// True while this fill is appending the live-overlay half of a window (never for the first-take Record lane).
   bool continuingOverlay() const { return testFlag(kOverlayActiveBit); }
+  /// The last begin read a committed manifest window (`ManifestWindow` scope); kept after the fill completes.
+  bool readsManifestWindow() const { return scope_ == RuntimePlaybackViewFillScope::ManifestWindow; }
   RuntimePlaybackViewFillRefusal refusal() const {
     return static_cast<RuntimePlaybackViewFillRefusal>((flags_ >> kOverlayRefusalShift) & kOverlayRefusalMask);
   }

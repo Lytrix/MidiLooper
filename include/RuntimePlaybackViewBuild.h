@@ -140,7 +140,16 @@ class RuntimePlaybackViewBuild {
     const Result result = work();
     return finishCall() ? result : denied;
   }
-  enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied, SnapshotFill, SnapshotCanonicalOrder, SnapshotRanks, SnapshotPlaybackOrder, Qualification };
+  enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied, SnapshotFill, SnapshotCanonicalOrder, SnapshotRanks, SnapshotPlaybackOrder, Qualification,
+                               ManifestRankCount, ManifestRankAssign };
+  /// C5.3b (DEC-246): a manifest window's canonical ranks without a sort. The canonical order is pass-major, a stable
+  /// partition by origin of rows that arrive in pass order within each origin, so a count pass and an assign pass give
+  /// its dense ranks in 2E units whatever the passes' interleaving. Needs the candidate's `mergeScratch` to hold one
+  /// counter per origin byte; a smaller view keeps the canonical sort.
+  static constexpr size_t kManifestRankOriginSlots = 256;
+  /// Start the canonical-rank stage after the snapshot-shaped fill: the dense count for a manifest window, else the sort.
+  void beginCanonicalRanks();
+  void stepManifestRanks(size_t entryQuantum);
 
   RuntimePlaybackViewFill fill_;
   RuntimePlaybackOrderBuilder order_;

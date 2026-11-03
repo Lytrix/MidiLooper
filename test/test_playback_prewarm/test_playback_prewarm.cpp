@@ -8828,7 +8828,8 @@ void buildLoop(Loop& loop) {
 
 template <typename Begin>
 void drive(RuntimePlaybackView& view, RuntimePlaybackViewBuild& build, Begin begin) {
-  TEST_ASSERT_TRUE(view.prewarm(128));
+  // 256: a manifest window takes the dense rank stage (RuntimePlaybackViewBuild::kManifestRankOriginSlots).
+  TEST_ASSERT_TRUE(view.prewarm(256));
   TEST_ASSERT_TRUE(begin());
   for (unsigned turn = 0; turn < 100000 && build.active(); ++turn) {
     if (build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) build.stepFill(3);
@@ -9004,13 +9005,13 @@ struct StageCost {
 
 StageCost measure(RevisionStore::Store<c5::Cap>& store, RevisionStore::ManifestWindowCursor<c5::Cap>* source,
                   const PlaybackCoverageInterval& coverage, size_t fillQuantum, size_t orderQuantum,
-                  RuntimePlaybackView& view, RuntimePlaybackViewBuild& build) {
+                  RuntimePlaybackView& view, RuntimePlaybackViewBuild& build, size_t capacity) {
   using namespace RevisionStore;
   const ManifestId m = store.current();
   TEST_ASSERT_EQUAL(WindowResult::Pending, source->begin(store, m, store.identityOf(m), store.manifest(m).revision,
                                                          coverage.startPhase, coverage.lengthTicks,
                                                          coverage.loopLengthTicks));
-  TEST_ASSERT_TRUE(view.prewarm(128));
+  TEST_ASSERT_TRUE(view.prewarm(capacity));
   const PlaybackViewSourceIdentity identity{store.manifest(m).revision, 1, nullptr};
   TEST_ASSERT_TRUE(build.beginCoverageQualification(view, *source, identity, coverage));
   StageCost cost{};
@@ -9079,6 +9080,10 @@ struct Case {
   uint32_t expectedCanonicalUnits;  // exact, quantum 1
 };
 
+/// Old path: a 128-entry view keeps the canonical sort. New path: a 256-entry view takes the dense count/assign ranks.
+constexpr size_t kSortCapacity = 128;
+constexpr size_t kDenseCapacity = 256;
+
 void run(Case& c) {
   using namespace RevisionStore;
   Loop loop;
@@ -9086,38 +9091,127 @@ void run(Case& c) {
   static Store<c5::Cap> store;
   store.reset();
   TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, store));
-
   static PassEvent staging[256];
-  ManifestWindowCursor<c5::Cap> unitSource(staging, 256);
-  RuntimePlaybackView unitView;
-  RuntimePlaybackViewBuild unitBuild;
-  const StageCost units = measure(store, &unitSource, c.coverage, 1, 1, unitView, unitBuild);
-  ManifestWindowCursor<c5::Cap> grantSource(staging, 256);
-  RuntimePlaybackView grantView;
-  RuntimePlaybackViewBuild grantBuild;
-  const StageCost grants = measure(store, &grantSource, c.coverage, kFillQuantum, kOrderQuantum, grantView, grantBuild);
-  const uint32_t E = units.rows;
-  char label[200];
-  snprintf(label, sizeof(label),
-           "%s: E=%u read=%u canonical+ranks units=%u playback units=%u | grants q=%u c+r=%u p=%u", c.name, E,
-           units.readUnits, units.canonicalRanks, units.playback, grants.qualification, grants.canonicalRanks,
-           grants.playback);
-  TEST_MESSAGE(label);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expectedRows, E, label);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2 * E + 1, units.readUnits, label);
-  // Exact units: canonical order as pinned, ranks E, playback order E (ordered by construction).
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expectedCanonicalUnits + E, units.canonicalRanks, label);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(E, units.playback, label);
-  // Grants: each stage is ceil(units / quantum); a stage never shares a grant with the next.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(2 * E + 1, 64), grants.qualification, label);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(c.expectedCanonicalUnits, 48) + ceilDiv(E, 48), grants.canonicalRanks, label);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(E, 48), grants.playback, label);
-  // The canonical merge cost is the builder's own declared bound (fill + one write per level + odd-level copy-back).
-  if (c.expectedCanonicalUnits != E)
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(RuntimePlaybackOrderBuilder::workEntriesUpperBound(E), c.expectedCanonicalUnits,
-                                     label);
-  expectSnapshotParity(loop, c.coverage, grantView, c.name);
-  expectSnapshotParity(loop, c.coverage, unitView, c.name);
+  for (const size_t capacity : {kSortCapacity, kDenseCapacity}) {
+    const bool dense = capacity == kDenseCapacity;
+    ManifestWindowCursor<c5::Cap> unitSource(staging, 256);
+    RuntimePlaybackView unitView;
+    RuntimePlaybackViewBuild unitBuild;
+    const StageCost units = measure(store, &unitSource, c.coverage, 1, 1, unitView, unitBuild, capacity);
+    ManifestWindowCursor<c5::Cap> grantSource(staging, 256);
+    RuntimePlaybackView grantView;
+    RuntimePlaybackViewBuild grantBuild;
+    const StageCost grants =
+        measure(store, &grantSource, c.coverage, kFillQuantum, kOrderQuantum, grantView, grantBuild, capacity);
+    const uint32_t E = units.rows;
+    // Sort path: canonical units as pinned, then ranks E. Dense path: count E, then assign E, whatever the interleaving.
+    const uint32_t canonical = dense ? E : c.expectedCanonicalUnits;
+    char label[220];
+    snprintf(label, sizeof(label),
+             "%s [%s]: E=%u read=%u canonical+ranks units=%u playback units=%u | grants q=%u c+r=%u p=%u", c.name,
+             dense ? "dense ranks" : "canonical sort", E, units.readUnits, units.canonicalRanks, units.playback,
+             grants.qualification, grants.canonicalRanks, grants.playback);
+    TEST_MESSAGE(label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expectedRows, E, label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2 * E + 1, units.readUnits, label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(canonical + E, units.canonicalRanks, label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(E, units.playback, label);
+    // Grants: each stage is ceil(units / quantum); a stage never shares a grant with the next.
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(2 * E + 1, 64), grants.qualification, label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(canonical, 48) + ceilDiv(E, 48), grants.canonicalRanks, label);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(E, 48), grants.playback, label);
+    // The sort's merge cost is the builder's own declared bound (fill + one write per level + odd-level copy-back).
+    if (!dense && c.expectedCanonicalUnits != E)
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(RuntimePlaybackOrderBuilder::workEntriesUpperBound(E), c.expectedCanonicalUnits,
+                                       label);
+    expectSnapshotParity(loop, c.coverage, grantView, c.name);
+    expectSnapshotParity(loop, c.coverage, unitView, c.name);
+  }
+}
+
+/// A committed-window source with chosen keys: rows in stream order, each `canonicalOrder = eventId = origin << 16 |
+/// ordinal`. Lets a fixture give source ordinals that are not window-local (non-zero, with gaps).
+struct KeyedSource final : CommittedWindowRowSource {
+  struct Row { MidiEvent event; uint16_t origin; uint16_t ordinal; };
+  std::vector<Row> rows;
+  size_t at = 0;
+  size_t units = 0;
+  bool done = false;
+  uint32_t start = 0, length = 0, loopLength = 0;
+  bool idle() const override { return false; }
+  bool complete() const override { return done; }
+  bool retiring() const override { return false; }
+  uint64_t traversalGeneration() const override { return 1; }
+  uint32_t startTick() const override { return start; }
+  uint32_t lengthTicks() const override { return length; }
+  uint32_t loopLengthTicks() const override { return loopLength; }
+  size_t readUnits() const override { return units; }
+  ReadResult step(LoopSnapshotEvent& out) override {
+    ++units;
+    if (at == rows.size()) { done = true; return ReadResult::Complete; }
+    const Row& r = rows[at++];
+    const uint32_t key = (static_cast<uint32_t>(r.origin) << 16) | r.ordinal;
+    out.loopId = kInvalidLoopId;
+    out.canonicalOrder = key;
+    out.eventId = key;
+    out.value = r.event;
+    return ReadResult::Event;
+  }
+};
+
+/// One keyed window through the real build at `capacity`, optionally discarding rows after the fill (retention).
+void buildKeyed(const std::vector<KeyedSource::Row>& rows, const PlaybackCoverageInterval& coverage, size_t capacity,
+                const std::vector<size_t>& discarded, RuntimePlaybackView& view, RuntimePlaybackViewBuild& build) {
+  KeyedSource source;
+  source.rows = rows;
+  source.start = coverage.startPhase;
+  source.length = coverage.lengthTicks;
+  source.loopLength = coverage.loopLengthTicks;
+  TEST_ASSERT_TRUE(view.prewarm(capacity));
+  TEST_ASSERT_TRUE(build.beginCoverageQualification(view, source, PlaybackViewSourceIdentity{1, 1, nullptr}, coverage));
+  RuntimePlaybackViewFillResult fill = RuntimePlaybackViewFillResult::Pending;
+  for (unsigned turn = 0; turn < 10000 && fill == RuntimePlaybackViewFillResult::Pending; ++turn)
+    fill = build.stepCoverageQualification(kFillQuantum);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Complete, fill);
+  for (const size_t index : discarded) TEST_ASSERT_TRUE(view.storage.discardEvent(index));
+  TEST_ASSERT_TRUE(build.admitCoverageQualification());
+  for (unsigned turn = 0; turn < 10000 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++turn)
+    (void)build.stepOrder(kOrderQuantum);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_TRUE(view.canonicalRanksReady);
+}
+
+/// Dense ranks equal the canonical sort's on the same keyed window, row for row: playback order, phases and the rank of
+/// every retained row; and those ranks are exactly 0..R-1, pass-major, stream order within each origin.
+/// With discarded rows only the independent pass-major oracle applies: the sort path's `SnapshotRanks` walks
+/// `storage.order` to `eventCount`, past the `orderedEventCount` retained entries the sort wrote (latent there: no
+/// production path discards a snapshot or manifest candidate's rows before ranks).
+void expectDenseMatchesSort(const char* name, const std::vector<KeyedSource::Row>& rows,
+                            const std::vector<size_t>& discarded = {}) {
+  const PlaybackCoverageInterval coverage{0, 2 * c5::kBar, c5::kLength};
+  RuntimePlaybackView sorted, dense;
+  RuntimePlaybackViewBuild sortBuild, denseBuild;
+  buildKeyed(rows, coverage, kSortCapacity, discarded, sorted, sortBuild);
+  buildKeyed(rows, coverage, kDenseCapacity, discarded, dense, denseBuild);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(sorted.storage.eventCount, dense.storage.eventCount, name);
+  std::vector<bool> retained(rows.size(), true);
+  for (const size_t index : discarded) retained[index] = false;
+  if (discarded.empty()) {
+    for (uint32_t i = 0; i < sorted.storage.eventCount; ++i) {
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(sorted.canonicalRanks[i], dense.canonicalRanks[i], name);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(sorted.storage.phases[i], dense.storage.phases[i], name);
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(sorted.storage.order[i], dense.storage.order[i], name);
+    }
+  }
+  // Dense from zero over the retained rows, pass-major, stream order within an origin.
+  std::vector<std::pair<uint32_t, uint32_t>> expected;  // (origin, stream index) of each retained row
+  for (uint32_t i = 0; i < rows.size(); ++i)
+    if (retained[i]) expected.emplace_back(rows[i].origin, i);
+  std::stable_sort(expected.begin(), expected.end(),
+                   [](const auto& a, const auto& b) { return a.first < b.first; });
+  for (uint32_t r = 0; r < expected.size(); ++r)
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(r, dense.canonicalRanks[expected[r].second], name);
 }
 }  // namespace c5cost
 
@@ -9149,6 +9243,35 @@ void test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch() {
   pair.overdub.emplace_back(700, true, 95);
   pair.overdub.emplace_back(2000, false, 95);
   for (c5cost::Case* c : {&single, &interleaved, &even, &pair}) c5cost::run(*c);
+}
+
+// C5.3b dense manifest ranks: equal to the canonical sort's numbering on windows the cursor cannot produce by itself.
+void test_c5_manifest_dense_ranks_match_the_canonical_sort() {
+  using Row = c5cost::KeyedSource::Row;
+  // Two passes alternating in time whose source ordinals start mid-pass (500, 900) with gaps: ranks start at 0.
+  std::vector<Row> midPass;
+  for (uint16_t k = 0; k < 20; ++k) {
+    const uint32_t t = 10 + 60u * k;
+    midPass.push_back({MidiEvent::NoteOn(t, 1, static_cast<uint8_t>(60 + k % 12), 100), 0, static_cast<uint16_t>(500 + 3 * k)});
+    midPass.push_back({MidiEvent::NoteOn(t + 30, 1, static_cast<uint8_t>(72 + k % 12), 100), 1,
+                       static_cast<uint16_t>(900 + 7 * k)});
+  }
+  c5cost::expectDenseMatchesSort("mid-pass ordinals", midPass);
+  // The same window with retained-out rows from both origins: no holes in the ranks.
+  c5cost::expectDenseMatchesSort("filtered rows", midPass, {0, 3, 4, 17, 38});
+  // Three origins at shared ticks: an Off from origin 2, an On from origin 0 and an On from origin 1 on one tick, plus
+  // interleaved singles. Store order is (tick, class, run), so the later origin's Off precedes earlier origins' Ons.
+  std::vector<Row> threeOrigins;
+  uint16_t ordinal[3] = {0, 0, 0};
+  auto add = [&](const MidiEvent& e, uint16_t origin) { threeOrigins.push_back({e, origin, ordinal[origin]++}); };
+  for (uint32_t k = 0; k < 12; ++k) {
+    const uint32_t t = 40 + 96 * k;
+    add(MidiEvent::NoteOff(t, 1, static_cast<uint8_t>(50 + k), 0), 2);
+    add(MidiEvent::NoteOn(t, 1, static_cast<uint8_t>(60 + k), 100), 0);
+    add(MidiEvent::NoteOn(t, 1, static_cast<uint8_t>(70 + k), 100), 1);
+    add(MidiEvent::NoteOn(t + 20, 1, static_cast<uint8_t>(80 + k), 100), static_cast<uint16_t>(k % 3));
+  }
+  c5cost::expectDenseMatchesSort("three origins, equal ticks", threeOrigins);
 }
 
 void test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins() {
@@ -10209,6 +10332,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_c5_manifest_window_gives_the_consumer_the_snapshot_windows_tuple);
   RUN_TEST(test_c5_manifest_window_cursor_refuses_by_name);
   RUN_TEST(test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch);
+  RUN_TEST(test_c5_manifest_dense_ranks_match_the_canonical_sort);
   RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
   RUN_TEST(test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin);
   RUN_TEST(test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled);

@@ -186,11 +186,68 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::admitCoverageQual
   return execute([&]() -> bool {
   if (phase_ != Phase::Qualification || !coverageOwned_ || destination_ == nullptr ||
       !destination_->sourceFilled || destination_->published || destination_->complete) return false;
-  if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
-                    RuntimePlaybackOrderMode::SnapshotCanonical)) return false;
-  phase_ = order_.complete() ? Phase::SnapshotRanks : Phase::SnapshotCanonicalOrder;
+  const Phase qualified = phase_;
+  beginCanonicalRanks();
+  if (phase_ == Phase::Denied) { phase_ = qualified; return false; }
   return true;
   }, false);
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::beginCanonicalRanks() {
+  auto& view = *destination_;
+  snapshotRankCursor_ = 0;
+  if (fill_.readsManifestWindow() && view.passOrigins != nullptr && view.canonicalRanks != nullptr &&
+      view.storage.mergeScratch != nullptr && view.storage.capacity >= kManifestRankOriginSlots &&
+      !view.passOriginsReady) {
+    phase_ = Phase::ManifestRankCount;
+    return;
+  }
+  if (!order_.begin(view, view.coverage.loopLengthTicks, RuntimePlaybackOrderMode::SnapshotCanonical)) {
+    phase_ = Phase::Denied;
+    return;
+  }
+  phase_ = order_.complete() ? Phase::SnapshotRanks : Phase::SnapshotCanonicalOrder;
+}
+
+// rank(i) = base[origin] + (rows of that origin before i): one count pass, then one assign pass in stream order. Each
+// origin's rows arrive in their pass order (`ManifestWindowCursor` numbers them in stream order), so this is exactly the
+// position the pass-major canonical sort gives, dense from 0 over the retained rows only. The counters live in the
+// unpublished candidate's `mergeScratch`, which no sort uses on this path; clearing and prefix-summing the 256 slots is
+// a fixed cost inside the first and last count grains, never a grain of its own.
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::stepManifestRanks(size_t entryQuantum) {
+  auto& view = *destination_;
+  auto& storage = view.storage;
+  uint16_t* slot = storage.mergeScratch;
+  const size_t rows = storage.eventCount;
+  if (phase_ == Phase::ManifestRankCount) {
+    if (snapshotRankCursor_ == 0)
+      for (size_t o = 0; o < kManifestRankOriginSlots; ++o) slot[o] = 0;
+    for (size_t unit = 0; unit < entryQuantum && snapshotRankCursor_ < rows; ++unit, ++snapshotRankCursor_) {
+      if (!storage.eventRetained(snapshotRankCursor_)) continue;
+      const uint16_t origin = view.passOrigins[snapshotRankCursor_].pass;
+      if (origin >= kManifestRankOriginSlots) { phase_ = Phase::Denied; return; }
+      ++slot[origin];
+    }
+    if (snapshotRankCursor_ < rows) return;
+    uint16_t base = 0;
+    for (size_t o = 0; o < kManifestRankOriginSlots; ++o) {
+      const uint16_t count = slot[o];
+      slot[o] = base;
+      base = static_cast<uint16_t>(base + count);
+    }
+    snapshotRankCursor_ = 0;
+    phase_ = Phase::ManifestRankAssign;
+    return;
+  }
+  for (size_t unit = 0; unit < entryQuantum && snapshotRankCursor_ < rows; ++unit, ++snapshotRankCursor_) {
+    if (!storage.eventRetained(snapshotRankCursor_)) continue;
+    view.canonicalRanks[snapshotRankCursor_] = slot[view.passOrigins[snapshotRankCursor_].pass]++;
+  }
+  if (snapshotRankCursor_ < rows) return;
+  view.canonicalRanksReady = true;
+  if (!order_.begin(view, view.coverage.loopLengthTicks, RuntimePlaybackOrderMode::SnapshotPlayback))
+    phase_ = Phase::Denied;
+  else phase_ = order_.complete() ? Phase::Complete : Phase::SnapshotPlaybackOrder;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
@@ -216,6 +273,8 @@ RuntimePlaybackViewBuild::nextGrain() const {
     case Phase::SnapshotCanonicalOrder:
     case Phase::SnapshotRanks:
     case Phase::SnapshotPlaybackOrder:
+    case Phase::ManifestRankCount:
+    case Phase::ManifestRankAssign:
       return RuntimePlaybackViewBuildGrain::Order;
     case Phase::Complete:
       return fill_.liveCaptureCurrent() ? RuntimePlaybackViewBuildGrain::Complete
@@ -249,12 +308,7 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
     return RuntimePlaybackViewBuildGrain::Fill;
   }
   if (phase_ == Phase::SnapshotFill) {
-    if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
-                      RuntimePlaybackOrderMode::SnapshotCanonical)) {
-      phase_ = Phase::Denied;
-      return nextGrain();
-    }
-    phase_ = order_.complete() ? Phase::SnapshotRanks : Phase::SnapshotCanonicalOrder;
+    beginCanonicalRanks();
     return nextGrain();
   }
   if (fill_.appendStableCapture()) {
@@ -300,6 +354,10 @@ RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
     phase_ = Phase::Denied;
     return RuntimePlaybackViewBuildGrain::Denied;
   }
+  if (phase_ == Phase::ManifestRankCount || phase_ == Phase::ManifestRankAssign) {
+    if (entryQuantum != 0) stepManifestRanks(entryQuantum);
+    return nextGrain();
+  }
   if (phase_ == Phase::SnapshotRanks) {
     if (entryQuantum == 0) return nextGrain();
     auto& view = *destination_;
@@ -337,6 +395,7 @@ RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::active() const {
   return phase_ == Phase::Qualification || phase_ == Phase::Fill || phase_ == Phase::Order || phase_ == Phase::SnapshotFill ||
       phase_ == Phase::SnapshotCanonicalOrder || phase_ == Phase::SnapshotRanks ||
+      phase_ == Phase::ManifestRankCount || phase_ == Phase::ManifestRankAssign ||
       phase_ == Phase::SnapshotPlaybackOrder;
 }
 
