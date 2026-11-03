@@ -40,8 +40,26 @@ void noteMergedReuseFailure(uint8_t track, uint8_t term, uint64_t tick, uint32_t
 void dumpMergedReuse();
 void resetMergedReuse();
 }  // namespace LaneGapSpans
+namespace LaneGapSpans {
+/// Children of one dispatched MIDI message (owner ruling 2026-11-03): accumulated per message and folded by
+/// `MidiHandler.cpp`'s `noteMidiMessage`, apart from the loop buckets above so nothing is counted twice.
+enum MessageChild : uint8_t { StopOverdub = 0, StopRecordingTrack, RecordStopGeometry, OverlapHold, RecordEvents,
+                              MessageChildCount };
+extern uint32_t gMessage[MessageChildCount];
+struct MessageScope {
+  uint8_t child;
+  uint32_t startUs;
+  bool active;
+  explicit MessageScope(uint8_t c) : child(c), startUs(micros()), active(!inHandler()) {}
+  ~MessageScope() {
+    if (active) gMessage[child] += micros() - startUs;
+  }
+};
+}  // namespace LaneGapSpans
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
+#define LANE_MSG_SPAN(child) LaneGapSpans::MessageScope laneMsgSpanScope(LaneGapSpans::child)
 #define LANE_GAP_MIDI_SPLIT 1
 #else
 #define LANE_GAP_SPAN(bucket) ((void)0)
+#define LANE_MSG_SPAN(child) ((void)0)
 #endif

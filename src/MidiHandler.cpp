@@ -230,7 +230,10 @@ struct MidiInvocation {
   uint16_t hostReads;
   uint8_t maxMsgKind, phase;
 };
+struct WorstMessage { uint32_t us; uint64_t tick; uint8_t kind, phase; uint32_t child[LaneGapSpans::MessageChildCount]; };
 struct MidiSpans {
+  uint64_t childUs[PhaseCount][KindCount][LaneGapSpans::MessageChildCount];
+  WorstMessage worstMessages[8];
   MidiKindStat stat[PhaseCount][KindCount];
   uint32_t invocations[PhaseCount];
   MidiInvocation current;
@@ -273,6 +276,18 @@ struct MidiInvocationScope {
 void noteMidiMessage(uint8_t type, uint32_t us) {
   auto& m = sMidiSpans;
   const uint8_t kind = midiKindOf(type);
+  for (uint8_t c = 0; c < LaneGapSpans::MessageChildCount; ++c) m.childUs[m.current.phase][kind][c] += LaneGapSpans::gMessage[c];
+  uint8_t least = 0;
+  for (uint8_t i = 1; i < 8; ++i) if (m.worstMessages[i].us < m.worstMessages[least].us) least = i;
+  if (us > m.worstMessages[least].us) {
+    auto& w = m.worstMessages[least];
+    w.us = us;
+    w.tick = clockManager.getCurrentTick();
+    w.kind = kind;
+    w.phase = m.current.phase;
+    for (uint8_t c = 0; c < LaneGapSpans::MessageChildCount; ++c) w.child[c] = LaneGapSpans::gMessage[c];
+  }
+  for (auto& v : LaneGapSpans::gMessage) v = 0;
   auto& st = m.stat[m.current.phase][kind];
   ++st.count;
   st.totalUs += us;
@@ -294,6 +309,26 @@ FLASHMEM void dumpMidiSpansImpl() {
     for (uint8_t k = 0; k < KindCount; ++k)
       Serial.printf("%s%lu:%llu:%lu", k ? "/" : "", (unsigned long)m.stat[p][k].count,
                     (unsigned long long)m.stat[p][k].totalUs, (unsigned long)m.stat[p][k].maxUs);
+    Serial.println();
+  }
+  // Children per phase and kind: stop overdub / stop recording track / record-stop geometry / overlap hold / record events.
+  for (uint8_t p = 0; p < PhaseCount; ++p)
+    for (uint8_t k = 0; k < KindCount; ++k) {
+      uint64_t any = 0;
+      for (uint8_t c = 0; c < LaneGapSpans::MessageChildCount; ++c) any |= m.childUs[p][k][c];
+      if (!any) continue;
+      Serial.printf("#CAP,%lu,DIAG,midi_spans,children,phase=%s,kind=%u,us=", (unsigned long)micros(), kPhase[p],
+                    unsigned(k));
+      for (uint8_t c = 0; c < LaneGapSpans::MessageChildCount; ++c)
+        Serial.printf("%s%llu", c ? "/" : "", (unsigned long long)m.childUs[p][k][c]);
+      Serial.println();
+    }
+  for (const auto& w : m.worstMessages) {
+    if (w.us == 0) continue;
+    Serial.printf("#CAP,%lu,DIAG,midi_spans,message,phase=%s,kind=%u,tick=%llu,us=%lu,children=",
+                  (unsigned long)micros(), kPhase[w.phase < PhaseCount ? w.phase : 0], unsigned(w.kind),
+                  (unsigned long long)w.tick, (unsigned long)w.us);
+    for (uint8_t c = 0; c < LaneGapSpans::MessageChildCount; ++c) Serial.printf("%s%lu", c ? "/" : "", (unsigned long)w.child[c]);
     Serial.println();
   }
   for (const auto& w : m.worst) {

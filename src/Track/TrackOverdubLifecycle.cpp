@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Utils/RuntimeProfiler.h"
+#include "Utils/LaneGapSpans.h"
 #include "TrackInternal.h"
 
 #include <Arduino.h>
@@ -4619,6 +4620,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
 
 
 TRACK_COLD_MEM void Track::stopOverdubbing() {
+  LANE_MSG_SPAN(StopOverdub);
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
 #if defined(SESSION_CAPTURE)

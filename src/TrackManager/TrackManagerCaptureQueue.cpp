@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "TrackManager.h"
+#include "Utils/LaneGapSpans.h"
 #include "TrackManagerInternal.h"
 
 #include "ClockManager.h"
@@ -115,6 +116,7 @@ void TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captu
 }
 
 FLASHMEM void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
+  LANE_MSG_SPAN(StopRecordingTrack);
   if (trackIndex >= Config::NUM_TRACKS) return;
 
   // S4f.21: the interval's slot is captured **before** the stop, because the stop edge may move
@@ -154,6 +156,7 @@ FLASHMEM void TrackManager::applyRecordStopGeometry(uint8_t trackIndex, uint8_t 
 }
 
 FLASHMEM void TrackManager::servicePendingRecordStopGeometry() {
+  LANE_MSG_SPAN(RecordStopGeometry);
   if (pendingRecordGeometryMask == 0) return;
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     const uint8_t bit = static_cast<uint8_t>(1u << i);

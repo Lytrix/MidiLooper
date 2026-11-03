@@ -252,3 +252,27 @@ Same capture, `captures/session_20261103_123542.log`, using the image's existing
   - one Clock took 3.0 s at the overdub stop.
 
   These are the next two named defects.
+
+## The overdub-phase MIDI cost, split by child (2026-11-03)
+
+- **Method.** Per dispatched message, a separate RAM2 child set (`LaneGapSpans::MessageScope`, flash callees only, so
+  ITCM is unchanged): `Track::stopOverdubbing`, `TrackManager::stopRecordingTrack`, the record-stop geometry service,
+  `Track::snapshotOverlapHoldCandidates`, `Track::recordMidiEvents`. Totals per phase and kind, plus the 8 worst
+  messages with their children; printed at the transport stop.
+- **Run.** succprobe HEX sha256 `026ae5c1b168c52180dd8a498484b1a05194ee887f9fa11ebaff22bfd2851101`,
+  `captures/session_20261103_135139.log`, boot `crash=0`. Overdub 57.5-88.4 s.
+
+| phase | Note: n / avg | of which `recordMidiEvents` | of which overlap hold |
+|---|---|---|---|
+| record take | 1,009 / 0.31 ms | 0.23 s total | 0 |
+| **overdub** | 1,026 / **18.7 ms** | **18.37 s of 19.15 s (96 %)** | 0.68 s |
+
+- **Overdub notes.** The cost is `Track::recordMidiEvents` on the overdub branch: about 18 ms per event, against
+  0.23 ms per event during the record take. The worst messages are a burst of 76 ms notes (ticks 50,304-50,592),
+  entirely inside it.
+- **The 3.57 s Clock** (tick 49,920, mid-overdub, not at the stop) has **no named child**: not the overdub stop, not
+  the record-stop service, not capture. It is elsewhere in the Clock's synchronous chain (`updateAllTracks`:
+  per-track playback / overlay / pass work on the overdubbing track).
+- After the stop the Clock stays at 0.51 ms (the reclaim fix holds).
+- **Next.** Split `recordMidiEvents`' overdub branch one level deeper, and time `updateAllTracks`' per-track children
+  for the Clock (needs flash-side timers only, or an ITCM budget check).

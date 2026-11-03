@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "TrackInternal.h"
+#include "Utils/LaneGapSpans.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -199,6 +200,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::catchUpCommittedPlaybackLed
 
 TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidates(
     PendingNote& pending) {
+  LANE_MSG_SPAN(OverlapHold);
   if (!isOverdubbing()) {
     return;
   }
@@ -882,6 +884,7 @@ Track::captureIntervalAdmissionForSlot(uint8_t slotIndex) const {
 }
 TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEvents(
     midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
+  LANE_MSG_SPAN(RecordEvents);
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
     Loop& loop = getActiveLoop();
     uint32_t tickRelative;

@@ -621,6 +621,7 @@ FLASHMEM __attribute__((noinline)) static void reportSlowIdleTurnUnit(uint8_t tr
 /// "other" is the rest) into RAM2 totals, keeps the 16 worst iterations and the 8 worst lane gaps, and prints nothing
 /// while the transport runs. When it stops, one `lane_spans` dump: totals, then the worst iterations and gaps.
 DMAMEM uint32_t LaneGapSpans::gIteration[LaneGapSpans::Count];
+DMAMEM uint32_t LaneGapSpans::gMessage[LaneGapSpans::MessageChildCount];
 namespace {
 constexpr uint8_t kSpanBuckets = LaneGapSpans::Count + 3;  // + idle, load/display frame, other
 struct LaneSpanRecord { uint64_t tick; uint32_t totalUs; uint32_t gapTicks; uint32_t us[kSpanBuckets]; };
