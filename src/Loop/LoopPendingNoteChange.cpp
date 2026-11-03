@@ -682,9 +682,13 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     return false;
   }
 
+  LANE_NOTEOFF_BEGIN(overdubCoverageDeferredCount_);
   // Touched coverage (task 4.7): the completed span marks every tile it touches. Marking derives
   // nothing; it is what makes the span answerable by the worker and by the deadline fallback.
-  (void)markOverdubCoverageSpan(startTick, endTick);
+  {
+    LANE_NOTEOFF_PHASE(coverageUs);
+    (void)markOverdubCoverageSpan(startTick, endTick);
+  }
   const uint32_t spanLength = wrapCrossing ? (loopLen - startTick + endTick) : (endTick - startTick);
   if (overdubCoverage_.sessionActive && !overdubCoverage_.spanPrepared(startTick, spanLength)) {
     // The note is accepted now; the overlap consequence is deferred **by name** and discharged when the
@@ -697,7 +701,13 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     completion.pitch = pitch;
     completion.velocity = velocity;
     completion.spanOwed = true;
-    if (retainDeferredOverdubCompletion(completion)) {
+    bool retained = false;
+    {
+      LANE_NOTEOFF_PHASE(retainUs);
+      retained = retainDeferredOverdubCompletion(completion);
+    }
+    if (retained) {
+      LANE_NOTEOFF_PATH(PathRetained);
       // The interval's own Add row is not an overlap decision: it is recorded now so the note is part of
       // the session's pending set exactly once, whether or not its consequence is still owed.
       PendingNoteChange addChange{};
@@ -719,8 +729,12 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     uint32_t lookupLength = 0;
     CoveragePrerequisite::closureWindow(startTick, spanLength, overdubCoverageClosureTicks_, loopLen,
                                         lookupStart, lookupLength);
-    LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLen, lookupStart, lookupLength,
-                                                       local);
+    LANE_NOTEOFF_PATH(PathFallback);
+    {
+      LANE_NOTEOFF_PHASE(deriveUs);
+      LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLen, lookupStart, lookupLength,
+                                                         local);
+    }
     return applyOverlapConsequenceForCompletedNote(
         channel, pitch, velocity, startTick, endTick, incomingNoteId, overlapNoteIds,
         occupancyResolvedNoteIds, true, &local);
@@ -1532,3 +1546,86 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   pendingNoteChanges_.clear();
   return sealedIds;
 }
+
+#if defined(LANE_GAP_MIDI_SPLIT)
+// Overdub NoteOff split (owner ruling 2026-11-03, measurement image only): per entry occupancy of the deferred
+// completion set (0..16, clamped) and per path, count / total / max; plus the 4 worst NoteOffs. RAM2 (NOLOAD): reset at
+// the transport start with the MIDI spans, and every index is clamped, so stale boot bytes cannot address outside it.
+namespace {
+constexpr uint8_t kNoteOffOccupancyBins = 17;  // Loop::kDeferredOverdubCompletionCapacity + 1
+struct NoteOffBin { uint32_t count, totalUs, maxUs; };
+struct NoteOffPathStat { uint32_t count, totalUs, maxUs, coverageUs, retainUs, deriveUs; };
+struct NoteOffWorst { uint32_t us, coverageUs, retainUs, deriveUs; uint8_t occupancy, path; };
+struct NoteOffSpans {
+  NoteOffBin byOccupancy[kNoteOffOccupancyBins];
+  NoteOffPathStat byPath[LaneGapSpans::PathCount];
+  NoteOffWorst worst[4];
+  uint8_t highWater;
+};
+DMAMEM NoteOffSpans sNoteOffSpans;
+// Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
+FLASHMEM const char* noteOffPathName(uint8_t p) {
+  return p == LaneGapSpans::PathRetained ? PSTR("retained")
+         : p == LaneGapSpans::PathFallback ? PSTR("fallback") : PSTR("prepared");
+}
+}  // namespace
+
+FLASHMEM void LaneGapSpans::noteOverdubNoteOff(const NoteOffProbe& probe, uint32_t totalUs, uint8_t occupancyAfter) {
+  auto& m = sNoteOffSpans;
+  const uint8_t occupancy = probe.occupancyAtEntry < kNoteOffOccupancyBins ? probe.occupancyAtEntry
+                                                                            : kNoteOffOccupancyBins - 1;
+  const uint8_t path = probe.path < PathCount ? probe.path : PathPrepared;
+  auto& bin = m.byOccupancy[occupancy];
+  ++bin.count;
+  bin.totalUs += totalUs;
+  if (totalUs > bin.maxUs) bin.maxUs = totalUs;
+  auto& st = m.byPath[path];
+  ++st.count;
+  st.totalUs += totalUs;
+  if (totalUs > st.maxUs) st.maxUs = totalUs;
+  st.coverageUs += probe.coverageUs;
+  st.retainUs += probe.retainUs;
+  st.deriveUs += probe.deriveUs;
+  const uint8_t high = probe.occupancyAtEntry > occupancyAfter ? probe.occupancyAtEntry : occupancyAfter;
+  if (high > m.highWater) m.highWater = high;
+  uint8_t least = 0;
+  for (uint8_t i = 1; i < 4; ++i) if (m.worst[i].us < m.worst[least].us) least = i;
+  if (totalUs > m.worst[least].us)
+    m.worst[least] = {totalUs, probe.coverageUs, probe.retainUs, probe.deriveUs, occupancy, path};
+}
+
+FLASHMEM void LaneGapSpans::resetNoteOffSpans() { sNoteOffSpans = NoteOffSpans{}; }
+
+FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
+  const auto& m = sNoteOffSpans;
+  // remainder = total - coverage - retain - derive (the immediate consequence and everything else)
+  for (uint8_t p = 0; p < PathCount; ++p) {
+    const auto& st = m.byPath[p];
+    if (st.count == 0) continue;
+    const uint32_t named = st.coverageUs + st.retainUs + st.deriveUs;
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,path=%s,n=%lu,total_us=%lu,max_us=%lu,coverage=%lu,retain=%lu,"
+                  "derive=%lu,remainder=%lu\n"),
+                  (unsigned long)micros(), noteOffPathName(p), (unsigned long)st.count, (unsigned long)st.totalUs,
+                  (unsigned long)st.maxUs, (unsigned long)st.coverageUs, (unsigned long)st.retainUs,
+                  (unsigned long)st.deriveUs, (unsigned long)(st.totalUs > named ? st.totalUs - named : 0));
+  }
+  Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,occupancy,high_water=%u,bins="), (unsigned long)micros(),
+                unsigned(m.highWater));
+  bool first = true;
+  for (uint8_t o = 0; o < kNoteOffOccupancyBins; ++o) {
+    const auto& bin = m.byOccupancy[o];
+    if (bin.count == 0) continue;
+    Serial.printf_P(PSTR("%s%u:%lu:%lu:%lu"), first ? PSTR("") : PSTR("/"), unsigned(o), (unsigned long)bin.count,
+                  (unsigned long)bin.totalUs, (unsigned long)bin.maxUs);
+    first = false;
+  }
+  Serial.println();
+  for (const auto& w : m.worst) {
+    if (w.us == 0) continue;
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,worst,us=%lu,occupancy=%u,path=%s,coverage=%lu,retain=%lu,derive=%lu\n"),
+                  (unsigned long)micros(), (unsigned long)w.us, unsigned(w.occupancy),
+                  noteOffPathName(w.path), (unsigned long)w.coverageUs, (unsigned long)w.retainUs,
+                  (unsigned long)w.deriveUs);
+  }
+}
+#endif

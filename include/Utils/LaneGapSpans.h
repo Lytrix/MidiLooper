@@ -55,11 +55,44 @@ struct MessageScope {
     if (active) gMessage[child] += micros() - startUs;
   }
 };
+/// Overdub NoteOff split (owner ruling 2026-11-03), defined in LoopPendingNoteChange.cpp and folded into the MIDI
+/// dump: which path a completed note took (prepared span / retained obligation / full-set fallback derive), the
+/// deferred-set occupancy at entry, and the coverage-mark, retain and derive time. Everything else is the remainder.
+enum NoteOffPath : uint8_t { PathPrepared = 0, PathRetained, PathFallback, PathCount };
+struct NoteOffProbe;
+void noteOverdubNoteOff(const NoteOffProbe& probe, uint32_t totalUs, uint8_t occupancyAfter);
+void dumpNoteOffSpans();
+void resetNoteOffSpans();
+struct NoteOffProbe {
+  const uint8_t& occupancyNow;
+  uint32_t startUs;
+  uint32_t coverageUs = 0, retainUs = 0, deriveUs = 0;
+  uint8_t occupancyAtEntry;
+  uint8_t path = PathPrepared;
+  bool active;
+  explicit NoteOffProbe(const uint8_t& occupancy)
+      : occupancyNow(occupancy), startUs(micros()), occupancyAtEntry(occupancy), active(!inHandler()) {}
+  ~NoteOffProbe() {
+    if (active) noteOverdubNoteOff(*this, micros() - startUs, occupancyNow);
+  }
+};
+struct NoteOffPhase {
+  uint32_t& field;
+  uint32_t startUs;
+  explicit NoteOffPhase(uint32_t& f) : field(f), startUs(micros()) {}
+  ~NoteOffPhase() { field += micros() - startUs; }
+};
 }  // namespace LaneGapSpans
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
 #define LANE_MSG_SPAN(child) LaneGapSpans::MessageScope laneMsgSpanScope(LaneGapSpans::child)
+#define LANE_NOTEOFF_BEGIN(occupancy) LaneGapSpans::NoteOffProbe laneNoteOffProbe(occupancy)
+#define LANE_NOTEOFF_PHASE(field) LaneGapSpans::NoteOffPhase laneNoteOffPhase(laneNoteOffProbe.field)
+#define LANE_NOTEOFF_PATH(p) (laneNoteOffProbe.path = LaneGapSpans::p)
 #define LANE_GAP_MIDI_SPLIT 1
 #else
 #define LANE_GAP_SPAN(bucket) ((void)0)
 #define LANE_MSG_SPAN(child) ((void)0)
+#define LANE_NOTEOFF_BEGIN(occupancy) ((void)0)
+#define LANE_NOTEOFF_PHASE(field) ((void)0)
+#define LANE_NOTEOFF_PATH(p) ((void)0)
 #endif

@@ -297,7 +297,10 @@ void noteMidiMessage(uint8_t type, uint32_t us) {
 }
 }  // namespace
 
-void resetMidiSpansImpl() { sMidiSpans = MidiSpans{}; }
+void resetMidiSpansImpl() {
+  sMidiSpans = MidiSpans{};
+  LaneGapSpans::resetNoteOffSpans();
+}
 
 FLASHMEM void dumpMidiSpansImpl() {
   auto& m = sMidiSpans;
@@ -376,7 +379,10 @@ void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
 
 #if defined(LANE_GAP_MIDI_SPLIT)
 void LaneGapSpans::resetMidiSpans() { resetMidiSpansImpl(); }
-FLASHMEM void LaneGapSpans::dumpMidiSpans() { dumpMidiSpansImpl(); }
+FLASHMEM void LaneGapSpans::dumpMidiSpans() {
+  dumpMidiSpansImpl();
+  dumpNoteOffSpans();
+}
 #endif
 
 void MidiHandler::setup() {
