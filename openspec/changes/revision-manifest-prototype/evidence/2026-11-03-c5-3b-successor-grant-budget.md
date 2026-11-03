@@ -154,3 +154,32 @@ tick, grants served because due, max opportunity gap while owed, N.end.
 
   Whatever builds, scans or commits there moves to bounded deferred ownership. No lane deadline or deeper lookahead
   until then.
+
+## The repeated post-stop Clock work, named from the existing timing rows (2026-11-03)
+
+Same capture, `captures/session_20261103_123542.log`, using the image's existing runtime-timing rows. No new code.
+
+| phase | `merged_build` rows | `playback_order` rows |
+|---|---|---|
+| record take (26 s) | 30 | 30 |
+| overdub (30 s) | 87 | 86 |
+| **after the overdub stop (45 s)** | **6,110** | **1,539** |
+| playback after the restart (34 s) | 43 | 43 |
+
+- **Who.** After the overdub stop the six **unrouted** tracks each rebuild their merged playback fallback about 873
+  times in 45 s, about 19 per second per track. That is about 114 builds per second, roughly one per Clock.
+  - Tracks 0, 1, 2, 4, 5, 6, slot 0; the windows are their whole loops, 768-12,288 ticks.
+  - Every row is `path=2` (`CompatibilityPasses`: the committed passes serve the window), `pst=5` (that source is
+    current), `root=0` (no current published root), 68-448 events per build.
+  - The routed track is not among them.
+- **Where.** `Clock` → `ClockManager::onMidiClockPulse` → `TrackManager::updateAllTracks` → per-track merged-fallback
+  build (`TrackPlaybackWindowBuild.cpp`, the `mergedFallbackReuseHolds` reuse test failing, then
+  `copyEffectiveCommittedEventsInRange` over the window). That is synchronous, content-sized work on the clock path.
+- **Instrumentation share.** In capture images the witness row of every such build (`reportMergedBuildWitness`) also
+  gathers a whole-window oracle copy, so the measured 6.7 ms per Clock is roughly one build plus one oracle copy. Even
+  so, about 114 builds per second of up to 448 events is real production work.
+- **Not yet known: why reuse fails about 19 times per second per track only after the overdub stop.** The reuse key is
+  the loop's `playbackRevision`, its `publishedSnapshotIdentity()`, and the window covering the playhead. For a
+  whole-loop window the coverage term always holds, so the revision or the identity must be moving.
+- **Next.** One silent counter per reuse-failure term (revision, identity, empty, coverage) per track, for the
+  post-stop phase. Then remove the cause, so a stable committed source is built once.
