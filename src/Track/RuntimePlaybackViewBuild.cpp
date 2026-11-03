@@ -526,6 +526,20 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveSnapshotGrai
 /// Task 3.7h — the **one** price for a window build, shared by the rolling selector's position and the
 /// admission's lead test. `releaseUnits == 0` is the source-only shape (`deriveSnapshotGrainsFrom`), which
 /// charges the single promotion grain and nothing for retirement.
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveManifestWindowGrantsFrom(
+    size_t sourceUnits, size_t eventCount, size_t fillQuantum, size_t orderQuantum) {
+  const auto grants = [](size_t work, size_t quantum) -> size_t {
+    return quantum == 0 ? SIZE_MAX : work == 0 ? 0 : 1 + (work - 1) / quantum;
+  };
+  const size_t reads = grants(sourceUnits, fillQuantum);
+  const size_t pass = grants(eventCount, orderQuantum);
+  const size_t fills = reads == SIZE_MAX ? SIZE_MAX : reads + 1;  // + the admission turn
+  const size_t orders = pass > SIZE_MAX / 3 ? SIZE_MAX : 3 * pass;  // dense count, dense assign, playback order
+  requiredFillGrains = static_cast<uint16_t>(fills > UINT16_MAX ? UINT16_MAX : fills);
+  requiredOrderGrains = static_cast<uint16_t>(orders > UINT16_MAX ? UINT16_MAX : orders);
+  requiredPromotionGrains = 1;  // publication
+}
+
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveWindowGrainsFrom(
     size_t sourceUnits, size_t eventCount, size_t releaseUnits, size_t fillQuantum, size_t orderQuantum) {
   const auto grains = [](size_t work, size_t quantum) -> size_t {

@@ -441,3 +441,31 @@ AFFECTED native: 16 suites, 534 cases, 0 failed, 0 errored.
     prototype price on G(E) grants.
   - The final timing contract (G(E) × guaranteed grant gap + guard) is later.
   - The origin of the superseded demand is still to be traced.
+
+## C5 manifest work estimator prices G(E) grants (owner ruling 2026-11-03)
+
+- **Change.** `CoverageServiceContract::deriveManifestWindowGrantsFrom`, a work count in lane grants, with the timing
+  rule unchanged:
+  - fill = ceil((2E + 1)/64) + 1 (the qualification read plus the admission turn);
+  - order = 3·ceil(E/48) (the dense count, the dense assign and the playback order);
+  - promotion = 1 (the publication).
+  - The routed position bound prices the full G(E). The admission prices the remainder, 3·ceil(E/48) + 1, after
+    qualification.
+- **Host.**
+  - The cost fixture asserts estimate == measured grants on every dense window.
+  - The table test pins G(93) = 11 for both shapes, G(96) = 12, G(97) = 15, and 16 / 19 / 20 for the device sizes.
+  - AFFECTED: 16 suites, 535 cases, 0 failed, 0 errored.
+- **Device.** succprobe HEX sha256 `33111c647cf6341e780a7a2e6d4dc4ea0322aad3a4642fb55cba09b5562c828c`,
+  `captures/session_20261103_095257.log`, boot `crash=0`. Same overdub run.
+  - **Estimated == measured on 22/22 handed windows:** E = 138 → 10 grants after admission, E = 162–188 → 13.
+  - Priced work fell from 75–77 old grains to at most 13 grants.
+  - The first window after the restart served at 41.0 s, against 61.5 s with the old work count; the timing
+    conversion is unchanged.
+  - After the restart: 20/20 successors handed off, 0 missed, 0 superseded discharges.
+- **Exposed, tracked separately.** One block before the restart, at 101.9 s on the overdubbed take:
+  - 86.5 s: the rolling requester asked for a window.
+  - 88.2 s: the build was admitted.
+  - 89.7 s: it was `published_as_ready`, but the frame stayed **Requested**.
+  - The same turn, the per-turn demand armed a playhead request beside it (`pending_armed`, frame Requested).
+  - At the deadline (start 23,856): `CandidateNotReady` → Blocked, for about 26 s until the stop.
+  - This is a frame/build association defect the closer position exposed, not an estimator error.

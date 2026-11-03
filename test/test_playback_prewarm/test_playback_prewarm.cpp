@@ -9120,6 +9120,14 @@ void run(Case& c) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(2 * E + 1, 64), grants.qualification, label);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(canonical, 48) + ceilDiv(E, 48), grants.canonicalRanks, label);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(E, 48), grants.playback, label);
+    if (dense) {
+      // The manifest estimator predicts exactly the grants the dense build used: the stages measured here plus the
+      // lane's admission and publication grants (one each, device-measured).
+      CoverageServiceContract estimate{};
+      estimate.deriveManifestWindowGrantsFrom(2 * E + 1, E, kFillQuantum, kOrderQuantum);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(grants.qualification + 1 + grants.canonicalRanks + grants.playback + 1,
+                                       estimate.requiredGrains(), label);
+    }
     // The sort's merge cost is the builder's own declared bound (fill + one write per level + odd-level copy-back).
     if (!dense && c.expectedCanonicalUnits != E)
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(RuntimePlaybackOrderBuilder::workEntriesUpperBound(E), c.expectedCanonicalUnits,
@@ -9243,6 +9251,24 @@ void test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch() {
   pair.overdub.emplace_back(700, true, 95);
   pair.overdub.emplace_back(2000, false, 95);
   for (c5cost::Case* c : {&single, &interleaved, &even, &pair}) c5cost::run(*c);
+}
+
+// C5.3b manifest work estimator (owner ruling 2026-11-03): a count of lane grants, G(E) = ceil((2E+1)/64) +
+// 3 * ceil(E/48) + 2, a function of E alone. The admission prices the remainder after qualification and its turn.
+void test_c5_manifest_window_grant_estimator_is_g_of_e() {
+  struct Row { uint32_t E, G; };
+  // 93: both measured shapes (one pass, interleaved); 138/150/176/186/189: the device's two-pass windows; 96/97: the
+  // order step, where ceil(E / 48) moves from 2 to 3.
+  const Row rows[] = {{93, 11}, {96, 12}, {97, 15}, {138, 16}, {150, 19}, {176, 20}, {186, 20}, {189, 20}};
+  for (const Row& r : rows) {
+    CoverageServiceContract c{};
+    c.deriveManifestWindowGrantsFrom(2 * r.E + 1, r.E, 64, 48);
+    char label[64];
+    snprintf(label, sizeof(label), "E=%u", r.E);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(r.G, c.requiredGrains(), label);
+    c.requiredFillGrains = 0;  // the admission's remainder
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(3 * ((r.E + 47) / 48) + 1, c.requiredGrains(), label);
+  }
 }
 
 // C5.3b dense manifest ranks: equal to the canonical sort's numbering on windows the cursor cannot produce by itself.
@@ -10333,6 +10359,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_c5_manifest_window_cursor_refuses_by_name);
   RUN_TEST(test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch);
   RUN_TEST(test_c5_manifest_dense_ranks_match_the_canonical_sort);
+  RUN_TEST(test_c5_manifest_window_grant_estimator_is_g_of_e);
   RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
   RUN_TEST(test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin);
   RUN_TEST(test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled);

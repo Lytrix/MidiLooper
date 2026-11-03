@@ -207,6 +207,14 @@ struct CoverageServiceContract {
   /// counted window with it, so the position and the lead test cannot drift into two estimates.
   void deriveWindowGrainsFrom(size_t sourceUnits, size_t eventCount, size_t releaseUnits,
                               size_t fillQuantum, size_t orderQuantum);
+  /// C5.3b (DEC-246 amendment 28): **the manifest window's work, in lane grants** -- the bounded count the lane
+  /// serves, proven per stage on host and device: `G(E) = ceil(sourceUnits / fill) + 1 + 3 * ceil(E / order) + 1`.
+  /// Fill grains carry the qualification read **and** the admission turn; order grains the dense rank count and
+  /// assign passes plus the playback order (no canonical sort on this path); one promotion grain the publication. A
+  /// caller that zeroes `requiredFillGrains` after qualification prices the remaining `3 * ceil(E / order) + 1`.
+  /// A work count only: the grant -> time conversion stays the caller's (DEC-147), unchanged.
+  void deriveManifestWindowGrantsFrom(size_t sourceUnits, size_t eventCount, size_t fillQuantum,
+                                      size_t orderQuantum);
   bool canCompleteBeforeHandoff(uint32_t currentPhase, uint32_t handoffPhase,
                                 uint32_t loopLengthTicks,
                                 uint16_t additionalGrains = 0) const;

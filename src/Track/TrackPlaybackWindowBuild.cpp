@@ -6699,6 +6699,12 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     if (snapshot && boundRollingWindowWork(*snapshot, loop.loopLengthTicks, span, bound)) {
 #endif
       CoverageServiceContract priced = contract;
+#if REVISION_MANIFEST_READER
+      if (routed)  // C5.3b: the manifest build's own grant count (dense ranks, no canonical sort)
+        priced.deriveManifestWindowGrantsFrom(bound.readUnits, bound.events, kPlaybackViewFillQuantum,
+                                              kPlaybackViewOrderQuantum);
+      else
+#endif
       priced.deriveWindowGrainsFrom(bound.readUnits, bound.events, bound.releaseUnits,
                                     kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
       positionCost = priced;
@@ -7617,6 +7623,12 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   // pass + the retirement of the topology the qualification pinned. The selector's position is priced from a bound
   // over every span of this loop (so the target's own cost can never exceed it); the admission prices the counted
   // window with the one function both read, so a position and a lead test can never disagree about what the work is.
+#if REVISION_MANIFEST_READER
+  if (runtime->ownsManifestCoverage())  // C5.3b: the manifest build's own grant count, as the position priced it
+    contract.deriveManifestWindowGrantsFrom(runtime->coverageSourceUnits, runtime->coverageEventCount,
+                                            kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
+  else
+#endif
   contract.deriveWindowGrainsFrom(runtime->coverageSourceUnits, runtime->coverageEventCount,
 #if REVISION_MANIFEST_READER
                                   runtime->coverageSourceReleaseUnitBound(),
@@ -7624,7 +7636,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
                                   runtime->coverageSource.qualifiedReleaseUnitBound(),
 #endif
                                   kPlaybackViewFillQuantum, kPlaybackViewOrderQuantum);
-  contract.requiredFillGrains = 0; // Already completed in private qualification; never reread.
+  contract.requiredFillGrains = 0; // Already completed in private qualification (and its admission turn); never reread.
   // Launch has no deadline to expire. A sibling appearing after qualification
   // temporarily owns service; preserve the counted source and retry admission.
   if ((launch || cold) && playbackViewOutstandingGrains(slotIndex) != 0)
