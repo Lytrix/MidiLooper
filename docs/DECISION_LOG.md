@@ -14137,6 +14137,29 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
         the routed slot, no term-6 refusal (`captures/session_20261102_175059.log`).
       - The 192-PPQN musical timeline is unaffected: event times between pulses stay what they are; this rule is
         only about the transport's continuity proof.
+28. **A manifest window's canonical ranks come from a dense count/assign pass, not a sort (owner, 2026-11-03).**
+    - **Why.** The canonical key is `origin << 16 | ordinal`, which is pass-major. Any window where passes
+      interleave in time therefore took the full bottom-up merge, so a normal overdub was not an adversarial corner.
+      Host-pinned at E = 93: 11 grants for one pass, 27 for two interleaved passes or for one cross-pass equal-tick
+      pair. A content-dependent cliff like that cannot be priced from E.
+    - **Rule.** On the manifest-routed build the canonical stage is:
+      ```
+      count[o] = retained rows of origin o in this candidate
+      base[o]  = sum of count[p] over p < o
+      rank[i]  = base[origin_i] + (retained rows of origin_i before i)
+      ```
+      - It is one E-unit count pass plus one E-unit assign pass, in stream order.
+      - Ranks are window-local and dense from 0, never the source ordinal.
+      - The per-origin counters live in the unpublished candidate's `mergeScratch`, so `LoopPlaybackRuntime` does not
+        grow.
+      - A view under 256 entries keeps the sort (host oracle only; production views hold 2,048).
+      - The snapshot builder keeps its sort until migration reaches it.
+    - **Result.** `G(E) = ceil((2E + 1)/64) + 3·ceil(E/48) + 2` for any arrangement of passes. Host: interleaved
+      E = 93 falls from 27 to 11 grants. Ranks, order and phases equal the sort's and the published root's
+      (`test_playback_prewarm`: mid-pass gapped ordinals, retained-out rows, three origins at equal ticks).
+    - **Not changed yet.** The DEC-147 price (`deriveWindowGrainsFrom` still charges two full sorts, conservatively),
+      the scheduler, and the snapshot path. `G(E)` is the input for the DEC-147 successor rewrite that comes next.
+    - Evidence: `evidence/2026-11-02-c5-3b-successor-lead-sweep.md`.
 
 ### Related
 

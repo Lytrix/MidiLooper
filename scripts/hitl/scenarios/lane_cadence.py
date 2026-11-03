@@ -256,15 +256,17 @@ def _routed_window_served_ticks(lines, start):
 
 
 def run_sweep(action, session, capture, master, report, save, scale, deny_levels=SWEEP_DENY_LEVELS, hold_s=0.0,
-              points=()):
+              points=(), overdub_bars=0):
     """Amendment 26: for each denial level (0-7 withheld grants after every grain served to track 8), the smallest
     successor lead at which every seam hands off cleanly -- 20-seam bisection points, then 50/50 at the answer.
 
     Load: the HITL take on track 8 slot 4 (32 dense bars, the only lane-served slot on this card), the rest of the set
-    playing, normal display and save activity, 300 BPM. No overdub (it is a known heap-pressure defect).
+    playing, normal display and save activity, 300 BPM. No overdub by default (it is a known heap-pressure defect);
+    `overdub_bars` > 0 overdubs the take once before the restart, so every committed window interleaves two passes
+    (C5.3b dense-rank qualification).
     """
     import uuid
-    from hitl.actions.slots import _slot_note, press_slot_clear, press_slot_record, press_track
+    from hitl.actions.slots import _slot_note, press_slot_clear, press_slot_overdub, press_slot_record, press_track
     from hitl.control_constants import CONTROL_CHANNEL_1BASED
     from hitl.transport_clock import stream_pattern_for_bars
 
@@ -308,6 +310,27 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
         raise RuntimeError("record_stop_not_confirmed")
     save()
 
+    if overdub_bars > 0:
+        # One overdub pass in the upper register, interleaved in time with the take (the intense mode's gesture).
+        time.sleep(4 * bar_s)  # let the take commit and play once
+        lines = log_lines()
+        press_slot_overdub(action, HITL_SLOT)
+        if _wait_line(log_lines, len(lines), ("Overdub session opened",), 4 * bar_s + 3) is None:
+            raise RuntimeError("overdub_not_confirmed")
+        stream_pattern_for_bars(
+            session.out_port, session.in_port, midi_channel_1based=1, low_note=72, high_note=95,
+            step_clocks=STEP_16TH_CLOCKS, gate_clocks=3, target_bars=overdub_bars, cc_number=74, cc_step=9,
+            pitch_cycle_bars=2, phase_start_delay_bars=0, phase_start_delay_beats=0,
+            max_seconds_guard=overdub_bars * bar_s * 2 + 30, stop_press_advance_clocks=12,
+            stop_press_note=_slot_note(HITL_SLOT), stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
+            emit_immediate_first_step=True, master=master)
+        stopped = _wait_line(log_lines, len(lines), ("Stop Overdub", "Overdub stopped", "capture hot stop"),
+                             4 * bar_s + 3)
+        leg["overdub"] = dict(bars=overdub_bars, stop_confirmed=stopped is not None)
+        if stopped is None:
+            raise RuntimeError("overdub_stop_not_confirmed")
+        save()
+
     # Measurement workaround (amendments 26-27): avoid the open Record-return ownership handoff. Let the Record job
     # retire and the committed source publish, stop, record the state, then restart: the sweep starts from a clean
     # manifest-served committed lane, never from the Record-return path.
@@ -317,7 +340,9 @@ def run_sweep(action, session, capture, master, report, save, scale, deny_levels
     # blocks: the open ownership-handoff defect), in several deferred steps -- 4 s was not enough on the device.
     time.sleep(20.0)
     status = {}
-    for command in ("!STOP_STATUS", "!REVSHADOW_STATUS"):
+    # `!REVSHADOW_STATUS` copies the whole loop's events twice into heap vectors for its shadow parity; on an overdubbed
+    # take (about 3,000 rows) that ran the device out of heap and reset it (2026-11-03), so it is skipped then.
+    for command in ("!STOP_STATUS",) + (() if overdub_bars > 0 else ("!REVSHADOW_STATUS",)):
         nonce, end = uuid.uuid4().hex, uuid.uuid4().hex
         accepted, _ = capture.send_command(command, nonce=nonce, end_nonce=end)
         rows = capture.fenced_response(nonce, end, timeout_s=5.0, poll_s=0.05) if accepted else None
@@ -485,6 +510,8 @@ def run_lane_cadence(args):
     parser.add_argument("--lane-cadence-deny", default="0,3,7", help="sweep: denial levels (comma list; 'none': setup only)")
     parser.add_argument("--lane-cadence-points", default="",
                         help="sweep: fixed probes deny:lead:seams,... instead of the search")
+    parser.add_argument("--lane-cadence-overdub-bars", type=int, default=0,
+                        help="sweep: overdub the take for this many bars before the restart (0: none)")
     parser.add_argument("--lane-cadence-hold", type=float, default=0.0,
                         help="sweep with deny none: seconds to keep playing after the first window serves")
     ns, _ = parser.parse_known_args(legacy)
@@ -517,7 +544,8 @@ def run_lane_cadence(args):
                           tuple(int(x) for x in ns.lane_cadence_deny.split(",") if x.strip() and x.strip() != "none"),
                           hold_s=ns.lane_cadence_hold,
                           points=tuple(tuple(int(v) for v in p.split(":")) for p in ns.lane_cadence_points.split(",")
-                                       if p.strip()))
+                                       if p.strip()),
+                          overdub_bars=ns.lane_cadence_overdub_bars)
         for bpm, seconds in (LEGS if ns.lane_cadence_mode == "legs" else ()):
             seconds = max(5.0, seconds * ns.lane_cadence_scale)
             leg = dict(bpm=bpm, planned_s=seconds, start_monotonic=time.monotonic(), start_us_hint=None)

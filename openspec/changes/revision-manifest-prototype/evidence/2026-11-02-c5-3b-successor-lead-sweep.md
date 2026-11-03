@@ -344,3 +344,63 @@ G(E) = ceil((2E + 1)/64) + 1 + ceil(E/48) + ceil(E/48) + ceil(E/48) + 1
 
 This is monotone in E alone, as DEC-147 pricing needs. **Not implemented**, per the owner ruling: no builder or
 scheduler change yet.
+
+## Dense manifest ranks replace the canonical sort (owner ruling 2026-11-03, DEC-246 amendment 28)
+
+Commit `b434100d`. Manifest-routed builds (`RuntimePlaybackViewBuild::beginCanonicalRanks` /
+`stepManifestRanks`) number canonical ranks with:
+- a **count pass** that counts retained rows per origin in the candidate's `mergeScratch`, then turns the counts into
+  per-origin bases;
+- an **assign pass**: `rank = base[origin]++`, in stream order.
+
+That is 2E units, with the 256-slot clear and prefix as fixed work inside the first and last count grains. Ranks are
+window-local and dense; the source ordinal is never used. Views under 256 entries, and the snapshot path, keep the
+sort.
+
+Host (`test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch`, both paths on each window):
+
+| Window | E | sort: c+r grants | dense: c+r grants | G(E) sort → dense |
+|---|---|---|---|---|
+| one pass | 93 | 2+2 | 2+2 | 11 → 11 |
+| two passes interleaved | 93 | 18+2 | 2+2 | **27 → 11** |
+| two passes interleaved | 64 | 10+2 | 2+2 | 19 → 11 |
+| one cross-pass equal-tick pair | 93 | 18+2 | 2+2 | **27 → 11** |
+
+**Parity.** Order, phase and rank equal the published root's on every window above. They also equal the sort's in
+`test_c5_manifest_dense_ranks_match_the_canonical_sort`, on windows the cursor cannot produce by itself:
+- two interleaved passes whose source ordinals start at 500 and 900, with gaps: ranks start at 0;
+- the same window with retained-out rows from both origins: no holes, checked against an independent pass-major
+  oracle;
+- three origins sharing ticks: a later origin's NoteOff ahead of earlier origins' NoteOns.
+
+**Latent finding in the old sort path.** `SnapshotRanks` walks `storage.order` up to `eventCount`, which runs past the
+`orderedEventCount` retained entries the sort wrote. A candidate with discarded rows would get stale ranks. No
+production path discards rows of a snapshot or manifest candidate before ranks, so this is recorded, not fixed.
+AFFECTED native: 16 suites, 534 cases, 0 failed, 0 errored.
+
+### Device qualification with an overdub: not reached (2026-11-03)
+
+- **Image.** `teensy41-capture-serial-revstore-succprobe` at `b434100d`, HEX sha256
+  `039eb2c705c480eef8956600f7f2cb254d1404be7f9df12ec3d77fae83f30c81`. Boot `boot_reset,crash=0`, `BOOT,load,ok`.
+- **Run.** Sweep mode with `--lane-cadence-overdub-bars 32 --lane-cadence-points 0:1536:30`: 32 dense bars, then a
+  32-bar overdub in the upper register, then stop and restart.
+- **Run 1** (`captures/session_20261103_084213.log`). After the stop, the board **reset itself** while answering
+  `!REVSHADOW_STATUS`.
+  - Its last row was `run_phase,run=2`, and the next block copies the whole loop's events twice into heap vectors for
+    its shadow parity: 3,070 rows, with about 106 KB of heap free.
+  - The restart then hit a booting board.
+  - Likely an out-of-heap reset in that stopped-only diagnostic; the ring had wrapped past the second boot's
+    `boot_reset` row, so this is not confirmed. The scenario now skips that query on an overdubbed take.
+- **Run 2** (`captures/session_20261103_084810.log`). The restart went through, but no manifest window served:
+  - at +4 s a window was **ready**: start 7,480, deadline 58,168 = 7,480 + 2 × 25,344, two traversals ahead;
+  - it waited (`WaitingForHandoff`) while a **pending demand stayed active** (owners = 4);
+  - at +30 s that demand was judged `DeadlineExpired` (`win_blocked_by_request`, rq = 10), and the frame stayed
+    **Blocked**. The harness watchdog ended the run at 360 s.
+- **Reading (not yet proven).** The DEC-147 price still charges two full sorts (`deriveWindowGrainsFrom`). For a
+  two-pass window of about E = 186 (estimated from the take's density; no window served, so not measured) that is 81
+  grains, or 42,240 ticks. That exceeds a whole 25,344-tick traversal, against 22,272 for the single-pass E = 93
+  window. So the first window was placed two traversals out, and the retained demand expired before the handoff
+  arrived. The dense ranks cut the real cost to G(186) = 20 grains, but the price does not see that yet.
+- **Not a dense-rank defect on this evidence.** Nothing was being built while the board was stopped, and the routed-lane
+  host suites pass at production view size. Telling "the price places windows a traversal out" apart from "an expired
+  retained demand blocks a ready frame terminally" needs either the price change or a host fixture of the second.
