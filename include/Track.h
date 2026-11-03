@@ -717,6 +717,10 @@ public:
   /// C5.3 (DEC-246 amendment 22): the committed-window source seam. True only for the designated track's active slot
   /// while a reader is installed; such a slot's committed windows read the manifest and nothing else.
   bool manifestLaneRoutesSlot(uint8_t slotIndex) const;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  void reestablishRollingFrameDemand(uint8_t slot, const LoopPlaybackRuntime::RollingFrame& frame,
+                                     uint32_t currentPhase, PlaybackDeadlineClock clock);
+#endif
   /// Main-loop only: ask the reader (metadata only) and publish the routed slot's servability to the tick words.
   CommittedManifestLane::State refreshManifestLane(uint8_t slotIndex);
   /// The routed slot's currency for a window identity: the actual manifest identity is the servable one, imported from

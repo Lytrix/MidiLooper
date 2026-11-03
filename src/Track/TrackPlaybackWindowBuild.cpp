@@ -5210,6 +5210,31 @@ TRACK_COLD_MEM bool Track::committedDemandPriceRefused(uint8_t slotIndex, const 
   return refused.source.snapshotIdentity == loop.publishedSnapshotIdentity();
 }
 
+#if defined(SESSION_CAPTURE)
+namespace {
+/// C5.3b measurement (owner ruling 2026-11-03): the frame / build / ready association at its three moments.
+/// assoc,<moment>: frame phase, frame start, frame deadline, record or work deadline, record or candidate start,
+/// record or work epoch, frame epoch, record kind, record reason (deadlines are low words).
+TRACK_COLD_MEM __attribute__((noinline)) void reportRollingAssociation(
+    uint8_t track, uint8_t slot, const char* moment, const LoopPlaybackRuntime& runtime,
+                              uint64_t otherDeadline, uint32_t otherStart, uint32_t otherEpoch, uint8_t kind,
+                              uint8_t reason) {
+  const auto& frame = runtime.rolling;
+  SC_FROZEN_WINDOW_READINESS(track, slot, "assoc", moment, static_cast<uint32_t>(frame.phase), frame.startPhase,
+                             static_cast<uint32_t>(frame.deadlineTick), static_cast<uint32_t>(otherDeadline),
+                             otherStart, otherEpoch, frame.epoch, kind, reason, 0u);
+}
+TRACK_COLD_MEM __attribute__((noinline)) uint32_t buildCandidateStart(const LoopPlaybackRuntime& runtime) {
+  const auto* set = runtime.viewSetIfPrewarmed();
+  return set && set->lifecycle.build < set->views.size() ? set->views[set->lifecycle.build].coverage.startPhase
+                                                          : UINT32_MAX;
+}
+}  // namespace
+#define REPORT_ROLLING_ASSOCIATION(...) reportRollingAssociation(__VA_ARGS__)
+#else
+#define REPORT_ROLLING_ASSOCIATION(...) ((void)0)
+#endif
+
 namespace {
 bool rollingFrameOwnsPositionedObligation(const LoopPlaybackRuntime::RollingFrame& frame, uint32_t generation,
                                           uint32_t epoch, uint32_t loopLength);
@@ -6807,6 +6832,11 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   frame.lastTick = clock.tick;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Requested; // Publish metadata last.
   reportPlaybackRollingGateRow("win_requested", clock.epoch != 0, /*reprojectedTick=*/false, static_cast<uint8_t>(requested));
+  REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), activeLoopIndex, "request", *runtime,
+                             runtime->pendingViewRequest_.deadlineTick, runtime->pendingViewRequest_.coverage.startPhase,
+                             runtime->pendingViewRequest_.clockEpoch,
+                             static_cast<uint8_t>(runtime->pendingViewRequest_.sourceKind),
+                             static_cast<uint8_t>(runtime->pendingViewRequest_.reason));
   return RollingOutcome::Requested;
 #endif
 }
@@ -7661,6 +7691,11 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
     const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
+    if (admitted)
+      REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slotIndex, "admit_waived", *runtime,
+                                 runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
+                                 runtime->viewBuildWork.clockEpoch, launch ? 1u : cold ? 2u : 3u,
+                                 static_cast<uint8_t>(request.reason));
     return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
   constexpr uint32_t spanTicks = 2 * Config::TICKS_PER_BAR;
@@ -7759,6 +7794,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
   const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
   traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
+  if (admitted)
+    REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slotIndex, "admit", *runtime,
+                               runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
+                               runtime->viewBuildWork.clockEpoch, 0u, static_cast<uint8_t>(request.reason));
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
   if (admitted && successorDemand) {
     ++RollingSuccessorProbe::gCounters.admitted;
@@ -8937,10 +8976,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   }
   const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
   RuntimePlaybackViewBuildGrain result = RuntimePlaybackViewBuildGrain::Denied;
+  bool deadBuild = false;
   if (grain == RuntimePlaybackViewBuildGrain::Fill) {
     result = runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum);
   } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
     result = runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum);
+  } else if (grain == RuntimePlaybackViewBuildGrain::Denied && runtime->ownsCoverageSource()) {
+    deadBuild = true;
+    // Owner ruling 2026-11-03: a coverage build whose next grain is Denied (its destination generation or source moved
+    // under it) is dead. It is retired on this turn by the same path as a denied step -- the build discarded, its role
+    // released, its candidate never published -- instead of being left active until its frame's deadline passes.
+    result = RuntimePlaybackViewBuildGrain::Denied;
   } else {
     // Only admitted coverage-owned Fill/Order work reaches this branch; source
     // qualification and retirement took the separate bounded retry branch above.
@@ -9048,7 +9094,15 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
 #endif
 #endif
-    else (void)publishCompletedPlaybackWindow(slot);
+    else {
+      if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested)
+        REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slot, "publish_outside_frame", *runtime,
+                                   runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
+                                   runtime->viewBuildWork.clockEpoch,
+                                   runtime->completedPromisePendingJudgement ? 1u : 0u,
+                                   runtime->admittedPromiseInvalidated ? 1u : 0u);
+      (void)publishCompletedPlaybackWindow(slot);
+    }
     if (runtime->ownsCoverageSource()) {
       runtime->frozenViewRequest = {};
 #if REVISION_MANIFEST_READER
@@ -9065,9 +9119,20 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
 #endif
     }
   } else if (result == RuntimePlaybackViewBuildGrain::Denied && runtime->ownsCoverageSource()) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+    // The dead build was the Requested frame's own (its admitted promise carries the frame's deadline and epoch):
+    // the build dies, the frame's obligation does not.
+    const auto frame = runtime->rolling;
+    const bool framesOwnBuild = deadBuild && slot == activeLoopIndex &&
+        frame.phase == LoopPlaybackRuntime::RollingPhase::Requested && frame.deadlineTick != 0 &&
+        runtime->viewBuildWork.deadlineTick == frame.deadlineTick && runtime->viewBuildWork.clockEpoch == frame.epoch;
+#endif
     const uint32_t dropBefore = probeCoverageBuildDrop(slot);
     runtime->retireCoverageSource();
     traceCoverageBuildDrop(slot, CoverageBuildDropReason::GrainDeniedWhileOwned, dropBefore);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+    if (framesOwnBuild) reestablishRollingFrameDemand(slot, frame, currentPhase, clock);
+#endif
   }
   const PlaybackViewTurnResult turnResult = finishPlaybackViewGrain(slot, result);
   if (turnResult == PlaybackViewTurnResult::GrainDenied || turnResult == PlaybackViewTurnResult::BuildComplete) {
@@ -9093,6 +9158,28 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   if (isAudiblePlaybackActive()) (void)serviceCaptureStopPresentations();
   return primaryTurn && bridgeTurn ? outcome : PlaybackViewTurnResult::GrainDenied;
 }
+
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+/// Owner ruling 2026-11-03: a Requested frame whose own build died (its destination moved under it) keeps its
+/// obligation. The frame's own interval is requested again through the rolling requester's entry; if the new demand
+/// does not land on the frame's position, the frame is cancelled so the requester repositions it -- never left to time
+/// out at its deadline.
+TRACK_COLD_MEM void Track::reestablishRollingFrameDemand(uint8_t slot, const LoopPlaybackRuntime::RollingFrame& frame,
+                                                         uint32_t currentPhase, PlaybackDeadlineClock clock) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr || frame.loopLength == 0) return;
+  const PlaybackCoverageInterval coverage{frame.startPhase, rollingFrameSpan(frame), frame.loopLength};
+  const uint32_t phase = currentPhase % frame.loopLength;
+  const bool requested = requestCommittedPlaybackWindow(slot, coverage, phase, clock) ==
+                         PlaybackViewRequestResult::DeferredSourceQualification;
+  const auto& demand = runtime->pendingViewRequest_;
+  const bool samePosition = requested && demand.active && demand.deadlineTick == frame.deadlineTick &&
+                            demand.clockEpoch == frame.epoch && demand.coverage.startPhase == frame.startPhase;
+  reportPlaybackRollingGateRow(samePosition ? "win_dead_build_rerequested" : "win_dead_build_repositioned",
+                               clock.epoch != 0);
+  if (!samePosition) cancelRollingPlaybackWindow(slot);
+}
+#endif
 
 TRACK_COLD_MEM Track::OverdubOverlayDemand Track::overdubOverlayDemandForSlot(uint8_t slotIndex,
                                                                               uint32_t playheadPhase) const {

@@ -1388,7 +1388,14 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       return;
     }
   }
-  if (isPlaying()) {
+  // Owner ruling 2026-11-03: a manifest-routed slot's playback-view lifecycle has one owner, the manifest rolling lane.
+  // The bridge-window owner (the old path's pre-root bridge after an overdub stop) never rotates, publishes or resets
+  // that slot's views; on the device it served none of its ticks. The stop job's bridge storage is unaffected.
+  bool bridgeWindowOwnsViews = isPlaying();
+#if REVISION_MANIFEST_READER
+  if (bridgeWindowOwnsViews && manifestLaneRoutesSlot(activeLoopIndex)) bridgeWindowOwnsViews = false;
+#endif
+  if (bridgeWindowOwnsViews) {
     auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
     const auto phase = getActiveLoop().lastTickInLoop;
     if (runtime && phase != UINT32_MAX && runtime->serviceBridgeWindow(

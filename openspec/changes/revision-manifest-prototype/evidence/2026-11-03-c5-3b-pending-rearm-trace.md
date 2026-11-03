@@ -95,3 +95,41 @@ pending_armed,named,2,1611203015,28928,3584,1536,0,2,56,7
   Grants per window are still exactly G(E): E = 138 → 16, 150 → 19, 164–188 → 20.
 - **Next.** The C5 work estimator on G(E) grants: the work count only, not the timing rule. The writer trace stays
   in capture images until that run; then it is removed or demoted.
+
+## The routed slot has one view-lifecycle owner; a dead build retires and its frame is served (owner ruling 2026-11-03)
+
+- **Exposed by the G(E) estimator** (`8b80cb6f`, `session_20261103_095257`). One pre-restart block after a live overdub
+  stop: a build published outside its Requested frame, then `CandidateNotReady`. An association trace (capture images
+  only) then records the frame, build and ready keys at the request, at both admission sites
+  (`admit` / `admit_waived`) and at a publication made while the frame is Requested (`publish_outside_frame`). The
+  traced run did not reproduce the block.
+- **Host RED for the post-overdub shape:** a routed take, one traversal of interleaved overdub, a live stop, then play
+  in `main.cpp`'s lane order. Backtrace of the view reset:
+  `serviceBridgeWindow` → `publishCompletedBuildAsReady` → `RuntimePlaybackView::resetMetadata`. After the overdub stop
+  the old path's **bridge-window owner** (deferred idle maintenance) rotated the slot's three playback views and reset
+  the view holding the manifest candidate during the dense count. The dead build then answered `Denied` about 12,000
+  times, and the lane step returned `Idle` for a Denied grain, so nothing retired it and the frame timed out.
+- **Fix 1, ownership.** On a manifest-routed slot the bridge-window owner never rotates, publishes or resets the
+  playback views (`TrackDeferredMaintenance`); the stop job's bridge storage is unaffected. Fixture
+  `test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub_stop`: 95 foreign mutations → 0.
+- **Fix 2, liveness guard.** A coverage build whose next grain is Denied is dead and is retired that turn by the
+  denied-step path (`retireCoverageSource`).
+  - If it was the Requested frame's own build (same deadline and epoch), the frame's interval is requested again
+    (`win_dead_build_rerequested`). If the new demand does not land on the frame's position, the frame is cancelled so
+    the requester repositions it (`win_dead_build_repositioned`).
+  - Fixture `test_5_1_a_dead_coverage_build_retires_and_its_frame_is_served` moves the destination under an admitted
+    build. Before the fix: 6,143 dead turns, then `CandidateNotReady` Blocked, the device's own term. After: retired
+    within 5 lane turns, 0 blocked, 3,072 window-served ticks.
+- **Open, host only.** In the overdub fixture the routed slot is then played from the stop job's full-loop **bridge
+  route** for about 21,000 ticks. Its Ready frame is not adopted and later becomes `HandoffMissed`. The device served
+  0 bridge ticks on the routed slot. Removing the bridge from a routed slot's audible route is a clock-path resolver
+  change that needs the owner's ruling, so it is reported and not asserted.
+- **Host.** Routed suite 23/23. FULL (escalated by `include/Track.h`): 147/147 suites, 3,959 cases, 0 failed,
+  0 errored.
+- **Device.** succprobe HEX sha256 `419bc3df1caeb5bdfc3d8a01b8854c70e9d8c97b380a6d3939fd51e2b92cc118`,
+  `captures/session_20261103_104233.log`, boot `crash=0`. Same overdub run.
+  - Routed `win_blocked` 0, superseded discharges 0, dead builds 0, `publish_outside_frame` 0, bridge ticks 0.
+  - The first window after the restart served at 14.3 s; successors 20/20, 0 missed in the measured phase.
+  - Estimate == measured on all 21 handed seams.
+  - One `succ_seam,missed` row at 124.4 s is unexplained: before the restart and the probe configuration, E = 0,
+    tagged slot 0. It is not counted.

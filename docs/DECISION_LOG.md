@@ -14173,6 +14173,20 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - **Device (two-pass take).** Before: 2 discharges, the re-arm named as main's `requestActiveCommittedPlaybackWindow`.
       After: 0 discharges and 0 blocks, with 20/20 successors.
     - Evidence: `evidence/2026-11-03-c5-3b-pending-rearm-trace.md`.
+30. **A manifest-routed slot's playback-view lifecycle has one owner; a dead coverage build retires without losing its
+    frame (owner, 2026-11-03).**
+    - **Ownership.** Once the manifest rolling lane owns a routed slot, the legacy bridge-window owner never rotates,
+      publishes, resets or otherwise mutates that slot's playback views. The old path's pre-root bridge has no role
+      there; the overdub stop job's bridge storage itself is unchanged.
+    - **Liveness guard.** A coverage build whose next grain is Denied (its destination generation or source moved) is
+      dead. It is retired on that turn, its role released and its candidate never published.
+      - The frame's obligation survives. Its own interval is requested again, or the frame is repositioned if the new
+        demand cannot land on its position.
+      - It is never left waiting for its deadline.
+      - The guard is independent of the ownership rule.
+    - **Open.** On host the routed slot can still be played from the stop job's full-loop bridge route after an overdub
+      stop; the device shows none. Removing the bridge from a routed slot's audible route is a separate resolver ruling.
+    - Evidence: `evidence/2026-11-03-c5-3b-pending-rearm-trace.md`.
 
 ### Related
 

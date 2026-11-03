@@ -761,6 +761,183 @@ void test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
 
+/// The routed slot's playback-view lifecycle as one comparable stamp: the four roles and each view's storage generation.
+struct ViewLifecycleStamp {
+  uint8_t current = 255, ready = 255, build = 255, idle = 255;
+  uint64_t generation[RuntimePlaybackViewConfig::kViewCount] = {};
+  bool operator==(const ViewLifecycleStamp& o) const {
+    if (current != o.current || ready != o.ready || build != o.build || idle != o.idle) return false;
+    for (size_t i = 0; i < RuntimePlaybackViewConfig::kViewCount; ++i)
+      if (generation[i] != o.generation[i]) return false;
+    return true;
+  }
+};
+ViewLifecycleStamp stampViews(LoopPlaybackRuntime& runtime) {
+  ViewLifecycleStamp stamp{};
+  if (const auto* set = runtime.viewSetIfPrewarmed()) {
+    stamp.current = set->lifecycle.current;
+    stamp.ready = set->lifecycle.ready;
+    stamp.build = set->lifecycle.build;
+    stamp.idle = set->lifecycle.idle;
+    for (size_t i = 0; i < RuntimePlaybackViewConfig::kViewCount; ++i) stamp.generation[i] = set->views[i].storageGeneration;
+  }
+  return stamp;
+}
+
+// A coverage build whose destination generation moved is dead, not its frame's obligation (owner ruling 2026-11-03;
+// host captures the device's post-overdub shape: ~12,000 Denied grains, the build never discarded, the frame timed
+// out). The fixture moves the destination under an admitted manifest build: the build must retire in bounded turns,
+// the frame must not block terminally, and a replacement must serve.
+void test_5_1_a_dead_coverage_build_retires_and_its_frame_is_served() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const uint32_t len = loop.loopLengthTicks;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  const auto step = [&](uint32_t tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) {
+      (void)t.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
+      lane.serviceTracks(tick);
+    }
+    t.playMidiEvents(tick, true);
+  };
+  // 1. Serve once, then reach an admitted manifest build for the next frame.
+  uint32_t tick = 0;
+  bool served = false;
+  for (; tick < 20 * len; ++tick) {
+    step(tick);
+    served = served || runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving;
+    if (served && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested &&
+        runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Building && runtime.viewBuild.active())
+      break;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(runtime.viewBuild.active() &&
+                               runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Building,
+                           "precondition: an admitted manifest build for a Requested frame");
+  // 2. Move the destination's generation underneath it (any owner's reset, recovery, clear/load would do the same).
+  auto* set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE(set->lifecycle.build < set->views.size());
+  set->views[set->lifecycle.build].resetMetadata();
+  // 3. Drive: the dead build must retire in bounded lane turns; the frame must not block terminally; it must serve.
+  uint32_t deadTurns = 0, maxDeadTurns = 0, blocked = 0, servedAfter = 0;
+  for (const uint32_t end = tick + 8 * len; ++tick < end;) {
+    step(tick);
+    if (tick % 4 == 0) {
+      const bool dead = runtime.viewBuild.active() && runtime.viewBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Denied;
+      deadTurns = dead ? deadTurns + 1 : 0;
+      maxDeadTurns = std::max(maxDeadTurns, deadTurns);
+    }
+    blocked += runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked;
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++servedAfter;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "maxDeadTurns=%u blocked=%u servedAfter=%u phase=%u by=%u", maxDeadTurns, blocked,
+           servedAfter, unsigned(runtime.rolling.phase), unsigned(runtime.rolling.blockedBy));
+  printf("DEADBUILD %s\n", detail);
+  // Within one round-robin rotation of the lane (H = 8 holders), never until the frame's deadline.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(Config::NUM_TRACKS, maxDeadTurns, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, blocked, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, servedAfter, detail);
+}
+
+// A build admitted for a Requested routed frame must advance that frame or retire it (owner ruling 2026-11-03; device
+// captures/session_20261103_095257 at 86.5-101.9 s). After a live overdub stop, during the stop job's record-return
+// phase (`rw=1`), the frame's build completed but was published outside the frame (`published_as_ready`); the frame stayed
+// Requested and blocked at its deadline (`CandidateNotReady`) for the rest of the transport. The fixture plays a routed
+// take, overdubs it for one traversal interleaved in time, stops the overdub while playing, and keeps the device's lane
+// order (reader owner, per-turn demand, owner lane, deferred idle owners) through the stop job.
+void test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub_stop() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  MidiServiceDrain::DeferredIdleOwnerCursor idleCursor{};
+  const uint32_t len = loop.loopLengthTicks;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  uint32_t notReady = 0, blockedTicks = 0, servedAfter = 0, foreignMutations = 0;
+  uint8_t firstBlockedBy = 0;
+  bool stopped = false;
+  const auto step = [&](uint32_t tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) {
+      if (t.isPlaying() && !t.isRecording() && !t.isOverdubbing())
+        (void)t.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
+      lane.serviceTracks(tick);
+      const bool backlog = t.hasSnapshotPublicationBacklogOnAnySlot();
+      // Ownership: while the manifest lane owns the routed slot's coverage, no deferred owner may rotate, publish or
+      // reset that slot's playback views.
+      const bool manifestOwned = runtime.ownsManifestCoverage();
+      const ViewLifecycleStamp before = stampViews(runtime);
+      t.processDeferredIdleMaintenance(tick, false, MidiServiceDrain::selectDeferredIdleOwner(idleCursor, backlog, false),
+                                       1);
+      if (manifestOwned && !(stampViews(runtime) == before)) ++foreignMutations;
+    }
+    t.playMidiEvents(tick, true);
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+      if (!blockedTicks) firstBlockedBy = runtime.rolling.blockedBy;
+      ++blockedTicks;
+      notReady += runtime.rolling.blockedBy ==
+                  static_cast<uint8_t>(PlaybackTickContext::RouteReject::CandidateNotReady);
+    }
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (stopped && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++servedAfter;
+  };
+  uint32_t tick = 0;
+  for (; tick < 4 * len; ++tick) step(tick);  // the routed take serves
+  // One traversal of overdub, its notes between the take's.
+  t.startOverdubbing(tick);
+  TEST_ASSERT_TRUE_MESSAGE(t.isOverdubbing(), "precondition: overdub started");
+  const uint32_t odEnd = tick + len;
+  for (; tick < odEnd; ++tick) {
+    if (tick % 48 == 24) t.noteOn(1, static_cast<uint8_t>(84 + (tick / 48) % 8), 100, tick);
+    if (tick % 48 == 40) t.noteOff(1, static_cast<uint8_t>(84 + (tick / 48) % 8), 0, tick);
+    step(tick);
+  }
+  t.stopOverdubbing();
+  stopped = true;
+  for (const uint32_t end = tick + 12 * len; tick < end; ++tick) step(tick);
+  char detail[260];
+  snprintf(detail, sizeof(detail),
+           "foreign=%u blockedTicks=%u notReady=%u firstBlockedBy=%u servedAfter=%u phase=%u pend=%d stopPending=%u "
+           "passes=%u",
+           foreignMutations, blockedTicks, notReady, unsigned(firstBlockedBy), servedAfter, unsigned(runtime.rolling.phase),
+           runtime.pendingViewRequest_.active, t.hasPendingDeferredOverdubStop() ? 1u : 0u,
+           unsigned(loop.passes.overdubPasses.size()));
+  printf("OVERDUBSTOP %s\n", detail);
+  // The ownership contract (owner ruling 2026-11-03): no deferred owner mutates the routed slot's views while the
+  // manifest owns its coverage. Open, reported here and not asserted: on host the routed slot is then played from the
+  // stop job's full-loop **bridge route** for ~21,000 ticks, so its Ready frame is not adopted and is later judged
+  // `HandoffMissed`. The device served 0 bridge ticks on the routed slot (sessions 20261103_093844 / _095257); removing
+  // the bridge from a routed slot's audible route is a clock-path resolver change awaiting the owner's ruling.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, foreignMutations, detail);
+}
+
 // The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
 // the nominal span, sized evenly in 8-tick clock quanta, so no successor follows a shorter window into a longer one
 // (a local tail scheme always has that seam; device: the 1.5 -> 2-bar wrap missed under the 3-denial bound). Never
@@ -1047,6 +1224,8 @@ int main(int, char**) {
   RUN_TEST(test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame);
   RUN_TEST(test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded);
   RUN_TEST(test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame);
+  RUN_TEST(test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub_stop);
+  RUN_TEST(test_5_1_a_dead_coverage_build_retires_and_its_frame_is_served);
   RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
