@@ -618,6 +618,84 @@ void test_5_1_an_expired_routed_demand_is_discharged_after_a_restart() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
 
+// A superseded request cannot kill a newer Ready frame (owner ruling 2026-11-03; device
+// captures/session_20261103_084810). On a two-pass take the first window was built and Ready, positioned two
+// traversals out, while an older committed demand stayed pending (`dm=1`, owners=4). When that older demand's deadline
+// passed it was judged `DeadlineExpired`, and the producer blocked the frame terminally (`win_blocked_by_request`
+// rq=10): the routed slot never served. The fixture reaches a real Ready frame, reinstates an older positioned demand
+// (captured from this frame's own Requested phase) whose deadline lies before the frame's, and drives past it.
+void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const uint32_t len = loop.loopLengthTicks;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  const auto step = [&](uint32_t tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+  };
+  // 1. Drive until the frame is Ready (built, not yet due), keeping a copy of its demand from the Requested phase.
+  PlaybackViewPendingRequest older{};
+  uint32_t tick = 0;
+  for (; tick < 40 * len; ++tick) {
+    step(tick);
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested) {
+      if (runtime.pendingViewRequest_.active) older = runtime.pendingViewRequest_;
+      else if (runtime.frozenViewRequest.active) older = runtime.frozenViewRequest;
+    }
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Ready && older.active &&
+        runtime.rolling.deadlineTick > uint64_t(tick) + 64 && !runtime.pendingViewRequest_.active)
+      break;
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(LoopPlaybackRuntime::RollingPhase::Ready, runtime.rolling.phase,
+                            "precondition: a Ready frame, its handoff still ahead");
+  TEST_ASSERT_TRUE_MESSAGE(older.active && older.clockEpoch == 1, "precondition: a positioned committed demand copy");
+  // 2. The device's state: an older demand still pending beside the Ready frame, due before the frame's handoff.
+  const uint64_t frameDeadline = runtime.rolling.deadlineTick;
+  older.deadlineTick = tick + 16;
+  older.work.deadlineTick = older.deadlineTick;
+  older.work.admittedTick = tick;
+  older.positionInvalidated = false;
+  older.reason = PlaybackViewPendingReason::None;
+  runtime.pendingViewRequest_ = older;
+  // 3. Past the older deadline and on through the frame's handoff and beyond.
+  uint32_t blocked = 0, served = 0;
+  uint8_t blockedBy = 0;
+  const char* firstBlockExit = nullptr;
+  for (++tick; tick < frameDeadline + 4 * len; ++tick) {
+    step(tick);
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+      if (!blocked) {
+        blockedBy = runtime.rolling.blockedBy;
+        firstBlockExit = PlaybackTickContext::gState.producerExit[0];
+      }
+      ++blocked;
+    }
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++served;
+  }
+  char detail[220];
+  snprintf(detail, sizeof(detail), "blocked=%u blockedBy=%u firstExit=%s served=%u phase=%u pend=%d/%u", blocked,
+           unsigned(blockedBy), firstBlockExit ? firstBlockExit : "-", served, unsigned(runtime.rolling.phase),
+           runtime.pendingViewRequest_.active, unsigned(runtime.pendingViewRequest_.reason));
+  printf("SUPERSEDED %s\n", detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, blocked, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
+}
+
 // The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
 // the nominal span, sized evenly in 8-tick clock quanta, so no successor follows a shorter window into a longer one
 // (a local tail scheme always has that seam; device: the 1.5 -> 2-bar wrap missed under the 3-denial bound). Never
@@ -901,6 +979,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_handoff_frontier_accepts_the_next_clock_reachable_start_only);
   RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
   RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
+  RUN_TEST(test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame);
   RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);

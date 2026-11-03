@@ -5730,6 +5730,27 @@ TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingF
 }
 
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline);
+#endif
+
+/// A retained demand that a newer frame has superseded and whose only fault is its own position (owner ruling
+/// 2026-11-03; device captures/session_20261103_084810): the frame is Ready or Serving a window of its own, the demand
+/// is not that frame's (another deadline) nor its probe successor, and it was invalidated by its deadline passing. It is
+/// stale state, not an answer about the frame, so it is discharged instead of blocking the frame terminally.
+TRACK_COLD_MEM __attribute__((noinline)) bool supersededPositionalRequest(const LoopPlaybackRuntime& runtime,
+                                                                          const PlaybackViewPendingRequest& request,
+                                                                          PlaybackViewPendingReason invalidation) {
+  const auto& frame = runtime.rolling;
+  if (frame.phase != LoopPlaybackRuntime::RollingPhase::Ready &&
+      frame.phase != LoopPlaybackRuntime::RollingPhase::Serving) return false;
+  if (!request.positionInvalidated || request.deadlineTick == frame.deadlineTick) return false;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (rollingSuccessorDemandIs(runtime, request.deadlineTick)) return false;  // its miss is named by the probe
+#endif
+  return invalidation == PlaybackViewPendingReason::DeadlineExpired;
+}
+
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
 /// C5.3b host probe: the one successor of the window a positioned frame serves -- `[N.end, N.end + span)`, absolute and
 /// unwrapped (`deadline` is `N.end`), derived from the served window's own start and span, never from the playhead.
 struct RollingSuccessorKey {
@@ -6454,6 +6475,19 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       return RollingOutcome::Rejected;
     }
     const auto* request = runtime->pendingViewRequest();
+    if (request && request->positionInvalidated) {
+      const PlaybackViewPendingReason invalidation =
+          (request->reason == PlaybackViewPendingReason::None ||
+           request->reason == PlaybackViewPendingReason::AwaitingSourceQualification)
+              ? pendingViewRequestInvalidation(activeLoopIndex, clock)
+              : request->reason;
+      if (supersededPositionalRequest(*runtime, *request, invalidation)) {
+        runtime->clearViewPendingRequest();
+        reportPlaybackRollingGateRow("win_superseded_request_discharged", clock.epoch != 0, /*reprojectedTick=*/false,
+                                     static_cast<uint8_t>(invalidation));
+        request = nullptr;
+      }
+    }
     if (request && (request->positionInvalidated ||
         request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
         request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||

@@ -511,7 +511,8 @@ SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t ac
  *  `x` names the exit **of this call**: `win_no_runtime`, `win_track_not_playing`, `win_reprojection_blocked`,
  *  `win_window_ineligible` (the epoch / demotion / span-alignment trio, told apart by `ep`/`av`/`al`),
  *  `win_frame_invalidated`, `win_serving`, `win_blocked`, `win_blocked_by_request` (its `rq` is the
- *  `PlaybackViewPendingReason` ordinal that stopped the retained demand), `win_blocked_by_budget` (its `rq` is the
+ *  `PlaybackViewPendingReason` ordinal that stopped the retained demand), `win_superseded_request_discharged` (a
+ *  Ready/Serving frame's older, position-expired demand was discharged instead of blocking it; `rq` its reason ordinal), `win_blocked_by_budget` (its `rq` is the
  *  spent span ordinal of a measured traversal), `win_ready`, `win_waiting`,
  *  `win_not_servable`, `win_busy`, `win_reprojected_tick`, `win_boundary_rejected`, `win_request_refused`,
  *  `win_request_dropped`, `win_requested`. */
