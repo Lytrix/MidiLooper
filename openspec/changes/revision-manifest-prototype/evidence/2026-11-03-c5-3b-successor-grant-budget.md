@@ -215,3 +215,40 @@ Same capture, `captures/session_20261103_123542.log`, using the image's existing
   snapshot-identity churn. It is a legacy derived-cache release fighting a legacy synchronous rebuild on the Clock
   path. Next: count the clear site and its admitting term; then contain it minimally (never release a cache a
   playing track will rebuild on the next Clock). Migrating these tracks to the manifest reader is the end state.
+
+## Fix: a Clock-consumed merged cache is not reclaimed (owner ruling 2026-11-03)
+
+- **Confirmed admitting term** (`captures/session_20261103_131309.log`): after the overdub stop the reclaim cleared
+  each of the six tracks' merged windows **919 times as "not PLAYING and silent"**. The tracks stayed stopped through
+  the capture, while their enabled slots' engines consumed the window on every Clock. No clear was stale or audible.
+- **Invariant.** A derived playback cache is not reclaimable while the Clock path consumes it.
+  `Track::mergedWindowConsumedOnClockPath(slot)` uses the same gates as `playMidiEvents`: no stop barrier, the capture
+  interval permits playback, not a stopped recording, the slot enabled, a playable source. `isPlaying()` is not
+  consulted. `tryReleasePlaybackMergedMidiEventsMemory` keeps such a window unless it is stale. Legacy containment only;
+  the merged fallback itself is unchanged.
+- **Host RED.** `test_5_1_a_clock_consumed_merged_cache_is_not_reclaimed`: a stopped unrouted track whose enabled
+  slot's engine runs, with a reclaim after every pulse.
+  - Before the fix: 1,536 rebuilds and 1,536 clears over 1,536 pulses.
+  - After: 1 rebuild, 0 clears. Mutating the new term out restores the thrash exactly.
+  - Control `test_5_1_an_unconsumed_merged_cache_is_still_reclaimed`: a disabled slot's cache is still released.
+  - FULL: 147/147 suites, 3,963 cases, 0 failed, 0 errored.
+- **Also fixed.** Since `62a3199f` the default image (`teensy41-capture-serial`) had not compiled:
+  `Track::reestablishRollingFrameDemand` was declared inside the `REVISION_MANIFEST_READER` block. It is moved out; the
+  default image builds with RAM1 at baseline (code 392,008, padding 1,208).
+- **Device.** succprobe HEX sha256 `3669f33b47af3844b9d05159135f5ac1bc65eccaeb28179564523b1c73c1e0d4`,
+  `captures/session_20261103_132725.log`, boot `crash=0`. Same overdub workload.
+
+| after the overdub stop (45 s) | before (`_123542` / `_131309`) | after the fix |
+|---|---|---|
+| Clock dispatch avg / max | 6.71 ms / 52 ms | **0.53 ms / 28 ms** |
+| reclaim clears per track | 919 | **1** |
+| `merged_build` rows | 6,110 | **59** |
+| lane gaps > 96 ticks (whole pre-restart segment) | 161 | **25**, all inside the overdub |
+
+  - Post-restart successors: deny 0 20/20. Deny 7: one miss in the first 14, then 20/20 on the repeat; minimum margin
+    24, the grant budget's guard.
+- **Remaining, all inside the overdub phase.** The 25 gaps (1.0-1.4 s each, 6.8 s at the stop) are MIDI input:
+  - overdub NoteOn/NoteOff still cost 17.9 ms each (record take: 0.27 ms);
+  - one Clock took 3.0 s at the overdub stop.
+
+  These are the next two named defects.

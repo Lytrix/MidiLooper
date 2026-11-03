@@ -713,14 +713,14 @@ public:
   /// from; it deliberately does not replace `Loop::publishedSnapshotIsCurrent()` where that answer is the checkpoint /
   /// effective-content authority's (DEC-114), and it changes nothing a gate row reports about the root itself.
   bool playbackWindowSourceIsCurrentForSlot(uint8_t slotIndex) const;
-#if REVISION_MANIFEST_READER
-  /// C5.3 (DEC-246 amendment 22): the committed-window source seam. True only for the designated track's active slot
-  /// while a reader is installed; such a slot's committed windows read the manifest and nothing else.
-  bool manifestLaneRoutesSlot(uint8_t slotIndex) const;
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
   void reestablishRollingFrameDemand(uint8_t slot, const LoopPlaybackRuntime::RollingFrame& frame,
                                      uint32_t currentPhase, PlaybackDeadlineClock clock);
 #endif
+#if REVISION_MANIFEST_READER
+  /// C5.3 (DEC-246 amendment 22): the committed-window source seam. True only for the designated track's active slot
+  /// while a reader is installed; such a slot's committed windows read the manifest and nothing else.
+  bool manifestLaneRoutesSlot(uint8_t slotIndex) const;
   /// Main-loop only: ask the reader (metadata only) and publish the routed slot's servability to the tick words.
   CommittedManifestLane::State refreshManifestLane(uint8_t slotIndex);
   /// The routed slot's currency for a window identity: the actual manifest identity is the servable one, imported from
@@ -1098,6 +1098,10 @@ public:
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
   bool tryReleasePlaybackMergedMidiEventsMemory();
+  /// The Clock path consumes this slot's merged window: its engine runs (`TrackManager::updateAllTracks` plays every
+  /// enabled slot) and `playMidiEvents`' own gates admit it. Independent of `isPlaying()`, which is false for an
+  /// enabled slot playing through a capture on another track (owner ruling 2026-11-03).
+  bool mergedWindowConsumedOnClockPath(uint8_t slotIndex) const;
   /// S4.0 (B6, invariant 33): per-slot liveness. True when the slot has no live owner, so its
   /// working set may be released and a load may be admitted into it. The ring test scans the
   /// **live window only**: retirement clears `owner`/`loopId` but not `slot`, so a whole-array scan

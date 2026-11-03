@@ -4587,14 +4587,29 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
 
     const uint32_t windowRevision = loop.playbackRevision;
     const bool windowStale = runtime->mergedMidiEvents.builtFromRevision != windowRevision;
-    if (transportActive && !windowStale) {
+    // A derived cache is not reclaimable while the Clock path consumes it: the next pulse would rebuild the whole
+    // window synchronously (device: 919 clears and 918 rebuilds per track in 45 s after an overdub stop).
+    if ((transportActive || mergedWindowConsumedOnClockPath(slot)) && !windowStale) {
       continue;
     }
-
+#if defined(LANE_GAP_MIDI_SPLIT)
+    // Which term admitted this clear (owner ruling 2026-11-03): 0 not PLAYING but audible, 1 not PLAYING and silent,
+    // 2 stale window.
+    LaneGapSpans::noteMergedReuseFailure(trackIndex, windowStale ? 2 : (isAudiblePlaybackActive() ? 0 : 1),
+                                         clockManager.getCurrentTick(), runtime->mergedMidiEvents.builtFromRevision,
+                                         windowRevision, 0xC1EA0000u, 0, uint8_t(getState()));
+#endif
     runtime->mergedMidiEvents.clear();
     reclaimed = true;
   }
   return reclaimed;
+}
+
+TRACK_COLD_MEM bool Track::mergedWindowConsumedOnClockPath(uint8_t slotIndex) const {
+  if (transportStopOutputBarrier_ || !captureIntervalPermitsPlayback(captureInterval_) || isStoppedRecording())
+    return false;
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  return trackManager.isSlotEnabled(trackIndex, slotIndex) && hasAudiblePlaybackSource(slotIndex);
 }
 
 TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
@@ -8221,6 +8236,7 @@ struct MergedReuseTransition { uint64_t tick; uint32_t oldRevision, newRevision;
                                uint8_t track, term, phase; };
 struct MergedReuse {
   uint32_t failures[Config::NUM_TRACKS][5];
+  uint32_t clears[Config::NUM_TRACKS][3];
   MergedReuseTransition first[24];
   uint8_t firstCount;
   uint8_t perTrackLogged[Config::NUM_TRACKS];
@@ -8232,6 +8248,10 @@ TRACK_COLD_MEM void LaneGapSpans::noteMergedReuseFailure(uint8_t track, uint8_t 
                                                          uintptr_t oldIdentity, uintptr_t newIdentity, uint8_t phase) {
   auto& m = sMergedReuse;
   if (track >= Config::NUM_TRACKS || term >= 5) return;
+  if (oldIdentity == 0xC1EA0000u) {  // a reclaim clear, not a reuse failure
+    ++m.clears[track][term < 3 ? term : 2];
+    return;
+  }
   ++m.failures[track][term];
   // The first transitions of each track (3 each, 24 in all): enough to see what moves, never one row per Clock.
   if (m.perTrackLogged[track] < 3 && m.firstCount < 24) {
@@ -8249,6 +8269,13 @@ TRACK_COLD_MEM void LaneGapSpans::dumpMergedReuse() {
     Serial.printf("#CAP,%lu,DIAG,merged_reuse,track=%u,revision=%lu,identity=%lu,null_empty=%lu,zero_len=%lu,"
                   "coverage=%lu\r\n", (unsigned long)micros(), unsigned(t), (unsigned long)f[0], (unsigned long)f[1],
                   (unsigned long)f[2], (unsigned long)f[3], (unsigned long)f[4]);
+  }
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    const uint32_t* c = m.clears[t];
+    if ((c[0] | c[1] | c[2]) == 0) continue;
+    Serial.printf("#CAP,%lu,DIAG,merged_reuse,clears,track=%u,not_playing_audible=%lu,not_playing_silent=%lu,"
+                  "stale=%lu\r\n", (unsigned long)micros(), unsigned(t), (unsigned long)c[0], (unsigned long)c[1],
+                  (unsigned long)c[2]);
   }
   for (uint8_t i = 0; i < m.firstCount; ++i) {
     const auto& e = m.first[i];

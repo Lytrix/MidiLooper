@@ -1275,6 +1275,58 @@ void test_5_1_a_tight_successor_is_served_by_its_grant_budget() {
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, agg.deniedGrants, detail);  // the competing owner did withhold grants
 }
 
+// A derived playback cache is not reclaimable while the Clock path consumes it (owner ruling 2026-11-03; device
+// captures/session_20261103_131309: after an overdub stop the six unrouted tracks were not PLAYING -- they stayed
+// stopped through the capture -- but their enabled slots' engines ran on every Clock. The pressure reclaim freed each
+// merged window as "not playing" and the next Clock rebuilt the whole loop: 919 clears and 918 rebuilds per track in
+// 45 s). Control: a slot whose engine does not run still has its cache released.
+void reclaimThrashRun(bool slotEnabled, unsigned& rebuilds, unsigned& clears) {
+  uninstallReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  TEST_ASSERT_FALSE_MESSAGE(t.isPlaying(), "precondition: the track is not PLAYING");
+  trackManager.setSlotEnabled(0, 0, slotEnabled);
+  nativePlaybackDeadlineClock = {0, 1};
+  resetPlaybackMergedRebuildCountForTest();
+  clears = 0;
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  for (uint32_t tick = 0; tick < 4 * loop.loopLengthTicks; tick += 8) {  // one external-clock pulse
+    clockManager.assignCurrentTickSilently(tick);
+    if (slotEnabled) t.playMidiEvents(tick, true);  // `updateAllTracks`: the enabled slot's engine runs
+    const bool built = !runtime.mergedMidiEvents.empty();
+    (void)t.tryReleasePlaybackMergedMidiEventsMemory();  // the pressure reclaim, every loop iteration
+    // Its return also names a canonical-capture reservation release, so the merged window itself is what is read.
+    if (built && runtime.mergedMidiEvents.empty()) ++clears;
+  }
+  rebuilds = playbackMergedRebuildCountForTest();
+}
+
+void test_5_1_a_clock_consumed_merged_cache_is_not_reclaimed() {
+  unsigned rebuilds = 0, clears = 0;
+  reclaimThrashRun(true, rebuilds, clears);
+  char detail[120];
+  snprintf(detail, sizeof(detail), "engine runs: rebuilds=%u merged clears=%u", rebuilds, clears);
+  printf("RECLAIM %s\n", detail);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(1, rebuilds, detail);  // a stable source is built once
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, clears, detail);
+}
+
+void test_5_1_an_unconsumed_merged_cache_is_still_reclaimed() {
+  // Build the cache once while the engine runs, then disable the slot: nothing consumes it, so it is released.
+  uninstallReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  trackManager.setSlotEnabled(0, 0, true);
+  clockManager.assignCurrentTickSilently(0);
+  t.playMidiEvents(0, true);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  TEST_ASSERT_FALSE_MESSAGE(runtime.mergedMidiEvents.empty(), "precondition: a built merged window");
+  trackManager.setSlotEnabled(0, 0, false);
+  TEST_ASSERT_TRUE_MESSAGE(t.tryReleasePlaybackMergedMidiEventsMemory(), "an unconsumed cache is released");
+  TEST_ASSERT_TRUE(runtime.mergedMidiEvents.empty());
+  (void)loop;
+}
+
 // The offer names the deadline successor while it is owed (DEC-246 amendment 27). On the device main's per-turn demand can
 // hold `pending` while the successor is in frozen qualification or being built; the flag must still be set, or the
 // service bound never engages (device: deny 4 with the bound missed on a full lead).
@@ -1348,5 +1400,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_a_due_successor_grant_is_never_withheld);
   RUN_TEST(test_5_1_a_tight_successor_is_served_by_its_grant_budget);
   RUN_TEST(test_5_1_the_offer_names_the_deadline_successor_beside_main_s_demand);
+  RUN_TEST(test_5_1_a_clock_consumed_merged_cache_is_not_reclaimed);
+  RUN_TEST(test_5_1_an_unconsumed_merged_cache_is_still_reclaimed);
   return UNITY_END();
 }
