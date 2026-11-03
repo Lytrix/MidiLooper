@@ -293,8 +293,9 @@ existing `RuntimePlaybackViewLifecycle` transitions only:
 3. **Promotion keeps the obligation:** when N (depth 1) is promoted to serving, the frame's `deadlineTick` advances by
    one span, so the outstanding depth-2 demand **becomes** the new frame's depth-1 key without being re-stamped.
    `successorState = 1` must survive that promotion instead of resetting to 0.
-   - Where the promotion resets it is the one line to change (to be located: no direct `successorState = 0` exists,
-     so it comes from re-seeding the frame).
+   - The reset is the successor handoff in `src/Track/TrackPlaybackWindowBuild.cpp`
+     (`frame.successorState = 0; // N+1 is now the served window; its own successor is demanded afresh`).
+   - Two-span keeps it at 1 when `pendingViewRequest_` already carries the new frame's depth-1 key.
 
 All three are inside the existing successor requester (`PLAYBACK_ROLLING_SUCCESSOR_PROBE`), keyed by the same
 absolute deadlines the cancel and missed paths already use. No new lifecycle, view or worker, and no admission change.
