@@ -425,6 +425,35 @@ void test_wrap_guard_session_undo_never_publishes_a_wrong_current_root() {
   TEST_ASSERT_NOT_NULL(findPitchStart(notes, 60, 100));
 }
 
+/// Gate B RED (owner ruling 2026-11-03, device `captures/session_20261103_211405.log` and `_213204.log`): finite
+/// publication work must converge. On both images the arena tail fell to 36,864 / 32,768 B during the overdub and
+/// never recovered (`_sbrk` is a pure bump), and `SnapshotReserve` admits on the tail alone (floor 32 KiB + 8 KiB), so
+/// every publication turn was refused for the rest of the run while the free list still held large blocks. Modeled here
+/// with the measured tail and the device's measured largest free chunk (79.4 KB, `!HEAP_STATS` 2026-10-27).
+void test_publication_red_converges_when_the_tail_is_low_but_memory_is_free() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(wrap(track));
+  MemoryMonitor::setNativeTestFreeHeap(36864);
+  MemoryMonitor::setNativeTestAllocatableCapacity(80u * 1024u);
+  clockManager.assignCurrentTickSilently(768 + 40);
+  midiButtonActions.handleToggleRecord();  // overdub stop: deferred, the session exits
+  for (unsigned turn = 0; turn < 20000 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+    if (turn % 4 == 0) TrackCaptureStopTestAccess::snapshotOwnerTurn(track);
+  }
+  for (unsigned turn = 0; turn < 4096 && loop.hasPendingSnapshotPublish(); ++turn)
+    TrackCaptureStopTestAccess::snapshotOwnerTurn(track);
+  const bool pending = loop.hasPendingSnapshotPublish();
+  const bool current = loop.publishedSnapshotIsCurrent();
+  MemoryMonitor::resetNativeTestFreeHeap();
+  MemoryMonitor::resetNativeTestAllocatableCapacity();
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), "the deferred stop must retire");
+  TEST_ASSERT_FALSE_MESSAGE(pending, "finite publication work must converge without new input");
+  TEST_ASSERT_TRUE_MESSAGE(current, "the converged root must be current");
+}
+
 void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_red_clock_translates_no_snapshot_change);
   RUN_TEST(test_wrap_guard_deferred_interval_ignores_successor_mutation);
@@ -437,5 +466,9 @@ void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once);
   RUN_TEST(test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns);
   RUN_TEST(test_wrap_guard_session_undo_never_publishes_a_wrong_current_root);
+  // Gate B (2026-11-03): RED until the publication admission stops judging a free heap by the arena tail alone.
+  if (getenv("PUBLICATION_LIVENESS_RED") != nullptr) {
+    RUN_TEST(test_publication_red_converges_when_the_tail_is_low_but_memory_is_free);
+  }
 }
 
