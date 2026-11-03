@@ -401,6 +401,11 @@ class LoopSnapshot {
   LoopSnapshotNoteRef findNote(NoteId noteId, uint8_t pitchHint = 0) const;
   /// One-pitch identity lookup. Does not walk other pitches on a miss.
   LoopSnapshotNoteRef findNoteAtPitch(NoteId noteId, uint8_t pitch) const;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Witness: every `findNote` that missed its hint pitch and walked every other pitch, so a fixture can prove a
+  /// path never searched the whole snapshot.
+  static uint32_t findNoteAllPitchScanCountForTest();
+#endif
 
   void appendCanonicalSpans(const LoopSnapshotNoteRef& note,
                             CanonicalNoteSpanVec& out) const;

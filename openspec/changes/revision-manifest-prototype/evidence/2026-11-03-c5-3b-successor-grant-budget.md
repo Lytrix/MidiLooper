@@ -514,3 +514,53 @@ below). Same sweep, two runs, both OBSERVED with `crash=0`: `captures/session_20
   normally; its next boot reports the previous one reached the end of `setup()`.
 - **Reading.** The failure follows the flash code layout. It is a latent defect with an unknown owner, and it can
   return in any image. It is not caused by the probe logic.
+
+## Wrap journal: the dead parent lookup for Add rows (audit, 2026-11-03)
+
+Owner questions, answered from the code:
+
+1. **Does the journal receive the sealed companion IDs?** No.
+   - `queueOverdubWrapSnapshotJournal` runs before `sealPendingNoteChangesToEditPasses` in `commitOverdubWrap`.
+   - It translates the raw `pendingNoteChanges_` rows itself (`appendPendingNoteChange`).
+   - `lastOverdubSealCompanionIds_` exists only afterwards, in `recordLastOverdubSeal`.
+   - It does not rediscover companion effects by scanning. What it looked up was the parent's predecessor for every
+     row.
+2. **Why `findNote` for Add?** There is no semantic reason.
+   - `appendPairedNoteEventChanges` computed `previousNote` for every row, but reads it only in the Hide/Replace branch.
+   - `appendPendingNoteChange` already looks up only for Hide/Shorten.
+   - The deferred construction (`LoopSnapshotConstruction::applyNextBar`) resolves a missing predecessor only for
+     Remove/Replace, against the candidate it actually applies to. That rebase is why a Hide with a missing target
+     keeps `previous` empty (`test_wrap_journal_keeps_hide_when_parent_lacks_note`).
+   - So the Add result was dead whether or not the NoteId is fresh. Skipping it changes no output, and the freshness
+     guarantee is not needed for this change.
+   - `appendEditRowChange` (the EditPass path) is different: there a Create whose target exists becomes a Replace, so
+     its lookup is semantic.
+3. **Can fresh Adds bypass the lookup?** Yes, done.
+   - Only Hide/Shorten look up the predecessor.
+   - Existing-target edits keep their resolved `previous`, and rebased entries keep theirs.
+4. **Duplication with `tryAdmitLastOverdubSealIntoMergedEvents`?** Not on the same target.
+   - That function admits the pass and its companion EditPass rows into the merged playback stream, by identity.
+   - The journal builds the snapshot (revision) representation of the same seal from the pending rows.
+   - These are two consumers of one seal, needed until one representation is retired.
+   - One open overlap: `queueSessionExitSnapshot` re-queues companion EditPass IDs (`appendCompanionChanges`). A wrap's
+     Shorten/Hide may therefore be journaled at the wrap and again at exit. Replaying them is idempotent; the cost is
+     not measured, and both measured runs had 0 Shorten/Hide.
+
+- **Host.**
+  - Test seam: native-only `LoopSnapshot::findNoteAllPitchScanCountForTest`.
+  - RED `test_wrap_journal_fresh_adds_never_search_the_parent`: 6 fresh Adds made 6 full-parent scans, and the
+    existing-target Shorten made 0.
+  - GREEN asserts parity: Adds with no `previous`, 2 paired events each, the Shorten resolved, and the constructed
+    snapshot carries both.
+  - Native full: 3,969 / 0 failed.
+- **Device.** Probe `b43c5547`, `captures/session_20261103_192724.log` (OBSERVED, `crash=0`).
+  - The journal dropped from 1,346 ms to 602 ms (444 Adds).
+  - The wrap dropped from 1,397 ms to 655 ms, and its Clock from 1,474 ms to 733 ms.
+  - The overdub Clock total dropped from 3.74 s to 3.00 s.
+- **Open.**
+  - The remaining 602 ms (about 1.36 ms per Add) is not attributed.
+  - Candidates:
+    - the per-row change-set building (vectors of `shared_ptr`-bearing changes);
+    - `appendWrapNonNoteEvents`, which reads the pass and checks each non-note event against its bar membership;
+    - the fragment flush.
+  - Next measurement: split the journal into those three.

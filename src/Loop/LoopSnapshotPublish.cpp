@@ -414,7 +414,10 @@ void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteC
   }
   const bool isHide = change.kind == PendingNoteChangeKind::Hide;
   const bool isReplace = change.kind == PendingNoteChangeKind::Shorten;
-  const LoopSnapshotNoteRef previousNote = parent.findNote(change.noteId, change.pitch);
+  // Only a Hide or a Shorten removes the predecessor's events, so only they look it up. An Add is a note the parent
+  // does not have: on a miss `findNote` walks every pitch, which made the wrap journal O(Adds x parent notes).
+  const LoopSnapshotNoteRef previousNote =
+      (isHide || isReplace) ? parent.findNote(change.noteId, change.pitch) : LoopSnapshotNoteRef{};
   const uint32_t previousStart = previousNote ? previousNote->startTick : change.startTick;
   const uint32_t previousEnd = previousNote ? previousNote->endTick : change.endTick;
 

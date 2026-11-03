@@ -4671,6 +4671,85 @@ void test_wrap_journal_keeps_hide_when_parent_lacks_note() {
   TEST_ASSERT_FALSE(static_cast<bool>(afterHide->findNote(999, 64)));
 }
 
+/// Wrap journal cost (2026-11-03 wrap breakdown: 96% of the wrap, ~3 ms per sealed Add). An Add is a note the
+/// parent does not have, so the journal has nothing to look up for it: a batch of fresh Adds must never walk the
+/// whole parent snapshot. An existing-target edit keeps its resolved predecessor.
+void test_wrap_journal_fresh_adds_never_search_the_parent() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint8_t i = 0; i < 8; ++i) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100 + i * 200, 1, 60 + i, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(180 + i * 200, 1, 60 + i, 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::RecordStop, 1800));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const NoteId recordNoteId = loop.publishedSnapshot()->noteMembership(60, 0)->references[0]->noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, recordNoteId);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2000, 1, 80, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2100, 1, 80, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 2100));
+  constexpr NoteId kFreshBase = 5000;
+  constexpr uint8_t kFreshCount = 6;
+  for (uint8_t i = 0; i < kFreshCount; ++i) {
+    PendingNoteChange add = shortenChange(kFreshBase + i, 90 + i, 2200 + i * 100, 2260 + i * 100);
+    add.kind = PendingNoteChangeKind::Add;
+    add.velocity = 90;
+    loop.pushPendingNoteChangeForTest(add);
+  }
+  loop.pushPendingNoteChangeForTest(shortenChange(recordNoteId, 60, 100, 150));
+
+  const uint32_t scansBefore = LoopSnapshot::findNoteAllPitchScanCountForTest();
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(loop.lastCommittedPassId()));
+  TEST_ASSERT_EQUAL_UINT32(0u, LoopSnapshot::findNoteAllPitchScanCountForTest() - scansBefore);
+
+  const LoopSnapshotChangeSet* queued = loop.pendingWrapJournalChangesForTest();
+  TEST_ASSERT_NOT_NULL(queued);
+  const LoopSnapshotChangeSet journal = *queued;
+  uint8_t freshAdds = 0;
+  bool shortenResolved = false;
+  for (const SnapshotNoteChange& change : journal.notes) {
+    if (change.next.noteId >= kFreshBase && change.next.noteId < kFreshBase + kFreshCount) {
+      TEST_ASSERT_EQUAL(static_cast<int>(SnapshotChangeKind::Add), static_cast<int>(change.kind));
+      TEST_ASSERT_FALSE(static_cast<bool>(change.previous));
+      ++freshAdds;
+    }
+    if (change.next.noteId == recordNoteId && change.kind == SnapshotChangeKind::Replace) {
+      shortenResolved = static_cast<bool>(change.previous) && change.next.endTick == 150;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8(kFreshCount, freshAdds);
+  TEST_ASSERT_TRUE(shortenResolved);
+  uint8_t freshEvents = 0;
+  for (const SnapshotEventChange& change : journal.events) {
+    if (change.kind == SnapshotChangeKind::Add && change.next.value.noteId >= kFreshBase &&
+        change.next.value.noteId < kFreshBase + kFreshCount) {
+      ++freshEvents;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8(2 * kFreshCount, freshEvents);
+
+  LoopSnapshotConstruction construction(loop.publishedSnapshot(), journal);
+  TEST_ASSERT_TRUE(completeSnapshotConstruction(construction));
+  const ImmutableLoopSnapshotRef next = construction.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(next));
+  for (uint8_t i = 0; i < kFreshCount; ++i) {
+    const LoopSnapshotNoteRef fresh = next->findNote(kFreshBase + i, 90 + i);
+    TEST_ASSERT_TRUE(static_cast<bool>(fresh));
+    TEST_ASSERT_EQUAL_UINT32(2200u + i * 100, fresh->startTick);
+  }
+  const LoopSnapshotNoteRef shortened = next->findNote(recordNoteId, 60);
+  TEST_ASSERT_TRUE(static_cast<bool>(shortened));
+  TEST_ASSERT_EQUAL_UINT32(150u, shortened->endTick);
+}
+
 /// RC4 (172532 nopart): linear 2304→2496 is not present at hs=0 / hs=48.
 void test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight() {
   LoopEventStore::resetPoolForTests();
@@ -5595,6 +5674,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
+  RUN_TEST(test_wrap_journal_fresh_adds_never_search_the_parent);
   RUN_TEST(test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight);
   RUN_TEST(test_wrap_held_source_row_occupies_hold_zero);
   RUN_TEST(test_wrap_seal_keeps_painted_shorten_233150);

@@ -676,6 +676,13 @@ LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNoteAtPitch(NoteId noteId,
   return {};
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+namespace {
+uint32_t gFindNoteAllPitchScanCount = 0;
+}  // namespace
+uint32_t LoopSnapshot::findNoteAllPitchScanCountForTest() { return gFindNoteAllPitchScanCount; }
+#endif
+
 LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
                                                         uint8_t pitchHint) const {
   if (auto found = findNoteAtPitch(noteId, pitchHint)) {
@@ -684,6 +691,9 @@ LOOP_COLD_MEM LoopSnapshotNoteRef LoopSnapshot::findNote(NoteId noteId,
   if (noteId == kInvalidNoteId || !spanRoot_) {
     return {};
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gFindNoteAllPitchScanCount;
+#endif
   for (uint16_t pitch = 0; pitch < kLoopSnapshotPitchCount; ++pitch) {
     if (pitch == pitchHint) {
       continue;
