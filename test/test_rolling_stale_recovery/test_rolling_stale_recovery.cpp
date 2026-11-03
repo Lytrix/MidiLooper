@@ -861,12 +861,18 @@ void test_5_1_a_dead_coverage_build_retires_and_its_frame_is_served() {
 // Requested and blocked at its deadline (`CandidateNotReady`) for the rest of the transport. The fixture plays a routed
 // take, overdubs it for one traversal interleaved in time, stops the overdub while playing, and keeps the device's lane
 // order (reader owner, per-turn demand, owner lane, deferred idle owners) through the stop job.
-void test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub_stop() {
-  installReader();
+struct OverdubStopOutcome { uint32_t foreign, blockedTicks, handoffMissed, servedAfter, bridgeTicksAfter; };
+
+/// A take on track 0 slot 0 (manifest-routed when `routed`), overdubbed for one traversal interleaved in time, the overdub
+/// stopped while playing, then 12 traversals in `main.cpp`'s lane order.
+OverdubStopOutcome liveOverdubStopRun(bool routed) {
+  if (routed) installReader(); else uninstallReader();
   Track& t = trackManager.getTrack(0);
   Loop& loop = recordTake(t, 4, 32);
-  reader().serviceOwner(loop);
-  reader().serviceOwner(loop);
+  if (routed) {
+    reader().serviceOwner(loop);
+    reader().serviceOwner(loop);
+  }
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
   RollingOwnerLane lane;
   MidiServiceDrain::DeferredIdleOwnerCursor idleCursor{};
@@ -875,13 +881,13 @@ void test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub
   clockManager.assignCurrentTickSilently(0);
   t.startPlaying(0);
   TrackCaptureStopTestAccess::unmute(t);
-  uint32_t notReady = 0, blockedTicks = 0, servedAfter = 0, foreignMutations = 0;
+  uint32_t notReady = 0, blockedTicks = 0, servedAfter = 0, foreignMutations = 0, handoffMissed = 0;
   uint8_t firstBlockedBy = 0;
   bool stopped = false;
   const auto step = [&](uint32_t tick) {
     nativePlaybackDeadlineClock = {tick, 1};
     clockManager.assignCurrentTickSilently(tick);
-    reader().serviceOwner(loop);
+    if (routed) reader().serviceOwner(loop);
     if (tick % 4 == 0) {
       if (t.isPlaying() && !t.isRecording() && !t.isOverdubbing())
         (void)t.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
@@ -901,11 +907,13 @@ void test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub
       ++blockedTicks;
       notReady += runtime.rolling.blockedBy ==
                   static_cast<uint8_t>(PlaybackTickContext::RouteReject::CandidateNotReady);
+      handoffMissed += runtime.rolling.blockedBy ==
+                       static_cast<uint8_t>(PlaybackTickContext::RouteReject::HandoffMissed);
     }
     PlaybackViewSourceIdentity src{};
     PlaybackCoverageInterval cov{};
     if (stopped && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
-        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+        t.publishedPlaybackWindowForSlot(0, src, cov) && (!routed || src.manifestIdentity != 0))
       ++servedAfter;
   };
   uint32_t tick = 0;
@@ -921,21 +929,33 @@ void test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub
   }
   t.stopOverdubbing();
   stopped = true;
+  const uint32_t bridgeBefore = PlaybackTickContext::gState.route[static_cast<int>(PlaybackTickContext::TickRoute::Bridge)];
   for (const uint32_t end = tick + 12 * len; tick < end; ++tick) step(tick);
-  char detail[260];
-  snprintf(detail, sizeof(detail),
-           "foreign=%u blockedTicks=%u notReady=%u firstBlockedBy=%u servedAfter=%u phase=%u pend=%d stopPending=%u "
-           "passes=%u",
-           foreignMutations, blockedTicks, notReady, unsigned(firstBlockedBy), servedAfter, unsigned(runtime.rolling.phase),
-           runtime.pendingViewRequest_.active, t.hasPendingDeferredOverdubStop() ? 1u : 0u,
-           unsigned(loop.passes.overdubPasses.size()));
-  printf("OVERDUBSTOP %s\n", detail);
-  // The ownership contract (owner ruling 2026-11-03): no deferred owner mutates the routed slot's views while the
-  // manifest owns its coverage. Open, reported here and not asserted: on host the routed slot is then played from the
-  // stop job's full-loop **bridge route** for ~21,000 ticks, so its Ready frame is not adopted and is later judged
-  // `HandoffMissed`. The device served 0 bridge ticks on the routed slot (sessions 20261103_093844 / _095257); removing
-  // the bridge from a routed slot's audible route is a clock-path resolver change awaiting the owner's ruling.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, foreignMutations, detail);
+  const uint32_t bridgeTicks =
+      PlaybackTickContext::gState.route[static_cast<int>(PlaybackTickContext::TickRoute::Bridge)] - bridgeBefore;
+  printf("OVERDUBSTOP[%s] foreign=%u blocked=%u handoffMissed=%u notReady=%u servedAfter=%u bridgeTicks=%u phase=%u\n",
+         routed ? "routed" : "unrouted", foreignMutations, blockedTicks, handoffMissed, notReady, servedAfter,
+         bridgeTicks, unsigned(runtime.rolling.phase));
+  return {foreignMutations, blockedTicks, handoffMissed, servedAfter, bridgeTicks};
+}
+
+// One playback source authority on a routed slot (owner ruling 2026-11-03, DEC-246 amendment 30): after a live overdub
+// stop no deferred owner mutates the routed slot's views, and the stop job's bridge -- which may still exist as storage
+// -- is never an eligible committed playback source there, so the Ready manifest frame is adopted. Negative control:
+// the same run on an unrouted slot still plays the bridge.
+void test_5_1_a_routed_slot_has_one_playback_source_after_an_overdub_stop() {
+  const OverdubStopOutcome unrouted = liveOverdubStopRun(false);
+  const OverdubStopOutcome routed = liveOverdubStopRun(true);
+  char detail[200];
+  snprintf(detail, sizeof(detail), "routed: foreign=%u bridge=%u missed=%u blocked=%u served=%u | unrouted bridge=%u",
+           routed.foreign, routed.bridgeTicksAfter, routed.handoffMissed, routed.blockedTicks, routed.servedAfter,
+           unrouted.bridgeTicksAfter);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, unrouted.bridgeTicksAfter, detail);  // the control: the bridge is eligible
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, routed.foreign, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, routed.bridgeTicksAfter, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, routed.handoffMissed, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, routed.blockedTicks, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, routed.servedAfter, detail);
 }
 
 // The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
@@ -1224,7 +1244,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame);
   RUN_TEST(test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded);
   RUN_TEST(test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame);
-  RUN_TEST(test_5_1_no_deferred_owner_mutates_the_routed_slot_s_views_after_an_overdub_stop);
+  RUN_TEST(test_5_1_a_routed_slot_has_one_playback_source_after_an_overdub_stop);
   RUN_TEST(test_5_1_a_dead_coverage_build_retires_and_its_frame_is_served);
   RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);

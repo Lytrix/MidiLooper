@@ -1469,6 +1469,12 @@ TRACK_COLD_MEM void Track::resolveFixedPlaybackSourceForTurn(
   if (runtime == nullptr) {
     return;
   }
+#if REVISION_MANIFEST_READER
+  // DEC-246 amendment 30 (owner ruling 2026-11-03): a manifest-routed slot has one committed playback source. A stop
+  // job's bridge may still exist as storage, but it is never an eligible source there -- otherwise it shadows the
+  // manifest frame (the rolling reader is consulted only when no fixed source is chosen) and a Ready frame is missed.
+  if (!manifestLaneRoutesSlot(slotIndex))
+#endif
   bridgeOut = runtime->selectedFullLoopBridge(sourceOut, loop.loopLengthTicks);
   viewOut = bridgeOut != nullptr ? runtime->fullLoopBridgeBase(*bridgeOut, loop.loopLengthTicks)
                                  : runtime->publishedFullLoopView(sourceOut, loop.loopLengthTicks);

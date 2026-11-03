@@ -14184,8 +14184,10 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
         demand cannot land on its position.
       - It is never left waiting for its deadline.
       - The guard is independent of the ownership rule.
-    - **Open.** On host the routed slot can still be played from the stop job's full-loop bridge route after an overdub
-      stop; the device shows none. Removing the bridge from a routed slot's audible route is a separate resolver ruling.
+    - **Source authority (same day).** On a manifest-routed slot a stop job's bridge may still exist as storage, but it
+      is never an eligible committed playback source; the static route excludes it in the fixed-source selector.
+      "Manifest-routed" now means the same at all three layers: build ownership, view-lifecycle ownership and tick-time
+      source authority. (Host: bridge ticks 34,644 → 0, no `HandoffMissed`; the unrouted control still plays the bridge.)
     - Evidence: `evidence/2026-11-03-c5-3b-pending-rearm-trace.md`.
 
 ### Related

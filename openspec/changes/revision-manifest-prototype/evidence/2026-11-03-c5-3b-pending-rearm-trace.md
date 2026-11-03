@@ -133,3 +133,34 @@ pending_armed,named,2,1611203015,28928,3584,1536,0,2,56,7
   - Estimate == measured on all 21 handed seams.
   - One `succ_seam,missed` row at 124.4 s is unexplained: before the restart and the probe configuration, E = 0,
     tagged slot 0. It is not counted.
+
+## The stop job's bridge is never a playback source on a routed slot (owner ruling 2026-11-03)
+
+- **Cause.** `resolveQualificationPlaybackSourceForTurn` falls through to `resolveFixedPlaybackSourceForTurn`, which
+  takes the selected full-loop bridge and its base view. The rolling reader is consulted only when no fixed view was
+  chosen, so after an overdub stop a selected bridge shadowed the routed slot's Ready manifest frame.
+- **Fix.** On a manifest-routed slot (`manifestLaneRoutesSlot`, the static route) the bridge is not an eligible source.
+  The branch is in the flash-resident selector (ITCM unchanged, padding 936). Bridge construction, stop-job storage and
+  unrouted tracks are unchanged.
+- **Host RED with control.** `test_5_1_a_routed_slot_has_one_playback_source_after_an_overdub_stop`:
+
+| after the live overdub stop | unrouted (control) | routed, before | routed, after |
+|---|---|---|---|
+| bridge ticks | 34,644 | 34,644 | **0** |
+| `HandoffMissed` / blocked ticks | 0 / 0 | 488 / 488 | **0 / 0** |
+| manifest window-served ticks | n/a | 0 | **3,072** |
+
+  Routed suite 23/23; AFFECTED 17 suites, 558 cases, 0 failed, 0 errored.
+- **Device.** succprobe HEX sha256 `1afd0a68fc293a273b043640e94c2a835cbfed912b2f2298e0f6a5b7779b5495`,
+  `captures/session_20261103_105106.log`, boot `crash=0`. Same overdub run.
+  - Bridge ticks 0 (102 `tick_route` rows). Routed `win_blocked` 0, superseded discharges 0, dead builds 0,
+    `publish_outside_frame` 0.
+  - Estimate == measured on all 59 handed seams (E = 138–188).
+  - The first window after the restart served at 14.3 s.
+- **Timing, not ownership.** The first 20-seam attempt had one miss.
+  - The seam: E = 186, actual lead 1,424 (the configure-phase short lead), 19 of 20 grants by its deadline, max grant
+    gap 120 ticks, minimum margin 32.
+  - 20 grants × up to 120 ticks is about 2,400 ticks, more than the 1,424 the seam had. A two-pass E ≈ 186 successor at
+    a 1,536 lead needs a grant every ≤ 76 ticks.
+  - The repeat was 20/20 handed, minimum margin 688.
+  - This is the input to the grant-gap timing contract.
