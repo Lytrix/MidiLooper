@@ -256,9 +256,9 @@ Whether each pass's input is ordered follows from the store's merge order, `(tic
 
 - **Playback order** `(phase, kind Off < On < other, rank)`: inside a non-wrapping window, phase is monotonic in tick
   and the class order is the kind order, so the input is **already ordered**: `ceil(E / 48)` grants.
-- **Canonical order** `(raw tick, pass, event)`: ordered **unless** an equal-tick pair's class order disagrees with its
-  pass order (for example a later pass's NoteOff and an earlier pass's NoteOn at the same tick). Then the pass merge-
-  sorts.
+- **Canonical order**: ~~`(raw tick, pass, event)`: ordered unless an equal-tick pair's class order disagrees with its
+  pass order~~. **Corrected below (2026-11-03, host-pinned):** the key is the row's `canonicalOrder = origin << 16 |
+  ordinal`, i.e. **pass-major**, so the merge sort runs whenever two passes interleave in time inside the window.
 
 **Grant bound for a committed manifest window:**
 
@@ -282,3 +282,65 @@ C(E) <= ceil(E * (2 + ceil(log2 E)) / 48)        otherwise (fill + merge passes 
 - **Not yet verified on host:** the inverted branch, i.e. how many units the merge actually uses, and whether
   publication ever needs a second grant. A host fixture that counts grants for a window with an equal-tick cross-pass
   Off/On pair would pin it.
+
+## Inverted canonical branch, pinned on host (2026-11-03)
+
+Fixture: `test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch` (`test_playback_prewarm`). It drives the
+real manifest build (`ManifestWindowCursor` -> qualification fill -> admission -> canonical order -> ranks -> playback
+order) at the lane's quanta (fill 64, order 48) and again at quantum 1 for exact units, and checks each window's final
+order, phase and rank against the published root's snapshot build.
+
+| Window | E | read units | canonical units | ranks | playback | grants q / c+r / p | G(E) |
+|---|---|---|---|---|---|---|---|
+| one pass | 93 | 187 | 93 | 93 | 93 | 3 / 2+2 / 2 | **11** |
+| two passes alternating in time | 93 | 187 | **837** (9E) | 93 | 93 | 3 / 18+2 / 2 | **27** |
+| two passes alternating, parity case | 64 | 129 | **448** (7E) | 64 | 64 | 3 / 10+2 / 2 | **19** |
+| one equal-tick cross-pass pair only | 93 | 187 | **837** | 93 | 93 | 3 / 18+2 / 2 | **27** |
+
+(G adds the lane's admission and publication grants, 1 each, as measured on the device.) All parity checks pass.
+
+**What is now exact:**
+
+- **Canonical cost.** `C(E) = ceil(workEntriesUpperBound(E) / 48)`, where
+  `workEntriesUpperBound(E) = E × (1 + L + (L odd))` and `L = ceil(log2 E)`. This is the builder's own declared bound,
+  and the merge meets it exactly: each level writes all E entries, whatever the input's disorder. The earlier
+  `ceil(E(2 + L)/48)` is exact for odd L and loose by E/48 for even L (64: 10 grants, not 11).
+- **Stages never share a grant.** Each stage costs `ceil(units / quantum)`.
+- **Publication** is one grant in every case.
+- **The cost is a cliff.** A single out-of-order row, here one equal-tick pair, costs the full merge, just like a
+  fully interleaved window.
+
+**The trigger is broader than equal ticks.** `ManifestWindowCursor::step` keys each row `origin << 16 | ordinal`. The
+fill stores that as the phase `SnapshotCanonical` sorts by, so canonical order is pass-major. Its input arrives in DEC-244
+tick order, so it is ordered only while no later pass's row precedes an earlier pass's row in time. **Any overdub that
+plays inside a window together with the record pass takes the merge path.** In a looper that is the normal case, not an
+adversarial one. The dense device take matched the cheap path because it was a single pass.
+
+**Why an equal-tick-local fix does not apply, and what does.** The disorder is not confined to equal-tick groups, so
+reordering within equal-tick groups would not remove it. But the canonical order is used only to number ranks:
+- `SnapshotRanks` reads `storage.order`;
+- `SnapshotPlayback`'s `begin` then refills the order;
+- no other reader exists.
+
+The canonical order itself is a **stable partition by origin** of rows that already arrive in ordinal order within each
+origin. The rank therefore has a closed form:
+
+```
+rank(i) = base[origin_i] + ordinal_i,    base[o] = rows of origins < o in the window
+```
+
+Computing it is one counting pass (E units) plus one assignment pass (E units), with no sort: the same 2E as today's
+cheap path. The values are identical by construction to the sorted positions the snapshot path and its consumers
+expect:
+- `RuntimePlaybackBridge` indexes `canonicalCycleMasks` and predecessor ranks by them;
+- `SnapshotPlayback` uses them as the equal-tick tie-break.
+
+If a row can ever be filtered by retention, `ordinal` is replaced by a per-origin running count of retained rows; it is
+still O(E). The cost is one small per-origin counter array. With it the bound becomes arrangement-independent:
+
+```
+G(E) = ceil((2E + 1)/64) + 1 + ceil(E/48) + ceil(E/48) + ceil(E/48) + 1
+```
+
+This is monotone in E alone, as DEC-147 pricing needs. **Not implemented**, per the owner ruling: no builder or
+scheduler change yet.

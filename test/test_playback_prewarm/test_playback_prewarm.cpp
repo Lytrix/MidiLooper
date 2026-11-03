@@ -8943,6 +8943,214 @@ void test_c5_manifest_window_cursor_refuses_by_name() {
   TEST_ASSERT_FALSE(store.windowActive());  // the pin is released
 }
 
+// C5.3b buildGrantBound(E): the post-admission cost of a committed manifest window, pinned per stage at the lane's
+// production quanta (qualification fill 64, order 48) and in exact units (quantum 1). The canonical order's key is the
+// row's `canonicalOrder = origin << 16 | ordinal` (pass-major), so its fill pass sees ordered input only while the
+// window's passes do not interleave in time; otherwise the bottom-up merge runs every level over all E entries, plus a
+// copy-back when the level count is odd. Playback order's input is ordered by construction. Each window's final
+// order, phases and ranks also equal the published root's own.
+namespace c5cost {
+using Rows = std::vector<std::tuple<uint32_t, bool, uint8_t>>;
+
+/// A capture appends chronologically: each pass's rows in tick order (stable, so a fixture's equal-tick order stays).
+Rows chronological(Rows rows) {
+  std::stable_sort(rows.begin(), rows.end(),
+                   [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+  return rows;
+}
+
+void buildLoop(Loop& loop, const Rows& recordRows, const Rows& overdubRows) {
+  loop.loopLengthTicks = c5::kLength;
+  NoteId nextId = 7001;
+  RecordPass record{};
+  record.id = 1;
+  LoopEventStore recordStore;
+  c5::appendPass(recordStore, chronological(recordRows), nextId);
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(recordStore, record.committedChunkIds));
+  loop.passes.recordPass = std::move(record);
+  if (!overdubRows.empty()) {
+    OverdubPass overdub{};
+    overdub.id = 2;
+    overdub.mergeSequence = 1;
+    LoopEventStore overdubStore;
+    c5::appendPass(overdubStore, chronological(overdubRows), nextId);
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(overdubStore, overdub.committedChunkIds));
+    loop.passes.overdubPasses.push_back(std::move(overdub));
+  }
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRebuild());
+  for (unsigned turn = 0; turn < 4096 && loop.hasPendingSnapshotPublish(); ++turn) {
+    (void)loop.stepPendingSnapshotPublish(64, true, 0);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "fixture precondition: a current root from the passes");
+}
+
+/// Notes `[on, on + 40)` at `first + k * spacing`, pitch 60 + k % 24.
+void addNotes(Rows& rows, uint32_t first, uint32_t spacing, uint32_t count) {
+  for (uint32_t k = 0; k < count; ++k) {
+    const uint32_t on = first + k * spacing;
+    const uint8_t pitch = static_cast<uint8_t>(60 + k % 24);
+    rows.emplace_back(on, true, pitch);
+    rows.emplace_back(on + 40, false, pitch);
+  }
+}
+
+struct StageCost {
+  uint32_t rows = 0;
+  uint32_t readUnits = 0;
+  uint32_t qualification = 0;   // stepCoverageQualification calls to Complete
+  uint32_t canonicalRanks = 0;  // stepOrder calls until canonicalRanksReady (canonical order, then ranks)
+  uint32_t playback = 0;        // stepOrder calls after it, to Complete
+};
+
+StageCost measure(RevisionStore::Store<c5::Cap>& store, RevisionStore::ManifestWindowCursor<c5::Cap>* source,
+                  const PlaybackCoverageInterval& coverage, size_t fillQuantum, size_t orderQuantum,
+                  RuntimePlaybackView& view, RuntimePlaybackViewBuild& build) {
+  using namespace RevisionStore;
+  const ManifestId m = store.current();
+  TEST_ASSERT_EQUAL(WindowResult::Pending, source->begin(store, m, store.identityOf(m), store.manifest(m).revision,
+                                                         coverage.startPhase, coverage.lengthTicks,
+                                                         coverage.loopLengthTicks));
+  TEST_ASSERT_TRUE(view.prewarm(128));
+  const PlaybackViewSourceIdentity identity{store.manifest(m).revision, 1, nullptr};
+  TEST_ASSERT_TRUE(build.beginCoverageQualification(view, *source, identity, coverage));
+  StageCost cost{};
+  RuntimePlaybackViewFillResult fill = RuntimePlaybackViewFillResult::Pending;
+  while (fill == RuntimePlaybackViewFillResult::Pending && cost.qualification < 100000) {
+    fill = build.stepCoverageQualification(fillQuantum);
+    ++cost.qualification;
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Complete, fill);
+  cost.rows = view.storage.eventCount;
+  cost.readUnits = static_cast<uint32_t>(source->readUnits());
+  TEST_ASSERT_TRUE(build.admitCoverageQualification());
+  while (!view.canonicalRanksReady && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order &&
+         cost.canonicalRanks < 100000) {
+    (void)build.stepOrder(orderQuantum);
+    ++cost.canonicalRanks;
+  }
+  TEST_ASSERT_TRUE(view.canonicalRanksReady);
+  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order && cost.playback < 100000) {
+    (void)build.stepOrder(orderQuantum);
+    ++cost.playback;
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_TRUE(view.complete);
+  return cost;
+}
+
+/// The published root's window through the snapshot build: the parity oracle for order, phase and rank.
+void expectSnapshotParity(Loop& loop, const PlaybackCoverageInterval& coverage, const RuntimePlaybackView& manifestView,
+                          const char* name) {
+  const auto root = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(root.get());
+  RuntimePlaybackView snapshotView;
+  RuntimePlaybackViewBuild snapshotBuild;
+  LoopSnapshot::EventWindowCursor snapshotSource;
+  TEST_ASSERT_TRUE(snapshotSource.begin(*root, coverage.startPhase, coverage.lengthTicks));
+  const PlaybackViewSourceIdentity snapshotIdentity{loop.playbackRevision, 1, root.get()};
+  c5::drive(snapshotView, snapshotBuild, [&] {
+    return snapshotBuild.begin(snapshotView, snapshotSource, snapshotIdentity, coverage, {}, {});
+  });
+  retireBindingSource(snapshotSource);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(snapshotView.storage.eventCount, manifestView.storage.eventCount, name);
+  for (uint32_t i = 0; i < snapshotView.storage.eventCount; ++i) {
+    const uint16_t a = snapshotView.storage.order[i];
+    const uint16_t b = manifestView.storage.order[i];
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(snapshotView.storage.events[a].tick, manifestView.storage.events[b].tick, name);
+    TEST_ASSERT_EQUAL_MESSAGE(snapshotView.storage.events[a].type, manifestView.storage.events[b].type, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(snapshotView.storage.events[a].data.noteData.note,
+                                    manifestView.storage.events[b].data.noteData.note, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(snapshotView.storage.phases[a], manifestView.storage.phases[b], name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(snapshotView.canonicalRanks[a], manifestView.canonicalRanks[b], name);
+  }
+}
+
+uint32_t ceilDiv(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
+// `Track::kPlaybackViewFillQuantum` / `kPlaybackViewOrderQuantum` (Track is incomplete in this suite).
+constexpr size_t kFillQuantum = 64;
+constexpr size_t kOrderQuantum = 48;
+
+struct Case {
+  const char* name;
+  Rows record;
+  Rows overdub;
+  PlaybackCoverageInterval coverage;
+  uint32_t expectedRows;
+  uint32_t expectedCanonicalUnits;  // exact, quantum 1
+};
+
+void run(Case& c) {
+  using namespace RevisionStore;
+  Loop loop;
+  buildLoop(loop, c.record, c.overdub);
+  static Store<c5::Cap> store;
+  store.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, store));
+
+  static PassEvent staging[256];
+  ManifestWindowCursor<c5::Cap> unitSource(staging, 256);
+  RuntimePlaybackView unitView;
+  RuntimePlaybackViewBuild unitBuild;
+  const StageCost units = measure(store, &unitSource, c.coverage, 1, 1, unitView, unitBuild);
+  ManifestWindowCursor<c5::Cap> grantSource(staging, 256);
+  RuntimePlaybackView grantView;
+  RuntimePlaybackViewBuild grantBuild;
+  const StageCost grants = measure(store, &grantSource, c.coverage, kFillQuantum, kOrderQuantum, grantView, grantBuild);
+  const uint32_t E = units.rows;
+  char label[200];
+  snprintf(label, sizeof(label),
+           "%s: E=%u read=%u canonical+ranks units=%u playback units=%u | grants q=%u c+r=%u p=%u", c.name, E,
+           units.readUnits, units.canonicalRanks, units.playback, grants.qualification, grants.canonicalRanks,
+           grants.playback);
+  TEST_MESSAGE(label);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expectedRows, E, label);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2 * E + 1, units.readUnits, label);
+  // Exact units: canonical order as pinned, ranks E, playback order E (ordered by construction).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.expectedCanonicalUnits + E, units.canonicalRanks, label);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(E, units.playback, label);
+  // Grants: each stage is ceil(units / quantum); a stage never shares a grant with the next.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(2 * E + 1, 64), grants.qualification, label);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(c.expectedCanonicalUnits, 48) + ceilDiv(E, 48), grants.canonicalRanks, label);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(ceilDiv(E, 48), grants.playback, label);
+  // The canonical merge cost is the builder's own declared bound (fill + one write per level + odd-level copy-back).
+  if (c.expectedCanonicalUnits != E)
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(RuntimePlaybackOrderBuilder::workEntriesUpperBound(E), c.expectedCanonicalUnits,
+                                     label);
+  expectSnapshotParity(loop, c.coverage, grantView, c.name);
+  expectSnapshotParity(loop, c.coverage, unitView, c.name);
+}
+}  // namespace c5cost
+
+void test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch() {
+  using c5cost::Rows;
+  const PlaybackCoverageInterval twoBars{0, 2 * c5::kBar, c5::kLength};
+  // A: one pass, 46 notes + a NoteOn whose Off lies past the window: E = 93, canonical input ordered.
+  c5cost::Case single{"single pass E=93", {}, {}, twoBars, 93, 93};
+  c5cost::addNotes(single.record, 4, 32, 46);
+  single.record.emplace_back(1500, true, 90);
+  single.record.emplace_back(1600, false, 90);
+  // B: the same 93 rows split over two passes that alternate in time: 7 merge levels (odd) -> 9E = 837 units.
+  c5cost::Case interleaved{"interleaved passes E=93", {}, {}, twoBars, 93, 837};
+  c5cost::addNotes(interleaved.record, 4, 64, 23);
+  c5cost::addNotes(interleaved.overdub, 36, 64, 23);
+  interleaved.record.emplace_back(1500, true, 90);
+  interleaved.record.emplace_back(1600, false, 90);
+  // C: copy-back parity, E = 64 interleaved: 6 levels (even), no copy-back -> 7E = 448 units.
+  c5cost::Case even{"interleaved passes E=64", {}, {}, twoBars, 64, 448};
+  c5cost::addNotes(even.record, 4, 96, 16);
+  c5cost::addNotes(even.overdub, 52, 96, 16);
+  // D: the only disorder is one equal-tick pair: the overdub's NoteOff at 2000 (its NoteOn before the window) and the
+  // record's NoteOn at 2000. Store order puts the later pass's Off first; canonical (pass-major) wants it last.
+  const PlaybackCoverageInterval midWindow{c5::kBar, 2 * c5::kBar, c5::kLength};
+  c5cost::Case pair{"equal-tick cross-pass pair E=93", {}, {}, midWindow, 93, 837};
+  c5cost::addNotes(pair.record, c5::kBar + 4, 26, 45);
+  pair.record.emplace_back(2000, true, 91);
+  pair.record.emplace_back(2100, false, 91);
+  pair.overdub.emplace_back(700, true, 95);
+  pair.overdub.emplace_back(2000, false, 95);
+  for (c5cost::Case* c : {&single, &interleaved, &even, &pair}) c5cost::run(*c);
+}
+
 void test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins() {
   const PlaybackViewSourceIdentity capture{0, 7, nullptr, PlaybackWindowOrigin::Capture, 41};
   const PlaybackViewSourceIdentity newer{0, 7, nullptr, PlaybackWindowOrigin::Capture, 42};
@@ -10000,6 +10208,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_binding_empty_window_completes_and_costs_saturate);
   RUN_TEST(test_c5_manifest_window_gives_the_consumer_the_snapshot_windows_tuple);
   RUN_TEST(test_c5_manifest_window_cursor_refuses_by_name);
+  RUN_TEST(test_c5_manifest_build_grant_bound_pins_the_canonical_merge_branch);
   RUN_TEST(test_capture_source_identity_distinguishes_same_size_revisions_and_other_origins);
   RUN_TEST(test_live_descriptor_rejects_raw_or_semantic_mutation_before_begin);
   RUN_TEST(test_capture_phase_identity_copy_assignment_and_exhaustion_are_nonrecycled);
