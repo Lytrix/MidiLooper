@@ -1,3 +1,18 @@
+**2026-11-03 — Gates A/B (owner priority change: playback and liveness first).**
+- **Gate B fixed (DEC-249, `c12f040c`).** The publication reserve resolves a low arena tail with the read-only walk.
+  On device: tail 32,768 B, largest free 54,824 B, walk 13 µs, publication converged. Before the fix it never
+  published.
+- **Gate A reconciled, not fixed.**
+  - The measured successor handoffs come from the probe's measurement requester (DEC-147 price waived). With it,
+    steady state is continuous on host and device.
+  - Every silence on routed track 8 is a chain's first window: at playback start, after the Overdub stop's revision
+    move, and after a restart.
+- **Open:**
+  - The cold-start window rule (owner decision).
+  - A roughly 50 s publication-idle window after the stop on the default image (not memory).
+  - Gate C (display bars 20-32).
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-03 — DEC-248: the overdub wrap publishes from its session record; the wrap Clock builds no journal.**
 - **Change.** The wrap stamps only the post-seal revision, in O(1). The existing publish box then produces each
   session record in causal order: the pass through the pass producer, then its companions in a bounded resumable

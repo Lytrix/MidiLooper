@@ -1,5 +1,8 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-03 — Gate B fixed (DEC-249); Gate A reconciled.** Next: the owner rules on the cold-start window for a
+routed chain (playback start, revision move, restart). Then Gate C (display bars 20-32).
+
 **2026-11-03 — DEC-248 landed: wrap publication from the session record.** The wrap Clock went from 841 ms to
 220 ms on device. Next, an owner decision on the publication cut: in the sweep, the root still lagged at run end.
 Still separate: held-NoteOn extraction, the C3.4 forced deadline, the probe boot hang.
