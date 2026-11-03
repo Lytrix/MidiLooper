@@ -398,3 +398,39 @@ views. DEC-147 admission is unchanged, and this is no production timing claim.
 - the production DEC-147 price still refuses successors, and the requester exists only in the probe image;
 - the outer-loop bound is not enforceable;
 - device confirmation of slice 1 and this slice on the probe image.
+
+### 13.1 Device run (2026-11-04)
+
+**Run setup.**
+- Image: `teensy41-capture-serial-revstore-succprobe` at `fc0a5e80`, plus the uncommitted TEMP boot breadcrumbs in
+  `main.cpp`. HEX sha256 `34af5c315c3f9fdd850391bdac82de51ccff674fe7405252162e112210775f13`.
+- Boot: `boot_reset,crash=0`, `BOOT,load,ok`, no crash report.
+- Stimulus: `STIM-LANE-CADENCE-TEMP-01`, sweep mode, track 8 slot 4, fixed point `0:3200:40`.
+- Command: `host_midi_hitl.py run --scenarios lane_cadence --track 8 --loop-slot 4 --midi-channel 1 --boot-reset
+  --lane-cadence-mode sweep --lane-cadence-points 0:3200:40`.
+- Capture: `captures/session_20261104_002601.log`. The harness exited on its own.
+
+**Steady state at lead 3200 (no denial), 131.98-192.0 s.**
+
+| measure | value |
+|---|---|
+| successor records | 42 requested, **40 HandedOff, 0 missed, 0 refused** (2 cancelled at transport stop: both outstanding keys) |
+| minimum actual request lead | **2960 ticks** (about two spans). The depth-2 demand was opened while N still waited in `ready`; a depth-1-only requester cannot exceed one span (1536). |
+| minimum handoff margin | 2728 ticks |
+| maximum request-to-ready | 248 ticks |
+| maximum grains | 7 |
+| `tick_route` (every 5 s row) | `view=1200`, **`none=0`**: every routed pulse was served from a window |
+
+- **Slice 2 (two-span): confirmed on the device** for this take and cadence.
+- **Slice 1 (orphaned `retained`): consistent but not directly witnessed.**
+  - After the Record stop, three-view operation ran for 40 consecutive handoffs. A surviving orphaned `retained` role
+    would hold the third view and refuse every depth-2 build.
+  - `STOP_PREFIX` reports `current=2,ready=1,build=0,retained=255`.
+  - No row names the release itself.
+
+**Not part of this result (already open):**
+- The routed slot is silent for about 33 s after the Record stop (62-95 s, `none=600` per row, no successor row before
+  95.15 s). This is the post-stop publication-liveness gap (Gates A/B).
+- About 8 s at the restart cold start (121-127 s).
+- The run does not verify emitted-MIDI content; it checks only coverage and outcomes. Production pricing and timing
+  are not qualified by this probe image.
