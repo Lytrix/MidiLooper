@@ -252,3 +252,49 @@ purpose.
 **Next (slice 2).** The two-span frame RED: N-1 / current, N / ready, N+1 / build coexist on the three views now
 free, N+1 survives the N-1 -> N rotation, a valid retained window refuses the second lookahead safely, and every
 expected MIDI event is emitted under production pricing.
+
+## 11. Slice 2: the three-view / two-span lifecycle, structurally (owner ruling 2026-11-03)
+
+Host, `test/test_playback_prewarm/two_span_lifecycle.inc`, real builder (`RuntimePlaybackViewBuild`) and the
+existing `RuntimePlaybackViewLifecycle` transitions only:
+
+- **`test_two_span_three_views_carry_n_minus_1_n_and_n_plus_1_through_a_handoff`.** It reaches the state N-1 in
+  `current` (published), N in `ready` (complete, unpublished) and the third view free in `build`, and asserts:
+  - N+1 begun and left mid-fill; `publishCompletedBuildAsReadySuccessor` refuses ("one real successor"), and N stays
+    ready;
+  - the N-1 -> N handoff keeps N+1 in `build` with its identity, coverage, fill progress and `storageGeneration`
+    intact, and N-1 is unpublished;
+  - resumed, N+1 equals a reference build made without a handoff, event for event;
+  - published, N+1 is `ready` and unpublished, and the retired N-1 view is the next `build`, reset and never
+    published;
+  - roles are distinct at every step.
+- **`test_two_span_never_steals_a_legitimately_retained_view`.** A complete retained view with events occupies its
+  own role, so there is no second-lookahead view (`build` is none) and `releaseOrphanedRetained` refuses it. The
+  handoff never recycles or resets it, and the marker survives.
+- **Result: both GREEN on the current code.** After slice 1 the existing lifecycle already carries two-span lookahead
+  on three views. These are structural proofs, not REDs: no lifecycle change is needed.
+
+### The smallest frame-state change for the second outstanding obligation
+
+**What the frame holds today** (`RollingFrame`, probe requester):
+- the serving window: `deadlineTick` (N's start), `startPhase`, span;
+- `successorState`: 0 none, 1 demanded, 2 missed, 3 duplicate;
+- the successor's key, *derived* by `rollingSuccessorKey` (deadline `deadlineTick + span`, start
+  `startPhase + span`);
+- the build obligation, carried by the one `pendingViewRequest_`;
+- one-span comes from a single requester gate: it refuses while `ready` holds a complete view (gate bit 16).
+
+**Proposal: no new field.** Three local changes:
+1. **The key at depth 1 or 2:** `rollingSuccessorKey(frame, depth)`, giving deadline `deadlineTick + depth * span`
+   and start `startPhase + depth * span`. `rollingSuccessorDemandIs` accepts either key.
+2. **The requester gate:** when `ready` holds a complete view whose coverage equals the depth-1 key, open the depth-2
+   demand instead of refusing. It is still the single `pendingViewRequest_`, the single builder and the single
+   `build` view; the depth-1 window is already complete, so only one obligation is ever being built.
+3. **Promotion keeps the obligation:** when N (depth 1) is promoted to serving, the frame's `deadlineTick` advances by
+   one span, so the outstanding depth-2 demand **becomes** the new frame's depth-1 key without being re-stamped.
+   `successorState = 1` must survive that promotion instead of resetting to 0.
+   - Where the promotion resets it is the one line to change (to be located: no direct `successorState = 0` exists,
+     so it comes from re-seeding the frame).
+
+All three are inside the existing successor requester (`PLAYBACK_ROLLING_SUCCESSOR_PROBE`), keyed by the same
+absolute deadlines the cancel and missed paths already use. No new lifecycle, view or worker, and no admission change.

@@ -9775,6 +9775,7 @@ void test_legacy_record_adopter_cannot_reidentify_frozen_capture_ready() {
 }
 
 #include "pending_box_release.inc"
+#include "two_span_lifecycle.inc"
 #define INVENTORY_ADOPTION_WORKER_HARNESS 1
 #include "../test_note_edit_entry_boundary/inventory_adoption.inc"
 
@@ -10343,6 +10344,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_private_delta_order_matrix_matches_independent_order_and_work_bound);
   RUN_TEST(test_adoption_prepared_real_ready_committed_recycle_owner_refuse);
   RUN_TEST(test_adoption_preserved_full_grant_future_worker_begin_commit);
+  registerTwoSpanLifecycleCases();
   RUN_TEST(test_pending_box_admission_qualification_and_row_grains);
   RUN_TEST(test_pending_box_real_prewarm_retain_and_empty_release);
   RUN_TEST(test_pending_box_partial_construction_and_progress_batches);
