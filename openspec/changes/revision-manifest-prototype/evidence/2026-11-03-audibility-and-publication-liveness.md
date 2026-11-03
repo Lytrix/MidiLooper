@@ -111,3 +111,36 @@ the reader owner serviced every tick: two traversals, then an overdub (one note)
   conflicts with amendment 23's interim silence on the routed track. Turning the RED green needs either C5.3b
   successor preparation (plus a post-stop serving rule), or an amended amendment 23 that gives the routed track an
   interim audible fallback. Owner decision.
+
+## Gate A reconciliation (owner ruling: reconcile with the earlier successor handoffs)
+
+- **The measured handoffs are correct, and they are not production.**
+  - The 20/20, 21/21 and 5/5 handoffs come from the C5.3b-m **measurement requester** (`RollingSuccessorProbe`),
+    which the probe image enables at boot with the DEC-147 lead price waived (`installAtBoot`:
+    `bypassLeadPrice = true`).
+  - With the price in force, production admits no successor at N's end (`test_rolling_successor_lead`:
+    `test_c5_3b_the_declared_price_refuses_every_successor_at_n_end`).
+  - The manifest-lane host suite never enables the requester. The first Gate A RED therefore exercised production
+    with no successor preparation, which is why it showed a gap at every boundary.
+- **Same path, same knobs.** The host Gate A case with the probe image's knobs plays steady state continuously: every
+  tick served and every take note, in traversals 5-6. That matches the device's continuous `view` route.
+- **Classification of every silent interval** (host with probe knobs, and device A1):
+
+| interval | successor state |
+|---|---|
+| playback start (traversal 0 -> bar 2 of traversal 1) | the chain's **first** window: none covers the current phase; ready, but servable only from a later two-bar boundary |
+| after the Overdub stop (traversal 3 -> bar 2 of traversal 4; device 77.2 -> 97.9 s) | the revision move ends the serving chain (`win_not_servable`). The chain restarts with a first window: on device about 7 s of busy lane plus whole-loop qualification, then ready at 85.4 s but reachable only at 97.9 s |
+| after the sweep's restart (device 144 -> 159 s) | the same chain cold start |
+| steady state with the requester on | none: successors are requested, prepared, adopted and handed off with audible coverage |
+
+- **What the counters miss.** No interval is a successor that was counted as handed off without audible coverage.
+  The counters are honest about successors. They simply never count a chain's opening window, and every silence
+  observed is one.
+- **The defect to fix (not implemented).** A chain cold start (playback start, a revision move, a restart) has no
+  window covering the current phase until the first window's start is reached.
+
+## Gate B (DEC-249)
+
+- **Fixed:** `SnapshotReserve` resolves a low tail with the read-only walk; see DEC-249.
+- **Device:** tail 32,768 B, largest free 54,824 B, walk 13 µs, publication resumed and published.
+- **Open:** a roughly 50 s publication-idle window after the stop on the default image, with memory admitted.

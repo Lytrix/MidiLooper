@@ -109,7 +109,10 @@ stop owners; an overdub wrap queues **nothing** but an O(1) revision stamp, beca
 Publication admission charges the slab to its allocator tier: an external-only slab is not internal
 heap headroom. The internal requirement is the 32 KiB safety floor plus 8 KiB working margin, plus
 the 32 KiB slab only for internal-slab targets. Pool-refusal and transient allocation park/recovery
-remain unchanged; no live heap scan or allocation probe is added ([DEC-157](../../DECISION_LOG.md)).
+remain unchanged; no allocation probe is added ([DEC-157](../../DECISION_LOG.md)). When the arena tail looks low,
+the reserve is resolved by the read-only, allocation-free free-list walk, at most once per 250 ms on the idle owner and
+never on the MIDI or Clock path ([DEC-249](../../DECISION_LOG.md)): the tail never recovers, so a tail-only verdict
+refused every publication turn after an overdub.
 
 Publication is **atomic** and conditional:
 

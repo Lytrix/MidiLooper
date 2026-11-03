@@ -454,6 +454,28 @@ void test_publication_red_converges_when_the_tail_is_low_but_memory_is_free() {
   TEST_ASSERT_TRUE_MESSAGE(current, "the converged root must be current");
 }
 
+/// Gate B guard: the reserve still protects a genuinely low heap. With no free-list holes (the largest block equals the
+/// 36,864 B tail) no publication turn is admitted: nothing is published and the work stays owed, never dropped.
+void test_publication_guard_genuinely_low_memory_still_denies_and_keeps_the_work_owed() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(wrap(track));
+  const uint32_t rootBefore = loop.publishedSnapshotRevision();
+  MemoryMonitor::setNativeTestFreeHeap(36864);
+  MemoryMonitor::setNativeTestAllocatableCapacity(36864);
+  for (unsigned turn = 0; turn < 512; ++turn) TrackCaptureStopTestAccess::snapshotOwnerTurn(track);
+  const bool pending = loop.hasPendingSnapshotPublish();
+  const uint32_t rootDuring = loop.publishedSnapshotRevision();
+  MemoryMonitor::resetNativeTestFreeHeap();
+  MemoryMonitor::resetNativeTestAllocatableCapacity();
+  TEST_ASSERT_TRUE_MESSAGE(pending, "denied work must stay owed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rootBefore, rootDuring, "nothing may publish below the reserve");
+  const Drain d = drainWithSessionRunning(track);  // memory returns: the same owed work now converges
+  TEST_ASSERT_TRUE(d.converged);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
 void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_red_clock_translates_no_snapshot_change);
   RUN_TEST(test_wrap_guard_deferred_interval_ignores_successor_mutation);
@@ -466,9 +488,8 @@ void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once);
   RUN_TEST(test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns);
   RUN_TEST(test_wrap_guard_session_undo_never_publishes_a_wrong_current_root);
-  // Gate B (2026-11-03): RED until the publication admission stops judging a free heap by the arena tail alone.
-  if (getenv("PUBLICATION_LIVENESS_RED") != nullptr) {
-    RUN_TEST(test_publication_red_converges_when_the_tail_is_low_but_memory_is_free);
-  }
+  // Gate B (2026-11-03): GREEN since `SnapshotReserve` resolves a low tail by the read-only free-list walk.
+  RUN_TEST(test_publication_red_converges_when_the_tail_is_low_but_memory_is_free);
+  RUN_TEST(test_publication_guard_genuinely_low_memory_still_denies_and_keeps_the_work_owed);
 }
 

@@ -391,6 +391,45 @@ FLASHMEM void reportPrewarmAdmissionDenied(OperationKind operation) {
       static_cast<unsigned long>(pool.poolRefusedLargestBytes));
 }
 
+/// Gate B (owner ruling 2026-11-03): `SnapshotReserve`'s answer when the arena tail looks low. The tail never recovers
+/// (`_sbrk` only bumps), so a tail-only verdict refused every publication turn once an overdub had raised the frontier,
+/// while the free list still held large blocks (`captures/session_20261103_211405.log`: tail 36,864 B). The read-only
+/// walk is allocation-free and bounded (`largestInternalFreeChunkBytes`); it runs only on this idle-owner path, never on
+/// the MIDI or Clock path, and at most once per `kSnapshotReserveWalkIntervalMs`. Between walks the cached answer
+/// stands: a stale "fits" is caught by the publication's own transient allocation park, and a stale "no" is retried at
+/// the next walk, so a conservative denial is never permanent.
+constexpr uint32_t kSnapshotReserveWalkIntervalMs = 250;
+/// RAM2 (NOLOAD, not zeroed at boot; RAM1 has no room for it). The check word ties the two fields to a fixed key, so
+/// leftover bytes from a previous image read as "never walked" and force a fresh walk instead of a garbage answer.
+struct SnapshotReserveWalkCache {
+  uint32_t largestBytes;
+  uint32_t walkedAtMs;
+  uint32_t check;
+};
+DMAMEM static SnapshotReserveWalkCache sSnapshotReserveWalk;
+constexpr uint32_t kSnapshotReserveWalkKey = 0x5A17C0DEu;
+FLASHMEM static uint32_t snapshotReserveLargestFreeBytes(uint32_t nowMs) {
+  SnapshotReserveWalkCache& cache = sSnapshotReserveWalk;
+  const bool valid = cache.check == (cache.largestBytes ^ cache.walkedAtMs ^ kSnapshotReserveWalkKey);
+  if (!valid || nowMs - cache.walkedAtMs >= kSnapshotReserveWalkIntervalMs) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t walkStartUs = micros();
+#endif
+    cache.largestBytes = largestInternalFreeChunkBytes();
+    cache.walkedAtMs = nowMs;
+    cache.check = cache.largestBytes ^ cache.walkedAtMs ^ kSnapshotReserveWalkKey;
+#if defined(SESSION_CAPTURE)
+    // Device proof of the allocatable headroom the verdict uses: one row per walk (at most every 250 ms, and only
+    // while the tail looks low). Flash string: no RAM1 literal.
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,reserve_walk,tail=%lu,largest=%lu,walk_us=%lu\n"),
+                    static_cast<unsigned long>(micros()), static_cast<unsigned long>(getInternalHeapFreeBytes()),
+                    static_cast<unsigned long>(cache.largestBytes),
+                    static_cast<unsigned long>(micros() - walkStartUs));
+#endif
+  }
+  return cache.largestBytes;
+}
+
 FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
   const uint32_t heapFree = getInternalHeapFreeBytes();
   const ExternalPoolAccounting::Counters& pool = ExternalPoolAccounting::counters();
@@ -429,7 +468,8 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   // without consuming the resource it is judging. Device `!HEAP_STATS` (2026-10-27): tail 36 KB while the largest free
   // chunk was 79.4 KB — the tail alone is a false denial. The walk is bounded (≤ 4096 free chunks) and gated to the
   // rare gesture press, so it never becomes the per-turn `SnapshotReserve` storm the withdrawn probe was measured to
-  // cause. `SnapshotReserve` and the point-of-use reserves keep their existing paths untouched.
+  // cause. The point-of-use reserves keep their existing paths untouched. `SnapshotReserve` (Gate B, 2026-11-03) uses the
+  // same walk, cadence-bounded and cached (`snapshotReserveLargestFreeBytes`), never a probe.
   const bool userGestureAdmission =
       operation == OperationKind::OverdubStart || operation == OperationKind::RecordStart ||
       operation == OperationKind::SlotSwitch;
@@ -437,7 +477,11 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   // (0 = the walk did not run, or was incomplete). Same call, same condition, same order as before.
   uint32_t largestFreeBytes = 0;
   if (tailLooksLow && userGestureAdmission) largestFreeBytes = largestInternalFreeChunkBytes();
-  const bool heapLow = tailLooksLow && !(userGestureAdmission && largestFreeBytes >= admissionNeedBytes);
+  // Gate B: the publication reserve asks the same contiguous floor + margin question, from the cadence-bounded walk.
+  const bool snapshotReserve = operation == OperationKind::SnapshotReserve;
+  if (tailLooksLow && snapshotReserve) largestFreeBytes = snapshotReserveLargestFreeBytes(nowMs);
+  const bool heapLow = tailLooksLow && !((userGestureAdmission || snapshotReserve) &&
+                                         largestFreeBytes >= admissionNeedBytes);
   const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
   const bool reserveFailed =
       pointOfUseReserve && !probeBlockAvailable(requiredBytes, reserveProbeAsksExternalPoolFirst(operation),
@@ -862,8 +906,8 @@ bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
   }
   if (sNativeForcedReserveDenied) return false;
   // Task 4.20 (DEC-169): the native mirror matches the device — floor + margin, resolved against the modeled largest
-  // free chunk (`nativeAllocatableCapacityBytes`, defaulting to the injected tail) for user-gesture admissions, and
-  // against the tail for everything else. `SnapshotReserve` keeps the tail rule (it gates every publication turn).
+  // free chunk (`nativeAllocatableCapacityBytes`, defaulting to the injected tail) for user-gesture admissions and for
+  // `SnapshotReserve` (Gate B), and against the tail for everything else.
   const uint32_t required =
       marginBytes != 0 ? marginBytes
                        : (operation == OperationKind::SnapshotReserve ? 8u * 1024u : 16u * 1024u);
@@ -872,8 +916,10 @@ bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
   const bool userGestureAdmission =
       operation == OperationKind::OverdubStart || operation == OperationKind::RecordStart ||
       operation == OperationKind::SlotSwitch;
-  const bool heapLow =
-      tailLooksLow && !(userGestureAdmission && nativeAllocatableCapacityBytes() >= need);
+  // Gate B: `SnapshotReserve` resolves a low tail by the modeled largest free block, as the device's walk does.
+  const bool snapshotReserve = operation == OperationKind::SnapshotReserve;
+  const bool heapLow = tailLooksLow && !((userGestureAdmission || snapshotReserve) &&
+                                         nativeAllocatableCapacityBytes() >= need);
   return !heapLow;
 }
 void setNativeForcedReserveDenied(bool denied) { sNativeForcedReserveDenied = denied; }

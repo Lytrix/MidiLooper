@@ -14369,3 +14369,52 @@ not be queued therefore stalled for the rest of the session (RED 6, `822c0cee`).
      wrap count after a clear.
    - The applied-ID and hand-over scans grow with the session's companion rows, never with note content.
    - Recorded as a bound to revisit if a session's wrap count is ever large.
+
+## DEC-249 — Publication admission resolves a low arena tail by the read-only free-list walk
+
+**Date:** 2026-11-03
+**Owner:** `MemoryMonitor::admitOperationMemory` (`SnapshotReserve`), called only by the idle Snapshot owner
+(`admitSnapshotPublicationTurn`). Formal trigger: a confirmed liveness defect in publication admission (Gate B of
+the owner's 2026-11-03 priority change).
+**Status:** Accepted by owner (2026-11-03, "bounded, read-only free-list assessment on denial, outside the MIDI/Clock
+path"); implemented, host and device verified.
+
+### Problem
+
+`SnapshotReserve` admitted on the arena tail alone: floor 32 KiB plus 8 KiB margin. The tail never recovers
+(`_sbrk` only bumps).
+- An overdub raised the frontier to a 36,864 / 32,768 B tail, and every publication turn was refused for the rest of
+  the run, on both images.
+- Construction froze mid-fragment with `elig=1` on every turn. The root stayed unpublished more than 100 s after the
+  stop, in five runs.
+- User gestures had already moved to the read-only walk for the same false denial (Task 4.20 / DEC-169).
+
+### Decision
+
+1. **The walk resolves a low tail.** When the tail looks low, `SnapshotReserve` is answered by
+   `largestInternalFreeChunkBytes` (read-only, allocation-free, at most 4,096 chunks, 0 when incomplete). It admits
+   when the largest contiguous block covers the same floor plus margin.
+2. **Cadence-bounded and cached.** The walk runs at most once per 250 ms (`kSnapshotReserveWalkIntervalMs`). Its
+   answer is cached in RAM2, behind a check word, so leftover NOLOAD bytes force a fresh walk.
+   - A stale "fits" is caught by the existing transient allocation park and recovery.
+   - A stale "no" is retried at the next walk. A conservative denial is never permanent.
+3. **Unchanged:** the floor and the margin, the point-of-use reserves, pool-refusal, DEC-157's no-probe rule,
+   publication atomicity and DEC-073 coverage.
+
+### Evidence
+
+- **Host:**
+  - `test_publication_red_converges_when_the_tail_is_low_but_memory_is_free` (tail 36,864 B, 80 KiB free): RED, now
+    GREEN.
+  - `test_publication_guard_genuinely_low_memory_still_denies_and_keeps_the_work_owed` (no holes): nothing
+    publishes, the work stays owed, and it converges once memory returns.
+  - Native full: 3,982 / 0 failed.
+- **Device, default image:**
+  - `c5bd44de`, `captures/session_20261103_221928.log`: tail 32,768 B, walk `largest=54,824 B` at `walk_us=13`, and
+    publication resumed and published (about 140 s).
+  - The same tail before the fix (`310580ef`, `_213204`) never published.
+
+### Open (not this decision)
+
+On the default image no snapshot unit runs between about 70 s and 120 s, while every walk in that window admits.
+That gap is not memory. That image carries no Snapshot-gate rows, so the cause is not named yet.
