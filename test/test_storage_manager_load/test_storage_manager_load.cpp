@@ -1380,6 +1380,23 @@ void test_boot_init_discards_noload_job_bytes_without_releasing_them() {
   clearPendingLoopSlotRestoresAtBoot();
 }
 
+/// Lifetime of the same boot init: it destroys before it constructs, so a repeated call neither abandons nor
+/// double-releases what an owning member holds, and an already-clean job comes out unchanged.
+void test_boot_init_releases_owned_members_exactly_once_and_is_repeatable() {
+  using namespace StorageManagerInternal;
+  auto held = std::make_shared<const LoopSnapshot>();
+  loadLoopJob_.loadedLoopSnapshot = held;
+  parkedLoadLoopJob_.lsv1ParseState.loopSnapshot = held;
+  TEST_ASSERT_EQUAL(3, held.use_count());
+  initLoadLoopJobsAtBoot();
+  TEST_ASSERT_EQUAL_MESSAGE(1, held.use_count(), "each owned reference is released, none abandoned");
+  initLoadLoopJobsAtBoot();  // repeated on clean jobs: no release, no allocation, same end state
+  TEST_ASSERT_EQUAL(1, held.use_count());
+  TEST_ASSERT_NULL(loadLoopJob_.session);
+  TEST_ASSERT_NULL(parkedLoadLoopJob_.lsv1ParseState.loopSnapshot.get());
+  TEST_ASSERT_FALSE(anyLoadLoopJobActive());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
@@ -1430,5 +1447,6 @@ int main(int, char**) {
   RUN_TEST(test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot);
   // Last: while RED, the scribbled session would reach the next fixture's `setUp` clear.
   RUN_TEST(test_boot_init_discards_noload_job_bytes_without_releasing_them);
+  RUN_TEST(test_boot_init_releases_owned_members_exactly_once_and_is_repeatable);
   return UNITY_END();
 }

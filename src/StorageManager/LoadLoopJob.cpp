@@ -181,10 +181,14 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
 /// `.bss.dma` is NOLOAD on Teensy, and the jobs' static initializer writes only the members whose constructors need it
 /// (GCC relies on zeroed static storage for the rest), so `session` and the plain fields start as the previous image's
 /// RAM2 bytes -- probe image 047d6779 faulted in `SlotLoadSession::fail()` on `session == 0x100`. Re-construct both jobs
-/// at boot, before the first `clearLoadLoopJob()`, without reading or releasing anything they hold: nothing is owned yet.
+/// at boot, before the first `clearLoadLoopJob()`. Destroy first: the startup constructors made every owning member
+/// (file, buffer, passes, stagings, snapshot refs) a valid object, so only their own destructors run -- releasing
+/// anything held exactly once -- while plain bytes (`session` included, a raw pointer) are never read.
 STORAGE_PERSIST_MEM void initLoadLoopJobsAtBoot() {
-    new (&loadLoopJob_) LoadLoopJob{};
-    new (&parkedLoadLoopJob_) LoadLoopJob{};
+    for (LoadLoopJob* job : {&loadLoopJob_, &parkedLoadLoopJob_}) {
+        job->~LoadLoopJob();
+        new (job) LoadLoopJob{};
+    }
 }
 
 STORAGE_PERSIST_MEM void clearLoadLoopJob() {
