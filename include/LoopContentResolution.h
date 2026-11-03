@@ -717,4 +717,8 @@ struct LoopContentResolution {
   /// Reserved note slots the envelope keeps, and the pass count of its retained prefix.
   static uint32_t boundedDisplayRetainedCapacity();
   static uint32_t boundedDisplayRetainedPassCount();
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Witness: every `resolveDisplayNotesInWindow` derive, so a fixture can prove an edge did none.
+  static uint32_t resolveDisplayNotesInWindowCountForTest();
+#endif
 };

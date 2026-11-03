@@ -30,6 +30,11 @@ struct PendingNoteChange {
   uint8_t velocity = 0;
   uint32_t startTick = 0;
   uint32_t endTick = 0;
+  /// `Add` rows only: this note's overlap consequence is still owed because the bounded deferred completion
+  /// set was full when its span closed. The worker promotes it into the set as capacity frees, and the seal
+  /// deadline (CONTRACTS.md C3.4) answers any remainder, so the MIDI path never derives it. Trailing, so the
+  /// positional initializers above keep their meaning.
+  bool consequenceOwed = false;
 };
 
 using PendingNoteChangeVec =

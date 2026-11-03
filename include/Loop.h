@@ -890,6 +890,7 @@ struct Loop {
   /// session then owns the job's prewarmed empty vector for its successor.
   void swapPendingNoteChanges(PendingNoteChangeVec& other) {
     pendingNoteChanges_.swap(other);
+    overdubCompletionOverflowCount_ = 0;  // owed rows travel with their set; the live session owes none
   }
   /// Readable capture preview for display consumers: the live session's preview,
   /// or the admitted stop job's owned preview while that job borrows it. Writers
@@ -1983,6 +1984,11 @@ struct Loop {
   /// The seal/deadline edge: a completion still owed when the interval ends is answered synchronously
   /// from a windowed derive of its own span, so no decision is dropped and none is applied twice.
   void materializeDeferredOverdubCompletionsAtDeadline();
+  /// A completion owed beyond the full set, rebuilt from its own `Add` row (span owed, no occupancy:
+  /// a note with a retained occupancy hold merges into that entry and never overflows).
+  static DeferredOverdubCompletion overflowedCompletion(const PendingNoteChange& row);
+  /// Worker lane: move owed overflow rows into the set's freed capacity. Never on the MIDI path.
+  void promoteOverflowedOverdubCompletions();
 #if defined(PIO_UNIT_TEST_NATIVE)
  public:
   /// DEC-217 witness: queue one owed completion with no prerequisite, so the per-turn bound can be
@@ -2011,6 +2017,10 @@ struct Loop {
   }
   uint8_t dischargeDeferredOverdubCompletionsForTest(uint8_t maxDischarge) {
     return dischargeDeferredOverdubCompletions(maxDischarge);
+  }
+  uint16_t overdubCompletionOverflowForTest() const { return overdubCompletionOverflowCount_; }
+  void materializeDeferredOverdubCompletionsAtDeadlineForTest() {
+    materializeDeferredOverdubCompletionsAtDeadline();
   }
 
  private:
@@ -2160,6 +2170,9 @@ struct Loop {
   /// Bounded deferred overlap completions (one per note, coalesced by note identity).
   DeferredOverdubCompletion deferredOverdubCompletions_[kDeferredOverdubCompletionCapacity]{};
   uint8_t overdubCoverageDeferredCount_ = 0;
+  /// Completed notes whose consequence is owed beyond the full set: `Add` rows flagged `consequenceOwed`.
+  /// Fits the padding before the next word, so the pinned `sizeof(Loop)` is unchanged.
+  uint16_t overdubCompletionOverflowCount_ = 0;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   bool fallbackGatherSessionActive_ = false;

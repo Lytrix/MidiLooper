@@ -708,38 +708,30 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
       LANE_NOTEOFF_PHASE(retainUs);
       retained = retainDeferredOverdubCompletion(completion);
     }
+    // The interval's own Add row is not an overlap decision: it is recorded now so the note is part of
+    // the session's pending set exactly once, whether or not its consequence is still owed.
+    PendingNoteChange addChange{};
+    addChange.kind = PendingNoteChangeKind::Add;
+    addChange.noteId = incomingNoteId != kInvalidNoteId ? incomingNoteId : allocateNoteId();
+    addChange.channel = channel;
+    addChange.pitch = pitch;
+    addChange.velocity = velocity;
+    addChange.startTick = startTick;
+    addChange.endTick = endTick;
     if (retained) {
       LANE_NOTEOFF_PATH(PathRetained);
-      // The interval's own Add row is not an overlap decision: it is recorded now so the note is part of
-      // the session's pending set exactly once, whether or not its consequence is still owed.
-      PendingNoteChange addChange{};
-      addChange.kind = PendingNoteChangeKind::Add;
-      addChange.noteId = incomingNoteId != kInvalidNoteId ? incomingNoteId : allocateNoteId();
-      addChange.channel = channel;
-      addChange.pitch = pitch;
-      addChange.velocity = velocity;
-      addChange.startTick = startTick;
-      addChange.endTick = endTick;
-      pendingNoteChanges_.push_back(addChange);
-      recountOverlapHoldTotalsFromPending();
-      return true;
+    } else {
+      // The bounded obligation set is full. Capacity exhaustion never hands the completion back to MIDI
+      // dispatch (owner ruling 2026-11-03: a windowed derive here cost 46-78 ms per NoteOff once the set
+      // filled): the Add row carries the owed consequence, the worker promotes it as capacity frees, and
+      // the C3.4 seal deadline answers whatever is still owed -- the same decision the retained path makes.
+      LANE_NOTEOFF_PATH(PathOverflow);
+      addChange.consequenceOwed = true;
+      if (overdubCompletionOverflowCount_ != UINT16_MAX) ++overdubCompletionOverflowCount_;
     }
-    // The bounded obligation set is full: answer synchronously against the note's own closure window
-    // instead of dropping the decision. A window, never a pass walk.
-    NoteUtils::DisplayNoteVec local;
-    uint32_t lookupStart = 0;
-    uint32_t lookupLength = 0;
-    CoveragePrerequisite::closureWindow(startTick, spanLength, overdubCoverageClosureTicks_, loopLen,
-                                        lookupStart, lookupLength);
-    LANE_NOTEOFF_PATH(PathFallback);
-    {
-      LANE_NOTEOFF_PHASE(deriveUs);
-      LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLen, lookupStart, lookupLength,
-                                                         local);
-    }
-    return applyOverlapConsequenceForCompletedNote(
-        channel, pitch, velocity, startTick, endTick, incomingNoteId, overlapNoteIds,
-        occupancyResolvedNoteIds, true, &local);
+    pendingNoteChanges_.push_back(addChange);
+    recountOverlapHoldTotalsFromPending();
+    return true;
   }
   return applyOverlapConsequenceForCompletedNote(channel, pitch, velocity, startTick, endTick,
                                                  incomingNoteId, overlapNoteIds,
@@ -1582,7 +1574,7 @@ inline uint8_t setFullIndex() { return sObservedOccupancy >= kDeferredSetFull ? 
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
   return p == LaneGapSpans::PathRetained ? PSTR("retained")
-         : p == LaneGapSpans::PathFallback ? PSTR("fallback") : PSTR("prepared");
+         : p == LaneGapSpans::PathOverflow ? PSTR("overflow") : PSTR("prepared");
 }
 }  // namespace
 

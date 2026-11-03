@@ -1723,9 +1723,21 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const LoopPasses&
 #endif
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+namespace {
+uint32_t gResolveDisplayNotesInWindowCount = 0;
+}  // namespace
+uint32_t LoopContentResolution::resolveDisplayNotesInWindowCountForTest() {
+  return gResolveDisplayNotesInWindowCount;
+}
+#endif
+
 TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotesInWindow(
     const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
     NoteUtils::DisplayNoteVec& out, ResolutionCostCounters* counters) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++gResolveDisplayNotesInWindowCount;
+#endif
   out.clear();
   if (loopLengthTicks == 0 || windowLength == 0) {
     return;

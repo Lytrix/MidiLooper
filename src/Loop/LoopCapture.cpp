@@ -1877,6 +1877,7 @@ LOOP_COLD_MEM void Loop::prewarmOverdubSourceSpanCache() {
 
 void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
+  overdubCompletionOverflowCount_ = 0;
 }
 
 LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {

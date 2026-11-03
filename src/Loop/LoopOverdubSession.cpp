@@ -328,6 +328,7 @@ bool LOOP_COLD_MEM Loop::overdubCoverageRequiredNow(uint32_t currentPhase,
 uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return 0;
   }
+  promoteOverflowedOverdubCompletions();
   LANE_COV_OBSERVE(overdubCoverageDeferredCount_);
   LANE_COV_COUNT(DischargeCalls);
   uint8_t discharged = 0;
@@ -380,6 +381,46 @@ void Loop::materializeDeferredOverdubCompletionsAtDeadline() {
     (void)applyDeferredOverdubCompletion(deferredOverdubCompletions_[i]);
   }
   overdubCoverageDeferredCount_ = 0;
+  // The completions owed beyond the full set are answered by the same rule. By index: an answer appends
+  // transforms, never another owed row, so the rows read here stay valid and none is answered twice.
+  for (size_t i = 0; overdubCompletionOverflowCount_ != 0 && i < pendingNoteChanges_.size(); ++i) {
+    if (!pendingNoteChanges_[i].consequenceOwed) continue;
+    pendingNoteChanges_[i].consequenceOwed = false;
+    --overdubCompletionOverflowCount_;
+    (void)applyDeferredOverdubCompletion(overflowedCompletion(pendingNoteChanges_[i]));
+  }
+  overdubCompletionOverflowCount_ = 0;
+}
+
+Loop::DeferredOverdubCompletion Loop::overflowedCompletion(const PendingNoteChange& row) {
+  DeferredOverdubCompletion completion{};
+  completion.startTick = row.startTick;
+  completion.endTick = row.endTick;
+  completion.noteId = row.noteId;
+  completion.channel = row.channel;
+  completion.pitch = row.pitch;
+  completion.velocity = row.velocity;
+  completion.spanOwed = true;
+  return completion;
+}
+
+void Loop::promoteOverflowedOverdubCompletions() {
+  // Worker lane only: refill the capacity the discharges freed from the rows owed beyond the full set, in
+  // row order. The scan is skipped entirely while nothing is owed, and a count with no flagged row left
+  // (the rows moved to a stop job with their set) is retired here rather than rescanned every turn.
+  if (overdubCompletionOverflowCount_ == 0 ||
+      overdubCoverageDeferredCount_ >= kDeferredOverdubCompletionCapacity) {
+    return;
+  }
+  bool anyOwed = false;
+  for (PendingNoteChange& row : pendingNoteChanges_) {
+    if (!row.consequenceOwed) continue;
+    anyOwed = true;
+    if (!retainDeferredOverdubCompletion(overflowedCompletion(row))) return;  // full again
+    row.consequenceOwed = false;
+    if (--overdubCompletionOverflowCount_ == 0) return;
+  }
+  if (!anyOwed) overdubCompletionOverflowCount_ = 0;
 }
 
 bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& completion) {
@@ -470,6 +511,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
   // its source generation. Nothing is derived here -- acceptance marks demand later.
   overdubCoverage_.beginSession(loopLengthTicks, playbackRevision);
   overdubCoverageDeferredCount_ = 0;
+  overdubCompletionOverflowCount_ = 0;
   overdubCoverageClosureTicks_ = 0;
   seedOverdubCoverageClosureFromCommittedContent();
   adoptPrewarmedOverdubCoverage();
@@ -536,6 +578,7 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
   overdubSessionLiveUndoEvents_.clear();
   overdubCoverage_.endSession();
   overdubCoverageDeferredCount_ = 0;
+  overdubCompletionOverflowCount_ = 0;
   overdubCoverageClosureTicks_ = 0;
   clearOverdubSourceView();
   discardUnpublishedSnapshotIfNotSessionExit();

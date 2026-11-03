@@ -384,6 +384,104 @@ void test_empty_ids_shorten_jit_ahead_after_sounding_snapshot() {
   TEST_ASSERT_EQUAL_UINT32(0, Loop::committedEventsFullMaterializeCount());
 }
 
+// Full deferred set (owner ruling 2026-11-03): a NoteOff whose span is unprepared while the bounded completion
+// set is full answered synchronously from a windowed derive of `passes` -- content-sized work in MIDI dispatch
+// (device: 46-78 ms per NoteOff for ~350 NoteOffs once the set filled). Capacity exhaustion must not hand the
+// completion back to the MIDI path: it stays represented, and the worker or the C3.4 seal deadline answers it
+// with the same decision the retained path makes.
+namespace {
+constexpr uint32_t kFullSetLoop = Config::TICKS_PER_BAR * 64;
+
+void openOverdubAheadOfSource(Loop& loop) {
+  seedLongSourceNote(loop, 1, 224, 288, 60, kFullSetLoop);
+  loop.beginCapture(CapturePhase::Overdub, kFullSetLoop - 80);
+}
+
+void fillDeferredCompletionSet(Loop& loop) {
+  // Sixteen owed spans on pitches the source does not hold, so their own consequences are empty.
+  for (uint8_t i = 0; i < 16; ++i)
+    TEST_ASSERT_TRUE(loop.retainCoverageDeadlineForTest(1, static_cast<uint8_t>(20 + i), 16u + i * 4u,
+                                                        18u + i * 4u));
+  TEST_ASSERT_EQUAL_UINT8(16, loop.overdubCoverageDeferredCompletionsForTest());
+  TEST_ASSERT_FALSE_MESSAGE(loop.retainCoverageDeadlineForTest(1, 40, 0, 2), "precondition: the set is full");
+}
+
+void drainWorker(Loop& loop) {
+  driveSourceCoverage(loop);
+  for (unsigned turn = 0; turn < 256; ++turn)
+    if (loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn) ==
+        Loop::OverdubCoverageTurn::Idle)
+      break;
+}
+
+PendingNoteChange retainedPathTransform() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop control;
+  openOverdubAheadOfSource(control);
+  TEST_ASSERT_TRUE(control.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10, overlapIds({})));
+  TEST_ASSERT_EQUAL_UINT8(1, control.overdubCoverageDeferredCompletionsForTest());
+  drainWorker(control);
+  const PendingNoteChange* transform = findTransform(control.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL_MESSAGE(transform, "control: the retained path shortens/hides the source note");
+  return *transform;
+}
+
+void assertSameTransform(const PendingNoteChange& expected, const PendingNoteChangeVec& pending) {
+  const PendingNoteChange* actual = findTransform(pending, 1);
+  TEST_ASSERT_NOT_NULL_MESSAGE(actual, "the overflowed completion was answered");
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.kind), static_cast<uint8_t>(actual->kind));
+  TEST_ASSERT_EQUAL_UINT32(expected.startTick, actual->startTick);
+  TEST_ASSERT_EQUAL_UINT32(expected.endTick, actual->endTick);
+}
+}  // namespace
+
+void test_full_deferred_set_noteoff_derives_nothing_and_stays_owed() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  openOverdubAheadOfSource(loop);
+  fillDeferredCompletionSet(loop);
+  const uint32_t derivesBefore = LoopContentResolution::resolveDisplayNotesInWindowCountForTest();
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10, overlapIds({})));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(derivesBefore, LoopContentResolution::resolveDisplayNotesInWindowCountForTest(),
+                                   "a full set must not move the completion's derive onto the NoteOff");
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, loop.overdubCompletionOverflowForTest(),
+                                   "the completion stays represented beyond the full set");
+  TEST_ASSERT_NULL_MESSAGE(findTransform(loop.pendingNoteChanges(), 1), "nothing is answered on the MIDI path");
+}
+
+void test_full_deferred_set_overflow_is_answered_by_the_worker_like_the_retained_path() {
+  const PendingNoteChange expected = retainedPathTransform();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  openOverdubAheadOfSource(loop);
+  fillDeferredCompletionSet(loop);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10, overlapIds({})));
+  drainWorker(loop);
+  TEST_ASSERT_EQUAL_UINT16(0, loop.overdubCompletionOverflowForTest());
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
+  assertSameTransform(expected, loop.pendingNoteChanges());
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+}
+
+void test_full_deferred_set_overflow_is_answered_at_the_seal_deadline_like_the_retained_path() {
+  const PendingNoteChange expected = retainedPathTransform();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  openOverdubAheadOfSource(loop);
+  fillDeferredCompletionSet(loop);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10, overlapIds({})));
+  loop.materializeDeferredOverdubCompletionsAtDeadlineForTest();  // no worker turn ran
+  TEST_ASSERT_EQUAL_UINT16(0, loop.overdubCompletionOverflowForTest());
+  TEST_ASSERT_EQUAL_UINT8(0, loop.overdubCoverageDeferredCompletionsForTest());
+  assertSameTransform(expected, loop.pendingNoteChanges());
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+}
+
 // Consume attribution: occupy id present, but no source-view note exists at lookup
 // time. Only the long-loop JIT branch can reach that candidate.
 void test_consume_attribution_counts_late_note_for_jit_ahead_candidate() {
@@ -5383,6 +5481,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_off_skips_hold_fill_when_source_view_covers_loop);
   RUN_TEST(test_empty_ids_shorten_jit_ahead_after_sounding_snapshot);
   RUN_TEST(test_consume_attribution_counts_late_note_for_jit_ahead_candidate);
+  RUN_TEST(test_full_deferred_set_noteoff_derives_nothing_and_stays_owed);
+  RUN_TEST(test_full_deferred_set_overflow_is_answered_by_the_worker_like_the_retained_path);
+  RUN_TEST(test_full_deferred_set_overflow_is_answered_at_the_seal_deadline_like_the_retained_path);
   RUN_TEST(test_consume_attribution_counts_scan_only_for_id_absent_candidate);
   RUN_TEST(test_consume_id_resolution_norow_repaired_by_hold_fill);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);

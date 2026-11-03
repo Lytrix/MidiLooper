@@ -56,9 +56,9 @@ struct MessageScope {
   }
 };
 /// Overdub NoteOff split (owner ruling 2026-11-03), defined in LoopPendingNoteChange.cpp and folded into the MIDI
-/// dump: which path a completed note took (prepared span / retained obligation / full-set fallback derive), the
+/// dump: which path a completed note took (prepared span / retained obligation / overflow beyond a full set), the
 /// deferred-set occupancy at entry, and the coverage-mark, retain and derive time. Everything else is the remainder.
-enum NoteOffPath : uint8_t { PathPrepared = 0, PathRetained, PathFallback, PathCount };
+enum NoteOffPath : uint8_t { PathPrepared = 0, PathRetained, PathOverflow, PathCount };
 struct NoteOffProbe;
 void noteOverdubNoteOff(const NoteOffProbe& probe, uint32_t totalUs, uint8_t occupancyAfter);
 void dumpNoteOffSpans();
