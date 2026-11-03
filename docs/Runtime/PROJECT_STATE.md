@@ -1,3 +1,10 @@
+**2026-11-03 — The wrap journal no longer searches the parent for Add rows (`3df2ca34`).**
+- **Cause.** The lookup was dead for Adds: `appendPairedNoteEventChanges` read the predecessor only for Hide/Shorten.
+  The rebase rule and existing-target edits are unchanged.
+- **Host.** RED → GREEN `test_wrap_journal_fresh_adds_never_search_the_parent`. Native full 3,969 / 0 failed.
+- **Device** (`b43c5547`): journal 1,346 → 602 ms, wrap Clock 1,474 → 733 ms.
+- **Open.** The remaining 602 ms is not attributed. Candidates: change-set building, non-note events, fragment flush.
+
 **2026-11-03 — Wrap Clock breakdown: the wrap snapshot journal is 96% of the wrap; the C3.4 deadline answered nothing (wrap probe).**
 - **Measured** (`1731cac3`, two sweeps: `captures/session_20261103_190327.log`, `captures/session_20261103_190834.log`):
   - The wrap took 1.33 s and 1.40 s, with 99.99% of it accounted for by the probe's steps.

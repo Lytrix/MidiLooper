@@ -1,5 +1,8 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-03 — Wrap journal Add lookup removed (`3df2ca34`).** Journal 1,346 → 602 ms, wrap Clock 1,474 → 733 ms.
+Next: attribute the remaining 602 ms. The probe boot hang (`9400e352`) is parked by the owner.
+
 **2026-11-03 — Wrap Clock breakdown (wrap probe).** The wrap took 1.33-1.40 s. 96% of that is
 `queueOverdubWrapSnapshotJournal`, about 3 ms per sealed Add: a `findNote` miss per Add scans every parent pitch. The
 C3.4 deadline answered 0 completions in both runs. Next: an owner ruling on where the wrap-ownership RED points. Open:
