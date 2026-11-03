@@ -404,3 +404,40 @@ AFFECTED native: 16 suites, 534 cases, 0 failed, 0 errored.
 - **Not a dense-rank defect on this evidence.** Nothing was being built while the board was stopped, and the routed-lane
   host suites pass at production view size. Telling "the price places windows a traversal out" apart from "an expired
   retained demand blocks a ready frame terminally" needs either the price change or a host fixture of the second.
+
+## Superseded expired request discharged; two-pass device qualification passes (2026-11-03)
+
+- **Fix** (`fa346fea`). A position-expired retained demand that is not the frame's own (a different deadline, and not
+  its probe successor) is discharged when the frame is Ready or Serving: `win_superseded_request_discharged`, with `rq`
+  the reason ordinal. It no longer blocks the frame terminally.
+- **Host RED.** `test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame` drives a real routed frame to Ready,
+  reinstates an older positioned demand due before it, and drives past that deadline.
+  - Before the fix: `win_blocked_by_request`, `blockedBy` 0, reason 10, nothing served, the device's own exit.
+  - After: 0 Blocked and the window serves.
+  - Mutating the discharge off restores the RED.
+  - AFFECTED: 18 suites, 595 cases, 0 failed, 0 errored.
+- **Device** (succprobe HEX sha256 `c22d06f8893d204a779ae1c9fbc10a33c2703c70970f81b1877d88d76d1f48ff`,
+  `captures/session_20261103_090716.log`). Boot `boot_reset,crash=0`, `BOOT,load,ok`. Same run as before: 32 dense
+  bars, a 32-bar overdub, stop, restart, then `0:1536:20`.
+  - The discharge fired twice, at 179.3 s and 205.0 s, both `DeadlineExpired`. There were **0** `win_blocked` exits.
+    The superseded demand recurs on the device; where it comes from is still not traced.
+  - The first manifest window served 61.7 s after the restart. That is two traversals, because the old DEC-147 price
+    still places it there.
+  - Successors: 20/20 handed off, 0 missed, 0 refused, minimum margin 856 ticks, max request to ready 624 ticks. The
+    smallest actual lead was 1,472, flagged short against 1,536.
+- **Grants per window on two-pass content**, every one exactly
+  `G(E) = ceil((2E + 1)/64) + 3·ceil(E/48) + 2`:
+
+| E | read units | grants before admission | grants total | G(E) | old sort's G(E) | priced grains (old) |
+|---|---|---|---|---|---|---|
+| 138 | 277 | 6 | 16 | 16 | 41 | 56 |
+| 150 | 301 | 6 | 19 | 19 | 44 | 63 |
+| 176 | 353 | 7 | 20 | 20 | 48 | 71 |
+| 184–189 (17 seams) | 369–379 | 7 | 20 | 20 | 49–51 | 75–77 |
+
+  The max grant gap while owed was 32–64 ticks.
+- **Open.**
+  - The DEC-147 price still charges two full sorts (75–77 grains against 20 real grants). The next slice is the C5
+    prototype price on G(E) grants.
+  - The final timing contract (G(E) × guaranteed grant gap + guard) is later.
+  - The origin of the superseded demand is still to be traced.

@@ -1,3 +1,18 @@
+**2026-11-03 — C5.3b: dense manifest ranks and the superseded-request discharge qualify on a two-pass take (DEC-246 amendment 28).**
+- **Landed.**
+  - `b434100d`: manifest windows number canonical ranks with a count pass and an assign pass, not the merge sort.
+    Interleaved E = 93 drops from 27 to 11 grants on host, with parity to the sort and to the root.
+  - `fa346fea`: a position-expired demand that a Ready or Serving frame superseded is discharged by name, never
+    terminal-blocking.
+  - `85991d34`: the sweep can overdub before the restart.
+- **Host.** AFFECTED: 16 suites / 534 cases, then 18 suites / 595 cases, all green.
+- **Device** (succprobe `c22d06f8…`, `captures/session_20261103_090716.log`):
+  - The first window served 61.7 s after the restart; 20/20 successors were handed off, 0 missed.
+  - Every two-pass window cost exactly G(E) grants: 20 at E ≈ 186, against 49–51 under the sort.
+- **Next.** C5 prototype pricing on G(E) grants (DEC-147 still charges two full sorts). Then the grant-gap timing
+  contract. Trace where the superseded demand comes from.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-02-c5-3b-successor-lead-sweep.md)
+
 **2026-11-02 — restart handoff closed on the device (5.1, DEC-246 amendment 27): the first post-restart manifest window serves, and steady state holds for 150 s at 300 BPM.**
 - **Landed.**
   - `95d49ed7`: a term-6 continuity refusal is measured and recoverable.
