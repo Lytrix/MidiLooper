@@ -6406,6 +6406,98 @@ TRACK_COLD_MEM void Track::reportRollingBusyRoles(const LoopPlaybackRuntime& run
                              life.build, life.idle, life.retained, owners, 0u, 0u);
 }
 
+/// Record-stop liveness ruling (2026-11-04): the **exact identities** at the stale-serving retirement edge, so whether
+/// the occupied `ready` window is superseded or source-correct is read, never inferred. One row per party, emitted
+/// once per retirement (a rare edge). Report-only; compiled out without session capture.
+///   stale_id,<view role>: rev, manifest, generation, captureContent, start, length, loop, origin, complete|published<<1|
+///                         firstRecordReturn<<2, view index
+///   stale_id,pending|frozen: rev, manifest, generation, deadline, start, length, loop, kind, active|epoch!=0<<1, origin
+///   stale_id,record: (the bound Record-return job's qualified source) rev, manifest, generation, captureContent, start,
+///                    length, loop, qualified, retirementActive|ownsExtent<<1|ownerCurrent<<2, presentation generation
+///   stale_id,source: loop rev, manifest servable identity, playbackGeneration, published snapshot, servable revision,
+///                    servable sourceRevision, loop, servable state, presentation|finalizing<<1|committedCurrent<<2,
+///                    capture stop phase
+///   stale_id,snap: the low 32 bits of each snapshot identity: current, ready, pending, published root, record
+TRACK_COLD_MEM void Track::reportStaleRetirementIdentities(const LoopPlaybackRuntime& runtime, const Loop& loop) {
+  const uint8_t track = playbackRebuildTrackIndex(*this);
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (track >= Config::NUM_TRACKS || set == nullptr) return;
+  const uint8_t slot = activeLoopIndex;
+  const auto lo32 = [](const void* p) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p)); };
+#if REVISION_MANIFEST_READER
+  const auto manifestOf = [](const PlaybackViewSourceIdentity& id) { return id.manifestIdentity; };
+#else
+  const auto manifestOf = [](const PlaybackViewSourceIdentity&) { return 0u; };
+#endif
+  const auto& life = set->lifecycle;
+  const auto viewRow = [&](const char* role, uint8_t index) {
+    if (index >= set->views.size()) {
+      SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", role, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, index);
+      return;
+    }
+    const auto& v = set->views[index];
+    SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", role, v.source.playbackRevision, manifestOf(v.source),
+                               v.source.sourceGeneration, v.source.captureContentGeneration, v.coverage.startPhase,
+                               v.coverage.lengthTicks, v.coverage.loopLengthTicks, static_cast<uint8_t>(v.source.origin),
+                               static_cast<uint8_t>((v.complete ? 1u : 0u) | (v.published ? 2u : 0u) |
+                                                    (v.firstRecordReturnWindow ? 4u : 0u)),
+                               index);
+  };
+  viewRow("current", life.current);
+  viewRow("ready", life.ready);
+  viewRow("build", life.build);
+  viewRow("retained", life.retained);
+  const auto requestRow = [&](const char* role, const PlaybackViewPendingRequest& r) {
+    SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", role, r.source.playbackRevision, manifestOf(r.source),
+                               r.source.sourceGeneration, r.deadlineTick, r.coverage.startPhase, r.coverage.lengthTicks,
+                               r.coverage.loopLengthTicks, static_cast<uint8_t>(r.sourceKind),
+                               static_cast<uint8_t>((r.active ? 1u : 0u) | (r.clockEpoch != 0 ? 2u : 0u)),
+                               static_cast<uint8_t>(r.source.origin));
+  };
+  requestRow("pending", runtime.pendingViewRequest_);
+  requestRow("frozen", runtime.frozenViewRequest);
+  const CaptureStopPresentation* job = captureStopPresentationForSlot(slot);
+  PlaybackViewSourceIdentity recordId{};
+  RuntimePlaybackViewSource recordSource{};
+  const bool qualified = job != nullptr &&
+      qualifiedFrozenRecordCaptureSourceForSlot(slot, job->interval, recordSource, recordId);
+  const bool ownerCurrent = job != nullptr && job->owner != nullptr && C5_COMMITTED_CURRENT(slot, *job->owner);
+  SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", "record", recordId.playbackRevision, manifestOf(recordId),
+                             recordId.sourceGeneration, recordId.captureContentGeneration,
+                             job != nullptr ? static_cast<uint32_t>(job->interval) : 0u,
+                             job != nullptr ? static_cast<uint32_t>(job->frozenCaptureContentGeneration) : 0u,
+                             job != nullptr ? job->loopLengthTicks : 0u, static_cast<uint8_t>(qualified ? 1u : 0u),
+                             static_cast<uint8_t>(job == nullptr ? 0xFFu
+                                 : ((job->retirementActive ? 1u : 0u) | (job->ownsExtent ? 2u : 0u) |
+                                    (ownerCurrent ? 4u : 0u))),
+                             static_cast<uint8_t>(job != nullptr ? job->generation : 0u));
+  uint32_t servableIdentity = 0, servableRevision = 0, servableSourceRevision = 0;
+  uint8_t servableState = 0xFF;
+#if REVISION_MANIFEST_READER
+  if (manifestLaneRoutesSlot(slot)) {
+    servableIdentity = CommittedManifestLane::gServable.identity;
+    servableRevision = CommittedManifestLane::gServable.revision;
+    servableSourceRevision = CommittedManifestLane::gServable.sourceRevision;
+    servableState = CommittedManifestLane::gServable.state;
+  }
+#endif
+  const bool finalizing = runtime.captureStopOwner != nullptr && runtime.captureStopOwner->pending;
+  SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", "source", loop.playbackRevision, servableIdentity,
+                             playbackGeneration, lo32(loop.publishedSnapshotIdentity()), servableRevision,
+                             servableSourceRevision, loop.loopLengthTicks, servableState,
+                             static_cast<uint8_t>((runtime.presentationOwner != nullptr ? 1u : 0u) |
+                                                  (finalizing ? 2u : 0u) |
+                                                  (C5_COMMITTED_CURRENT(slot, loop) ? 4u : 0u)),
+                             static_cast<uint8_t>(finalizing ? static_cast<uint8_t>(runtime.captureStopOwner->phase)
+                                                             : 0xFFu));
+  const auto snapOf = [&](uint8_t index) {
+    return index < set->views.size() ? lo32(set->views[index].source.snapshotIdentity) : 0u;
+  };
+  SC_FROZEN_WINDOW_READINESS(track, slot, "stale_id", "snap", snapOf(life.current), snapOf(life.ready),
+                             lo32(runtime.pendingViewRequest_.source.snapshotIdentity),
+                             lo32(loop.publishedSnapshotIdentity()), lo32(recordId.snapshotIdentity), 0u, 0u);
+}
+
 TRACK_COLD_MEM void Track::reportRollingBlockMeasure(const LoopPlaybackRuntime& runtime, const Loop& loop) {
   const auto& frame = runtime.rolling;
   const uint8_t track = playbackRebuildTrackIndex(*this);
@@ -6628,6 +6720,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   // terminal until it is shown recoverable.
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
       frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale)) {
+    reportStaleRetirementIdentities(*runtime, loop);  // report-only: the identities before anything is retired
     cancelRollingPlaybackWindow(activeLoopIndex);
     // The retirement is direct evidence that the slot's old demand is obsolete too: an unpositioned committed demand
     // left beside it (the record stop's lead request on the device) would otherwise hold this requester at `win_busy`

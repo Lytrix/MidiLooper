@@ -585,6 +585,186 @@ void test_c5_3_a_valid_retained_record_bar_stays_protected() {
   TEST_ASSERT_TRUE(t.isRecording());
 }
 
+/// Record-stop liveness (owner ruling 2026-11-04): the device gesture on the routed slot -- arm while stopped, Start,
+/// record the take with the transport running, stop **into PLAYING** on the grid -- then play on, with the Record stop
+/// job and the Snapshot owner serviced the way the main loop services them.
+struct RecordStopTrace {
+  uint32_t stopTick = 0;
+  uint32_t staleRetiredAt = 0;   // first tick the frame was Blocked for ServingViewSourceStale
+  uint32_t readyOccupiedFrom = 0, readyOccupiedLongest = 0, readyOccupiedRun = 0;
+};
+
+PlaybackObservation recordIntoPlayingThenPlay(Track& t, uint32_t traversals, RecordStopTrace& trace,
+                                              const std::function<void(uint32_t)>& perTick = {}) {
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  start(t, 0, false, 0, 60);
+  PlaybackObservation obs;
+  play(t, 1, kLength, obs, 1, [&](uint32_t tick) {
+    if (tick % kBar == 12 && tick / kBar >= 1) t.noteOn(1, static_cast<uint8_t>(60 + tick / kBar), 100, tick);
+    if (tick % kBar == 96 && tick / kBar >= 1) t.noteOff(1, static_cast<uint8_t>(60 + tick / kBar), 0, tick);
+  });
+  clockManager.assignCurrentTickSilently(kLength);
+  nativePlaybackDeadlineClock = {kLength, 1};
+  t.stopRecording(kLength);
+  trace.stopTick = kLength;
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  play(t, kLength, (1 + traversals) * kLength, obs, 1, [&](uint32_t tick) {
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) TrackCaptureStopTestAccess::step(t);
+    const auto& frame = runtime.rolling;
+    if (trace.staleRetiredAt == 0 && frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
+        frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale))
+      trace.staleRetiredAt = tick;
+    if (runtime.coverageRoleRefusal(false) == PlaybackCoverageRoleRefusal::ReadyRoleOccupied &&
+        frame.phase == LoopPlaybackRuntime::RollingPhase::Idle) {
+      if (trace.readyOccupiedRun++ == 0) trace.readyOccupiedFrom = tick;
+      trace.readyOccupiedLongest = std::max(trace.readyOccupiedLongest, trace.readyOccupiedRun);
+    } else {
+      trace.readyOccupiedRun = 0;
+    }
+    if (perTick) perTick(tick);
+  });
+  return obs;
+}
+
+/// Per-tick ready-role judgement after the Record stop. A `ready` window is **late** when it became complete only after
+/// the playhead had already consumed its start boundary (its own edge is gone until the next traversal); it is
+/// **timely** when it was complete before its start.
+struct ReadyLatenessWitness {
+  uint8_t view = 0xFF;
+  uint64_t storage = 0;
+  uint32_t start = 0;
+  bool late = false;
+  uint32_t lateHeldFrom = 0;
+  uint32_t lateHeldLongest = 0;   // the longest run a late ready held the role while a positioned demand was refused
+  uint32_t lateSeen = 0;          // late readies observed (non-vacuity of the RED)
+  uint32_t lateSourceCorrect = 0; // ... of them Committed at the loop's current revision and generation
+  uint32_t timelyAdopted = 0;     // timely readies that later became `current` at their own start (guard)
+  uint32_t timelyLost = 0;        // timely readies that left `ready` without becoming `current`
+  // Record-return windows (Capture origin, the frozen Record reader's) after the stop: each one that became complete
+  // must be served -- `current` while the playhead is inside it -- before its view is reused.
+  struct ReturnWindow { uint64_t storage = 0; bool tracked = false; bool served = false; };
+  ReturnWindow returnWindows[3];
+  uint32_t returnWindowsSeen = 0;
+  uint32_t returnWindowsServed = 0;
+  uint32_t returnWindowsLostUnserved = 0;
+  bool started = false;  // windows already present at the stop were serving before it: not judged here
+};
+
+void observeReadyLateness(LoopPlaybackRuntime& runtime, const Loop& loop, uint32_t generation, uint32_t tick,
+                          uint32_t loopLength, ReadyLatenessWitness& w) {
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (set == nullptr || loopLength == 0) return;
+  const auto& lc = set->lifecycle;
+  const uint32_t phase = tick % loopLength;
+  for (uint8_t i = 0; i < set->views.size() && i < 3; ++i) {
+    const auto& v = set->views[i];
+    auto& r = w.returnWindows[i];
+    const bool isReturn = v.complete && v.source.origin == PlaybackWindowOrigin::Capture;
+    if (r.tracked && (!isReturn || v.storageGeneration != r.storage)) {  // reused or reset
+      (r.served ? w.returnWindowsServed : w.returnWindowsLostUnserved)++;
+      r = {};
+    }
+    if (isReturn && !r.tracked) {
+      r.tracked = true;
+      r.storage = v.storageGeneration;
+      r.served = !w.started;
+      if (w.started) ++w.returnWindowsSeen;
+    }
+    if (r.tracked && lc.current == i && v.coverage.contains(phase)) r.served = true;
+  }
+  w.started = true;
+  const bool hasReady = lc.ready < set->views.size() && set->views[lc.ready].complete && !set->views[lc.ready].published;
+  const bool same = hasReady && lc.ready == w.view && set->views[lc.ready].storageGeneration == w.storage;
+  if (w.view != 0xFF && !same) {  // the tracked ready left the role
+    if (!w.late) {
+      const bool adopted = lc.current == w.view && set->views[w.view].published &&
+          set->views[w.view].storageGeneration == w.storage;
+      (adopted ? w.timelyAdopted : w.timelyLost)++;
+    }
+    w.view = 0xFF;
+    w.lateHeldFrom = 0;
+  }
+  if (hasReady && w.view == 0xFF) {  // a ready newly occupies the role: judge it once, at the tick it is first seen
+    const auto& v = set->views[lc.ready];
+    w.view = lc.ready;
+    w.storage = v.storageGeneration;
+    w.start = v.coverage.startPhase;
+    // Consumed: the playhead is past the start and the window's whole interval is not still ahead of it.
+    const uint32_t sinceStart = (phase + loopLength - w.start) % loopLength;
+    w.late = sinceStart != 0 && sinceStart < loopLength / 2;
+    if (w.late) {
+      ++w.lateSeen;
+      if (v.source.origin == PlaybackWindowOrigin::Committed && v.source.playbackRevision == loop.playbackRevision &&
+          v.source.sourceGeneration == generation)
+        ++w.lateSourceCorrect;
+    }
+  }
+  if (w.view != 0xFF && w.late) {
+    const bool refusing = runtime.coverageRoleRefusal(false) == PlaybackCoverageRoleRefusal::ReadyRoleOccupied;
+    if (refusing) {
+      if (w.lateHeldFrom == 0) w.lateHeldFrom = tick;
+      w.lateHeldLongest = std::max(w.lateHeldLongest, tick - w.lateHeldFrom + 1);
+    }
+  }
+}
+
+// Record-stop liveness RED (owner ruling 2026-11-04, device `captures/session_20261104_004411.log`). The device gesture
+// on the routed slot: Record with the transport running, stopped into PLAYING; then play on. A committed window of the
+// **current** source (revision, manifest identity and generation all current -- source-correct, not superseded) is
+// published into `ready` only after the playhead has consumed its start boundary. It then holds `ready` until that
+// phase recurs, one traversal later, while the positioned committed demand for the playhead's interval is refused
+// `ReadyRoleOccupied`. Required: a late ready never holds the role for longer than one span.
+void test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  ReadyLatenessWitness w;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeReadyLateness(TrackCaptureStopTestAccess::runtimeFor(t, 0), t.getLoop(0),
+                         TrackCaptureStopTestAccess::playbackGenerationOf(t), tick, kLength, w);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, w.lateSeen, "no late ready occurred: the RED would be vacuous");
+  // The device verdict (identity rows at the retirement edge): the late ready is source-correct, not superseded.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(w.lateSeen, w.lateSourceCorrect, "a late ready was not of the current source");
+  char msg[128];
+  snprintf(msg, sizeof(msg), "a late ready held the role %u ticks while the playhead's demand was refused",
+           unsigned(w.lateHeldLongest));
+  TEST_ASSERT_TRUE_MESSAGE(w.lateHeldLongest <= 2 * kBar, msg);
+}
+
+// Guard (owner ruling: preserve DEC-159's valid unpublished Record predecessor): every **timely** ready -- complete
+// before its own start, including the bound Record-return window -- is adopted as `current` at that start and is never
+// discarded. Non-vacuous: at least one timely ready, and the bound Record-return window among them, is observed.
+// Exactly-once: no NoteOn is emitted twice in any traversal after the stop.
+void test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  ReadyLatenessWitness w;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeReadyLateness(TrackCaptureStopTestAccess::runtimeFor(t, 0), t.getLoop(0),
+                         TrackCaptureStopTestAccess::playbackGenerationOf(t), tick, kLength, w);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, w.timelyAdopted, "no timely ready observed: the guard would be vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, w.returnWindowsSeen, "no Record-return window completed after the stop");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.returnWindowsLostUnserved, "a Record-return window was reused before it served");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.timelyLost, "a timely ready left the role without being adopted");
+  for (uint32_t pass = 1; pass < 6; ++pass) {
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+}
+
 // Two-span requester, essential RED (owner ruling 2026-11-03; controlled eligibility: the probe image's successor
 // knobs, DEC-147 price waived). While N-1 serves and N waits complete in `ready`, N+1 must be prepared in `build`
 // (the depth-2 obligation): at some tick all three stages coexist -- current = the serving window, ready = its
@@ -833,6 +1013,9 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_two_span_parked_successor_is_published_without_rebuild);
   RUN_TEST(test_c5_3_two_span_mid_build_successor_survives_the_handoff);
   RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
+  RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
+  if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
+    RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
     RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
   if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);

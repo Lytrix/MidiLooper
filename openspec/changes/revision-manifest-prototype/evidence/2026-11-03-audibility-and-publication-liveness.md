@@ -201,3 +201,83 @@ gap has two parts with different owners.
 **Candidate direction (owner decision; not implemented).** Make the `ServingViewSourceStale` retirement also discharge
 a `ready` window bound to the same Record-return job whose source is not the current one: an identity-guarded release
 through the lifecycle's superseded-ready path, never by timeout. Part 2 belongs to completion-aware placement.
+
+### Record-stop gap: Ready-source identity verdict (owner ruling on `05042537`, 2026-11-04)
+
+**Instrument.** `Track::reportStaleRetirementIdentities` emits report-only `stale_id` rows at the stale-serving
+retirement edge, one per party, before anything is retired.
+
+**Device run.**
+- Image `teensy41-capture-serial-revstore-succprobe`, HEX
+  `63d950bf9a9e494375b868233ab6f4cb1a8a006f78ae123e070d1989dbfeb5c7`.
+- Boot `crash=0`, `BOOT,load,ok`.
+- Exact stimulus as before; capture `captures/session_20261104_004411.log`.
+
+**Identities at the edge (66.29 s).** Values are taken from the rows; nothing is inferred from timing.
+
+| party | origin | rev | manifest | gen | capture | interval | state |
+|---|---|---|---|---|---|---|---|
+| serving `current` (view 1) | Capture | 0 | 0 | 0 | 1538 | 9984+768 | complete, published |
+| occupied `ready` (view 0) | **Committed** | **1** | **1** | **0** | 0 | **9216**+768 | complete, unpublished |
+| `build` (view 2) / `retained` | empty / none | | | | | | |
+| pending | CommittedSnapshot | 1 | 1 | 0 | -- | 9288+1536, deadline 59976 | active, positioned |
+| frozen request | none | | | | | | |
+| Record job (qualified source) | Capture | 1 | 0 | 0 | 1538 | interval 1 | qualified, retirement active, owns extent, owner current |
+| effective committed source | loop rev 1, servable manifest 1 (state Ready), generation 0 | | | | | | presentation bound, committed current |
+
+**Verdict: B. `ready` is source-correct, not superseded.**
+- Its origin, revision, manifest identity and generation equal the effective committed source.
+- It is the bound Record job's **DEC-136 root-return successor**. Its interval is the one that contained the demand
+  phase, and its adoption boundary is that interval's next entry. `rootReturnSuccessorIsOwedForSlot` says so
+  explicitly: timing is "deliberately not judged here".
+- The retired serving view is also valid by the job's own predicate. It matches the qualified frozen identity
+  (Capture, gen 0, capture 1538), which is `fromThisFrozenJob` in the E2 route.
+- The resolver's `ServingViewSourceStale` is the **origin** term of the committed rolling check
+  (`current.source.origin != Committed`), not evidence of a stale source. This bears on DEC-159: revision 0 against 1
+  is not invalidity here.
+
+**Sequence (device).**
+1. 64.67 s: the frame adopts frozen bar 9216. The root-return demand for 9216 is raised.
+2. 65.47 s: the frozen bar 9984 is adopted from `ready`. That frees `build`, and the root-return build is admitted
+   (65.49) and published into `ready` (65.53) for 9216, which is now a traversal away.
+3. With `ready` held, the frozen reader never prepares bar 10752. Its `complete_ready` rows, one per bar until 64.77 s,
+   stop.
+4. 66.27 s: the playhead leaves the 9984 bar. The committed resolver rejects the Capture-bound frame by origin, the
+   producer retires it, and the positioned committed demand is refused `ReadyRoleOccupied`
+   (`busy,roles,9,1,0,13,2,255,255,68`).
+5. 91.11 s: 9216 recurs, and the root-return window is adopted.
+
+**So the failure is role contention inside one owner (the Record-return job).** Its DEC-136 root-return successor
+parks in `ready` for a traversal, which starves the same job's frozen reader of the role its next bar needs. DEC-136
+item 2 says the frozen reader keeps serving until the root-backed successor is ready; with three views it cannot.
+
+**Regression status: pre-existing.**
+- Same stimulus on the image before slice 1 (`bf482df9`, HEX `6634501f…27f19f`, boot `crash=0`,
+  `captures/session_20261104_005353.log`).
+- Identical roles row at the retirement (60.04 s), release about one traversal later (84.88 s), routed slot silent
+  about 62-97 s.
+
+**Host.**
+- `test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal` (`RECORD_STOP_LIVENESS_RED`): the Record
+  gesture into PLAYING on the routed slot. A late ready of the **current source** (asserted) holds the role for
+  **3065 ticks** while the playhead's demand is refused. FAILS as intended; non-vacuous (`lateSeen > 0`).
+- Guard `test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice` (default gate): passes.
+  - Every timely ready is adopted at its own start (6 observed, 0 lost).
+  - Every Capture-origin Record-return window completed after the stop is served before its view is reused
+    (non-vacuous).
+  - No NoteOn plays twice in any traversal.
+- The host does not reach the stale-serving retirement (its frozen reader runs out differently). It reproduces the
+  same occupied-late-ready mechanism. The retirement is downstream of the contention, not its cause.
+
+**Smallest ownership-correct repair (proposal; not implemented).** The repair belongs to the Record-return job, case B.
+No Ready retirement, no timeout, no fallback, no DEC-147 change.
+1. Position the root-return successor at the frozen reader's next **unserved** boundary, not the interval containing
+   the demand phase. Its adoption then *is* the next bar's handoff, so it takes `ready` exactly when the frozen reader
+   would have needed that role for its own next bar, and the frozen frame hands off to the committed window there.
+2. If it completes after that boundary, the job applies the rule its frozen reader already uses for its own late
+   readies (`record_ready_late`): the late view is retired through `retireSupersededReady`, and the one owed demand
+   re-targets the next boundary. That is exactly one replacement, from the same owner.
+3. Separately for DEC-159: the committed resolver should not label a frame bound to the job's own qualified frozen view
+   `ServingViewSourceStale`. It is the E2 route's frame, not a stale committed one.
+
+The 8 s completion-placement delay stays separate.
