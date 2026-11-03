@@ -283,7 +283,6 @@ TRACK_COLD_MEM void retainLiveRecordDemand(LoopPlaybackRuntime& runtime, const L
   if (serving && request.coverage.startPhase == 0)
     request.coverage.loopLengthTicks = std::max(request.coverage.loopLengthTicks, desired);
   request.loopLengthTicks = request.coverage.loopLengthTicks;
-  NOTE_PENDING_ARMED(&runtime, request.active, true, RetainLiveRecord, __LINE__);
   request.active = true;
   request.liveMaximumTick = loop.captureMaximumTick();
   request.source = {loop.playbackRevision, operation, nullptr,
@@ -3953,7 +3952,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
         : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
                         : PlaybackViewPendingReason::DeadlineExpired);
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -3981,7 +3979,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
                : PlaybackViewPendingReason::WindowExceedsRetainedCapacity);
     runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -3995,7 +3992,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
     runtime->retainedGatherRefusal = retainedRefusalForGatherResult(gathered.result);
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4057,7 +4053,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
                       ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
                       : PlaybackViewPendingReason::SourceNotCurrent));
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4255,7 +4250,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
         : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
                         : PlaybackViewPendingReason::DeadlineExpired);
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4282,7 +4276,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4317,7 +4310,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Cancelled;
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4421,7 +4413,6 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
     // was serving survives the release -- it is coalesced back into the record the lane reads, exactly as
     // `retireCoverageSource` coalesces a frozen root-backed request -- and only the gathered window is released.
     if (runtime->retainedGatherActive() && runtime->frozenViewRequest.active) {
-      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, true, ViewTransition, __LINE__);
       if (!runtime->pendingViewRequest_.active) runtime->pendingViewRequest_ = runtime->frozenViewRequest;
       runtime->frozenViewRequest = {};
       runtime->discardRetainedGather();
@@ -4432,7 +4423,6 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
     // happened afterwards (`NoPages`) rather than resuming into pages that no longer exist.
     if (runtime->pagedActive) {
       if (runtime->frozenViewRequest.active && !runtime->pendingViewRequest_.active) {
-        NOTE_PENDING_ARMED(runtime, false, true, ViewTransition, __LINE__);
         runtime->pendingViewRequest_ = runtime->frozenViewRequest;
       }
       runtime->frozenViewRequest = {};
@@ -5216,31 +5206,6 @@ TRACK_COLD_MEM bool Track::committedDemandPriceRefused(uint8_t slotIndex, const 
   return refused.source.snapshotIdentity == loop.publishedSnapshotIdentity();
 }
 
-#if defined(SESSION_CAPTURE)
-namespace {
-/// C5.3b measurement (owner ruling 2026-11-03): the frame / build / ready association at its three moments.
-/// assoc,<moment>: frame phase, frame start, frame deadline, record or work deadline, record or candidate start,
-/// record or work epoch, frame epoch, record kind, record reason (deadlines are low words).
-TRACK_COLD_MEM __attribute__((noinline)) void reportRollingAssociation(
-    uint8_t track, uint8_t slot, const char* moment, const LoopPlaybackRuntime& runtime,
-                              uint64_t otherDeadline, uint32_t otherStart, uint32_t otherEpoch, uint8_t kind,
-                              uint8_t reason) {
-  const auto& frame = runtime.rolling;
-  SC_FROZEN_WINDOW_READINESS(track, slot, "assoc", moment, static_cast<uint32_t>(frame.phase), frame.startPhase,
-                             static_cast<uint32_t>(frame.deadlineTick), static_cast<uint32_t>(otherDeadline),
-                             otherStart, otherEpoch, frame.epoch, kind, reason, 0u);
-}
-TRACK_COLD_MEM __attribute__((noinline)) uint32_t buildCandidateStart(const LoopPlaybackRuntime& runtime) {
-  const auto* set = runtime.viewSetIfPrewarmed();
-  return set && set->lifecycle.build < set->views.size() ? set->views[set->lifecycle.build].coverage.startPhase
-                                                          : UINT32_MAX;
-}
-}  // namespace
-#define REPORT_ROLLING_ASSOCIATION(...) reportRollingAssociation(__VA_ARGS__)
-#else
-#define REPORT_ROLLING_ASSOCIATION(...) ((void)0)
-#endif
-
 namespace {
 bool rollingFrameOwnsPositionedObligation(const LoopPlaybackRuntime::RollingFrame& frame, uint32_t generation,
                                           uint32_t epoch, uint32_t loopLength);
@@ -5513,7 +5478,6 @@ TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
   request.reason = PlaybackViewPendingReason::AwaitingSourceQualification;
   reportPlaybackLaunchGateRow(slotIndex, "launch_requested", sourceRequestNeeded, sourceRequested);
   runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow);
-  NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, LaunchPreparation, __LINE__);
   runtime->pendingViewRequest_ = request;
   runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Requested;
   return true;
@@ -6838,11 +6802,6 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   frame.lastTick = clock.tick;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Requested; // Publish metadata last.
   reportPlaybackRollingGateRow("win_requested", clock.epoch != 0, /*reprojectedTick=*/false, static_cast<uint8_t>(requested));
-  REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), activeLoopIndex, "request", *runtime,
-                             runtime->pendingViewRequest_.deadlineTick, runtime->pendingViewRequest_.coverage.startPhase,
-                             runtime->pendingViewRequest_.clockEpoch,
-                             static_cast<uint8_t>(runtime->pendingViewRequest_.sourceKind),
-                             static_cast<uint8_t>(runtime->pendingViewRequest_.reason));
   return RollingOutcome::Requested;
 #endif
 }
@@ -7222,29 +7181,6 @@ TRACK_COLD_MEM void Track::refreshRetainedDemandIdentityForSlot(uint8_t slotInde
       if (sLastOwnerSet[traceTrack][slotIndex] != set) {
         const uint8_t previousOwnerSet = sLastOwnerSet[traceTrack][slotIndex];
         sLastOwnerSet[traceTrack][slotIndex] = set;
-#if defined(SESSION_CAPTURE)
-        // pending_armed: the retained demand appeared since the last transition. writer, site (line, or the return
-        // address of `retainViewPendingRequest`), deadline, start, length, manifest identity, frame phase, frame
-        // deadline (low words), the demand's reason. Writer 255: the last mark was another runtime's.
-        if (previousOwnerSet != 0xFFu && (previousOwnerSet & 1u) == 0 && (set & 1u) != 0) {
-          const auto& mark = PendingRequestProvenance::gLast;
-          const auto& pending = runtime->pendingViewRequest_;
-          SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "pending_armed",
-                                     mark.runtime == runtime ? "named" : "unnamed",
-                                     mark.runtime == runtime ? mark.writer : 255u, mark.site,
-                                     static_cast<uint32_t>(pending.deadlineTick), pending.coverage.startPhase,
-                                     pending.coverage.lengthTicks,
-#if REVISION_MANIFEST_READER
-                                     pending.source.manifestIdentity,
-#else
-                                     0u,
-#endif
-                                     static_cast<uint32_t>(runtime->rolling.phase),
-                                     static_cast<uint32_t>(runtime->rolling.deadlineTick),
-                                     static_cast<uint8_t>(pending.reason), 0u);
-          PendingRequestProvenance::gLast = {};
-        }
-#endif
         const bool ownerless = jobPending && (set & 0x7u) == 0;
         SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "owner_trace", "transition", loopForSlot(slotIndex).playbackRevision,
                                    0u, playbackGeneration, 0u, set, 0u,
@@ -7697,11 +7633,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
     const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
-    if (admitted)
-      REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slotIndex, "admit_waived", *runtime,
-                                 runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
-                                 runtime->viewBuildWork.clockEpoch, launch ? 1u : cold ? 2u : 3u,
-                                 static_cast<uint8_t>(request.reason));
     return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
   }
   constexpr uint32_t spanTicks = 2 * Config::TICKS_PER_BAR;
@@ -7800,10 +7731,6 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
   const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
   traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
-  if (admitted)
-    REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slotIndex, "admit", *runtime,
-                               runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
-                               runtime->viewBuildWork.clockEpoch, 0u, static_cast<uint8_t>(request.reason));
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
   if (admitted && successorDemand) {
     ++RollingSuccessorProbe::gCounters.admitted;
@@ -9100,15 +9027,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
 #endif
 #endif
-    else {
-      if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Requested)
-        REPORT_ROLLING_ASSOCIATION(playbackRebuildTrackIndex(*this), slot, "publish_outside_frame", *runtime,
-                                   runtime->viewBuildWork.deadlineTick, buildCandidateStart(*runtime),
-                                   runtime->viewBuildWork.clockEpoch,
-                                   runtime->completedPromisePendingJudgement ? 1u : 0u,
-                                   runtime->admittedPromiseInvalidated ? 1u : 0u);
-      (void)publishCompletedPlaybackWindow(slot);
-    }
+    else (void)publishCompletedPlaybackWindow(slot);
     if (runtime->ownsCoverageSource()) {
       runtime->frozenViewRequest = {};
 #if REVISION_MANIFEST_READER
