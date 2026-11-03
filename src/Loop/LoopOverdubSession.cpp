@@ -10,6 +10,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/LaneGapSpans.h"
 #if defined(SESSION_CAPTURE)
 #include "Utils/DebugSessionCapture.h"
 #endif
@@ -48,12 +49,14 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
   const uint32_t coverageStartUs = micros();
 #endif
   if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
+    LANE_COV_COUNT(TurnNoSession);
     return OverdubCoverageTurn::Idle;
   }
   // CONTRACTS.md C3.1/C3.5: a private-predecessor scan owns this cache from its first grain until its
   // deferred holds are materialized, and publishing a committed tile over it would mix a private prefix
   // with committed content in either direction. The worker yields; the tile stays owed.
   if (privatePredecessorSourcePending()) {
+    LANE_COV_COUNT(TurnPrivateYield);
     return OverdubCoverageTurn::Idle;
   }
   const uint16_t from = overdubCoverageCursorTile_ >= CoveragePrerequisite::kMaxTiles
@@ -61,6 +64,7 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
                             : overdubCoverageCursorTile_;
   const uint16_t tile = overdubCoverage_.nextOwedTile(from);
   if (tile >= CoveragePrerequisite::kMaxTiles) {
+    LANE_COV_COUNT(TurnNoOwed);
     overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
     // DEC-217: the publication turn is not the only turn that may discharge. A queue that is still owed
     // after its tile published must keep draining on the following turns, or the one-per-turn bound would
@@ -96,6 +100,7 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
                                              loopLengthTicks, lookupStart, lookupLength);
   if (!LoopContentResolution::stepTilePreparation(passes, loopLengthTicks, lookupStart, lookupLength,
                                                  eventBudget, overdubCoverageCursor_)) {
+    LANE_COV_COUNT(TurnAdvanced);
     return OverdubCoverageTurn::Advanced;
   }
   // Atomic publication (task 4.8): the grain that completes the tile publishes its content **and** its
@@ -106,6 +111,7 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
   publishPreparedOverdubCoverageTile(tile, overdubCoverageCursor_.notes,
                                      overdubCoverageCursor_.rawEvents, windowStart, windowLength);
   overdubCoverage_.publishPrepared(tile);
+  LANE_COV_COUNT(TurnPublished);
   overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
 #if defined(SESSION_CAPTURE)
   const uint32_t publishUs = micros() - coverageStartUs - prepareUs;
@@ -322,6 +328,7 @@ bool LOOP_COLD_MEM Loop::overdubCoverageRequiredNow(uint32_t currentPhase,
 uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return 0;
   }
+  LANE_COV_COUNT(DischargeCalls);
   uint8_t discharged = 0;
   for (uint8_t i = 0; i < overdubCoverageDeferredCount_;) {
     DeferredOverdubCompletion& completion = deferredOverdubCompletions_[i];
@@ -339,10 +346,13 @@ uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!
     const bool spanReady =
         !completion.spanOwed || overdubCoverage_.spanPrepared(completion.startTick, spanLength);
     if (!occupancyReady || !spanReady) {
+      if (!occupancyReady) LANE_COV_COUNT(BlockedOccupancy);
+      if (!spanReady) LANE_COV_COUNT(BlockedSpan);
       ++i;
       continue;
     }
     (void)applyDeferredOverdubCompletion(completion);
+    LANE_COV_COUNT(Discharged);
     // Remove by swap-and-pop: the order of independent completions does not carry meaning, and a note's
     // occupancy is always applied before its own span inside `applyDeferredOverdubCompletion`.
     if (i + 1 < overdubCoverageDeferredCount_) {

@@ -687,7 +687,9 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   // nothing; it is what makes the span answerable by the worker and by the deadline fallback.
   {
     LANE_NOTEOFF_PHASE(coverageUs);
-    (void)markOverdubCoverageSpan(startTick, endTick);
+    const uint8_t newlySealed = markOverdubCoverageSpan(startTick, endTick);
+    LANE_COV_ADD(NewTilesSealed, newlySealed);
+    (void)newlySealed;
   }
   const uint32_t spanLength = wrapCrossing ? (loopLen - startTick + endTick) : (endTick - startTick);
   if (overdubCoverage_.sessionActive && !overdubCoverage_.spanPrepared(startTick, spanLength)) {
@@ -1563,6 +1565,9 @@ struct NoteOffSpans {
   uint8_t highWater;
 };
 DMAMEM NoteOffSpans sNoteOffSpans;
+constexpr uint8_t kIdleOwnerBins = 8;
+DMAMEM uint32_t sCoverageCounters[LaneGapSpans::CoverageCounterCount];
+DMAMEM uint32_t sIdleOwnersWhileOverdubbing[kIdleOwnerBins];
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
   return p == LaneGapSpans::PathRetained ? PSTR("retained")
@@ -1594,7 +1599,19 @@ FLASHMEM void LaneGapSpans::noteOverdubNoteOff(const NoteOffProbe& probe, uint32
     m.worst[least] = {totalUs, probe.coverageUs, probe.retainUs, probe.deriveUs, occupancy, path};
 }
 
-FLASHMEM void LaneGapSpans::resetNoteOffSpans() { sNoteOffSpans = NoteOffSpans{}; }
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::countCoverage(uint8_t counter, uint32_t by) {
+  if (counter < CoverageCounterCount) sCoverageCounters[counter] += by;
+}
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::countIdleOwner(uint8_t owner) {
+  ++sIdleOwnersWhileOverdubbing[owner < kIdleOwnerBins ? owner : kIdleOwnerBins - 1];
+}
+
+FLASHMEM void LaneGapSpans::resetNoteOffSpans() {
+  sNoteOffSpans = NoteOffSpans{};
+  for (auto& v : sCoverageCounters) v = 0;
+  for (auto& v : sIdleOwnersWhileOverdubbing) v = 0;
+}
 
 FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
   const auto& m = sNoteOffSpans;
@@ -1619,6 +1636,15 @@ FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
                   (unsigned long)bin.totalUs, (unsigned long)bin.maxUs);
     first = false;
   }
+  Serial.println();
+  // Worker trace: entered/gate_reached/gate_passed/turn_no_session/turn_private_yield/turn_no_owed/turn_advanced/
+  // turn_published/discharge_calls/discharged/blocked_occupancy/blocked_span/generation_changes/new_tiles_sealed.
+  Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,worker,counters="), (unsigned long)micros());
+  for (uint8_t c = 0; c < CoverageCounterCount; ++c)
+    Serial.printf_P(PSTR("%s%lu"), c ? PSTR("/") : PSTR(""), (unsigned long)sCoverageCounters[c]);
+  Serial.printf_P(PSTR(",owners="));
+  for (uint8_t o = 0; o < kIdleOwnerBins; ++o)
+    Serial.printf_P(PSTR("%s%lu"), o ? PSTR("/") : PSTR(""), (unsigned long)sIdleOwnersWhileOverdubbing[o]);
   Serial.println();
   for (const auto& w : m.worst) {
     if (w.us == 0) continue;

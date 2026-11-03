@@ -82,7 +82,19 @@ struct NoteOffPhase {
   explicit NoteOffPhase(uint32_t& f) : field(f), startUs(micros()) {}
   ~NoteOffPhase() { field += micros() - startUs; }
 };
+/// Deferred-completion worker trace (owner ruling 2026-11-03): one counter per decision point that decides whether
+/// the bounded obligation set can drain during live overdub -- the idle-turn owner reaching the worker gate, the
+/// worker's outcome, each discharge's readiness, and generation moves that clear prepared coverage. Calls go to a
+/// flash function, so an ITCM caller adds one call per site. Defined in LoopPendingNoteChange.cpp, dumped with it.
+enum CoverageCounter : uint8_t { Entered = 0, GateReached, GatePassed, TurnNoSession, TurnPrivateYield, TurnNoOwed,
+                                 TurnAdvanced, TurnPublished, DischargeCalls, Discharged, BlockedOccupancy,
+                                 BlockedSpan, GenerationChanges, NewTilesSealed, CoverageCounterCount };
+void countCoverage(uint8_t counter, uint32_t by);
+void countIdleOwner(uint8_t owner);
 }  // namespace LaneGapSpans
+#define LANE_COV_COUNT(c) LaneGapSpans::countCoverage(LaneGapSpans::c, 1)
+#define LANE_COV_ADD(c, n) LaneGapSpans::countCoverage(LaneGapSpans::c, (n))
+#define LANE_COV_OWNER(o) LaneGapSpans::countIdleOwner(static_cast<uint8_t>(o))
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
 #define LANE_MSG_SPAN(child) LaneGapSpans::MessageScope laneMsgSpanScope(LaneGapSpans::child)
 #define LANE_NOTEOFF_BEGIN(occupancy) LaneGapSpans::NoteOffProbe laneNoteOffProbe(occupancy)
@@ -95,4 +107,7 @@ struct NoteOffPhase {
 #define LANE_NOTEOFF_BEGIN(occupancy) ((void)0)
 #define LANE_NOTEOFF_PHASE(field) ((void)0)
 #define LANE_NOTEOFF_PATH(p) ((void)0)
+#define LANE_COV_COUNT(c) ((void)0)
+#define LANE_COV_ADD(c, n) ((void)0)
+#define LANE_COV_OWNER(o) ((void)0)
 #endif

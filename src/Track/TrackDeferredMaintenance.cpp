@@ -20,6 +20,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/InvestigationCaptureLog.h"
 #include "Utils/MidiServiceDrain.h"
+#include "Utils/LaneGapSpans.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
@@ -1124,6 +1125,12 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits,
     bool timingCritical) {
+#if defined(LANE_GAP_MIDI_SPLIT)
+  if (isOverdubbing()) {
+    LANE_COV_COUNT(Entered);
+    LANE_COV_OWNER(deferredOwner);
+  }
+#endif
   // The producer is single/global. Preserve the selected display's gap source
   // before either maintenance branch can ask for unrelated cache backfill.
   const Track& displayTrack = trackManager.getSelectedTrack();
@@ -1148,7 +1155,11 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // when that tile's derive completes. It runs **before** every early return below, because the demand was
   // created by an accepted note rather than by this turn, and a turn that returns early would otherwise
   // never serve it. Marks on the capture path derive nothing; this is the only place that does.
+#if defined(LANE_GAP_MIDI_SPLIT)
+  if (isOverdubbing()) LANE_COV_COUNT(GateReached);
+#endif
   if (isOverdubbing() && deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+    LANE_COV_COUNT(GatePassed);
     (void)getActiveLoop().serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
   }
   // DEC-194: the passes-backed stream is built on demand by the playback path (`rebuildPlaybackOrder`), which is
