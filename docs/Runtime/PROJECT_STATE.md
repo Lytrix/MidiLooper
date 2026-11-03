@@ -1,3 +1,21 @@
+**2026-11-03 — Wrap Clock breakdown: the wrap snapshot journal is 96% of the wrap; the C3.4 deadline answered nothing (wrap probe).**
+- **Measured** (`1731cac3`, two sweeps: `captures/session_20261103_190327.log`, `captures/session_20261103_190834.log`):
+  - The wrap took 1.33 s and 1.40 s, with 99.99% of it accounted for by the probe's steps.
+  - `queueOverdubWrapSnapshotJournal` took 1.28 s and 1.35 s, about 3 ms per sealed Add (428 and 436 Adds).
+  - Sealing took 3 ms. The C3.4 deadline answered 0 owed completions: the worker had discharged them all before the
+    wrap.
+- **Cause by code reading.** For every row, `appendPairedNoteEventChanges` calls `parent.findNote`. For an Add, the
+  note is not in the parent, so `LoopSnapshot::findNote` falls back to scanning every pitch. The wrap therefore costs
+  O(sealed Adds × parent notes).
+- **Boot fix.** `6ec640bb` (construct-only boot init) reverts 49eccad3's destroy-first, which was in the default image
+  until then. `72d9e280` (default image) boots.
+- **Open.**
+  - Probe image `9400e352` (exactly this tree) never enumerates on USB and leaves no CrashReport. The failure follows
+    the flash code layout: adding temporary breadcrumb code (`1731cac3`) makes it boot. This is a latent defect with
+    an unknown owner.
+  - Waiting on an owner ruling: the wrap-ownership RED now targets the journal, not the deadline.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-c5-3b-successor-grant-budget.md)
+
 **2026-11-03 — DEC-247: a full deferred overdub completion set keeps the completion owed, and the NoteOff derives nothing (`c0e8cbd8`).**
 - **Cause chain** (C5.3b overdub-phase traces):
   - The overdub MIDI cost was the full-set synchronous derive: 46-78 ms per NoteOff, 16-17.6 s per sweep.

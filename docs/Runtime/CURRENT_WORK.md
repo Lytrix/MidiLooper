@@ -1,5 +1,10 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-03 — Wrap Clock breakdown (wrap probe).** The wrap took 1.33-1.40 s. 96% of that is
+`queueOverdubWrapSnapshotJournal`, about 3 ms per sealed Add: a `findNote` miss per Add scans every parent pitch. The
+C3.4 deadline answered 0 completions in both runs. Next: an owner ruling on where the wrap-ownership RED points. Open:
+the probe image `9400e352` hang, which depends on the code layout. [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-c5-3b-successor-grant-budget.md)
+
 **2026-11-03 — DEC-247: a full deferred overdub completion set keeps the completion owed, and the NoteOff derives nothing (`c0e8cbd8`).**
 - **Cause chain** (C5.3b overdub-phase traces):
   - The overdub MIDI cost was the full-set synchronous derive: 46-78 ms per NoteOff, 16-17.6 s per sweep.

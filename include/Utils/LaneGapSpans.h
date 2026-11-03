@@ -99,7 +99,31 @@ void observeDeferredOccupancy(uint8_t occupancy);
 void noteGenerationChange(uintptr_t caller, uint32_t phaseTick, uint8_t occupancy);
 /// The capture-pass commit's own caller, latched at its entry, so a generation event names the Track owner too.
 void noteCommitCaller(uintptr_t caller);
+/// Overdub wrap breakdown (owner ruling 2026-11-03): one `commitOverdubWrap` split into its steps, with the C3.4
+/// deadline split by source (retained set vs overflow rows), plus the counts that reach it. Active only inside a wrap,
+/// so worker discharges elsewhere do not add to it. Defined in LoopPendingNoteChange.cpp and dumped with it.
+enum WrapPhase : uint8_t { WrapHeldOns = 0, WrapCommitPass, WrapJournalRecount, WrapSeal, WrapPrivateHolds,
+                           WrapDeadlineSet, WrapDeadlineOverflow, WrapSourceViewApply, WrapSessionBookkeeping,
+                           WrapBeginCapture, WrapResumeCanonical, WrapCarryOpenNotes, WrapPhaseCount };
+enum WrapCount : uint8_t { WrapCaptureEvents = 0, WrapHeldOnCount, WrapSetEntering, WrapOverflowEntering,
+                           WrapDeadlineEvaluated, WrapDeadlineDerives, WrapSealedAdd, WrapSealedShorten,
+                           WrapSealedHide, WrapCountCount };
+void beginWrapBreakdown();
+void endWrapBreakdown();
+bool wrapBreakdownActive();
+void addWrapPhase(uint8_t phase, uint32_t us);
+void addWrapCount(uint8_t count, uint32_t n);
+struct WrapPhaseScope {
+  uint8_t phase;
+  uint32_t startUs;
+  explicit WrapPhaseScope(uint8_t p) : phase(p), startUs(micros()) {}
+  ~WrapPhaseScope() { addWrapPhase(phase, micros() - startUs); }
+};
 }  // namespace LaneGapSpans
+#define LANE_WRAP_BEGIN() LaneGapSpans::beginWrapBreakdown()
+#define LANE_WRAP_END() LaneGapSpans::endWrapBreakdown()
+#define LANE_WRAP_PHASE(p) LaneGapSpans::WrapPhaseScope laneWrapPhase##p(LaneGapSpans::p)
+#define LANE_WRAP_COUNT(c, n) LaneGapSpans::addWrapCount(LaneGapSpans::c, (n))
 #define LANE_COV_COUNT(c) LaneGapSpans::countCoverage(LaneGapSpans::c, 1)
 #define LANE_COV_ADD(c, n) LaneGapSpans::countCoverage(LaneGapSpans::c, (n))
 #define LANE_COV_OWNER(o) LaneGapSpans::countIdleOwner(static_cast<uint8_t>(o))
@@ -127,4 +151,8 @@ void noteCommitCaller(uintptr_t caller);
 #define LANE_COV_OBSERVE(occupancy) ((void)0)
 #define LANE_COV_GENERATION(phase, occupancy) ((void)0)
 #define LANE_COV_COMMIT_CALLER() ((void)0)
+#define LANE_WRAP_BEGIN() ((void)0)
+#define LANE_WRAP_END() ((void)0)
+#define LANE_WRAP_PHASE(p) ((void)0)
+#define LANE_WRAP_COUNT(c, n) ((void)0)
 #endif

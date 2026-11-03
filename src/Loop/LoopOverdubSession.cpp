@@ -377,16 +377,24 @@ uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!
 void Loop::materializeDeferredOverdubCompletionsAtDeadline() {
   // The interval is ending. Every completion still owed is answered from a *windowed* derive of its own
   // span, never from a partial view: a decision is not dropped at the deadline, and it is applied once.
-  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
-    (void)applyDeferredOverdubCompletion(deferredOverdubCompletions_[i]);
+  LANE_WRAP_COUNT(WrapSetEntering, overdubCoverageDeferredCount_);
+  LANE_WRAP_COUNT(WrapOverflowEntering, overdubCompletionOverflowCount_);
+  {
+    LANE_WRAP_PHASE(WrapDeadlineSet);
+    for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+      LANE_WRAP_COUNT(WrapDeadlineEvaluated, 1);
+      (void)applyDeferredOverdubCompletion(deferredOverdubCompletions_[i]);
+    }
   }
   overdubCoverageDeferredCount_ = 0;
+  LANE_WRAP_PHASE(WrapDeadlineOverflow);
   // The completions owed beyond the full set are answered by the same rule. By index: an answer appends
   // transforms, never another owed row, so the rows read here stay valid and none is answered twice.
   for (size_t i = 0; overdubCompletionOverflowCount_ != 0 && i < pendingNoteChanges_.size(); ++i) {
     if (!pendingNoteChanges_[i].consequenceOwed) continue;
     pendingNoteChanges_[i].consequenceOwed = false;
     --overdubCompletionOverflowCount_;
+    LANE_WRAP_COUNT(WrapDeadlineEvaluated, 1);
     (void)applyDeferredOverdubCompletion(overflowedCompletion(pendingNoteChanges_[i]));
   }
   overdubCompletionOverflowCount_ = 0;
@@ -438,6 +446,7 @@ bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& compl
           ? completion.endTick - completion.startTick
           : loopLengthTicks - completion.startTick + completion.endTick;
   if (!overdubCoverage_.spanPrepared(completion.startTick, spanLength)) {
+    LANE_WRAP_COUNT(WrapDeadlineDerives, 1);
     uint32_t lookupStart = 0;
     uint32_t lookupLength = 0;
     CoveragePrerequisite::closureWindowAround(completion.startTick, spanLength,

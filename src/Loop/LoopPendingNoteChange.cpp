@@ -1468,7 +1468,10 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   // cache-only transform.
   // The deadline's own materialization first, then the denial: a decision that is still reachable is
   // taken here (against whatever source answers now) and only the unreachable one is denied.
-  materializeDeferredPrivateHoldsAtDeadline();
+  {
+    LANE_WRAP_PHASE(WrapPrivateHolds);
+    materializeDeferredPrivateHoldsAtDeadline();
+  }
   // The same deadline rule for touched coverage: a note whose span was completed before its tile was
   // published is answered now from a bounded window of its own span. Nothing is dropped and nothing is
   // applied twice (the discharge removes its obligation).
@@ -1478,6 +1481,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
     notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);
   }
   if (updateOverdubSourceView && !pendingNoteChanges_.empty()) {
+    LANE_WRAP_PHASE(WrapSourceViewApply);
     applyPendingNoteChangesToOverdubSourceView();
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
@@ -1570,6 +1574,15 @@ DMAMEM uintptr_t sCommitCaller;
 DMAMEM GenerationCaller sGenerationCallers[8];
 DMAMEM GenerationEvent sGenerationEvents[8];
 DMAMEM uint8_t sGenerationEventCount;
+struct WrapBreakdown {
+  uint32_t totalUs, tick;
+  uint32_t phaseUs[LaneGapSpans::WrapPhaseCount];
+  uint32_t count[LaneGapSpans::WrapCountCount];
+};
+DMAMEM WrapBreakdown sWrapCurrent;
+DMAMEM WrapBreakdown sWrapWorst[4];
+DMAMEM uint32_t sWrapStartUs;
+DMAMEM uint8_t sWrapActive;
 inline uint8_t setFullIndex() { return sObservedOccupancy >= kDeferredSetFull ? 1 : 0; }
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
@@ -1631,6 +1644,32 @@ FLASHMEM __attribute__((noinline)) void LaneGapSpans::noteGenerationChange(uintp
 
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::noteCommitCaller(uintptr_t caller) { sCommitCaller = caller; }
 
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::beginWrapBreakdown() {
+  sWrapCurrent = WrapBreakdown{};
+  sWrapCurrent.tick = clockManager.getCurrentTick();
+  sWrapStartUs = micros();
+  sWrapActive = 1;
+}
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::endWrapBreakdown() {
+  if (sWrapActive != 1) return;
+  sWrapActive = 0;
+  sWrapCurrent.totalUs = micros() - sWrapStartUs;
+  uint8_t least = 0;
+  for (uint8_t i = 1; i < 4; ++i) if (sWrapWorst[i].totalUs < sWrapWorst[least].totalUs) least = i;
+  if (sWrapCurrent.totalUs > sWrapWorst[least].totalUs) sWrapWorst[least] = sWrapCurrent;
+}
+
+FLASHMEM __attribute__((noinline)) bool LaneGapSpans::wrapBreakdownActive() { return sWrapActive == 1; }
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::addWrapPhase(uint8_t phase, uint32_t us) {
+  if (sWrapActive == 1 && phase < WrapPhaseCount) sWrapCurrent.phaseUs[phase] += us;
+}
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::addWrapCount(uint8_t count, uint32_t n) {
+  if (sWrapActive == 1 && count < WrapCountCount) sWrapCurrent.count[count] += n;
+}
+
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::countIdleOwner(uint8_t owner) {
   ++sIdleOwnersWhileOverdubbing[setFullIndex()][owner < kIdleOwnerBins ? owner : kIdleOwnerBins - 1];
 }
@@ -1644,6 +1683,9 @@ FLASHMEM void LaneGapSpans::resetNoteOffSpans() {
   for (auto& e : sGenerationEvents) e = GenerationEvent{};
   sGenerationEventCount = 0;
   sCommitCaller = 0;
+  sWrapCurrent = WrapBreakdown{};
+  for (auto& w : sWrapWorst) w = WrapBreakdown{};
+  sWrapActive = 0;
 }
 
 FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
@@ -1694,6 +1736,21 @@ FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
                          "phase=%lu,tick=%lu,occupancy=%u\n"),
                     (unsigned long)micros(), unsigned(i), (unsigned long)e.caller, (unsigned long)e.commitCaller,
                     (unsigned long)e.phaseTick, (unsigned long)e.clockTick, unsigned(e.occupancy));
+  }
+  // Wrap breakdown, phases: held_ons/commit_pass/journal_recount/seal/[private_holds/deadline_set/deadline_overflow/
+  // source_view_apply inside seal]/session_bookkeeping/begin_capture/resume_canonical/carry_open_notes; counts:
+  // capture_events/held_ons/set_entering/overflow_entering/deadline_evaluated/deadline_derives/sealed_add/
+  // sealed_shorten/sealed_hide.
+  for (const auto& w : sWrapWorst) {
+    if (w.totalUs == 0) continue;
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,wrap,tick=%lu,total_us=%lu,phases="), (unsigned long)micros(),
+                    (unsigned long)w.tick, (unsigned long)w.totalUs);
+    for (uint8_t p = 0; p < WrapPhaseCount; ++p)
+      Serial.printf_P(PSTR("%s%lu"), p ? PSTR("/") : PSTR(""), (unsigned long)w.phaseUs[p]);
+    Serial.printf_P(PSTR(",counts="));
+    for (uint8_t c = 0; c < WrapCountCount; ++c)
+      Serial.printf_P(PSTR("%s%lu"), c ? PSTR("/") : PSTR(""), (unsigned long)w.count[c]);
+    Serial.println();
   }
   for (const auto& w : m.worst) {
     if (w.us == 0) continue;

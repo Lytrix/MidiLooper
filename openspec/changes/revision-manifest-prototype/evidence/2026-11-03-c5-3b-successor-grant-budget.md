@@ -449,3 +449,68 @@ attempts were attach refusals during a boot slot restore; nothing ran in them.
   - The number answered at the wrap is not measured. The arithmetic (113 obligations, 50 discharged by the worker) is
     consistent with about 27 windowed derives at about 46 ms.
   - So the deadline is the next MIDI-path owner, and that is the separately open wrap-Clock item.
+
+## Wrap Clock breakdown (owner ruling 2026-11-03)
+
+`commitOverdubWrap` is split into its steps (`LANE_WRAP_PHASE`, `include/Utils/LaneGapSpans.h`), and the C3.4 deadline
+is split into the retained set and the overflow rows, each with its counts. The probe is measurement-only
+(`LANE_GAP_MIDI_SPLIT`) and adds 480 B of RAM2 records; RAM1 is unchanged.
+
+Device image `1731cac3`: the committed wrap probe plus temporary uncommitted boot breadcrumbs (see "Boot hang"
+below). Same sweep, two runs, both OBSERVED with `crash=0`: `captures/session_20261103_190327.log` and
+`captures/session_20261103_190834.log`.
+
+| wrap step (µs) | run 1 (tick 49,920) | run 2 (tick 50,688) |
+|---|---|---|
+| held NoteOns | 15,948 | 13,220 |
+| capture-pass commit | 29,073 | 30,609 |
+| **snapshot journal + hold recount + hold emit** | **1,276,914** | **1,346,431** |
+| seal (all of it) | 3,375 | 3,154 |
+| - private holds / deadline set / deadline overflow | 2 / 1 / 2 | 2 / 1 / 2 |
+| - source-view apply | 3,347 | 3,117 |
+| session bookkeeping | 3,671 | 3,401 |
+| begin capture / resume canonical / carry open notes | 23 / 57 / 131 | 21 / 56 / 128 |
+| **total wrap** | **1,329,265** | **1,397,099** |
+| enclosing Clock message | 1,411,469 | 1,473,769 |
+
+| counts | run 1 | run 2 |
+|---|---|---|
+| capture events / held NoteOns | 1,284 / 0 | 1,308 / 0 |
+| set / overflow entering the deadline | 0 / 0 | 0 / 0 |
+| deadline evaluated / derives | 0 / 0 | 0 / 0 |
+| sealed Add / Shorten / Hide | 428 / 0 / 0 | 436 / 0 / 0 |
+
+- **The wrap steps account for 99.99% of the wrap.**
+- **The deadline is not the wrap cost here.** No owed completion reached C3.4 in either run. In run 2 the session
+  overflowed 36 times, and the worker had promoted and discharged all of them before the wrap. The d4579ca9 estimate
+  ("about 27 windowed derives") is therefore unconfirmed. If those derives happened, they were in that run only.
+- **96% of the wrap is one step.**
+  - The step bundles `queueOverdubWrapSnapshotJournal`, `recountOverlapHoldTotalsFromPending` and
+    `emitOverlapHoldTotals`.
+  - The recount is one O(n) pass over the rows, and the emit is one log line. So the cost is the wrap snapshot journal:
+    about 3.0-3.1 ms per sealed Add.
+  - Code reading (not yet split on device) names the per-row cost. For every row, `appendPairedNoteEventChanges` calls
+    `parent.findNote(noteId, pitch)`, and so does `appendPendingNoteChange` for Hide/Shorten.
+  - An Add is a note the parent does not have, so the lookup misses. `LoopSnapshot::findNote` then scans every
+    pitch's pages and memberships.
+  - The wrap therefore costs O(sealed Adds × parent notes), and the C3.4 deadline is not in that cost.
+- **Run-to-run.** The wrap commit has measured 1.33 / 1.40 / 3.57 / 4.11 s. The larger runs were not split. They are
+  the same step only if their parent snapshot or Add count was larger, which is unmeasured.
+- **Consequence for the wrap-ownership RED.** The work that a bounded wrap must leave owed is mainly the snapshot
+  journal (a publication-side step), not the C3.4 deadline. The ruling's phrasing ("publication cannot outrun
+  unresolved consequences") still holds, but the dominant owed item has a different owner than assumed.
+
+## Boot hang of probe image 9400e352 (open)
+
+- **Symptom.** `9400e352` is exactly the committed wrap probe on top of `6ec640bb`. It never enumerates on USB and
+  leaves no CrashReport. It failed the same way three times: on top of 5440c954's leftovers, on top of the default
+  image's leftovers, and through both uploaders.
+- **What is ruled out.**
+  - The default image from the same tree (`72d9e280`) boots: `crash=0`, `BOOT,load,ok`.
+  - `initLoadLoopJobsAtBoot` compiles to identical store-only code in both images.
+  - RAM1/RAM2 layout, ITCM size and the USB descriptor tables are all identical to `5440c954`. That image reached
+    `setup()` and showed up on USB before faulting.
+- **What changes the outcome.** Adding about 20 lines of breadcrumb code to `main.cpp` (`1731cac3`) makes it boot
+  normally; its next boot reports the previous one reached the end of `setup()`.
+- **Reading.** The failure follows the flash code layout. It is a latent defect with an unknown owner, and it can
+  return in any image. It is not caused by the probe logic.

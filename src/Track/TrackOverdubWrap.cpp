@@ -57,8 +57,17 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   // Consumed on every path: the interval's rows have left the producer whether the pass
   // committed, was empty, or moved to the interval's own stop.
   overdubWrapCommitPending_ = false;
+  LANE_WRAP_BEGIN();
+  struct WrapBreakdownEnd {
+    ~WrapBreakdownEnd() { LANE_WRAP_END(); }
+  } wrapBreakdownEnd;
   SessionMidiEventVec heldOns;
-  loop.extractOpenCaptureNoteOns(heldOns);
+  {
+    LANE_WRAP_PHASE(WrapHeldOns);
+    loop.extractOpenCaptureNoteOns(heldOns);
+  }
+  LANE_WRAP_COUNT(WrapHeldOnCount, static_cast<uint32_t>(heldOns.size()));
+  LANE_WRAP_COUNT(WrapCaptureEvents, static_cast<uint32_t>(loop.capture.store.size()));
   if (loop.capture.store.empty()) {
     for (const MidiEvent& evt : heldOns) {
       loop.appendCaptureEvent(evt);
@@ -74,23 +83,42 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   g_overdubWrapBeginCaptureUs = 0;
   const uint32_t wrapCommitStartUs = micros();
 #endif
-  const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
+  CommitResult result;
+  {
+    LANE_WRAP_PHASE(WrapCommitPass);
+    result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
+  }
 #if defined(SESSION_CAPTURE)
   g_overdubWrapCommitUs = micros() - wrapCommitStartUs;
 #endif
   const bool wrapped = result == CommitResult::Committed;
   if (wrapped) {
     const PassId passId = loop.lastCommittedPassId();
-    loop.queueOverdubWrapSnapshotJournal(passId);
-    loop.recountOverlapHoldTotalsFromPending();
-    loop.emitOverlapHoldTotals();
+    {
+      LANE_WRAP_PHASE(WrapJournalRecount);
+      loop.queueOverdubWrapSnapshotJournal(passId);
+      loop.recountOverlapHoldTotalsFromPending();
+      loop.emitOverlapHoldTotals();
+    }
+#if defined(LANE_GAP_MIDI_SPLIT)
+    for (const PendingNoteChange& change : loop.pendingNoteChanges()) {
+      if (change.kind == PendingNoteChangeKind::Add) LANE_WRAP_COUNT(WrapSealedAdd, 1);
+      else if (change.kind == PendingNoteChangeKind::Shorten) LANE_WRAP_COUNT(WrapSealedShorten, 1);
+      else LANE_WRAP_COUNT(WrapSealedHide, 1);
+    }
+#endif
 #if defined(SESSION_CAPTURE)
     const uint32_t wrapSealPendingStartUs = micros();
 #endif
-    EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+    EditPassIdList companionIds;
+    {
+      LANE_WRAP_PHASE(WrapSeal);
+      companionIds = loop.sealPendingNoteChangesToEditPasses();
+    }
 #if defined(SESSION_CAPTURE)
     g_overdubWrapSealPendingUs = micros() - wrapSealPendingStartUs;
 #endif
+    LANE_WRAP_PHASE(WrapSessionBookkeeping);
     loop.pushOverdubSessionPass(passId, companionIds);
     loop.recordLastOverdubSeal(passId, companionIds, priorPlaybackRevision);
     loop.markAffectedDisplayCacheRanges(passId, companionIds);
@@ -98,7 +126,10 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
 #if defined(SESSION_CAPTURE)
   const uint32_t wrapBeginCaptureStartUs = micros();
 #endif
-  loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
+  {
+    LANE_WRAP_PHASE(WrapBeginCapture);
+    loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
+  }
 #if defined(SESSION_CAPTURE)
   g_overdubWrapBeginCaptureUs = micros() - wrapBeginCaptureStartUs;
 #endif
@@ -122,9 +153,11 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   if (wrapped && runtime && !predecessorOwnsSlotCanonicalWork) {
     const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
                                             loop.publishedSnapshotIdentity()};
+    LANE_WRAP_PHASE(WrapResumeCanonical);
     (void)runtime->resumeCanonicalAfterAppend(loop.passes, priorPlaybackRevision, source,
         {loop.playbackRevision, playbackGeneration, loop.loopLengthTicks, loop.canonicalStorageGeneration});
   }
+  LANE_WRAP_PHASE(WrapCarryOpenNotes);
   RuntimePlaybackViewSet* viewSet =
       runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
   if (runtime == nullptr || viewSet == nullptr || !viewSet->prewarmed) {
