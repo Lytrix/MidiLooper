@@ -311,7 +311,8 @@ FLASHMEM void dumpMidiSpansImpl() {
                     (unsigned long long)m.stat[p][k].totalUs, (unsigned long)m.stat[p][k].maxUs);
     Serial.println();
   }
-  // Children per phase and kind: stop overdub / stop recording track / record-stop geometry / overlap hold / record events.
+  // Children per phase and kind: stop overdub / stop recording track / record-stop geometry / overlap hold / record
+  // events / overdub note changes (inside record events) / overdub wrap commit.
   for (uint8_t p = 0; p < PhaseCount; ++p)
     for (uint8_t k = 0; k < KindCount; ++k) {
       uint64_t any = 0;

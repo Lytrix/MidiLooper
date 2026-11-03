@@ -276,3 +276,33 @@ Same capture, `captures/session_20261103_123542.log`, using the image's existing
 - After the stop the Clock stays at 0.51 ms (the reclaim fix holds).
 - **Next.** Split `recordMidiEvents`' overdub branch one level deeper, and time `updateAllTracks`' per-track children
   for the Clock (needs flash-side timers only, or an ITCM budget check).
+
+## The overdub-phase MIDI cost, named (2026-11-03)
+
+- **Method.** Two more flash-resident message children:
+  - `Loop::accumulatePendingNoteChangesForIncomingNote`, the overdub overlap evaluation of a completed note against
+    the overdub source view (inside `recordMidiEvents`' NoteOff branch);
+  - `Track::commitOverdubWrap`.
+  The image's existing runtime rows already pointed there (`notechg` up to 92 ms per 5 s window; `noteappend`
+  0.6-4.4 ms).
+- **Run.** succprobe HEX sha256 `a4c234c84117ce06dbd59c53391c4d73edd15aa7321ab4bc8d19997f461ad565`,
+  `captures/session_20261103_141004.log`, boot `crash=0`. The harness reported and exited on its own (deferred MIDI
+  close).
+
+| overdub phase | total | named child | share |
+|---|---|---|---|
+| Note (1,026, avg 6.83 ms, max 76 ms) | 7.01 s | `accumulatePendingNoteChangesForIncomingNote` **6.35 s** (of `recordMidiEvents` 6.63 s) | 91 % |
+| Clock (3,363, avg 1.04 ms, max 1,408 ms) | 3.51 s | `commitOverdubWrap` **1.33 s**, in one Clock at the loop wrap (tick 50,688) | 38 % |
+
+- **1. Overdub note cost = the overlap evaluation on NoteOff.** Every worst note (76 ms, ticks 51,488-52,112, just
+  after the wrap) is entirely `accumulatePendingNoteChangesForIncomingNote`. It runs synchronously inside MIDI dispatch,
+  and its cost grows with the overdub source view.
+- **2. The multi-second Clock = the overdub wrap commit.** `commitOverdubWrap` ran 1.33 s inside a single Clock
+  dispatch at the loop wrap (the earlier run's 3.57 s Clock at tick 49,920 is the same shape).
+- Run-to-run size varies (overdub note average 18.7 ms → 6.8 ms, wrap Clock 3.57 s → 1.41 s), but the attribution is
+  the same in both. Both are overdub-lifecycle transactions executed synchronously from MIDI dispatch, against the rule
+  that a MIDI message may do only bounded realtime work.
+- **Next (owner decision).** Move each into bounded deferred ownership:
+  - the note records only what the evaluation needs, and the evaluation runs in grains off the MIDI path;
+  - the wrap is accepted on the Clock and committed by a deferred owner in grains.
+  Both touch the overlap-resolve and wrap owners documented in `docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`.

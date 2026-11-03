@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Loop.h"
+#include "Utils/LaneGapSpans.h"
 
 #include "EditSessionAction.h"
 #include "EditSessionInteraction.h"
@@ -665,6 +666,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t startTick, uint32_t endTick,
     NoteId incomingNoteId, const OverlapNoteIdSet& overlapNoteIds,
     const OverlapNoteIdSet* occupancyResolvedNoteIds) {
+  LANE_MSG_SPAN(OverdubNoteChanges);
   if (!overdubSourceViewEstablished_ || overdubSourceViewLoopLengthTicks_ == 0) {
     return false;
   }

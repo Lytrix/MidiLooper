@@ -44,7 +44,7 @@ namespace LaneGapSpans {
 /// Children of one dispatched MIDI message (owner ruling 2026-11-03): accumulated per message and folded by
 /// `MidiHandler.cpp`'s `noteMidiMessage`, apart from the loop buckets above so nothing is counted twice.
 enum MessageChild : uint8_t { StopOverdub = 0, StopRecordingTrack, RecordStopGeometry, OverlapHold, RecordEvents,
-                              MessageChildCount };
+                              OverdubNoteChanges, OverdubWrapCommit, MessageChildCount };
 extern uint32_t gMessage[MessageChildCount];
 struct MessageScope {
   uint8_t child;

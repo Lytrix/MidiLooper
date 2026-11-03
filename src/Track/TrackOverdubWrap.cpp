@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "TrackInternal.h"
+#include "Utils/LaneGapSpans.h"
 
 #include "ClockManager.h"
 #include "Logger.h"
@@ -48,6 +49,7 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
 }
 
 TRACK_COLD_MEM bool Track::commitOverdubWrap() {
+  LANE_MSG_SPAN(OverdubWrapCommit);
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.capture.phase != CapturePhase::Overdub) {
     return false;
