@@ -1380,20 +1380,30 @@ void test_boot_init_discards_noload_job_bytes_without_releasing_them() {
   clearPendingLoopSlotRestoresAtBoot();
 }
 
-/// Lifetime of the same boot init: it destroys before it constructs, so a repeated call neither abandons nor
-/// double-releases what an owning member holds, and an already-clean job comes out unchanged.
-void test_boot_init_releases_owned_members_exactly_once_and_is_repeatable() {
+/// Device image 5440c954 boot loop (2026-11-03, MMARVALID 0x4BA1C66C in `initLoadLoopJobsAtBoot`): members whose
+/// default constructor is `constexpr` -- the `shared_ptr` snapshot refs and the `unique_ptr` parse stagings -- are
+/// constant-initialized, so the static initializer never writes them and they hold NOLOAD bytes at boot too. An init
+/// that destroyed the jobs first freed those bytes. The boot init must construct over the storage without reading,
+/// destroying or releasing any member.
+void test_boot_init_never_reads_noload_smart_pointer_members() {
   using namespace StorageManagerInternal;
-  auto held = std::make_shared<const LoopSnapshot>();
-  loadLoopJob_.loadedLoopSnapshot = held;
-  parkedLoadLoopJob_.lsv1ParseState.loopSnapshot = held;
-  TEST_ASSERT_EQUAL(3, held.use_count());
-  initLoadLoopJobsAtBoot();
-  TEST_ASSERT_EQUAL_MESSAGE(1, held.use_count(), "each owned reference is released, none abandoned");
-  initLoadLoopJobsAtBoot();  // repeated on clean jobs: no release, no allocation, same end state
-  TEST_ASSERT_EQUAL(1, held.use_count());
-  TEST_ASSERT_NULL(loadLoopJob_.session);
-  TEST_ASSERT_NULL(parkedLoadLoopJob_.lsv1ParseState.loopSnapshot.get());
+  LoadLoopJob* const jobs[] = {&loadLoopJob_, &parkedLoadLoopJob_};
+  for (LoadLoopJob* job : jobs) {
+    // What RAM2 holds there after another image: arbitrary bytes, not an empty smart pointer.
+    std::memset(static_cast<void*>(&job->loadedLoopSnapshot), 0xA5, sizeof(job->loadedLoopSnapshot));
+    std::memset(static_cast<void*>(&job->lsv1ParseState.loopSnapshot), 0xA5,
+                sizeof(job->lsv1ParseState.loopSnapshot));
+    std::memset(static_cast<void*>(&job->parseState.passStaging), 0xA5, sizeof(job->parseState.passStaging));
+    job->session = reinterpret_cast<SlotLoadSession*>(uintptr_t{0x100});
+  }
+  initLoadLoopJobsAtBoot();  // a destroy-first init faults here, as the device did
+  for (LoadLoopJob* job : jobs) {
+    TEST_ASSERT_NULL(job->loadedLoopSnapshot.get());
+    TEST_ASSERT_NULL(job->lsv1ParseState.loopSnapshot.get());
+    TEST_ASSERT_NULL(job->parseState.passStaging.get());
+    TEST_ASSERT_NULL(job->session);
+  }
+  clearLoadLoopJob();
   TEST_ASSERT_FALSE(anyLoadLoopJobActive());
 }
 
@@ -1447,6 +1457,6 @@ int main(int, char**) {
   RUN_TEST(test_dec190_a_fault_breadcrumb_parks_exactly_one_slot_for_the_next_boot);
   // Last: while RED, the scribbled session would reach the next fixture's `setUp` clear.
   RUN_TEST(test_boot_init_discards_noload_job_bytes_without_releasing_them);
-  RUN_TEST(test_boot_init_releases_owned_members_exactly_once_and_is_repeatable);
+  RUN_TEST(test_boot_init_never_reads_noload_smart_pointer_members);
   return UNITY_END();
 }

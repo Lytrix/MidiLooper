@@ -178,17 +178,16 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     job.requestSetEpoch = 0;
 }
 
-/// `.bss.dma` is NOLOAD on Teensy, and the jobs' static initializer writes only the members whose constructors need it
-/// (GCC relies on zeroed static storage for the rest), so `session` and the plain fields start as the previous image's
-/// RAM2 bytes -- probe image 047d6779 faulted in `SlotLoadSession::fail()` on `session == 0x100`. Re-construct both jobs
-/// at boot, before the first `clearLoadLoopJob()`. Destroy first: the startup constructors made every owning member
-/// (file, buffer, passes, stagings, snapshot refs) a valid object, so only their own destructors run -- releasing
-/// anything held exactly once -- while plain bytes (`session` included, a raw pointer) are never read.
+/// `.bss.dma` is NOLOAD on Teensy and is never zeroed, so at boot **no** member of either job can be trusted: the
+/// static initializer writes only members with a runtime constructor, and members whose default constructor is
+/// `constexpr` (the `shared_ptr` snapshot refs, the `unique_ptr` parse stagings) are constant-initialized -- the
+/// compiler assumes zeroed storage and writes nothing. Probe image 047d6779 faulted in `SlotLoadSession::fail()` on
+/// `session == 0x100`; `5440c954`, which destroyed the jobs first, faulted freeing a NOLOAD smart pointer. So this
+/// constructs over the storage without reading, destroying or releasing anything. Boot only, before any storage load:
+/// nothing is owned yet, and a call on a job that owns resources would abandon them.
 STORAGE_PERSIST_MEM void initLoadLoopJobsAtBoot() {
-    for (LoadLoopJob* job : {&loadLoopJob_, &parkedLoadLoopJob_}) {
-        job->~LoadLoopJob();
-        new (job) LoadLoopJob{};
-    }
+    new (&loadLoopJob_) LoadLoopJob{};
+    new (&parkedLoadLoopJob_) LoadLoopJob{};
 }
 
 STORAGE_PERSIST_MEM void clearLoadLoopJob() {
