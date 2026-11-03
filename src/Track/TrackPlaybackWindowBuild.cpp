@@ -5210,6 +5210,11 @@ TRACK_COLD_MEM bool Track::committedDemandPriceRefused(uint8_t slotIndex, const 
   return refused.source.snapshotIdentity == loop.publishedSnapshotIdentity();
 }
 
+namespace {
+bool rollingFrameOwnsPositionedObligation(const LoopPlaybackRuntime::RollingFrame& frame, uint32_t generation,
+                                          uint32_t epoch, uint32_t loopLength);
+}  // namespace
+
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestActiveCommittedPlaybackWindow(
     uint32_t playheadPhase, PlaybackDeadlineClock clock) {
   return requestCommittedPlaybackWindowForSlot(getActiveLoopIndex(), playheadPhase, clock);
@@ -5288,6 +5293,15 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestCommittedPlaybackW
         rollingRequest.coverage.startPhase == frame.startPhase &&
         rollingRequest.coverage.loopLengthTicks == frame.loopLength)
       return PlaybackViewRequestResult::DeferredSourceQualification;
+#if REVISION_MANIFEST_READER
+    // Owner ruling 2026-11-03 (device captures/session_20261103_092547): once the rolling owner holds a positioned
+    // obligation for the routed slot -- a prepared or served window of this generation, epoch and geometry -- this
+    // per-turn playhead demand creates no competing obligation until that ownership is released. Deferring only while
+    // Requested left a Ready frame (positioned traversals ahead) beside a playhead demand nothing owned, which expired.
+    if (manifestRouted && rollingFrameOwnsPositionedObligation(frame, playbackGeneration, clock.epoch,
+                                                               loop.loopLengthTicks))
+      return PlaybackViewRequestResult::DeferredSourceQualification;
+#endif
     const auto holds = [&](const PlaybackViewPendingRequest& req) {
       if (!req.active || req.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) {
         return false;
@@ -5743,6 +5757,16 @@ TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingF
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
 bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline);
 #endif
+
+/// The rolling owner holds a positioned obligation: a Ready or Serving frame of this generation, clock epoch and loop
+/// geometry, positioned at a deadline. (A Requested frame's own demand is matched by its record instead.)
+TRACK_COLD_MEM __attribute__((noinline)) bool rollingFrameOwnsPositionedObligation(
+    const LoopPlaybackRuntime::RollingFrame& frame, uint32_t generation, uint32_t epoch, uint32_t loopLength) {
+  return (frame.phase == LoopPlaybackRuntime::RollingPhase::Ready ||
+          frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) &&
+         frame.generation == generation && frame.epoch == epoch && epoch != 0 && frame.loopLength == loopLength &&
+         frame.deadlineTick != 0;
+}
 
 /// A retained demand that a newer frame has superseded and whose only fault is its own position (owner ruling
 /// 2026-11-03; device captures/session_20261103_084810): the frame is Ready or Serving a window of its own, the demand

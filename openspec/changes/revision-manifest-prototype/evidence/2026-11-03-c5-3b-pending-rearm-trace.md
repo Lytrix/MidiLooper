@@ -61,3 +61,37 @@ pending_armed,named,2,1611203015,28928,3584,1536,0,2,56,7
 - The discharge predicate now uses that same key (`supersededPositionalRequest`) instead of the deadline alone, so the
   two definitions of "the frame's own demand" cannot drift apart.
 - AFFECTED: 17 suites, 554 cases, 0 failed, 0 errored.
+
+## Fix: the per-turn demand defers to a positioned rolling owner (owner ruling 2026-11-03)
+
+- **Contract.** Once the rolling owner holds a positioned obligation for the routed slot, the per-turn requester
+  creates no competing obligation until that ownership is released.
+  - "Positioned obligation" means a Ready or Serving frame of this generation, clock epoch and loop geometry,
+    positioned at a deadline (`rollingFrameOwnsPositionedObligation`).
+  - A Requested frame was already matched by its own record.
+  - The check is on the routed slot only, inside `requestCommittedPlaybackWindowForSlot`.
+- **The discharge stays** as the independent liveness guard (`fa346fea`).
+- **Host RED → GREEN.** `test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame` runs `main.cpp`'s
+  lane order: the per-turn demand, then the owner lane.
+  - Before: `armedBesideOwner=1`, at frame phase Ready.
+  - After: 0, with the window served.
+  - AFFECTED: 17 suites, 555 cases, 0 failed, 0 errored.
+- **Device.** succprobe HEX sha256 `ead10f19ef484a39096f7cfae14f5b4819adb45266f5ece7625440ac68ea8a29`,
+  `captures/session_20261103_093844.log`, boot `crash=0`. Same run: 32 dense bars, a 32-bar overdub, stop, restart,
+  `0:1536:20`.
+
+| | before (`session_20261103_092547`) | after |
+|---|---|---|
+| superseded discharges | 2 | **0** |
+| routed `win_blocked` exits | 0 | **0** |
+| `pending_armed` on the routed slot while Ready/Serving | 1 (154.49 s) | **0** |
+| successors handed / missed | 10 / 0 | 20 / 0, min margin 832 |
+| first window after the restart | 61.5 s | 61.5 s (the old price; unchanged) |
+
+  After the restart the only `pending_armed` rows on the routed slot are legitimate:
+  - 150.1 s: the per-turn first demand, with the frame Idle;
+  - 152.2 s: the rolling owner's own demand, with the frame Requested at 7,480 / 58,168.
+
+  Grants per window are still exactly G(E): E = 138 → 16, 150 → 19, 164–188 → 20.
+- **Next.** The C5 work estimator on G(E) grants: the work count only, not the timing rule. The writer trace stays
+  in capture images until that run; then it is removed or demoted.

@@ -14160,6 +14160,19 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
     - **Not changed yet.** The DEC-147 price (`deriveWindowGrainsFrom` still charges two full sorts, conservatively),
       the scheduler, and the snapshot path. `G(E)` is the input for the DEC-147 successor rewrite that comes next.
     - Evidence: `evidence/2026-11-02-c5-3b-successor-lead-sweep.md`.
+29. **A positioned rolling owner suppresses competing demand on the routed slot; a superseded expired demand never
+    terminal-blocks (owner, 2026-11-03).**
+    - **Contract.** Once the rolling owner holds a positioned obligation for the routed slot (a Ready or Serving frame
+      of this generation, epoch and geometry), the per-turn playhead requester creates no competing obligation until
+      that ownership is released. Before, it deferred only while the frame was Requested.
+    - **Liveness guard.** A position-expired demand that is not the frame's own is discharged by name
+      (`win_superseded_request_discharged`); it never blocks the frame.
+      - "The frame's own" uses the handoff's demand key: generation, epoch, deadline and start. A deadline alone is not
+        demand identity.
+      - The guard stays independent of the producer fix.
+    - **Device (two-pass take).** Before: 2 discharges, the re-arm named as main's `requestActiveCommittedPlaybackWindow`.
+      After: 0 discharges and 0 blocks, with 20/20 successors.
+    - Evidence: `evidence/2026-11-03-c5-3b-pending-rearm-trace.md`.
 
 ### Related
 

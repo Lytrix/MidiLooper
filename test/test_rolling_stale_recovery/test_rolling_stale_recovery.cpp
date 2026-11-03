@@ -705,6 +705,62 @@ void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() { expir
 // scheduling property, not demand provenance).
 void test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded() { expiredSupersededRequestCase(true); }
 
+// The per-turn playhead demand defers to a positioned rolling owner (owner ruling 2026-11-03; device
+// captures/session_20261103_092547, `pending_armed` writer 2 via `requestActiveCommittedPlaybackWindow`). Main's
+// per-turn demand stepped aside only while the routed frame was Requested; with the frame Ready for a window still
+// ahead it armed a playhead-centred demand nothing owned, which expired a traversal later. Contract: once the rolling
+// owner holds a positioned obligation for the routed slot, the per-turn requester creates no competing obligation until
+// that ownership is released.
+void test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  RollingOwnerLane lane;
+  const uint32_t len = loop.loopLengthTicks;
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  // `main.cpp`'s window lane: the per-turn demand first, then the owner lane.
+  uint32_t armedBesideOwner = 0, served = 0, blocked = 0;
+  uint32_t lastPhase = 0, lastStart = 0;
+  for (uint32_t tick = 0; tick < 20 * len; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) {
+      const auto phase = runtime.rolling.phase;
+      const bool owned = phase == LoopPlaybackRuntime::RollingPhase::Ready ||
+                         phase == LoopPlaybackRuntime::RollingPhase::Serving;
+      const bool wasPending = runtime.pendingViewRequest_.active;
+      (void)t.requestActiveCommittedPlaybackWindow(tick, nativePlaybackDeadlineClock);
+      if (owned && !wasPending && runtime.pendingViewRequest_.active) {
+        ++armedBesideOwner;
+        lastPhase = static_cast<uint32_t>(phase);
+        lastStart = runtime.pendingViewRequest_.coverage.startPhase;
+      }
+      lane.serviceTracks(tick);
+    }
+    t.playMidiEvents(tick, true);
+    blocked += runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Blocked;
+    PlaybackViewSourceIdentity src{};
+    PlaybackCoverageInterval cov{};
+    if (runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+        t.publishedPlaybackWindowForSlot(0, src, cov) && src.manifestIdentity != 0)
+      ++served;
+  }
+  char detail[200];
+  snprintf(detail, sizeof(detail), "armedBesideOwner=%u (last phase=%u start=%u) served=%u blocked=%u", armedBesideOwner,
+           lastPhase, lastStart, served, blocked);
+  printf("DEFER %s\n", detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, armedBesideOwner, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, blocked, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
+}
+
 // The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
 // the nominal span, sized evenly in 8-tick clock quanta, so no successor follows a shorter window into a longer one
 // (a local tail scheme always has that seam; device: the 1.5 -> 2-bar wrap missed under the 3-denial bound). Never
@@ -990,6 +1046,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
   RUN_TEST(test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame);
   RUN_TEST(test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded);
+  RUN_TEST(test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame);
   RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
