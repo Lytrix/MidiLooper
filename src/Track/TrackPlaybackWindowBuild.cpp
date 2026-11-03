@@ -283,6 +283,7 @@ TRACK_COLD_MEM void retainLiveRecordDemand(LoopPlaybackRuntime& runtime, const L
   if (serving && request.coverage.startPhase == 0)
     request.coverage.loopLengthTicks = std::max(request.coverage.loopLengthTicks, desired);
   request.loopLengthTicks = request.coverage.loopLengthTicks;
+  NOTE_PENDING_ARMED(&runtime, request.active, true, RetainLiveRecord, __LINE__);
   request.active = true;
   request.liveMaximumTick = loop.captureMaximumTick();
   request.source = {loop.playbackRevision, operation, nullptr,
@@ -3946,6 +3947,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
         : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
                         : PlaybackViewPendingReason::DeadlineExpired);
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -3973,6 +3975,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
                : PlaybackViewPendingReason::WindowExceedsRetainedCapacity);
     runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -3986,6 +3989,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
     runtime->retainedGatherRefusal = retainedRefusalForGatherResult(gathered.result);
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4047,6 +4051,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
                       ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
                       : PlaybackViewPendingReason::SourceNotCurrent));
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, RetainedGather, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4244,6 +4249,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
         : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
                         : PlaybackViewPendingReason::DeadlineExpired);
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4270,6 +4276,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4304,6 +4311,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Cancelled;
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
     if (!runtime->pendingViewRequest_.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, PagedPlayback, __LINE__);
       runtime->pendingViewRequest_ = request;
     }
     runtime->frozenViewRequest = {};
@@ -4407,6 +4415,7 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
     // was serving survives the release -- it is coalesced back into the record the lane reads, exactly as
     // `retireCoverageSource` coalesces a frozen root-backed request -- and only the gathered window is released.
     if (runtime->retainedGatherActive() && runtime->frozenViewRequest.active) {
+      NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, true, ViewTransition, __LINE__);
       if (!runtime->pendingViewRequest_.active) runtime->pendingViewRequest_ = runtime->frozenViewRequest;
       runtime->frozenViewRequest = {};
       runtime->discardRetainedGather();
@@ -4417,6 +4426,7 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
     // happened afterwards (`NoPages`) rather than resuming into pages that no longer exist.
     if (runtime->pagedActive) {
       if (runtime->frozenViewRequest.active && !runtime->pendingViewRequest_.active) {
+        NOTE_PENDING_ARMED(runtime, false, true, ViewTransition, __LINE__);
         runtime->pendingViewRequest_ = runtime->frozenViewRequest;
       }
       runtime->frozenViewRequest = {};
@@ -5458,6 +5468,7 @@ TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
   request.reason = PlaybackViewPendingReason::AwaitingSourceQualification;
   reportPlaybackLaunchGateRow(slotIndex, "launch_requested", sourceRequestNeeded, sourceRequested);
   runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow);
+  NOTE_PENDING_ARMED(runtime, runtime->pendingViewRequest_.active, request.active, LaunchPreparation, __LINE__);
   runtime->pendingViewRequest_ = request;
   runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Requested;
   return true;
@@ -5735,15 +5746,20 @@ bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadl
 
 /// A retained demand that a newer frame has superseded and whose only fault is its own position (owner ruling
 /// 2026-11-03; device captures/session_20261103_084810): the frame is Ready or Serving a window of its own, the demand
-/// is not that frame's (another deadline) nor its probe successor, and it was invalidated by its deadline passing. It is
-/// stale state, not an answer about the frame, so it is discharged instead of blocking the frame terminally.
+/// is not that frame's nor its probe successor, and it was invalidated by its deadline passing. It is stale state, not an
+/// answer about the frame, so it is discharged instead of blocking the frame terminally.
+/// "The frame's own" is the key the handoff already uses to release the frame's records (`matches` in the adoption
+/// path): generation, clock epoch, deadline and start -- never the deadline alone. A demand with that key but another
+/// source identity is released by the adoption that covers its interval (fixture: the same-deadline control).
 TRACK_COLD_MEM __attribute__((noinline)) bool supersededPositionalRequest(const LoopPlaybackRuntime& runtime,
                                                                           const PlaybackViewPendingRequest& request,
                                                                           PlaybackViewPendingReason invalidation) {
   const auto& frame = runtime.rolling;
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Ready &&
       frame.phase != LoopPlaybackRuntime::RollingPhase::Serving) return false;
-  if (!request.positionInvalidated || request.deadlineTick == frame.deadlineTick) return false;
+  const bool framesOwn = request.operationGeneration == frame.generation && request.clockEpoch == frame.epoch &&
+      request.deadlineTick == frame.deadlineTick && request.coverage.startPhase == frame.startPhase;
+  if (!request.positionInvalidated || framesOwn) return false;
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
   if (rollingSuccessorDemandIs(runtime, request.deadlineTick)) return false;  // its miss is named by the probe
 #endif
@@ -7140,6 +7156,29 @@ TRACK_COLD_MEM void Track::refreshRetainedDemandIdentityForSlot(uint8_t slotInde
       if (sLastOwnerSet[traceTrack][slotIndex] != set) {
         const uint8_t previousOwnerSet = sLastOwnerSet[traceTrack][slotIndex];
         sLastOwnerSet[traceTrack][slotIndex] = set;
+#if defined(SESSION_CAPTURE)
+        // pending_armed: the retained demand appeared since the last transition. writer, site (line, or the return
+        // address of `retainViewPendingRequest`), deadline, start, length, manifest identity, frame phase, frame
+        // deadline (low words), the demand's reason. Writer 255: the last mark was another runtime's.
+        if (previousOwnerSet != 0xFFu && (previousOwnerSet & 1u) == 0 && (set & 1u) != 0) {
+          const auto& mark = PendingRequestProvenance::gLast;
+          const auto& pending = runtime->pendingViewRequest_;
+          SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "pending_armed",
+                                     mark.runtime == runtime ? "named" : "unnamed",
+                                     mark.runtime == runtime ? mark.writer : 255u, mark.site,
+                                     static_cast<uint32_t>(pending.deadlineTick), pending.coverage.startPhase,
+                                     pending.coverage.lengthTicks,
+#if REVISION_MANIFEST_READER
+                                     pending.source.manifestIdentity,
+#else
+                                     0u,
+#endif
+                                     static_cast<uint32_t>(runtime->rolling.phase),
+                                     static_cast<uint32_t>(runtime->rolling.deadlineTick),
+                                     static_cast<uint8_t>(pending.reason), 0u);
+          PendingRequestProvenance::gLast = {};
+        }
+#endif
         const bool ownerless = jobPending && (set & 0x7u) == 0;
         SC_FROZEN_WINDOW_READINESS(traceTrack, slotIndex, "owner_trace", "transition", loopForSlot(slotIndex).playbackRevision,
                                    0u, playbackGeneration, 0u, set, 0u,

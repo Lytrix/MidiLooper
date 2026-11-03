@@ -599,6 +599,27 @@ struct PlaybackViewPendingRequest {
   }
 };
 
+#if defined(SESSION_CAPTURE)
+/// C5.3b measurement (owner ruling 2026-11-03): who arms `pendingViewRequest_`. Each writer records itself only on the
+/// inactive -> active edge; the owner-set trace (`refreshRetainedDemandIdentityForSlot`) names it in a `pending_armed`
+/// row when the pending bit appears. Capture images only; nothing reads it for a decision.
+namespace PendingRequestProvenance {
+enum Writer : uint8_t {
+  None = 0, RetainLiveRecord = 1, RetainRequest = 2, CoverageRetireCoalesce = 3, RetainedGather = 4,
+  PagedPlayback = 5, ViewTransition = 6, LaunchPreparation = 7
+};
+struct Mark { const void* runtime; uint32_t site; uint8_t writer; };
+extern Mark gLast;
+inline void noteArmed(const void* runtime, bool wasActive, bool nowActive, uint8_t writer, uint32_t site) {
+  if (!wasActive && nowActive) gLast = {runtime, site, writer};
+}
+}  // namespace PendingRequestProvenance
+#define NOTE_PENDING_ARMED(runtime, wasActive, nowActive, writer, site) \
+  PendingRequestProvenance::noteArmed((runtime), (wasActive), (nowActive), PendingRequestProvenance::writer, (site))
+#else
+#define NOTE_PENDING_ARMED(runtime, wasActive, nowActive, writer, site) ((void)0)
+#endif
+
 struct LoopPlaybackRuntime {
   // The external-first slot allocator is FLASH-resident. Keep the defaulted
   // constructor's value-initialization and fold its one-time body into that

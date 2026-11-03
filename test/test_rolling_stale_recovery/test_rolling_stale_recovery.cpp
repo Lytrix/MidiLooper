@@ -624,7 +624,7 @@ void test_5_1_an_expired_routed_demand_is_discharged_after_a_restart() {
 // passed it was judged `DeadlineExpired`, and the producer blocked the frame terminally (`win_blocked_by_request`
 // rq=10): the routed slot never served. The fixture reaches a real Ready frame, reinstates an older positioned demand
 // (captured from this frame's own Requested phase) whose deadline lies before the frame's, and drives past it.
-void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() {
+void expiredSupersededRequestCase(bool sameDeadlineOtherSource) {
   installReader();
   Track& t = trackManager.getTrack(0);
   Loop& loop = recordTake(t, 4, 32);
@@ -662,7 +662,10 @@ void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() {
   TEST_ASSERT_TRUE_MESSAGE(older.active && older.clockEpoch == 1, "precondition: a positioned committed demand copy");
   // 2. The device's state: an older demand still pending beside the Ready frame, due before the frame's handoff.
   const uint64_t frameDeadline = runtime.rolling.deadlineTick;
-  older.deadlineTick = tick + 16;
+  // Negative control: the stale demand shares the frame's deadline but names another source revision, so the
+  // deadline alone cannot tell it from the frame's own demand.
+  older.deadlineTick = sameDeadlineOtherSource ? frameDeadline : tick + 16;
+  if (sameDeadlineOtherSource) older.source.playbackRevision += 1;
   older.work.deadlineTick = older.deadlineTick;
   older.work.admittedTick = tick;
   older.positionInvalidated = false;
@@ -691,10 +694,16 @@ void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() {
   snprintf(detail, sizeof(detail), "blocked=%u blockedBy=%u firstExit=%s served=%u phase=%u pend=%d/%u", blocked,
            unsigned(blockedBy), firstBlockExit ? firstBlockExit : "-", served, unsigned(runtime.rolling.phase),
            runtime.pendingViewRequest_.active, unsigned(runtime.pendingViewRequest_.reason));
-  printf("SUPERSEDED %s\n", detail);
+  printf("SUPERSEDED[%s] %s\n", sameDeadlineOtherSource ? "same-deadline" : "earlier", detail);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, blocked, detail);
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, served, detail);
 }
+
+void test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame() { expiredSupersededRequestCase(false); }
+
+// The same, with the stale demand at the frame's own deadline but another source identity (owner: a deadline is a
+// scheduling property, not demand provenance).
+void test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded() { expiredSupersededRequestCase(true); }
 
 // The equal partition (DEC-246 amendment 27, owner ruling): an odd-bar loop's rolling windows are the fewest that fit
 // the nominal span, sized evenly in 8-tick clock quanta, so no successor follows a shorter window into a longer one
@@ -980,6 +989,7 @@ int main(int, char**) {
   RUN_TEST(test_5_1_the_routed_lane_serves_on_external_clock_pulses);
   RUN_TEST(test_5_1_an_expired_routed_demand_is_discharged_after_a_restart);
   RUN_TEST(test_5_1_an_expired_superseded_request_cannot_block_a_ready_frame);
+  RUN_TEST(test_5_1_a_stale_request_at_the_frame_s_deadline_is_still_superseded);
   RUN_TEST(test_5_1_the_equal_partition_tiles_odd_loops_evenly_on_the_clock_grid);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_3_bar_loop_in_two_balanced_windows);
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);

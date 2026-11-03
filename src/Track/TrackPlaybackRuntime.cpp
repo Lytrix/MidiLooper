@@ -15,6 +15,14 @@
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+
+#if defined(SESSION_CAPTURE)
+#if defined(__IMXRT1062__)
+DMAMEM PendingRequestProvenance::Mark PendingRequestProvenance::gLast;
+#else
+PendingRequestProvenance::Mark PendingRequestProvenance::gLast;
+#endif
+#endif
 #include "Utils/IntervalProjection.h"
 #include "Utils/RuntimeProfiler.h"
 
@@ -2537,6 +2545,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::retireCoverageSource()
   // Cancellation must not erase a newer request. Coalesce the frozen obligation
   // behind it using the existing retention rule (oldest compatible position).
   if (frozenViewRequest.active) {
+    NOTE_PENDING_ARMED(this, pendingViewRequest_.active, true, CoverageRetireCoalesce, __LINE__);
     if (!pendingViewRequest_.active) pendingViewRequest_ = frozenViewRequest;
     else if (pendingViewRequest_.operationGeneration == frozenViewRequest.operationGeneration &&
              pendingViewRequest_.clockEpoch == frozenViewRequest.clockEpoch &&
@@ -3229,6 +3238,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::retainViewPendingReque
   // while the **position** (deadline, epoch, geometry, origin phase and origin stamp) is the retained promise, kept as
   // ONE coherent set: pairing a deadline from one attempt with an origin stamp from another would describe a traversal
   // that never existed. `work` therefore carries the newest attempt's cost with the retained position's stamps.
+  NOTE_PENDING_ARMED(this, retained.active, true, RetainRequest,
+                     static_cast<uint32_t>(reinterpret_cast<uintptr_t>(__builtin_return_address(0))));
   pendingViewRequest_ = PlaybackViewPendingRequest{};
   pendingViewRequest_.active = true;
   pendingViewRequest_.positionInvalidated = keptInvalidation;
