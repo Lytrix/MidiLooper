@@ -299,3 +299,36 @@ existing `RuntimePlaybackViewLifecycle` transitions only:
 
 All three are inside the existing successor requester (`PLAYBACK_ROLLING_SUCCESSOR_PROBE`), keyed by the same
 absolute deadlines the cancel and missed paths already use. No new lifecycle, view or worker, and no admission change.
+
+## 12. Two-span requester: essential RED and an ownership conflict (owner ruling 2026-11-03)
+
+**RED.** `test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready` (`test_revision_manifest_lane`, `TWO_SPAN_RED`).
+It uses controlled eligibility (the probe image's successor knobs, DEC-147 price waived) and asserts:
+- at some tick, three stages coexist: `current` = the serving window, `ready` = its depth-1 successor (complete),
+  `build` = the depth-2 successor (building or complete);
+- no window is demanded twice (`duplicateStarts == 0`);
+- traversals 2-5 play every take note exactly once.
+
+It fails today: "N+1 was never prepared while N waited in ready".
+
+**Two layers refuse the depth-2 obligation.** Only the first is inside the slice's confinement.
+
+| layer | where | refusal |
+|---|---|---|
+| successor requester (in scope) | `TrackPlaybackWindowBuild.cpp`, probe requester | opens a demand only with `successorState == 0`, and refuses on gate bit 16: `ready` holds a complete view |
+| build admission role policy (**out of scope**) | `LoopPlaybackRuntime::coverageRoleRefusal` (`TrackPlaybackRuntime.cpp`) | returns `ReadyRoleOccupied` whenever `ready` holds a complete view. The single exception is `keepCaptureReady`: an unpublished **Capture** ready view with a build view distinct from ready, current and retained |
+
+- The lifecycle allows the three-stage state (slice 2). The **build-admission role policy** forbids starting a build
+  while `ready` is complete.
+- Every build start passes `coverageRoleAvailable`: the requester gate (bit 4), `beginCoverageQualification`, and the
+  admission path. So the three requester-local changes cannot turn this RED green by themselves.
+- **The smallest additional change:** a second, named exception in `coverageRoleRefusal`, mirroring `keepCaptureReady`
+  for a committed depth-1 successor. Conditions: an unpublished Committed `ready` window whose coverage equals the
+  serving frame's depth-1 key, with a build view distinct from ready, current and retained.
+- That is a policy change of the role owner, not a new role, view or lifecycle. It is outside the approved confinement,
+  so it needs an owner ruling before implementation.
+
+**The remaining cases** (mid-build preservation, retained blocking, stale-revision non-preservation, exactly-once per
+handoff) can only be non-vacuous once a depth-2 obligation can exist. They are specified here and written with the
+change. A valid retained view already blocks the build structurally: slice 2's
+`test_two_span_never_steals_a_legitimately_retained_view`.

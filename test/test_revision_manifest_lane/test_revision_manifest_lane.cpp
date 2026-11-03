@@ -584,6 +584,52 @@ void test_c5_3_a_valid_retained_record_bar_stays_protected() {
   TEST_ASSERT_TRUE(t.isRecording());
 }
 
+// Two-span requester, essential RED (owner ruling 2026-11-03; controlled eligibility: the probe image's successor
+// knobs, DEC-147 price waived). While N-1 serves and N waits complete in `ready`, N+1 must be prepared in `build`
+// (the depth-2 obligation): at some tick all three stages coexist -- current = the serving window, ready = its
+// depth-1 successor, build = the depth-2 successor (building or complete). Each window is demanded exactly once (no
+// second demand for the same deadline), and the steady traversals play every take note exactly once. RED today: the
+// requester opens a successor only while `ready` is empty, and `coverageRoleRefusal` refuses any build while `ready`
+// holds a complete view (`ReadyRoleOccupied`).
+void test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  constexpr uint32_t kSpanTicks = 2 * kBar;
+  bool threeStages = false;
+  PlaybackObservation obs;
+  play(t, 0, 6 * kLength, obs, 1, [&](uint32_t) {
+    const auto& frame = runtime.rolling;
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || frame.phase != LoopPlaybackRuntime::RollingPhase::Serving || frame.loopLength == 0) return;
+    const auto& lc = set->lifecycle;
+    if (lc.ready >= set->views.size() || lc.build >= set->views.size()) return;
+    const auto& ready = set->views[lc.ready];
+    const auto& build = set->views[lc.build];
+    const uint32_t depth1 = (frame.startPhase + kSpanTicks) % frame.loopLength;
+    const uint32_t depth2 = (frame.startPhase + 2 * kSpanTicks) % frame.loopLength;
+    if (ready.complete && ready.coverage.startPhase == depth1 && build.coverage.lengthTicks == kSpanTicks &&
+        build.coverage.startPhase == depth2 && (build.complete || runtime.viewBuild.active()))
+      threeStages = true;
+  });
+  const uint32_t requested = RollingSuccessorProbe::gCounters.requested;
+  const uint32_t duplicates = RollingSuccessorProbe::gCounters.duplicateStarts;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(threeStages, "N+1 was never prepared while N waited in ready (no depth-2 obligation)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, duplicates, "a window was demanded twice");
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, requested);
+  assertEveryTakeNotePlayed(obs, 2, 6);
+  for (uint32_t pass = 2; pass < 6; ++pass) {  // exactly once
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+}
+
 // Steady-state continuity under production DEC-147 pricing (owner ruling 2026-11-03): once a routed chain is serving,
 // every traversal plays every take note -- the successor must be requested, admitted and complete before the serving
 // window expires. Traversals 0-1 are the chain's cold start (their own RED) and are excluded. RED today: with the price
@@ -650,7 +696,8 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
   RUN_TEST(test_c5_3_completion_placement_never_claims_a_consumed_boundary);
   RUN_TEST(test_c5_3_a_valid_retained_record_bar_stays_protected);
-  if (getenv("ORPHAN_RETAINED_RED") != nullptr) RUN_TEST(test_c5_3_orphaned_retained_role_is_released);
+  RUN_TEST(test_c5_3_orphaned_retained_role_is_released);
+  if (getenv("TWO_SPAN_RED") != nullptr) RUN_TEST(test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
     RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
   if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);
