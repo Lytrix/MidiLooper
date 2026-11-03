@@ -171,3 +171,35 @@ fix its shape:
 
 **Confidence.** High on the cause: the lifetime and the price are measured on host and device. Medium on the exact
 owner for post-job onward windows. That is the one design choice for the owner.
+
+## 9. Owner ruling: the rolling frame owns the onward windows (2026-11-03), and what it can adopt
+
+REDs (`test_revision_manifest_lane`, with `ROUTED_AUDIBILITY_RED=1`; both run with the probe image's successor knobs,
+so only cold starts can be silent):
+- `test_c5_3_cold_start_transport_start_plays_the_first_traversal`: traversal 0 silent.
+- `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop`: traversal 3 silent.
+
+What exists to adopt at the Overdub stop (host, the slot's `lifecycle.current` every 16 ticks from the stop):
+- Before and after the stop, the current view is a **committed window at the pre-stop revision** (rev 1; the loop
+  moves to rev 2 at the stop), covering bars 2-3 (`1536+1536`), carrying a root identity.
+- It does **not** cover the playhead (phase 0), and it is stale for the new revision.
+- During the overdub the routed slot was served by the **merged overdub route**, not by a manifest chain. No warm
+  committed window covers the playhead at the stop.
+- The return view that was servable at the stop belongs to the stop job's presentation and retires with the job one
+  grain later.
+
+Consequences:
+- **Transport start: implementable within the rulings.** While STOPPED no deadline applies, so a launch window bound
+  for the routed active slot meets its price trivially, and the Task 3.7e seed adopts it at the first tick. This is
+  the same mechanism a committed switch target uses.
+- **Overdub stop: frame ownership alone cannot close it.** There is no built window to adopt. Building one at the stop
+  has zero lead under DEC-147, and continuing the merged overdub route past the stop would be the excluded merged
+  fallback. Closing it needs one of these (owner decision):
+  - (a) **A warm chain through the overdub:** the routed frame keeps serving committed (manifest) windows during the
+    overdub, so the stop is a revision move inside a running chain and its successor is requested at the new
+    revision. The largest option: overdub serving on the manifest lane.
+  - (b) **Prepare at the stop edge from the session's own sealed source:** the overdub stop job's presentation binds
+    a return window over committed passes plus the sealed capture before the stop's revision moves, as S4f.19 does for
+    a Record stop's bar 1. The frame then adopts it and owns its onward windows. This keeps the session's immutable
+    source as the predecessor, which is the ruling's intent.
+  - (c) Amend DEC-147 for a chain's first window. Excluded by the ruling.
