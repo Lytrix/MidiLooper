@@ -14333,3 +14333,39 @@ not be queued therefore stalled for the rest of the session (RED 6, `822c0cee`).
   publication cut, or a measured throughput bound, is the open owner decision.
 - **Remaining wrap Clock:** held-NoteOn extraction (98 ms with one held note), the C3.4 forced deadline, and the
   layout-sensitive probe boot hang.
+
+### Amendment 1 (2026-11-03): independent review of `c370357e`
+
+1. **Session undo/redo against the record cursor (high, fixed).**
+   - **Defect.** `undoOverdubSession` / `redoOverdubSession` flip a record's pass and companions without the box. The
+     box's index-only cursor, its candidate or the root could then describe the other state. After a later wrap
+     reused the index, the stamp could store a root as current that lacked the new pass or still carried the undone
+     one.
+   - **Fix.** `onOverdubSessionRecordCursorMoved` requests the inventory rebuild whenever the root is not current.
+     That is the global undo edge's answer (`requestPlaybackSourceCurrency`), unless a real session exit owns the
+     publication.
+   - The rebuild is marked `sessionRecordRebuild` and counted as owed wrap publication. Mid-overdub construction
+     admission (`allowSnapshotConstructionStart`) otherwise defers exit-shaped work to the stop, which would strand
+     the wrap's own retraction for the session.
+   - **Host:** `test_wrap_guard_session_undo_never_publishes_a_wrong_current_root`. RED: A's note missing, then
+     non-convergence. Now GREEN: no wrong current root on any turn, C published, B retracted, converged in session.
+2. **Re-production after a box clear (medium, fixed).**
+   - **Fix.** `Loop::overdubSessionPublishedRecords_` (a `uint16_t` in existing padding; `sizeof(Loop)` unchanged)
+     names the session records a published root contains. It advances at the wrap publication, and at an
+     exit-shaped publication to the records that box enumerated (`enumeratedSessionRecords`). It drops on undo and
+     resets at session open/close. The producer and the caught-up check resume after it.
+   - The legacy per-pass "untracked by this box" pending test in `hasPendingSnapshotPublish` is superseded by
+     `hasWrapPublicationOwed`. After a clear, that test woke the owner forever for passes the root carried.
+3. **Ordering on the inventory hand-over (medium, accepted, not a defect).**
+   - The hand-over and the session exit apply all handed-over passes before all companions.
+   - That differs from per-record interleaving only if a later pass carries a NoteId that an earlier companion
+     targets. GUARD 8 pins that no wrap pass does, so the result is the same.
+   - The per-record order is kept wherever the record exists.
+4. **A fragment in flight across a receipt swap (low, fixed).** A companion fragment records the IDs it translates
+   when it starts, against a committed watermark (`appliedCompanionCommitted`); a failure truncates them. The finish
+   no longer re-reads a list that the receipt may have swapped out.
+5. **Gate and hand-over cost (low, accepted).**
+   - `sessionRecordsCaughtUp` scans from the cursor to the depth: O(1) in steady state, bounded by the session's
+     wrap count after a clear.
+   - The applied-ID and hand-over scans grow with the session's companion rows, never with note content.
+   - Recorded as a bound to revisit if a session's wrap count is ever large.

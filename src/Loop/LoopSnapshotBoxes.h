@@ -159,6 +159,15 @@ struct PendingSnapshotPublishBox {
   bool applyingSessionCompanions = false;
   /// Companions incorporated from the session record, so an exit or inventory hand-over never applies one twice.
   EditPassIdList appliedCompanionIds;
+  /// `appliedCompanionIds` up to here is incorporated; entries after it belong to the fragment in construction and
+  /// are dropped if that fragment fails (recorded when the fragment starts, never re-read from a list at finish).
+  size_t appliedCompanionCommitted = 0;
+  /// The session records (from 0) this box enumerated wholesale (session exit or inventory rebuild); its publication
+  /// contains them, so the loop's published-record marker advances to it.
+  size_t enumeratedSessionRecords = 0;
+  /// This rebuild retracts a session undo/redo (`onOverdubSessionRecordCursorMoved`): it is the wrap's own publication
+  /// work, so it is admitted mid-overdub like the wrap producer, while other exit-shaped work waits for the stop.
+  bool sessionRecordRebuild = false;
   /// The session record was handed to the inventory lists (`queuedPassIds`, `companionIds`) at a session close that
   /// queued no session exit; their companions are owed without `sessionExitQueued`.
   bool inventoryCompanionsOwed = false;
@@ -203,6 +212,7 @@ struct PendingSnapshotPublishBox {
         journaledPassIds.empty() && queuedWrapJournals.empty() && !sessionRecord && !sessionRecordPassDone &&
         !sessionRecordCompanionNext && !companionNext && !companionFragmentEnd && !applyingSessionCompanions &&
         appliedCompanionIds.empty() && !inventoryCompanionsOwed && !wrapTargetRevision && !wrapTargetRecords &&
+        !appliedCompanionCommitted && !enumeratedSessionRecords && !sessionRecordRebuild &&
         passChangeProgress.freshForInventoryAdoption() && fragmentProgress.freshForInventoryAdoption() &&
         !fragmentProgressValid && !consecutiveFragmentFailures && !fragmentBlocked &&
         !fragmentBlockTransient && !fragmentParkSawDenial &&

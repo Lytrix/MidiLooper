@@ -1030,6 +1030,7 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
     if (ok && hasOverdubSourceView()) {
       rebuildOverdubSourceView(playheadPhaseTick, "undo");
     }
+    onOverdubSessionRecordCursorMoved();
     return ok;
   }
   if (capture.phase == CapturePhase::Overdub && !capture.store.empty()) {
@@ -1061,6 +1062,7 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
       if (hasOverdubSourceView()) {
         rebuildOverdubSourceView(playheadPhaseTick, "redo");
       }
+      onOverdubSessionRecordCursorMoved();
     }
     return ok;
   }

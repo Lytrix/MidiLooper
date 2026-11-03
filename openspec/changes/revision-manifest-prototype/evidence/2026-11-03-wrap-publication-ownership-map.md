@@ -247,3 +247,15 @@ Two defects found while turning it green, both fixed:
 
 Retirement-grain pins were kept by folding the new list's release into an existing phase. Device numbers are in
 DEC-248.
+
+## Review of `c370357e` (2026-11-03)
+
+Five findings. Three are fixed, and two are accepted with reasons. See DEC-248 amendment 1.
+
+- **Fixed.** Session undo/redo now retracts through an admitted inventory rebuild. The producer resumes after the
+  records a root contains (`overdubSessionPublishedRecords_`). Companion fragment IDs are committed at start, against
+  a watermark.
+- **Accepted.**
+  - Pass-before-companion order on the hand-over is equivalent under NoteId freshness (GUARD 8).
+  - Gate cost grows with the session's wrap count, not with note content.
+- **New host case:** `test_wrap_guard_session_undo_never_publishes_a_wrong_current_root`.

@@ -395,6 +395,36 @@ void test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns() {
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 }
 
+/// Review finding 1 (2026-11-03) -- session undo against the record cursor. Wrap A and B, publish partially, undo B
+/// (its pass and companions disabled), record C and wrap: C takes B's record index. Whatever publishes must never be
+/// a root marked current that lacks C or still carries B, and publication must converge.
+void test_wrap_guard_session_undo_never_publishes_a_wrong_current_root() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(wrap(track));
+  inputNote(70, 768 + 500, 768 + 600);  // B
+  clockManager.assignCurrentTickSilently(768 + 767);
+  TEST_ASSERT_TRUE(track.commitOverdubWrap());
+  for (unsigned turn = 0; turn < 3; ++turn) TrackCaptureStopTestAccess::snapshotOwnerTurn(track);  // partial
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());  // B disabled
+  inputNote(72, 2 * 768 + 200, 2 * 768 + 260);  // C
+  clockManager.assignCurrentTickSilently(2 * 768 + 767);
+  TEST_ASSERT_TRUE(track.commitOverdubWrap());  // C takes B's record index
+  bool wrongCurrent = false;
+  const Drain d = drainWithSessionRunning(track, [&wrongCurrent](Loop& l) {
+    if (!l.publishedSnapshotIsCurrent()) return;
+    const RootNotes notes = rootNotes(l);
+    if (findPitchStart(notes, 72, 200) == nullptr || findPitchStart(notes, 70, 500) != nullptr) wrongCurrent = true;
+  });
+  TEST_ASSERT_FALSE_MESSAGE(wrongCurrent, "a current root lacked C or still carried undone B");
+  TEST_ASSERT_TRUE_MESSAGE(d.converged, "publication must converge after a session undo");
+  const RootNotes notes = rootNotes(loop);
+  TEST_ASSERT_NOT_NULL_MESSAGE(findPitchStart(notes, 72, 200), "C must publish");
+  TEST_ASSERT_NULL_MESSAGE(findPitchStart(notes, 70, 500), "undone B must not be in the root");
+  TEST_ASSERT_NOT_NULL(findPitchStart(notes, 60, 100));
+}
+
 void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_red_clock_translates_no_snapshot_change);
   RUN_TEST(test_wrap_guard_deferred_interval_ignores_successor_mutation);
@@ -406,5 +436,6 @@ void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_guard_wrap_pass_note_ids_are_fresh_against_the_parent);
   RUN_TEST(test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once);
   RUN_TEST(test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns);
+  RUN_TEST(test_wrap_guard_session_undo_never_publishes_a_wrong_current_root);
 }
 

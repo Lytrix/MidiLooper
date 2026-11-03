@@ -1511,6 +1511,10 @@ struct Loop {
   void stampWrapPublicationObligation();
   /// Before a session record is cleared without a session exit: move what is not yet incorporated to the inventory.
   void handOverSessionRecordToInventory();
+  /// Session records (from 0) a published root contains; the wrap producer never re-produces them.
+  size_t overdubSessionPublishedRecords() const { return overdubSessionPublishedRecords_; }
+  /// Session undo/redo moved the record cursor: retract by an inventory rebuild when the root is not current.
+  void onOverdubSessionRecordCursorMoved();
   size_t pendingSnapshotQueuedPassCount() const;
   size_t pendingSnapshotAppliedPassCount() const;
   PassId pendingSnapshotConstructionPassId() const;
@@ -2187,6 +2191,10 @@ struct Loop {
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;
   bool overdubSourceViewEstablished_ = false;
   bool fallbackGatherSessionActive_ = false;
+  /// DEC-248 review: the overdub session records (from 0) a published root already contains. The wrap producer resumes
+  /// after them on a fresh box, so a box cleared mid-session never re-applies a record. Fits the padding before the
+  /// next word, so the pinned `sizeof(Loop)` is unchanged.
+  uint16_t overdubSessionPublishedRecords_ = 0;
   uint32_t fallbackGatherSessionWindowStart_ = 0;
   uint32_t fallbackGatherSessionWindowLength_ = 0;
   uint32_t fallbackGatherSessionPlaybackRevision_ = 0;
