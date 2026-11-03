@@ -564,3 +564,30 @@ Owner questions, answered from the code:
     - `appendWrapNonNoteEvents`, which reads the pass and checks each non-note event against its bar membership;
     - the fragment flush.
   - Next measurement: split the journal into those three.
+
+## Wrap journal attribution, one pass (owner ruling 2026-11-03)
+
+Probe `672833cf` (`3df2ca34` plus the journal split), `captures/session_20261103_193923.log` (OBSERVED, `crash=0`).
+
+| journal part | exclusive µs | counts |
+|---|---|---|
+| rows (`appendPendingNoteChange` + paired events + caps + inserts) | **~607,930** (608,050 incl. ≤120 in-loop flush) | 439 rows → 439 note changes, 878 paired event changes |
+| `appendWrapNonNoteEvents` | 17,323 | 1,318 pass events visited once, 440 checked, 8,768 bar-membership refs, 440 added |
+| fragment flush (all) | 121 | 45 fragments |
+| box queueing | 105 | 45 fragments moved |
+| rest of the step (parent pick, recount, emit) | ~5,100 | — |
+| **journal step** | **630,658** | |
+
+Wrap total 764,929 µs, inside a Clock of 841,138 µs. Held NoteOns were 97,891 µs, with 1 held note. That is up from
+13-16 ms with 0 held notes and is not studied here.
+
+- **Flush and queueing are not the cost.** 45 fragments cost 0.23 ms together. A fixed or repeated flush is ruled out.
+- **There is no repeated full-pass traversal.** The pass is visited once (1,318 events), for 17 ms.
+- **96% is the per-row change-set construction.** That is about 1.38 ms per row, and no lookup is left on the Add
+  path.
+  - Each row allocates a fresh `LoopSnapshotChangeSet` with 1 note and 2 events, then appends it into the fragment.
+    These vectors use `ExternalMemoryFirstAllocator` (PSRAM first).
+  - So the per-row cost is a handful of PSRAM allocations and copies of `shared_ptr`-bearing changes.
+  - That the allocator dominates is a hypothesis: this pass does not split allocation from copying.
+- **Classification (owner table).** This is necessary snapshot-construction work, not provably unused. It goes behind
+  bounded publication ownership; there is no further journal optimisation.

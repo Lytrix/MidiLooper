@@ -7,6 +7,7 @@
 #include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/LaneGapSpans.h"
 #include "Utils/NoteUtils.h"
 
 #include <algorithm>
@@ -285,6 +286,7 @@ bool eventAlreadyInSnapshot(const LoopSnapshot& snapshot, const MidiEvent& event
   bool found = false;
   forEachSnapshotMembershipReference(
       membership.get(), [&found, &event](const LoopSnapshotEventRef& ref) {
+        LANE_WRAP_COUNT(WrapNonNoteMembershipRefs, 1);
         if (!found && ref && midiEventMatchesSnapshot(ref->value, event)) {
           found = true;
         }
@@ -559,10 +561,16 @@ void appendWrapNonNoteEvents(const Loop& loop, const LoopSnapshot& parent, PassI
   }
   MidiEventVec events;
   LoopEventStore::appendChunkRefEvents(*chunks, events);
+  LANE_WRAP_COUNT(WrapNonNotePassEvents, static_cast<uint32_t>(events.size()));
   for (const MidiEvent& event : events) {
-    if (event.isNoteOn() || event.isNoteOff() || eventAlreadyInSnapshot(parent, event)) {
+    if (event.isNoteOn() || event.isNoteOff()) {
       continue;
     }
+    LANE_WRAP_COUNT(WrapNonNoteChecked, 1);
+    if (eventAlreadyInSnapshot(parent, event)) {
+      continue;
+    }
+    LANE_WRAP_COUNT(WrapNonNoteAdded, 1);
     SnapshotEventChange change{};
     change.kind = SnapshotChangeKind::Add;
     change.next.loopId = loop.loopId;
@@ -1395,12 +1403,20 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
   std::vector<SnapshotWrapJournalFragment> fragments;
 
   auto flushCurrent = [&]() {
+    LANE_WRAP_PHASE(WrapJournalFlush);
+    if (!current.notes.empty() || !current.events.empty()) {
+      LANE_WRAP_COUNT(WrapJournalFragments, 1);
+      LANE_WRAP_COUNT(WrapJournalNoteChanges, static_cast<uint32_t>(current.notes.size()));
+      LANE_WRAP_COUNT(WrapJournalEventChanges, static_cast<uint32_t>(current.events.size()));
+    }
     flushWrapJournalFragment(fragments, parent, wrapPassId, current);
     affectedBars = 0;
     membershipEntries = 0;
   };
 
   for (const PendingNoteChange& change : pendingNoteChanges_) {
+    LANE_WRAP_PHASE(WrapJournalRows);
+    LANE_WRAP_COUNT(WrapJournalRowsSeen, 1);
     LoopSnapshotChangeSet incoming;
     appendPendingNoteChange(*parent, change, loopId, loopLengthTicks, nextEventId,
                             nextCanonicalOrder, incoming);
@@ -1431,7 +1447,10 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
   }
 
   LoopSnapshotChangeSet nonNote;
-  appendWrapNonNoteEvents(*this, *parent, wrapPassId, nextEventId, nextCanonicalOrder, nonNote);
+  {
+    LANE_WRAP_PHASE(WrapJournalNonNote);
+    appendWrapNonNoteEvents(*this, *parent, wrapPassId, nextEventId, nextCanonicalOrder, nonNote);
+  }
   if (!nonNote.events.empty()) {
     if (!current.notes.empty() || !current.events.empty()) {
       if (journalWouldExceedCaps(current, affectedBars, 0, journalChangeCount(nonNote))) {
@@ -1445,6 +1464,7 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
   if (fragments.empty()) {
     return false;
   }
+  LANE_WRAP_PHASE(WrapJournalQueue);
   for (size_t index = 0; index < fragments.size(); ++index) {
     fragments[index].fragmentIndex = static_cast<uint8_t>(index);
     fragments[index].fragmentCount = static_cast<uint8_t>(fragments.size());

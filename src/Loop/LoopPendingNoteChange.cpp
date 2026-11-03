@@ -1738,9 +1738,11 @@ FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
                     (unsigned long)e.phaseTick, (unsigned long)e.clockTick, unsigned(e.occupancy));
   }
   // Wrap breakdown, phases: held_ons/commit_pass/journal_recount/seal/[private_holds/deadline_set/deadline_overflow/
-  // source_view_apply inside seal]/session_bookkeeping/begin_capture/resume_canonical/carry_open_notes; counts:
+  // source_view_apply inside seal]/session_bookkeeping/begin_capture/resume_canonical/carry_open_notes/
+  // [journal_rows(incl. in-loop flush)/journal_non_note/journal_flush/journal_queue inside journal_recount]; counts:
   // capture_events/held_ons/set_entering/overflow_entering/deadline_evaluated/deadline_derives/sealed_add/
-  // sealed_shorten/sealed_hide.
+  // sealed_shorten/sealed_hide/journal_rows/journal_note_changes/journal_event_changes/journal_fragments/
+  // non_note_pass_events/non_note_checked/non_note_membership_refs/non_note_added.
   for (const auto& w : sWrapWorst) {
     if (w.totalUs == 0) continue;
     Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,wrap,tick=%lu,total_us=%lu,phases="), (unsigned long)micros(),

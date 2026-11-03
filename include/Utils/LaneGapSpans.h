@@ -104,10 +104,15 @@ void noteCommitCaller(uintptr_t caller);
 /// so worker discharges elsewhere do not add to it. Defined in LoopPendingNoteChange.cpp and dumped with it.
 enum WrapPhase : uint8_t { WrapHeldOns = 0, WrapCommitPass, WrapJournalRecount, WrapSeal, WrapPrivateHolds,
                            WrapDeadlineSet, WrapDeadlineOverflow, WrapSourceViewApply, WrapSessionBookkeeping,
-                           WrapBeginCapture, WrapResumeCanonical, WrapCarryOpenNotes, WrapPhaseCount };
+                           WrapBeginCapture, WrapResumeCanonical, WrapCarryOpenNotes,
+                           // Inside the snapshot journal (owner ruling 2026-11-03, one attribution pass). Rows includes
+                           // the in-loop flushes; Flush is every fragment flush; Queue is the box hand-off.
+                           WrapJournalRows, WrapJournalNonNote, WrapJournalFlush, WrapJournalQueue, WrapPhaseCount };
 enum WrapCount : uint8_t { WrapCaptureEvents = 0, WrapHeldOnCount, WrapSetEntering, WrapOverflowEntering,
                            WrapDeadlineEvaluated, WrapDeadlineDerives, WrapSealedAdd, WrapSealedShorten,
-                           WrapSealedHide, WrapCountCount };
+                           WrapSealedHide, WrapJournalRowsSeen, WrapJournalNoteChanges,
+                           WrapJournalEventChanges, WrapJournalFragments, WrapNonNotePassEvents, WrapNonNoteChecked,
+                           WrapNonNoteMembershipRefs, WrapNonNoteAdded, WrapCountCount };
 void beginWrapBreakdown();
 void endWrapBreakdown();
 bool wrapBreakdownActive();
