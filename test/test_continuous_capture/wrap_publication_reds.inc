@@ -80,6 +80,30 @@ Drain drainWithSessionRunning(Track& track) {
   return drainWithSessionRunning(track, [](Loop&) {});
 }
 
+/// Root MIDI events: per NoteId (NoteOn, NoteOff) counts, and the non-note events.
+struct RootEvents {
+  std::map<NoteId, std::pair<unsigned, unsigned>> notes;
+  std::vector<MidiEvent> nonNote;
+};
+RootEvents rootEvents(const Loop& loop) {
+  RootEvents out;
+  const ImmutableLoopSnapshotRef root = loop.publishedSnapshot();
+  if (!root) return out;
+  const uint32_t bars = (root->loopLengthTicks() + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    const auto membership = root->eventMembership(bar);
+    if (!membership) continue;
+    forEachSnapshotMembershipReference(membership.get(), [&out](const LoopSnapshotEventRef& ref) {
+      if (!ref) return;
+      const MidiEvent& e = ref->value;
+      if (e.isNoteOn()) ++out.notes[e.noteId].first;
+      else if (e.isNoteOff()) ++out.notes[e.noteId].second;
+      else out.nonNote.push_back(e);
+    });
+  }
+  return out;
+}
+
 /// The interval every case starts from: a published root holding the source note (48 at 0-48), an overdub opened
 /// at tick 0, a same-pitch overdub that shortens the source (a sealed Shorten companion at the wrap), and two
 /// fresh Adds.
@@ -247,6 +271,105 @@ void test_wrap_red_lost_obligation_is_rediscovered_with_its_companions_in_sessio
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countPitch(notes, 60), "no change may be applied twice");
 }
 
+
+/// GUARD 7 -- Hide and non-note parity. An overdub that covers the source note seals a Hide (Delete companion); a
+/// controller recorded in the interval is part of its pass. Both publish with A.
+void test_wrap_guard_publication_keeps_hide_and_non_note_events() {
+  using namespace wrap_publication;
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  for (unsigned turn = 0; turn < 4096 && !loop.publishedSnapshotIsCurrent(); ++turn)
+    (void)loop.stepPendingSnapshotPublish(16);
+  const RootNotes before = rootNotes(loop);
+  TEST_ASSERT_EQUAL_UINT32(1u, before.size());
+  const NoteId sourceId = before.begin()->first;
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  inputNote(48, 0, 60);  // covers the source note: Hide
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(300, 1, 7, 90)));
+  TEST_ASSERT_TRUE(wrap(track));
+  TEST_ASSERT_TRUE(drainWithSessionRunning(track).converged);
+  const RootNotes notes = rootNotes(loop);
+  TEST_ASSERT_TRUE_MESSAGE(notes.find(sourceId) == notes.end(), "A's Hide must remove the source note");
+  TEST_ASSERT_NOT_NULL_MESSAGE(findPitchStart(notes, 48, 0), "A's covering note must publish");
+  const RootEvents events = rootEvents(loop);
+  TEST_ASSERT_TRUE_MESSAGE(events.notes.find(sourceId) == events.notes.end(),
+                           "A's Hide must remove the source note's events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, events.nonNote.size(), "A's controller must publish once");
+  TEST_ASSERT_EQUAL_UINT32(300u, events.nonNote[0].tick);
+}
+
+/// GUARD 8 -- repeated NoteId, resolved by the identity contract. The journal admits every Add row; the pass producer
+/// admits a pass note only when the parent lacks its NoteId. They can differ only if a committed wrap pass carries a
+/// NoteId the parent already has. Capture assigns every NoteOn a fresh `nextNoteId_`, so on the production path no
+/// wrap pass does, and the two admission rules are equivalent there. This pins that contract (including a note held
+/// across the wrap, the one case that carries a NoteId between passes).
+void test_wrap_guard_wrap_pass_note_ids_are_fresh_against_the_parent() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  inputNote(64, 700, UINT32_MAX);  // held across the wrap
+  const RootNotes parent = rootNotes(loop);
+  TEST_ASSERT_TRUE(wrap(track));
+  clockManager.assignCurrentTickSilently(768 + 50);
+  midiHandler.handleMidiMessage(midi::NoteOff, 1, 64, 0, SOURCE_USB);
+  inputNote(66, 768 + 200, 768 + 260);
+  clockManager.assignCurrentTickSilently(768 + 767);
+  TEST_ASSERT_TRUE(track.commitOverdubWrap());
+  for (size_t record = 0; record < 2; ++record) {
+    const PassId passId = loop.overdubSessionPassIdAt(record);
+    TEST_ASSERT_NOT_EQUAL(kInvalidPassId, passId);
+    const OverdubPass* pass = nullptr;
+    for (const OverdubPass& p : loop.passes.overdubPasses) if (p.id == passId) pass = &p;
+    TEST_ASSERT_NOT_NULL(pass);
+    SessionMidiEventVec events;
+    LoopEventStore::appendChunkRefEvents(pass->committedChunkIds, events);
+    for (const MidiEvent& e : events) {
+      if (!e.isNoteOn()) continue;
+      TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, e.noteId);
+      TEST_ASSERT_TRUE_MESSAGE(parent.find(e.noteId) == parent.end(), "a wrap pass reused a parent NoteId");
+    }
+  }
+}
+
+/// GUARD 9 -- delayed publication across the session exit (owner ruling 2026-11-03). A wraps; the publication owner
+/// is delayed; the overdub stops, its deferred stop runs to completion and the session record is cleared; then
+/// publication resumes. A's pass and A's companion must each be published exactly once, at a current revision.
+void test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  const RootNotes source = rootNotes(loop);
+  const NoteId sourceId = source.begin()->first;
+  TEST_ASSERT_TRUE(wrap(track));
+  clockManager.assignCurrentTickSilently(768 + 40);
+  midiButtonActions.handleToggleRecord();  // stop: deferred, the session exits
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    TrackCaptureStopTestAccess::snapshotOwnerTurn(track);  // only if the stop waits on publication
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), "the deferred stop must retire");
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  for (unsigned turn = 0; turn < 4096 && loop.hasPendingSnapshotPublish(); ++turn)
+    TrackCaptureStopTestAccess::snapshotOwnerTurn(track);
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(), "publication must converge after the exit");
+  const RootNotes notes = rootNotes(loop);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countPitch(notes, 60), "A's Add 60 exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countPitch(notes, 62), "A's Add 62 exactly once");
+  TEST_ASSERT_TRUE_MESSAGE(sourceShortened(notes), "A's Shorten must be applied");
+  const RootEvents events = rootEvents(loop);
+  const auto sourceEvents = events.notes.find(sourceId);
+  TEST_ASSERT_TRUE(sourceEvents != events.notes.end());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, sourceEvents->second.first, "the shortened source keeps one NoteOn");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, sourceEvents->second.second, "the shortened source keeps one NoteOff");
+  for (const auto& entry : events.notes) {
+    TEST_ASSERT_TRUE_MESSAGE(entry.second.first <= 1 && entry.second.second <= 1, "an event was applied twice");
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the root must cover the committed revision");
+}
+
 void registerWrapPublicationReds() {
   if (getenv("WRAP_PUBLICATION_RED") == nullptr) return;
   RUN_TEST(test_wrap_red_clock_translates_no_snapshot_change);
@@ -255,4 +378,8 @@ void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_guard_publication_is_atomic_and_current);
   RUN_TEST(test_wrap_red_two_rapid_wraps_queue_obligations_not_copies);
   RUN_TEST(test_wrap_red_lost_obligation_is_rediscovered_with_its_companions_in_session);
+  RUN_TEST(test_wrap_guard_publication_keeps_hide_and_non_note_events);
+  RUN_TEST(test_wrap_guard_wrap_pass_note_ids_are_fresh_against_the_parent);
+  RUN_TEST(test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once);
 }
+
