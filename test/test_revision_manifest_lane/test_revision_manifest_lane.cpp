@@ -7,6 +7,7 @@
 //
 // Only this suite's own cases are registered; the included suite's cases are dead-stripped from the run.
 #include "manifest_lane_harness.h"
+#include <map>
 #include "RollingSuccessorProbe.h"
 #include <cstdlib>
 
@@ -477,6 +478,89 @@ void test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop() {
   assertEveryTakeNotePlayed(obs, 2, 7);
 }
 
+/// One overdub (one note at bar 0 + 200 of traversal 2) on the routed take, stopped at loop tick `stopTick`; the
+/// transport then plays through traversal 6 with the stop job serviced every tick. Production pricing: no probe knobs.
+PlaybackObservation overdubThenStopAt(Track& t, Loop& loop, uint32_t stopTick) {
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation obs;
+  const auto stepStopJob = [&](uint32_t) {
+    if (t.hasPendingDeferredOverdubStop()) TrackCaptureStopTestAccess::step(t);
+  };
+  play(t, 0, 2 * kLength, obs);
+  t.startOverdubbing(2 * kLength);
+  play(t, 2 * kLength, 2 * kLength + 200, obs, 1, stepStopJob);
+  t.noteOn(1, 80, 100, 2 * kLength + 200);
+  play(t, 2 * kLength + 200, 2 * kLength + 260, obs, 1, stepStopJob);
+  t.noteOff(1, 80, 0, 2 * kLength + 260);
+  play(t, 2 * kLength + 260, stopTick, obs, 1, stepStopJob);
+  clockManager.assignCurrentTickSilently(stopTick);
+  t.stopOverdubbing();
+  play(t, stopTick, 7 * kLength, obs, 1, stepStopJob);
+  return obs;
+}
+
+bool takeNotePlayed(const PlaybackObservation& obs, uint32_t pass, uint32_t bar) {
+  for (const auto& [phase, pitch] : noteOnsInTraversal(obs, pass))
+    if (isTakeNote(phase, pitch) && phase / kBar == bar) return true;
+  return false;
+}
+
+// Steady-state continuity under production DEC-147 pricing (owner ruling 2026-11-03): once a routed chain is serving,
+// every traversal plays every take note -- the successor must be requested, admitted and complete before the serving
+// window expires. Traversals 0-1 are the chain's cold start (their own RED) and are excluded. RED today: with the price
+// in force no successor at N's end is admitted, so steady state plays bars 2-3 of every other traversal.
+void test_c5_3_steady_state_is_continuous_under_production_pricing() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation obs;
+  play(t, 0, 6 * kLength, obs);
+  assertEveryTakeNotePlayed(obs, 2, 6);
+}
+
+// Completion-aware placement (owner ruling 2026-11-03, `2026-11-03-routed-cold-start-design.md` section 10): the
+// post-stop window for bars 2-3 is complete 56 ticks after an overdub stop at traversal 3's phase 0, about 1,464 ticks
+// before this traversal's bar-2 boundary -- more than the contract's one-bar handoff margin -- yet it is held for the
+// *next* traversal because the request-time DEC-147 price ruled the nearer boundary out. RED today. Only bars 2-3 are
+// asserted: bars 0-1 after the stop belong to the separate cold-start RED and are not fixed by placement.
+void test_c5_3_completion_placement_serves_the_nearest_eligible_boundary() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength - 40);
+  TEST_ASSERT_TRUE_MESSAGE(takeNotePlayed(obs, 3, 2), "traversal 3: the completed bar-2 window was not served");
+  TEST_ASSERT_TRUE_MESSAGE(takeNotePlayed(obs, 3, 3), "traversal 3: the completed bar-3 window was not served");
+  for (uint32_t pass = 3; pass < 7; ++pass) {  // no duplicate: one NoteOn per take note per traversal
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+}
+
+// Guard (negative): the boundary is already consumed. Stopped after bar 2 began (phase 1,600 of traversal 3), the
+// bars-2-3 interval of this traversal is in progress: placement may not adopt a window part-way into it, so the take's
+// bar-3 note of traversal 3 is not played from it (nothing else serves a routed gap).
+void test_c5_3_completion_placement_never_claims_a_consumed_boundary() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength + 1600);
+  TEST_ASSERT_FALSE_MESSAGE(takeNotePlayed(obs, 3, 3), "a window was adopted part-way into a consumed interval");
+}
+
+// Guard (negative): insufficient margin. Stopped 600 ticks before traversal 3's bar-2 boundary, the window cannot be
+// complete a full bar before it; the nearer boundary may not be claimed.
+void test_c5_3_completion_placement_needs_the_handoff_margin() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength + 1536 - 600);
+  TEST_ASSERT_FALSE_MESSAGE(takeNotePlayed(obs, 3, 2), "a boundary was claimed with less than the handoff margin");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_c5_3_current_boot_content_is_served_from_the_manifest_only);
@@ -489,6 +573,11 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_note_sounding_into_a_gap_is_closed_not_left_hanging);
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
+  RUN_TEST(test_c5_3_completion_placement_never_claims_a_consumed_boundary);
+  RUN_TEST(test_c5_3_completion_placement_needs_the_handoff_margin);
+  if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
+    RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
+  if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);
   if (getenv("ROUTED_AUDIBILITY_RED") != nullptr) {
     RUN_TEST(test_c5_3_cold_start_transport_start_plays_the_first_traversal);
     RUN_TEST(test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop);

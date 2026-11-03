@@ -268,3 +268,68 @@ REDs stay separate and unchanged: `test_c5_3_cold_start_transport_start_plays_th
 launch) and `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop` (post-overdub-stop return). The acceptance
 for either fix is complete emitted-MIDI parity across several traversals, including the first successor handoff,
 under production pricing.
+
+## 11. Revised C5.3b ruling: the pricing reconciliation and the interaction map (no production change)
+
+Option (b) is withdrawn by the owner.
+
+### 11.1 Why `G(E)` and the grant budget do not admit production successors
+
+| improvement | where it lives | what it governs |
+|---|---|---|
+| `G(E) = ceil((2E+1)/64) + 3*ceil(E/48) + 2` | `CoverageServiceContract::deriveManifestWindowGrantsFrom` | the price's **input** (grains) |
+| amendment 31 grant budget: due grants spaced over the actual remaining lead, never withheld | the lane's grant scheduling | **delivery** of an admitted build |
+| DEC-147 admission: `canCompleteWithinLead(lead, outstanding)` | `requestPlaybackViewMaintenance` admission | **whether** a demand is admitted and **where** a cold frame is placed |
+
+- The admission inequality still charges every grain `(H + 1) x advance` = 8 x 64 = 512 ticks: seven denied lane
+  turns, each the full permitted advance. It adds the one-bar `leadTicks` and the 128-tick slack.
+- Amendment 31 records itself as "not yet the DEC-147 admission rule". The guarantee it proved on device (a due
+  grant cannot be withheld; 21/21 at a 1,536 lead with 7 denials) is therefore not what admission charges.
+- **Host 4,480 vs device about 13,100 ticks.** Both use the same formula with different `G`. The host's sparse take
+  sits at the 7-grain declared floor: 7 x 512 + 896 = 4,480. The device's dense take prices its densest span at about
+  24 grains: about 24 x 512 + 896, roughly 13,180.
+- **Production has no successor requester.** Only `RollingSuccessorProbe` opens N+1's demand while N serves.
+  Production opens the next span when N expires, which is a cold frame. That is C5.3b's open "successor preparation"
+  task.
+- **Net:** under production pricing a 1,536-tick successor (7 grains needs 4,480) is always refused, and none is
+  requested anyway.
+  - With amendment 31's delivery bound as the admission model, the feasibility condition is about
+    `G x lane-opportunity gap + guard`: 7 x 46 + 64 is about 386 ticks on the measured device gap.
+  - That is the gap between the two models. Admitting on it is an owner amendment of DEC-147.
+
+### 11.2 Pricing, completion, musical phase and serving ownership
+
+- **Window content is traversal-free.** A `RuntimePlaybackView` carries its source identity (revision, generation,
+  manifest or snapshot identity), its loop-local `coverage` (start phase, length, loop length) and a physical
+  `storageGeneration`.
+  - The traversal binding lives only in the rolling frame (`deadlineTick`, `epoch`, `projectionStart`) and in the
+    request (`admittedTick`, `deadlineTick`, `clockEpoch`).
+  - A completed window may therefore serve an earlier occurrence of the same phase interval only while its revision,
+    generation and epoch are still current. That is the periodicity condition the owner named.
+- **The frame owns the placement.** A Ready frame is promoted at its `deadlineTick`. Placement-at-completion moves
+  `deadlineTick` to an earlier occurrence; it never touches the view. Conditions:
+  1. revision, generation, epoch and manifest identity are unchanged;
+  2. the earlier occurrence's start is still ahead of the playhead (never part-way into an interval);
+  3. completion precedes that start by at least the contract's `leadTicks` (one bar);
+  4. the earlier interval is the same phase interval; non-wrapping two-bar spans make this exact;
+  5. no other promise owns that interval;
+  6. the publication and generation barriers the resolver already checks still hold.
+- **Not covered by placement:** the interval from a stop to the first qualified boundary (bars 0-1 after the overdub
+  stop), and transport start. Those need a source, not a reposition.
+  - The resolver already prepares "an unpositioned cold initial view … while stopped" for a cold-shaped frame. The
+    stopped-launch RED is why the routed slot does not use it.
+
+### 11.3 REDs (host, `test_revision_manifest_lane`, emitted MIDI as oracle, each behind its own flag)
+
+| case | flag | today |
+|---|---|---|
+| steady state under production pricing (traversals 2-5) | `STEADY_STATE_RED` | RED: traversal 2 incomplete |
+| completion-aware placement: traversal 3's bars 2-3 after a stop at phase 0; no NoteOn twice | `COMPLETION_PLACEMENT_RED` | RED |
+| guard: a consumed boundary is never claimed (stop at phase 1,600) | default gate | green |
+| guard: the handoff margin is required (stop 600 ticks before the boundary) | default gate | green |
+| transport-start launch (traversal 0) | `ROUTED_AUDIBILITY_RED` | RED |
+| post-overdub-stop coverage (traversal 3, all bars) | `ROUTED_AUDIBILITY_RED` | RED; placement of bars 2-3 does not satisfy it |
+
+- The two guards are trivially green today, because nothing serves a routed gap. They bind the fix.
+- The wrong-revision case is pinned by the existing `test_c5_3_a_source_move_while_serving_cannot_publish_a_stale_window`.
+  The wrong-traversal and incomplete-coverage cases are conditions 1, 2 and 4 above.
