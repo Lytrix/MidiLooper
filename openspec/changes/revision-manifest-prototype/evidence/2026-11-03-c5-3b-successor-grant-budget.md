@@ -382,3 +382,36 @@ reproduces the cost: 376 fallbacks, 17.24 s, max 78 ms; the overdub Note phase t
   2. **The worker receives too little service** (1 of 3 idle owners), and the set-full fallback then starves it
      further.
 - The capacity (16) is unchanged, by ruling.
+
+## Who moves the committed generation during the overdub session (2026-11-03, `976fff9b`)
+
+`notifyCommittedContentChanged` records, while a session is active:
+- its return address;
+- the capture-pass commit's own caller, latched at `commitPreparedCapturePassAtomic`'s entry;
+- the clock tick;
+- the deferred-set occupancy.
+
+Symbolized with `addr2line` against the flashed ELF. Image `ce587ea6`, same overdub sweep,
+`captures/session_20261103_162105.log` (391 fallbacks, 17.58 s, max 75 ms).
+
+| # | tick | set | Track owner | Loop path |
+|---|---|---|---|---|
+| 1 | 33,664 | **empty** | `Track::stepDeferredRecordPublication` | `commitPreparedCapturePassAtomic(transfer, pass)` |
+| 2 | 50,688 | full | overdub wrap commit: `Loop::commitCapturePass` → `commitPendingCapturePass` | `commitPreparedCapturePassAtomic(transfer)` |
+| 3 | 57,928 | full | deferred overdub stop: `processDeferredOverdubStopGrain` → `commitSupersededCausalBase` | `commitPreparedCapturePassAtomic(transfer, pass)` |
+
+All three reach `completePreparedCapturePassAtomic` → `notifyCommittedContentChanged` →
+`CoverageState::changeGeneration`, which clears every prepared tile of the live session.
+
+- **Move 1 starts the failure.**
+  - The preceding **Record** pass's deferred publication lands after the overdub session opened, with the set still
+    empty.
+  - It wipes the coverage the session's open prewarm had prepared, so the following NoteOffs find their spans
+    unprepared, retain, and fill the set.
+- **Move 2 is the session's own wrap.** Committing the overdub pass at the loop wrap (tick 50,688, the same tick as the
+  multi-second `commitOverdubWrap` Clock) wipes coverage again while the set is full.
+- **Move 3 is the session end** (the deferred overdub stop), so it is not part of the live failure.
+- **Inference, not yet tested.** A generation move whose content is not the session's source of overlap decisions
+  (move 1: the previous interval's own pass; move 2: the session's own captured notes) should not have to invalidate
+  coverage the session already prepared. Whether either move actually changes the committed content that overlap
+  decisions read is the open question for the owner.
