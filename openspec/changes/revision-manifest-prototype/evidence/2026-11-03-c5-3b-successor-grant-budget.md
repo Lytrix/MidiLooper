@@ -57,3 +57,36 @@ tick, grants served because due, max opportunity gap while owed, N.end.
   - This is the evidence that a one-window lookahead needs either earlier preparation or an outer scheduling guarantee
     while that phase's work runs.
   - The previously unexplained pre-restart `succ_seam,missed` rows are very likely the same shape.
+
+## The outer gap: what owns the main loop between window-lane turns (measurement, 2026-11-03)
+
+- **Method.** In the measurement image only (`main.cpp` `noteLaneGapIteration`, flash; ITCM padding 856, still above
+  the 840 floor), every loop iteration records its deferred owner, whether the turn was allowed, its idle-maintenance
+  time and its load/display-frame time. At the next allowed `PlaybackViewMaintenance` turn, a gap above 96 ticks while
+  playing emits two immediate-path rows:
+  - `lane_gap,turn`: the gap, iterations, disallowed turns, the longest iteration, the longest idle turn and its
+    owner, and the top owners;
+  - `lane_gap,frame`: summed iteration, idle-maintenance and load/display-frame time.
+  - A first run that queued the rows into the capture ring lost them while the transport ran, so it is not used.
+- **Runs.**
+  - `captures/session_20261103_113649.log`: the turn rows. Two post-stop misses again.
+  - `captures/session_20261103_114206.log`: the frame rows. Image
+    `3baa6a9ed02a10051bbc229a062e6d9646a8713e1c5bd2bfd740db8af49d3907`, boot `crash=0`.
+
+| phase | gaps > 96 ticks | mean gap | per gap: loop time | idle maintenance | load/display frame | rest of `loop()` |
+|---|---|---|---|---|---|---|
+| Record take (33-56 s) | 109 | 178 ticks | 185 ms | 3 ms | 2 ms | **180 ms** |
+| After the overdub stop (92-137 s) | 180 | 235 ticks | 245 ms | 8 ms | 21 ms (max 50) | **216 ms** |
+| After the restart | 0 | — | — | — | — | — |
+
+- **Classification.** The successor misses come from the outer gap, but **not from a deferred owner**: not A, B or D.
+  - The lane is offered every rotation of 8-13 iterations, and no turn is disallowed.
+  - Idle maintenance, including the realtime unit rotation, costs only 3-8 ms per gap.
+  - The longest single iteration is 42-100 ms.
+  - About 88 % of the gap is spent in the rest of `loop()`, outside the deferred rotation: MIDI and clock handling,
+    playback emission, persistence, display paint outside the load frame, and the capture's own serial output. So it is
+    shape C, but across the whole loop rather than among the deferred owners.
+  - After the restart the same image has no gap over 96 ticks, and successors hand off.
+- **Open.** Which part of the rest of `loop()` takes the ~200 ms. The next measurement splits that residual by the
+  loop's existing spans (`loop_prefix`, MIDI drain, display paint, `persist_save`, capture output) inside the same gap
+  rows. Then: slice the owner, or give the window lane an outer turn deadline.

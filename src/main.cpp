@@ -612,6 +612,79 @@ FLASHMEM __attribute__((noinline)) static void reportSlowIdleTurnUnit(uint8_t tr
 #define reportSlowIdleTurnUnit(trackIndex, unitUs, turnUs, units) ((void)0)
 #endif
 
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && defined(SESSION_CAPTURE)
+/// C5.3b measurement (owner ruling 2026-11-03): **what owns the main loop between two window-lane turns.** Each loop
+/// iteration adds its deferred owner (allowed or not) and its idle-maintenance time; at the next allowed
+/// `PlaybackViewMaintenance` turn, a gap above 96 transport ticks while playing emits one row:
+/// lane_gap (see the row below): the gap and what the loop spent it on.
+/// Measurement image only; nothing reads it for a decision.
+namespace {
+struct LaneGapMeasure {
+  uint64_t lastLaneTick = 0;
+  uint32_t lastIterationUs = 0;
+  uint32_t iterations = 0, disallowed = 0, maxIterationUs = 0, maxIdleUs = 0;
+  uint32_t sumIterationUs = 0, sumIdleUs = 0, sumLoadFrameUs = 0, maxLoadFrameUs = 0, loadFrames = 0;
+  uint8_t maxIdleOwner = 0xFF;
+  uint32_t turns[8] = {}, totalUs[8] = {}, maxUs[8] = {};
+};
+DMAMEM LaneGapMeasure sLaneGap;
+}  // namespace
+
+FLASHMEM __attribute__((noinline)) static void noteLaneGapIteration(MidiServiceDrain::DeferredIdleOwner owner,
+                                                                   bool allowed, uint32_t idleUs) {
+  auto& m = sLaneGap;
+  const uint32_t nowUs = micros();
+  if (m.lastIterationUs != 0) {
+    const uint32_t iterationUs = nowUs - m.lastIterationUs;
+    m.sumIterationUs += iterationUs;
+    if (iterationUs > m.maxIterationUs) m.maxIterationUs = iterationUs;
+  }
+  m.lastIterationUs = nowUs;
+  ++m.iterations;
+  const uint8_t o = static_cast<uint8_t>(owner) & 7u;
+  if (!allowed) { ++m.disallowed; return; }
+  ++m.turns[o];
+  m.totalUs[o] += idleUs;
+  m.sumIdleUs += idleUs;
+  if (idleUs > m.maxUs[o]) m.maxUs[o] = idleUs;
+  if (idleUs > m.maxIdleUs) { m.maxIdleUs = idleUs; m.maxIdleOwner = o; }
+  if (owner != MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) return;
+  const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
+  const uint64_t gap = m.lastLaneTick != 0 && clock.tick > m.lastLaneTick ? clock.tick - m.lastLaneTick : 0;
+  if (gap > 96 && clock.epoch != 0) {
+    uint8_t top = 0, second = 0xFF;
+    for (uint8_t i = 1; i < 8; ++i) if (m.totalUs[i] > m.totalUs[top]) top = i;
+    for (uint8_t i = 0; i < 8; ++i)
+      if (i != top && (second == 0xFF || m.totalUs[i] > m.totalUs[second])) second = i;
+    // The immediate serial path (as `succ_due`), not the capture ring, which retains rows while the transport runs.
+    // win_frozen_readiness,0,0,lane_gap,turn: ticks, iterations, disallowed turns, longest iteration us, longest idle
+    // turn us, top owner's total us, top owner's max us, longest idle turn's owner, top owner, runner-up owner.
+    SC_FROZEN_WINDOW_READINESS(0, 0, "lane_gap", "turn", static_cast<uint32_t>(gap), m.iterations, m.disallowed,
+                               m.maxIterationUs, m.maxIdleUs, m.totalUs[top], m.maxUs[top], m.maxIdleOwner, top,
+                               second);
+    // lane_gap,frame: summed iteration us, summed idle-maintenance us, summed load/display-frame us, the longest
+    // load/display frame us, and how many ran -- what the rest of the loop spent the gap on.
+    SC_FROZEN_WINDOW_READINESS(0, 0, "lane_gap", "frame", static_cast<uint32_t>(gap), m.sumIterationUs, m.sumIdleUs,
+                               m.sumLoadFrameUs, m.maxLoadFrameUs, m.loadFrames, 0u, 0u, 0u, 0u);
+  }
+  const uint32_t keepIterationUs = m.lastIterationUs;
+  m = LaneGapMeasure{};
+  m.lastLaneTick = clock.tick;
+  m.lastIterationUs = keepIterationUs;
+}
+FLASHMEM __attribute__((noinline)) static void noteLaneGapLoadFrame(uint32_t loadFrameUs) {
+  if (loadFrameUs == 0) return;
+  sLaneGap.sumLoadFrameUs += loadFrameUs;
+  ++sLaneGap.loadFrames;
+  if (loadFrameUs > sLaneGap.maxLoadFrameUs) sLaneGap.maxLoadFrameUs = loadFrameUs;
+}
+#define NOTE_LANE_GAP_ITERATION(owner, allowed, idleUs) noteLaneGapIteration((owner), (allowed), (idleUs))
+#define NOTE_LANE_GAP_LOAD_FRAME(loadFrameUs) noteLaneGapLoadFrame(loadFrameUs)
+#else
+#define NOTE_LANE_GAP_ITERATION(owner, allowed, idleUs) ((void)0)
+#define NOTE_LANE_GAP_LOAD_FRAME(loadFrameUs) ((void)0)
+#endif
+
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint32_t now, bool postOverdubPlayingMidiDrain,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, bool timingCritical, uint32_t turnStartUs) {
@@ -1450,6 +1523,7 @@ void loop() {
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t idleMaintUs = micros() - idleTurnStartUs;
+  NOTE_LANE_GAP_ITERATION(deferredIdleOwner, deferredIdleOwnerAllowed, idleMaintUs);
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
   DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
   // Task 5.4: near-bar turns only (3x the owner budget), one row per 100 ms. The row names the
@@ -1500,6 +1574,7 @@ void loop() {
   }
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_NOTE_LOAD_FRAME(loadFrameUs);
+  NOTE_LANE_GAP_LOAD_FRAME(loadFrameUs);
   DebugSessionCapture::recordLoopRemainderSpan("load_frame", loadFrameUs);
 #endif
 
