@@ -90,3 +90,35 @@ tick, grants served because due, max opportunity gap while owed, N.end.
 - **Open.** Which part of the rest of `loop()` takes the ~200 ms. The next measurement splits that residual by the
   loop's existing spans (`loop_prefix`, MIDI drain, display paint, `persist_save`, capture output) inside the same gap
   rows. Then: slice the owner, or give the window lane an outer turn deadline.
+
+## The outer gap with a near-silent probe (owner ruling 2026-11-03)
+
+- **Method.** Nothing about lanes is printed while the transport runs.
+  - Flash callees add their wall time to RAM2 buckets through a scope timer (`include/Utils/LaneGapSpans.h`): MIDI
+    input, capture flush, capture immediate rows, playback fallback, loop prefix, edge effects.
+  - `main.cpp` folds each iteration with idle maintenance, the load/display frame and the rest ("other"), and keeps the
+    16 worst iterations and the 8 worst lane gaps.
+  - One `lane_spans` dump per transport stop. The stop trigger is the clock's running state: the epoch survives a stop,
+    and a first version never dumped.
+  - RAM1 and ITCM unchanged (padding 856).
+- **Run.** succprobe HEX sha256 `b3350d180412eaed0076f5d71f13fb9077fa8911bb373895b1fae4f571c24d56`,
+  `captures/session_20261103_122418.log`, boot `crash=0`. Same overdub workload; post-restart successors 10/10.
+
+| segment | iterations | gaps > 96 | max gap | max iteration | MIDI input | capture flush | capture immediate | idle maint | load/display | other |
+|---|---|---|---|---|---|---|---|---|---|---|
+| record + overdub + post-stop | 26,052 | 161 | 5,160 ticks | 2,634 ms | **52.6 %** | 1.6 % | 0.0 % | 11.8 % | 10.3 % | 17.2 % |
+| after the restart | 17,420 | **0** | 88 ticks | 41 ms | 12.8 % | 1.1 % | 0.0 % | 41.8 % | 17.2 % | 20.2 % |
+
+- **The eight worst post-stop gaps** were 440-536 ticks, 417-557 ms. **MIDI input took 376-520 ms of each.** Capture
+  flush was ≤ 1 ms, immediate rows 0, idle maintenance 9-15 ms, the load/display frame 0-59 ms, other 12-15 ms.
+- **The worst gap, 5,160 ticks (5.4 s) around the overdub stop**, was 5.36 s inside MIDI input. Two single iterations
+  took 2.6 s, almost all of it in `MidiHandler::handleMidiInput`.
+- **Conclusion.**
+  - The outer gap is **real production-shaped behaviour, not capture overhead**: capture output is about 1 % of the
+    loop and at most 1 ms per gap.
+  - It is not a deferred owner. It is `MidiHandler::handleMidiInput`, which includes everything a received message
+    dispatches: external-clock ticks and their playback, the slot gestures and the capture of incoming notes.
+  - After the restart the same image has no gap above 88 ticks.
+- **Next.** Split the MIDI-input bucket one level deeper: clock-tick processing (with its playback), the control
+  gesture that stops the overdub, and live note capture. Then decide between slicing that work and an outer lane-turn
+  deadline. No deeper lookahead yet.

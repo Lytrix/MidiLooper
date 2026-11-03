@@ -12,6 +12,7 @@
 #include "Utils/EdgeEffects.h"
 #include "Utils/PlaybackMidiOutput.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "Utils/LaneGapSpans.h"
 
 namespace {
 
@@ -390,6 +391,7 @@ __attribute__((noinline)) void TrackManager::recordEdgeEffect(EdgeEffectKind kin
 /// the capture flush), so its `millis()` prefix and its position in the serial stream move by that much. The
 /// *device-time* relationships the acceptance rows are read for are untouched: nothing here is a timing edge.
 FLASHMEM void TrackManager::drainEdgeEffects() {
+  LANE_GAP_SPAN(EdgeEffects);
   EdgeEffectRecord effect;
   // Bounded per call: at most one queue's worth, even if the edge keeps producing while this runs.
   for (uint16_t turn = 0; turn < EdgeEffectQueue::kCapacity; ++turn) {

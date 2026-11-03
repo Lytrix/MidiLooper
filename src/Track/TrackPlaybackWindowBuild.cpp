@@ -1,4 +1,5 @@
 #include "Utils/PlaybackLaneMeasurement.h"
+#include "Utils/LaneGapSpans.h"
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
@@ -2520,6 +2521,7 @@ TRACK_COLD_MEM void Track::serviceOwedTickPlaybackFallback(uint8_t slotIndex) {
 }
 
 TRACK_COLD_MEM void TrackManager::serviceOwedTickPlaybackFallbacks() {
+  LANE_GAP_SPAN(PlaybackFallback);
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS && trackIndex < getTrackCount(); ++trackIndex) {
     const uint8_t owed = PlaybackTickContext::gState.owed[trackIndex];
     if (owed == 0) continue;

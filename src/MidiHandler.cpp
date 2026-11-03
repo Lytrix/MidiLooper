@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Globals.h"
+#include "Utils/LaneGapSpans.h"
 #include "ClockManager.h"
 #include "TrackManager.h"
 #include "MidiHandler.h"
@@ -311,6 +312,7 @@ void MidiHandler::setQualificationInputPrewarmDeniedForTests(bool) {}
 #endif
 
 FLASHMEM void MidiHandler::handleMidiInput() {
+  LANE_GAP_SPAN(Midi);
 #if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
   RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(inputEnterUs);

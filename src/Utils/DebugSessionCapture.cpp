@@ -17,6 +17,7 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "LoopEventStore.h"
 #include "StorageManager.h"
+#include "Utils/LaneGapSpans.h"
 
 #if defined(__IMXRT1062__)
 extern "C" void* extmem_malloc(size_t size);
@@ -2438,6 +2439,7 @@ SC_MEM_ATTR void frozenReadinessReceiptImmediate(uint8_t track, uint8_t slot, co
                                                 uint64_t captureToken, uint32_t start, uint32_t length,
                                                 uint32_t loopLength, uint8_t adoptMask, uint8_t adoptResult,
                                                 uint8_t adoptWhy) {
+  LANE_GAP_SPAN(CaptureImmediate);
   if (serialWriteRoom(160)) {
     // `.progmem` is memory-mapped on this target, so the FLASH-resident format is read directly -- the same
     // treatment `SC_FMT` (`PSTR`) already gives the sibling receipt's direct path.
@@ -2731,6 +2733,7 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
+  LANE_GAP_SPAN(CaptureFlush);
   // A nested flush would fight the outer one for the head for the same reason a nested append
   // must not evict (see `appendCaptureRecord`): `Serial` writes can reach `yield()`.
   if (sFlushInProgress) {
