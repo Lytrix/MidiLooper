@@ -339,3 +339,46 @@ deferred-completion-set occupancy at entry. Image `5a8f54e5` (RAM2 +352 B agains
   - Whether the two visits per occupancy level are two overdub sessions or one partial drain.
   - The capacity (16) is left unchanged, by ruling.
 - **Separately still open.** The wrap Clock: the overdub Clock maximum is 2.94 s (`commitOverdubWrap`).
+
+## Why the deferred set never drains during live overdub (2026-11-03, `f6c6484d` + split `27154420`)
+
+Worker counters at each decision point, split by whether the set was full when last observed. Image `0aa776f7` (RAM2
++544 B against `49eccad3`, RAM1 unchanged), same overdub sweep, `captures/session_20261103_160317.log`. The run
+reproduces the cost: 376 fallbacks, 17.24 s, max 78 ms; the overdub Note phase totals 17.95 s.
+
+| | set not full | **set full** |
+|---|---|---|
+| NoteOffs | ~132 | **378** |
+| idle maintenance entered while overdubbing | 1,100 | **146** |
+| entered per NoteOff (rate proxy) | 8.4 | **0.39** (≈ 22× less) |
+| worker gate passed (VisualCache owner) | 360 | 37 |
+| worker outcome: private yield / no owed tile / grain / tile published | 66 / 275 / 17 / 6 | **0 / 0 / 34 / 3** |
+| discharge calls / discharged | 281 / 0 | 3 / **3** |
+| generation changes during the session | 1 | 2 |
+| idle owners (Snapshot / VisualCache / WrapAppend) | 380 / 360 / 360 | 73 / 37 / 36 |
+
+- **The worker is never idle while the set is full, and it is starved.**
+  - Every turn is a tile-prep grain or a publish: about 11 grains per tile (34 / 3), with an owed tile on every turn
+    (`no owed` = 0).
+  - Each publish discharges exactly one obligation, so the full period discharged 3 in all, against hundreds of
+    NoteOffs that each find the set full.
+- **Idle service collapses once the set is full.**
+  - Idle maintenance reaches the overdub track about 22× less often per NoteOff.
+  - That is consistent with the fallback itself (46-78 ms per NoteOff, synchronously in MIDI dispatch) consuming the
+    main loop.
+  - The worker gets only every third idle turn (owner rotation Snapshot / VisualCache / WrapAppend).
+  - **This is a positive feedback loop.** A full set → synchronous fallbacks on the MIDI path → fewer idle turns →
+    fewer worker grains → the set stays full.
+- **What makes tiles owed again.** The generation changes clear all prepared coverage, so every required tile must be
+  re-derived: 1 before the set filled, 2 during the full period.
+  - The not-full period's 275 "no owed tile" turns with 0 discharged are turns while the set was empty, before any
+    obligation existed.
+  - Which owner moves the generation during an overdub session is **not identified** (no marker). Candidates are the
+    `notifyCommittedContentChanged` callers: capture-pass state change, wrap/commit paths.
+- **Classification (owner decision tree): the full-set fallback dominates at occupancy 16, and the worker cannot
+  discharge.** Two causes, compounding:
+  1. **Generation moves during the session** wipe prepared coverage, and re-preparing it costs about 11 grains per
+     tile.
+  2. **The worker receives too little service** (1 of 3 idle owners), and the set-full fallback then starves it
+     further.
+- The capacity (16) is unchanged, by ruling.
