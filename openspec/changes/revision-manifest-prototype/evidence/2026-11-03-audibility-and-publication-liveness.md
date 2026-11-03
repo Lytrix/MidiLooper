@@ -81,3 +81,33 @@ The publication owner is **stalled, not slow**.
 
 Not yet traced. Track 7's display rows in the gap show `disp_turn ... st=ret, why=hold_gap` over a published window
 that the playhead is entering. That is the lead for the viewport-demand trace.
+
+## Gate A, follow-up (owner: the observation was on the probe image's track 8)
+
+**Host RED:** `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop` in `test_revision_manifest_lane`,
+registered with `ROUTED_AUDIBILITY_RED=1`. A four-bar take on the routed slot, played on the production owners with
+the reader owner serviced every tick: two traversals, then an overdub (one note), its deferred stop, and four more.
+
+| traversal | manifest-served ticks | take notes played |
+|---|---|---|
+| 0 | 0 | none |
+| 1 | 1,536 / 3,072 | bars 2-3 |
+| 2 (overdub, merged route) | 0 | bars 0-3 + overdub note |
+| 3 (after the stop) | 0 | **none** |
+| 4 | 1,536 | bars 2-3 |
+| 5 | 0 | **none** |
+| 6 | 1,536 | bars 2-3 |
+
+**Reading:**
+- The routed manifest lane is audible only inside a window that is already serving. The next window is not prepared
+  ahead, and a gap is silent. This happens in steady state, not only after a stop.
+- That is amendment 23 as written: lane-owned gaps are named misses, never merged. The existing case
+  `test_c5_3_current_boot_content_is_served_from_the_manifest_only` asserts "outside them the routed lane is silent
+  by contract".
+- `tasks.md` keeps C5.3b successor preparation open, pending the owner's successor price.
+- The overdub stop adds a longer gap on top: the revision move makes the serving window unservable. On device, the
+  lane's whole-loop re-qualification followed (about 7 s busy, then a window ready 12.5 s before it served).
+- The defect is therefore not publication-gated. The owner's contract ("a newly recorded loop plays immediately")
+  conflicts with amendment 23's interim silence on the routed track. Turning the RED green needs either C5.3b
+  successor preparation (plus a post-stop serving rule), or an amended amendment 23 that gives the routed track an
+  interim audible fallback. Owner decision.

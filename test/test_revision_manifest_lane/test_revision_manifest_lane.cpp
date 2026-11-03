@@ -403,6 +403,45 @@ void test_c5_3_a_dense_take_is_served_from_the_manifest() {
   TEST_ASSERT_TRUE_MESSAGE(expected == actual, detail);
 }
 
+// Gate A (owner ruling 2026-11-03, device `captures/session_20261103_211405.log`): the owner's user-facing contract --
+// a committed take stays audible on the routed slot through an overdub and its deferred stop, without waiting for a
+// published root: every traversal plays every take note. RED today, and against amendment 23 as written (lane-owned
+// gaps are silent named misses until C5.3b successor preparation lands): measured here, the routed lane plays bars
+// 2-3 of every other traversal in steady state, and nothing in the traversal after the stop. Registered only with
+// `ROUTED_AUDIBILITY_RED=1` until the owner rules on amendment 23 / C5.3b.
+void test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation obs;
+  play(t, 0, 2 * kLength, obs);
+  t.startOverdubbing(2 * kLength);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  const auto stepStopJob = [&](uint32_t) {
+    if (t.hasPendingDeferredOverdubStop()) TrackCaptureStopTestAccess::step(t);
+  };
+  play(t, 2 * kLength, 2 * kLength + 200, obs, 1, stepStopJob);
+  t.noteOn(1, 80, 100, 2 * kLength + 200);
+  play(t, 2 * kLength + 200, 2 * kLength + 260, obs, 1, stepStopJob);
+  t.noteOff(1, 80, 0, 2 * kLength + 260);
+  play(t, 2 * kLength + 260, 3 * kLength - 40, obs, 1, stepStopJob);
+  clockManager.assignCurrentTickSilently(3 * kLength - 40);
+  t.stopOverdubbing();
+  play(t, 3 * kLength - 40, 7 * kLength, obs, 1, stepStopJob);
+  for (uint32_t pass = 2; pass < 7; ++pass) {
+    const auto ons = noteOnsInTraversal(obs, pass);
+    for (uint32_t bar = 0; bar < kBars; ++bar) {
+      bool heard = false;
+      for (const auto& [phase, pitch] : ons) heard |= isTakeNote(phase, pitch) && phase / kBar == bar;
+      char msg[96];
+      snprintf(msg, sizeof(msg), "traversal %u: the take's bar-%u note was not played", unsigned(pass), unsigned(bar));
+      TEST_ASSERT_TRUE_MESSAGE(heard, msg);
+    }
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_c5_3_current_boot_content_is_served_from_the_manifest_only);
@@ -415,5 +454,6 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_note_sounding_into_a_gap_is_closed_not_left_hanging);
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
+  if (getenv("ROUTED_AUDIBILITY_RED") != nullptr) RUN_TEST(test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop);
   return UNITY_END();
 }
