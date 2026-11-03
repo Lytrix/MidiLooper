@@ -5832,11 +5832,24 @@ TRACK_COLD_MEM RollingSuccessorKey rollingSuccessorKey(const LoopPlaybackRuntime
   return {frame.deadlineTick + span, start, rollingWindowLengthAt(start, frame.loopLength, frame.equalPartition != 0)};
 }
 
+/// Two-span (owner ruling 2026-11-04): the serving frame's successor at `depth` 1 (the next window) or 2 (the one after
+/// it), chained from the frame's own geometry exactly as depth 1 is.
+TRACK_COLD_MEM RollingSuccessorKey rollingSuccessorKeyAt(const LoopPlaybackRuntime::RollingFrame& frame, uint8_t depth) {
+  RollingSuccessorKey key = rollingSuccessorKey(frame);
+  if (depth < 2) return key;
+  const uint32_t start = (key.startPhase + key.lengthTicks) % frame.loopLength;
+  return {key.deadline + key.lengthTicks, start,
+          rollingWindowLengthAt(start, frame.loopLength, frame.equalPartition != 0)};
+}
+
 TRACK_COLD_MEM bool rollingSuccessorDemandIs(const LoopPlaybackRuntime& runtime, uint64_t deadline) {
   const auto& frame = runtime.rolling;
-  return RollingSuccessorProbe::gKnobs.enabled && frame.successorState == 1 &&
-         frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.deadlineTick != 0 &&
-         frame.loopLength != 0 && rollingSuccessorKey(frame).deadline == deadline;
+  if (!RollingSuccessorProbe::gKnobs.enabled || frame.phase != LoopPlaybackRuntime::RollingPhase::Serving ||
+      frame.deadlineTick == 0 || frame.loopLength == 0)
+    return false;
+  if (frame.successorState == 1) return rollingSuccessorKey(frame).deadline == deadline;
+  if (frame.successorState == 4) return rollingSuccessorKeyAt(frame, 2).deadline == deadline;  // the depth-2 build
+  return false;
 }
 
 /// Discard the successor demand keyed `key` and everything it owns -- the retained record, the frozen read, an admitted
@@ -5910,6 +5923,27 @@ TRACK_COLD_MEM __attribute__((noinline)) bool rollingHandoffFrontierHolds(const 
 // Boundary-only validation is flash-resident; steady serving stays in ITCM.
 // Fixed metadata reads only, under RollingMetadataGuard. Device duration remains
 // a qualification obligation; this placement is not a timing claim.
+/// Two-span (owner ruling 2026-11-04): the builder belongs to the frame's outstanding depth-2 obligation -- the frame
+/// was re-keyed at `N.end` with it (state 5), and the frozen request or the build record names exactly the re-keyed
+/// frame's next deadline, epoch and generation. The single build record then describes N+1, not the ready window, so
+/// the ready window is judged by its own identity (the view terms below), never by the record.
+TRACK_COLD_MEM bool builderOwnedByDepth2(const LoopPlaybackRuntime& runtime) {
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  const auto& frame = runtime.rolling;
+  if (frame.successorState != 5 || frame.loopLength == 0 || frame.deadlineTick == 0) return false;
+  const uint64_t next = rollingSuccessorKey(frame).deadline;
+  const bool workIsDepth2 = runtime.viewBuildWork.clockEpoch == frame.epoch &&
+      runtime.viewBuildWork.deadlineTick == next && runtime.viewBuildOperationGeneration == frame.generation;
+  const bool frozenIsDepth2 = runtime.frozenViewRequest.active && runtime.frozenViewRequest.deadlineTick == next &&
+      runtime.frozenViewRequest.clockEpoch == frame.epoch &&
+      runtime.frozenViewRequest.operationGeneration == frame.generation;
+  return workIsDepth2 || frozenIsDepth2;
+#else
+  (void)runtime;
+  return false;
+#endif
+}
+
 /// Report-only: the **first** term of `rollingCandidateReadyAtBoundary` that fails, in its own order (1-based; 0: none).
 /// Read only on the reject path, so the hot path pays nothing. Kept term for term with the predicate below.
 TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
@@ -5918,17 +5952,18 @@ TRACK_COLD_MEM __attribute__((noinline)) uint8_t rollingCandidateRejectTerm(
   const auto& frame = runtime.rolling;
   const auto* set = runtime.viewSetIfPrewarmed();
   if (!set) return 1;
-  if (runtime.ownsCoverageSource()) return 2;
-  if (runtime.completedPromisePendingJudgement) return 3;
+  const bool depth2 = builderOwnedByDepth2(runtime);
+  if (runtime.ownsCoverageSource() && !depth2) return 2;
+  if (runtime.completedPromisePendingJudgement && !depth2) return 3;
   if (runtime.admittedPromiseInvalidated) return 4;
   if (runtime.countedMissedTraversals != 0) return 5;
   if (!rollingHandoffFrontierHolds(loop, phase, frontierStep, gapSilent)) return 6;
   if (set->lifecycle.ready >= set->views.size()) return 7;
   const auto& work = runtime.viewBuildWork;
   const auto& ready = set->views[set->lifecycle.ready];
-  if (work.clockEpoch != frame.epoch) return 8;
-  if (work.deadlineTick != frame.deadlineTick) return 9;
-  if (runtime.viewBuildOperationGeneration != frame.generation) return 10;
+  if (!depth2 && work.clockEpoch != frame.epoch) return 8;
+  if (!depth2 && work.deadlineTick != frame.deadlineTick) return 9;
+  if (!depth2 && runtime.viewBuildOperationGeneration != frame.generation) return 10;
   if (!sourceCurrent) return 11;
   if (runtime.cachedLoopRevision != loop.playbackRevision) return 12;
   if (runtime.cachedTrackGeneration != frame.generation) return 13;
@@ -5950,14 +5985,15 @@ TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
     uint32_t frontierStep, bool gapSilent) {
   const auto& frame = runtime.rolling;
   const auto* set = runtime.viewSetIfPrewarmed();
-  if (!set || runtime.ownsCoverageSource() || runtime.completedPromisePendingJudgement ||
+  const bool depth2 = set != nullptr && builderOwnedByDepth2(runtime);
+  if (!set || (runtime.ownsCoverageSource() && !depth2) || (runtime.completedPromisePendingJudgement && !depth2) ||
       runtime.admittedPromiseInvalidated || runtime.countedMissedTraversals != 0 ||
       !rollingHandoffFrontierHolds(loop, phase, frontierStep, gapSilent) ||
       set->lifecycle.ready >= set->views.size()) return false;
   const auto& work = runtime.viewBuildWork;
   const auto& ready = set->views[set->lifecycle.ready];
-  return work.clockEpoch == frame.epoch && work.deadlineTick == frame.deadlineTick &&
-      runtime.viewBuildOperationGeneration == frame.generation && sourceCurrent &&
+  return (depth2 || (work.clockEpoch == frame.epoch && work.deadlineTick == frame.deadlineTick &&
+                     runtime.viewBuildOperationGeneration == frame.generation)) && sourceCurrent &&
       runtime.cachedLoopRevision == loop.playbackRevision && runtime.cachedTrackGeneration == frame.generation &&
       ready.complete && !ready.published && !ready.rawCoveragePrepared &&
       ready.source.origin == PlaybackWindowOrigin::Committed && ready.source.sourceGeneration == frame.generation &&
@@ -5993,10 +6029,17 @@ TRACK_COLD_MEM void Track::cancelRollingPlaybackWindow(uint8_t slot) {
   if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle) return;
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
   // C5.3b probe: a serving frame's demanded successor dies with it, by name (a missed one is keyed by the frame itself).
-  if (runtime->rolling.successorState == 1 && runtime->rolling.deadlineTick != 0 && runtime->rolling.loopLength != 0)
+  if (runtime->rolling.successorState == 4 && runtime->rolling.deadlineTick != 0 && runtime->rolling.loopLength != 0)
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKeyAt(runtime->rolling, 2),
+                           RollingSuccessorProbe::Outcome::Cancelled);  // two-span: the depth-2 obligation first
+  if ((runtime->rolling.successorState == 1 || runtime->rolling.successorState == 4) &&
+      runtime->rolling.deadlineTick != 0 && runtime->rolling.loopLength != 0)
     cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(runtime->rolling),
                            RollingSuccessorProbe::Outcome::Cancelled);
-  if (runtime->rolling.successorState == 2)
+  if (runtime->rolling.successorState == 5 && runtime->rolling.deadlineTick != 0 && runtime->rolling.loopLength != 0)
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(runtime->rolling),
+                           RollingSuccessorProbe::Outcome::Cancelled);  // the re-keyed frame's own depth-1 obligation
+  if (runtime->rolling.successorState == 2 || runtime->rolling.successorState == 5)
     cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this),
                            {runtime->rolling.deadlineTick, runtime->rolling.startPhase, 0},
                            RollingSuccessorProbe::Outcome::Missed);
@@ -6067,14 +6110,19 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
   auto& frame = runtime->rolling;
   // A missed successor: the resolver re-keyed the frame to it and blocked it at `N.end`. Discard it by name; the lane
   // then positions a fresh window as it does after any expiry.
-  if (frame.successorState == 2) {
+  if (frame.successorState == 2 || frame.successorState == 5) {
     RollingMetadataGuard guard;
     cancelRollingPlaybackWindow(activeLoopIndex);
     return;
   }
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Serving || frame.deadlineTick == 0 || frame.loopLength == 0 ||
-      frame.successorState != 0 || clock.epoch != frame.epoch)
+      clock.epoch != frame.epoch)
     return;
+  if (frame.successorState == 1) {
+    serviceRollingDepth2Demand(clock);  // two-span: the window after the ready one
+    return;
+  }
+  if (frame.successorState != 0) return;
   const RollingSuccessorKey key = rollingSuccessorKey(frame);
   {
     // The trace starts on the first producer turn that sees N Serving under this key, before any lead test.
@@ -6131,6 +6179,93 @@ TRACK_COLD_MEM void Track::serviceRollingSuccessorDemand(PlaybackDeadlineClock c
 #else
   (void)clock;
 #endif
+}
+
+/// Two-span (owner ruling 2026-11-04): while N-1 serves and its depth-1 successor N is complete in `ready`, open the
+/// one demand for N+1 (depth 2). Same requester, same single `pendingViewRequest_`, same single builder: the depth-1
+/// window is already complete, so only N+1 is ever being built. `successorState` 4 names the obligation, so the role
+/// policy's one narrow exception (`LoopPlaybackRuntime::coverageRoleRefusal`) admits exactly this build.
+TRACK_COLD_MEM void Track::serviceRollingDepth2Demand(PlaybackDeadlineClock clock) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  namespace probe = RollingSuccessorProbe;
+  auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (!runtime) return;
+  auto& frame = runtime->rolling;
+  const auto& loop = getActiveLoop();
+  if (!runtime->readyIsServingFramesDepth1Successor() || !runtime->viewSetIfPrewarmed() ||
+      runtime->viewSetIfPrewarmed()->views[runtime->viewSetIfPrewarmed()->lifecycle.ready].source.playbackRevision !=
+          loop.playbackRevision)
+    return;
+  const RollingSuccessorKey key = rollingSuccessorKeyAt(frame, 2);
+  if (clock.tick >= key.deadline || key.deadline - clock.tick > probe::gKnobs.requestLeadTicks) return;
+  const uint8_t track = playbackRebuildTrackIndex(*this);
+  if (probe::recordFor(track, key.deadline) != nullptr) return;  // demanded once already: never a second demand
+  const PlaybackCoverageRoleRefusal role = runtime->coverageRoleRefusal(false);
+  if (runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
+      (role != PlaybackCoverageRoleRefusal::None && role != PlaybackCoverageRoleRefusal::ReadyRoleOccupied) ||
+      playbackViewOutstandingGrains(activeLoopIndex) != 0)
+    return;  // another promise owns the lane, or no unowned build view is free
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  const PlaybackCoverageInterval coverage{key.startPhase, key.lengthTicks, loop.loopLengthTicks};
+  frame.successorState = 4;  // before the request: its admission and the role policy see the depth-2 obligation
+  if (requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock) !=
+          PlaybackViewRequestResult::DeferredSourceQualification ||
+      !runtime->pendingViewRequest_.active) {
+    frame.successorState = 1;
+    return;
+  }
+  RollingMetadataGuard guard;
+  auto& positioned = runtime->pendingViewRequest_;
+  positioned.deadlineTick = key.deadline;
+  positioned.clockEpoch = clock.epoch;
+  positioned.work.deadlineTick = key.deadline;
+  positioned.work.clockEpoch = clock.epoch;
+  positioned.work.positionedLater = false;
+  ++probe::gCounters.requested;
+  (void)probe::openRecord(track, key.deadline, clock.tick, key.startPhase);
+#else
+  (void)clock;
+#endif
+}
+
+/// Two-span promotion: the depth-1 window became the served window, so the old depth-2 obligation is now this frame's
+/// depth-1 successor. Kept only when its full identity matches -- the request, the admitted build or the parked
+/// complete view names exactly this frame's next deadline, start, generation, epoch and the loop's revision; a parked
+/// complete view is then published as the ready successor without rebuilding. Anything else is retired by name and
+/// the requester re-evaluates afresh.
+TRACK_COLD_MEM void Track::adoptOutstandingDepth2AsSuccessor(uint8_t slot, LoopPlaybackRuntime& runtime,
+                                                           const Loop& loop) {
+  auto& frame = runtime.rolling;
+  const RollingSuccessorKey key = rollingSuccessorKey(frame);
+  const auto requestOwned = [&](const PlaybackViewPendingRequest& request) {
+    return successorRequestMatches(request, frame.generation, key) && request.clockEpoch == frame.epoch &&
+           request.source.playbackRevision == loop.playbackRevision;
+  };
+  const bool buildOwned = runtime.viewBuild.coverageOwned() && runtime.viewBuildOperationGeneration == frame.generation &&
+      runtime.viewBuildWork.deadlineTick == key.deadline && runtime.viewBuildWork.clockEpoch == frame.epoch;
+  auto* set = runtime.viewSetIfPrewarmed();
+  const RuntimePlaybackView* parked = set && set->lifecycle.build < set->views.size()
+      ? &set->views[set->lifecycle.build] : nullptr;
+  const bool parkedOwned = parked != nullptr && parked->complete && !parked->published &&
+      parked->source.origin == PlaybackWindowOrigin::Committed && parked->source.sourceGeneration == frame.generation &&
+      parked->source.playbackRevision == loop.playbackRevision && parked->coverage.startPhase == key.startPhase &&
+      parked->coverage.lengthTicks == key.lengthTicks && parked->coverage.loopLengthTicks == frame.loopLength;
+  // A parked window is judged first: the builder keeps naming its finished work, so `buildOwned` alone would read a
+  // complete window as still building and leave it unpublished until its deadline.
+  if (parkedOwned) {
+    if (set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views)) {
+      ++RollingSuccessorProbe::gCounters.ready;
+      frame.successorState = 1;  // published without rebuilding
+      return;
+    }
+  } else if (requestOwned(runtime.pendingViewRequest_) || requestOwned(runtime.frozenViewRequest) || buildOwned) {
+    frame.successorState = 1;  // still building: its completion publishes it through the depth-1 path
+    return;
+  }
+  cancelRollingSuccessor(runtime, playbackRebuildTrackIndex(*this), key, RollingSuccessorProbe::Outcome::Cancelled);
+  frame.successorState = 0;
+  (void)slot;
 }
 #endif
 
@@ -6469,14 +6604,17 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Excluded;
   }
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
-  if (frame.successorState == 1 && frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
-      frame.deadlineTick != 0 && frame.loopLength != 0) {
+  if ((frame.successorState == 1 || frame.successorState == 4) &&
+      frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked && frame.deadlineTick != 0 && frame.loopLength != 0) {
     // C5.3b probe: a blocked frame serves nothing, so its successor has no handoff: discard it by name.
+    if (frame.successorState == 4)
+      cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKeyAt(frame, 2),
+                             RollingSuccessorProbe::Outcome::Cancelled);
     cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(frame),
                            RollingSuccessorProbe::Outcome::Cancelled);
     frame.successorState = 3;
   }
-  if (frame.successorState == 2) {
+  if (frame.successorState == 2 || frame.successorState == 5) {
     serviceRollingSuccessorDemand(clock);  // C5.3b probe: the named miss is cancelled; the next turn positions afresh
     reportPlaybackRollingGateRow("win_successor_missed", clock.epoch != 0);
     return RollingOutcome::Rejected;
@@ -6946,7 +7084,8 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   // candidate is prepared, Requested otherwise -- and takes the one existing handoff below. Adopted, it serves N+1 from
   // this very tick; anything else is the named miss (the handoff rejects and blocks the re-keyed frame, and the
   // requester cancels it). No build, no reader call: fixed metadata only.
-  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.successorState == 1 &&
+  if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving &&
+      (frame.successorState == 1 || frame.successorState == 4) &&
       frame.deadlineTick != 0 && frame.startPhase < frame.loopLength && clock.tick >= frame.deadlineTick &&
       clock.tick - frame.deadlineTick >= rollingFrameSpan(frame)) {
     const RollingSuccessorKey key = rollingSuccessorKey(frame);
@@ -6956,7 +7095,8 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     frame.startPhase = key.startPhase;
     frame.deadlineTick = key.deadline;
     frame.phase = prepared ? LoopPlaybackRuntime::RollingPhase::Ready : LoopPlaybackRuntime::RollingPhase::Requested;
-    frame.successorState = 2;  // a miss unless the handoff below adopts it
+    // A miss unless the handoff below adopts it; 5 also carries the outstanding depth-2 obligation (two-span).
+    frame.successorState = frame.successorState == 4 ? 5 : 2;
   }
 #endif
   const uint32_t span = frame.deadlineTick == 0 ? frame.loopLength :
@@ -7110,10 +7250,14 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
   frame.boundStorageGeneration = set->views[frame.boundView].storageGeneration;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
-  if (frame.successorState == 2) {
+  if (frame.successorState == 2 || frame.successorState == 5) {
+    const bool depth2Outstanding = frame.successorState == 5;
     frame.successorState = 0;  // N+1 is now the served window; its own successor is demanded afresh
     if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), frame.deadlineTick))
       RollingSuccessorProbe::noteOutcome(*record, RollingSuccessorProbe::Outcome::HandedOff);
+    // Two-span: the old depth-2 obligation is this frame's depth-1 successor -- kept only if its full identity
+    // matches (deadline, start, generation, epoch, revision); otherwise retired by name and re-evaluated afresh.
+    if (depth2Outstanding) adoptOutstandingDepth2AsSuccessor(slot, *runtime, loop);
   }
 #endif
   // Task 4.5's **eligible boundary, and its only recovery**: the replacement prepared for this traversal was adopted
@@ -7698,10 +7842,13 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   if (successorDemand && (leadTooShort || siblingBroken)) {
     // Refused by the price (or by a sibling's promise): named, discarded, never repositioned. N still serves to its
     // end and then expires as it does today.
-    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), rollingSuccessorKey(runtime->rolling),
+    const bool depth2 = runtime->rolling.successorState == 4;
+    cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this),
+                           rollingSuccessorKeyAt(runtime->rolling, depth2 ? 2 : 1),
                            leadTooShort ? RollingSuccessorProbe::Outcome::PriceRefused
                                         : RollingSuccessorProbe::Outcome::Cancelled);
-    runtime->rolling.successorState = 3;
+    // A refused depth-2 demand leaves the ready depth-1 successor in place (two-span); a refused depth-1 ends here.
+    runtime->rolling.successorState = depth2 ? 1 : 3;
     return PlaybackViewTurnResult::GrainDenied;
   }
 #endif
@@ -9158,8 +9305,22 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
              runtime->viewBuildWork.clockEpoch == runtime->rolling.epoch) {
       RollingMetadataGuard guard;
       auto* set = runtime->viewSetIfPrewarmed();
-      const RollingSuccessorKey key = rollingSuccessorKey(runtime->rolling);
-      if (runtime->rolling.generation != playbackGeneration || slot != activeLoopIndex || !isPlaying() ||
+      const bool depth2 = runtime->rolling.successorState == 4;
+      const RollingSuccessorKey key = rollingSuccessorKeyAt(runtime->rolling, depth2 ? 2 : 1);
+      if (depth2) {
+        // Two-span: the depth-2 window completed while the depth-1 window still occupies `ready`. It stays complete
+        // and owned in `build` (parked) and is published after the depth-1 window is promoted -- never rebuilt.
+        if (runtime->rolling.generation != playbackGeneration || slot != activeLoopIndex || !isPlaying() ||
+            runtime->completedPromisePendingJudgement || runtime->admittedPromiseInvalidated || !set ||
+            set->lifecycle.build >= set->views.size() || !set->views[set->lifecycle.build].complete ||
+            set->views[set->lifecycle.build].coverage.startPhase != key.startPhase) {
+          cancelRollingSuccessor(*runtime, playbackRebuildTrackIndex(*this), key,
+                                 RollingSuccessorProbe::Outcome::Cancelled);
+          runtime->rolling.successorState = 1;  // the depth-1 window is still the ready successor
+        } else if (auto* record = RollingSuccessorProbe::recordFor(playbackRebuildTrackIndex(*this), key.deadline)) {
+          RollingSuccessorProbe::noteReady(*record, finished.tick);
+        }
+      } else if (runtime->rolling.generation != playbackGeneration || slot != activeLoopIndex || !isPlaying() ||
           runtime->completedPromisePendingJudgement || runtime->admittedPromiseInvalidated || !set ||
           !set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views)) {
         // A completion at or after `N.end` is the miss itself (its judgement stays pending); anything else moved.

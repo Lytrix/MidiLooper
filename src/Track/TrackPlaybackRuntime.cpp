@@ -2389,8 +2389,52 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM PlaybackCoverageRoleRefusal LoopPlaybackRuntime:
       set->lifecycle.build != set->lifecycle.current &&
       set->lifecycle.build != set->lifecycle.retained)
     return PlaybackCoverageRoleRefusal::None;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  // Two-span (owner ruling 2026-11-04): the one narrow exception for a committed `ready`. Only the serving frame's own
+  // depth-2 obligation may build while its depth-1 successor waits complete -- never an unrelated request.
+  if (rolling.successorState == 4 && readyIsServingFramesDepth1Successor() &&
+      (!pendingViewRequest_.active || isServingFramesDepth2Request(pendingViewRequest_)) &&
+      (!frozenViewRequest.active || isServingFramesDepth2Request(frozenViewRequest)))
+    return PlaybackCoverageRoleRefusal::None;
+#endif
   return PlaybackCoverageRoleRefusal::ReadyRoleOccupied;
 }
+
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::readyIsServingFramesDepth1Successor() const {
+  const auto* set = viewSetIfPrewarmed();
+  if (!set) return false;
+  const auto& lc = set->lifecycle;
+  const auto& frame = rolling;
+  const size_t n = set->views.size();
+  if (frame.phase != RollingPhase::Serving || frame.deadlineTick == 0 || frame.loopLength == 0 || frame.epoch == 0)
+    return false;
+  if (lc.current >= n || lc.current != frame.boundView || lc.ready >= n || lc.build >= n) return false;
+  if (lc.build == lc.ready || lc.build == lc.current || lc.build == lc.retained || lc.ready == lc.retained) return false;
+  const auto& current = set->views[lc.current];
+  const auto& ready = set->views[lc.ready];
+  const auto& build = set->views[lc.build];
+  return ready.complete && !ready.published && ready.source.origin == PlaybackWindowOrigin::Committed &&
+         ready.source.sourceGeneration == frame.generation &&
+         ready.source.playbackRevision == current.source.playbackRevision &&
+         ready.coverage.loopLengthTicks == frame.loopLength && current.coverage.lengthTicks != 0 &&
+         ready.coverage.startPhase == (frame.startPhase + current.coverage.lengthTicks) % frame.loopLength &&
+         !build.published;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::isServingFramesDepth2Request(
+    const PlaybackViewPendingRequest& request) const {
+  const auto* set = viewSetIfPrewarmed();
+  if (!set || set->lifecycle.current >= set->views.size() || set->lifecycle.ready >= set->views.size()) return false;
+  const auto& current = set->views[set->lifecycle.current];
+  const auto& ready = set->views[set->lifecycle.ready];
+  const auto& frame = rolling;
+  return request.active && request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+         request.operationGeneration == frame.generation && request.clockEpoch == frame.epoch &&
+         request.coverage.startPhase == (ready.coverage.startPhase + ready.coverage.lengthTicks) % frame.loopLength &&
+         request.deadlineTick == frame.deadlineTick + current.coverage.lengthTicks + ready.coverage.lengthTicks;
+}
+#endif
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::coverageRoleAvailable(bool keepCaptureReady) const {
   return coverageRoleRefusal(keepCaptureReady) == PlaybackCoverageRoleRefusal::None;
@@ -2474,12 +2518,18 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE
   // C5.3b host probe: the same DEC-147 lead price `Track::stepCommittedPlaybackRetry` skips for the serving frame's own
   // successor demand is skipped here too -- it is one decision charged twice, not a second rule.
+  // Slice 2: the frame's depth-2 demand (N+1 while N waits in `ready`) is the same frame's own successor demand, so the
+  // same waiver applies to it, and only to it -- matched by the one identity the role exception admits.
+  const bool depth2Admissible = frame.successorState == 4 && frozenViewRequest.active &&
+      readyIsServingFramesDepth1Successor() && isServingFramesDepth2Request(frozenViewRequest);
   const bool successorPriceWaived = RollingSuccessorProbe::gKnobs.enabled &&
       RollingSuccessorProbe::gKnobs.bypassLeadPrice && frame.phase == RollingPhase::Serving &&
-      frame.successorState == 1 && frame.deadlineTick != 0 && frame.startPhase < frame.loopLength &&
-      frozenViewRequest.deadlineTick == frame.deadlineTick + rollingFrameSpan(frame);
+      frame.deadlineTick != 0 && frame.startPhase < frame.loopLength &&
+      ((frame.successorState == 1 && frozenViewRequest.deadlineTick == frame.deadlineTick + rollingFrameSpan(frame)) ||
+       depth2Admissible);
 #else
   constexpr bool successorPriceWaived = false;
+  constexpr bool depth2Admissible = false;
 #endif
 #if REVISION_MANIFEST_READER
   if (coveragePreparation != CoveragePreparation::AwaitAdmission || !coverageSourceComplete() ||
@@ -2495,8 +2545,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   auto* set = viewSetIfPrewarmed();
   // Qualification may run privately beside a Capture ready, but admission
   // cannot discharge that request until the single successor role is free.
+  // Slice 2 (owner ruling 2026-11-04): the one exception is the frame's own depth-2 build into a distinct free view.
   if (!set || set->lifecycle.build >= set->views.size() ||
-      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) ||
+      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete && !depth2Admissible) ||
 #if REVISION_MANIFEST_READER
       coverageSourceReadUnits() != coverageSourceUnits) return false;
 #else

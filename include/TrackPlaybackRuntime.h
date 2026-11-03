@@ -1095,6 +1095,14 @@ struct LoopPlaybackRuntime {
   void retireCoverageSource();
   bool stepCoverageSourceRetirement(size_t quantum);
   bool coverageRoleAvailable(bool keepCaptureReady = false) const;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  /// Two-span (owner ruling 2026-11-04): `ready` holds the serving frame's own depth-1 successor -- complete,
+  /// unpublished, committed, the frame's generation, the serving window's revision, starting where the serving window
+  /// ends -- and a distinct unowned `build` view (not ready, current or retained) exists.
+  bool readyIsServingFramesDepth1Successor() const;
+  /// `request` is that frame's depth-2 obligation: committed, its generation and epoch, the next deadline and start.
+  bool isServingFramesDepth2Request(const PlaybackViewPendingRequest& request) const;
+#endif
   /// DEC-194 (report-only): the first failing term of `coverageRoleAvailable`, in its own order.
   PlaybackCoverageRoleRefusal coverageRoleRefusal(bool keepCaptureReady) const;
 

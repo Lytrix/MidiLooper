@@ -350,6 +350,10 @@ public:
   /// C5.3b host probe (`RollingSuccessorProbe.h`): while the active slot's frame serves N, open its one successor
   /// demand for `[N.end, N.end + span)`; after a named miss, cancel it. Main-loop requester only.
   void serviceRollingSuccessorDemand(PlaybackDeadlineClock clock);
+  /// Two-span: while the depth-1 successor waits complete in `ready`, open the one depth-2 demand.
+  void serviceRollingDepth2Demand(PlaybackDeadlineClock clock);
+  /// Two-span promotion: keep the old depth-2 obligation as the new depth-1 successor only on a full identity match.
+  void adoptOutstandingDepth2AsSuccessor(uint8_t slot, LoopPlaybackRuntime& runtime, const Loop& loop);
 #endif
   // Off-clock initial launch preparation; no absolute promise before binding.
   bool preparePlaybackLaunchForSlot(uint8_t slotIndex);

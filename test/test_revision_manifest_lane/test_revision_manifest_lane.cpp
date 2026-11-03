@@ -417,6 +417,7 @@ void test_c5_3_a_dense_take_is_served_from_the_manifest() {
 /// and the only silences left are a chain's cold starts.
 void enableProbeImageSuccessors() {
   RollingSuccessorProbe::gKnobs = {};
+  RollingSuccessorProbe::gCounters = {};  // records are keyed by absolute deadline; every case restarts at tick 0
   RollingSuccessorProbe::gKnobs.enabled = true;
   RollingSuccessorProbe::gKnobs.bypassLeadPrice = true;
   RollingSuccessorProbe::gKnobs.requestLeadTicks = UINT32_MAX;
@@ -613,7 +614,8 @@ void test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready() {
     const uint32_t depth1 = (frame.startPhase + kSpanTicks) % frame.loopLength;
     const uint32_t depth2 = (frame.startPhase + 2 * kSpanTicks) % frame.loopLength;
     if (ready.complete && ready.coverage.startPhase == depth1 && build.coverage.lengthTicks == kSpanTicks &&
-        build.coverage.startPhase == depth2 && (build.complete || runtime.viewBuild.active()))
+        build.coverage.startPhase == depth2 &&
+        (build.complete || runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Building))
       threeStages = true;
   });
   const uint32_t requested = RollingSuccessorProbe::gCounters.requested;
@@ -627,6 +629,136 @@ void test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready() {
     std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
     for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
     for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+}
+
+/// Per-tick two-span witness on the active slot: physical-role uniqueness every tick, and the parked/published
+/// identity of a depth-2 window (N+1 complete in `build` while N occupies `ready`).
+struct TwoSpanWitness {
+  bool parked = false;              // N+1 seen complete in build behind a complete ready N
+  uint8_t parkedView = 0xFF;        // its physical view
+  uint64_t parkedStorage = 0;       // its storage generation when parked
+  uint32_t parkedStart = 0;
+  bool publishedWithoutRebuild = false;  // later seen in ready: same view, same storage generation
+  bool midBuildAtHandoff = false;   // a handoff happened while N+1 was still building
+  bool midBuildSurvived = false;    // ... and the same physical view completed without a reset
+  uint8_t midView = 0xFF;
+  uint64_t midStorage = 0;
+};
+
+void observeTwoSpan(LoopPlaybackRuntime& runtime, TwoSpanWitness& w, uint32_t& lastStart) {
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (set == nullptr) return;
+  assertRolesDistinct(set->lifecycle);
+  const auto& frame = runtime.rolling;
+  const auto& lc = set->lifecycle;
+  const bool serving = frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.loopLength != 0;
+  if (serving && lc.ready < set->views.size() && lc.build < set->views.size()) {
+    const auto& ready = set->views[lc.ready];
+    const auto& build = set->views[lc.build];
+    const uint32_t span = 2 * kBar;
+    const uint32_t depth1 = (frame.startPhase + span) % frame.loopLength;
+    const uint32_t depth2 = (frame.startPhase + 2 * span) % frame.loopLength;
+    if (!w.parked && ready.complete && ready.coverage.startPhase == depth1 && build.complete &&
+        build.coverage.startPhase == depth2 && !build.published) {
+      w.parked = true;
+      w.parkedView = lc.build;
+      w.parkedStorage = build.storageGeneration;
+      w.parkedStart = depth2;
+    }
+  }
+  // A handoff (the frame's start moved) while the build view is still being filled under coverage ownership.
+  if (serving && !w.midBuildAtHandoff && lastStart != UINT32_MAX && frame.startPhase != lastStart &&
+      lc.build < set->views.size() && !set->views[lc.build].complete &&
+      runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Building &&
+      set->views[lc.build].coverage.startPhase == (frame.startPhase + 2 * kBar) % frame.loopLength) {
+    w.midBuildAtHandoff = true;
+    w.midView = lc.build;
+    w.midStorage = set->views[lc.build].storageGeneration;
+  }
+  if (w.parked && !w.publishedWithoutRebuild && lc.ready == w.parkedView && lc.ready < set->views.size() &&
+      set->views[lc.ready].complete && set->views[lc.ready].storageGeneration == w.parkedStorage &&
+      set->views[lc.ready].coverage.startPhase == w.parkedStart)
+    w.publishedWithoutRebuild = true;
+  if (w.midBuildAtHandoff && !w.midBuildSurvived && w.midView < set->views.size() &&
+      set->views[w.midView].complete && set->views[w.midView].storageGeneration == w.midStorage)
+    w.midBuildSurvived = true;
+  lastStart = frame.startPhase;
+}
+
+// Two-span: N+1 completed **before** the N-1 -> N handoff, parked in `build` behind the occupied `ready`, then published
+// as `ready` after N is promoted -- the same physical view and storage generation, i.e. without restarting work -- and
+// with no second demand. Roles stay distinct every tick and every note plays exactly once.
+void test_c5_3_two_span_parked_successor_is_published_without_rebuild() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  TwoSpanWitness w;
+  uint32_t lastStart = UINT32_MAX;
+  PlaybackObservation obs;
+  play(t, 0, 6 * kLength, obs, 1, [&](uint32_t) { observeTwoSpan(runtime, w, lastStart); });
+  const uint32_t duplicates = RollingSuccessorProbe::gCounters.duplicateStarts;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(w.parked, "N+1 never completed while N occupied ready (the parked case did not occur)");
+  TEST_ASSERT_TRUE_MESSAGE(w.publishedWithoutRebuild, "the parked N+1 was not published as ready without rebuilding");
+  TEST_ASSERT_EQUAL_UINT32(0u, duplicates);
+  assertEveryTakeNotePlayed(obs, 2, 6);
+}
+
+// Two-span: N+1 is still mid-build at the N-1 -> N handoff (its demand opened just before it) and completes in the
+// same physical view, unreset, after the handoff; no traversal loses a take note.
+constexpr uint32_t kMidBuildLeadTicks = 3;  // request -> Building in 2 ticks; the handoff lands inside the fill
+void test_c5_3_two_span_mid_build_successor_survives_the_handoff() {
+  installReader();
+  enableProbeImageSuccessors();
+  // The depth-2 demand opens a few ticks before the N-1 -> N handoff (its deadline is N.end, one span later), so its
+  // qualification and fill straddle the handoff. (Withheld grants cannot do this: the bounded selector forces a
+  // deadline successor after three denials.)
+  RollingSuccessorProbe::gKnobs.requestLeadTicks = 2 * kBar + kMidBuildLeadTicks;
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  TwoSpanWitness w;
+  uint32_t lastStart = UINT32_MAX;
+  PlaybackObservation obs;
+  play(t, 0, 8 * kLength, obs, 1, [&](uint32_t) { observeTwoSpan(runtime, w, lastStart); });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(w.midBuildAtHandoff, "no handoff happened while N+1 was mid-build (case did not occur)");
+  TEST_ASSERT_TRUE_MESSAGE(w.midBuildSurvived, "the mid-build N+1 did not complete in its own, unreset view");
+  assertEveryTakeNotePlayed(obs, 2, 8);
+}
+
+// Two-span: a revision change while the depth-2 obligation is outstanding invalidates it -- it is never preserved into
+// promotion, and the deleted note never sounds from a window read after the move.
+void test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  uint32_t movedAt = 0;
+  bool sawDepth2 = false;
+  PlaybackObservation obs;
+  play(t, 0, 6 * kLength, obs, 1, [&](uint32_t tick) {
+    if (movedAt != 0 || tick < 2 * kLength) return;
+    if (runtime.rolling.successorState != 4) return;
+    sawDepth2 = true;
+    deleteTakeNote(loop, 63);  // the source moves while N+1 is owed
+    movedAt = tick;
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(sawDepth2, "no depth-2 obligation was outstanding (case did not occur)");
+  for (const auto& [tick, e] : obs.sent) {
+    if (!e.isNoteOn() || e.data.noteData.note != 63) continue;
+    TEST_ASSERT_TRUE_MESSAGE(tick < movedAt + 3 * 2 * kBar, "the deleted note sounded from a stale preserved window");
   }
 }
 
@@ -697,7 +829,10 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_completion_placement_never_claims_a_consumed_boundary);
   RUN_TEST(test_c5_3_a_valid_retained_record_bar_stays_protected);
   RUN_TEST(test_c5_3_orphaned_retained_role_is_released);
-  if (getenv("TWO_SPAN_RED") != nullptr) RUN_TEST(test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready);
+  RUN_TEST(test_c5_3_two_span_prepares_n_plus_1_while_n_waits_ready);
+  RUN_TEST(test_c5_3_two_span_parked_successor_is_published_without_rebuild);
+  RUN_TEST(test_c5_3_two_span_mid_build_successor_survives_the_handoff);
+  RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
     RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
   if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);

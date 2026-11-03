@@ -332,3 +332,69 @@ It fails today: "N+1 was never prepared while N waited in ready".
 handoff) can only be non-vacuous once a depth-2 obligation can exist. They are specified here and written with the
 change. A valid retained view already blocks the build structurally: slice 2's
 `test_two_span_never_steals_a_legitimately_retained_view`.
+
+## 13. Two-span requester, narrow role exception and identity-guarded promotion (owner ruling 2026-11-04)
+
+The scope amendment authorized one role-owner policy change. The rolling frame may build its depth-2 window while its
+depth-1 `ready` window is complete and unpublished, but only when all of these hold:
+- both identities belong to the same valid frame;
+- source, revision, generation and epoch match;
+- a distinct, unowned build view is available.
+
+This is probe-image only (`PLAYBACK_ROLLING_SUCCESSOR_PROBE`). There is still one producer, one build request and three
+views. DEC-147 admission is unchanged, and this is no production timing claim.
+
+**What changed.**
+
+| owner | change |
+|---|---|
+| requester (`serviceRollingSuccessorDemand`) | Depth-aware. State 1 (depth-1 ready) opens the depth-2 demand `[N.end, N.end + span)` due at `N.end` (`serviceRollingDepth2Demand`, state 4). States 5/2 are the re-keyed and missed forms. Cancel, refusal and blocked-frame paths each retire both keys. |
+| role policy (`coverageRoleRefusal`) | One exception before `ReadyRoleOccupied`: state 4, `readyIsServingFramesDepth1Successor()`, and every recorded request is `isServingFramesDepth2Request`. |
+| admission (`beginQualifiedCoverageBuild`) | The same exception, through the same predicate (`depth2Admissible`), at the two places admission repeats the role and price decisions. See interaction 1. |
+| completion | A depth-2 completion stays complete and owned in `build` (parked). It is never published over `ready`. |
+| promotion (N-1 -> N) | `adoptOutstandingDepth2AsSuccessor`. A parked window whose identity matches the new depth-1 key is published without a rebuild. One still building keeps its obligation (state 1, published by its own completion). Anything else is cancelled by name. `builderOwnedByDepth2` excuses only the builder-record terms of the boundary adoption predicate, and only for state 5 naming exactly the next deadline, epoch and generation. |
+
+**RED -> GREEN** (`test_revision_manifest_lane`; `test_playback_prewarm/two_span_lifecycle.inc`).
+
+| case | RED (fix reverted) | GREEN |
+|---|---|---|
+| `two_span_prepares_n_plus_1_while_n_waits_ready` (now requires `Building` or complete, not just "owed") | A: "never prepared while N waited"; B: traversal 2 bar-2 missing | pass |
+| `two_span_parked_successor_is_published_without_rebuild` (same view, same `storageGeneration`) | A: parked case never occurs; B: "not published as ready without rebuilding" | pass |
+| `two_span_mid_build_successor_survives_the_handoff` (request lead `span + 3`: handoff lands inside `Building`) | guard | pass, every take note in traversals 2-7 |
+| `two_span_revision_change_never_preserves_a_stale_obligation` (`deleteTakeNote` during state 4) | guard | pass |
+| `two_span_role_exception_admits_only_the_frames_own_depth2_build` | -- | admitted case first; then each of these single-term perturbations is refused: state 1, another deadline, another epoch, generation moved, revision moved, valid retained view holding the third view |
+
+- A = admission without `depth2Admissible`.
+- B = promotion judging the builder before the parked window.
+- Every per-tick witness also asserts physical-role distinctness.
+- In every two-span case all successor records are `HandedOff`, `duplicateStarts == 0`, and each NoteOn plays exactly
+  once per traversal.
+
+**Admission/publication interactions found** (all resolved within the boundaries):
+
+1. **Admission repeats the role and price decisions.** Two copies were missed by the requester change:
+   - `beginQualifiedCoverageBuild` refuses whenever `ready` is complete.
+   - Its probe lead-price waiver matched only the depth-1 deadline.
+   
+   So the depth-2 demand was *owed and positioned* but sat in `AwaitAdmission` until the handoff re-keyed it as depth 1.
+   The earlier GREEN of the "prepares" case (section 12 follow-up) was vacuous: it accepted `viewBuild.active()`.
+   - Fixed by one predicate at all three sites.
+   - The code comment's rule, "one decision charged twice, not a second rule", now holds for depth 2.
+2. **The builder keeps naming its finished work.** `viewBuild.coverageOwned()` and `viewBuildWork` still describe a
+   completed build.
+   - Promotion read the parked window as "still building" and never published it. The window was then Missed at its
+     deadline, and the frame restarted after a gap.
+   - Fixed by judging the parked window first.
+3. **The boundary adoption predicate reads the single `viewBuildWork` record.** Under two-span that record describes the
+   depth-2 build, not the ready window.
+   - Fixed by `builderOwnedByDepth2` (state 5, exact next identity). The ready-view identity terms stay.
+4. **Harness:** `RollingSuccessorProbe::gCounters.records` are keyed by absolute deadline and persisted across cases. The
+   requester's duplicate guard (`recordFor`) then refused every later case's demands. `enableProbeImageSuccessors` now
+   resets the counters.
+5. **Withheld grants cannot make a mid-build handoff.** The bounded selector forces a deadline successor after three
+   denials. The host harness lane does not apply `denyPerGrain` at all. The mid-build case positions the request instead.
+
+**Still open (unchanged):**
+- the production DEC-147 price still refuses successors, and the requester exists only in the probe image;
+- the outer-loop bound is not enforceable;
+- device confirmation of slice 1 and this slice on the probe image.

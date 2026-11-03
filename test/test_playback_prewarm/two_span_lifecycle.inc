@@ -188,7 +188,119 @@ void test_two_span_never_steals_a_legitimately_retained_view() {
   assertRolesDistinct(lc);
 }
 
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+namespace two_span {
+constexpr uint64_t kNm1End = 10000;  // absolute N-1.end: the serving frame's deadline
+constexpr uint32_t kEpoch = 3;
+
+/// The serving frame over the two-span state: N-1 bound in `current`, N its depth-1 successor in `ready`, depth 2 owed.
+void serveFrameOverTwoSpan(LoopPlaybackRuntime& runtime) {
+  auto& frame = runtime.rolling;
+  frame.phase = LoopPlaybackRuntime::RollingPhase::Serving;
+  frame.loopLength = kLoop;
+  frame.startPhase = 0;
+  frame.deadlineTick = kNm1End;
+  frame.epoch = kEpoch;
+  frame.generation = 7;
+  frame.boundView = runtime.viewSetIfPrewarmed()->lifecycle.current;
+  frame.successorState = 4;
+}
+
+/// The frame's own depth-2 demand: `[N.end, N.end + span)` due at N.end.
+PlaybackViewPendingRequest depth2Request() {
+  PlaybackViewPendingRequest request{};
+  request.active = true;
+  request.sourceKind = PlaybackViewPendingRequest::SourceKind::CommittedSnapshot;
+  request.operationGeneration = 7;
+  request.clockEpoch = kEpoch;
+  request.coverage = PlaybackCoverageInterval{(2 * kSpan) % kLoop, kSpan, kLoop};
+  request.deadlineTick = kNm1End + 2 * kSpan;
+  return request;
+}
+}  // namespace two_span
+
+/// Slice 2 scope amendment (owner ruling 2026-11-04): the narrow role exception, as `coverageRoleRefusal` answers it.
+/// Only the serving frame's own depth-2 demand may build into a distinct free view while its complete, unpublished
+/// depth-1 successor occupies `ready`; every other request, a held retained view, a moved generation or revision, and
+/// a frame not owing depth 2 keep `ReadyRoleOccupied` (or an earlier refusal). Non-vacuous: the admitted case is
+/// asserted first on the same state each refusal then perturbs by one term.
+void test_two_span_role_exception_admits_only_the_frames_own_depth2_build() {
+  using namespace two_span;
+  const auto fresh = [](LoopPlaybackRuntime& runtime) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews());
+    uint8_t viewNm1 = kNone, viewN = kNone;
+    reachTwoSpanState(*runtime.viewSetIfPrewarmed(), viewNm1, viewN);
+    serveFrameOverTwoSpan(runtime);
+  };
+  using Refusal = PlaybackCoverageRoleRefusal;
+  {  // the frame's own depth-2 obligation, with and without its request recorded yet
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    TEST_ASSERT_TRUE(runtime.readyIsServingFramesDepth1Successor());
+    TEST_ASSERT_EQUAL(Refusal::None, runtime.coverageRoleRefusal(false));
+    runtime.pendingViewRequest_ = depth2Request();
+    TEST_ASSERT_EQUAL(Refusal::None, runtime.coverageRoleRefusal(false));
+  }
+  {  // the frame does not owe depth 2 (depth-1 obligation only): the committed ready keeps the role
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    runtime.rolling.successorState = 1;
+    TEST_ASSERT_EQUAL(Refusal::ReadyRoleOccupied, runtime.coverageRoleRefusal(false));
+  }
+  {  // an unrelated request (another deadline) while ready is occupied
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    auto request = depth2Request();
+    request.deadlineTick += kSpan;
+    runtime.pendingViewRequest_ = request;
+    TEST_ASSERT_EQUAL(Refusal::ReadyRoleOccupied, runtime.coverageRoleRefusal(false));
+  }
+  {  // an unrelated request (another epoch)
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    auto request = depth2Request();
+    request.clockEpoch = kEpoch + 1;
+    runtime.pendingViewRequest_ = request;
+    TEST_ASSERT_EQUAL(Refusal::ReadyRoleOccupied, runtime.coverageRoleRefusal(false));
+  }
+  {  // the generation moved: the ready window is no longer the frame's
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    runtime.rolling.generation = 8;
+    TEST_ASSERT_FALSE(runtime.readyIsServingFramesDepth1Successor());
+    TEST_ASSERT_EQUAL(Refusal::ReadyRoleOccupied, runtime.coverageRoleRefusal(false));
+  }
+  {  // the revision moved: ready no longer matches the serving window's revision
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    auto& set = *runtime.viewSetIfPrewarmed();
+    set.views[set.lifecycle.ready].source.playbackRevision = 2;
+    TEST_ASSERT_EQUAL(Refusal::ReadyRoleOccupied, runtime.coverageRoleRefusal(false));
+  }
+  {  // a valid retained view holds the third view: there is no distinct free view to build into
+    LoopPlaybackRuntime runtime;
+    fresh(runtime);
+    auto& set = *runtime.viewSetIfPrewarmed();
+    Lifecycle& lc = set.lifecycle;
+    const uint8_t third = lc.build;
+    {
+      RuntimePlaybackViewBuild build;
+      beginBuild(build, set.views[third], SpanSource(0, 90), 0, 1);
+      finishBuild(build);
+    }
+    lc.build = kNone;
+    lc.retained = third;
+    TEST_ASSERT_FALSE(runtime.readyIsServingFramesDepth1Successor());
+    TEST_ASSERT_NOT_EQUAL(Refusal::None, runtime.coverageRoleRefusal(false));
+    TEST_ASSERT_TRUE(set.views[third].complete);  // untouched
+  }
+}
+#endif
+
 void registerTwoSpanLifecycleCases() {
   RUN_TEST(test_two_span_three_views_carry_n_minus_1_n_and_n_plus_1_through_a_handoff);
   RUN_TEST(test_two_span_never_steals_a_legitimately_retained_view);
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE
+  RUN_TEST(test_two_span_role_exception_admits_only_the_frames_own_depth2_build);
+#endif
 }
