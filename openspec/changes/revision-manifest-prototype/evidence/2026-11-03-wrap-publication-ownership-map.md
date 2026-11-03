@@ -174,3 +174,58 @@ until idle). The reference is today's journal-based result.
   - (b) adds a note only if the parent lacks it (`findNoteAtPitch`, `eventAlreadyInSnapshot`).
   - (a) adds every Add row unconditionally.
   - For fresh notes they agree. For a re-recorded NoteId, they could differ.
+
+## Amendment after the owner review and the REDs (2026-11-03)
+
+**Owner qualifications accepted.**
+
+- **Only the hand-off is O(1).** The seal (O(Shorten/Hide)), the pass commit and the held-NoteOn extraction stay on
+  the Clock. This slice removes the journal; it does not make the whole wrap bounded.
+- **The companion producer needs a resumable translation grain.** The bound covers the rows translated, the
+  allocations and the lookups per turn, not only the 32-change fragment cap. Completing a fragment and publishing are
+  separate steps from that grain.
+- **The publication cut is open.** A fixed-frontier cut (publish everything through F, atomically) amends row 22's
+  atomicity and needs a decision. It is not in this slice; first measure whether continuous overdub prevents
+  convergence. C5.3b is not complete while that can happen.
+
+**Corrections from the code.**
+
+1. **The companion list is not movable.** `pushOverdubSessionPass` moves the seal's `EditPassIdList` into
+   `overdubSessionCompanionIds_[i]`, parallel to `overdubSessionPassIds_[i]`. Other owners read it:
+   - session undo, via `overdubSessionCursor_`;
+   - the stale-root playback overlay (`LoopSnapshotPlayback`, by index up to the cursor);
+   - `recordLastOverdubSeal`, which keeps a copy for `tryAdmitLastOverdubSealIntoMergedEvents`;
+   - `markAffectedDisplayCacheRanges` (a const reference).
+
+   So the box must not take that list. That session record already is the ordered, durable index of (pass,
+   companions) per wrap. A companion producer that reads it by index, up to the cursor, gets two things without a new
+   index:
+   - in-session rediscovery;
+   - the causal order: A's pass, then A's companions, then B.
+   The session close clears it (`clearOverdubSession*`), so the hand-over to the session-exit inventory must happen
+   before that.
+2. **The wrap journal also admits publication.** During overdub, `Track::processSnapshotOwnerTurn` is eligible only
+   when `hasInFlightSnapshotConstruction() || hasPendingWrapJournal() || pendingSnapshotSessionExitQueued()`. A queued
+   pass obligation without a journal is never stepped mid-session. The redesign has to turn that term into "has a
+   wrap publication obligation", or the live pass producer never runs.
+
+**REDs** (`test/test_continuous_capture/wrap_publication_reds.inc`). They are registered only with
+`WRAP_PUBLICATION_RED=1`, like the S1.2 `WORKING_SET_RED` gate. Publication is driven through the production owner
+turn (`TrackCaptureStopTestAccess::snapshotOwnerTurn`), with the session still running.
+
+| case | today | evidence |
+|---|---|---|
+| RED 1: no snapshot change translated in the wrap Clock | **FAILS** | 4 translations (3 Adds + 1 Shorten), 1 journal fragment queued |
+| GUARD 2: B's mutation does not change A's publication | holds | the root after A equals A published with B silent |
+| GUARD 3: Add, Shorten, held note crossing the wrap | holds | A's Adds and Shorten publish; the held note is absent from A and published once by B |
+| GUARD 4: atomic and current | holds | no turn shows A's notes without A's Shorten; revision = post-seal `playbackRevision`. Worst worker turn today: 0 translations (all on the Clock) |
+| RED 5: two rapid wraps queue obligations, not copies | **FAILS** | 2 private journal fragments |
+| RED 6: a lost obligation is rediscovered in session, with its companions | **FAILS** | stall: pending for 4,096 owner turns, 0 translations; the gate never admits it without a journal |
+
+Native-only seams:
+- `Loop::snapshotChangeTranslationsForTest`, which counts every translation by any producer, so RED 1 survives the
+  redesign;
+- `Loop::failNextWrapPublicationObligationForTest`.
+
+The parity cases (GUARD 2-4) are the old journal's result pinned as the oracle. A repeated-NoteId case is still to be
+added when the producer lands, because today's journal and the pass producer can only differ there.

@@ -142,8 +142,21 @@ const EditPass* findActiveEditPass(const Loop& loop, EditPassId id) {
   return nullptr;
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+namespace {
+// Wrap-publication REDs (owner ruling 2026-11-03): every pending row, EditPass row or pass event translated into a
+// snapshot change, whichever producer does it, so a fixture can prove a call stack (the wrap Clock) did none.
+uint32_t gSnapshotChangeTranslations = 0;
+bool gFailNextWrapPublicationObligation = false;
+}  // namespace
+#define SNAPSHOT_CHANGE_TRANSLATED() (++gSnapshotChangeTranslations)
+#else
+#define SNAPSHOT_CHANGE_TRANSLATED() ((void)0)
+#endif
+
 LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPass& row,
                                        LoopId loopId, LoopSnapshotChangeSet& changes) {
+  SNAPSHOT_CHANGE_TRANSLATED();
   if (row.passType != EditPassType::Note) {
     return true;
   }
@@ -522,6 +535,7 @@ void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange
   if (change.noteId == kInvalidNoteId) {
     return;
   }
+  SNAPSHOT_CHANGE_TRANSLATED();
   SnapshotNoteChange noteChange{};
   noteChange.next.loopId = loopId;
   noteChange.next.noteId = change.noteId;
@@ -571,6 +585,7 @@ void appendWrapNonNoteEvents(const Loop& loop, const LoopSnapshot& parent, PassI
       continue;
     }
     LANE_WRAP_COUNT(WrapNonNoteAdded, 1);
+    SNAPSHOT_CHANGE_TRANSLATED();
     SnapshotEventChange change{};
     change.kind = SnapshotChangeKind::Add;
     change.next.loopId = loop.loopId;
@@ -927,6 +942,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
   }
   while (!progress.batchExhausted()) {
     const MidiEvent& event = progress.batch[progress.batchIndex];
+    SNAPSHOT_CHANGE_TRANSLATED();
     bool addEvent = false;
     {
 #if defined(SESSION_CAPTURE)
@@ -1379,6 +1395,12 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
   if (wrapPassId == kInvalidPassId || loopLengthTicks == 0) {
     return false;
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (gFailNextWrapPublicationObligation) {  // the obligation could not be queued (allocation)
+    gFailNextWrapPublicationObligation = false;
+    return false;
+  }
+#endif
   ImmutableLoopSnapshotRef parent = publishedSnapshot();
   if (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->unpublishedCandidate) {
     parent = pendingSnapshotPublishBox_->unpublishedCandidate;
@@ -1606,6 +1628,8 @@ uint32_t Loop::pendingSnapshotCoveredPassRevisionForTest() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->coveredPassRevision : 0;
 }
 
+uint32_t Loop::snapshotChangeTranslationsForTest() { return gSnapshotChangeTranslations; }
+void Loop::failNextWrapPublicationObligationForTest() { gFailNextWrapPublicationObligation = true; }
 const LoopSnapshotChangeSet* Loop::pendingWrapJournalChangesForTest() const {
   if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->queuedWrapJournals.empty()) {
     return nullptr;

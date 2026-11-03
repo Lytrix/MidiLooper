@@ -1164,6 +1164,10 @@ struct Loop {
     storePublishedSnapshot(std::move(snapshot), revision, coveredPassRevision);
   }
   const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
+  /// Wrap-publication REDs: snapshot-change translations by any producer (pending row, EditPass row, pass event),
+  /// and an injection that makes the next wrap's publication obligation fail to queue.
+  static uint32_t snapshotChangeTranslationsForTest();
+  static void failNextWrapPublicationObligationForTest();
   /// Task 6.4: the box's enumerated pass queue and coverage watermark, so a fixture can prove receipt
   /// coalescing enumerates exactly what sequential consumption does.
   std::vector<PassId> pendingSnapshotQueuedPassIdsForTest() const;

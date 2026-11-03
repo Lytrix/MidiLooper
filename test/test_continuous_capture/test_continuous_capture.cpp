@@ -320,6 +320,8 @@ struct TrackCaptureStopTestAccess {
   static bool serviceAcceptedInteraction(Track& track) {
     return track.serviceAcceptedInteractionTurn();
   }
+  /// The production Snapshot owner turn, with its own admission gate (wrap-publication REDs).
+  static void snapshotOwnerTurn(Track& track) { track.processSnapshotOwnerTurn(track.getActiveLoop(), 2); }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static uint64_t interval(const Track& track) { return track.captureInterval_; }
@@ -5668,6 +5670,8 @@ void test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it(
   TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
                             "no latch is set where this image has no boundary to clear it");
 }
+#include "wrap_publication_reds.inc"
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -5817,5 +5821,7 @@ int main() {
   RUN_TEST(test_record_stop_persist_target_follows_the_recorded_slot);
   // Task 4.5: the breach is reported in every image; the latch is set only where a boundary can clear it.
   RUN_TEST(test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it);
+  // Wrap-publication ownership REDs (2026-11-03): only with `WRAP_PUBLICATION_RED=1`.
+  registerWrapPublicationReds();
   return UNITY_END();
 }
