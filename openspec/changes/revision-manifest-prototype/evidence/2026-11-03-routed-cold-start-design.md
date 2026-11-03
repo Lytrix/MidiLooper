@@ -203,3 +203,68 @@ Consequences:
     a Record stop's bar 1. The frame then adopts it and owns its onward windows. This keeps the session's immutable
     source as the predecessor, which is the ruling's intent.
   - (c) Amend DEC-147 for a chain's first window. Excluded by the ruling.
+
+## 10. Option (b) feasibility (owner: verdict before production changes)
+
+### 10.1 The "job-owned servable return window" is not one
+
+Host, every 8 ticks from the overdub stop (`test_revision_manifest_lane` Gate A case), all view roles:
+
+| tick | job | `hasServableDeferredRecordView` | first-return index | current | ready |
+|---|---|---|---|---|---|
+| 9,176-9,224 | pending | **1** | 255 (none) | rev 1, `1536+1536`, complete, published | none |
+| 9,232 | retired | 0 | 255 | rev 1, `1536+1536` | **rev 2, `1536+1536`, complete** |
+
+- `hasServableDeferredRecordView` is true when a first-Record return window exists **or** the current/ready view is
+  merely complete. It checks neither revision nor playhead coverage.
+- At the overdub stop it counts the stale pre-stop window. The first-return window is a **Record-only** path
+  (`firstRecordReturnWindowIndex` stays 255).
+- **There is no job-owned return window over the session's source to transfer.** The apparent contradiction is this
+  predicate, not a hidden window.
+
+### 10.2 Transfer without a synchronous rebuild
+
+- Nothing exists to transfer at the stop edge.
+- The post-stop window for the new revision, however, is **built within 56 ticks** of the stop by the existing
+  bounded workers: tick 9,232, `ready`, rev 2, bars 2-3. The work is not the problem.
+- That window is held for the *next* traversal's bar 2 (deadline 13,824), because at request time the DEC-147 price
+  (4,480 ticks) would not admit this traversal's bar 2, then 1,520 ticks away.
+
+### 10.3 Onward continuity under production DEC-147 pricing
+
+- Under production pricing no successor at N's end is admitted (`test_rolling_successor_lead`, both lanes). The host
+  Gate A case without the probe knobs plays bars 2-3 of every other traversal in steady state.
+- A two-bar return window (1,536 ticks) cannot bridge the cold-start horizon: lookahead 4,480 ticks on host, about
+  13,100 on device. Under production pricing its successor is refused anyway.
+- So **no return window, however bound, gives continuity under production pricing**: the chain itself does not
+  continue there.
+
+### 10.4 Earlier preparation through existing bounded workers
+
+- The workers already prepare the right content in time (10.2). What holds it back is the price's **position**
+  judgement: it is made at request time, from a declared worst case, and never revisited when the build completes
+  early.
+- Preparing the post-stop chain before the stop would mean serving committed-plus-live content on the manifest lane
+  during the overdub. That is option (a), the excluded manifest overdub reader.
+
+### 10.5 Verdict
+
+**Option (b) is not feasible as specified. Within the current constraints no narrow variant of it is either.**
+1. The return source it would transfer does not exist for an overdub stop (10.1).
+2. Under production DEC-147 pricing the routed chain does not continue past any window, so even a perfect return
+   window ends in a cold frame (10.3).
+3. The binding constraint is the price's request-time position judgement, not the work, the source or the ownership.
+   The correct window is complete 56 ticks after the stop and then waits 4,480 ticks (10.2).
+
+What would close it without a fallback, a new reader or relaxed work pricing is for the owner to decide:
+- **The C5.3b successor price (already pending).** Production needs an admissible successor regardless of cold
+  start; without one, steady state is not continuous either.
+- **Judging the position at completion as well as at request:** a ready window may take the earliest boundary its
+  *completed* build precedes, by at least the one-bar `leadTicks` the contract already requires. The work price is
+  unchanged. Only a position the price ruled out at request time may be reclaimed once the work is done.
+  - This touches DEC-147's position rule, so it is an owner amendment, not a mechanical fix.
+
+REDs stay separate and unchanged: `test_c5_3_cold_start_transport_start_plays_the_first_traversal` (stopped-state
+launch) and `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop` (post-overdub-stop return). The acceptance
+for either fix is complete emitted-MIDI parity across several traversals, including the first successor handoff,
+under production pricing.
