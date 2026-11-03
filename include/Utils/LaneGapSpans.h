@@ -30,8 +30,12 @@ struct Scope {
     if (active) gIteration[bucket] += micros() - startUs;
   }
 };
+/// MIDI input split (owner ruling 2026-11-03), defined in MidiHandler.cpp: printed after the transport stops.
+void dumpMidiSpans();
+void resetMidiSpans();
 }  // namespace LaneGapSpans
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
+#define LANE_GAP_MIDI_SPLIT 1
 #else
 #define LANE_GAP_SPAN(bucket) ((void)0)
 #endif

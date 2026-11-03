@@ -122,3 +122,35 @@ tick, grants served because due, max opportunity gap while owed, N.end.
 - **Next.** Split the MIDI-input bucket one level deeper: clock-tick processing (with its playback), the control
   gesture that stops the overdub, and live note capture. Then decide between slicing that work and an outer lane-turn
   deadline. No deeper lookahead yet.
+
+## MIDI input split: per-message cost, not backlog (owner ruling 2026-11-03)
+
+- **Method.** In the measurement image `dispatchMidiBatch` moves to flash, which frees ITCM (padding 984), and times
+  each dispatched message. Per transport phase (play, record, overdub, post-stop) and per message kind, it keeps counts,
+  total and longest dispatch; per `handleMidiInput` call, the totals and the 16 worst calls. RAM2, printed only at the
+  transport stop.
+- **Run.** succprobe HEX sha256 `6e2496e50f7d8ac6909ffe52f0762886290ae4db2dc9fd4a6edbe291312ff7ef`,
+  `captures/session_20261103_123542.log`, boot `crash=0`. Same overdub workload; after the restart the first window
+  served at 12.4 s and successors went 10/10.
+
+| phase | Clock: n / avg / max | Note: n / avg / max | Start/Stop |
+|---|---|---|---|
+| record take | 3,131 / **0.60 ms** / 11 ms | 1,026 / 0.28 ms / 3.7 ms | — |
+| overdub | 3,587 / 1.41 ms / **3,045 ms** | 1,026 / **18.4 ms** / 87 ms | — |
+| after the overdub stop (45 s) | 5,927 / **6.71 ms** / 52 ms | 4 / 0.19 ms | 95 ms |
+| playback after the restart | 4,110 / **0.97 ms** / 31 ms | — | 95-109 ms |
+
+- **It is per-message cost (case B), and it depends on the phase.** The batches are bounded and are not the driver.
+  1. **After the overdub stop every Clock costs 6.7 ms**, against 0.6 ms while recording and 1.0 ms in playback after
+     the restart. At 300 BPM (120 clocks/s), Clock dispatch alone took 39.8 s of the 45 s phase, about 88 % of the CPU.
+     That is the outer starvation of the window lane.
+  2. **During the overdub every NoteOn/NoteOff costs 18 ms** (max 87 ms), against 0.28 ms during the record take. That
+     backs input up: the worst calls drained 85 clocks + 29 notes and took 1.0-1.2 s.
+  3. **One Clock message took 3.04 s** during the overdub: the single synchronous stall inside the 5.4 s gap.
+- **Next.** Follow the synchronous call chain of:
+  - a Clock dispatch in the post-overdub-stop phase;
+  - the 3 s Clock;
+  - an overdub note dispatch.
+
+  Whatever builds, scans or commits there moves to bounded deferred ownership. No lane deadline or deeper lookahead
+  until then.

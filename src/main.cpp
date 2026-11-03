@@ -679,7 +679,8 @@ FLASHMEM __attribute__((noinline)) static void noteLaneGapIteration(MidiServiceD
   // The epoch survives a stop, so the transport state is the clock's own (device: an epoch test never dumped).
   const bool running = clockManager.isClockRunning() && clock.epoch != 0;
   if (!running) {
-    if (m.running) dumpLaneSpans();  // after the transport, never during it
+    if (m.running) { dumpLaneSpans(); LaneGapSpans::dumpMidiSpans(); }  // after the transport, never during it
+    if (m.running) LaneGapSpans::resetMidiSpans();
     if (m.running || m.iterations != 0) m = LaneSpanMeasure{};
     for (auto& v : LaneGapSpans::gIteration) v = 0;
     return;

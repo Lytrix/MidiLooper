@@ -216,8 +216,102 @@ void pollQualifiedInput(MidiHandler& owner, bool hostReady, USBHost& host, MIDID
 // recording starts before channel messages in that batch are recorded.
 // Clock stays FIFO with channel messages (RC-C A): Clock, NoteOn, Clock must not
 // become Clock, Clock, NoteOn — note ticks come from getCurrentTick() at process time.
-#if MIDI_INGRESS_RECEIPTS_ENABLED
-// Receipt-profile input work only, never the tick's output path.
+#if defined(LANE_GAP_MIDI_SPLIT)
+// C5.3b MIDI input split (owner ruling 2026-11-03, measurement image only): per transport phase and message type,
+// counts, total and longest dispatch; per `handleMidiInput` invocation, the totals and the longest message; the 16 worst
+// invocations. RAM2; printed only after the transport stops (`dumpMidiSpans`).
+namespace {
+enum MidiKind : uint8_t { KindClock = 0, KindNote, KindCc, KindTransport, KindOther, KindCount };
+enum MidiPhase : uint8_t { PhasePlay = 0, PhaseRecord, PhaseOverdub, PhasePostStop, PhaseCount };
+struct MidiKindStat { uint32_t count; uint64_t totalUs; uint32_t maxUs; };
+struct MidiInvocation {
+  uint32_t totalUs, usbUs, dinUs, hostTaskUs, hostDrainUs, maxMsgUs;
+  uint16_t counts[KindCount];
+  uint16_t hostReads;
+  uint8_t maxMsgKind, phase;
+};
+struct MidiSpans {
+  MidiKindStat stat[PhaseCount][KindCount];
+  uint32_t invocations[PhaseCount];
+  MidiInvocation current;
+  MidiInvocation worst[16];
+};
+DMAMEM MidiSpans sMidiSpans;
+uint8_t midiKindOf(uint8_t type) {
+  if (type == midi::Clock) return KindClock;
+  if (type == midi::NoteOn || type == midi::NoteOff) return KindNote;
+  if (type == midi::ControlChange) return KindCc;
+  if (type == midi::Start || type == midi::Stop || type == midi::Continue) return KindTransport;
+  return KindOther;
+}
+uint8_t midiPhaseNow() {
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+    const Track& t = trackManager.getTrack(i);
+    if (t.isOverdubbing()) return PhaseOverdub;
+    if (t.isRecording()) return PhaseRecord;
+  }
+  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i)
+    if (trackManager.getTrack(i).hasPendingDeferredOverdubStop()) return PhasePostStop;
+  return trackManager.anyPlayingMidiDrainAfterOverdubStop() ? PhasePostStop : PhasePlay;
+}
+/// One `handleMidiInput` invocation, finalized on every return path.
+struct MidiInvocationScope {
+  uint32_t startUs;
+  MidiInvocationScope() : startUs(micros()) {
+    sMidiSpans.current = MidiInvocation{};
+    sMidiSpans.current.phase = midiPhaseNow();
+  }
+  ~MidiInvocationScope() {
+    auto& m = sMidiSpans;
+    m.current.totalUs = micros() - startUs;
+    ++m.invocations[m.current.phase];
+    uint8_t least = 0;
+    for (uint8_t i = 1; i < 16; ++i) if (m.worst[i].totalUs < m.worst[least].totalUs) least = i;
+    if (m.current.totalUs > m.worst[least].totalUs) m.worst[least] = m.current;
+  }
+};
+void noteMidiMessage(uint8_t type, uint32_t us) {
+  auto& m = sMidiSpans;
+  const uint8_t kind = midiKindOf(type);
+  auto& st = m.stat[m.current.phase][kind];
+  ++st.count;
+  st.totalUs += us;
+  if (us > st.maxUs) st.maxUs = us;
+  if (m.current.counts[kind] != UINT16_MAX) ++m.current.counts[kind];
+  if (us > m.current.maxMsgUs) { m.current.maxMsgUs = us; m.current.maxMsgKind = kind; }
+}
+}  // namespace
+
+void resetMidiSpansImpl() { sMidiSpans = MidiSpans{}; }
+
+FLASHMEM void dumpMidiSpansImpl() {
+  auto& m = sMidiSpans;
+  static const char* const kPhase[PhaseCount] = {"play", "record", "overdub", "post_stop"};
+  for (uint8_t p = 0; p < PhaseCount; ++p) {
+    if (m.invocations[p] == 0) continue;
+    Serial.printf("#CAP,%lu,DIAG,midi_spans,phase=%s,invocations=%lu,kinds=", (unsigned long)micros(), kPhase[p],
+                  (unsigned long)m.invocations[p]);
+    for (uint8_t k = 0; k < KindCount; ++k)
+      Serial.printf("%s%lu:%llu:%lu", k ? "/" : "", (unsigned long)m.stat[p][k].count,
+                    (unsigned long long)m.stat[p][k].totalUs, (unsigned long)m.stat[p][k].maxUs);
+    Serial.println();
+  }
+  for (const auto& w : m.worst) {
+    if (w.totalUs == 0) continue;
+    Serial.printf("#CAP,%lu,DIAG,midi_spans,invocation,phase=%s,us=%lu,usb=%lu,din=%lu,host_task=%lu,host_drain=%lu,"
+                  "host_reads=%u,max_msg_us=%lu,max_kind=%u,counts=%u/%u/%u/%u/%u\r\n",
+                  (unsigned long)micros(), kPhase[w.phase < PhaseCount ? w.phase : 0], (unsigned long)w.totalUs,
+                  (unsigned long)w.usbUs, (unsigned long)w.dinUs, (unsigned long)w.hostTaskUs,
+                  (unsigned long)w.hostDrainUs, unsigned(w.hostReads), (unsigned long)w.maxMsgUs, unsigned(w.maxMsgKind),
+                  unsigned(w.counts[0]), unsigned(w.counts[1]), unsigned(w.counts[2]), unsigned(w.counts[3]),
+                  unsigned(w.counts[4]));
+  }
+}
+#endif
+
+#if MIDI_INGRESS_RECEIPTS_ENABLED || defined(LANE_GAP_MIDI_SPLIT)
+// Receipt-profile input work only, never the tick's output path. (The measurement image's MIDI split also places it in
+// flash, which frees ITCM rather than using it.)
 FLASHMEM
 #endif
 void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
@@ -232,11 +326,22 @@ void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
   MidiDispatchOrder::planDispatchOrder(types, count, order);
   for (size_t i = 0; i < count; ++i) {
     const MidiInputMsg& msg = batch[order[i]];
+#if defined(LANE_GAP_MIDI_SPLIT)
+    const uint32_t messageStartUs = micros();
+#endif
     midiHandler.handleMidiMessage(msg.type, msg.channel, msg.data1, msg.data2, msg.source INPUT_RECEIPT_ARGUMENT(msg.ingress));
+#if defined(LANE_GAP_MIDI_SPLIT)
+    noteMidiMessage(msg.type, micros() - messageStartUs);
+#endif
   }
 }
 
 }  // namespace
+
+#if defined(LANE_GAP_MIDI_SPLIT)
+void LaneGapSpans::resetMidiSpans() { resetMidiSpansImpl(); }
+FLASHMEM void LaneGapSpans::dumpMidiSpans() { dumpMidiSpansImpl(); }
+#endif
 
 void MidiHandler::setup() {
 #if MIDI_INGRESS_RECEIPTS_ENABLED
@@ -313,6 +418,10 @@ void MidiHandler::setQualificationInputPrewarmDeniedForTests(bool) {}
 
 FLASHMEM void MidiHandler::handleMidiInput() {
   LANE_GAP_SPAN(Midi);
+#if defined(LANE_GAP_MIDI_SPLIT)
+  MidiInvocationScope midiInvocation;
+  uint32_t splitStartUs = micros();
+#endif
 #if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
   RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(inputEnterUs);
@@ -361,6 +470,10 @@ FLASHMEM void MidiHandler::handleMidiInput() {
       clockManager.getMicrosPerTick() * Config::TICKS_PER_CLOCK);
 #endif
   dispatchMidiBatch(batch, count);
+#if defined(LANE_GAP_MIDI_SPLIT)
+  sMidiSpans.current.usbUs = micros() - splitStartUs;
+  splitStartUs = micros();
+#endif
 #if RUNTIME_TIMING_ENABLED
   const uint32_t dispatchUs = micros() - dispatchStartUs;
   RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(dispatchUs);
@@ -381,6 +494,10 @@ FLASHMEM void MidiHandler::handleMidiInput() {
                       MIDIserial.getData2(), SOURCE_SERIAL INPUT_RECEIPT_ARGUMENT(MidiIngress::lastReceipt(SOURCE_SERIAL))};
   }
   dispatchMidiBatch(batch, count);
+#if defined(LANE_GAP_MIDI_SPLIT)
+  sMidiSpans.current.dinUs = micros() - splitStartUs;
+  splitStartUs = micros();
+#endif
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_DIN_DRAIN(micros() - segmentStartUs);
 #endif
@@ -398,6 +515,9 @@ FLASHMEM void MidiHandler::handleMidiInput() {
   segmentStartUs = micros();
 #endif
   usbHost.Task();
+#if defined(LANE_GAP_MIDI_SPLIT)
+  sMidiSpans.current.hostTaskUs = micros() - splitStartUs;
+#endif
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_HOST_TASK(micros() - segmentStartUs);
 #endif
@@ -417,9 +537,16 @@ FLASHMEM void MidiHandler::handleMidiInput() {
   segmentStartUs = micros();
 #endif
   size_t hostReads = 0;
+#if defined(LANE_GAP_MIDI_SPLIT)
+  splitStartUs = micros();
+#endif
   while (hostReads < midiInputBatchMax && usbHostMIDI.read()) {
     ++hostReads;
   }
+#if defined(LANE_GAP_MIDI_SPLIT)
+  sMidiSpans.current.hostDrainUs = micros() - splitStartUs;
+  sMidiSpans.current.hostReads = static_cast<uint16_t>(hostReads);
+#endif
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_HOST_DRAIN(micros() - segmentStartUs);
 #endif
