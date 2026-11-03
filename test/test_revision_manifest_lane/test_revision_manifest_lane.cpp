@@ -7,6 +7,8 @@
 //
 // Only this suite's own cases are registered; the included suite's cases are dead-stripped from the run.
 #include "manifest_lane_harness.h"
+#include "RollingSuccessorProbe.h"
+#include <cstdlib>
 
 extern "C" void setUp() {
   sharedCaptureFinalizationSuiteSetUp();
@@ -409,8 +411,49 @@ void test_c5_3_a_dense_take_is_served_from_the_manifest() {
 // gaps are silent named misses until C5.3b successor preparation lands): measured here, the routed lane plays bars
 // 2-3 of every other traversal in steady state, and nothing in the traversal after the stop. Registered only with
 // `ROUTED_AUDIBILITY_RED=1` until the owner rules on amendment 23 / C5.3b.
+/// The probe image's successor requester (`RollingSuccessorProbe::installAtBoot`): one successor per served window with
+/// only the DEC-147 lead price waived. The cold-start cases run with it, so steady state is continuous (as on the device)
+/// and the only silences left are a chain's cold starts.
+void enableProbeImageSuccessors() {
+  RollingSuccessorProbe::gKnobs = {};
+  RollingSuccessorProbe::gKnobs.enabled = true;
+  RollingSuccessorProbe::gKnobs.bypassLeadPrice = true;
+  RollingSuccessorProbe::gKnobs.requestLeadTicks = UINT32_MAX;
+}
+
+/// The traversals in [from, to) play every take note (`isTakeNote`: one per bar).
+void assertEveryTakeNotePlayed(const PlaybackObservation& obs, uint32_t from, uint32_t to) {
+  for (uint32_t pass = from; pass < to; ++pass) {
+    const auto ons = noteOnsInTraversal(obs, pass);
+    for (uint32_t bar = 0; bar < kBars; ++bar) {
+      bool heard = false;
+      for (const auto& [phase, pitch] : ons) heard |= isTakeNote(phase, pitch) && phase / kBar == bar;
+      char msg[96];
+      snprintf(msg, sizeof(msg), "traversal %u: the take's bar-%u note was not played", unsigned(pass), unsigned(bar));
+      TEST_ASSERT_TRUE_MESSAGE(heard, msg);
+    }
+  }
+}
+
+// Cold start, transport start (owner ruling 2026-11-03, `2026-11-03-routed-cold-start-design.md`): the routed slot's
+// take is audible from the first traversal, with the probe image's successors on. RED today: traversal 0 is silent and
+// traversal 1 starts at bar 2 (the cold frame waits its DEC-147 lookahead, and no launch window is bound).
+void test_c5_3_cold_start_transport_start_plays_the_first_traversal() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation obs;
+  play(t, 0, 3 * kLength, obs);
+  RollingSuccessorProbe::gKnobs = {};
+  assertEveryTakeNotePlayed(obs, 0, 3);
+}
+
 void test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop() {
   installReader();
+  enableProbeImageSuccessors();
   Track& t = trackManager.getTrack(0);
   Loop& loop = recordFourBarTake(t);
   reader().serviceOwner(loop);
@@ -430,16 +473,8 @@ void test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop() {
   clockManager.assignCurrentTickSilently(3 * kLength - 40);
   t.stopOverdubbing();
   play(t, 3 * kLength - 40, 7 * kLength, obs, 1, stepStopJob);
-  for (uint32_t pass = 2; pass < 7; ++pass) {
-    const auto ons = noteOnsInTraversal(obs, pass);
-    for (uint32_t bar = 0; bar < kBars; ++bar) {
-      bool heard = false;
-      for (const auto& [phase, pitch] : ons) heard |= isTakeNote(phase, pitch) && phase / kBar == bar;
-      char msg[96];
-      snprintf(msg, sizeof(msg), "traversal %u: the take's bar-%u note was not played", unsigned(pass), unsigned(bar));
-      TEST_ASSERT_TRUE_MESSAGE(heard, msg);
-    }
-  }
+  RollingSuccessorProbe::gKnobs = {};
+  assertEveryTakeNotePlayed(obs, 2, 7);
 }
 
 int main(int, char**) {
@@ -454,6 +489,9 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_note_sounding_into_a_gap_is_closed_not_left_hanging);
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
-  if (getenv("ROUTED_AUDIBILITY_RED") != nullptr) RUN_TEST(test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop);
+  if (getenv("ROUTED_AUDIBILITY_RED") != nullptr) {
+    RUN_TEST(test_c5_3_cold_start_transport_start_plays_the_first_traversal);
+    RUN_TEST(test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop);
+  }
   return UNITY_END();
 }
