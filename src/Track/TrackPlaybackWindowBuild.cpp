@@ -851,6 +851,22 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     DIAG_COUNTER_INC(PlaybackDeferredReuse);
     return false;
   }
+#if defined(LANE_GAP_MIDI_SPLIT)
+  {
+    // Which reuse term failed (first failing, in `mergedFallbackReuseHolds`' order): 0 revision, 1 identity,
+    // 2 null identity with an empty build, 3 zero-length window, 4 coverage.
+    const auto& built = runtime.mergedMidiEvents;
+    const uint8_t term = built.builtFromRevision != windowRevision ? 0
+        : built.builtFromSnapshotIdentity != buildIdentity ? 1
+        : (buildIdentity == nullptr && built.empty()) ? 2
+        : built.windowLengthTicks == 0 ? 3 : 4;
+    const uint8_t phase = uint8_t((track.isOverdubbing() ? 1u : 0u) | (track.hasPendingDeferredOverdubStop() ? 2u : 0u) |
+        (trackManager.anyPlayingMidiDrainAfterOverdubStop() ? 4u : 0u) | (loop.publishedSnapshotIsCurrent() ? 8u : 0u));
+    LaneGapSpans::noteMergedReuseFailure(playbackRebuildTrackIndex(track), term, currentTick, built.builtFromRevision,
+                                         windowRevision, reinterpret_cast<uintptr_t>(built.builtFromSnapshotIdentity),
+                                         reinterpret_cast<uintptr_t>(buildIdentity), phase);
+  }
+#endif
   // DEC-239 profile scope (long: window-shaped but content-sized, no hard event cap; synchronous). After the
   // reuse return above: on device that cheap path was ~32,000 calls per chain at ~17 us, i.e. the poll.
   PROFILE_SCOPE_LONG(profileScope, RuntimeProfiler::ProfileId::PlaybackWindow_build);
@@ -8198,6 +8214,51 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
 #endif
   return offer;
 }
+
+#if defined(LANE_GAP_MIDI_SPLIT)
+namespace {
+struct MergedReuseTransition { uint64_t tick; uint32_t oldRevision, newRevision; uint32_t oldIdentity, newIdentity;
+                               uint8_t track, term, phase; };
+struct MergedReuse {
+  uint32_t failures[Config::NUM_TRACKS][5];
+  MergedReuseTransition first[24];
+  uint8_t firstCount;
+  uint8_t perTrackLogged[Config::NUM_TRACKS];
+};
+DMAMEM MergedReuse sMergedReuse;
+}  // namespace
+TRACK_COLD_MEM void LaneGapSpans::noteMergedReuseFailure(uint8_t track, uint8_t term, uint64_t tick,
+                                                         uint32_t oldRevision, uint32_t newRevision,
+                                                         uintptr_t oldIdentity, uintptr_t newIdentity, uint8_t phase) {
+  auto& m = sMergedReuse;
+  if (track >= Config::NUM_TRACKS || term >= 5) return;
+  ++m.failures[track][term];
+  // The first transitions of each track (3 each, 24 in all): enough to see what moves, never one row per Clock.
+  if (m.perTrackLogged[track] < 3 && m.firstCount < 24) {
+    m.first[m.firstCount++] = {tick, oldRevision, newRevision, uint32_t(oldIdentity), uint32_t(newIdentity), track,
+                               term, phase};
+    ++m.perTrackLogged[track];
+  }
+}
+TRACK_COLD_MEM void LaneGapSpans::resetMergedReuse() { sMergedReuse = MergedReuse{}; }
+TRACK_COLD_MEM void LaneGapSpans::dumpMergedReuse() {
+  auto& m = sMergedReuse;
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    const uint32_t* f = m.failures[t];
+    if ((f[0] | f[1] | f[2] | f[3] | f[4]) == 0) continue;
+    Serial.printf("#CAP,%lu,DIAG,merged_reuse,track=%u,revision=%lu,identity=%lu,null_empty=%lu,zero_len=%lu,"
+                  "coverage=%lu\r\n", (unsigned long)micros(), unsigned(t), (unsigned long)f[0], (unsigned long)f[1],
+                  (unsigned long)f[2], (unsigned long)f[3], (unsigned long)f[4]);
+  }
+  for (uint8_t i = 0; i < m.firstCount; ++i) {
+    const auto& e = m.first[i];
+    Serial.printf("#CAP,%lu,DIAG,merged_reuse,first,track=%u,tick=%llu,term=%u,rev=%lu->%lu,id=%08lx->%08lx,"
+                  "phase=%u\r\n", (unsigned long)micros(), unsigned(e.track), (unsigned long long)e.tick,
+                  unsigned(e.term), (unsigned long)e.oldRevision, (unsigned long)e.newRevision,
+                  (unsigned long)e.oldIdentity, (unsigned long)e.newIdentity, unsigned(e.phase));
+  }
+}
+#endif
 
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && defined(__IMXRT1062__)
 #define ROLLING_SUCCESSOR_PROBE_MEM TRACK_COLD_MEM

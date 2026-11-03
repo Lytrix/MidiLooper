@@ -183,3 +183,35 @@ Same capture, `captures/session_20261103_123542.log`, using the image's existing
   whole-loop window the coverage term always holds, so the revision or the identity must be moving.
 - **Next.** One silent counter per reuse-failure term (revision, identity, empty, coverage) per track, for the
   post-stop phase. Then remove the cause, so a stable committed source is built once.
+
+## Why the six tracks rebuild: their cache is cleared, not their source moved (2026-11-03)
+
+- **Method.** In the measurement image, one counter per failed reuse term per track, plus the first three failures of
+  each track with old→new values. RAM2, reset at each transport start (RAM2 is not zeroed at boot: a first run's
+  pre-restart dump held stale bytes and is discarded). Printed after the transport stops.
+- **Run.** succprobe HEX sha256 `91693fce8b81e9df61567a28a3221bccc6ef03b0240336b66e0da2f74526b6a4`,
+  `captures/session_20261103_125956.log`, boot `crash=0`.
+
+| segment | tracks 0, 1, 2, 4, 5, 6 | track 3 | track 7 (routed) |
+|---|---|---|---|
+| record + overdub + post-stop | **revision 922 each**, nothing else | revision 922, coverage 72 | 1 / 1 / coverage 28 |
+| playback after the restart | 0 (track 0: 1 identity) | coverage 73 | — |
+
+- **The failing term is the revision, but the loop's revision is not moving.** Every transition is
+  `builtFromRevision 0 → playbackRevision 1`, with identity null → null.
+  - The built window's revision is 0: **the cache was cleared** (`mergedMidiEvents.clear()` resets it) and rebuilt from
+    the unchanged source.
+  - It happens on **all six tracks at the same ticks** (52,128, 55,200, 57,704, ...), so one pass clears every track's
+    cache at once, about 20 times per second during that phase.
+- **Leading suspect, not yet proven:** the memory-pressure reclaim in `loop()`
+  (`TrackManager::tryReclaimDerivedViewCachesUnderPressure` → `Track::tryReleasePlaybackMergedMidiEventsMemory`).
+  - It walks every track and clears a merged cache when its track is not `isPlaying()` or its window is stale.
+  - It runs on every loop iteration while the advisory pressure is Low or higher, and the heap is at 40 KB free.
+  - A whole-loop rebuild on the next Clock and a clear in the next loop iteration would be the thrash measured
+    (about 114 builds per second).
+  - Open: the heap is also 40 KB after the restart, where no churn occurs. So which of its terms admits the clear only
+    in this phase (`isPlaying()`, the overdub-stop guard, or pressure) has to be counted at the clear site itself.
+- **Classification so far.** Not source-revision churn (that would be an end-state identity defect), and not
+  snapshot-identity churn. It is a legacy derived-cache release fighting a legacy synchronous rebuild on the Clock
+  path. Next: count the clear site and its admitting term; then contain it minimally (never release a cache a
+  playing track will rebuild on the next Clock). Migrating these tracks to the manifest reader is the end state.

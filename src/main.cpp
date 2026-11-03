@@ -679,13 +679,26 @@ FLASHMEM __attribute__((noinline)) static void noteLaneGapIteration(MidiServiceD
   // The epoch survives a stop, so the transport state is the clock's own (device: an epoch test never dumped).
   const bool running = clockManager.isClockRunning() && clock.epoch != 0;
   if (!running) {
-    if (m.running) { dumpLaneSpans(); LaneGapSpans::dumpMidiSpans(); }  // after the transport, never during it
-    if (m.running) LaneGapSpans::resetMidiSpans();
+    if (m.running) {  // after the transport, never during it
+      dumpLaneSpans();
+      LaneGapSpans::dumpMidiSpans();
+      LaneGapSpans::dumpMergedReuse();
+      LaneGapSpans::resetMidiSpans();
+      LaneGapSpans::resetMergedReuse();
+    }
     if (m.running || m.iterations != 0) m = LaneSpanMeasure{};
     for (auto& v : LaneGapSpans::gIteration) v = 0;
     return;
   }
-  if (!m.running) { m = LaneSpanMeasure{}; m.running = true; m.lastLaneTick = clock.tick; m.lastIterationUs = micros(); }
+  if (!m.running) {
+    // RAM2 is not zeroed at boot: every record starts clean at the transport start (a reflash left stale bytes).
+    m = LaneSpanMeasure{};
+    LaneGapSpans::resetMidiSpans();
+    LaneGapSpans::resetMergedReuse();
+    m.running = true;
+    m.lastLaneTick = clock.tick;
+    m.lastIterationUs = micros();
+  }
   const uint32_t nowUs = micros();
   const uint32_t totalUs = nowUs - m.lastIterationUs;
   m.lastIterationUs = nowUs;

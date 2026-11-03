@@ -33,6 +33,12 @@ struct Scope {
 /// MIDI input split (owner ruling 2026-11-03), defined in MidiHandler.cpp: printed after the transport stops.
 void dumpMidiSpans();
 void resetMidiSpans();
+/// Merged-fallback reuse failures (owner ruling 2026-11-03), defined in TrackPlaybackWindowBuild.cpp: per track, which
+/// reuse term failed, and the first transitions with their old/new values. Printed after the transport stops.
+void noteMergedReuseFailure(uint8_t track, uint8_t term, uint64_t tick, uint32_t oldRevision, uint32_t newRevision,
+                            uintptr_t oldIdentity, uintptr_t newIdentity, uint8_t phase);
+void dumpMergedReuse();
+void resetMergedReuse();
 }  // namespace LaneGapSpans
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
 #define LANE_GAP_MIDI_SPLIT 1
