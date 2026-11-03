@@ -14189,6 +14189,15 @@ new owner, ownership transfer of one reader. `Snapshots.md` is not amended: the 
       "Manifest-routed" now means the same at all three layers: build ownership, view-lifecycle ownership and tick-time
       source authority. (Host: bridge ticks 34,644 → 0, no `HandoffMissed`; the unrouted control still plays the bridge.)
     - Evidence: `evidence/2026-11-03-c5-3b-pending-rearm-trace.md`.
+31. **A deadline successor is served by its own grant budget (owner, 2026-11-03).**
+    - **Rule.** Its next grant is due at `last grant + (N.end - guard - last grant) / remaining grants`. That uses the
+      actual remaining lead and the bounded remaining G(E). A due grant cannot be withheld by any holder or competing
+      owner. The 3-denial cap remains as a secondary bound until retired.
+    - **Device.** Deny 7 at a 1,536 lead now hands off 21/21; the cap alone missed it on host (0/7). Lateness against
+      the due tick is at most one lane-opportunity gap (23-46 ticks); the 64-tick guard absorbs it.
+    - **Open.** The outer liveness. In the post-overdub commit phase the lane went unoffered for 376-384 ticks and
+      two seams missed. That calls for earlier preparation or an outer lane-turn guarantee; it is the next measurement.
+    - Not yet the DEC-147 admission rule. Evidence: `evidence/2026-11-03-c5-3b-successor-grant-budget.md`.
 
 ### Related
 

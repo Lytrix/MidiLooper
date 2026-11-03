@@ -762,6 +762,10 @@ void test_5_1_the_per_turn_demand_defers_to_a_ready_or_serving_routed_frame() {
 }
 
 /// The routed slot's playback-view lifecycle as one comparable stamp: the four roles and each view's storage generation.
+/// The integration lead (ticks): short enough that a 3-denial cap alone misses under deny 7 (one grant per four
+/// opportunities), long enough for a successor served by its grant budget.
+constexpr uint32_t kTightSuccessorLeadTicks = 192;
+
 struct ViewLifecycleStamp {
   uint8_t current = 255, ready = 255, build = 255, idle = 255;
   uint64_t generation[RuntimePlaybackViewConfig::kViewCount] = {};
@@ -1181,6 +1185,96 @@ void test_5_1_a_deadline_successor_is_never_denied_more_than_three_opportunities
   TEST_ASSERT_EQUAL_UINT8(0, cursor.successorDenials[kSuccessor]);
 }
 
+// The candidate service deadline (owner ruling 2026-11-03): a deadline successor whose next grant is due is served at
+// that opportunity -- before any denial count accrues, and the competing owner (the injector) may not withhold it.
+void test_5_1_a_due_successor_grant_is_never_withheld() {
+  using namespace MidiServiceDrain;
+  constexpr uint8_t kHolders = 8, kSuccessor = 5;
+  PlaybackHolder holders[kHolders] = {};
+  for (uint8_t i = 0; i < kHolders; ++i) holders[i].eligible = true;
+  holders[kSuccessor].deadlineSuccessor = true;
+  holders[kSuccessor].hasDeadline = true;
+  holders[kSuccessor].grantDue = true;
+  PlaybackHolderCursor cursor{};
+  cursor.next = kSuccessor + 1;  // the rotation is as far from the successor as it can be
+  uint8_t chosen = kNoPlaybackHolder;
+  (void)selectPlaybackHolderBounded(cursor, holders, kHolders, chosen);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kSuccessor, chosen, "a due successor takes this opportunity");
+  TEST_ASSERT_TRUE_MESSAGE(playbackHolderMustBeServed(cursor, chosen, holders[chosen]),
+                           "a due grant cannot be withheld by the competing owner");
+  // Not due: ordinary round-robin, and the competing owner may withhold it (its denial count still bounds that).
+  holders[kSuccessor].grantDue = false;
+  PlaybackHolderCursor fresh{};
+  fresh.next = kSuccessor + 1;
+  (void)selectPlaybackHolderBounded(fresh, holders, kHolders, chosen);
+  TEST_ASSERT_NOT_EQUAL(kSuccessor, chosen);
+}
+
+/// `main.cpp`'s window lane in the measurement image: the bounded selection, the injector bound by
+/// `playbackHolderMustBeServed`, and the probe's opportunity notes.
+struct InjectingOwnerLane {
+  MidiServiceDrain::PlaybackHolderCursor cursor{};
+  void serviceTracks(uint32_t tick) {
+    const auto clock = clockManager.getPlaybackDeadlineClock();
+    MidiServiceDrain::PlaybackHolder offers[Config::NUM_TRACKS] = {};
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+      Track& track = trackManager.getTrack(i);
+      (void)track.serviceRollingPlaybackWindow(clock);
+      track.serviceAdmittedDeadlineMisses(clock);
+    }
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i)
+      offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(tick, clock);
+    uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+    if (MidiServiceDrain::selectPlaybackHolderBounded(cursor, offers, Config::NUM_TRACKS, chosen) ==
+        MidiServiceDrain::PlaybackHolderSelection::Service) {
+      const bool forced = MidiServiceDrain::playbackHolderMustBeServed(cursor, chosen, offers[chosen]);
+      if (forced) RollingSuccessorProbe::noteForcedGrant(chosen);
+      if (!forced && RollingSuccessorProbe::denyThisGrant(chosen, tick)) {
+        MidiServiceDrain::notePlaybackHolderWithheld(cursor, chosen, offers[chosen]);
+        chosen = MidiServiceDrain::kNoPlaybackHolder;
+      } else {
+        (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(tick, nullptr, true, clock);
+        MidiServiceDrain::notePlaybackHolderServed(cursor, chosen);
+        RollingSuccessorProbe::noteGrant(chosen, tick);
+      }
+    }
+    RollingSuccessorProbe::noteSuccessorOpportunities(offers, Config::NUM_TRACKS, chosen, tick);
+  }
+};
+
+// Integration: a routed successor whose lead is too short for one grant per four opportunities (the 3-denial cap under
+// a competing owner that withholds every grant it may) hands off when it is served by its due tick instead.
+void test_5_1_a_tight_successor_is_served_by_its_grant_budget() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordTake(t, 4, 32);
+  reader().serviceOwner(loop);
+  reader().serviceOwner(loop);
+  InjectingOwnerLane lane;
+  RollingSuccessorProbe::configure(kTightSuccessorLeadTicks, 0, 7);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  t.startPlaying(0);
+  TrackCaptureStopTestAccess::unmute(t);
+  for (uint32_t tick = 0; tick < 30 * loop.loopLengthTicks; ++tick) {
+    nativePlaybackDeadlineClock = {tick, 1};
+    clockManager.assignCurrentTickSilently(tick);
+    reader().serviceOwner(loop);
+    if (tick % 4 == 0) lane.serviceTracks(tick);
+    t.playMidiEvents(tick, true);
+  }
+  const auto& agg = RollingSuccessorProbe::gCounters.perTrack[0];
+  char detail[200];
+  snprintf(detail, sizeof(detail), "requested=%u handed=%u missed=%u cancelled=%u refused=%u minLead=%u denied=%u",
+           agg.requested, agg.handedOff, agg.missed, agg.cancelled, agg.priceRefused, agg.minRequestLead,
+           agg.deniedGrants);
+  printf("DUEBUDGET %s\n", detail);
+  RollingSuccessorProbe::gKnobs = RollingSuccessorProbe::Knobs{};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(4, agg.handedOff, detail);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, agg.missed, detail);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, agg.deniedGrants, detail);  // the competing owner did withhold grants
+}
+
 // The offer names the deadline successor while it is owed (DEC-246 amendment 27). On the device main's per-turn demand can
 // hold `pending` while the successor is in frozen qualification or being built; the flag must still be set, or the
 // service bound never engages (device: deny 4 with the bound missed on a full lead).
@@ -1251,6 +1345,8 @@ int main(int, char**) {
   RUN_TEST(test_5_1_a_note_held_across_the_balanced_seam_closes_once);
   RUN_TEST(test_5_1_the_routed_slot_serves_a_5_bar_loop_in_three_equal_windows);
   RUN_TEST(test_5_1_a_deadline_successor_is_never_denied_more_than_three_opportunities);
+  RUN_TEST(test_5_1_a_due_successor_grant_is_never_withheld);
+  RUN_TEST(test_5_1_a_tight_successor_is_served_by_its_grant_budget);
   RUN_TEST(test_5_1_the_offer_names_the_deadline_successor_beside_main_s_demand);
   return UNITY_END();
 }

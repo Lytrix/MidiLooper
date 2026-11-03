@@ -8031,6 +8031,45 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
 }
 
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+/// C5.3b (owner ruling 2026-11-03): the deadline successor's next-grant due tick, from its **actual** remaining lead and
+/// its bounded remaining grants -- G(E) from the manifest bound before admission, the grants already served plus the
+/// admission's priced remainder after it. `due = from + (N.end - guard - from) / remaining`, `from` its last grant (or
+/// its request). Records the due and the estimate on the seam trace; true once the due tick is reached.
+TRACK_COLD_MEM __attribute__((noinline)) bool successorGrantDue(uint8_t track, const LoopPlaybackRuntime& runtime,
+                                                                const Loop& loop, uint64_t now) {
+  namespace probe = RollingSuccessorProbe;
+  if (track >= probe::kTracks) return false;
+  auto& seam = probe::gCounters.seam[track];
+  const RollingSuccessorKey key = rollingSuccessorKey(runtime.rolling);
+  if (seam.requestTick == 0 || seam.outcome != 0 || key.deadline == 0) return false;
+  uint32_t total = 0;
+  if (seam.grantsAtAdmit != 0) {
+    const probe::Record* record = probe::recordFor(track, key.deadline);
+    if (record == nullptr || record->pricedGrains == 0) return false;
+    total = uint32_t(seam.grantsAtAdmit) + record->pricedGrains;
+  } else {
+#if REVISION_MANIFEST_READER
+    RollingWindowWorkBound bound{};
+    if (!manifestWindowWorkBound(loop.loopLengthTicks, key.lengthTicks, bound)) return false;
+    CoverageServiceContract estimate{};
+    estimate.deriveManifestWindowGrantsFrom(bound.readUnits, bound.events, Track::kPlaybackViewFillQuantum,
+                                            Track::kPlaybackViewOrderQuantum);
+    total = estimate.requiredGrains();
+#else
+    (void)loop;
+    return false;
+#endif
+  }
+  const uint32_t remaining = total > seam.grantsServed ? total - seam.grantsServed : 1u;
+  const uint64_t from = seam.lastServedTick != 0 ? seam.lastServedTick : seam.requestTick;
+  const uint64_t end = key.deadline > MidiServiceDrain::kDeadlineSuccessorHandoffGuardTicks
+      ? key.deadline - MidiServiceDrain::kDeadlineSuccessorHandoffGuardTicks : 0;
+  const uint64_t due = end > from ? from + (end - from) / remaining : from;
+  seam.grantDueTick = due;
+  seam.estimatedGrants = total > UINT16_MAX ? UINT16_MAX : uint16_t(total);
+  return now >= due;
+}
+
 namespace RollingSuccessorProbe {
 TRACK_COLD_MEM __attribute__((noinline)) void noteSuccessorOpportunities(const MidiServiceDrain::PlaybackHolder* offers,
                                                                         uint8_t count, uint8_t servedTrack,
@@ -8050,6 +8089,10 @@ TRACK_COLD_MEM __attribute__((noinline)) void noteSuccessorOpportunities(const M
     }
     seam.lastOpportunityTick = tick;
     if (servedTrack == t) {
+      // How late the grant came against its due (0 when on time): the outer lane-turn liveness, per seam.
+      if (seam.grantDueTick != 0 && tick > seam.grantDueTick && tick - seam.grantDueTick > seam.maxGrantLateness)
+        seam.maxGrantLateness = tick - seam.grantDueTick > UINT32_MAX ? UINT32_MAX : uint32_t(tick - seam.grantDueTick);
+      if (offers[t].grantDue && seam.dueForcedGrants != UINT16_MAX) ++seam.dueForcedGrants;
       const uint64_t from = seam.lastServedTick != 0 ? seam.lastServedTick : seam.requestTick;
       if (tick > from && tick - from > seam.maxGrantGap)
         seam.maxGrantGap = tick - from > UINT32_MAX ? UINT32_MAX : uint32_t(tick - from);
@@ -8071,7 +8114,7 @@ TRACK_COLD_MEM __attribute__((noinline)) PlaybackHolderSelection selectPlaybackH
       const uint8_t index = static_cast<uint8_t>((cursor.next + step) % count);
       const PlaybackHolder& h = holders[index];
       if (index < kTracked && h.eligible && h.canProgress && h.deadlineSuccessor &&
-          cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials)
+          (h.grantDue || cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials))
         forced = index;
     }
   }
@@ -8099,7 +8142,7 @@ TRACK_COLD_MEM __attribute__((noinline)) PlaybackHolderSelection selectPlaybackH
 TRACK_COLD_MEM __attribute__((noinline)) bool playbackHolderMustBeServed(const PlaybackHolderCursor& cursor,
                                                                         uint8_t index, const PlaybackHolder& holder) {
   return holder.deadlineSuccessor && index < sizeof(cursor.successorDenials) &&
-         cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials;
+         (holder.grantDue || cursor.successorDenials[index] >= kDeadlineSuccessorMaxConsecutiveDenials);
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) void notePlaybackHolderServed(PlaybackHolderCursor& cursor, uint8_t index) {
@@ -8145,6 +8188,9 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
       offer.deadlineSuccessor = (pendingDeadline != 0 && rollingSuccessorDemandIs(*runtime, pendingDeadline)) ||
           (frozenDeadline != 0 && rollingSuccessorDemandIs(*runtime, frozenDeadline)) ||
           (buildDeadline != 0 && rollingSuccessorDemandIs(*runtime, buildDeadline));
+      if (offer.deadlineSuccessor)
+        offer.grantDue = successorGrantDue(playbackRebuildTrackIndex(*this), *runtime, loopForSlot(activeLoopIndex),
+                                           clock.tick);
     }
   }
 #endif
@@ -8238,6 +8284,12 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
           r ? from(seam.requestTick, r->readyTick) : UINT32_MAX, seam.readUnits,
           static_cast<uint8_t>(seam.grantsAtAdmit > 255 ? 255 : seam.grantsAtAdmit), seam.forcedGrants,
           static_cast<uint8_t>(r ? (r->pricedGrains > 255 ? 255 : r->pricedGrains) : 0));
+      // succ_due,<outcome>: actual lead (request -> N.end), estimated grants, grants served, max grant lateness against
+      // its due, grants served because due, max opportunity gap while owed, N.end (owner ruling 2026-11-03).
+      SC_FROZEN_WINDOW_READINESS(t, 0, "succ_due",
+          seam.outcome == 1 ? "handed" : seam.outcome == 2 ? "missed" : seam.outcome == 3 ? "refused" : "cancelled",
+          from(seam.requestTick, seam.deadline), seam.estimatedGrants, seam.grantsServed, seam.deadline,
+          seam.maxGrantLateness, seam.dueForcedGrants, seam.maxOpportunityGap, 0u, 0u, 0u);
     }
 #endif
     if (sLaneMeasurement.overruns > 0) {

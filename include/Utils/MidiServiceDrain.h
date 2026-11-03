@@ -305,7 +305,15 @@ struct PlaybackHolder {
   /// deadline** -- liveness-critical, so it may be denied at most `kDeadlineSuccessorMaxConsecutiveDenials`
   /// consecutive eligible opportunities (`selectPlaybackHolderBounded`). Every other holder keeps round-robin.
   bool deadlineSuccessor = false;
+  /// C5.3b (owner ruling 2026-11-03): the deadline successor's **next grant is due** -- its remaining lead (to the
+  /// handoff, less the guard) divided by its bounded remaining grants, counted from its last grant, has elapsed. A due
+  /// successor is served at this opportunity; no competing holder or owner may withhold it. Slack that early grants
+  /// earned lets a later gap be longer, and a successor falling behind tightens its own next due.
+  bool grantDue = false;
 };
+/// The part of a successor's lead kept back from the grant budget for the handoff itself (one measured lane-turn gap
+/// is 32-56 ticks on the device).
+constexpr uint32_t kDeadlineSuccessorHandoffGuardTicks = 64;
 
 /// DEC-246 amendment 27 (owner ruling, measured on device at 300 BPM with the balanced tail: 3 holds 50/50 seams, 4-6
 /// miss): the most consecutive eligible opportunities a deadline successor may be denied. The successor's admission

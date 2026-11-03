@@ -118,6 +118,12 @@ struct Counters {
     uint16_t grantsAtAdmit = 0;
     uint32_t rows = 0;
     uint32_t readUnits = 0;
+    // Owner ruling (candidate service deadline): the next grant's due tick, the bounded grant estimate behind it, the
+    // worst lateness of a grant against its due, and the grants served because they were due.
+    uint64_t grantDueTick = 0;
+    uint32_t maxGrantLateness = 0;
+    uint16_t estimatedGrants = 0;
+    uint16_t dueForcedGrants = 0;
   } seam[kTracks] = {};
   /// Resolved seams waiting for the main-loop report (a handed-off seam's trace is replaced by the next one at once).
   static constexpr uint8_t kSeamLog = 8;
