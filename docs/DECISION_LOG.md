@@ -14244,6 +14244,10 @@ the retained path: no transform where the retained path shortens or hides the so
 
 - `PendingNoteChange` gains a trailing `consequenceOwed` (20 -> 24 B per row). It is trailing because positional
   initializers depend on the existing member order.
+- **`consequenceOwed` is semantic state, not a performance marker** (owner, 2026-11-03). It represents overlap work
+  that the synchronous overflow path previously answered inconsistently or lost: on host it dropped a transform the
+  retained path makes. Removing the flag, or answering owed rows anywhere but the worker and the C3.4 deadline, needs
+  its own decision even if timing later looks fine.
 - The owed state is worker-lane state only: promotion never runs on the MIDI path. A swapped or cleared pending set
   resets the count.
 - **Open (owner decision).** The C3.4 wrap deadline runs inside the wrap's Clock dispatch (`commitOverdubWrap`). On
