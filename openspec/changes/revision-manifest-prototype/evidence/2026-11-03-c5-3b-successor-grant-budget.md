@@ -306,3 +306,36 @@ Same capture, `captures/session_20261103_123542.log`, using the image's existing
   - the note records only what the evaluation needs, and the evaluation runs in grains off the MIDI path;
   - the wrap is accepted on the Clock and committed by a deferred owner in grains.
   Both touch the overlap-resolve and wrap owners documented in `docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`.
+
+## NoteOff split by path and deferred-set occupancy (2026-11-03, `a6c74b63`)
+
+Owner ruling 2026-11-03: the earlier children (scan, transforms, recount ≈ 0.05 s of 17.7 s) disproved the whole-loop
+evaluator, so the probe splits only coverage mark / deferred retain / full-set fallback derive / remainder, with the
+deferred-completion-set occupancy at entry. Image `5a8f54e5` (RAM2 +352 B against `49eccad3`), same overdub
+`lane_cadence` sweep as before (track 8 slot 4, 32 overdub bars), `captures/session_20261103_154139.log`, boot
+`crash=0`, harness exited on its own.
+
+| path | NoteOffs | total | max | where the time is |
+|---|---|---|---|---|
+| prepared span (immediate consequence) | 128 | 0.044 s | 0.41 ms | remainder (the consequence itself) |
+| retained obligation | 34 | 0.001 s | 0.06 ms | retain 0.23 ms in all |
+| **full-set fallback** | **350** | **16.05 s** | **74.4 ms** | **derive 16.01 s (99.8 %)** |
+
+- **Occupancy.**
+  - 0: 128 NoteOffs.
+  - 1-15: 2 each (15: 4), all cheap (max 62 µs).
+  - **16: 352 NoteOffs, 16.05 s, max 74.4 ms.**
+  - High-water 16. All 4 worst NoteOffs (73.5-74.4 ms) are occupancy 16, fallback path, ≈ 100 % derive.
+- **Share of the overdub MIDI cost.** The overdub Note phase totals 16.78 s over 1,026 notes. The fallback derive is
+  95.7 % of it.
+- **Classification (owner decision tree): the full-set fallback dominates and occupancy = 16.**
+  - The set fills within about 17 obligations and then stays full for the remaining ~350 NoteOffs.
+  - So the worker discharges nothing during live overdub, and every later NoteOff resolves synchronously on the MIDI
+    path.
+  - The fallback's closure-window resolve (`resolveDisplayNotesInWindow` over `passes`) costs 46 ms on average.
+- **Not concluded.**
+  - Why the worker cannot discharge during live overdub is unproven: is it never scheduled, or never answerable because
+    tiles are not prepared?
+  - Whether the two visits per occupancy level are two overdub sessions or one partial drain.
+  - The capacity (16) is left unchanged, by ruling.
+- **Separately still open.** The wrap Clock: the overdub Clock maximum is 2.94 s (`commitOverdubWrap`).
