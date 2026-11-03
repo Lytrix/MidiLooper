@@ -144,3 +144,60 @@ the reader owner serviced every tick: two traversals, then an overdub (one note)
 - **Fixed:** `SnapshotReserve` resolves a low tail with the read-only walk; see DEC-249.
 - **Device:** tail 32,768 B, largest free 54,824 B, walk 13 µs, publication resumed and published.
 - **Open:** a roughly 50 s publication-idle window after the stop on the default image, with memory admitted.
+
+## Record-stop gap on the succprobe image (2026-11-04, `captures/session_20261104_002601.log`)
+
+**Run.** Image `fc0a5e80` (succprobe), track 8 slot 4, dense 32-bar take, Record stop, no overdub. The routed slot is
+silent from **61.8 to 94.9 s**: `tick_route` shows `none=600` per 5 s row. Track 7 (0-based) is the routed track. The
+gap has two parts with different owners.
+
+**Part 1: 61.84 -> 86.63 s (~25 s), `win_busy` / `ReadyRoleOccupied`.**
+- Before the gap:
+  - At 60.14 s the Record stop's commit moves the source (`disp_src crev 0 -> 1`).
+  - At 61.12 s the frozen Record reader's successor is still built and published into `ready`
+    (`build_drop,published_as_ready`).
+- At 61.84 s the producer retires the serving frame for `ServingViewSourceStale` (`win_stale_serving_retired`). It
+  cannot position a replacement. The one roles row reads `busy,roles,9,2,1,52,0,255,255,68`:
+
+  | field | value |
+  |---|---|
+  | refusal | 9 = `ReadyRoleOccupied` |
+  | current | view 2 (complete, published) |
+  | ready | view 1 (complete, unpublished) |
+  | build | view 0 (empty) |
+  | retained | none (255) |
+  | owners | 68 = pending request (4) + `hasBoundRecordReturnWindowForPendingJob` (64) |
+
+- The orphan-successor reclaim ("orphaned successor" in the requester) explicitly excludes both owners. The
+  stale-retirement path clears only an *unpositioned* pending demand. So nothing releases the `ready` window.
+- At 86.63 s the playhead reaches that window's own start phase again (8448, one traversal = 25,344 ticks ≈ 26.4 s at
+  300 BPM). It is adopted (`route,turn,...,8448`, `adopt_wait,e2_boundary`), and the Record reentry releases
+  (`Reentry released slot=3`).
+- **Reading (medium confidence).** The Record-return job's successor window outlives the source move that retired its
+  frame. It keeps the `ready` role and the job binding until its own boundary, a full traversal later. The retirement
+  treats the serving view's stale source as evidence of obsolescence, but not the ready view built from the same
+  pre-commit source.
+- **Not proven.** The ready view's source identity was not logged. That it is the pre-commit source is inferred from
+  its publication time (61.12 s, after the 60.14 s commit, with the reader still frozen) and from playback staying
+  silent after it is adopted.
+
+**Part 2: 86.97 -> 94.94 s (~8 s), ready but not serving.**
+- After the release, a fresh full-loop window is positioned and built quickly:
+  - 86.65: `qualification_started`
+  - 86.71: `handoff_unreachable`, then `win_requested`
+  - 86.82: `build_admitted`
+  - 86.97: `win_ready`
+- It is first served at 94.94 s, at phase 16416, about 8,000 ticks past the nearest span boundary.
+- This is the completion-aware placement item already open (host RED
+  `test_c5_3_completion_placement_serves_the_nearest_eligible_boundary`, `COMPLETION_PLACEMENT_RED`).
+
+**Not caused by slices 1 and 2 (by construction, not by an A/B run).**
+- No successor row exists before 95.15 s, so the frame was never in two-span states 4/5, and slice 2's exceptions
+  cannot apply.
+- `retained` is 255 throughout, so slice 1's orphan release is not involved.
+- Gate A's earlier A1 run showed only `none=10` at the Record stop, but with a different gesture sequence (an overdub
+  followed). An A/B of this exact stimulus on the image before `05057ed3` would settle whether it is a regression.
+
+**Candidate direction (owner decision; not implemented).** Make the `ServingViewSourceStale` retirement also discharge
+a `ready` window bound to the same Record-return job whose source is not the current one: an identity-guarded release
+through the lifecycle's superseded-ready path, never by timeout. Part 2 belongs to completion-aware placement.
