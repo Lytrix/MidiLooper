@@ -1026,6 +1026,7 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
     completion.noteId = kInvalidNoteId;  // assigned from the capture store at note-off
     completion.occupancyOwed = true;
     (void)retainDeferredOverdubCompletion(completion);
+    LANE_COV_OBSERVE(overdubCoverageDeferredCount_);
   }
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
@@ -1566,8 +1567,11 @@ struct NoteOffSpans {
 };
 DMAMEM NoteOffSpans sNoteOffSpans;
 constexpr uint8_t kIdleOwnerBins = 8;
-DMAMEM uint32_t sCoverageCounters[LaneGapSpans::CoverageCounterCount];
-DMAMEM uint32_t sIdleOwnersWhileOverdubbing[kIdleOwnerBins];
+constexpr uint8_t kDeferredSetFull = 16;  // Loop::kDeferredOverdubCompletionCapacity
+DMAMEM uint32_t sCoverageCounters[2][LaneGapSpans::CoverageCounterCount];  // [set full][counter]
+DMAMEM uint32_t sIdleOwnersWhileOverdubbing[2][kIdleOwnerBins];
+DMAMEM uint8_t sObservedOccupancy;
+inline uint8_t setFullIndex() { return sObservedOccupancy >= kDeferredSetFull ? 1 : 0; }
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
   return p == LaneGapSpans::PathRetained ? PSTR("retained")
@@ -1597,20 +1601,26 @@ FLASHMEM void LaneGapSpans::noteOverdubNoteOff(const NoteOffProbe& probe, uint32
   for (uint8_t i = 1; i < 4; ++i) if (m.worst[i].us < m.worst[least].us) least = i;
   if (totalUs > m.worst[least].us)
     m.worst[least] = {totalUs, probe.coverageUs, probe.retainUs, probe.deriveUs, occupancy, path};
+  observeDeferredOccupancy(occupancyAfter);
 }
 
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::countCoverage(uint8_t counter, uint32_t by) {
-  if (counter < CoverageCounterCount) sCoverageCounters[counter] += by;
+  if (counter < CoverageCounterCount) sCoverageCounters[setFullIndex()][counter] += by;
+}
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::observeDeferredOccupancy(uint8_t occupancy) {
+  sObservedOccupancy = occupancy;
 }
 
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::countIdleOwner(uint8_t owner) {
-  ++sIdleOwnersWhileOverdubbing[owner < kIdleOwnerBins ? owner : kIdleOwnerBins - 1];
+  ++sIdleOwnersWhileOverdubbing[setFullIndex()][owner < kIdleOwnerBins ? owner : kIdleOwnerBins - 1];
 }
 
 FLASHMEM void LaneGapSpans::resetNoteOffSpans() {
   sNoteOffSpans = NoteOffSpans{};
-  for (auto& v : sCoverageCounters) v = 0;
-  for (auto& v : sIdleOwnersWhileOverdubbing) v = 0;
+  for (auto& row : sCoverageCounters) for (auto& v : row) v = 0;
+  for (auto& row : sIdleOwnersWhileOverdubbing) for (auto& v : row) v = 0;
+  sObservedOccupancy = 0;
 }
 
 FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
@@ -1639,13 +1649,16 @@ FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
   Serial.println();
   // Worker trace: entered/gate_reached/gate_passed/turn_no_session/turn_private_yield/turn_no_owed/turn_advanced/
   // turn_published/discharge_calls/discharged/blocked_occupancy/blocked_span/generation_changes/new_tiles_sealed.
-  Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,worker,counters="), (unsigned long)micros());
-  for (uint8_t c = 0; c < CoverageCounterCount; ++c)
-    Serial.printf_P(PSTR("%s%lu"), c ? PSTR("/") : PSTR(""), (unsigned long)sCoverageCounters[c]);
-  Serial.printf_P(PSTR(",owners="));
-  for (uint8_t o = 0; o < kIdleOwnerBins; ++o)
-    Serial.printf_P(PSTR("%s%lu"), o ? PSTR("/") : PSTR(""), (unsigned long)sIdleOwnersWhileOverdubbing[o]);
-  Serial.println();
+  for (uint8_t f = 0; f < 2; ++f) {
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,worker,set=%s,counters="), (unsigned long)micros(),
+                    f ? PSTR("full") : PSTR("not_full"));
+    for (uint8_t c = 0; c < CoverageCounterCount; ++c)
+      Serial.printf_P(PSTR("%s%lu"), c ? PSTR("/") : PSTR(""), (unsigned long)sCoverageCounters[f][c]);
+    Serial.printf_P(PSTR(",owners="));
+    for (uint8_t o = 0; o < kIdleOwnerBins; ++o)
+      Serial.printf_P(PSTR("%s%lu"), o ? PSTR("/") : PSTR(""), (unsigned long)sIdleOwnersWhileOverdubbing[f][o]);
+    Serial.println();
+  }
   for (const auto& w : m.worst) {
     if (w.us == 0) continue;
     Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,worst,us=%lu,occupancy=%u,path=%s,coverage=%lu,retain=%lu,derive=%lu\n"),

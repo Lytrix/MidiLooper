@@ -89,12 +89,16 @@ struct NoteOffPhase {
 enum CoverageCounter : uint8_t { Entered = 0, GateReached, GatePassed, TurnNoSession, TurnPrivateYield, TurnNoOwed,
                                  TurnAdvanced, TurnPublished, DischargeCalls, Discharged, BlockedOccupancy,
                                  BlockedSpan, GenerationChanges, NewTilesSealed, CoverageCounterCount };
+/// Every counter is split by whether the deferred set was **full** when it was last observed (NoteOn hold retain,
+/// NoteOff, and each discharge call's entry and exit observe it), so turns can be placed against the full period.
 void countCoverage(uint8_t counter, uint32_t by);
 void countIdleOwner(uint8_t owner);
+void observeDeferredOccupancy(uint8_t occupancy);
 }  // namespace LaneGapSpans
 #define LANE_COV_COUNT(c) LaneGapSpans::countCoverage(LaneGapSpans::c, 1)
 #define LANE_COV_ADD(c, n) LaneGapSpans::countCoverage(LaneGapSpans::c, (n))
 #define LANE_COV_OWNER(o) LaneGapSpans::countIdleOwner(static_cast<uint8_t>(o))
+#define LANE_COV_OBSERVE(occupancy) LaneGapSpans::observeDeferredOccupancy(occupancy)
 #define LANE_GAP_SPAN(bucket) LaneGapSpans::Scope laneGapSpanScope(LaneGapSpans::bucket)
 #define LANE_MSG_SPAN(child) LaneGapSpans::MessageScope laneMsgSpanScope(LaneGapSpans::child)
 #define LANE_NOTEOFF_BEGIN(occupancy) LaneGapSpans::NoteOffProbe laneNoteOffProbe(occupancy)
@@ -110,4 +114,5 @@ void countIdleOwner(uint8_t owner);
 #define LANE_COV_COUNT(c) ((void)0)
 #define LANE_COV_ADD(c, n) ((void)0)
 #define LANE_COV_OWNER(o) ((void)0)
+#define LANE_COV_OBSERVE(occupancy) ((void)0)
 #endif

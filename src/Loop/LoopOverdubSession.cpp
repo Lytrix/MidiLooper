@@ -328,6 +328,7 @@ bool LOOP_COLD_MEM Loop::overdubCoverageRequiredNow(uint32_t currentPhase,
 uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!overdubCoverage_.sessionActive || loopLengthTicks == 0) {
     return 0;
   }
+  LANE_COV_OBSERVE(overdubCoverageDeferredCount_);
   LANE_COV_COUNT(DischargeCalls);
   uint8_t discharged = 0;
   for (uint8_t i = 0; i < overdubCoverageDeferredCount_;) {
@@ -368,6 +369,7 @@ uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!
     // persistence and exactly-once, never same-turn completion, and the seal deadline is the backstop.
     if (maxDischarge != 0 && discharged >= maxDischarge) break;
   }
+  LANE_COV_OBSERVE(overdubCoverageDeferredCount_);
   return discharged;
 }
 
