@@ -96,7 +96,8 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
     const PassId passId = loop.lastCommittedPassId();
     {
       LANE_WRAP_PHASE(WrapJournalRecount);
-      loop.queueOverdubWrapSnapshotJournal(passId);
+      // No snapshot journal on the Clock (owner ruling 2026-11-03; ExecutionBounds row 22): the session record
+      // pushed below is this interval's publication obligation, produced later by the Snapshot owner.
       loop.recountOverlapHoldTotalsFromPending();
       loop.emitOverlapHoldTotals();
     }
@@ -121,6 +122,7 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
     LANE_WRAP_PHASE(WrapSessionBookkeeping);
     loop.pushOverdubSessionPass(passId, companionIds);
     loop.recordLastOverdubSeal(passId, companionIds, priorPlaybackRevision);
+    loop.stampWrapPublicationObligation();
     loop.markAffectedDisplayCacheRanges(passId, companionIds);
   }
 #if defined(SESSION_CAPTURE)

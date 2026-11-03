@@ -1,3 +1,20 @@
+**2026-11-03 — DEC-248: the overdub wrap publishes from its session record; the wrap Clock builds no journal.**
+- **Change.** The wrap stamps only the post-seal revision, in O(1). The existing publish box then produces each
+  session record in causal order: the pass through the pass producer, then its companions in a bounded resumable
+  grain, which now also replaces the unbounded session-exit companion step.
+- **Admission.** The Snapshot owner is admitted by durable owed work, not by a journal artifact.
+- **Hand-over.** It is exactly-once at the session exit and at a session close or open.
+- **Host.** Ten wrap cases in the default gate; RED 1, 5 and 6 are now green, and all guards hold. Native full
+  3,969 / 0 failed.
+- **Device** (`939b94ce`): the journal step went from 631 ms to 0.11 ms, the wrap from 765 ms to 136 ms, and the
+  Clock from 841 ms to 220 ms.
+- **Open.**
+  - Publication lag: the root was unpublished at run end in both images, so the publication cut is an owner decision.
+  - Held-NoteOn extraction: 98 ms.
+  - The C3.4 forced deadline.
+  - The probe boot hang.
+- [DEC-248](../DECISION_LOG.md), [map](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-wrap-publication-ownership-map.md)
+
 **2026-11-03 — The wrap journal no longer searches the parent for Add rows (`3df2ca34`).**
 - **Cause.** The lookup was dead for Adds: `appendPairedNoteEventChanges` read the predecessor only for Hide/Shorten.
   The rebase rule and existing-target edits are unchanged.

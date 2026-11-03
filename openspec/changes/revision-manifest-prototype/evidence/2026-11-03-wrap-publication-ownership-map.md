@@ -229,3 +229,21 @@ Native-only seams:
 
 The parity cases (GUARD 2-4) are the old journal's result pinned as the oracle. A repeated-NoteId case is still to be
 added when the producer lands, because today's journal and the pass producer can only differ there.
+
+## Implemented (DEC-248, 2026-11-03)
+
+The map's recommendation landed with the owner's four conditions:
+
+1. Admission comes from durable obligations, gated on DEC-073 currency so there is no busy loop.
+2. Causal order: pass, then companions, then the next record. Pinned by RED 5: B's Hide of A's note.
+3. Per-turn bound: at most 4 companion rows per fragment; the dense host case's worst turn is 22 translations against
+   a bound of 32.
+4. Lossless exit hand-over: `appliedCompanionIds` plus `handOverSessionRecordToInventory`, pinned by GUARD 9.
+
+Two defects found while turning it green, both fixed:
+- After an exit publication, a still-open session's record read as unproduced against a fresh box. It was published
+  again without coverage.
+- Gating the producer, the publish rule and the legacy session-pass pending check on root currency closes it.
+
+Retirement-grain pins were kept by folding the new list's release into an existing phase. Device numbers are in
+DEC-248.

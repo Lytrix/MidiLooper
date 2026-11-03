@@ -1504,6 +1504,13 @@ struct Loop {
   /// Units the in-flight construction has completed (saturating; 0 when none). Qualification row progress only.
   uint16_t inFlightSnapshotConstructionUnits() const;
   bool hasPendingWrapJournal() const;
+  /// A live overdub session-record entry (or its inventory hand-over) the publication owner has not incorporated:
+  /// durable owed wrap publication work, independent of any Clock-built artifact (owner ruling 2026-11-03).
+  bool hasWrapPublicationOwed() const;
+  /// The wrap Clock's whole publication duty: O(1) -- stamp the post-seal revision the session record now reaches.
+  void stampWrapPublicationObligation();
+  /// Before a session record is cleared without a session exit: move what is not yet incorporated to the inventory.
+  void handOverSessionRecordToInventory();
   size_t pendingSnapshotQueuedPassCount() const;
   size_t pendingSnapshotAppliedPassCount() const;
   PassId pendingSnapshotConstructionPassId() const;

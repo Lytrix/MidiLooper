@@ -541,6 +541,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
       record->sessionIdentity = overdubSessionUndoGeneration_;
     }
   }
+  handOverSessionRecordToInventory();
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
@@ -581,6 +582,7 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   overdubWrapArmed_ = false;
   overdubWrapSuppressNext_ = false;
+  handOverSessionRecordToInventory();
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;

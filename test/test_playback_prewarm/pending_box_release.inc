@@ -36,6 +36,9 @@ std::vector<uint64_t> metadata(const Box& owner) {
   add(owner.fragmentProgressValid); add(owner.consecutiveFragmentFailures); add(owner.fragmentBlocked);
   add(owner.fragmentBlockTransient); add(owner.fragmentParkSawDenial); add(owner.constructionPassId);
   add(owner.appliedLiveRecordEventIndex); add(owner.appliedLiveRecordCompletedTicks);
+  add(owner.sessionRecord); add(owner.sessionRecordPassDone); add(owner.sessionRecordCompanionNext);
+  add(owner.companionNext); add(owner.companionFragmentEnd); add(owner.applyingSessionCompanions);
+  add(owner.inventoryCompanionsOwed); add(owner.wrapTargetRevision); add(owner.wrapTargetRecords);
   for (const auto* progress : {&owner.passChangeProgress, &owner.fragmentProgress}) {
     add(progress->passId); add(progress->cursor.listIndex); add(progress->cursor.chunkIndex);
     add(progress->cursor.chunkEventOffset); add(progress->cursor.complete);

@@ -65,7 +65,10 @@ PendingSnapshotPublishBox::stepPayloadRelease(PayloadReleaseCursor& cursor, size
           cursor.policy_ == CompanionStoragePolicy::Retain); break;
       case 6: done = retirePendingValueRowOrBuffer(queuedPassIds); break;
       case 7: done = retirePendingValueRowOrBuffer(appliedPassIds); break;
-      case 8: done = retirePendingValueRowOrBuffer(journaledPassIds); break;
+      // The wrap producer's applied-companion IDs retire behind the journal IDs in the same phase: an empty list costs
+      // no grant, a populated one one row per grant.
+      case 8: done = retirePendingValueRowOrBuffer(journaledPassIds) &&
+                     retirePendingValueRowOrBuffer(appliedCompanionIds); break;
       case 9:
         if (queuedWrapJournals.empty()) {
           decltype(queuedWrapJournals){}.swap(queuedWrapJournals);

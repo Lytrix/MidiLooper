@@ -1029,9 +1029,11 @@ fragment silently.
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
 stop (`queueSessionExitSnapshot`) and construct from
-`Track::processDeferredIdleMaintenance`. Phase 3 wrap publication queues
-bounded journal fragments from `Track::commitOverdubWrapAtSessionStart` and
-steps them during PLAYING/OVERDUBBING after the first root (`DEC-047`). An idle
+`Track::processDeferredIdleMaintenance`. Phase 3 wrap publication (DEC-248) builds **no** journal on the wrap:
+`Track::commitOverdubWrap` stamps only the post-seal revision (O(1)), and the Snapshot owner, admitted mid-overdub by
+`Loop::hasPendingWrapJournal` ("wrap publication owed", which reads the durable session record), produces the session
+record's passes and companions in bounded fragments during PLAYING/OVERDUBBING after the first root (`DEC-047`). The
+legacy journal path (`Loop::queueOverdubWrapSnapshotJournal`) remains only as the host parity oracle. An idle
 turn that applies Snapshot construction does not also run a visual-cache slice.
 `STOPPED` first-paint (`visualCacheNeedsFirstPaint`) does not suppress that
 Snapshot turn when session-exit, in-flight, or wrap-journal work is pending.
@@ -1040,7 +1042,8 @@ RECORDING may start from `capture.store` after the playhead has left bar 1.
 Wrap-ahead admission consumes only bounded journal fragments and never starts
 pass reconstruction. Construction remains **not** admitted to
 `handleMidiInput()`, clock dispatch, track-tick, or the
-`CommitReason::OverdubWrap` call stack; the wrap path queues the fragment only.
+`CommitReason::OverdubWrap` call stack; the wrap path translates no snapshot change at all (host-pinned by
+`test_wrap_red_clock_translates_no_snapshot_change`).
 
 Selected structural caps:
 

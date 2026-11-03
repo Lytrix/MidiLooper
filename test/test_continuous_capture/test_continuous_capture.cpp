@@ -5821,7 +5821,7 @@ int main() {
   RUN_TEST(test_record_stop_persist_target_follows_the_recorded_slot);
   // Task 4.5: the breach is reported in every image; the latch is set only where a boundary can clear it.
   RUN_TEST(test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it);
-  // Wrap-publication ownership REDs (2026-11-03): only with `WRAP_PUBLICATION_RED=1`.
+  // Wrap-publication ownership cases (DEC-248).
   registerWrapPublicationReds();
   return UNITY_END();
 }

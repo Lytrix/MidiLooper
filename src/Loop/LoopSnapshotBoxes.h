@@ -144,6 +144,28 @@ struct PendingSnapshotPublishBox {
   std::vector<PassId> appliedPassIds;
   std::vector<PassId> journaledPassIds;
   std::vector<SnapshotWrapJournalFragment> queuedWrapJournals;
+  /// Wrap publication without a Clock-built journal (owner ruling 2026-11-03). The overdub session record
+  /// (`overdubSessionPassIds_[i]` with `overdubSessionCompanionIds_[i]`) is the durable, ordered obligation list;
+  /// this cursor names the next record to produce: its pass first (the pass producer), then its companions in
+  /// bounded fragments. A record is never copied or moved here.
+  size_t sessionRecord = 0;
+  bool sessionRecordPassDone = false;
+  size_t sessionRecordCompanionNext = 0;
+  /// The exit/inventory companion list's cursor (`companionIds`), produced in the same bounded fragments.
+  size_t companionNext = 0;
+  /// The fragment in construction is a companion fragment ending here; its cursor advances only when the fragment is
+  /// incorporated (the DEC-047 transaction), so a failed fragment is rebuilt from the same rows.
+  size_t companionFragmentEnd = 0;
+  bool applyingSessionCompanions = false;
+  /// Companions incorporated from the session record, so an exit or inventory hand-over never applies one twice.
+  EditPassIdList appliedCompanionIds;
+  /// The session record was handed to the inventory lists (`queuedPassIds`, `companionIds`) at a session close that
+  /// queued no session exit; their companions are owed without `sessionExitQueued`.
+  bool inventoryCompanionsOwed = false;
+  /// Stamped by the wrap Clock (O(1)): the post-seal revision covering the session record's first
+  /// `wrapTargetRecords` entries. Zero when the stamp was lost -- the content still publishes, without coverage.
+  uint32_t wrapTargetRevision = 0;
+  size_t wrapTargetRecords = 0;
   PendingPassChangeProgress passChangeProgress;
   /// Transactional pass-change fragment (DEC-047 amendment 2026-09-16). A
   /// fragment is built on this working copy; authoritative `passChangeProgress`
@@ -178,7 +200,9 @@ struct PendingSnapshotPublishBox {
         !companionsApplied && !applyingCompanions && !wrapJournalInFlight &&
         sessionExitReason == CommitReason::RecordStop && !sessionExitUndoAttachEntryId &&
         companionIds.empty() && queuedPassIds.empty() && appliedPassIds.empty() &&
-        journaledPassIds.empty() && queuedWrapJournals.empty() &&
+        journaledPassIds.empty() && queuedWrapJournals.empty() && !sessionRecord && !sessionRecordPassDone &&
+        !sessionRecordCompanionNext && !companionNext && !companionFragmentEnd && !applyingSessionCompanions &&
+        appliedCompanionIds.empty() && !inventoryCompanionsOwed && !wrapTargetRevision && !wrapTargetRecords &&
         passChangeProgress.freshForInventoryAdoption() && fragmentProgress.freshForInventoryAdoption() &&
         !fragmentProgressValid && !consecutiveFragmentFailures && !fragmentBlocked &&
         !fragmentBlockTransient && !fragmentParkSawDenial &&

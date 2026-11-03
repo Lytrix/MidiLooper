@@ -265,6 +265,47 @@ LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& 
   appendCompanionEventChanges(parent, loop.loopId, changes);
 }
 
+bool editPassIdInList(const EditPassIdList& ids, EditPassId id) {
+  for (const EditPassId existing : ids) {
+    if (existing == id) return true;
+  }
+  return false;
+}
+
+/// One bounded companion grain (owner ruling 2026-11-03): at most `kCompanionRowsPerFragment` active rows of `ids`
+/// from `begin` are translated, and at most `kCompanionRowsScannedPerFragment` are examined, so a turn's lookups and
+/// allocations are bounded by the row count, not by the session. Rows already in `applied` are skipped (an exit or
+/// inventory hand-over never applies one twice). Returns the scan end; the caller advances its cursor to it only
+/// when the fragment is incorporated.
+constexpr size_t kCompanionRowsPerFragment = 4;
+constexpr size_t kCompanionRowsScannedPerFragment = 16;
+LOOP_COLD_MEM size_t appendCompanionFragment(const Loop& loop, const LoopSnapshot& parent, const EditPassIdList& ids,
+                                             size_t begin, const EditPassIdList& applied,
+                                             LoopSnapshotChangeSet& changes) {
+  size_t translated = 0;
+  size_t index = begin;
+  for (; index < ids.size() && translated < kCompanionRowsPerFragment &&
+         index - begin < kCompanionRowsScannedPerFragment;
+       ++index) {
+    const EditPassId id = ids[index];
+    if (id == kInvalidEditPassId || editPassIdInList(applied, id)) continue;
+    const EditPass* row = findActiveEditPass(loop, id);
+    if (row == nullptr) continue;
+    appendEditRowChange(parent, *row, loop.loopId, changes);
+    ++translated;
+  }
+  if (!changes.notes.empty()) appendCompanionEventChanges(parent, loop.loopId, changes);
+  return index;
+}
+
+/// Marks `ids[begin, end)` incorporated: the rows a companion fragment translated (inactive rows are skipped by the
+/// builder and carry no effect, so recording them is harmless).
+void recordAppliedCompanions(const EditPassIdList& ids, size_t begin, size_t end, EditPassIdList& applied) {
+  for (size_t index = begin; index < end && index < ids.size(); ++index) {
+    if (ids[index] != kInvalidEditPassId && !editPassIdInList(applied, ids[index])) applied.push_back(ids[index]);
+  }
+}
+
 bool midiEventMatchesSnapshot(const MidiEvent& existing, const MidiEvent& incoming) {
   if (existing.tick != incoming.tick || existing.type != incoming.type ||
       existing.channel != incoming.channel) {
@@ -1146,6 +1187,91 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(Loop& loop,
   return {};
 }
 
+bool sessionRecordPassSettled(const PendingSnapshotPublishBox& box, PassId passId) {
+  return passId == kInvalidPassId || passIdInList(box.appliedPassIds, passId) ||
+         passIdInList(box.journaledPassIds, passId);
+}
+
+}  // namespace
+
+/// True when every live session-record entry (up to the undo cursor) has its pass and companions incorporated in
+/// the box's candidate. Read-only: it evaluates the cursor's pending advance without taking it.
+LOOP_COLD_MEM bool sessionRecordsCaughtUp(const Loop& loop, const PendingSnapshotPublishBox* box) {
+  const size_t records = loop.overdubSessionUndoDepth();
+  size_t record = box ? box->sessionRecord : 0;
+  bool passDone = box ? box->sessionRecordPassDone : false;
+  size_t companionNext = box ? box->sessionRecordCompanionNext : 0;
+  for (; record < records; ++record, passDone = false, companionNext = 0) {
+    if (!passDone && !(box && sessionRecordPassSettled(*box, loop.overdubSessionPassIdAt(record))) &&
+        loop.overdubSessionPassIdAt(record) != kInvalidPassId) {
+      return false;
+    }
+    if (companionNext < loop.overdubSessionCompanionIdsAt(record).size()) return false;
+  }
+  return true;
+}
+
+namespace {
+
+/// The wrap's publication owner (owner ruling 2026-11-03, design input
+/// `openspec/changes/revision-manifest-prototype/evidence/2026-11-03-wrap-publication-ownership-map.md`): the session
+/// record is produced in causal order -- record i's pass through the existing pass producer, then record i's
+/// companions in bounded fragments, then record i+1. Nothing is read from the pending rows, which the seal has
+/// already turned into the pass and the companion rows. Returns true when it started a fragment.
+LOOP_COLD_MEM bool startNextSessionRecordWork(Loop& loop, PendingSnapshotPublishBox& box,
+                                              const ImmutableLoopSnapshotRef& parent) {
+  const size_t records = loop.overdubSessionUndoDepth();
+  // A small fixed number of record steps per turn: each settled step is O(1) plus one bounded companion scan.
+  for (unsigned step = 0; step < 8 && box.sessionRecord < records; ++step) {
+    const PassId passId = loop.overdubSessionPassIdAt(box.sessionRecord);
+    if (!box.sessionRecordPassDone) {
+      if (sessionRecordPassSettled(box, passId)) {
+        box.sessionRecordPassDone = true;
+      } else if (box.constructionPassId == passId || passIdInList(box.queuedPassIds, passId) ||
+                 (box.passChangeProgress.active && box.passChangeProgress.passId == passId)) {
+        return false;  // the pass is already owned by the generic pass queue; it settles there
+      } else {
+        bool isOverdubPass = false;
+        const CommittedChunkIdList* chunks = committedChunksForPass(loop, passId, isOverdubPass);
+        if (chunks == nullptr || chunks->empty()) {
+          box.appliedPassIds.push_back(passId);
+          box.sessionRecordPassDone = true;
+          continue;
+        }
+        box.passChangeProgress.reset();
+        box.passChangeProgress.active = true;
+        box.passChangeProgress.passId = passId;
+        box.passChangeProgress.nextEventId = parent->nextEventId();
+        box.passChangeProgress.nextCanonicalOrder = parent->nextEventId();
+        CommittedEventRange::resetWindowTraversalCursor(box.passChangeProgress.cursor);
+        box.constructionPassId = passId;
+        box.applyingCompanions = false;
+        return startNextPassChangeFragment(loop, box, parent);
+      }
+    }
+    const EditPassIdList& companions = loop.overdubSessionCompanionIdsAt(box.sessionRecord);
+    if (box.sessionRecordCompanionNext < companions.size()) {
+      LoopSnapshotChangeSet changes;
+      const size_t end = appendCompanionFragment(loop, *parent, companions, box.sessionRecordCompanionNext,
+                                                 box.appliedCompanionIds, changes);
+      if (changes.notes.empty() && changes.events.empty()) {
+        box.sessionRecordCompanionNext = end;  // nothing applicable in this grain
+        continue;
+      }
+      box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+      box.constructionPassId = kInvalidPassId;
+      box.applyingCompanions = true;
+      box.applyingSessionCompanions = true;
+      box.companionFragmentEnd = end;
+      return true;
+    }
+    ++box.sessionRecord;
+    box.sessionRecordPassDone = false;
+    box.sessionRecordCompanionNext = 0;
+  }
+  return false;
+}
+
 LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     Loop& loop, PendingSnapshotPublishBox& box, uint32_t liveRecordCompletedTicks) {
   if (!box.queuedWrapJournals.empty()) {
@@ -1188,6 +1314,12 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     return startNextPassChangeFragment(loop, box, fragmentParent);
   }
 
+  // DEC-073: a current root already covers the record, so there is nothing to produce.
+  if (!box.sessionExitQueued && !box.inventoryCompanionsOwed && loop.hasOverdubSession() &&
+      !loop.publishedSnapshotIsCurrent() && startNextSessionRecordWork(loop, box, parent)) {
+    return true;
+  }
+
   if (!box.queuedPassIds.empty()) {
     const PassId passId = box.queuedPassIds.front();
     box.queuedPassIds.erase(box.queuedPassIds.begin());
@@ -1217,17 +1349,29 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     return startNextPassChangeFragment(loop, box, fragmentParent);
   }
 
-  if (box.sessionExitQueued && !box.companionsApplied) {
-    box.companionsApplied = true;
-    LoopSnapshotChangeSet changes;
-    appendCompanionChanges(loop, *parent, box.companionIds, changes);
-    if (changes.notes.empty() && changes.events.empty()) {
-      return false;
+  if ((box.sessionExitQueued || box.inventoryCompanionsOwed) && !box.companionsApplied) {
+    // The same bounded grain as the session record's companions: a cursor over the inventory list, advanced only
+    // when its fragment is incorporated (it used to translate every companion in one change set).
+    for (unsigned step = 0; step < 8 && box.companionNext < box.companionIds.size(); ++step) {
+      LoopSnapshotChangeSet changes;
+      const size_t end = appendCompanionFragment(loop, *parent, box.companionIds, box.companionNext,
+                                                 box.appliedCompanionIds, changes);
+      if (changes.notes.empty() && changes.events.empty()) {
+        box.companionNext = end;
+        continue;
+      }
+      box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+      box.constructionPassId = kInvalidPassId;
+      box.applyingCompanions = true;
+      box.applyingSessionCompanions = false;
+      box.companionFragmentEnd = end;
+      return true;
     }
-    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
-    box.constructionPassId = kInvalidPassId;
-    box.applyingCompanions = true;
-    return true;
+    if (box.companionNext >= box.companionIds.size()) {
+      box.companionsApplied = true;
+      box.inventoryCompanionsOwed = false;
+    }
+    return false;
   }
   return false;
 }
@@ -1347,7 +1491,7 @@ void noteFragmentIncorporationFailure(LoopSnapshotFailureReason reason,
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) bool finishPendingConstruction(
-    PendingSnapshotPublishBox& box) {
+    const Loop& loop, PendingSnapshotPublishBox& box) {
   ImmutableLoopSnapshotRef frozen = box.construction->freeze();
   if (!frozen) {
     // Partial candidate is discarded; authoritative progress is untouched.
@@ -1364,6 +1508,23 @@ LOOP_COLD_MEM __attribute__((noinline)) bool finishPendingConstruction(
   }
   box.consecutiveFragmentFailures = 0;
   box.fragmentBlocked = false;
+  if (box.applyingCompanions) {
+    // The companion fragment's transaction commit point: its cursor advances only now.
+    if (box.applyingSessionCompanions) {
+      recordAppliedCompanions(loop.overdubSessionCompanionIdsAt(box.sessionRecord), box.sessionRecordCompanionNext,
+                              box.companionFragmentEnd, box.appliedCompanionIds);
+      box.sessionRecordCompanionNext = box.companionFragmentEnd;
+    } else {
+      recordAppliedCompanions(box.companionIds, box.companionNext, box.companionFragmentEnd, box.appliedCompanionIds);
+      box.companionNext = box.companionFragmentEnd;
+      if (box.companionNext >= box.companionIds.size()) {
+        box.companionsApplied = true;
+        box.inventoryCompanionsOwed = false;
+      }
+    }
+    box.applyingSessionCompanions = false;
+    box.companionFragmentEnd = 0;
+  }
   if (box.wrapJournalInFlight && !box.queuedWrapJournals.empty()) {
     box.queuedWrapJournals.erase(box.queuedWrapJournals.begin());
   }
@@ -1515,13 +1676,11 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   const size_t queuedBefore = box.queuedPassIds.size();
-  for (const PassId passId : overdubSessionPassIds_) {
-    if (passId != kInvalidPassId && isCommittedOverdubPass(*this, passId) &&
-        !passAlreadyTracked(box, passId)) {
-      box.queuedPassIds.push_back(passId);
-    }
-  }
-  if (lastCommittedPassId_ != kInvalidPassId &&
+  // The session record's passes are produced by the session-record producer, in causal order with their companions
+  // (owner ruling 2026-11-03); queueing them here as well would let a later pass overtake an earlier companion.
+  bool lastIsSessionRecord = false;
+  for (const PassId passId : overdubSessionPassIds_) lastIsSessionRecord |= passId == lastCommittedPassId_;
+  if (lastCommittedPassId_ != kInvalidPassId && !lastIsSessionRecord &&
       isCommittedOverdubPass(*this, lastCommittedPassId_) &&
       !passAlreadyTracked(box, lastCommittedPassId_)) {
     box.queuedPassIds.push_back(lastCommittedPassId_);
@@ -1545,6 +1704,12 @@ LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
   if (!box.queuedWrapJournals.empty() || box.wrapJournalInFlight || box.construction) {
     return;
   }
+  // The same rule for a session record handed to the inventory at this close: its passes and companions are owed.
+  if (!box.queuedPassIds.empty() || box.passChangeProgress.active ||
+      (box.inventoryCompanionsOwed && !box.companionsApplied) ||
+      (box.unpublishedCandidate && box.unpublishedCandidate != publishedSnapshot())) {
+    return;
+  }
   clearPendingSnapshotPublish();
 }
 
@@ -1561,6 +1726,7 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
       return true;
     }
   }
+  if (hasWrapPublicationOwed()) return true;
   if (capture.phase == CapturePhase::Record && loopLengthTicks > 0 && !publishedSnapshot() &&
       !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued) &&
       !(pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->unpublishedCandidate)) {
@@ -1571,7 +1737,7 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
       return true;
     }
   }
-  if (!hasOverdubSession()) {
+  if (!hasOverdubSession() || publishedSnapshotIsCurrent()) {
     return false;
   }
   const PendingSnapshotPublishBox* box = pendingSnapshotPublishBox_.get();
@@ -1605,8 +1771,81 @@ LOOP_COLD_MEM uint16_t Loop::inFlightSnapshotConstructionUnits() const {
 }
 
 LOOP_COLD_MEM bool Loop::hasPendingWrapJournal() const {
-  return pendingSnapshotPublishBox_ &&
-         !pendingSnapshotPublishBox_->queuedWrapJournals.empty();
+  // "Wrap publication owed": a legacy journal fragment, or a live session-record entry the publication owner has not
+  // incorporated yet (owner ruling 2026-11-03). The second is what admits the Snapshot owner mid-overdub now that
+  // the wrap Clock builds no journal; it reads durable state, so a lost Clock stamp cannot strand the work, and it is
+  // false once the cursor has caught up, so an idle owner is not woken for nothing.
+  if (pendingSnapshotPublishBox_ && !pendingSnapshotPublishBox_->queuedWrapJournals.empty()) return true;
+  return hasWrapPublicationOwed();
+}
+
+LOOP_COLD_MEM bool Loop::hasWrapPublicationOwed() const {
+  // DEC-073: a current root covers every committed pass and companion, the session record's included, so nothing is
+  // owed. Without this, a record whose exit publication already landed (the box cleared, the session not yet closed)
+  // would read as unproduced against a fresh cursor and be published again without coverage.
+  if (publishedSnapshotIsCurrent()) return false;
+  const PendingSnapshotPublishBox* box = pendingSnapshotPublishBox_.get();
+  if (box && box->sessionExitQueued) return false;  // the exit's own inventory owns the records now
+  if (box && box->inventoryCompanionsOwed && !box->companionsApplied) return true;
+  if (!hasOverdubSession() || overdubSessionUndoDepth() == 0) return false;
+  if (!sessionRecordsCaughtUp(*this, box)) return true;
+  return box && box->unpublishedCandidate && box->unpublishedCandidate != publishedSnapshot() &&
+         !box->construction && box->queuedPassIds.empty() && !box->passChangeProgress.active;
+}
+
+LOOP_COLD_MEM void Loop::stampWrapPublicationObligation() {
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (gFailNextWrapPublicationObligation) {  // the obligation's stamp could not be recorded (allocation)
+    gFailNextWrapPublicationObligation = false;
+    return;
+  }
+#endif
+  if (!pendingSnapshotPublishBox_) {
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  }
+  pendingSnapshotPublishBox_->wrapTargetRevision = playbackRevision;
+  pendingSnapshotPublishBox_->wrapTargetRecords = overdubSessionUndoDepth();
+}
+
+LOOP_COLD_MEM void Loop::handOverSessionRecordToInventory() {
+  // A session record is about to be cleared (session open/close without a session exit). Whatever the publication
+  // owner has not incorporated moves to the box's inventory lists, in order, so no wrap's pass or companion is lost
+  // and none is applied twice (`appliedCompanionIds`). The cursor is reset for the next session's record.
+  PendingSnapshotPublishBox* box = pendingSnapshotPublishBox_.get();
+  const size_t records = overdubSessionUndoDepth();
+  if (records > 0 && !(box && box->sessionExitQueued) && !sessionRecordsCaughtUp(*this, box)) {
+    if (!box) {
+      pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+      box = pendingSnapshotPublishBox_.get();
+    }
+    for (size_t record = box->sessionRecord; record < records; ++record) {
+      const bool first = record == box->sessionRecord;
+      const PassId passId = overdubSessionPassIdAt(record);
+      if (!(first && box->sessionRecordPassDone) && passId != kInvalidPassId &&
+          !passAlreadyTracked(*box, passId)) {
+        box->queuedPassIds.push_back(passId);
+      }
+      const EditPassIdList& companions = overdubSessionCompanionIdsAt(record);
+      for (size_t index = first ? box->sessionRecordCompanionNext : 0; index < companions.size(); ++index) {
+        const EditPassId id = companions[index];
+        if (id == kInvalidEditPassId || editPassIdInList(box->appliedCompanionIds, id) ||
+            editPassIdInList(box->companionIds, id)) {
+          continue;
+        }
+        box->companionIds.push_back(id);
+        box->companionsApplied = false;
+        box->inventoryCompanionsOwed = true;
+      }
+    }
+    // The stamp covered exactly these records; it now covers the inventory publication instead.
+    if (box->wrapTargetRecords != records) box->wrapTargetRevision = 0;
+  }
+  if (box) {
+    box->sessionRecord = 0;
+    box->sessionRecordPassDone = false;
+    box->sessionRecordCompanionNext = 0;
+    box->wrapTargetRecords = 0;
+  }
 }
 
 #if defined(PIO_UNIT_TEST_NATIVE)
@@ -2458,7 +2697,7 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
     }
     for (size_t i = 0; i < sessionCursor && i < sessionCompanionIds.size(); ++i) {
       for (const EditPassId companionId : sessionCompanionIds[i]) {
-        if (companionId == kInvalidEditPassId) {
+        if (companionId == kInvalidEditPassId || editPassIdInList(box.appliedCompanionIds, companionId)) {
           continue;
         }
         bool alreadyQueued = false;
@@ -2685,7 +2924,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.finishUs);
 #endif
-      finished = finishPendingConstruction(box);
+      finished = finishPendingConstruction(*this, box);
     }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     emitSnapshotUnitCapture(*this, "finish", heapBefore);
@@ -2716,6 +2955,28 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
       emitSnapshotUnitCapture(*this, "publish", heapBefore);
 #endif
+    }
+  }
+
+  // Wrap publication from the session record (owner ruling 2026-11-03): once every live record's pass and
+  // companions are incorporated and nothing else is queued, the candidate publishes atomically. Coverage is the wrap
+  // Clock's post-seal stamp only when that stamp names exactly the records produced; a lost stamp still publishes the
+  // content, without claiming coverage (DEC-073: coverage is evidence, never inferred).
+  if (!box.sessionExitQueued && !box.construction && box.queuedWrapJournals.empty() &&
+      !box.passChangeProgress.active && box.queuedPassIds.empty() && !publishedSnapshotIsCurrent() &&
+      !(box.inventoryCompanionsOwed && !box.companionsApplied) && box.unpublishedCandidate &&
+      box.unpublishedCandidate != publishedSnapshot() &&
+      (hasOverdubSession() ? overdubSessionUndoDepth() > 0 && sessionRecordsCaughtUp(*this, &box)
+                           : box.wrapTargetRecords == 0 && box.wrapTargetRevision != 0)) {
+    const bool stamped = box.wrapTargetRevision != 0 &&
+                         (!hasOverdubSession() || box.wrapTargetRecords == overdubSessionUndoDepth());
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
+#endif
+    if (stamped) {
+      storePublishedSnapshot(box.unpublishedCandidate, box.wrapTargetRevision, box.wrapTargetRevision);
+    } else {
+      storePublishedSnapshot(box.unpublishedCandidate, 0, kSnapshotCoverageUnset);
     }
   }
 

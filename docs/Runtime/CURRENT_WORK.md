@@ -1,5 +1,9 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-03 — DEC-248 landed: wrap publication from the session record.** The wrap Clock went from 841 ms to
+220 ms on device. Next, an owner decision on the publication cut: in the sweep, the root still lagged at run end.
+Still separate: held-NoteOn extraction, the C3.4 forced deadline, the probe boot hang.
+
 **2026-11-03 — Wrap journal Add lookup removed (`3df2ca34`).** Journal 1,346 → 602 ms, wrap Clock 1,474 → 733 ms.
 Next: attribute the remaining 602 ms. The probe boot hang (`9400e352`) is parked by the owner.
 

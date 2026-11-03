@@ -3,9 +3,9 @@
 //
 // The wrap Clock must only register a publication obligation for the interval it commits; the existing publish box
 // builds that interval's snapshot changes later, from its immutable pass and its sealed companion rows. RED cases fail
-// on today's eager wrap journal. GUARD cases hold today and pin the result the redesign must keep (the old journal as
-// parity oracle). Registered only with `WRAP_PUBLICATION_RED=1`, like the S1.2 `WORKING_SET_RED` gate, so the default
-// native gate stays green until the implementing slice lands.
+// on the eager wrap journal (`822c0cee`, RED baseline); GUARD cases held there and pin the result the redesign keeps
+// (the old journal as parity oracle). The implementing slice (DEC-248) turned the REDs green, so the former
+// `WRAP_PUBLICATION_RED` gate is gone and every case runs in the default gate.
 
 #include <map>
 #include <tuple>
@@ -225,14 +225,14 @@ void test_wrap_guard_publication_is_atomic_and_current() {
 }
 
 /// RED 5 -- two rapid wraps. A and B both wrap before any publication turn. The box holds their obligations, not
-/// private fragment copies of their content, and the drain applies them in order: B's Shorten of A's note lands
+/// private fragment copies of their content, and the drain applies them in order: B's Hide of A's note lands
 /// after A's pass.
 void test_wrap_red_two_rapid_wraps_queue_obligations_not_copies() {
   using namespace wrap_publication;
   Track& track = openIntervalA();
   Loop& loop = track.getActiveLoop();
   TEST_ASSERT_TRUE(wrap(track));
-  inputNote(60, 768 + 110, 768 + 150);  // B shortens A's note 60
+  inputNote(60, 768 + 90, 768 + 210);  // B covers A's note 60
   inputNote(70, 768 + 500, 768 + 600);
   clockManager.assignCurrentTickSilently(768 + 767);
   TEST_ASSERT_TRUE(track.commitOverdubWrap());
@@ -242,12 +242,14 @@ void test_wrap_red_two_rapid_wraps_queue_obligations_not_copies() {
   std::printf("wrap RED 5: %s\n", message);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.pendingSnapshotWrapJournalCount(), message);
   const Drain d = drainWithSessionRunning(track);
+
   TEST_ASSERT_TRUE(d.converged);
   const RootNotes notes = rootNotes(loop);
   TEST_ASSERT_NOT_NULL_MESSAGE(findPitchStart(notes, 70, 500), "B's Add must publish");
-  const NoteKey* aNote = findPitchStart(notes, 60, 100);
-  TEST_ASSERT_TRUE_MESSAGE(aNote == nullptr || std::get<2>(*aNote) <= 110,
-                           "B's Shorten of A's note must apply after A's pass");
+  // B's covering note seals a Hide of A's note 60. Applied before A's pass it would find no target and A's note
+  // would survive; its absence proves the record order (A's pass, then B's companion).
+  TEST_ASSERT_NULL_MESSAGE(findPitchStart(notes, 60, 100), "B's Hide of A's note must apply after A's pass");
+  TEST_ASSERT_NOT_NULL_MESSAGE(findPitchStart(notes, 60, 90), "B's covering note must publish");
 }
 
 /// RED 6 -- capacity, lossless within the session. The obligation for A cannot be queued (allocation). With the
@@ -370,8 +372,30 @@ void test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once() {
   TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the root must cover the committed revision");
 }
 
+/// GUARD 10 -- bounded worker turns. A dense interval (48 notes over the source, so a companion too) publishes in
+/// full, and no single publication-owner turn translates more than one pass-producer batch
+/// (`kSnapshotWrapJournalMaxChanges`). The device measures the same turns' wall time.
+void test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns() {
+  using namespace wrap_publication;
+  Track& track = openIntervalA();
+  Loop& loop = track.getActiveLoop();
+  for (uint8_t i = 0; i < 48; ++i) inputNote(70 + (i % 24), 410 + i * 7, 414 + i * 7);
+  TEST_ASSERT_TRUE(wrap(track));
+  const Drain d = drainWithSessionRunning(track);
+  std::printf("wrap GUARD 10: drain turns=%u worst turn=%lu translations\n", d.turns,
+              static_cast<unsigned long>(d.maxTranslationsPerTurn));
+  TEST_ASSERT_TRUE(d.converged);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kSnapshotWrapJournalMaxChanges, d.maxTranslationsPerTurn,
+                                           "one publication-owner turn exceeded one pass-producer batch");
+  const RootNotes notes = rootNotes(loop);
+  size_t dense = 0;
+  for (const auto& entry : notes) dense += std::get<1>(entry.second) >= 410 ? 1u : 0u;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(48u, dense, "every dense note must publish");
+  TEST_ASSERT_TRUE(sourceShortened(notes));
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
 void registerWrapPublicationReds() {
-  if (getenv("WRAP_PUBLICATION_RED") == nullptr) return;
   RUN_TEST(test_wrap_red_clock_translates_no_snapshot_change);
   RUN_TEST(test_wrap_guard_deferred_interval_ignores_successor_mutation);
   RUN_TEST(test_wrap_guard_publication_keeps_add_shorten_and_held_note);
@@ -381,5 +405,6 @@ void registerWrapPublicationReds() {
   RUN_TEST(test_wrap_guard_publication_keeps_hide_and_non_note_events);
   RUN_TEST(test_wrap_guard_wrap_pass_note_ids_are_fresh_against_the_parent);
   RUN_TEST(test_wrap_guard_publication_delayed_across_session_exit_is_exactly_once);
+  RUN_TEST(test_wrap_guard_dense_interval_publishes_in_bounded_worker_turns);
 }
 

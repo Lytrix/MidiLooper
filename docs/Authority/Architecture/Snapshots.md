@@ -100,9 +100,10 @@ step) and has no content-sized unit.
 
 ## Publication
 
-`Loop::stepPendingSnapshotPublish` is the only publication owner. Wrap journals
-and session-exit pass lists are queued at their commit/stop owners; idle then
-admits a bounded number of units
+`Loop::stepPendingSnapshotPublish` is the only publication owner. Session-exit pass lists are queued at their
+stop owners; an overdub wrap queues **nothing** but an O(1) revision stamp, because the overdub session record
+(`overdubSessionPassIds_[i]` with `overdubSessionCompanionIds_[i]`) already is its ordered publication obligation
+([DEC-248](../../DECISION_LOG.md)). Idle then admits a bounded number of units
 (`MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn` = 2).
 
 Publication admission charges the slab to its allocator tier: an external-only slab is not internal
@@ -118,6 +119,10 @@ Publication is **atomic** and conditional:
   and companion change is complete. A failure never publishes a prefix.
 - Wrap journals carry a `targetRevision` so a candidate is never marked current
   for a revision it does not contain; unstamped journals stay unselected.
+- A wrap's publication (DEC-248) is produced from the session record in causal order -- record i's pass through the
+  pass producer, then record i's companions in bounded fragments (at most 4 rows translated, 16 examined), then
+  record i+1 -- and publishes once every live record is incorporated, at the wrap Clock's post-seal stamp. A lost
+  stamp still publishes the content, with coverage unset. A current root owes nothing.
 
 **Two request shapes, one lane (DEC-150).** A request queues work; it never publishes. The *incremental* form
 (`requestCommittedPassesRepublish`) diffs every queued committed pass and companion against the **published root**, which

@@ -14262,3 +14262,74 @@ and `…answered_at_the_seal_deadline…` (RED -> GREEN). Native full 3,968 / 0 
 `captures/session_20261103_171618.log`: overdub Note messages 17.95 s / max 78 ms -> 0.81 s / 5.5 ms; worker
 discharges 3 -> 50. Evidence: `openspec/changes/revision-manifest-prototype/evidence/2026-11-03-c5-3b-successor-grant-budget.md`.
 DEC-159, DEC-162, DEC-217.
+
+## DEC-248 — The overdub wrap publishes from its session record; the wrap Clock builds no snapshot journal
+
+**Date:** 2026-11-03
+**Owner:** `PendingSnapshotPublishBox` / `Loop::stepPendingSnapshotPublish` (the existing publication owner), with
+the overdub session record (`overdubSessionPassIds_` / `overdubSessionCompanionIds_`) as the durable obligation.
+Formal trigger: an ownership change of wrap publication, from the `CommitReason::OverdubWrap` call stack to the
+Snapshot owner.
+**Status:** Accepted by owner (2026-11-03); implemented, host and device verified.
+
+### Problem
+
+`commitOverdubWrap` built the whole wrap snapshot journal inside the Clock dispatch: one change set per sealed row.
+That cost 0.6-1.35 s per wrap (`2026-11-03-c5-3b-successor-grant-budget.md`) and broke ExecutionBounds row 22.
+The journal also was the only thing that admitted the Snapshot owner mid-overdub. A wrap whose obligation could
+not be queued therefore stalled for the rest of the session (RED 6, `822c0cee`).
+
+### Decision
+
+1. **The wrap Clock publishes nothing.** It stamps the post-seal revision and the record count (O(1),
+   `Loop::stampWrapPublicationObligation`). The session record pushed by the same wrap is the obligation. Nothing is
+   copied or moved: undo, the stale-root overlay, the merged-playback admit copy and display invalidation keep
+   reading the record.
+2. **The existing box produces the record in causal order.** Record i's pass goes through the existing pass producer
+   (bounded fragments from immutable chunks). Then record i's companions follow, in a resumable grain: at most 4 rows
+   translated and 16 examined per fragment, with the cursor advanced only when the fragment is incorporated. Then
+   record i+1. The session-exit and inventory companion step uses the same grain; it used to translate every
+   companion in one change set.
+3. **Admission reads durable state.** `Loop::hasPendingWrapJournal` now means "wrap publication owed": a legacy
+   fragment, or a live record not yet incorporated (`Loop::hasWrapPublicationOwed`). It is false when the root is
+   current (DEC-073: a current root covers the record), when an exit already owns the records, and once the cursor
+   has caught up. So it neither strands work nor wakes an idle owner.
+4. **Publication stays atomic.** The candidate publishes once every live record is incorporated and nothing else is
+   queued.
+   - Its coverage is the stamp when the stamp names exactly the produced records.
+   - A lost stamp still publishes the content, with coverage unset. It never claims coverage it lacks.
+5. **Hand-over is exactly-once.**
+   - At a session exit, the exit's own inventory takes the records and skips companions already applied
+     (`appliedCompanionIds`).
+   - At a session open or close without an exit, `handOverSessionRecordToInventory` moves what is unproduced into
+     the box's inventory lists, in order, before the record is cleared.
+6. **Unchanged:** DEC-159, DEC-247, generation rules and the atomic-publication rule.
+   - `queueOverdubWrapSnapshotJournal` remains only as the host parity oracle.
+   - A fixed publication cut (publish a completed prefix through frontier F) amends row 22's atomicity and is not
+     part of this decision.
+
+### Evidence
+
+- **Host:** `test/test_continuous_capture/wrap_publication_reds.inc`, run in the default gate. RED 1, 5 and 6 fail
+  at `822c0cee`/`ba041597` and pass now; GUARD 2-4 and 7-10 hold in both. The cases cover:
+  - Clock ownership, interval isolation, Add/Shorten/Hide/non-note/held-note parity, atomicity and currency;
+  - two rapid wraps applied in order (B's Hide of A's note lands after A's pass);
+  - a lost obligation rediscovered with its companion, still in session;
+  - NoteId freshness against the parent: the identity contract that makes the journal's and the pass producer's
+    admission rules equivalent;
+  - publication delayed across the session exit, exactly once;
+  - a dense interval with a worst turn of 22 translations, against a bound of 32.
+- **Native full:** 3,969 / 0 failed.
+- **Device:** probe `939b94ce`, `captures/session_20261103_204647.log` (OBSERVED, `crash=0`).
+  - The wrap's journal step went from 630,658 µs to 114 µs, with 0 rows translated.
+  - The wrap went from 764,929 µs to 136,153 µs, and its Clock from 841,138 µs to 219,816 µs.
+  - The overdub Clock total went from 3.20 s to 2.56 s.
+  - The worst Snapshot-track idle turn was 180 ms, against 212 ms before.
+
+### Open (not this decision)
+
+- **Publication lag.** In this sweep, the slot's root was still unpublished at the end of the run, in both images:
+  the Record session-exit construction (DEC-159) was still stepping about 100 s after the stop. The fixed
+  publication cut, or a measured throughput bound, is the open owner decision.
+- **Remaining wrap Clock:** held-NoteOn extraction (98 ms with one held note), the C3.4 forced deadline, and the
+  layout-sensitive probe boot hang.

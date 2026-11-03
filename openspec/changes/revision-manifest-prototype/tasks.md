@@ -227,6 +227,12 @@ timing and memory envelope without introducing real-time construction?
     - A missed successor is a named miss: no merged fallback, no tick build.
     - Gate: on a steady committed slot, lane-owned merged-fallback ticks are 0 with flag 0 and with flag 1. Measured
       before this slice: 83 % (7,680 of 9,216).
+    - [x] Overdub-phase MIDI-path owners found by the C5.3b traces (2026-11-03):
+      - DEC-247 (`c0e8cbd8`): a full-set NoteOff stays owed.
+      - `3df2ca34`: the dead parent lookup for wrap-journal Add rows is removed.
+      - DEC-248: the wrap publishes from its session record, and the wrap Clock builds no journal (841 → 220 ms
+        on device).
+      - Open: the publication cut (the root lags), held-NoteOn extraction, and the C3.4 forced deadline.
   - [ ] C5.4 device A/B (probe flag 0 / 1, same stimulus): current-boot owner chain + reboot-restored; timing
 - [ ] C6 Remove the corresponding old reader after device parity.
 
