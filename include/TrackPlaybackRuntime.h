@@ -1661,6 +1661,10 @@ struct LoopPlaybackRuntime {
   /// True when a pending job owns the interval **and** a view it can serve exists: the bound
   /// bar-1 return window or a range-derived onward window. Ownership alone is not audibility.
   bool hasServableDeferredRecordView() const;
+  /// Release a `retained` role whose view holds no complete coverage once no Record-side owner remains: no bound
+  /// return window for a pending job, no frozen request, no coverage-owned build. The caller adds the track-level
+  /// owners (an active recording into this slot). Cold; never on the Clock path.
+  bool releaseOrphanedRetainedView();
   /// Refresh the retained first-record bar from the live capture store using
   /// the same bounded fill/order workers as ordinary playback preparation.
   bool serviceFirstRecordingBar(const Loop& loop,

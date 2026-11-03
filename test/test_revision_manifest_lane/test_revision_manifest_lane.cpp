@@ -525,6 +525,65 @@ bool takeNotePlayed(const PlaybackObservation& obs, uint32_t pass, uint32_t bar)
   return false;
 }
 
+/// Every role names a distinct physical view (`kNoView` excepted).
+void assertRolesDistinct(const RuntimePlaybackViewLifecycle& lc) {
+  const uint8_t roles[] = {lc.current, lc.ready, lc.build, lc.idle, lc.retained};
+  for (size_t i = 0; i < 5; ++i)
+    for (size_t j = i + 1; j < 5; ++j)
+      if (roles[i] != RuntimePlaybackViewLifecycle::kNoView && roles[i] == roles[j] &&
+          !(i == 0 && j == 4))  // `current` may legitimately be the retained view (installPreparedCurrent)
+        TEST_FAIL_MESSAGE("two roles name the same physical view");
+}
+
+// Slice 1 RED (owner ruling 2026-11-03): an orphaned `retained` role. After a Record stop retires, the Record return
+// window's view is emptied while its `retained` marker survives (every later preserving reset re-stamps it), so in
+// routed steady state one of the three physical views is never usable again. A view may keep a role only while it has
+// a legitimate owner or a qualified serving/return purpose: once its coverage and its Record-side owner are both gone,
+// `retained` must not name it. Measured today: `retained` = view 1, complete=0, coverage 0+0, no owner, for the run.
+void test_c5_3_orphaned_retained_role_is_released() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  Loop& loop = recordFourBarTake(t);
+  reader().serviceOwner(loop);
+  startTransport(t);
+  PlaybackObservation obs;
+  play(t, 0, 2 * kLength, obs);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const auto* set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_FALSE(runtime.hasBoundRecordReturnWindowForPendingJob());  // no Record-side owner remains
+  const uint8_t retained = set->lifecycle.retained;
+  TEST_ASSERT_TRUE_MESSAGE(retained == RuntimePlaybackViewLifecycle::kNoView || set->views[retained].complete,
+                           "a retained role names an empty view with no remaining owner");
+  assertRolesDistinct(set->lifecycle);
+}
+
+// Slice 1 guard: a *valid* retained view stays protected. While a Record take is recording, the raw first bar is the
+// retained view (complete, `rawCoveragePrepared`); no orphan release may touch it.
+void test_c5_3_a_valid_retained_record_bar_stays_protected() {
+  installReader();
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  bool sawRetainedBar = false;
+  for (uint32_t tick = 1; tick < kBar + 200; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    nativePlaybackDeadlineClock = {tick, 1};
+    TrackCaptureStopTestAccess::step(t);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.retained >= set->views.size()) continue;
+    const auto& v = set->views[set->lifecycle.retained];
+    TEST_ASSERT_TRUE_MESSAGE(v.complete || runtime.hasBoundRecordReturnWindowForPendingJob() || t.isRecording(),
+                             "a retained view without coverage or owner during recording");
+    sawRetainedBar |= v.complete;
+    assertRolesDistinct(set->lifecycle);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawRetainedBar, "no retained Record bar observed: the guard would be vacuous");
+  TEST_ASSERT_TRUE(t.isRecording());
+}
+
 // Steady-state continuity under production DEC-147 pricing (owner ruling 2026-11-03): once a routed chain is serving,
 // every traversal plays every take note -- the successor must be requested, admitted and complete before the serving
 // window expires. Traversals 0-1 are the chain's cold start (their own RED) and are excluded. RED today: with the price
@@ -590,6 +649,8 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
   RUN_TEST(test_c5_3_completion_placement_never_claims_a_consumed_boundary);
+  RUN_TEST(test_c5_3_a_valid_retained_record_bar_stays_protected);
+  if (getenv("ORPHAN_RETAINED_RED") != nullptr) RUN_TEST(test_c5_3_orphaned_retained_role_is_released);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
     RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
   if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);

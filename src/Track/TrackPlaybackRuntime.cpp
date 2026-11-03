@@ -496,8 +496,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(
   // launch's own cache reset must not clear it before the first root publishes.
   uint8_t preservedIndex = RuntimePlaybackViewLifecycle::kNoView;
   if (preserveLedger && viewSet != nullptr) {
+    // Only a retained view that still holds complete coverage is preserved: re-stamping an emptied one is what
+    // turned a retired Record return window into a permanently unusable physical view.
     if (viewSet->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView &&
-        viewSet->lifecycle.retained < viewSet->views.size()) {
+        viewSet->lifecycle.retained < viewSet->views.size() &&
+        viewSet->views[viewSet->lifecycle.retained].complete) {
       preservedIndex = viewSet->lifecycle.retained;
     } else {
       const uint8_t window = viewSet->firstRecordReturnWindowIndex();
@@ -2879,6 +2882,14 @@ LoopPlaybackRuntime::hasServableDeferredRecordView() const {
         !set->views[index].firstRecordReturnWindow;
   };
   return onward(set->lifecycle.current) || onward(set->lifecycle.ready);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseOrphanedRetainedView() {
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.retained >= set->views.size()) return false;
+  if (hasBoundRecordReturnWindowForPendingJob() || frozenViewRequest.active || viewBuild.coverageOwned())
+    return false;
+  return set->lifecycle.releaseOrphanedRetained(set->views);
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool

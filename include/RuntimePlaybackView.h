@@ -728,6 +728,11 @@ struct RuntimePlaybackViewLifecycle {
   // view becomes the next build buffer, so accepted source updates never mutate
   // a view that is being traversed.
   bool replaceRetainedWithReady(std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
+  // A view keeps a role only while it has an owner or a qualified serving/return purpose. Drop a `retained` marker
+  // whose view holds no complete coverage; the caller has established that no Record-side owner remains. The view
+  // joins `idle` (or `build` when that role is free) unless it is `current`, which keeps it unpublished. Returns
+  // true when a marker was released.
+  bool releaseOrphanedRetained(std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
   // Owner must discard any in-flight builder and preflight source/ledger first.
   // Reuses the existing views; subsequent coverage needs a fresh build.
   bool handoffToRetained(std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);

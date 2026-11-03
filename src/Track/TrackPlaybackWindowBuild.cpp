@@ -6321,6 +6321,12 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   return RollingOutcome::Disabled;
 #else
   RollingMetadataGuard guard;
+  // Slice 1 (owner ruling 2026-11-03): a `retained` role without coverage or owner never outlives its obligation. The
+  // active slot's recording is the track-level owner the runtime cannot see.
+  if (!isRecording()) {
+    if (LoopPlaybackRuntime* active = playbackRuntime.slotIfAllocated(activeLoopIndex))
+      (void)active->releaseOrphanedRetainedView();
+  }
   // Task 3.15g: refresh a retained Committed demand's identity from the live root on **every** lane turn, before any
   // selection. It must not sit behind the holder choice: a demand whose identity is stale is exactly one the selector
   // reports as unable to progress, so a refresh placed after selection would never run in the state that needs it.

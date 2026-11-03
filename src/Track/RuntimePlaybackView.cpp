@@ -907,6 +907,21 @@ bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
   return true;
 }
 
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewLifecycle::releaseOrphanedRetained(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
+  if (retained >= views.size() || views[retained].complete) return false;
+  const uint8_t orphan = retained;
+  retained = kNoView;
+  if (orphan == current || orphan == ready || orphan == build || orphan == idle) return true;
+  if (build == kNoView) {
+    build = orphan;
+    views[build].resetMetadata();
+  } else if (idle == kNoView) {
+    idle = orphan;
+  }
+  return true;
+}
+
 bool RuntimePlaybackViewLifecycle::replaceRetainedWithReady(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
   if (retained == kNoView || retained >= views.size() || ready == kNoView ||

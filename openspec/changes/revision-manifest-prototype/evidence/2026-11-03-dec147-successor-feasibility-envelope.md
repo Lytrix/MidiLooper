@@ -219,3 +219,36 @@ Bound: `(G - k) * a + k * X <= L - g` for `k` stalls of length `X` inside one le
 | post-overdub-stop coverage | `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop` | `ROUTED_AUDIBILITY_RED` |
 
 Plus the placement RED (`COMPLETION_PLACEMENT_RED`) and the consumed-boundary guard, which is in the default gate.
+
+## 10. Slice 1: orphaned `retained` role (owner ruling 2026-11-03), fixed
+
+**Invariant.** A physical view keeps a role only while it has a legitimate owner or a qualified serving or return
+purpose.
+
+**Mechanism of the defect.**
+- Every legitimate `retained` view is complete: `installPreparedCurrent` and `replaceRetainedWithReady` require it,
+  and `handoffToRetained` refuses otherwise.
+- Several paths empty a view in place without touching roles; for example the STOPPED oracle path's
+  `current.resetMetadata()` runs while `current == retained`.
+- The runtime reset then preserved whatever `retained` named, whatever its content, and `resetMetadataPreserveView`
+  re-stamped `lifecycle.retained = keep`. So after a Record stop, view 1 stayed `retained` and empty for the rest of
+  the run.
+
+**Fix.**
+- `RuntimePlaybackViewLifecycle::releaseOrphanedRetained` drops a `retained` marker whose view holds no complete
+  coverage. The view joins `build` or `idle`, or stays `current` unpublished; roles stay distinct.
+- `LoopPlaybackRuntime::releaseOrphanedRetainedView` calls it only when no Record-side owner remains: no bound return
+  window for a pending job, no frozen request, no coverage-owned build.
+- It is called from the rolling lane turn (`serviceRollingPlaybackWindow`, cold) unless the track is recording.
+- The runtime reset no longer preserves an emptied retained view.
+
+**Host.**
+- RED: `test_c5_3_orphaned_retained_role_is_released` (`retained` = view 1, complete=0, no owner) now GREEN.
+- Guard: `test_c5_3_a_valid_retained_record_bar_stays_protected` asserts it observed a complete retained Record bar
+  while recording, so it is not vacuous, and that roles stay distinct. It passes.
+- The four gated REDs are unchanged (steady state, placement, launch, post-stop), so the fix masks none of them.
+- Native full: 3,984 / 0 failed. Both images are within the RAM1 budget.
+
+**Next (slice 2).** The two-span frame RED: N-1 / current, N / ready, N+1 / build coexist on the three views now
+free, N+1 survives the N-1 -> N rotation, a valid retained window refuses the second lookahead safely, and every
+expected MIDI event is emitted under production pricing.
