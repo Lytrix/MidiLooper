@@ -1551,6 +1551,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
 }
 
 #if defined(LANE_GAP_MIDI_SPLIT)
+#include "ClockManager.h"
 // Overdub NoteOff split (owner ruling 2026-11-03, measurement image only): per entry occupancy of the deferred
 // completion set (0..16, clamped) and per path, count / total / max; plus the 4 worst NoteOffs. RAM2 (NOLOAD): reset at
 // the transport start with the MIDI spans, and every index is clamped, so stale boot bytes cannot address outside it.
@@ -1571,6 +1572,12 @@ constexpr uint8_t kDeferredSetFull = 16;  // Loop::kDeferredOverdubCompletionCap
 DMAMEM uint32_t sCoverageCounters[2][LaneGapSpans::CoverageCounterCount];  // [set full][counter]
 DMAMEM uint32_t sIdleOwnersWhileOverdubbing[2][kIdleOwnerBins];
 DMAMEM uint8_t sObservedOccupancy;
+struct GenerationCaller { uintptr_t caller, commitCaller; uint32_t count; };
+struct GenerationEvent { uintptr_t caller, commitCaller; uint32_t phaseTick, clockTick; uint8_t occupancy; };
+DMAMEM uintptr_t sCommitCaller;
+DMAMEM GenerationCaller sGenerationCallers[8];
+DMAMEM GenerationEvent sGenerationEvents[8];
+DMAMEM uint8_t sGenerationEventCount;
 inline uint8_t setFullIndex() { return sObservedOccupancy >= kDeferredSetFull ? 1 : 0; }
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
@@ -1612,6 +1619,26 @@ FLASHMEM __attribute__((noinline)) void LaneGapSpans::observeDeferredOccupancy(u
   sObservedOccupancy = occupancy;
 }
 
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::noteGenerationChange(uintptr_t caller, uint32_t phaseTick,
+                                                                         uint8_t occupancy) {
+  countCoverage(GenerationChanges, 1);
+  const uintptr_t commitCaller = sCommitCaller;
+  sCommitCaller = 0;  // a generation move outside a capture-pass commit reports none
+  for (auto& c : sGenerationCallers) {
+    if ((c.caller == caller && c.commitCaller == commitCaller) || c.caller == 0) {
+      c.caller = caller;
+      c.commitCaller = commitCaller;
+      ++c.count;
+      break;
+    }
+  }
+  if (sGenerationEventCount < 8)
+    sGenerationEvents[sGenerationEventCount++] = {caller, commitCaller, phaseTick, clockManager.getCurrentTick(),
+                                                  occupancy};
+}
+
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::noteCommitCaller(uintptr_t caller) { sCommitCaller = caller; }
+
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::countIdleOwner(uint8_t owner) {
   ++sIdleOwnersWhileOverdubbing[setFullIndex()][owner < kIdleOwnerBins ? owner : kIdleOwnerBins - 1];
 }
@@ -1621,6 +1648,10 @@ FLASHMEM void LaneGapSpans::resetNoteOffSpans() {
   for (auto& row : sCoverageCounters) for (auto& v : row) v = 0;
   for (auto& row : sIdleOwnersWhileOverdubbing) for (auto& v : row) v = 0;
   sObservedOccupancy = 0;
+  for (auto& c : sGenerationCallers) c = GenerationCaller{};
+  for (auto& e : sGenerationEvents) e = GenerationEvent{};
+  sGenerationEventCount = 0;
+  sCommitCaller = 0;
 }
 
 FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
@@ -1658,6 +1689,19 @@ FLASHMEM void LaneGapSpans::dumpNoteOffSpans() {
     for (uint8_t o = 0; o < kIdleOwnerBins; ++o)
       Serial.printf_P(PSTR("%s%lu"), o ? PSTR("/") : PSTR(""), (unsigned long)sIdleOwnersWhileOverdubbing[f][o]);
     Serial.println();
+  }
+  for (const auto& c : sGenerationCallers) {
+    if (c.caller == 0) continue;
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,generation,caller=0x%08lx,commit_caller=0x%08lx,count=%lu\n"),
+                    (unsigned long)micros(), (unsigned long)c.caller, (unsigned long)c.commitCaller,
+                    (unsigned long)c.count);
+  }
+  for (uint8_t i = 0; i < sGenerationEventCount && i < 8; ++i) {
+    const auto& e = sGenerationEvents[i];
+    Serial.printf_P(PSTR("#CAP,%lu,DIAG,noteoff_spans,generation_event,i=%u,caller=0x%08lx,commit_caller=0x%08lx,"
+                         "phase=%lu,tick=%lu,occupancy=%u\n"),
+                    (unsigned long)micros(), unsigned(i), (unsigned long)e.caller, (unsigned long)e.commitCaller,
+                    (unsigned long)e.phaseTick, (unsigned long)e.clockTick, unsigned(e.occupancy));
   }
   for (const auto& w : m.worst) {
     if (w.us == 0) continue;

@@ -9,6 +9,7 @@
 #include "Logger.h"
 #include "LoopPasses.h"
 #include "Utils/CaptureIncrementalSanity.h"
+#include "Utils/LaneGapSpans.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/Diagnostics.h"
@@ -3008,6 +3009,7 @@ LOOP_COLD_MEM bool Loop::transferCapturePass(PendingCapturePass& pass,
 
 LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
     PreparedCapturePassTransfer& transferred) {
+  LANE_COV_COMMIT_CALLER();
   if (!transferPreparedCapturePass(transferred)) {
     return false;
   }
@@ -3017,6 +3019,7 @@ LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
 
 LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
     PreparedCapturePassTransfer& transferred, PendingCapturePass& pass) {
+  LANE_COV_COMMIT_CALLER();
   if (!transferCapturePass(pass, transferred)) {
     return false;
   }

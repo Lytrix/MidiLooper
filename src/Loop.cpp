@@ -14,7 +14,7 @@ void Loop::notifyCommittedContentChanged() {
   // The committed source generation moved. Touched coverage is session state describing *what this
   // overdub touched*, so it survives; prepared coverage for the old generation is no longer
   // authoritative, so every required tile becomes owed again (task 4.4).
-  if (overdubCoverage_.sessionActive) LANE_COV_COUNT(GenerationChanges);
+  if (overdubCoverage_.sessionActive) LANE_COV_GENERATION(playheadPhaseTick, overdubCoverageDeferredCount_);
   overdubCoverage_.changeGeneration(playbackRevision);
   // Touched-coverage producer (task 4.8): the cache holds the old generation's tile content, so it is not
   // a source for the new one. The worker republishes the required tiles, content and bit together. The
