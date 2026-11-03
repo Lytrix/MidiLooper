@@ -478,9 +478,18 @@ void test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop() {
   assertEveryTakeNotePlayed(obs, 2, 7);
 }
 
+/// The first tick at which a complete window of the loop's current revision covering `phase` exists in any role,
+/// once the stop job has retired (its commit is the last revision move), 0 when none.
+struct CompletedWindowWitness {
+  uint32_t phase = 0;
+  uint32_t completedAt = 0;
+};
+
 /// One overdub (one note at bar 0 + 200 of traversal 2) on the routed take, stopped at loop tick `stopTick`; the
 /// transport then plays through traversal 6 with the stop job serviced every tick. Production pricing: no probe knobs.
-PlaybackObservation overdubThenStopAt(Track& t, Loop& loop, uint32_t stopTick) {
+/// `witness`, when given, records when a complete current-revision window covering its phase first exists.
+PlaybackObservation overdubThenStopAt(Track& t, Loop& loop, uint32_t stopTick,
+                                      CompletedWindowWitness* witness = nullptr) {
   reader().serviceOwner(loop);
   startTransport(t);
   PlaybackObservation obs;
@@ -496,7 +505,17 @@ PlaybackObservation overdubThenStopAt(Track& t, Loop& loop, uint32_t stopTick) {
   play(t, 2 * kLength + 260, stopTick, obs, 1, stepStopJob);
   clockManager.assignCurrentTickSilently(stopTick);
   t.stopOverdubbing();
-  play(t, stopTick, 7 * kLength, obs, 1, stepStopJob);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  play(t, stopTick, 7 * kLength, obs, 1, [&](uint32_t tick) {
+    stepStopJob(tick);
+    if (witness == nullptr || witness->completedAt != 0) return;
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr) return;
+    for (const auto& v : set->views)
+      if (v.complete && !t.hasPendingDeferredOverdubStop() && v.source.playbackRevision == loop.playbackRevision &&
+          v.coverage.contains(witness->phase))
+        witness->completedAt = tick;
+  });
   return obs;
 }
 
@@ -540,26 +559,23 @@ void test_c5_3_completion_placement_serves_the_nearest_eligible_boundary() {
   }
 }
 
-// Guard (negative): the boundary is already consumed. Stopped after bar 2 began (phase 1,600 of traversal 3), the
-// bars-2-3 interval of this traversal is in progress: placement may not adopt a window part-way into it, so the take's
+// Guard (negative): the boundary is already consumed. Stopped inside traversal 3's bars 2-3 (phase 2,000), the cold
+// frame's first window is that very interval (phase 2,000 + the 4,480-tick price lands on a phase-1,536 boundary two
+// traversals later), and it completes while traversal 3's bars 2-3 are still playing -- asserted, so the guard
+// exercises a real completed window. Placement may not adopt it part-way into the in-progress interval, so the take's
 // bar-3 note of traversal 3 is not played from it (nothing else serves a routed gap).
 void test_c5_3_completion_placement_never_claims_a_consumed_boundary() {
   installReader();
   Track& t = trackManager.getTrack(0);
   Loop& loop = recordFourBarTake(t);
-  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength + 1600);
+  CompletedWindowWitness witness{1536 + 800};
+  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength + 2000, &witness);
+  // Not vacuous: a complete window for this interval exists while traversal 3's bars 2-3 are still playing.
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, witness.completedAt, "no completed window: the guard would be vacuous");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(4 * kLength, witness.completedAt, "the window completed after the interval");
   TEST_ASSERT_FALSE_MESSAGE(takeNotePlayed(obs, 3, 3), "a window was adopted part-way into a consumed interval");
 }
 
-// Guard (negative): insufficient margin. Stopped 600 ticks before traversal 3's bar-2 boundary, the window cannot be
-// complete a full bar before it; the nearer boundary may not be claimed.
-void test_c5_3_completion_placement_needs_the_handoff_margin() {
-  installReader();
-  Track& t = trackManager.getTrack(0);
-  Loop& loop = recordFourBarTake(t);
-  const PlaybackObservation obs = overdubThenStopAt(t, loop, 3 * kLength + 1536 - 600);
-  TEST_ASSERT_FALSE_MESSAGE(takeNotePlayed(obs, 3, 2), "a boundary was claimed with less than the handoff margin");
-}
 
 int main(int, char**) {
   UNITY_BEGIN();
@@ -574,7 +590,6 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_a_snapshot_cold_ready_is_cancelled_once_the_slot_is_routed);
   RUN_TEST(test_c5_3_a_dense_take_is_served_from_the_manifest);
   RUN_TEST(test_c5_3_completion_placement_never_claims_a_consumed_boundary);
-  RUN_TEST(test_c5_3_completion_placement_needs_the_handoff_margin);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
     RUN_TEST(test_c5_3_completion_placement_serves_the_nearest_eligible_boundary);
   if (getenv("STEADY_STATE_RED") != nullptr) RUN_TEST(test_c5_3_steady_state_is_continuous_under_production_pricing);

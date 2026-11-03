@@ -140,3 +140,82 @@ window must satisfy one or the other, and never both counted against the same le
   claiming the steady-state gate for dense takes.
 - **Confidence:** high in the bound's shape (it is amendment 31's own rule). Medium in the dense feasibility until the
   outer-loop bound is declared and the two-in-flight role check is done.
+
+## 9. Owner follow-up (2026-11-03)
+
+64 ticks is **not** an enforceable outer-loop guarantee and is not promoted to DEC-147.
+
+### 9.1 Can the three view roles prepare N+1 while N-1 serves?
+
+**Lifecycle (code, `RuntimePlaybackViewLifecycle`).** Three views rotate over `current`, `ready`, `build`, `idle`
+and an optional `retained`.
+- `handoff` moves `ready` to `current` and parks the retired view in `idle` with `published = false`, so the tick
+  never reads it again.
+- `publishCompletedBuildAsReadySuccessor` refuses while `ready` holds a complete view ("one real successor at a
+  time").
+- A complete `build` survives a handoff and is published next. So with all three views free, N-1 / N / N+1 fit in
+  `current` / `ready` / `build` **with no new storage**.
+- The predecessor is safe to consume: it is only reset when it becomes `build`.
+
+**Occupancy as measured** (host, routed steady state with the probe's one-span requester, every 128 ticks):
+- **`retained` holds view 1 for the whole run.** Views 0 and 2 alternate between `current` and `ready`, `build` is
+  empty, and each successor is complete within 128 ticks of its handoff.
+- **The retained view is empty:** `complete=0`, coverage `0+0`, no source. Roles while STOPPED after the Record stop:
+  `cur=1 ready=- build=0 idle=2 ret=1`.
+- It is the Record stop's return window. Its metadata was reset (`resetMetadataPreserveView` keeps the role marker
+  on the preserved index), and nothing drops `retained` once its view holds no coverage.
+
+**Conclusion.**
+- Two-span lookahead fits the existing three views **only if that stale `retained` marker is released**.
+- Release condition: `retained` names a view with no complete coverage, or one whose owner has retired.
+- It also needs the frame to track a **second outstanding demand** (`successorState` / `rollingSuccessorKey` hold
+  one). That is frame state, not a view role or lifecycle, but it is new state, so it is the owner's call.
+
+### 9.2 One-span vs two-span envelope (`g = 64`; `L - g` = 1,472 vs 3,008)
+
+Bound: `(G - k) * a + k * X <= L - g` for `k` stalls of length `X` inside one lead.
+
+| case | `a` | `X` | max `k`, one-span | max `k`, two-span |
+|---|---|---|---|---|
+| sparse `G = 7` | 64 | 211 (wrap Clock) | 6 | 16 |
+| sparse `G = 7` | 64 | 536 (post-stop MIDI, pre-247/248) | 2 | 5 |
+| dense `G = 24` | 46 | 211 | 2 | 11 |
+| dense `G = 24` | 46 | 536 | **0** | 3 |
+| dense `G = 24` | 64 | 211 | **infeasible even at `k = 0`** (1,536 > 1,472) | 10 |
+| dense `G = 24` | 64 | 536 | infeasible | 3 |
+
+- Two-span lookahead makes the dense case feasible at the declared 64-tick cadence, with up to 3 of the worst
+  measured stalls per lead.
+- One-span cannot hold a dense window at 64 at all. It needs `a <= 61` with almost no stall.
+- Neither form becomes a guarantee until `a_outer` is **declared and latched**. Two-span widens the margin; it does
+  not replace that declaration.
+
+### 9.3 The real minimum adoption margin
+
+- Placement of an already-complete window needs no grant. It is decided in the lane turn that observes the
+  completion, and the clock advances at most `kPlaybackViewPermittedAdvancePerTurn` (64) within one turn.
+- **The real minimum is one permitted advance, 64 ticks.** It is not one bar, and not `a + g`. Its equality with `g`
+  is coincidence: `g` absorbs a *grant's* lateness, while the margin covers the *placement turn's* advance.
+- Carrying one bar forward would refuse eligible boundaries. A stop 600 ticks before the boundary leaves about 544
+  ticks after completion, which is eligible.
+
+### 9.4 Guards strengthened
+
+- Both earlier guards were **vacuous**. Under production pricing the cold frame's first window always covered bars
+  0-1 for those stop phases, so the window they guarded was never built.
+- `test_c5_3_completion_placement_never_claims_a_consumed_boundary` now stops at phase 2,000 and **asserts** that a
+  complete current-revision bars 2-3 window exists while traversal 3's bars 2-3 are still playing (`CompletedWindowWitness`).
+  It passes: not adopted mid-interval.
+- The margin near-miss cannot be produced behaviourally with the existing host knobs: it would need a completion
+  delayed by hundreds of ticks per grant, and `denyPerGrain` is at most 255. The vacuous version is removed. The
+  margin guard becomes a direct test of the placement predicate, written with the implementation.
+
+### 9.5 Gates (unchanged, independent, emitted MIDI, no named silent gap counts)
+
+| gate | RED | flag |
+|---|---|---|
+| steady-state continuity | `test_c5_3_steady_state_is_continuous_under_production_pricing` | `STEADY_STATE_RED` |
+| stopped-state launch | `test_c5_3_cold_start_transport_start_plays_the_first_traversal` | `ROUTED_AUDIBILITY_RED` |
+| post-overdub-stop coverage | `test_c5_3_gate_a_take_stays_audible_through_an_overdub_stop` | `ROUTED_AUDIBILITY_RED` |
+
+Plus the placement RED (`COMPLETION_PLACEMENT_RED`) and the consumed-boundary guard, which is in the default gate.
