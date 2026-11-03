@@ -106,3 +106,68 @@ the overdub-stop return window at the stop edge, as the Record stop already does
 window at transport start. Confidence that the fix belongs to these two existing predecessors: high, since both
 mechanisms exist and the device shows the overdub one being attempted. Confidence in the exact failure inside the
 overdub return window: low until section 5.1 is measured.
+
+## 8. Measurements (owner: "Take measurements", 2026-11-03)
+
+### 8.1 Device: the Overdub-stop window (`captures/session_20261103_211405.log`, track 7)
+
+`win_frozen_readiness` fields: readiness, holder, revision, phase-or-lead, generation, token, start, length, loop,
+adopt bits. At about 961 ticks/s:
+
+| time | row | reading |
+|---|---|---|
+| 76.3 s | `route,turn`, rev 2 | the pre-stop chain |
+| 77.7 -> 84.3 s | `busy,roles`, refusal 9 | the stop job's frozen presentation holds the coverage roles for 6.5 s; nothing is requested |
+| 84.3 s | `route,turn`, rev 3, phase 10,752 | the lane acts on the new revision |
+| 84.3 -> 85.4 s | `qualification_started` -> `handoff_unreachable` -> `released_without_site` -> `qualification_started` -> `build_admitted` -> `completed_unpublished` | a window built in about 1.1 s |
+| 97.9 s | `route,turn`, phase 23,856 | that window's start: serving begins |
+
+The window was built about 13,100 ticks ahead of the playhead (its priced lookahead) and waited for it. The 12.5 s
+"ready, not serving" span is the price, not a slow build.
+
+### 8.2 Host: the same transition (`test_revision_manifest_lane` Gate A case, owner state every 128 ticks)
+
+| tick (phase) | owner state |
+|---|---|
+| 9,176 | `stopOverdubbing()` |
+| 9,216 (0) | stop job pending; return window **bound and servable** (`hasBoundRecordReturnWindowForPendingJob`, `hasServableDeferredRecordView`) |
+| 9,344 (128) | stop job **retired**; no return window; rolling frame positioned at `startPhase = 1536`, deadline tick 13,824 (the next traversal) |
+| 9,344 -> 13,824 | nothing serves: 4,480 ticks |
+| 13,952 | serving; continuous afterwards |
+
+- 4,480 is exactly the declared DEC-147 lookahead: 7 grains x 8 x 64 + 768 + 128.
+- Transport start shows the same: from tick 0, the first window is at 4,608, which is bar 2 of traversal 1. The routed
+  slot binds no launch window.
+
+### 8.3 What the measurements decide
+
+1. **The overdub-stop predecessor does exist and does serve, but only while the stop job is pending.** On host the
+   job retires within 128 ticks, the return window goes with it, and the cold frame is then positioned a full priced
+   lookahead ahead. On device the job held the roles for 6.5 s without the window becoming servable for the new
+   revision.
+   - The defect is **predecessor lifetime**, not an absent mechanism. Its coverage ends with its owner (the job),
+     not at the first manifest handoff.
+2. **The silence equals the cold frame's DEC-147 lookahead in every case.** The first window is ready in about a
+   tenth of that (device: built in 1.1 s; successors ready at most about 550 ticks after their request). The price
+   is a declared worst case, and the gap is the price.
+3. **Transport start has no predecessor at all.** The launch-window path (`seedRollingFrameFromBoundLaunch`) finds no
+   bound launch for the routed active slot.
+
+### 8.4 Refined rule
+
+The section 4 rule is unchanged ("a routed chain never cold-starts at an audible boundary"), and the measurements
+fix its shape:
+
+- **Predecessor lifetime.** A predecessor is retired by its **handoff**, not by its owner. A stop job's return window
+  stays bound until the routed frame's first manifest window serves, even after the job has retired. Its source is
+  immutable: the committed passes the stop just finalized. Until then the successor demand is the routed frame's
+  first window, priced as today.
+  - Open point: the return window covers bar 1 plus onward windows built from the job's range. After the job, the
+    onward windows need an owner. The candidate is the frame itself serving the frozen source's windows as its first
+    links, which is the S4f.19 onward path with the job's range replaced by the committed source.
+- **Transport start.** The routed active slot binds a launch window while STOPPED, where no deadline is in force, so
+  the price is trivially met. The Task 3.7e seed then adopts it at the first tick.
+- **Unchanged:** the DEC-147 price, amendment 23 (no fallback), DEC-247, DEC-248 and publication.
+
+**Confidence.** High on the cause: the lifetime and the price are measured on host and device. Medium on the exact
+owner for post-job onward windows. That is the one design choice for the owner.
