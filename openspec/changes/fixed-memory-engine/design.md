@@ -542,3 +542,48 @@ building indexes in worker grains instead of inside `begin`, belong to E5.
 
 **Tests:** `test_content_engine_edit_index` (7): shared pinned slot, no slot without edit runs, exhaustion with pinned
 slots never evicted, LRU eviction, capacity, identical rebuild after eviction, composer budget; zero heap.
+
+## E5 slice 1 — restart-checkpoint ownership (as built)
+
+**Owner:** `CheckpointTable<Checkpoint, Slots = 64, PerSlot = 8>` (`include/ContentEngine/CheckpointTable.h`): per slot,
+8 checkpoints at a fixed spacing (8 bars), stamped with the manifest identity swept. Production size 208,128 B against
+262,144 B budgeted (plan § 4.1; static check in `EngineCore.h`).
+
+**Filling (`CheckpointSweep`, the sweep worker's job):** a cold composition's cycle 0 does not carry notes held across
+the loop end; steady playback (cycle 1 on) does, and a cold start wants the steady state. The sweep therefore:
+1. composes cycle 0 and stores its captures as *provisional* (never resumed);
+2. at the end of cycle 0 stores the position-0 checkpoint as usable (it carries the steady state);
+3. continues into cycle 1, storing usable captures, until one equals the provisional capture at the same position.
+
+A checkpoint is the composer's whole state (resume equivalence), so equal state at a position means equal state from
+there on: the remaining provisional captures are promoted without composing further. Cost: one loop plus the windows
+until the carried notes have ended, at most a second loop. The plan's soft-job estimate (§ 7.3, one loop per committed
+slot) holds for loops whose held-across-the-end notes end within the first spacing; the worst case is two loops.
+`step` composes one window; grain-sliced composition is a later E5 slice.
+
+**Retirement and pins:** a new sweep for a slot retires its table at once; a sweep whose identity is no longer the
+slot's ends `Superseded` and writes nothing. The table holds no page references, only the identity stamp, and manifest
+identities are never reused, so a stale checkpoint cannot match another manifest. The table therefore needs no manifest
+pin (plan § 5.4 lists one; holding it would only delay reclamation).
+
+**Cold start (`coldStart`):** resumes from the nearest usable checkpoint at or before the position, else warms up a
+whole cycle from the loop start (the plan's worst path), renumbers the cycle (`Composer::rebaseCycle`) and replays to
+the position. With a usable checkpoint it replays fewer windows than one spacing.
+
+**Composer change:** removing an admitted note now preserves admission order (it was swap-with-last). The carried
+state is then a function of the position in a steady cycle, not of how many cycles were composed; without it a cold
+start's carry list was a permutation of uninterrupted playback's, and checkpoints never converged.
+
+**Tests:** `test_content_engine_checkpoint_table` (5), zero heap:
+- 25 random multi-pass sources (held-across-the-end, held-loop, edit hides): a cold start equals uninterrupted
+  playback window for window, from an empty table, at every step of a running sweep, and at every window of three
+  steady cycles from a complete table (replay < one spacing);
+- cold captures stay provisional until steady (hand-specified held note across the end);
+- a new sweep supersedes the old one;
+- lookup, unusable entries, identity, slots;
+- production budget.
+
+Mutations caught: promoting cold captures, no warm-up, swap removal, no convergence check, ignoring supersession.
+
+**Not yet built (E5):** the worker scheduler (EDF of hard jobs, display and persistence shares, slack check); compose,
+sweep and index builds sliced into grains; the edit-index store placed in the page reserve.

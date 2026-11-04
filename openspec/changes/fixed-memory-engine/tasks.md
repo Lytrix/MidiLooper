@@ -61,7 +61,9 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E3.2f Restart checkpoints: capture/resume, byte-identical resumed windows (`test_content_engine_checkpoint` 4, mutation-checked).
 - [x] E3.3 Hide table moved to the shared, identity-keyed `EditIndexStore` (18 slots, pinning, LRU of unpinned, named exhaustion); composer 43,184 → 10,428 B; budgets statically checked (`test_content_engine_edit_index` 7).
 - [x] E3.3b EDIT-1 regression: two successive edits of one NoteId plus an unrelated earlier same-pitch note.
-- [ ] E5 Checkpoint table owner; index builds in worker grains; store placed in the page reserve.
+- [x] E5.1 Checkpoint table owner: per-slot identity-stamped table, steady-state sweep with convergence, supersession, cold start (`test_content_engine_checkpoint_table` 5, mutation-checked); admitted order made canonical.
+- [ ] E5.2 Worker scheduler (EDF hard jobs, display/persistence shares, slack check).
+- [ ] E5.3 Compose, sweep and index builds sliced into grains; edit-index store placed in the page reserve.
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output
