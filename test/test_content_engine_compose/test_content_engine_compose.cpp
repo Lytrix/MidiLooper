@@ -306,11 +306,43 @@ void test_instance_identity_includes_run() {
   TEST_ASSERT_EQUAL(1, s.sounding());
 }
 
+// The same note id in two passes (an edit run's replacement keeps the hidden note's id): the composer must end each
+// instance from its own run's NoteOff. Matching by id alone would close the earlier pass's note at the later NoteOff.
+void test_same_note_id_in_two_runs_ends_each_from_its_own_run() {
+  const RunId a = gRuns.allocate(0, 0);
+  const RunId b = gRuns.allocate(0, 0);
+  auto put = [](RunId r, uint32_t tick, uint8_t status, uint8_t pitch, uint8_t vel) {
+    PassEvent e;
+    e.tick = tick;
+    e.noteId = 5;
+    e.seq = tick;
+    e.status = status;
+    e.data1 = pitch;
+    e.data2 = vel;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, e, gPool));
+  };
+  put(a, 100, 0x90, 60, 100);
+  put(a, 500, 0x80, 60, 0);
+  put(b, 300, 0x90, 72, 100);
+  put(b, 400, 0x80, 72, 0);
+  gRuns.seal(a);
+  gRuns.seal(b);
+  const SourceRun src[] = {{a, 2}, {b, 2}};
+  uint32_t x[1] = {0}, y[1] = {0};
+  const auto got = playCycle(src, 2, 3, x, y);
+  TEST_ASSERT_EQUAL_UINT32(4, got.size());
+  TEST_ASSERT_EQUAL_UINT32(400, got[2].tick);
+  TEST_ASSERT_EQUAL_UINT8(72, got[2].pitch);
+  TEST_ASSERT_EQUAL_UINT32(500, got[3].tick);
+  TEST_ASSERT_EQUAL_UINT8(60, got[3].pitch);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_384_source_16_output_across_windows);
   RUN_TEST(test_live_held_note_closed_live_then_recorded_end_next_cycle);
   RUN_TEST(test_revision_switch_closes_uncarried_and_never_closes_unsent);
   RUN_TEST(test_instance_identity_includes_run);
+  RUN_TEST(test_same_note_id_in_two_runs_ends_each_from_its_own_run);
   return UNITY_END();
 }
