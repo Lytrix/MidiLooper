@@ -1,3 +1,17 @@
+**2026-11-04 — DEC-136.4b: Record-return root takeover is gapless on the device.**
+- **Geometry (`bfd9d94f`).** The speculative root is the rolling grid's own window (`rollingGridWindowLengthAt`: two
+  bars normally, the terminal bar alone, an off-grid default-partition start has none). The clock edge re-keys the
+  frame (start, absolute deadline, partition) in O(1); the committed resolver accepts it.
+- **Frozen priority (`b0d63d25`, `01e9e9eb`).** On the routed slot, with no retained view, the frozen reader's next bar
+  outranks incomplete root work (only work that holds the builder yields); frozen builds are never superseded while
+  still owed; an authorized frozen frame that served out expires instead of being labelled `ServingViewSourceStale`.
+- **Host.** Lane gate 33/33; native full 4,008 / 0 failed; ITCM byte-identical on both images (304 B and 64 B headroom).
+- **Device** (succprobe `1149748f…`, `session_20261104_104642`): no post-stop silence (A/B `972e955a`: 62-97 s silent);
+  takeover at 10752; root-window MIDI equals the committed traversal; job released after the takeover.
+- **Open (owner):** R3 root liveness under cost; a ~200-tick frozen-versus-committed content offset (four notes repeat
+  at the takeover; also on the A/B image); C5.3b production successors; the default image is not device-qualified here.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-03 — Gates A/B (owner priority change: playback and liveness first).**
 - **Gate B fixed (DEC-249, `c12f040c`).** The publication reserve resolves a low arena tail with the read-only walk.
   On device: tail 32,768 B, largest free 54,824 B, walk 13 µs, publication converged. Before the fix it never

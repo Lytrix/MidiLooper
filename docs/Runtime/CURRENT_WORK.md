@@ -1,5 +1,14 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-04 — DEC-136.4b landed and device-qualified (`bfd9d94f` geometry, `b0d63d25` frozen priority,
+`01e9e9eb` device-driven fix).** On the Record-only gesture (succprobe `1149748f…`) the routed slot has no post-stop
+silence (previously 33-35 s, still so on the `972e955a` A/B). The root takes over at the boundary after the frozen
+ready, serves its two-bar window, and its MIDI matches the committed traversal. Open, each for the owner: R3 (root
+liveness when a root costs more than a frozen bar's spare time); a frozen-versus-committed content offset of about
+192-200 ticks at the same phases (four notes repeat at the takeover; present on the A/B image too, not attributed);
+production successors after the root window depend on C5.3b; device qualification ran on the probe image only.
+[Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-03 — Gate B fixed (DEC-249); Gate A reconciled.** Next: the owner rules on the cold-start window for a
 routed chain (playback start, revision move, restart). Then Gate C (display bars 20-32).
 

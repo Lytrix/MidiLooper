@@ -704,3 +704,47 @@ the C5.3b successor requester is absent. That dependency is named, not addressed
 - Before the fix: 10,752 gap ticks. After: no gap, one takeover, notes paired.
 
 *Gates.* Lane 33/33; native full 4,008 cases, 0 failed; ITCM byte-identical (392,072 + 1,144; 392,312 + 904).
+
+**Device qualification of `01e9e9eb` (the Record-only gesture, 2026-11-04).**
+
+*Run.*
+- Image: succprobe at `01e9e9eb`, plus the uncommitted TEMP boot breadcrumbs. HEX sha256 `1149748f…a767`, retained in
+  `captures/succprobe-1149748f/`.
+- Boot: `boot_reset,crash=0`, `BOOT,load,ok`.
+- Gesture: `STIM-LANE-CADENCE-TEMP-01`, track 8 slot 4, the same command as every earlier run.
+- Capture: `captures/session_20261104_104642.log`. The harness exited on its own: 40 handed off, 0 missed, 0 refused.
+
+| measure | earlier images (`fc0a5e80` run; the `972e955a` A/B below) | `01e9e9eb` |
+|---|---|---|
+| routed slot silent after the Record stop | about 33-35 s (`none` 600 per 5 s row) | **none**: `none=0` in every row from the stop on. The 9 pulses at 50-55 s precede the stop. |
+| root takeover | about one traversal later, after the gap | **at the boundary after the frozen ready**: the route turns from frozen (capture content 1538) to the committed root at phase 10752, at 65.943 s |
+| root window | — | serves its whole span: still current at 11520, its second bar. The probe successor is built behind it, and the producer reports `win_serving`. |
+| root-window MIDI | — | 32 note-ons in [10752, 12288), identical in pitch and tick to the same phases one traversal later |
+| Record job | — | released at 72.8 s (`Reentry released slot=3`), after the takeover |
+| frozen-priority yield | — | none needed this run: the root was prepared and parked beside the frozen ready (`publish_ready_refused`, `completed_unpublished` at 64.6 s) |
+
+*A/B on the same rig.*
+- Image: `972e955a`, the last image flashed before these slices, rebuilt in a scratch worktree with the same TEMP
+  `main.cpp`. HEX `6c03d4b3…77ca`, retained in `captures/succprobe-6c03d4b3-ab972e/`.
+- Capture: `captures/session_20261104_105623.log`. Boot clean.
+- The routed slot is silent from about 62 to 97 s (`none` 238/601/600/600/600/600/598/600/229). That is the known
+  defect, still present without the slices.
+
+*The qualified HEX is back on the board.*
+- `1149748f…`, uploaded with `-t nobuild`, because a rebuild differs in its bytes (`0039ce18…`).
+- Boot re-verified: `captures/session_20261104_110254.log`.
+
+**Open finding, not part of this patch: frozen versus committed content at the same phases.**
+- Observation:
+  - In `01e9e9eb`'s run the frozen bars reproduce the recording pass (pitch 60 at 9984).
+  - The committed windows of the same phases carry the take displaced by about 192-200 ticks (pitch 56 at 9992, in
+    every later traversal).
+  - So at the now-gapless takeover four notes repeat: 36-39 from the frozen bar at 10560-10704, then again from the
+    root at 10760-10904.
+- Why it is not attributed to these slices:
+  - The `972e955a` A/B run also has the recording pass and the committed traversal disagreeing at the same phases.
+  - The `fc0a5e80` run (`session_20261104_002601`) had them equal.
+  - The slices touch no capture-commit, projection or import code.
+- Attribution needs its own investigation: the record-stop projection or alignment of the committed take, versus the
+  frozen reader's `RecordCoverage` projection, versus the stimulus's own timing.
+- It bears on content parity at the frozen-to-committed handoff (DEC-159 territory).
