@@ -205,6 +205,84 @@ void test_final_interval_when_descriptors_run_out() {
   TEST_ASSERT_EQUAL(RunState::Sealed, gRuns.run(gW.lastRun()).state);
 }
 
+// Random input over many takes: NoteOn / NoteOff / CC / wrap / Stop / release of finished takes. Invariant R and page
+// conservation hold at every step; a NoteOff for an open lane is never refused; refusals happen (not vacuous); no heap.
+void test_writer_random_input_fuzz() {
+  initAll(/*fixedReserve*/ 4);
+  const unsigned long heapBefore = gHeapAllocations;
+  uint32_t seed = 0x5EEDu;
+  auto rnd = [&seed]() {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+  };
+  uint16_t openOnLane[17][8] = {};  // test-side mirror: open notes per (channel 1..16, pitch 60..67)
+  RunId finished[Runs::kRunCount];
+  uint16_t finishedCount = 0;
+  uint32_t refusals = 0, noteOffs = 0, takes = 0;
+  bool writing = false;
+  for (uint32_t step = 0; step < 100000; ++step) {
+    if (!writing) {
+      if (gW.begin(0, 1) == WriterResult::Ok) {
+        writing = true;
+        ++takes;
+      }
+    } else {
+      const uint32_t op = rnd() % 100;
+      const uint8_t ch = static_cast<uint8_t>(1 + rnd() % 16), p = static_cast<uint8_t>(rnd() % 8);
+      if (op < 40) {
+        const WriterResult r = gW.noteOn(step, ch, static_cast<uint8_t>(60 + p), 100);
+        if (r == WriterResult::Ok)
+          ++openOnLane[ch][p];
+        else
+          ++refusals;
+      } else if (op < 75) {
+        const WriterResult r = gW.noteOff(step, ch, static_cast<uint8_t>(60 + p), 0);
+        if (openOnLane[ch][p] > 0) {
+          TEST_ASSERT_EQUAL(WriterResult::Ok, r);
+          --openOnLane[ch][p];
+          ++noteOffs;
+        } else {
+          TEST_ASSERT_EQUAL(WriterResult::Unmatched, r);
+        }
+      } else if (op < 90) {
+        if (gW.channelEvent(step, 0xB0, 1, 2) != WriterResult::Ok) ++refusals;
+      } else if (op < 99) {
+        const WriterResult r = gW.wrap(step);
+        if (r == WriterResult::Stopped) writing = false;
+      } else {
+        TEST_ASSERT_EQUAL(WriterResult::Ok, gW.stop(step));
+        writing = false;
+      }
+      if (!writing) {
+        for (auto& c : openOnLane)
+          for (auto& x : c) x = 0;
+      }
+    }
+    // Sealed runs become content; every few takes the oldest content is dropped and reclaimed (undo / overwrite).
+    RunId sealed;
+    while (gW.takeSealed(sealed)) finished[finishedCount++] = sealed;
+    if (finishedCount > 12) {
+      gRuns.release(finished[0]);
+      while (!gRuns.reclaimStep(finished[0], gPool, 8)) {}
+      for (uint16_t i = 1; i < finishedCount; ++i) finished[i - 1] = finished[i];
+      --finishedCount;
+    }
+    if (step % 499 == 0) {
+      TEST_ASSERT_TRUE(gRes.check());
+      TEST_ASSERT_TRUE(conserved());
+    }
+  }
+  TEST_ASSERT_TRUE(gRes.check());
+  TEST_ASSERT_TRUE(conserved());
+  TEST_ASSERT_TRUE(refusals > 0);
+  TEST_ASSERT_TRUE(noteOffs > 1000);
+  TEST_ASSERT_TRUE(takes > 10);
+  TEST_ASSERT_EQUAL_UINT32(0, gW.sealedOverflow());
+  TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - heapBefore);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_noteoff_pairs_lifo_on_its_lane_and_keeps_channel);
@@ -216,5 +294,6 @@ int main(int, char**) {
   RUN_TEST(test_third_held_wrap_owes_the_commit);
   RUN_TEST(test_stop_closes_open_notes_in_their_own_runs_and_seals);
   RUN_TEST(test_final_interval_when_descriptors_run_out);
+  RUN_TEST(test_writer_random_input_fuzz);
   return UNITY_END();
 }
