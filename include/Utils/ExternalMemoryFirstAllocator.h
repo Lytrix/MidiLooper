@@ -20,6 +20,24 @@
  * Deallocation strategy:
  *   Uses isInExternalMemoryPool() so free routing stays consistent.
  */
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native external-pool pressure seam (owner ruling 2026-11-04, PSRAM exhaustion). Models the device moment where a
+/// request finds neither external memory nor internal heap: any request of `refuseAtOrAboveBytes` or more is refused.
+/// An unchecked growth that reaches the fatal branch records `abortReached` instead of terminating the test process
+/// (and is then served, so the suite can report it); a checked probe (`CheckedCapacity`) sees the refusal and backs off.
+struct NativeExternalPoolPressure {
+  std::size_t refuseAtOrAboveBytes = static_cast<std::size_t>(-1);
+  unsigned abortReached = 0;
+  unsigned probeRefusals = 0;
+  /// The pools' total capacity: a request above it can never be served (permanently insufficient).
+  std::size_t totalCapacityBytes = static_cast<std::size_t>(-1);
+};
+inline NativeExternalPoolPressure& nativeExternalPoolPressure() {
+  static NativeExternalPoolPressure pressure;
+  return pressure;
+}
+#endif
+
 template <typename T>
 class ExternalMemoryFirstAllocator {
  public:
@@ -43,6 +61,12 @@ class ExternalMemoryFirstAllocator {
 
   T* allocate(std::size_t n) {
     const std::size_t bytes = n * sizeof(T);
+#if defined(PIO_UNIT_TEST_NATIVE)
+    if (bytes >= nativeExternalPoolPressure().refuseAtOrAboveBytes) {
+      ++nativeExternalPoolPressure().abortReached;  // the device would abort() here
+      return static_cast<T*>(std::malloc(bytes));
+    }
+#endif
 
     // 1) Prefer external memory for length-scaling, non-hot buffers.
     void* ptr = extmem_malloc(bytes);

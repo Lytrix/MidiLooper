@@ -97,6 +97,8 @@ enum Tag : uint8_t {
   TagCompanionBridgeMap = 14,
   TagCompanionPasses = 15,
   TagCanonicalPassInputs = 16,
+  /// DEC-250 memory attribution (2026-11-04): a wrap obligation's source-cut preparation (pitch-filtered).
+  TagWrapCut = 17,
 };
 
 /// Every tag's retained KB, for a refusal line that must survive the process dying.

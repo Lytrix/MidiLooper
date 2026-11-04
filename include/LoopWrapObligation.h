@@ -36,6 +36,7 @@ struct Loop::WrapObligationQueue {
     NoteUtils::DisplayNoteVec cutNotes;
     uint32_t cutSequence = 0;            // C2: the flip journal's sequence at the wrap
     PassId sessionFirstPassId = kInvalidPassId;  // rows below it are pre-session (journaled when they flip)
+    CheckedCapacity::RefusalBackoff cutRefusal{};  // a refused cut growth: owed, retried after a bounded wait
   };
   Slot slots[kSlots];
   uint8_t head = 0;
@@ -45,6 +46,6 @@ struct Loop::WrapObligationQueue {
   std::vector<Loop::WrapCutFlip> flips;
   uint32_t flipSequence = 0;
   uint32_t flipOverflows = 0;
-  /// Cut preparations deferred for external memory (named; the obligation stays owed and is retried).
-  uint32_t cutAdmissionDeferrals = 0;
+  /// Cut growths refused at the allocation boundary (named; the obligation stays owed and is retried).
+  uint32_t cutRefusals = 0;
 };

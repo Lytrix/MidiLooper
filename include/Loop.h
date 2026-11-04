@@ -30,6 +30,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/CoveragePrerequisite.h"
 #include "LoopContentResolution.h"
+#include "Utils/CheckedCapacity.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Globals.h"
 #include "CaptureAppendResult.h"
@@ -1099,6 +1100,17 @@ struct Loop {
   void noteWrapCutStateFlip(uint32_t rowId, bool wasActive);
   /// C2 capacity: flips the bounded journal could not hold (each one named; the cut is then inexact for that row).
   uint32_t wrapCutJournalOverflows() const;
+  /// Named refusals (PSRAM-exhaustion ruling): the coverage worker's and the wrap cuts' refused growths.
+  uint32_t overdubCoverageRefusals() const { return overdubCoverageRefusal_.refusals; }
+  uint32_t wrapCutRefusals() const;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// PSRAM-exhaustion ruling: the head obligation's buffers by ownership, in bytes of capacity (test witness).
+  struct WrapCutMemory {
+    size_t layer = 0, rawEvents = 0, notes = 0, cutNotes = 0, membership = 0, pending = 0;
+    size_t total() const { return layer + rawEvents + notes + cutNotes + membership + pending; }
+  };
+  WrapCutMemory wrapCutMemoryForTest() const;
+#endif
   bool wrapObligationCapacityAvailable() const;
   /// The wrap Clock's whole C3.4 duty, constant work: swap the live pending set into a free obligation slot, move the
   /// closed deferred completions with it, stamp the cut (record `record`, pass `passId`, NoteId horizon). The live
@@ -2238,6 +2250,9 @@ struct Loop {
   CoveragePrerequisite::CoverageState overdubCoverage_;
   /// Worker cursor: the tile currently being prepared and its resumable per-pass traversal.
   LoopContentResolution::TilePrepCursor overdubCoverageCursor_{};
+  /// PSRAM-exhaustion ruling (2026-11-04): the worker's answer to a refused growth -- the tile stays owed and is
+  /// retried after a bounded wait; reset on a source-generation move.
+  CheckedCapacity::RefusalBackoff overdubCoverageRefusal_{};
   uint16_t overdubCoverageCursorTile_ = CoveragePrerequisite::kMaxTiles;
   uint32_t overdubCoverageCursorGeneration_ = 0;
   /// Conservative closure pad for a tile's lookup window (design D3). Seeded from the session-open

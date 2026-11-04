@@ -5,6 +5,11 @@
 // Native tests include this TU. Teensy links via linker/imxrt1062_t41_lcr.ld when referenced.
 
 #include "LoopContentResolution.h"
+#include "Utils/CheckedCapacity.h"
+#if !defined(PIO_UNIT_TEST_NATIVE)
+// RAM2 (NOLOAD): written by a refused probe before `RefusalBackoff` reads it.
+DMAMEM std::size_t CheckedCapacity::gLastRefusedBytes;
+#endif
 
 #include "CommittedEventRange.h"
 #include "EditApply.h"
@@ -1876,7 +1881,9 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(
 TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
     const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart, uint32_t windowLength,
     size_t eventBudget, TilePrepCursor& cursor, DisplayNoteUpsertIndex* noteIndex,
-    size_t maxChunks, size_t* chunksInspectedOut, size_t* eventsAppendedOut, const PassVisibility* visibility) {
+    size_t maxChunks, size_t* chunksInspectedOut, size_t* eventsAppendedOut, const PassVisibility* visibility,
+    bool* memoryRefusedOut) {
+  if (memoryRefusedOut != nullptr) *memoryRefusedOut = false;
   if (chunksInspectedOut != nullptr) {
     *chunksInspectedOut = 0;
   }
@@ -1937,11 +1944,33 @@ TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
   size_t chunkBudget = maxChunks;
   size_t chunksThisCall = 0;
   size_t eventsThisCall = 0;
+  // PSRAM-exhaustion ruling (2026-11-04): every content-sized growth below is checked at the allocation boundary
+  // first. A refusal returns before anything is mutated -- no event consumed, no edit applied, no cursor moved -- so
+  // the same grain is retried once memory is back, and the allocator's abort is never reached.
+  const auto refuse = [&]() {
+    if (memoryRefusedOut != nullptr) *memoryRefusedOut = true;
+    if (chunksInspectedOut != nullptr) *chunksInspectedOut = 0;
+    if (eventsAppendedOut != nullptr) *eventsAppendedOut = 0;
+    return false;
+  };
   while (remaining > 0 && cursor.passCursor < listCount) {
+    if (!CheckedCapacity::tryReserve(cursor.layer, cursor.layer.size() + remaining)) return refuse();
+    const size_t layerBefore = cursor.layer.size();
     const CommittedEventRange::WindowTraversalResult result =
         CommittedEventRange::appendWindowBudgeted(&lists[cursor.passCursor], 1, loopLengthTicks,
                                                   windowStart, windowLength, remaining,
                                                   cursor.windowCursor, cursor.layer, chunkBudget);
+    if (visibility != nullptr && visibility->pitchMask != nullptr) {
+      // A cut keeps only its pitches, filtered as each grain arrives, so the layer never holds the other pitches of
+      // a whole pass window (measured: the unfiltered layer was the cut's largest buffer, 64 KB).
+      cursor.layer.erase(std::remove_if(cursor.layer.begin() + static_cast<std::ptrdiff_t>(layerBefore),
+                                        cursor.layer.end(),
+                                        [visibility](const MidiEvent& e) {
+                                          return !(e.isNoteOn() || e.isNoteOff()) ||
+                                                 !pitchInMask(visibility->pitchMask, e.data.noteData.note);
+                                        }),
+                         cursor.layer.end());
+    }
     chunksThisCall += result.chunksInspected;
     eventsThisCall += result.eventsAppended;
     remaining = result.eventsAppended >= remaining ? 0 : remaining - result.eventsAppended;
@@ -1957,20 +1986,31 @@ TRACK_COLD_MEM bool LoopContentResolution::stepTilePreparation(
       }
       return false;
     }
+    {
+      // The pass's growths, all before the first mutation: edit rows may add events to the layer, then the layer is
+      // appended to `rawEvents` and paired into `notes` (at most one note per event).
+      size_t editRows = 0;
+      size_t addedEvents = 0;
+      for (const EditPass& editPass : passes.editPasses) {
+        if (editPass.passType != EditPassType::Note) continue;
+        ++editRows;
+        addedEvents += editPass.addedEvents.size();
+      }
+      const size_t layerAfterEdits = cursor.layer.size() + addedEvents;
+      if (!CheckedCapacity::probe(editRows * sizeof(EditPass)) ||
+          !CheckedCapacity::tryReserve(cursor.layer, layerAfterEdits) ||
+          !CheckedCapacity::tryReserve(cursor.rawEvents, cursor.rawEvents.size() + layerAfterEdits) ||
+          !CheckedCapacity::tryReserve(cursor.notes, cursor.notes.size() + layerAfterEdits)) {
+        return refuse();
+      }
+    }
     // The pass's window is fully traversed: apply its edit rows, then keep the **edited** events for the
     // identity merge. Keeping pre-edit events would resurrect a committed Delete target that pass-local
     // pairing had correctly removed (the merge's own rule is "recover an omitted identity", not "undo an
     // edit"), and then pair it locally. Bounded by this pass's window content.
     if (visibility != nullptr) {
-      if (visibility->pitchMask != nullptr) {
-        // Only the cut's pitches go on: pairing is per pitch, so dropping the rest changes no kept note.
-        cursor.layer.erase(std::remove_if(cursor.layer.begin(), cursor.layer.end(),
-                                          [visibility](const MidiEvent& e) {
-                                            return !(e.isNoteOn() || e.isNoteOff()) ||
-                                                   !pitchInMask(visibility->pitchMask, e.data.noteData.note);
-                                          }),
-                           cursor.layer.end());
-      }
+      // Only the cut's pitches are in the layer (filtered per grain above): pairing is per pitch, so dropping the rest
+      // changes no kept note.
       applyVisibleEdits(cursor.layer, passes, loopLengthTicks, *visibility);
     } else {
       applyActiveEdits(cursor.layer, passes, loopLengthTicks);

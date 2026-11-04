@@ -13,6 +13,7 @@
 #include "Utils/LaneGapSpans.h"
 #include "LoopWrapObligation.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/ExternalPoolAccounting.h"
 #if defined(SESSION_CAPTURE)
 #include "Utils/DebugSessionCapture.h"
 #endif
@@ -85,7 +86,10 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
     overdubCoverageCursorTile_ = tile;
     overdubCoverageCursorGeneration_ = overdubCoverage_.generation;
     overdubCoverageCursor_ = LoopContentResolution::TilePrepCursor{};
+    overdubCoverageRefusal_.reset();
   }
+  // PSRAM-exhaustion ruling: a refused growth parks this tile for a bounded wait; nothing else here allocates.
+  if (overdubCoverageRefusal_.parked()) return OverdubCoverageTurn::Idle;
   const uint32_t tileLength = CoveragePrerequisite::tileLengthTicks();
   const uint32_t windowStart = static_cast<uint32_t>(tile) * tileLength;
   if (windowStart >= loopLengthTicks) {
@@ -101,11 +105,28 @@ Loop::OverdubCoverageTurn Loop::serviceOverdubCoverageTurn(size_t eventBudget) {
   uint32_t lookupLength = windowLength;
   CoveragePrerequisite::closureWindowAround(windowStart, windowLength, overdubCoverageClosureTicks_,
                                              loopLengthTicks, lookupStart, lookupLength);
+  bool refused = false;
   if (!LoopContentResolution::stepTilePreparation(passes, loopLengthTicks, lookupStart, lookupLength,
-                                                 eventBudget, overdubCoverageCursor_)) {
+                                                 eventBudget, overdubCoverageCursor_, nullptr, 0, nullptr, nullptr,
+                                                 nullptr, &refused)) {
+    if (refused) {
+      overdubCoverageRefusal_.onRefused();  // the tile stays owed, its cursor exactly where it was
+      return OverdubCoverageTurn::Idle;
+    }
+    overdubCoverageRefusal_.onProgress();
     LANE_COV_COUNT(TurnAdvanced);
     return OverdubCoverageTurn::Advanced;
   }
+  // The publication grows the tile's own rows and the span cache: checked before anything is published (a refusal
+  // keeps the completed cursor, so the next attempt publishes the same tile).
+  if (!CheckedCapacity::probe(overdubCoverageCursor_.notes.size() * sizeof(NoteUtils::DisplayNote)) ||
+      !CheckedCapacity::tryReserve(overdubSourceSpanCacheNotes_,
+                                   overdubSourceSpanCacheNotes_.size() + overdubCoverageCursor_.notes.size() +
+                                       overdubCoverageCursor_.rawEvents.size())) {
+    overdubCoverageRefusal_.onRefused();
+    return OverdubCoverageTurn::Idle;
+  }
+  overdubCoverageRefusal_.onProgress();
   // Atomic publication (task 4.8): the grain that completes the tile publishes its content **and** its
   // prepared bit together. The worker is the span cache's only writer while a session is active.
 #if defined(SESSION_CAPTURE)
@@ -1150,8 +1171,6 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
 
 namespace {
 constexpr uint8_t kCarriedAnswersPerTurn = 4;
-/// External memory a cut preparation must find free before it starts (pitch-filtered cut + growth headroom).
-constexpr uint32_t kWrapCutAdmissionBytes = 256u * 1024u;
 
 void setPitchBit(uint32_t (&mask)[4], uint8_t pitch) { mask[(pitch >> 5) & 3u] |= 1u << (pitch & 31u); }
 bool pitchBit(const uint32_t (&mask)[4], uint8_t pitch) { return (mask[(pitch >> 5) & 3u] >> (pitch & 31u)) & 1u; }
@@ -1238,6 +1257,7 @@ LOOP_COLD_MEM bool Loop::handOverWrapObligation(PassId passId, size_t record) {
   slot.maskReady = false;
   slot.membershipReady = false;
   slot.cut = LoopContentResolution::TilePrepCursor{};
+  slot.cutRefusal.reset();
   slot.cutSequence = q.flipSequence;
   slot.sessionFirstPassId = overdubSessionPassIds_.empty() ? passId : overdubSessionPassIds_.front();
   // The slot's vector is empty with its capacity kept; the live interval continues in it.
@@ -1303,8 +1323,8 @@ LOOP_COLD_MEM void Loop::cancelWrapObligationsFromRecord(size_t firstDestroyedRe
     if (last.sessionIndex != currentOverdubSessionIndex_ || last.record < firstDestroyedRecord) break;
     last.phase = WrapObligationQueue::Slot::Phase::Free;
     last.pending.clear();
-    last.cutNotes.clear();
-    last.membership.clear();
+    NoteUtils::DisplayNoteVec().swap(last.cutNotes);
+    std::vector<std::pair<uint32_t, uint32_t>>().swap(last.membership);
     last.cut = LoopContentResolution::TilePrepCursor{};
     --q.count;
   }
@@ -1381,25 +1401,38 @@ LOOP_COLD_MEM bool Loop::serviceWrapObligationTurn(size_t eventBudget) {
     }
     const WrapObligationCutView view{&slot.membership, static_cast<uint32_t>(slot.record), slot.passId, &q.flips,
                                      slot.cutSequence};
-    // Admission (device: an unbounded cut growth hit the allocator's abort at 7.74 MB PSRAM live): the cut starts
-    // only with room for it; otherwise the obligation stays owed and is retried -- named, never an abort.
-    if (!slot.cut.started && MemoryMonitor::isExternalMemoryPoolAvailable() &&
-        MemoryMonitor::getExternalMemoryPoolFreeBytes() < kWrapCutAdmissionBytes) {
-      ++q.cutAdmissionDeferrals;
-      return false;
-    }
+    // PSRAM-exhaustion ruling: every cut growth is checked at the allocation boundary; a refusal leaves the obligation
+    // owed with its cursor untouched and parks it for a bounded wait -- named, never an abort, never a busy retry.
+    if (slot.cutRefusal.parked()) return false;
     LoopContentResolution::PassVisibility visibility{wrapCutVisible, &view};
     visibility.pitchMask = slot.pitchMask;
-    if (!LoopContentResolution::stepTilePreparation(passes, slot.loopLengthTicks, 0, slot.loopLengthTicks,
-                                                    eventBudget, slot.cut, nullptr, 0, nullptr, nullptr,
-                                                    &visibility)) {
-      return true;
+    bool refused = false;
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagWrapCut);  // names a growth made by the cut
+    const bool cutComplete =
+        LoopContentResolution::stepTilePreparation(passes, slot.loopLengthTicks, 0, slot.loopLengthTicks, eventBudget,
+                                                   slot.cut, nullptr, 0, nullptr, nullptr, &visibility, &refused);
+    ExternalPoolAccounting::endTag();
+    // The omitted-identity merge adds at most one note per NoteOff of the raw events: its growth is checked too.
+    if (refused || (cutComplete && !CheckedCapacity::tryReserveExact(slot.cut.notes, slot.cut.notes.size() +
+                                                                                        slot.cut.rawEvents.size() / 2 +
+                                                                                        1))) {
+      ++q.cutRefusals;
+      slot.cutRefusal.onRefused();
+      return false;
     }
-    slot.cutNotes.clear();
-    for (const NoteUtils::DisplayNote& note : slot.cut.notes)
-      if (note.noteId != kInvalidNoteId) slot.cutNotes.push_back(note);
+    slot.cutRefusal.onProgress();
+    if (!cutComplete) return true;
+    // Assembly without a second copy (measured peak 305 KB with the copy): the prepared notes become the cut in place,
+    // the layer is released before the merge, and the raw events right after their last consumer, the merge.
+    slot.cutNotes.swap(slot.cut.notes);
+    slot.cutNotes.erase(std::remove_if(slot.cutNotes.begin(), slot.cutNotes.end(),
+                                       [](const NoteUtils::DisplayNote& note) { return note.noteId == kInvalidNoteId; }),
+                        slot.cutNotes.end());
+    SessionMidiEventVec().swap(slot.cut.layer);
     mergeOmittedCommittedNoteOnIdentitiesForNotes(slot.cutNotes, slot.cut.rawEvents);
     slot.cut = LoopContentResolution::TilePrepCursor{};
+    // The membership is read only by the cut's visibility predicate: its last consumer has just finished.
+    std::vector<std::pair<uint32_t, uint32_t>>().swap(slot.membership);
     slot.phase = Phase::Answering;
     return true;
   }
@@ -1461,8 +1494,10 @@ LOOP_COLD_MEM bool Loop::serviceWrapObligationTurn(size_t eventBudget) {
   markAffectedDisplayCacheRanges(slot.passId, ids);
   recountOverlapHoldTotalsFromPending();
   slot.phase = Phase::Free;
-  slot.cutNotes.clear();
-  slot.membership.clear();
+  // Released, not cleared: a retired cut keeps no capacity (the carried pending vector keeps its capacity on purpose,
+  // it is what the live interval reuses so the MIDI path does not allocate).
+  NoteUtils::DisplayNoteVec().swap(slot.cutNotes);
+  std::vector<std::pair<uint32_t, uint32_t>>().swap(slot.membership);
   q.head = static_cast<uint8_t>((q.head + 1) % WrapObligationQueue::kSlots);
   --q.count;
   if (q.count == 0) q.flips.clear();  // no cut left to read them
@@ -1484,6 +1519,23 @@ LOOP_COLD_MEM void Loop::noteWrapCutStateFlip(uint32_t rowId, bool wasActive) {
   if (q.flips.capacity() == 0) q.flips.reserve(WrapObligationQueue::kFlipJournalCapacity);
   q.flips.push_back(WrapCutFlip{rowId, ++q.flipSequence, wasActive});
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+Loop::WrapCutMemory Loop::wrapCutMemoryForTest() const {
+  WrapCutMemory m;
+  if (!wrapObligations_ || wrapObligations_->count == 0) return m;
+  const WrapObligationQueue::Slot& slot = wrapObligations_->slots[wrapObligations_->head];
+  m.layer = slot.cut.layer.capacity() * sizeof(MidiEvent);
+  m.rawEvents = slot.cut.rawEvents.capacity() * sizeof(MidiEvent);
+  m.notes = slot.cut.notes.capacity() * sizeof(NoteUtils::DisplayNote);
+  m.cutNotes = slot.cutNotes.capacity() * sizeof(NoteUtils::DisplayNote);
+  m.membership = slot.membership.capacity() * sizeof(slot.membership[0]);
+  m.pending = slot.pending.capacity() * sizeof(PendingNoteChange);
+  return m;
+}
+#endif
+
+LOOP_COLD_MEM uint32_t Loop::wrapCutRefusals() const { return wrapObligations_ ? wrapObligations_->cutRefusals : 0; }
 
 LOOP_COLD_MEM uint32_t Loop::wrapCutJournalOverflows() const {
   return wrapObligations_ ? wrapObligations_->flipOverflows : 0;

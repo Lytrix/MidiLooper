@@ -565,6 +565,139 @@ void test_wrap_deadline_held_note_occupancy_survives_an_obligation_retiring_mid_
   wrap_deadline::assertSameOutcome(oracle, subject, "B3 held across retire");
 }
 
+/// PSRAM-exhaustion ruling (2026-11-04) -- an external allocation refusal during tile preparation (the live coverage
+/// worker and a wrap obligation's cut) must never reach the allocator's abort, corrupt a tile, advance a cursor past
+/// unprocessed data, release an owed completion or retry without bound; MIDI input keeps being served; once memory is
+/// reclaimed the same work completes with the unpressured result. RED today: the growth reaches the fatal branch.
+#include "Utils/CheckedCapacity.h"
+namespace wrap_deadline {
+struct PressureResult {
+  Outcome outcome;
+  unsigned abortReached = 0;
+  unsigned probeRefusals = 0;
+  size_t captureEventsUnderPressure = 0;
+};
+PressureResult runUnderExternalRefusal(bool pressure) {
+  PressureResult r;
+  freshHarness();
+  Track& track = prepareLongSourceTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  inputOwedNotes(loop, 200, 0, 0);
+  TEST_ASSERT_TRUE(wrapAt(track, kLoopLen - 1));       // an obligation whose cut must be prepared
+  inputOwedNotes(loop, 60, kLoopLen, 1);               // and live tiles the coverage worker must prepare
+  nativeExternalPoolPressure() = NativeExternalPoolPressure{};
+  if (pressure) nativeExternalPoolPressure().refuseAtOrAboveBytes = 4096;
+  const size_t captureBefore = loop.capture.store.size();
+  for (unsigned turn = 0; turn < 2000; ++turn) {
+    (void)loop.serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    (void)loop.serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    if (turn == 1000) inputNote(70, kLoopLen + 5000, kLoopLen + 5010);  // control/MIDI keeps being served
+  }
+  r.captureEventsUnderPressure = loop.capture.store.size() - captureBefore;
+  r.abortReached = nativeExternalPoolPressure().abortReached;
+  r.probeRefusals = nativeExternalPoolPressure().probeRefusals;
+  nativeExternalPoolPressure() = NativeExternalPoolPressure{};  // memory reclaimed
+  drainMaintenance(track);
+  TEST_ASSERT_TRUE(wrapAt(track, 2 * kLoopLen - 1));
+  drainMaintenance(track);
+  r.outcome = observe(track);
+  return r;
+}
+}  // namespace wrap_deadline
+
+void test_tile_preparation_external_refusal_is_named_bounded_and_recoverable() {
+  using namespace wrap_deadline;
+  const PressureResult control = runUnderExternalRefusal(false);
+  const PressureResult pressured = runUnderExternalRefusal(true);
+  char message[200];
+  std::snprintf(message, sizeof(message), "abort reached %u times, probe refusals %u over 2000 lane turns",
+                pressured.abortReached, pressured.probeRefusals);
+  std::printf("alloc-refusal: %s\n", message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, pressured.abortReached, message);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, pressured.probeRefusals, "the refusal must be seen and named");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(64u, pressured.probeRefusals, "a refused tile must not busy-retry");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, pressured.captureEventsUnderPressure, "MIDI input is served under refusal");
+  assertSameOutcome(control.outcome, pressured.outcome, "alloc refusal then reclaim");
+}
+
+/// PSRAM-exhaustion ruling -- a request no pool could ever serve is permanently insufficient: the obligation stays
+/// owed (never released), the refusal is named, and the lane parks instead of retrying (no busy retry).
+void test_tile_preparation_permanent_insufficiency_parks_and_keeps_the_obligation_owed() {
+  using namespace wrap_deadline;
+  freshHarness();
+  Track& track = prepareLongSourceTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  inputOwedNotes(loop, 200, 0, 0);
+  TEST_ASSERT_TRUE(wrapAt(track, kLoopLen - 1));
+  nativeExternalPoolPressure() = NativeExternalPoolPressure{};
+  nativeExternalPoolPressure().refuseAtOrAboveBytes = 4096;
+  nativeExternalPoolPressure().totalCapacityBytes = 2048;  // nothing at or above 4 KB can ever be served
+  for (unsigned turn = 0; turn < 4000; ++turn) (void)loop.serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+  const unsigned refusals = nativeExternalPoolPressure().probeRefusals;
+  const unsigned aborts = nativeExternalPoolPressure().abortReached;
+  nativeExternalPoolPressure() = NativeExternalPoolPressure{};
+  std::printf("alloc-refusal permanent: %u probe refusals over 4000 turns, cut refusals %u\n", refusals,
+              static_cast<unsigned>(loop.wrapCutRefusals()));
+  TEST_ASSERT_EQUAL_UINT32(0u, aborts);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasOutstandingWrapObligation(), "the obligation stays owed, never released");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(2u, refusals, "a permanently insufficient request parks, it is not retried");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, loop.wrapCutRefusals(), "named once");
+}
+
+/// PSRAM-exhaustion ruling -- the historical cut's retention, measured by buffer ownership over a dense backlog: five
+/// laps of 512 owed notes each over the long source, every obligation drained by the production lane order. Reports
+/// the peak per buffer (sum of capacities at the worst turn) and asserts the bound this slice establishes.
+void test_wrap_cut_memory_by_buffer() {
+  using namespace wrap_deadline;
+  freshHarness();
+  Track& track = prepareLongSourceTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  Loop::WrapCutMemory peak;
+  size_t peakTotal = 0;
+  size_t answeringPeak = 0;
+  const auto sample = [&]() {
+    const Loop::WrapCutMemory m = loop.wrapCutMemoryForTest();
+    if (m.total() > peakTotal) {
+      peakTotal = m.total();
+      peak = m;
+    }
+    if (m.cutNotes != 0 && m.total() > answeringPeak) answeringPeak = m.total();
+  };
+  for (unsigned lap = 0; lap < 5; ++lap) {
+    inputOwedNotes(loop, 512, lap * kLoopLen, lap);
+    if (!wrapAt(track, lap * kLoopLen + kLoopLen - 1)) {
+      for (unsigned t = 0; t < 200000 && !loop.wrapObligationCapacityAvailable(); ++t) {
+        (void)loop.serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+        sample();
+      }
+      TEST_ASSERT_TRUE(wrapAt(track, lap * kLoopLen + kLoopLen - 1));
+    }
+    for (unsigned t = 0; t < 64; ++t) {
+      (void)loop.serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+      sample();
+    }
+  }
+  for (unsigned t = 0; t < 200000 && loop.hasOutstandingWrapObligation(); ++t) {
+    (void)loop.serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    sample();
+  }
+  std::printf("wrap-cut memory peak: total=%u layer=%u raw=%u notes=%u cutNotes=%u membership=%u pending=%u bytes; "
+              "answering-phase peak=%u bytes\n",
+              unsigned(peakTotal), unsigned(peak.layer), unsigned(peak.rawEvents), unsigned(peak.notes),
+              unsigned(peak.cutNotes), unsigned(peak.membership), unsigned(peak.pending), unsigned(answeringPeak));
+  // Bounds this slice establishes (host sizes; baseline before it: 305 KB peak, the cut copied while the cursor lived
+  // and a retired slot kept its cut capacity): the preparation peak never coexists with an assembled cut, and the
+  // answering phase holds only the cut notes and the interval's own pending set.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, unsigned(peak.cutNotes), "no assembled cut coexists with a preparing cursor");
+  TEST_ASSERT_LESS_THAN_UINT32(unsigned(peakTotal), unsigned(answeringPeak));
+}
+
 void registerWrapDeadlineReds() {
   RUN_TEST(test_wrap_deadline_red_clock_work_is_constant_in_owed_completions);
   RUN_TEST(test_wrap_deadline_parity_single_wrap_matches_retained_path);
@@ -577,4 +710,9 @@ void registerWrapDeadlineReds() {
   RUN_TEST(test_wrap_deadline_stop_undo_entry_waits_for_late_companions);
   RUN_TEST(test_wrap_deadline_predecessor_stop_does_not_wait_for_the_successor);
   RUN_TEST(test_wrap_deadline_held_note_occupancy_survives_an_obligation_retiring_mid_hold);
+  // PSRAM-exhaustion ruling (2026-11-04): RED at the baseline (the fatal branch reached 394 times), GREEN since the
+  // checked allocation boundary.
+  RUN_TEST(test_tile_preparation_external_refusal_is_named_bounded_and_recoverable);
+  RUN_TEST(test_tile_preparation_permanent_insufficiency_parks_and_keeps_the_obligation_owed);
+  RUN_TEST(test_wrap_cut_memory_by_buffer);
 }

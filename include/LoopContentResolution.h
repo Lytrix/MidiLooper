@@ -478,7 +478,8 @@ struct LoopContentResolution {
                                   DisplayNoteUpsertIndex* noteIndex = nullptr,
                                   size_t maxChunks = 0, size_t* chunksInspectedOut = nullptr,
                                   size_t* eventsAppendedOut = nullptr,
-                                  const PassVisibility* visibility = nullptr);
+                                  const PassVisibility* visibility = nullptr,
+                                  bool* memoryRefusedOut = nullptr);
 
   static void resolveDisplayNotesInWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,

@@ -26,6 +26,7 @@
 #include "Globals.h"
 #include "Loop.h"
 #include "LoopContentResolution.h"
+#include "Utils/CheckedCapacity.h"
 #include "Utils/CoveragePrerequisite.h"
 #include "Utils/DisplayWindowUtils.h"
 
@@ -87,6 +88,8 @@ struct Prep {
   uint32_t lookupStart = 0;
   uint32_t lookupLength = 0;
   LoopContentResolution::TilePrepCursor cursor;
+  /// PSRAM-exhaustion ruling (2026-11-04): a refused growth parks the candidate for a bounded wait (never busy).
+  CheckedCapacity::RefusalBackoff refusal{};
   /// Per-tile pass-local upsert (bare NoteId, else pitch+start) — the resolver's identity.
   DisplayNoteUpsertIndex tileNoteIndex;
   /// Cross-tile body assembly (NoteId+start, else pitch+start).
@@ -135,6 +138,7 @@ inline void resetPrep(Prep& prep) {
   prep.lookupStart = 0;
   prep.lookupLength = 0;
   prep.cursor = LoopContentResolution::TilePrepCursor{};
+  prep.refusal.reset();
   prep.tileNoteIndex.clear();
   prep.candidateIndex.clear();
   prep.wrapIndex.clear();
@@ -168,6 +172,7 @@ inline bool beginTile(Prep& prep) {
                                             prep.key.loopLengthTicks, prep.lookupStart,
                                             prep.lookupLength);
   prep.cursor = LoopContentResolution::TilePrepCursor{};
+  prep.refusal.reset();
   prep.tileNotes.clear();
   prep.tileNoteIndex.clear();
   return true;
@@ -237,12 +242,19 @@ inline bool step(Prep& prep, const Loop& loop, size_t eventBudget) {
   StepWork work{};
   switch (prep.phase) {
     case Phase::Tiles: {
+      if (prep.refusal.parked()) return false;
       const size_t indexBefore = prep.tileNoteIndex.comparisons();
       size_t chunks = 0;
       size_t events = 0;
+      bool refused = false;
       const bool complete = LoopContentResolution::stepTilePreparation(
           loop.passes, prep.key.loopLengthTicks, prep.lookupStart, prep.lookupLength, eventBudget,
-          prep.cursor, &prep.tileNoteIndex, kMaxChunksInspectedPerStep, &chunks, &events);
+          prep.cursor, &prep.tileNoteIndex, kMaxChunksInspectedPerStep, &chunks, &events, nullptr, &refused);
+      if (refused) {
+        prep.refusal.onRefused();  // the candidate stays private and owed; its cursor is untouched
+        return false;
+      }
+      prep.refusal.onProgress();
       work.chunksInspected = static_cast<uint32_t>(chunks);
       work.eventsAppended = static_cast<uint32_t>(events);
       work.mergeComparisons = static_cast<uint32_t>(prep.tileNoteIndex.comparisons() - indexBefore);
