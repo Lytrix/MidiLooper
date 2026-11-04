@@ -413,7 +413,7 @@ reference once it was corrected.
 
 **Reference-model corrections found by the comparison (engine was right):**
 - **OVL-7 "shortest end wins":** must compare ends in unwrapped time from the note's start.
-- **Q-OVL-4 (owner to confirm):** OVL-3 is evaluated against the later note's effective wrap-aware, repeating span.
+- **Q-OVL-4, ratified 2026-11-04 as OVL-9:** OVL-3 is evaluated against the later note's effective wrap-aware, repeating span.
   An earlier note starting inside it is hidden even if it was also sounding when the later note started; Hide
   absorbs Shorten. Legacy resolves a hold once at its NoteOn and skips such notes at its NoteOff. For a later note
   that wraps or repeats, that would leave both sounding on the same pitch, against the same-pitch exclusivity lemma
@@ -424,3 +424,18 @@ reference once it was corrected.
 - Sending the flagged NoteOff fails 6 tests.
 - Dropping the once-per-loop source-count decrement is an equivalent mutant: a held-loop source note keeps its pitch
   counted as sounding either way, so the decrement only keeps the counter bounded.
+
+### OVL-9 (Q-OVL-4) fixtures — owner's cases, L = 768, hand-specified
+
+| Test | Case |
+|---|---|
+| `test_qovl4_case1_later_note_covers_earlier_start` | B 50–750 covers A's start at 700: A hidden every cycle, cold start included, no carry, no NoteOff |
+| `test_qovl4_case2_earlier_note_shortened_by_next_later_start` | B 50–600: A starts at 700 and ends at 817 when the next B starts at 818, every cycle |
+| `test_qovl4_case2_adoption_keeps_and_shortens_transmitted_note` | revision adoption with an already-transmitted A, case 2: the new revision carries the same instance and shortens it at 817 |
+| `test_qovl4_case1_adoption_closes_transmitted_note_at_switch` | adoption, case 1: A is closed at the switch (768) and never restarts |
+| `test_fixture_unwrapped_endpoint_smaller_phase_is_later` | a next-cycle end of 99 is later than a same-cycle 699; 699 wins |
+| `test_fixture_lookahead_never_sends_a_terminal_early` | a carried natural NoteOff at 2000 is not sent at 1999, and at 2000 goes out before the NoteOn |
+
+Revision adoption warms the new revision's composer by one silent cycle, so its carry reflects its steady state.
+Without a warm-up, a cold composer carries nothing and every transmitted note closes at the switch. Restart
+checkpoints will make this warm-up cheaper; it is bounded by one cycle of composition today.

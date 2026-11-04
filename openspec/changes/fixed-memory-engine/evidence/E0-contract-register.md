@@ -33,7 +33,7 @@ needed).
 | Id | Clause | Source | Fixture | Status |
 |---|---|---|---|---|
 | LEN-1 | A note held for at least one loop length L replays with effective end min(recorded end, S + L − 1). Its NoteOn repeats every loop, each iteration ends one tick before its successor, the original late NoteOff is never sent against a newer iteration, and there is no clipping at tick 0. Live holds sound until the real NoteOff. | owner decision 2026-11-04 (Q-LEN-1) | `test_qlen1_*` | reviewed |
-| Q-OVL-4 | OVL-3 against the later note's effective (wrap-aware, repeating) span: an earlier note starting inside it is hidden even if it was also sounding when the later note started. | engine and reference (2026-11-04); legacy differs for wrapping later notes | `test_qlen1_later_pass_overlap_with_repeating_spans`, random comparison | **question** |
+| OVL-9 (was Q-OVL-4) | **Ratified by owner 2026-11-04.** Overlap applies to effective note instances across cycles: an earlier-pass note whose NoteOn lies inside a later-pass note's effective span is hidden, also when a previous repetition of it was sounding when the later note began. Overlap at B's NoteOn is no permission to skip A's later NoteOns. An A that starts outside B is shortened by B's next start. | owner decision 2026-11-04 | `test_qovl4_case1_*`, `test_qovl4_case2_*` (incl. adoption), random comparison | reviewed |
 
 ## Optional amendments (not adopted; owner approval needed)
 
