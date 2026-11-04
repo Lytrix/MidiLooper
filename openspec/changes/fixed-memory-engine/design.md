@@ -439,3 +439,38 @@ reference once it was corrected.
 Revision adoption warms the new revision's composer by one silent cycle, so its carry reflects its steady state.
 Without a warm-up, a cold composer carries nothing and every transmitted note closes at the switch. Restart
 checkpoints will make this warm-up cheaper; it is bounded by one cycle of composition today.
+
+## E3 slice 4 — edit hides (as built)
+
+**Edit run** (`RunKind::kEdit`, a NOTE_EDIT commit):
+- HideNote rows come first (status `kHideNoteStatus` = 0xF4, never sent; `noteId` = target).
+- Replacement notes follow and keep the target's `noteId` (DEC-245 lineage).
+- A row of an earlier run is hidden iff a later edit run hides its `noteId`, so a second edit replaces the first
+  edit's replacement.
+
+**Hide table:**
+- The composer builds a fixed table at `begin`: noteId → latest hiding pass, heapsorted, O(H log H), H ≤ 4,096
+  (W: hidden note ids per manifest).
+- Lookup per NoteOn is O(log H).
+- A source with more hides than the table is refused by name at `begin`.
+- On the device the table moves to the edit-index page reserve: 18 × 32 pages, sized for 4,096 ids × 8 B.
+
+**EDIT-1 (draft, owner to review):**
+- An edit run is not a derived occluder. Its notes neither shorten nor hide earlier passes and are not counted as
+  occluding sources. NOTE_EDIT already writes its own overlap results (DEC-029, DEC-030, DEC-034) as explicit hides and
+  replacements, so derived occlusion would apply them twice.
+- Later overdub passes occlude edited notes like any earlier content.
+- A later-pass note hidden by an edit still counts as a source occluder: its sealed effect on earlier passes persists
+  (OVL-8).
+
+**Tests:** `test_content_engine_compose_edit` (8, hand-specified), zero heap:
+- hide;
+- replacement;
+- lineage;
+- EDIT-1;
+- a later overdub over an edit;
+- OVL-8 with an edit-hidden note;
+- undo (manifest without the edit run);
+- hide capacity refusal.
+
+Mutations caught: ignoring hides fails 6 tests; letting edit runs occlude fails the EDIT-1 test.
