@@ -368,13 +368,59 @@ budgeted.
 | RAM2 statics | 195,261 B | 207,965 B |
 | Heap left for libraries | 329,027 B | 316,323 B |
 
-**Q-LEN-1 — owner question, interim rule in place.** A note held across more than one wrap (longer than the loop)
-has its NoteOff in its run at ≥ 2 × loop. The interim rule, chosen only so that nothing sticks or duplicates:
-- that NoteOff plays in the cycle after the note's start, at `min(tick − 2·loop, loop − 1)`;
-- a note's restart ends its own previous iteration one tick earlier.
+**Q-LEN-1 — resolved (owner decision 2026-11-04: re-strike once per loop).** See the next section.
 
-`test_note_held_across_two_wraps_never_sticks`: no stuck instance, no duplicate, no phantom NoteOff. Disabling the
-band-2 stream fails it.
+## Q-LEN-1 — re-strike once per loop (as built)
 
-The musical rule for notes longer than the loop (clip, sustain across iterations, or re-strike) is the owner's to
-choose. Legacy handles them through C3.4 private holds.
+**Rule:** a note whose recorded duration is at least one loop length L replays with effective end
+`min(recorded end, S + L − 1)`.
+- Its NoteOn repeats at S + L, S + 2L, …, and each iteration ends one tick before its successor.
+- The original late NoteOff is never sent against a newer iteration.
+- Notes beginning near the loop end still sound into the next cycle; there is no clipping at tick 0.
+- The recorded NoteOn and NoteOff stay unchanged.
+- Live holds are the scheduler's live occupancy, not this rule: replayed iterations of a note whose key is still down
+  are suppressed until the real NoteOff.
+
+**Implementation:**
+- **Writer:**
+  - `begin(slot, kind, loopLength, startTick)`;
+  - each run stores ticks relative to its own start;
+  - a NoteOff whose note was held ≥ L carries `origin` flag `kOriginHeldLoop`. The flag is metadata, like
+    `kOriginGeneratedClosure`; both flags now live in `PassEvent.h`.
+- **Composer:**
+  - a flagged NoteOff has no playback effect;
+  - a NoteOn whose `(noteId, run)` is still admitted ends that previous iteration one tick earlier. This is also
+    checked one tick past each window end and at the loop end, so the end lands exactly before the successor;
+  - the source count of a held-loop note is +1 per NoteOn and −1 once per loop sweep;
+  - the overlap look-ahead clamps the note's end to S + L − 1.
+- **Player:** a TERMINAL for `pos − 1` (OVL-1 shorten or re-strike) can follow entries a lower pass wrote at `pos`.
+  The player now looks one tick ahead for TERMINALs due now. This was a real defect, found by a 400-trial run, and
+  affected shortenings as well; `test_fixture_shorten_terminal_after_lower_pass_entry_at_same_tick` fails without the
+  fix.
+
+**Hand-specified tests** (`test_content_engine_compose_wrap`):
+
+| Test | Case |
+|---|---|
+| `test_qlen1_durations_L_minus_1_L_L_plus_1_and_beyond_2L` | durations L−1, L, L+1 and > 2L |
+| `test_qlen1_note_beginning_near_loop_end` | a note beginning near the loop end |
+| `test_qlen1_note_starting_at_tick_zero` | a note starting at tick 0 |
+| `test_qlen1_later_pass_overlap_with_repeating_spans` | a later pass shortening a held-loop note; a held-loop later note hiding earlier notes, cold start included |
+| `test_qlen1_live_hold_across_wraps_then_replay` | a live hold across three wraps, then replay |
+
+Every stream is checked for orphan NoteOffs and duplicate instances. Separately, 2,000 random trials matched the
+reference once it was corrected.
+
+**Reference-model corrections found by the comparison (engine was right):**
+- **OVL-7 "shortest end wins":** must compare ends in unwrapped time from the note's start.
+- **Q-OVL-4 (owner to confirm):** OVL-3 is evaluated against the later note's effective wrap-aware, repeating span.
+  An earlier note starting inside it is hidden even if it was also sounding when the later note started; Hide
+  absorbs Shorten. Legacy resolves a hold once at its NoteOn and skips such notes at its NoteOff. For a later note
+  that wraps or repeats, that would leave both sounding on the same pitch, against the same-pitch exclusivity lemma
+  and the "overlap against effective repeating spans" instruction. For non-wrapping later notes the two cases exclude
+  each other, so nothing changes.
+
+**Mutations:**
+- Sending the flagged NoteOff fails 6 tests.
+- Dropping the once-per-loop source-count decrement is an equivalent mutant: a held-loop source note keeps its pitch
+  counted as sounding either way, so the decrement only keeps the counter bounded.

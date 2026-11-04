@@ -28,6 +28,13 @@ needed).
 | Q-OVL-2 | **Confirmed by owner.** Matching ignores channel (DEC-033); emission and NoteOff attribution keep original channels. | **Contradiction with legacy code:** `collectOverdubNoteOnParticipantIds` filters ledger candidates by channel, and `resolveOccupancyAtNoteOn` skips the channel-free geometric lookup when the ledger set is complete. A same-pitch note on another channel therefore escapes shortening whenever a same-channel note is sounding. DEC-033 and the default both say it is shortened → **HIB-9** (code reading; cross-check run pending). | `test_qovl2_…` | draft |
 | Q-OVL-3 | **Owner ruling: the ratified rule stands.** A hold at tick 0 in a wrap-held note's head hides it (`holdPhaseTick > 0` required for shorten). | Guide lifecycle and `resolveOccupancyAtNoteOn` agree with the ruling. Keeping the pre-wrap portion is recorded as optional amendment **AMD-1** (needs owner approval), not as a defect. | `test_qovl3_hold_at_zero_hides_wrap_held_note` | draft |
 
+## Note length
+
+| Id | Clause | Source | Fixture | Status |
+|---|---|---|---|---|
+| LEN-1 | A note held for at least one loop length L replays with effective end min(recorded end, S + L − 1). Its NoteOn repeats every loop, each iteration ends one tick before its successor, the original late NoteOff is never sent against a newer iteration, and there is no clipping at tick 0. Live holds sound until the real NoteOff. | owner decision 2026-11-04 (Q-LEN-1) | `test_qlen1_*` | reviewed |
+| Q-OVL-4 | OVL-3 against the later note's effective (wrap-aware, repeating) span: an earlier note starting inside it is hidden even if it was also sounding when the later note started. | engine and reference (2026-11-04); legacy differs for wrapping later notes | `test_qlen1_later_pass_overlap_with_repeating_spans`, random comparison | **question** |
+
 ## Optional amendments (not adopted; owner approval needed)
 
 | Id | Proposal | Status |

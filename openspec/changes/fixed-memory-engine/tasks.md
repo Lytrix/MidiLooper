@@ -55,7 +55,8 @@ revision 3 is the baseline; no whole-plan revisions.
   - Mutation: disabling shortening fails 2 cases.
 - [x] E3.2a Wrap-held notes over multiple cycles (`test_content_engine_compose_wrap` 6, mutation-checked); look-ahead defect fixed.
 - [x] E3.2b Multi-cycle runs removed: one run per cycle (writer); sealed queue resized; RAM2 corrected.
-- [ ] E3.2c Q-LEN-1 owner decision (notes longer than the loop); interim no-stick rule in place.
+- [x] E3.2c Q-LEN-1 re-strike once per loop (owner decision): writer flag, composer re-strike, player TERMINAL ordering fix; hand-specified tests.
+- [ ] E3.2e Owner confirmation of Q-OVL-4 (OVL-3 against effective wrap/repeating spans).
 - [ ] E3.2d Edit hides (index), checkpoints / mid-loop cold start.
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
