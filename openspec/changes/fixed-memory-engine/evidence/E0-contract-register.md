@@ -40,7 +40,7 @@ needed).
 | Id | Clause | Source | Fixture | Status |
 |---|---|---|---|---|
 | EDIT-0 | An edit run's HideNote hides every row of that noteId in earlier runs; a replacement keeps the noteId (lineage). | design D4, DEC-245 | `test_edit_*` | draft |
-| EDIT-1 | An edit run is not a derived occluder (NOTE_EDIT writes its overlap results explicitly); later overdubs occlude edited notes; an edit-hidden later note still occludes earlier passes (OVL-8). | DEC-029/030/034 reading | `test_edit_run_is_not_a_derived_occluder`, `test_edit_hidden_later_note_still_occludes_earlier_pass` | **question** |
+| EDIT-1 | **Ratified by owner 2026-11-04.** An edit run is not a derived occluder (NOTE_EDIT writes its overlap results explicitly); later overdubs occlude edited notes; an edit-hidden later note still occludes earlier passes (OVL-8); a later edit of a NoteId replaces the earlier replacement. | DEC-029/030/034 reading; owner decision 2026-11-04 | `test_edit_run_is_not_a_derived_occluder`, `test_edit_hidden_later_note_still_occludes_earlier_pass`, `test_edit1_two_successive_edits_and_unrelated_same_pitch_note` | reviewed |
 
 ## Optional amendments (not adopted; owner approval needed)
 

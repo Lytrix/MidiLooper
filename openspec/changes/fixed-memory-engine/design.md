@@ -453,17 +453,18 @@ checkpoints will make this warm-up cheaper; it is bounded by one cycle of compos
   (W: hidden note ids per manifest).
 - Lookup per NoteOn is O(log H).
 - A source with more hides than the table is refused by name at `begin`.
-- On the device the table moves to the edit-index page reserve: 18 × 32 pages, sized for 4,096 ids × 8 B.
+- Since E3.3 the table lives in the shared edit-index store, not in the composer (see E3 slice 6).
 
-**EDIT-1 (draft, owner to review):**
+**EDIT-1 (ratified by owner 2026-11-04):**
 - An edit run is not a derived occluder. Its notes neither shorten nor hide earlier passes and are not counted as
   occluding sources. NOTE_EDIT already writes its own overlap results (DEC-029, DEC-030, DEC-034) as explicit hides and
   replacements, so derived occlusion would apply them twice.
 - Later overdub passes occlude edited notes like any earlier content.
 - A later-pass note hidden by an edit still counts as a source occluder: its sealed effect on earlier passes persists
   (OVL-8).
+- A later edit of the same NoteId replaces the earlier replacement (the latest hiding pass wins).
 
-**Tests:** `test_content_engine_compose_edit` (8, hand-specified), zero heap:
+**Tests:** `test_content_engine_compose_edit` (hand-specified), zero heap:
 - hide;
 - replacement;
 - lineage;
@@ -471,7 +472,9 @@ checkpoints will make this warm-up cheaper; it is bounded by one cycle of compos
 - a later overdub over an edit;
 - OVL-8 with an edit-hidden note;
 - undo (manifest without the edit run);
-- hide capacity refusal.
+- hide capacity refusal (`IndexResult::CapacityExceeded`);
+- two successive edits of one NoteId plus an unrelated earlier same-pitch note (owner regression);
+- a source with edit runs and no index store is refused.
 
 Mutations caught: ignoring hides fails 6 tests; letting edit runs occlude fails the EDIT-1 test.
 
@@ -505,9 +508,37 @@ Mutations caught: counters not restored, admitted notes not restored, wrap curso
 **Sizes (ARM):**
 - A checkpoint is 404 B. At 8 checkpoints per slot (every 8 bars for 64 bars) that is 3,232 B per slot and 206,848 B
   for 64 slots, against 262,144 B budgeted.
-- **Budget finding:** a composer is 43,184 B because each one holds a 4,096-entry hide table (32 KB). The plan's edit
-  index is one per manifest in the shared index page reserve, not one per compose cursor. The hide table moves there
-  when the workers own the index (E5); without it a composer is about 11 KB, matching the 12 KB per cursor budgeted.
+- **Budget finding (resolved by E3.3):** a composer was 43,184 B because each one held a 4,096-entry hide table
+  (32 KB). The hide table now lives in the shared edit-index store; a composer is 10,428 B.
 
 **Not yet built:** the owner of the per-slot checkpoint table (which sweep captures, and when a checkpoint is retired
 after a source change). That belongs to the worker/scheduler milestone (E5).
+
+## E3 slice 6 — shared edit-hide index (E3.3, as built)
+
+**Owner:** `EditIndexStore<Pool, Runs, Slots = 18, Capacity = 4096>` (`include/ContentEngine/EditIndexStore.h`), one
+fixed object shared by every compose cursor. A composer takes a pointer to it at `init` and no longer carries a hide
+table.
+
+**Identity and pinning:** a slot holds the sorted hide index (noteId → latest hiding pass) of one manifest identity.
+`acquire(identity, source, count, lease)` at `begin` returns:
+- `Ready`: an existing slot with the same identity is reused and pinned again, or a slot is built;
+- `NotNeeded`: the source has no edit run, so no slot is taken (most manifests);
+- `CapacityExceeded`: more hides than one slot holds; no slot is taken;
+- `Busy`: every slot is pinned.
+
+`end()` (and the next `begin`) releases the lease. A composer given a source with edit runs and no store refuses it.
+
+**Residency and reclamation:** residency is bounded by the slot count, never one index per historical manifest. Only
+unpinned slots are evicted, least recently used first, so an index in use is never reclaimed. An evicted identity is
+rebuilt from its runs on the next `acquire`, identically (heapsort plus collapse to the latest hiding pass, O(H log H)).
+
+**Bound:** 18 slots ≥ 18 compose cursors (16 playback + 2 display); each cursor pins at most one slot, so `Busy` is
+unreachable at production capacity (static check in `EngineCore.h`). It remains a named outcome for smaller stores.
+
+**Sizes (ARM):** composer 10,428 B (18 cursors = 187,704 B ≤ 221,184 B; static check); store 590,124 B, the plan's
+576-page edit-index reserve (static check). The store is a fixed object; placing it inside the page reserve, and
+building indexes in worker grains instead of inside `begin`, belong to E5.
+
+**Tests:** `test_content_engine_edit_index` (7): shared pinned slot, no slot without edit runs, exhaustion with pinned
+slots never evicted, LRU eviction, capacity, identical rebuild after eviction, composer budget; zero heap.

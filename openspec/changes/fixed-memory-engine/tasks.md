@@ -57,9 +57,11 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E3.2b Multi-cycle runs removed: one run per cycle (writer); sealed queue resized; RAM2 corrected.
 - [x] E3.2c Q-LEN-1 re-strike once per loop (owner decision): writer flag, composer re-strike, player TERMINAL ordering fix; hand-specified tests.
 - [x] E3.2e Q-OVL-4 ratified as OVL-9; owner's cases, adoption, unwrapped-endpoint and look-ahead fixtures.
-- [x] E3.2d Edit hides: fixed hide table, lineage, EDIT-1 (draft) (`test_content_engine_compose_edit` 8, mutation-checked).
+- [x] E3.2d Edit hides: fixed hide table, lineage, EDIT-1 (ratified 2026-11-04) (`test_content_engine_compose_edit` 8, mutation-checked).
 - [x] E3.2f Restart checkpoints: capture/resume, byte-identical resumed windows (`test_content_engine_checkpoint` 4, mutation-checked).
-- [ ] E3.3 Hide table moves to the shared per-manifest edit index (budget: 43 KB composer → ~11 KB); checkpoint table owner (E5).
+- [x] E3.3 Hide table moved to the shared, identity-keyed `EditIndexStore` (18 slots, pinning, LRU of unpinned, named exhaustion); composer 43,184 → 10,428 B; budgets statically checked (`test_content_engine_edit_index` 7).
+- [x] E3.3b EDIT-1 regression: two successive edits of one NoteId plus an unrelated earlier same-pitch note.
+- [ ] E5 Checkpoint table owner; index builds in worker grains; store placed in the page reserve.
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output
