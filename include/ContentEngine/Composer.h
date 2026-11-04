@@ -33,7 +33,10 @@
 // looked up per NoteOn in O(log H). EDIT-1 (draft): an edit run is not a derived occluder; NOTE_EDIT writes its own
 // overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
 // by an edit still counts as a source occluder (OVL-8).
-// Not in this slice (named): checkpoints for mid-loop starts.
+// Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 64 entries,
+// admitted notes <= T, stamps); `resume` rebuilds the composer there (cursors by binary search on tick), so a mid-loop
+// start (undo, redo, slot switch, adoption warm-up) replays at most from the nearest earlier checkpoint instead of the
+// loop start. A sounding set that does not fit is refused by name (`capture` false); the caller uses an earlier one.
 // Scratch is fixed: 128 x 64 source counters, T admitted notes, three cursors per run.
 
 #pragma once
@@ -138,6 +141,74 @@ class Composer {
     while (nextStream(b, s)) process(w, s);
     endLookahead(w, b);
     windowStart_ = b;
+    return true;
+  }
+
+  static constexpr uint8_t kCheckpointActive = 64;
+
+  /// Carry state at a window boundary. Fixed size; stamped with the source it belongs to.
+  struct Checkpoint {
+    struct Active {
+      uint8_t pitch, run, count, pad;
+    };
+    struct Note {
+      uint32_t noteId;
+      uint16_t runKey;
+      uint8_t pitch, channel;
+    };
+    uint32_t identity, loopLength, position, cycle;
+    uint8_t runCount, activeCount, admittedCount;
+    bool valid;
+    Active active[kCheckpointActive];
+    Note admitted[T];
+  };
+
+  /// Stores the state at the current window boundary. False (named) when more than 64 (pitch, pass) source counters are
+  /// nonzero; `cp.valid` is then false.
+  bool capture(Checkpoint& cp) const {
+    cp.valid = false;
+    cp.identity = identity_;
+    cp.loopLength = loop_;
+    cp.position = windowStart_ < loop_ ? windowStart_ : 0;
+    cp.cycle = windowStart_ < loop_ ? cycle_ : cycle_ + 1;
+    cp.runCount = count_;
+    cp.activeCount = 0;
+    for (uint8_t p = 0; p < 128; ++p)
+      for (uint8_t r = 0; r < count_; ++r) {
+        if (active_[p][r] == 0) continue;
+        if (cp.activeCount >= kCheckpointActive) return false;
+        cp.active[cp.activeCount++] = {p, r, active_[p][r], 0};
+      }
+    cp.admittedCount = admittedCount_;
+    for (uint8_t i = 0; i < admittedCount_; ++i)
+      cp.admitted[i] = {admitted_[i].noteId, admitted_[i].runKey, admitted_[i].pitch, admitted_[i].channel};
+    cp.valid = true;
+    return true;
+  }
+
+  /// Rebuilds the composer at `cp` for the same source. False when `cp` is not valid for this source (identity, loop
+  /// length, run count) or the source's hides do not fit.
+  bool resume(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, const Checkpoint& cp) {
+    if (!cp.valid || cp.identity != identity || cp.loopLength != loopLength || cp.runCount != count) return false;
+    if (!begin(source, count, loopLength, identity)) return false;
+    for (auto& p : active_)
+      for (auto& c : p) c = 0;
+    for (uint8_t i = 0; i < cp.activeCount; ++i) active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
+    admittedCount_ = cp.admittedCount;
+    for (uint8_t i = 0; i < cp.admittedCount; ++i)
+      admitted_[i] = Admitted{cp.admitted[i].noteId, cp.admitted[i].runKey, cp.admitted[i].pitch, cp.admitted[i].channel,
+                              kNoEntry};
+    windowStart_ = cp.position;
+    cycle_ = cp.cycle;
+    for (uint8_t r = 0; r < count_; ++r) {
+      const uint32_t p = cp.position;
+      cursor_[r] = firstRowAtOrAfter(r, p);
+      if (cursor_[r] > wrapStart_[r]) cursor_[r] = wrapStart_[r];
+      uint32_t w = firstRowAtOrAfter(r, loop_ + p);
+      wrapCursor_[r] = w < wrapStart_[r] ? wrapStart_[r] : (w > band2Start_[r] ? band2Start_[r] : w);
+      const uint32_t b2 = firstRowAtOrAfter(r, 2 * loop_ + p);
+      band2Cursor_[r] = b2 < band2Start_[r] ? band2Start_[r] : b2;
+    }
     return true;
   }
 
