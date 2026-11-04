@@ -47,6 +47,8 @@ struct NoteSpec {
   uint32_t on, off;  // off >= kLoop: held across the loop end, ends at off - kLoop in the next cycle
 };
 
+static void setUpPlayerOnly();
+
 void setUp() {
   gPool.init();
   gRuns.init();
@@ -58,6 +60,12 @@ void setUp() {
   gPlayer.init(gSched);
 }
 void tearDown() {}
+
+static void setUpPlayerOnly() {
+  gC.init(gPool, gRuns);
+  gSched.init();
+  gPlayer.init(gSched);
+}
 
 /// One pass through the writer: events before the loop end, then the wrap (held notes go to the closing run), then the
 /// NoteOffs past the loop end. Returns the pass's run.
@@ -76,7 +84,7 @@ static RunId recordPass(const std::vector<NoteSpec>& notes) {
     if (a.tick != b.tick) return a.tick < b.tick;
     return !a.on && b.on;
   });
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1));
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1, kLoop));
   const RunId run = gW.activeRun();
   bool wrapped = false;
   for (const auto& e : ev) {
@@ -103,7 +111,10 @@ static std::vector<Oracle::Note> oracleNotes(const RunId* runs, uint8_t count) {
       for (uint32_t k = i + 1; k < r.rowCount; ++k) {
         const PassEvent& x = gRuns.rowAt(runs[order], k, gPool);
         if ((x.status & 0xF0) == 0x80 && x.noteId == e.noteId) {
-          off = x.tick >= kLoop ? x.tick - kLoop : x.tick;
+          if (x.tick - e.tick >= kLoop)  // Q-LEN-1: held a full loop -> effective end one tick before the restart
+            off = e.tick == 0 ? kLoop - 1 : e.tick - 1;
+          else
+            off = x.tick >= kLoop ? x.tick - kLoop : x.tick;
           break;
         }
       }
@@ -143,13 +154,7 @@ static void assertMatchesReference(const RunId* runs, uint8_t count) {
   const auto eff = Oracle::effective(oracleNotes(runs, count), kLoop);
   const auto want = SpanModel::expandedStream(SpanModel::timeline(eff, kLoop, kCycles), 0, kLoop * kCycles,
                                               Config::kMaxSoundingPerTrack);
-  if (got.size() != want.size()) {
-    char line[96];
-    std::snprintf(line, sizeof line, "stream size: engine %u, reference %u", static_cast<unsigned>(got.size()),
-                  static_cast<unsigned>(want.size()));
-    TEST_FAIL_MESSAGE(line);
-  }
-  for (size_t i = 0; i < got.size(); ++i) {
+  for (size_t i = 0; i < got.size() && i < want.size(); ++i) {
     if (got[i].tick != want[i].tick || got[i].cls != want[i].cls || got[i].noteId != want[i].noteId / 64 ||
         got[i].channel != want[i].channel || got[i].pitch != want[i].pitch) {
       char line[160];
@@ -158,6 +163,12 @@ static void assertMatchesReference(const RunId* runs, uint8_t count) {
                     want[i].cls, want[i].noteId / 64, want[i].pitch);
       TEST_FAIL_MESSAGE(line);
     }
+  }
+  if (got.size() != want.size()) {
+    char line[96];
+    std::snprintf(line, sizeof line, "stream size: engine %u, reference %u", static_cast<unsigned>(got.size()),
+                  static_cast<unsigned>(want.size()));
+    TEST_FAIL_MESSAGE(line);
   }
 }
 
@@ -221,7 +232,7 @@ void test_random_wrap_held_passes_match_reference() {
         if (used[ch][pitch]) continue;  // one note per lane per pass keeps the writer's pairing unambiguous
         used[ch][pitch] = true;
         const uint32_t on = rnd() % kLoop;
-        const uint32_t len = 1 + rnd() % (rnd() % 3 == 0 ? 3000 : 300);
+        const uint32_t len = 1 + rnd() % (rnd() % 3 == 0 ? (rnd() % 2 ? 3 * kLoop : 3000) : 300);  // incl. held-loop notes
         notes.push_back({ch, static_cast<uint8_t>(48 + pitch), on, on + len});
       }
       runs[p] = recordPass(notes);
@@ -376,19 +387,109 @@ void test_lookahead_work_is_bounded_on_dense_chords() {
   TEST_ASSERT_TRUE(gC.stats().maxLookaheadRowsPerNoteOn <= rowsInNineTicks);
 }
 
-// Q-LEN-1 interim (owner question open): a note held across two wraps ends, in playback, at its NoteOff position in the
-// cycle after its start; nothing sticks, no instance is duplicated, no NoteOff is phantom.
-void test_note_held_across_two_wraps_never_sticks() {
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1));
+// ---- Q-LEN-1 (owner decision 2026-11-04: re-strike once per loop), hand-specified ------------------------------------
+
+static RunId recordLong(uint32_t on, uint32_t off, uint8_t pitch = 64) {
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1, kLoop));
   const RunId run = gW.activeRun();
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOn(100, 1, 60, 100));
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap(kLoop));
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap(2 * kLoop));
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOff(2 * kLoop + 50, 1, 60, 0));  // into the originating run
-  gW.stop(3 * kLoop);
-  TEST_ASSERT_EQUAL_UINT32(2 * kLoop + 50, gRuns.rowAt(run, 1, gPool).tick);
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOn(on, 1, pitch, 100));
+  for (uint32_t w = kLoop; w <= off; w += kLoop) gW.wrap(w);
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOff(off, 1, pitch, 0));
+  gW.stop(off + kLoop);
+  return run;
+}
+
+// Durations L-1 (ordinary wrap-held), L, L+1 and > 2L from S = 100 all replay as: NoteOn every loop at S, NoteOff one tick
+// before the next NoteOn. The original late NoteOff is never sent against a newer iteration.
+void test_qlen1_durations_L_minus_1_L_L_plus_1_and_beyond_2L() {
   const uint32_t L = kLoop;
-  assertStream(&run, 1, 3, {{100, 1, 1}, {L + 50, 0, 1}, {L + 100, 1, 1}, {2 * L + 50, 0, 1}, {2 * L + 100, 1, 1}});
+  const std::vector<X> want = {{100, 1, 1}, {L + 99, 0, 1}, {L + 100, 1, 1}, {2 * L + 99, 0, 1}, {2 * L + 100, 1, 1}};
+  for (const uint32_t off : {L + 99, L + 100, L + 101, 2 * L + 500}) {
+    setUp();
+    const RunId r = recordLong(100, off);
+    TEST_ASSERT_EQUAL(off - 100 >= L ? kOriginHeldLoop : 0, gRuns.rowAt(r, 1, gPool).origin & kOriginHeldLoop);
+    assertStream(&r, 1, 3, want);
+  }
+}
+
+// A held-loop note beginning near the loop end still sounds into the next cycle (no clipping at tick 0).
+void test_qlen1_note_beginning_near_loop_end() {
+  const uint32_t L = kLoop;
+  const RunId r = recordLong(L - 10, 2 * L + 20);
+  assertStream(&r, 1, 3, {{L - 10, 1, 1}, {2 * L - 11, 0, 1}, {2 * L - 10, 1, 1}, {3 * L - 11, 0, 1}, {3 * L - 10, 1, 1}});
+}
+
+// A held-loop note starting at tick 0 ends at the loop's last tick each cycle and restarts at the next cycle's tick 0.
+void test_qlen1_note_starting_at_tick_zero() {
+  const uint32_t L = kLoop;
+  const RunId r = recordLong(0, L + 5);
+  assertStream(&r, 1, 3, {{0, 1, 1}, {L - 1, 0, 1}, {L, 1, 1}, {2 * L - 1, 0, 1}, {2 * L, 1, 1}, {3 * L - 1, 0, 1}});
+}
+
+// Overlap against the effective repeating spans. Pass 0: A60 [100, L+500) held a loop (id 1), D62 [500, 600) (id 2).
+// Pass 1: B60 [300, 400) (id 3) shortens A to 299 every cycle; C62 [1000, L+2000) held a loop (id 4) sounds continuously
+// (each iteration until 999 of the next cycle), so D starts inside it and is hidden in every cycle (cold start too).
+void test_qlen1_later_pass_overlap_with_repeating_spans() {
+  RunId r[2];
+  r[0] = recordPass({{1, 60, 100, kLoop + 500}, {1, 62, 500, 600}});
+  r[1] = recordPass({{2, 60, 300, 400}, {2, 62, 1000, kLoop + 2000}});
+  std::vector<X> want;
+  for (uint32_t c = 0; c < 3; ++c) {
+    const uint32_t b = c * kLoop;
+    want.push_back({b + 100, 1, 1});
+    want.push_back({b + 299, 0, 1});
+    want.push_back({b + 300, 1, 3});
+    want.push_back({b + 400, 0, 3});
+    if (c > 0) want.push_back({b + 999, 0, 4});
+    want.push_back({b + 1000, 1, 4});
+  }
+  assertStream(r, 2, 3, want);
+}
+
+// A live hold across several wraps sounds through the live path until the real NoteOff: while the pitch is occupied,
+// the replayed iterations of the recorded note are suppressed (no playback NoteOn, no orphan NoteOff). After release the
+// sealed take replays with the re-strike rule.
+void test_qlen1_live_hold_across_wraps_then_replay() {
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1, kLoop));
+  const RunId run = gW.activeRun();
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOn(100, 1, 70, 100));
+  TerminalScheduler<Config::kMaxSoundingPerTrack>::Out offs[16];
+  gSched.occupy(70, 100, offs, 16);  // the live key is down
+  std::vector<Player::Emit> got;
+  Player::Emit buf[64];
+  const SourceRun prefix[] = {{run, 1}};  // only the NoteOn is recorded so far
+  gC.begin(prefix, 1, kLoop, 1);
+  for (uint32_t c = 0; c < 3; ++c) {
+    gW.wrap((c + 1) * kLoop);
+    while (gC.composeNext(gWin, kWin)) {
+      uint8_t n = gPlayer.beginWindow(gWin, buf, 64);
+      got.insert(got.end(), buf, buf + n);
+      for (uint32_t t = gWin.cycleBase + gWin.start; t < gWin.cycleBase + gWin.end; ++t) {
+        n = gPlayer.tick(t, buf, 64);
+        got.insert(got.end(), buf, buf + n);
+      }
+    }
+    gC.nextCycle();
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, got.size());  // nothing replayed under the live hold
+  TEST_ASSERT_TRUE(gSched.counters().suppressedOccupied >= 3);
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOff(3 * kLoop + 200, 1, 70, 0));
+  gSched.release(70);
+  gW.stop(4 * kLoop);
+  TEST_ASSERT_TRUE((gRuns.rowAt(run, 1, gPool).origin & kOriginHeldLoop) != 0);
+  setUpPlayerOnly();
+  const uint32_t L = kLoop;
+  assertStream(&run, 1, 2, {{100, 1, 1}, {L + 99, 0, 1}, {L + 100, 1, 1}});
+}
+
+// Ordering regression: a TERMINAL for pos - 1 is written after an entry a lower pass already wrote at pos. Pass 0: A60
+// [100, 3000) id 1 (carried into window 1), C61 [2000, 2100) id 2. Pass 1: B60 [2000, 2200) id 3 shortens A to 1999.
+// A's NoteOff must go out at 1999, not a tick late.
+void test_fixture_shorten_terminal_after_lower_pass_entry_at_same_tick() {
+  RunId r[2];
+  r[0] = recordPass({{1, 60, 100, 3000}, {1, 61, 2000, 2100}});
+  r[1] = recordPass({{2, 60, 2000, 2200}});
+  assertStream(r, 2, 1, {{100, 1, 1}, {1999, 0, 1}, {2000, 1, 2}, {2000, 1, 3}, {2100, 0, 2}, {2200, 0, 3}});
 }
 
 int main(int, char**) {
@@ -405,6 +506,11 @@ int main(int, char**) {
   RUN_TEST(test_fixture_tick_zero_hides_wrap_held_note);
   RUN_TEST(test_fixture_successive_iterations_of_one_note);
   RUN_TEST(test_lookahead_work_is_bounded_on_dense_chords);
-  RUN_TEST(test_note_held_across_two_wraps_never_sticks);
+  RUN_TEST(test_qlen1_durations_L_minus_1_L_L_plus_1_and_beyond_2L);
+  RUN_TEST(test_qlen1_note_beginning_near_loop_end);
+  RUN_TEST(test_qlen1_note_starting_at_tick_zero);
+  RUN_TEST(test_qlen1_later_pass_overlap_with_repeating_spans);
+  RUN_TEST(test_qlen1_live_hold_across_wraps_then_replay);
+  RUN_TEST(test_fixture_shorten_terminal_after_lower_pass_entry_at_same_tick);
   return UNITY_END();
 }

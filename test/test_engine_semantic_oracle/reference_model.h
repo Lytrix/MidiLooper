@@ -61,16 +61,22 @@ inline std::vector<Effective> effective(const std::vector<Note>& notes, uint32_t
         const bool wrapHeldHead = a.off < a.on && h < a.off && h > 0 && h != a.on;
         if (a.on < h || wrapHeldHead) {  // OVL-1 shorten to h - 1
           const uint32_t end = h == 0 ? loopLength - 1 : h - 1;
-          if (e.fate != Fate::Hidden && (e.fate == Fate::Kept || end < e.note.off)) {
+          // OVL-7 "shortest wins" compares ends in unwrapped time from A's start: a next-cycle end lies after any
+          // same-cycle end.
+          const auto unwrapped = [&](uint32_t x) { return x >= a.on ? x : x + loopLength; };
+          if (e.fate != Fate::Hidden && (e.fate == Fate::Kept || unwrapped(end) < unwrapped(e.note.off))) {
             e.fate = Fate::Shortened;
             e.note.off = end;
           }
         } else {  // OVL-2 same start
           e.fate = Fate::Hidden;
         }
-      } else if (startsStrictlyInside(a, b)) {
-        e.fate = Fate::Hidden;  // OVL-3
       }
+      // OVL-3 against the later note's effective (wrap-aware, repeating) span: A starting inside it is hidden, even if
+      // A was also sounding when B started (Hide absorbs Shorten, OVL-7). For a later note that does not wrap the two
+      // cases exclude each other; for one that wraps (or repeats, Q-LEN-1), A starting inside B's previous iteration
+      // would otherwise sound on the same pitch together with it (Q-OVL-4).
+      if (startsStrictlyInside(a, b)) e.fate = Fate::Hidden;
     }
     if (e.fate == Fate::Shortened) {  // OVL-6, wrap-aware: a wrap-held remnant's length runs across the loop end
       const uint32_t len = e.note.off >= e.note.on ? e.note.off - e.note.on : e.note.off + loopLength - e.note.on;
