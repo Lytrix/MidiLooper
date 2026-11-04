@@ -10,9 +10,11 @@
 #include <unity.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <new>
 
+#include "ContentEngine/EngineConfig.h"
 #include "ContentEngine/TerminalScheduler.h"
 
 static unsigned long gHeapAllocations = 0;
@@ -28,7 +30,7 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
-using Sched = TerminalScheduler<8>;
+using Sched = TerminalScheduler<8>;  // small T so the full-set case is cheap to reach; production is Config::kMaxSoundingPerTrack
 
 static Sched gS;
 static Sched::Out gOut[16];
@@ -41,23 +43,23 @@ void tearDown() {}
 // A still-held live writer note: its START window was composed with an open end. The writer's NoteOff closes it at the
 // current tick; the TERMINAL that a later recomposition carries for the same note is suppressed.
 void test_live_noteoff_closes_open_instance_and_suppresses_later_terminal() {
-  TEST_ASSERT_EQUAL(StartResult::Started, gS.start(100, 7, 1, 60, 0, kOpenEnd, /*identity*/ 5));
+  TEST_ASSERT_EQUAL(StartResult::Started, gS.start(100, 7, 1, 60, 0, kOpenEnd));
   TEST_ASSERT_EQUAL(0, fire(500));
   TEST_ASSERT_EQUAL(CloseResult::Closed, gS.liveNoteOff(7, 900));
   TEST_ASSERT_EQUAL(1, fire(900));
   TEST_ASSERT_EQUAL_UINT32(900, gOut[0].tick);
   TEST_ASSERT_EQUAL_UINT32(7, gOut[0].noteId);
   TEST_ASSERT_EQUAL_UINT8(1, gOut[0].channel);
-  TEST_ASSERT_EQUAL(CloseResult::NotSounding, gS.composedEnd(7, 905, 6));
+  TEST_ASSERT_EQUAL(CloseResult::NotSounding, gS.composedEnd(7, 905));
   TEST_ASSERT_EQUAL(0, fire(905));
   TEST_ASSERT_EQUAL_UINT32(1, gS.counters().suppressedTerminals);
 }
 
 // Cross-window closure: START with an open end, TERMINAL two windows later.
 void test_composed_terminal_closes_across_windows() {
-  gS.start(100, 1, 2, 61, 0, kOpenEnd, 5);
+  gS.start(100, 1, 2, 61, 0, kOpenEnd);
   TEST_ASSERT_EQUAL(0, fire(1600));
-  TEST_ASSERT_EQUAL(CloseResult::EndSet, gS.composedEnd(1, 3100, 5));
+  TEST_ASSERT_EQUAL(CloseResult::EndSet, gS.composedEnd(1, 3100));
   TEST_ASSERT_EQUAL(0, fire(3099));
   TEST_ASSERT_EQUAL(1, fire(3100));
   TEST_ASSERT_EQUAL(0, gS.sounding());
@@ -65,18 +67,18 @@ void test_composed_terminal_closes_across_windows() {
 
 // Duplicate terminals (the old and the new revision both carry one): the first closes, the second is suppressed.
 void test_duplicate_terminal_suppressed() {
-  gS.start(10, 2, 1, 62, 0, kOpenEnd, 5);
-  gS.composedEnd(2, 200, 5);
+  gS.start(10, 2, 1, 62, 0, kOpenEnd);
+  gS.composedEnd(2, 200);
   TEST_ASSERT_EQUAL(1, fire(200));
-  TEST_ASSERT_EQUAL(CloseResult::NotSounding, gS.composedEnd(2, 210, 6));
+  TEST_ASSERT_EQUAL(CloseResult::NotSounding, gS.composedEnd(2, 210));
   TEST_ASSERT_EQUAL(0, fire(210));
 }
 
 // A terminal that arrives after its tick has passed fires now, never in the past.
 void test_late_terminal_fires_at_current_tick() {
-  gS.start(10, 3, 1, 63, 0, kOpenEnd, 5);
+  gS.start(10, 3, 1, 63, 0, kOpenEnd);
   TEST_ASSERT_EQUAL(0, fire(400));
-  gS.composedEnd(3, 300, 5);  // logically 300, learned at 401
+  gS.composedEnd(3, 300);  // logically 300, learned at 401
   TEST_ASSERT_EQUAL(1, fire(401));
   TEST_ASSERT_EQUAL_UINT32(401, gOut[0].tick);
   TEST_ASSERT_EQUAL_UINT32(1, gS.counters().lateTerminals);
@@ -85,10 +87,10 @@ void test_late_terminal_fires_at_current_tick() {
 // Revision transition (undo, redo, commit): instances the new source carries keep sounding; instances it does not carry
 // are closed now (DEC-148 closure); carried entries for notes never sounded are ignored.
 void test_revision_transition_reconciles_carry_set() {
-  gS.start(10, 11, 1, 60, 0, 2000, 5);  // carried by the new revision
-  gS.start(20, 12, 1, 64, 0, 2000, 5);  // undone: not carried
+  gS.start(10, 11, 1, 60, 0, 2000);  // carried by the new revision
+  gS.start(20, 12, 1, 64, 0, 2000);  // undone: not carried
   const Sched::Carry carry[] = {{11, 2000}, {99, 1800}};
-  TEST_ASSERT_EQUAL(1, gS.transition(1536, carry, 2, 6, gOut, 16));
+  TEST_ASSERT_EQUAL(1, gS.transition(1536, carry, 2, gOut, 16));
   TEST_ASSERT_EQUAL_UINT32(12, gOut[0].noteId);
   TEST_ASSERT_EQUAL_UINT32(1536, gOut[0].tick);
   TEST_ASSERT_EQUAL(1, gS.sounding());
@@ -101,26 +103,26 @@ void test_revision_transition_reconciles_carry_set() {
 // time A's NoteOff is sent now, before the live NoteOn the caller passes through. Composed NoteOns on 60 are suppressed
 // while the pitch is occupied; two live notes on two channels hold the pitch until both are released.
 void test_live_occupy_closes_now_and_suppresses_until_released() {
-  gS.start(100, 21, 3, 60, 0, 900, 5);
-  gS.start(110, 22, 4, 60, 1, 950, 5);  // a second instance on 60, other channel: also ended (DEC-033)
+  gS.start(100, 21, 3, 60, 0, 900);
+  gS.start(110, 22, 4, 60, 1, 950);  // a second instance on 60, other channel: also ended (DEC-033)
   TEST_ASSERT_EQUAL(2, gS.occupy(60, 300, gOut, 16));
   TEST_ASSERT_EQUAL_UINT32(300, gOut[0].tick);
   TEST_ASSERT_EQUAL_UINT8(3, gOut[0].channel);
   TEST_ASSERT_EQUAL_UINT8(4, gOut[1].channel);
   TEST_ASSERT_EQUAL(0, fire(900));  // A's composed end is gone with the instance
   TEST_ASSERT_EQUAL(2, gS.occupy(60, 310, gOut, 16) + 2);  // second live note: nothing sounding to close
-  TEST_ASSERT_EQUAL(StartResult::SuppressedOccupied, gS.start(400, 23, 1, 60, 0, 500, 5));
+  TEST_ASSERT_EQUAL(StartResult::SuppressedOccupied, gS.start(400, 23, 1, 60, 0, 500));
   gS.release(60);
-  TEST_ASSERT_EQUAL(StartResult::SuppressedOccupied, gS.start(420, 24, 1, 60, 0, 500, 5));
+  TEST_ASSERT_EQUAL(StartResult::SuppressedOccupied, gS.start(420, 24, 1, 60, 0, 500));
   gS.release(60);
-  TEST_ASSERT_EQUAL(StartResult::Started, gS.start(440, 25, 1, 60, 0, 500, 5));
+  TEST_ASSERT_EQUAL(StartResult::Started, gS.start(440, 25, 1, 60, 0, 500));
   TEST_ASSERT_EQUAL_UINT32(2, gS.counters().suppressedOccupied);
 }
 
 // Capacity: a full set refuses a new instance by name; every started instance still gets its NoteOff.
 void test_full_set_refuses_new_start_and_never_drops_a_noteoff() {
-  for (uint32_t i = 0; i < 8; ++i) TEST_ASSERT_EQUAL(StartResult::Started, gS.start(10, 100 + i, 1, 40 + i, 0, 50 + i, 5));
-  TEST_ASSERT_EQUAL(StartResult::RefusedFull, gS.start(11, 200, 1, 70, 0, 60, 5));
+  for (uint32_t i = 0; i < 8; ++i) TEST_ASSERT_EQUAL(StartResult::Started, gS.start(10, 100 + i, 1, 40 + i, 0, 50 + i));
+  TEST_ASSERT_EQUAL(StartResult::RefusedFull, gS.start(11, 200, 1, 70, 0, 60));
   uint32_t sent = 0;
   for (uint32_t t = 50; t < 60; ++t) sent += fire(t);
   TEST_ASSERT_EQUAL_UINT32(8, sent);
@@ -129,9 +131,9 @@ void test_full_set_refuses_new_start_and_never_drops_a_noteoff() {
 
 // DEC-244 at one tick: NoteOffs in pass then id order.
 void test_equal_tick_noteoffs_in_pass_then_id_order() {
-  gS.start(10, 9, 1, 50, 2, 100, 5);
-  gS.start(10, 8, 1, 51, 2, 100, 5);
-  gS.start(10, 30, 1, 52, 1, 100, 5);
+  gS.start(10, 9, 1, 50, 2, 100);
+  gS.start(10, 8, 1, 51, 2, 100);
+  gS.start(10, 30, 1, 52, 1, 100);
   TEST_ASSERT_EQUAL(3, fire(100));
   TEST_ASSERT_EQUAL_UINT32(30, gOut[0].noteId);
   TEST_ASSERT_EQUAL_UINT32(8, gOut[1].noteId);
@@ -140,18 +142,46 @@ void test_equal_tick_noteoffs_in_pass_then_id_order() {
 
 // The same note cannot sound twice: a second START for a sounding id is a duplicate, not a second instance.
 void test_duplicate_start_is_not_a_second_instance() {
-  gS.start(10, 5, 1, 50, 0, 100, 5);
-  TEST_ASSERT_EQUAL(StartResult::Duplicate, gS.start(10, 5, 1, 50, 0, 100, 6));
+  gS.start(10, 5, 1, 50, 0, 100);
+  TEST_ASSERT_EQUAL(StartResult::Duplicate, gS.start(10, 5, 1, 50, 0, 100));
   TEST_ASSERT_EQUAL(1, gS.sounding());
 }
 
 void test_no_heap() {
   const unsigned long before = gHeapAllocations;
   for (uint32_t i = 0; i < 1000; ++i) {
-    gS.start(i, i, 1, i % 128, 0, i + 3, 5);
+    gS.start(i, i, 1, i % 128, 0, i + 3);
     fire(i);
   }
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
+}
+
+// Physical-port backpressure: the port accepts fewer NoteOffs than are due at this tick. The rest stay owned by the
+// scheduler and go out on the next ticks (counted late); none is dropped, none is sent for an unsounded note.
+void test_port_backpressure_delays_noteoffs_and_drops_none() {
+  for (uint32_t i = 0; i < 6; ++i) gS.start(10, 300 + i, 1, 50 + i, 0, 100);
+  TEST_ASSERT_EQUAL(2, gS.due(100, gOut, 2));   // port room for 2
+  TEST_ASSERT_EQUAL(4, gS.sounding());
+  TEST_ASSERT_EQUAL(StartResult::Started, gS.start(100, 400, 1, 70, 0, 900));  // a NoteOn the port admitted
+  uint32_t sent = 2;
+  for (uint32_t t = 101; t < 110; ++t) sent += gS.due(t, gOut, 1);  // one per tick
+  TEST_ASSERT_EQUAL_UINT32(6, sent);
+  TEST_ASSERT_EQUAL_UINT32(4, gS.counters().lateTerminals);
+  TEST_ASSERT_EQUAL(1, gS.sounding());  // only the instance ending at 900
+}
+
+// Production size: OUT-POLY T = 16 per track, 12-byte instances (owner budget 8 x 16 x 12 = 1,536 B of instances).
+void test_production_terminal_set_size() {
+  using TrackTerminals = TerminalScheduler<Config::kMaxSoundingPerTrack>;
+  static TrackTerminals t;
+  t.init();
+  for (uint32_t i = 0; i < 20; ++i) t.start(10, i + 1, 1 + (i % 16), static_cast<uint8_t>(i), 0, 50);
+  TEST_ASSERT_EQUAL(16, t.sounding());
+  TEST_ASSERT_EQUAL_UINT32(4, t.counters().refusedFull);
+  char line[120];
+  std::snprintf(line, sizeof line, "TerminalScheduler<16>: %u B per track (instances 192 B + occupancy 128 B + counters)",
+                static_cast<unsigned>(sizeof(TrackTerminals)));
+  TEST_MESSAGE(line);
 }
 
 int main(int, char**) {
@@ -165,6 +195,8 @@ int main(int, char**) {
   RUN_TEST(test_full_set_refuses_new_start_and_never_drops_a_noteoff);
   RUN_TEST(test_equal_tick_noteoffs_in_pass_then_id_order);
   RUN_TEST(test_duplicate_start_is_not_a_second_instance);
+  RUN_TEST(test_port_backpressure_delays_noteoffs_and_drops_none);
+  RUN_TEST(test_production_terminal_set_size);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

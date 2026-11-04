@@ -12,15 +12,16 @@
 #include <cstdio>
 #include <vector>
 
+#include "ContentEngine/EngineConfig.h"
 #include "span_window_model.h"
 
 using namespace Oracle;
 using namespace SpanModel;
 
 constexpr uint32_t kWindow = 1536;        // 2 bars
-constexpr uint32_t kSourceAdmission = 2816;
-constexpr uint32_t kT = 256;              // admitted sounding notes per track (terminal set capacity)
-constexpr uint32_t kWindowCapacity = 3072;
+constexpr uint32_t kSourceAdmission = ContentEngine::Config::kWindowSourceAdmission;
+constexpr uint32_t kT = ContentEngine::Config::kMaxSoundingPerTrack;  // OUT-POLY, owner-ratified 16
+constexpr uint32_t kWindowCapacity = ContentEngine::Config::kWindowEntries;
 
 static uint32_t gSeed = 0xB1B1B1u;
 static uint32_t rnd() {
@@ -51,20 +52,22 @@ static std::vector<Note> counterExample(uint32_t batches) {
 void setUp() {}
 void tearDown() {}
 
-// The counter-example that broke the row-based bound needs only its start rows in span form.
+// The counter-example that broke the row-based bound: in span form it needs only START entries for the instances that
+// actually sound. With OUT-POLY (16 sounding per track) most of the 2,560 stacked NoteOns are suppressed at output by name;
+// the stored passes are untouched and the composed and consumed streams stay identical.
 void test_span_windows_absorb_the_counterexample() {
   const uint32_t loop = 768 * 4;
   const auto notes = counterExample(20);
   const auto tl = timeline(effective(notes, loop), loop, 1);
   const auto windows = composeWindows(tl, loop, kWindow, kT);
-  TEST_ASSERT_EQUAL_UINT32(2560, windows[0].startEntries);
+  TEST_ASSERT_EQUAL_UINT32(2560, windows[0].startEntries + windows[0].refused);
   TEST_ASSERT_EQUAL_UINT32(0, windows[0].terminalEntries);
-  TEST_ASSERT_EQUAL_UINT32(0, windows[0].refused);
-  TEST_ASSERT_TRUE(windows[0].entries.size() <= kWindowCapacity);
+  TEST_ASSERT_TRUE(windows[0].entries.size() <= kSourceAdmission + kT);
   bool overflow = true;
   const auto stream = consume(windows, 0, kT, overflow);
   TEST_ASSERT_FALSE(overflow);
   TEST_ASSERT_TRUE(stream == expandedStream(tl, 0, loop, kT));
+  TEST_ASSERT_EQUAL_UINT32(2560, static_cast<uint32_t>(notes.size()));  // storage unchanged
 }
 
 // Bound and exactness under random stacking: up to 40 passes, same-pitch overlaps on several channels, long notes
@@ -92,13 +95,13 @@ void test_span_window_bound_and_stream_equality_random() {
     const auto tl = timeline(eff, loop, cycles);
     const uint32_t to = loop * cycles;
     const auto starts = sourceStarts(n, loop, cycles);
-    for (uint32_t T : {kT, 8u}) {  // 8: the admission policy actually binds
+    for (uint32_t T : {kT, 8u}) {  // both bind under dense random stacking
       const auto windows = composeWindows(tl, to, kWindow, T);
       for (size_t w = 0; w < windows.size(); ++w) {
         TEST_ASSERT_TRUE(windows[w].terminalEntries <= T);
         TEST_ASSERT_TRUE(windows[w].startEntries <= starts[w]);
         TEST_ASSERT_TRUE(windows[w].entries.size() <= starts[w] + T);
-        if (T == 8u) refusedWhenBinding += windows[w].refused;
+        if (T == kT) refusedWhenBinding += windows[w].refused;
         terminalsSeen += windows[w].terminalEntries;
       }
       bool overflow = true;
@@ -116,21 +119,24 @@ void test_span_window_bound_and_stream_equality_random() {
   TEST_ASSERT_TRUE(terminalsSeen > 0);       // carried terminals were exercised
 }
 
-// The bound is tight: T notes sounding across the window start that end inside it, plus a full window of starts.
+// The bound is tight: T instances sounding across the window start that end inside it, plus a full window of admitted
+// START entries (groups of 16, so OUT-POLY admits every one): 2,816 + 16 = 2,832 <= 3,072.
 void test_span_window_bound_is_tight() {
   const uint32_t loop = 768 * 8;
   std::vector<Note> n;
   uint32_t id = 1;
-  for (uint32_t k = 0; k < kT; ++k)  // run 0: T notes on distinct (channel, pitch), crossing into window 1
-    n.push_back({id++, 0, static_cast<uint8_t>(k / 128), static_cast<uint8_t>(k % 128), 100, kWindow + 50});
-  for (uint32_t k = 0; k < kSourceAdmission; ++k)  // run 1: short notes after those end, all inside window 1
-    n.push_back({id++, 1, 0, static_cast<uint8_t>(k % 128), kWindow + 60 + (k / 128) * 30, kWindow + 61 + (k / 128) * 30});
+  for (uint32_t k = 0; k < kT; ++k)  // run 0: T notes on distinct pitches, crossing into window 1
+    n.push_back({id++, 0, 0, static_cast<uint8_t>(k), 100, kWindow + 50});
+  for (uint32_t k = 0; k < kSourceAdmission; ++k)  // run 1: 16 one-tick notes every 2 ticks after those end
+    n.push_back({id++, 1, 0, static_cast<uint8_t>(32 + k % kT), kWindow + 60 + (k / kT) * 2,
+                 kWindow + 61 + (k / kT) * 2});
   const auto tl = timeline(effective(n, loop), loop, 1);
   const auto windows = composeWindows(tl, loop, kWindow, kT);
   TEST_ASSERT_EQUAL_UINT32(kT, windows[1].terminalEntries);
   TEST_ASSERT_EQUAL_UINT32(kSourceAdmission, windows[1].startEntries);
-  TEST_ASSERT_EQUAL_UINT32(kSourceAdmission + kT, static_cast<uint32_t>(windows[1].entries.size()));
-  TEST_ASSERT_EQUAL_UINT32(kWindowCapacity, kSourceAdmission + kT);
+  TEST_ASSERT_EQUAL_UINT32(0, windows[1].refused);
+  TEST_ASSERT_EQUAL_UINT32(2832, static_cast<uint32_t>(windows[1].entries.size()));
+  TEST_ASSERT_TRUE(windows[1].entries.size() <= kWindowCapacity);
 }
 
 // A note held across windows: START with an open end, nothing in between, one TERMINAL where it ends.
@@ -175,9 +181,9 @@ void test_row_based_proposals_on_counterexample() {
   const uint32_t splitExtraBytes = 24u * (splitRows - kWindowCapacity) * 16u;
   char line[220];
   std::snprintf(line, sizeof line,
-                "CE-B1 compare: rows=%u; admission/pass-bound admit %u of %u batches (refuse %u notes); split buffers "
-                "need %u rows/window (+%u B PSRAM); span: %u entries, 0 refused",
-                rowsEffective, b, batches, refusedNotes, splitRows, splitExtraBytes, 128 * batches);
+                "CE-B1 compare: rows=%u; admission/pass-bound admit %u of %u batches (refuse %u stored notes); split "
+                "buffers need %u rows/window (+%u B PSRAM); span: <= %u entries, storage never refused",
+                rowsEffective, b, batches, refusedNotes, splitRows, splitExtraBytes, kSourceAdmission + kT);
   TEST_MESSAGE(line);
   TEST_ASSERT_EQUAL_UINT32(4992, rowsEffective);
   TEST_ASSERT_EQUAL_UINT32(12, b);
@@ -210,10 +216,9 @@ void test_same_pitch_notes_of_different_passes_never_overlap() {
   }
 }
 
-// ...but polyphony is NOT bounded by T: each pass holds up to 128 open notes, and different pitches can come from
-// different passes. Three passes of 128 notes on three pitches give 384 sounding notes. The output-overload policy
-// (OUT-POLY) sends the first T = 256 in DEC-244 order and refuses the rest by name; stored content is unchanged and the
-// composed and consumed streams stay identical.
+// Source polyphony above T: three passes of 128 notes on three pitches sound 384 notes at once. OUT-POLY (T = 16,
+// owner-ratified) sends the first 16 in DEC-244 order and suppresses the rest at output by name; stored content is
+// unchanged and the composed and consumed streams stay identical.
 void test_polyphony_exceeds_t_and_out_poly_refuses_by_name() {
   const uint32_t loop = 768 * 8;
   std::vector<Note> n;
@@ -228,7 +233,7 @@ void test_polyphony_exceeds_t_and_out_poly_refuses_by_name() {
   TEST_ASSERT_EQUAL_UINT32(384, effectiveSounding);
   const auto tl = timeline(eff, loop, 1);
   const auto windows = composeWindows(tl, loop, kWindow, kT);
-  TEST_ASSERT_EQUAL_UINT32(128, windows[0].refused);
+  TEST_ASSERT_EQUAL_UINT32(384 - kT, windows[0].refused);
   bool overflow = true;
   TEST_ASSERT_TRUE(consume(windows, 0, kT, overflow) == expandedStream(tl, 0, loop, kT));
   TEST_ASSERT_FALSE(overflow);

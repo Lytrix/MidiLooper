@@ -37,6 +37,14 @@ constexpr uint8_t kSlotCount = 64;
 constexpr uint8_t kWriterCount = 8;
 constexpr uint8_t kInlinePagesPerRun = 16;
 constexpr uint8_t kMaxOpenNotesPerWriter = 128;
+
+// OUT-POLY (owner decision 2026-11-04, ratified end-state constant): at most 16 simultaneously sounding MIDI output
+// note instances per track. It limits output only, never recording, storage, undo history or the piano roll.
+constexpr uint8_t kMaxSoundingPerTrack = 16;
+constexpr uint16_t kWindowEntries = 3072;           // span-window buffer, kept pending E3 qualification
+constexpr uint16_t kWindowSourceAdmission = 2816;   // source START rows admitted per 2-bar window per slot
+static_assert(kWindowSourceAdmission + kMaxSoundingPerTrack <= kWindowEntries,
+              "CE-B1: entries(W) <= START rows + carried instances (2,832) fit the window buffer");
 }  // namespace Config
 
 }  // namespace ContentEngine

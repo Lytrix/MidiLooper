@@ -14,7 +14,9 @@
 //     are ignored.
 // Whichever close comes first sends the NoteOff; later terminals for that instance are suppressed. Nothing is sent into
 // the past: an end already behind the current tick fires at the current tick (counted). A started instance always gets
-// its NoteOff; a new instance is refused by name when T are sounding. O(T) per call; no allocation.
+// its NoteOff; a new instance is refused by name when T are sounding (OUT-POLY, owner-ratified T = 16 per track:
+// `Config::kMaxSoundingPerTrack`). Source identity is checked by the window ring, not stored per instance.
+// O(T) per call; no allocation.
 
 #pragma once
 
@@ -58,8 +60,7 @@ class TerminalScheduler {
     lastTick_ = 0;
   }
 
-  StartResult start(uint32_t tick, uint32_t noteId, uint8_t channel, uint8_t pitch, uint8_t run, uint32_t end,
-                    uint32_t identity) {
+  StartResult start(uint32_t tick, uint32_t noteId, uint8_t channel, uint8_t pitch, uint8_t run, uint32_t end) {
     lastTick_ = tick;
     if (occupied_[pitch & 0x7F] > 0) {
       ++counters_.suppressedOccupied;
@@ -73,19 +74,18 @@ class TerminalScheduler {
       ++counters_.refusedFull;
       return StartResult::RefusedFull;
     }
-    set_[count_++] = Instance{noteId, end, identity, channel, pitch, run};
+    set_[count_++] = Instance{noteId, end, channel, pitch, run};
     return StartResult::Started;
   }
 
   /// Composed end (TERMINAL / carry entry) for a sounding instance.
-  CloseResult composedEnd(uint32_t noteId, uint32_t end, uint32_t identity) {
+  CloseResult composedEnd(uint32_t noteId, uint32_t end) {
     const int i = find(noteId);
     if (i < 0) {
       ++counters_.suppressedTerminals;
       return CloseResult::NotSounding;
     }
     set_[i].end = end;
-    set_[i].identity = identity;
     return CloseResult::EndSet;
   }
 
@@ -138,7 +138,7 @@ class TerminalScheduler {
   }
 
   /// Switch to a new source at `tick`: keep instances it carries (taking its end), close the others now.
-  uint8_t transition(uint32_t tick, const Carry* carry, uint16_t carryCount, uint32_t identity, Out* out, uint8_t max) {
+  uint8_t transition(uint32_t tick, const Carry* carry, uint16_t carryCount, Out* out, uint8_t max) {
     lastTick_ = tick;
     uint8_t n = 0;
     for (uint16_t i = 0; i < count_ && n < max;) {
@@ -150,7 +150,6 @@ class TerminalScheduler {
         out[n++] = emit(i, tick);
       } else {
         set_[i].end = carry[k].end;
-        set_[i].identity = identity;
         ++i;
       }
     }
@@ -165,7 +164,6 @@ class TerminalScheduler {
   struct Instance {
     uint32_t noteId = 0;
     uint32_t end = kOpenEnd;
-    uint32_t identity = 0;
     uint8_t channel = 0;
     uint8_t pitch = 0;
     uint8_t run = 0;
@@ -202,6 +200,7 @@ class TerminalScheduler {
     return o;
   }
 
+  static_assert(sizeof(Instance) == 12, "a sounding instance is 12 bytes (owner budget: 8 tracks x 16 x 12 B)");
   Instance set_[T];
   uint16_t count_;
   uint8_t occupied_[128];
