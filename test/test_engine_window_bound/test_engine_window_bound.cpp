@@ -183,6 +183,58 @@ void test_row_based_proposals_on_counterexample() {
   TEST_ASSERT_EQUAL_UINT32(12, b);
 }
 
+// Effective-polyphony analysis, lemma: under OVL-1..3 two effective notes of the same pitch from different passes never
+// sound at the same tick (the later one shortens or hides the earlier). Checked over random stacked passes.
+void test_same_pitch_notes_of_different_passes_never_overlap() {
+  const uint32_t loop = 768 * 8;
+  for (uint32_t trial = 0; trial < 40; ++trial) {
+    std::vector<Note> n;
+    uint32_t id = 1;
+    const uint32_t passes = 2 + rnd() % 20;
+    for (uint32_t run = 0; run < passes; ++run)
+      for (uint32_t k = 0, c = rnd() % 60; k < c; ++k) {
+        const uint32_t on = rnd() % (loop - 3000);
+        n.push_back({id++, static_cast<uint8_t>(run), static_cast<uint8_t>(rnd() % 3),
+                     static_cast<uint8_t>(60 + rnd() % 4), on, on + 1 + rnd() % 2500});
+      }
+    const auto eff = effective(n, loop);
+    for (size_t i = 0; i < eff.size(); ++i)
+      for (size_t j = 0; j < eff.size(); ++j) {
+        const auto &a = eff[i], &b = eff[j];
+        if (a.fate == Fate::Hidden || b.fate == Fate::Hidden || a.note.pitch != b.note.pitch ||
+            a.note.run >= b.note.run)
+          continue;
+        const bool overlap = a.note.on < b.note.off && b.note.on < a.note.off;
+        TEST_ASSERT_FALSE(overlap);
+      }
+  }
+}
+
+// ...but polyphony is NOT bounded by T: each pass holds up to 128 open notes, and different pitches can come from
+// different passes. Three passes of 128 notes on three pitches give 384 sounding notes. The output-overload policy
+// (OUT-POLY) sends the first T = 256 in DEC-244 order and refuses the rest by name; stored content is unchanged and the
+// composed and consumed streams stay identical.
+void test_polyphony_exceeds_t_and_out_poly_refuses_by_name() {
+  const uint32_t loop = 768 * 8;
+  std::vector<Note> n;
+  uint32_t id = 1;
+  for (uint8_t run = 0; run < 3; ++run)
+    for (uint8_t ch = 0; ch < 16; ++ch)
+      for (uint8_t k = 0; k < 8; ++k) n.push_back({id++, run, ch, static_cast<uint8_t>(40 + run), 100u + k, 1000});
+  const auto eff = effective(n, loop);
+  uint32_t effectiveSounding = 0;
+  for (const auto& e : eff)
+    if (e.fate != Fate::Hidden && e.note.on <= 200 && 200 < e.note.off) ++effectiveSounding;
+  TEST_ASSERT_EQUAL_UINT32(384, effectiveSounding);
+  const auto tl = timeline(eff, loop, 1);
+  const auto windows = composeWindows(tl, loop, kWindow, kT);
+  TEST_ASSERT_EQUAL_UINT32(128, windows[0].refused);
+  bool overflow = true;
+  TEST_ASSERT_TRUE(consume(windows, 0, kT, overflow) == expandedStream(tl, 0, loop, kT));
+  TEST_ASSERT_FALSE(overflow);
+  TEST_ASSERT_EQUAL_UINT32(384, static_cast<uint32_t>(n.size()));  // stored content untouched
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_span_windows_absorb_the_counterexample);
@@ -191,5 +243,7 @@ int main(int, char**) {
   RUN_TEST(test_held_note_crosses_windows_with_one_terminal);
   RUN_TEST(test_carried_note_shortened_in_next_window);
   RUN_TEST(test_row_based_proposals_on_counterexample);
+  RUN_TEST(test_same_pitch_notes_of_different_passes_never_overlap);
+  RUN_TEST(test_polyphony_exceeds_t_and_out_poly_refuses_by_name);
   return UNITY_END();
 }

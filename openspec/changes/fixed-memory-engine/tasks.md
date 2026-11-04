@@ -23,8 +23,10 @@ revision 3 is the baseline; no whole-plan revisions.
 
 - [x] B.1 Span-window reference model (START + TERMINAL entries, terminal set T = 256), exact-stream equality with
       expanded rows, tight bound `startRows + T`, comparison against the three row-based options (`test_engine_window_bound`).
-- [ ] B.2 Owner acknowledgement of T = 256 as a named output limit, and of the cold-start note.
-- [ ] B.3 Late terminal for a writer's open note in the reference test.
+- [x] B.2a Effective-polyphony analysis: same-pitch exclusivity lemma tested; T not guaranteed (384 constructed).
+- [ ] B.2 Owner acceptance of OUT-POLY (T = 256 output limit) and of the cold-start note.
+- [x] B.3 `TerminalScheduler` (fixed T): live / composed closure, duplicate suppression, late terminals, transition reconcile, live occupy count; 10 tests.
+- [ ] B.4 Window carry list in the engine composer (E3).
 
 ## E1 — storage core
 
@@ -37,6 +39,11 @@ revision 3 is the baseline; no whole-plan revisions.
 - [ ] E1.5 History ring and `SlotTable` (moved to E4 with undo/redo semantics).
 - [x] E1.6 `PassEvent` owned by `ContentEngine` (`include/ContentEngine/PassEvent.h`); the prototype store aliases it.
 - [ ] E1.7 Device placement: EXTMEM pool and DMAMEM tables, with census rows (lands with integration, E9).
+
+## E2 — writer
+
+- [x] E2.1 Fixed-page writer: NoteOn reservation, LIFO lane NoteOff into the owing run, closing runs, owed commit, FinalInterval, Stop closures (`test_content_engine_writer` 9, RED → GREEN).
+- [ ] E2.2 Writer fuzz with conservation; live occupancy signal to the track's scheduler; segment bound for owed-commit runs.
 
 ## Blocked (by ruling)
 

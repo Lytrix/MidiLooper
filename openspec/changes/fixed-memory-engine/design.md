@@ -11,7 +11,7 @@ whole-plan revisions (owner, 2026-11-04).
 |---|---|---|---|
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
-| CE-B1 | Window representation and bound. Row windows are unbounded in stacked passes (counter-example: 2,560 source → 4,992 rows). **Span windows** hold START entries (effective NoteOn or event, with an inline end when it falls in the window) and TERMINAL entries (end of a note sounding across the window start); NoteOffs are fired from a fixed terminal set of capacity **T = 256** admitted sounding notes per track. Bound: `entries(W) ≤ startRows(W) + T = 2,816 + 256 = 3,072` (tight). | **Settled (reference model)**; the engine composer is not built yet | `test_engine_window_bound` (6 cases, mutation-checked) |
+| CE-B1 | Span windows (START + TERMINAL / carry entries) with a fixed terminal set of T per track. `entries(W) ≤ startRows(W) + T` holds **only while T bounds the sounding instances the track actually sends**. Effective polyphony is not bounded by T (see the effective-polyphony section below), so the bound rests on output policy **OUT-POLY**. | **Direction approved; not discharged.** Bound and stream equality hold on the reference model; live/composed closure is implemented in `TerminalScheduler`; OUT-POLY needs owner acceptance | `test_engine_window_bound` (8), `test_content_engine_terminals` (10) |
 | CE-C1 | Physical output: per-port admission and overload policy. | Open | — |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
@@ -85,3 +85,48 @@ Consequences that need the owner's acknowledgement:
   playback (the composer decided admission). This only applies while the T limit is binding.
 - A writer's still-open note in a composed prefix gets its end from the writer's NoteOff at run time (late terminal,
   O(1) in the terminal set). This path is modeled in the design but not yet in the reference test.
+
+## Effective polyphony (CE-B1 remaining proof) — analysis
+
+1. **Lemma (tested, `test_same_pitch_notes_of_different_passes_never_overlap`):** under OVL-1..3, two effective notes
+   of the same pitch from different passes never sound at the same tick. The later pass either shortens the earlier
+   note (it was sounding) or hides it (it started inside).
+2. **So at any tick** each pitch is sounded by **one** pass. Polyphony(t) = Σ over pitches of that pass's sounding notes
+   on that pitch.
+3. **Per pass**, sounding notes at one position are ≤ 128, its writer's open-note cap. A run that spans owed-commit
+   cycles holds ≤ 8 segments, so at most 8 × 128.
+4. **Different pitches can come from different passes**, so polyphony ≤ 128 × (passes contributing) and is **not**
+   ≤ 256. Constructed: 3 passes × 128 notes on 3 pitches = 384 sounding
+   (`test_polyphony_exceeds_t_and_out_poly_refuses_by_name`).
+5. **Undo / redo:** a manifest is a subset of passes; the lemma and the bound hold per manifest.
+   **Cold start:** only notes starting at or after the start position sound, so it is never above the steady state.
+
+Conclusion: no admission rule on *input* can guarantee ≤ T at every future tick, because a later pass's notes on
+other pitches add to sounding content recorded earlier. The bound therefore needs a narrowly specified output policy.
+
+## OUT-POLY — output-overload policy (proposed, needs owner acceptance)
+
+- **Scope:** only when more than T = 256 notes would sound at once on one track. That needs ≥ 3 passes each holding
+  ≥ 128 simultaneous notes on different pitches (or the multi-segment case).
+- **Rule:** the composer and the consumer send NoteOns in DEC-244 order. A NoteOn that would be instance T + 1 is
+  **not sent**. It is counted per window (`refused`) and per scheduler (`refusedFull`), and reported with slot and tick.
+- **Never:** a NoteOff dropped for a note that was sent; stored content changed; display changed (the piano roll draws
+  stored content, not output).
+- **Next cycle:** the same deterministic choice, because composition is deterministic.
+- **Legacy difference:** legacy sends notes beyond its 128-entry ledger, which overflows only its bookkeeping. Under
+  OUT-POLY, sending stops at 256.
+
+## Live / composed closure ownership (`TerminalScheduler`, tested)
+
+| Case | Rule | Test |
+|---|---|---|
+| Writer note still held when its START window was composed | START has an open end; the writer's NoteOff (`liveNoteOff`) closes it **now**; a later composed TERMINAL is suppressed | `test_live_noteoff_closes_open_instance_and_suppresses_later_terminal` |
+| Cross-window | open end in W, TERMINAL in W+2 | `test_composed_terminal_closes_across_windows` |
+| Duplicate terminals (old and new revision) | first closes, rest suppressed | `test_duplicate_terminal_suppressed` |
+| End learned after its tick | fires at the current tick (`lateTerminals`), never in the past | `test_late_terminal_fires_at_current_tick` |
+| Revision transition | close instances the new source does not carry (DEC-148 closure); ignore carried entries never sent | `test_revision_transition_reconciles_carry_set` |
+| Live overlap (logical Shorten end = live NoteOn − 1) | the sounding instance's NoteOff is sent **now**, before the live NoteOn the caller passes through; the pitch is occupied (count) and composed NoteOns on it are suppressed until every live note on it is released | `test_live_occupy_closes_now_and_suppresses_until_released` |
+| Full set | new instance refused by name; every sent instance still gets its NoteOff | `test_full_set_refuses_new_start_and_never_drops_a_noteoff` |
+
+Windows must carry a **carry list** (every instance sounding across the window start, with its end or open) so a
+transition can reconcile. The carry list replaces the TERMINAL-only list at the same bound (≤ T entries).
