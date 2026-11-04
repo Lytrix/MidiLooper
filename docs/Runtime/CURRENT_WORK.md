@@ -1,5 +1,11 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.** The wrap hands its interval to a bounded obligation
+answered by the discharge lane against its own source cut. On device (`19f11706`) wraps run on schedule; the worst
+per-wrap Clock is 150-235 ms (previously 123 s). The intense run then aborts at 201.7 s on PSRAM exhaustion. Next: the
+memory fix (owner, 2026-11-04: "continue with memory fix"). The allocation-failure path must not abort, and the
+refusing caller must be attributed. [DEC-250](../DECISION_LOG.md)
+
 **2026-11-04 — DEC-136.4b closeout: content provenance and R3.** The "192-200-tick offset" is not a transformation:
 after a clear-and-re-record of the routed slot, the manifest reader keeps serving the previous take, because the two
 takes' `ImportSourceKey`s collide (revisions reset to 1, loop id kept, inventory = pass id/state/chunk count). Host RED

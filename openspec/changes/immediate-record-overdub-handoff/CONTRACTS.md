@@ -325,6 +325,15 @@ Loop's current ownership domain.** The concrete deadline is:
   **deferred** route, which never reaches the seal helper because its pending set is fed to the
   canonical tail instead.
 
+**Amendment (owner rulings 2026-11-04, DEC-250).** The overdub wrap is no longer a synchronous seal edge. At the
+wrap, the interval's pending set and its closed owed completions move, in constant work, into a bounded wrap
+obligation. That obligation is the interval's deadline: the discharge lane answers it against the interval's own
+immutable source cut and seals the result into the interval's own session record before that record can publish or
+be read by its stop. "Leaving the Loop's ownership domain" is therefore the obligation's retirement, not the Clock
+edge. The overdub **stop** keeps the synchronous seal deadline for the stopping interval itself (still open). Whenever
+a pitch is owed by an earlier obligation, the live interval's decisions on that pitch are owed too and answered after
+it (C1, exact).
+
 Failure policy at either edge: retain intent, deny the dependent transform with a named diagnostic, and
 do **not** apply stale, empty or cache-only content. Materialising the retained intents at the deadline
 is bounded by the declared hold capacity; it is not a synchronous completion of the *scan*, which stays

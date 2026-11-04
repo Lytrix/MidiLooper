@@ -14458,3 +14458,100 @@ path"); implemented, host and device verified.
 
 On the default image no snapshot unit runs between about 70 s and 120 s, while every walk in that window admits.
 That gap is not memory. That image carries no Snapshot-gate rows, so the cause is not named yet.
+
+## DEC-250 — The overdub wrap hands its C3.4 deadline to a bounded obligation; the discharge lane answers it against the interval's own source cut
+
+**Date:** 2026-11-04
+**Owner:** `Loop` wrap obligations (`handOverWrapObligation`, `serviceWrapObligationTurn`, `include/LoopWrapObligation.h`)
+on the existing discharge lane (`TrackDeferredMaintenance`, VisualCache and Snapshot owner turns). Formal trigger: an
+ownership change of the C3.4 wrap deadline, from the `commitOverdubWrap` Clock dispatch to the deferred owner. Closes
+DEC-247's open item.
+**Status:** Accepted by owner (2026-11-04: "Deadline off the Clock", packet ruling with four amendments, C1 "owed too,
+exact"); implemented; host verified; device: Clock stall removed. The intense run still ends in PSRAM exhaustion
+(separate memory-pressure scope).
+
+### Problem
+
+One overdub wrap held the Clock for 123.46 s on device (`captures/session_20261104_140156.log`). The C3.4 deadline
+answered 518 owed completions with one whole-loop `resolveDisplayNotesInWindow` each, with 0 allocation failures. The
+deadline's decisions were also wrong: each derive read committed `passes` without the interval's own pending rows, so
+every completion re-shortened a long source note and the last answer won.
+
+### Decision
+
+Design and proofs: `docs/Plans/2026-11-04-wrap-deadline-off-clock.md` (revision 2 plus rulings).
+
+1. **The wrap's C3.4 work is a constant-cost handover.**
+   - The live pending set is swapped into one of two FIFO slots.
+   - Closed completions are copied (16 slots); open holds stay with the live interval.
+   - The wrap stamps the record index, the pass id and the flip-journal sequence, then pushes the record with no
+     companions yet.
+   - Only the private-predecessor holds are still answered on the Clock (unchanged).
+   - The commit point itself admits the handover. With both slots owned, the wrap defers through the DEC-069 owed
+     commit, and so does a wrap that lands inside a lane turn (internal-clock ISR).
+2. **The discharge lane answers it.**
+   - One bounded step per turn:
+     - prepare the cut: pitch mask, record membership, then the source cut via `stepTilePreparation` with a
+       visibility predicate and a pitch filter;
+     - answer the owed completions against the cut, 4 per turn;
+     - seal the rows into **the interval's own record** (session lists or exit receipt), in that record's state.
+   - Undo and redo move the companions with the record. A destroyed record (redo-tail drop) cancels its obligation.
+3. **The source cut is immutable.**
+   - Records before P are visible whatever their current state: a push drops the redo tail, so all were active at P's
+     wrap.
+   - P and later records are excluded by membership and by P's pass-id watermark.
+   - Pre-session rows whose state flips after the wrap are read through a bounded flip journal (C2, 256 entries,
+     overflow counted).
+   - The cut reads `passes`, never the published root, so there is no publication→discharge cycle.
+4. **C1 "owed too, exact".** While an obligation owes or decided on a pitch, live NoteOn occupancy, NoteOff completions
+   and live discharge on that pitch are owed and answered after it. The mask is conservative until computed. A held
+   note's occupancy is answered together with its span.
+5. **Publication and stop.**
+   - The record producer does not pass a record whose obligation is outstanding (`BlockedOnObligation`, so the idle
+     owner is not woken for nothing). The stamp is renewed after a late seal.
+   - Outside a session, no root publishes while an obligation is outstanding.
+   - A stop is accepted at once. Its job waits, from companion history on, for **its own session's** obligations,
+     which keep discharging while stopped.
+6. **Memory.** The cut keeps only the obligation's pitches and starts only with 256 KB external free. Otherwise it stays
+   owed and is retried, counted, never an abort.
+7. **Unchanged:** DEC-247's owed-row representation, DEC-248's session-record publication, DEC-069, capacity 16, and
+   the stop interval's own forced deadline (still synchronous; C3.4 is **not** declared fully realtime while it
+   remains).
+
+### Constraints created
+
+- `sizeof(Loop)` goes from 2,288 to 2,296 B (the obligation queue pointer and the turn flag). Shells are external pool.
+- `Loop::disableEditPasses`, `enableEditPasses` and `setCapturePassState` are now `LOOP_COLD_MEM`. Every caller is an
+  undo, NOTE_EDIT or session-undo edge.
+- The oracle for wrap answers is a **sequential canonical run**: the source is complete before each lap, and each
+  decision is made at its own NoteOn/NoteOff.
+
+### Open (not this decision)
+
+- The C2 journal counts an overflow but does not refuse the NOTE_EDIT commit by name (packet option (a)).
+- The companion seal runs in one maintenance turn, not in 32-row grains.
+- `kTilePrepMaxPasses = 32` truncates the cut, as it already truncates the live worker.
+- The stop interval's own forced deadline is still synchronous.
+- The intense gesture exhausts PSRAM, about 4 KB/s of session content growth plus transient derive buffers, and the
+  allocator aborts. Owned by the memory-pressure investigation.
+
+### Evidence
+
+- **Host:** `test/test_continuous_capture/wrap_deadline_reds.inc`, default gate.
+  - R1: constant Clock work for 0/50/518 owed; at baseline the wrap saved 48 edit passes on the Clock.
+  - R2/R3/R4: parity and a three-wrap backlog.
+  - R5: an undone record.
+  - R6/R7: a stop while owed.
+  - G3: C1.
+  - C2: a pre-session flip.
+  - Review B1–B4: an ISR wrap inside a lane turn, the stop undo entry, a predecessor stop next to a successor, and a
+    held note across an obligation's retirement.
+  - Every case failed at its RED baseline or under a mutation of its fix.
+- **Native full:** 4,027 cases, 0 failed.
+- **ITCM padding:** succprobe 904 → 1,176 B, default 1,144 → 1,416 B.
+- **Device:** succprobe `19f11706…`, `captures/session_20261104_160724.log`.
+  - Six wraps on schedule; worst Clock block per wrap 150–235 ms (the remaining pass-commit/append phases), against
+    123.46 s before.
+  - The run aborted at 201.7 s on PSRAM exhaustion (`MEM_EXT_REFUSED` 116,480 B in `stepTilePreparation`, 7,846 KB
+    live).
+- **Evidence file:** `openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md`.

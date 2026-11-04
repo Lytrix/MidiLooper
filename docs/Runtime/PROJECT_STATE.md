@@ -1,3 +1,22 @@
+**2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.**
+- **Cause:** the intense-gesture wedge was one overdub wrap answering 518 owed completions with whole-loop derives on
+  the Clock: 123.46 s, 0 allocation failures. The forced answers were also wrong (a long source note re-shortened by
+  every completion).
+- **Fix:** the wrap hands its interval to a bounded two-slot obligation in constant work. The discharge lane answers it
+  against the interval's immutable source cut and seals into the interval's own record. Also:
+  - C1: owed pitches stay owed, exact;
+  - C2: a flip journal for pre-session rows;
+  - publication waits for the record; a stop waits per session;
+  - the cut is pitch-filtered with a memory admission.
+- **Host:** `wrap_deadline_reds.inc` (13 cases, including review B1-B4); native full 4,027 / 0; ITCM padding
+  succprobe 1,176 B, default 1,416 B.
+- **Device** (`19f11706…`, `session_20261104_160724`): six wraps on schedule, worst per-wrap Clock 150-235 ms. The run
+  aborts at 201.7 s on PSRAM exhaustion: content grows about 4 KB/s, and a transient `stepTilePreparation` growth was
+  refused.
+- **Next:** the memory fix (allocation failure must not abort; the cut versus live-worker attribution). Open in DEC-250:
+  the C2 named refusal, the seal grain, the 32-pass envelope, and the stop interval's synchronous deadline.
+- [DEC-250](../DECISION_LOG.md) · [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-04 — DEC-136 tail repair: the 33-bar first-traversal gap is closed (`949daedc`, `fc1971af`).**
 - **Cause:** after the root took over, the Record-return tail raised a redundant containing-interval demand. It held
   `pending` and `ready`, so the rolling successor for the root window's end was never requested.

@@ -1102,3 +1102,39 @@ No storage or overdub semantics are changed.
 - **The merged-fallback build is not the stall:** `track_rebuild` stays in milliseconds.
 - **Host REDs** (`test_pending_note_change`, `MEMORY_PRESSURE_RED` gate): deadline derives scale with owed completions (66 at 50 owed, 456 at 500); with the tail exhausted, the seal drops every refused companion (16 owed, 0 sealed, 0 represented). Default-gate characterization: a 24,576 B request above a 7,576 B largest block is served externally, with identical derives and content.
 - Production probe image `3772f91c…` restored afterwards; boot verified (`session_20261104_140904`).
+
+## DEC-250: the C3.4 wrap deadline off the Clock (2026-11-04)
+
+**Change.**
+- The wrap hands its interval to a bounded obligation. The discharge lane answers it against the interval's own source
+  cut and seals into its own record.
+- Design: `docs/Plans/2026-11-04-wrap-deadline-off-clock.md`. Decision: DEC-250.
+
+**Host.**
+- `wrap_deadline_reds.inc` (default gate) and native full: 4,027 cases, 0 failed.
+- The RED baseline also exposed that the forced deadline's answers were wrong, not only slow: a long source note was
+  re-shortened by every owed completion, and the last answer won.
+
+**Independent review (2026-11-04).** Four blocking findings, all fixed, each with a case that fails without its fix:
+- B1: the stop's undo entry was built before the late companions were sealed (48 of 48 missing under the mutation).
+- B2: a wrap from the internal-clock ISR could reuse a slot during a lane turn.
+- B3: a held note's occupancy was dropped when its obligation retired mid-hold. This also exposed a pre-existing
+  defect: an occupancy-only hold (`endTick = 0`) was answered as a span to the loop end, hiding later same-pitch notes.
+- B4: a predecessor stop waited for the successor's obligations.
+
+**Device.** succprobe image, intense `lane_cadence`, track 8 slot 4.
+
+| image | run | wraps | worst Clock block per wrap | end |
+|---|---|---|---|---|
+| diag `5a564c40` (before) | `session_20261104_140156` | 2 | **123.46 s** | watchdog, blocked |
+| `fa39b5d2` (first cut) | `session_20261104_154110` | 3 | 23 ms (`tracks`) | abort 145.7 s, 171,640 B refused in `stepTilePreparation`, whole-loop cut |
+| `19f11706` (review fixes, pitch-filtered cut, admission) | `session_20261104_160724` | **6, on schedule** | 150–235 ms (`tracks`) | abort 201.7 s, 116,480 B refused in `stepTilePreparation`, 7,846 KB PSRAM live |
+
+- The remaining 150–235 ms per wrap are the phases this slice does not move: the pass commit (with
+  `verifyCaptureHotStop`), held-NoteOn extraction, and the playback/source-view append. That is the DEC-248 level.
+- **PSRAM grows about 4 KB/s under this gesture on both images:**
+  - old image: 7.24 MB at 67 s, 7.52 MB at 118 s;
+  - new image: 7.29 MB at 87 s, 7.72 MB at 200 s.
+- Transient derive buffers ride 160–280 KB above live. The run now lives long enough to reach the ceiling, and the
+  allocator aborts. The log does not attribute the refusing caller to the obligation cut or to the live coverage worker
+  (both run `stepTilePreparation`). This is the memory-pressure scope, not C3.4.
