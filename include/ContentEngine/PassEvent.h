@@ -32,4 +32,16 @@ constexpr uint8_t kOriginGeneratedClosure = 0x80u;
 /// row's tick, status and data stay as recorded.
 constexpr uint8_t kOriginHeldLoop = 0x40u;
 
+/// A HideNote row of an Edit run: `noteId` names the target; every row of that noteId in earlier runs is hidden. Hide rows
+/// sit at the start of their run (tick 0); 0xF4 is an undefined MIDI status, never sent.
+constexpr uint8_t kHideNoteStatus = 0xF4u;
+
+/// Run kinds (the RunTable descriptor's `kind`).
+namespace RunKind {
+constexpr uint8_t kRecord = 0;
+constexpr uint8_t kOverdub = 1;
+constexpr uint8_t kCompacted = 2;
+constexpr uint8_t kEdit = 3;  // NOTE_EDIT commit: HideNote rows + replacement notes (EDIT-1: not a derived occluder)
+}  // namespace RunKind
+
 }  // namespace ContentEngine

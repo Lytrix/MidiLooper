@@ -28,7 +28,12 @@
 // repeats every loop and each iteration ends one tick before its successor. The flagged NoteOff is never sent against a
 // newer iteration. Its source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the
 // effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
-// Not in this slice (named): edit hides; checkpoints for mid-loop starts.
+// Edit runs (NOTE_EDIT): their HideNote rows hide every row of the named noteId in earlier runs (lineage: a replacement
+// keeps the noteId and lives in the edit run). A fixed hide table (noteId -> latest hiding pass) is built at `begin` and
+// looked up per NoteOn in O(log H). EDIT-1 (draft): an edit run is not a derived occluder; NOTE_EDIT writes its own
+// overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
+// by an edit still counts as a source occluder (OVL-8).
+// Not in this slice (named): checkpoints for mid-loop starts.
 // Scratch is fixed: 128 x 64 source counters, T admitted notes, three cursors per run.
 
 #pragma once
@@ -47,7 +52,8 @@ struct SourceRun {
   uint32_t rowLimit;  // rows readable now (a writer's prefix, or the sealed count)
 };
 
-template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack>
+template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
+          uint16_t MaxHides = 4096>
 class Composer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
@@ -70,25 +76,36 @@ class Composer {
     identity_ = 0;
     cycle_ = 0;
     admittedCount_ = 0;
+    hideCount_ = 0;
     stats_ = Stats{};
     lookaheadRows_ = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
   }
 
-  void begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
+  /// False (named) when the source holds more edit hides than the fixed hide table: nothing is composed.
+  bool begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
     count_ = count > MaxRuns ? MaxRuns : count;
     loop_ = loopLength;
     for (auto& p : active_)
       for (auto& c : p) c = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
+    hideCount_ = 0;
     for (uint8_t r = 0; r < count_; ++r) {
       src_[r] = source[r];
+      edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
       wrapStart_[r] = firstRowAtOrAfter(r, loop_);
       band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
       cursor_[r] = 0;
       wrapCursor_[r] = wrapStart_[r];
       band2Cursor_[r] = band2Start_[r];
+      if (edit_[r]) {
+        for (uint32_t i = 0; i < src_[r].rowLimit && row(r, i).status == kHideNoteStatus; ++i) {
+          if (hideCount_ >= MaxHides) return false;
+          hides_[hideCount_++] = Hide{row(r, i).noteId, r};
+        }
+        continue;  // EDIT-1: an edit run is not counted as a source occluder
+      }
       for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
         const PassEvent& e = row(r, i);
         if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
@@ -96,10 +113,12 @@ class Composer {
       for (uint32_t i = 0; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes starting at tick 0, per pitch
         if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
     }
+    sortHides();
     admittedCount_ = 0;
     windowStart_ = 0;
     cycle_ = 0;
     identity_ = identity;
+    return true;
   }
 
   /// Composes the next window of `windowTicks` ticks into `w`. False at the end of the loop cycle.
@@ -237,6 +256,7 @@ class Composer {
     uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
     if (off > on + loop_ - 1) off = on + loop_ - 1;  // Q-LEN-1 effective end
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j) {
+      if (edit_[j]) continue;  // EDIT-1
       for (uint32_t i = cursor_[j]; i < wrapStart_[j]; ++i) {
         ++lookaheadRows_;
         const PassEvent& e = row(j, i);
@@ -263,6 +283,52 @@ class Composer {
       if (row(r, i).noteId == noteId && cls(row(r, i)) == 0) return true;
     }
     return false;
+  }
+
+  /// Heapsort by noteId, then keep one entry per noteId with its latest hiding pass. O(H log H), in place.
+  void sortHides() {
+    auto less = [this](uint16_t a, uint16_t b) { return hides_[a].noteId < hides_[b].noteId; };
+    auto sift = [&](uint16_t start, uint16_t end) {
+      uint16_t root = start;
+      while (static_cast<uint32_t>(root) * 2 + 1 < end) {
+        uint16_t child = static_cast<uint16_t>(root * 2 + 1);
+        if (child + 1 < end && less(child, static_cast<uint16_t>(child + 1))) ++child;
+        if (!less(root, child)) return;
+        const Hide t = hides_[root];
+        hides_[root] = hides_[child];
+        hides_[child] = t;
+        root = child;
+      }
+    };
+    for (int32_t i = hideCount_ / 2 - 1; i >= 0; --i) sift(static_cast<uint16_t>(i), hideCount_);
+    for (uint16_t end = hideCount_; end > 1; --end) {
+      const Hide t = hides_[0];
+      hides_[0] = hides_[end - 1];
+      hides_[end - 1] = t;
+      sift(0, static_cast<uint16_t>(end - 1));
+    }
+    uint16_t w = 0;
+    for (uint16_t i = 0; i < hideCount_; ++i) {
+      if (w > 0 && hides_[w - 1].noteId == hides_[i].noteId) {
+        if (hides_[i].order > hides_[w - 1].order) hides_[w - 1].order = hides_[i].order;
+      } else {
+        hides_[w++] = hides_[i];
+      }
+    }
+    hideCount_ = w;
+  }
+
+  /// A later edit run (pass order > r) hides `noteId`. O(log H).
+  bool hiddenByEdit(uint32_t noteId, uint8_t r) const {
+    uint16_t lo = 0, hi = hideCount_;
+    while (lo < hi) {
+      const uint16_t mid = static_cast<uint16_t>(lo + (hi - lo) / 2);
+      if (hides_[mid].noteId < noteId)
+        lo = static_cast<uint16_t>(mid + 1);
+      else
+        hi = mid;
+    }
+    return lo < hideCount_ && hides_[lo].noteId == noteId && hides_[lo].order > r;
   }
 
   bool laterPassSounding(uint8_t r, uint8_t pitch) const {
@@ -312,10 +378,11 @@ class Composer {
     else
       ++band2Cursor_[r];
     const uint16_t runKey = makeRunKey(src_[r].run, r);
+    if (e.status == kHideNoteStatus) return;  // collected at begin
     const uint8_t c = cls(e);
     if (c == 0) {
       if (e.origin & kOriginHeldLoop) return;  // Q-LEN-1: the re-strike ends it; its count drops at the sweep end
-      if (active_[e.data1 & 0x7F][r] > 0) --active_[e.data1 & 0x7F][r];
+      if (!edit_[r] && active_[e.data1 & 0x7F][r] > 0) --active_[e.data1 & 0x7F][r];
       for (uint8_t i = 0; i < admittedCount_; ++i)
         if (admitted_[i].noteId == e.noteId && admitted_[i].runKey == runKey) {
           endAdmitted(w, i, pos);
@@ -337,12 +404,14 @@ class Composer {
         break;
       }
     lookaheadRows_ = 0;
-    const bool hidden = laterPassSounding(r, pitch) || laterPassStartsWhileSounding(r, e.noteId, pitch, pos) ||
-                        wrapHeldHiddenAtZero(r, e.noteId, pitch);
+    const bool hidden = hiddenByEdit(e.noteId, r) || laterPassSounding(r, pitch) ||
+                        laterPassStartsWhileSounding(r, e.noteId, pitch, pos) || wrapHeldHiddenAtZero(r, e.noteId, pitch);
     if (lookaheadRows_ > stats_.maxLookaheadRowsPerNoteOn) stats_.maxLookaheadRowsPerNoteOn = lookaheadRows_;
     stats_.lookaheadRowsLastWindow += lookaheadRows_;
-    shorten(w, r, pitch, pos);
-    if (active_[pitch][r] < 0xFF) ++active_[pitch][r];
+    if (!edit_[r]) {  // EDIT-1: an edit run's notes neither shorten earlier passes nor count as occluders
+      shorten(w, r, pitch, pos);
+      if (active_[pitch][r] < 0xFF) ++active_[pitch][r];
+    }
     if (hidden) return;
     if (admittedCount_ >= T || w.count >= Cap) {
       ++w.refusedCount;
@@ -371,14 +440,15 @@ class Composer {
             endAdmitted(w, k, b - 1);
             break;
           }
-        if (!loopEnd) shorten(w, j, e.data1 & 0x7F, b);
+        if (!loopEnd && !edit_[j]) shorten(w, j, e.data1 & 0x7F, b);
       }
     }
     if (!loopEnd) return;
     for (uint8_t j = 0; j < count_; ++j)
       for (uint32_t i = wrapStart_[j]; i < src_[j].rowLimit; ++i) {
         const PassEvent& e = row(j, i);
-        if (cls(e) == 0 && (e.origin & kOriginHeldLoop) && active_[e.data1 & 0x7F][j] > 0) --active_[e.data1 & 0x7F][j];
+        if (!edit_[j] && cls(e) == 0 && (e.origin & kOriginHeldLoop) && active_[e.data1 & 0x7F][j] > 0)
+          --active_[e.data1 & 0x7F][j];
       }
   }
 
@@ -391,6 +461,13 @@ class Composer {
   uint32_t band2Start_[MaxRuns];  // first row with tick >= 2 x loop (notes held across more than one wrap)
   uint32_t band2Cursor_[MaxRuns];
   uint8_t count_;
+  bool edit_[MaxRuns];
+  struct Hide {
+    uint32_t noteId;
+    uint8_t order;  // latest hiding pass
+  };
+  Hide hides_[MaxHides];
+  uint16_t hideCount_;
   uint8_t active_[128][MaxRuns];  // source notes sounding per (pitch, pass), effective or not (OVL-8)
   Admitted admitted_[T];
   uint8_t admittedCount_;
