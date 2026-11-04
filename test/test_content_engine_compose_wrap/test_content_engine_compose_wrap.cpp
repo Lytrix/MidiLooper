@@ -376,6 +376,21 @@ void test_lookahead_work_is_bounded_on_dense_chords() {
   TEST_ASSERT_TRUE(gC.stats().maxLookaheadRowsPerNoteOn <= rowsInNineTicks);
 }
 
+// Q-LEN-1 interim (owner question open): a note held across two wraps ends, in playback, at its NoteOff position in the
+// cycle after its start; nothing sticks, no instance is duplicated, no NoteOff is phantom.
+void test_note_held_across_two_wraps_never_sticks() {
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, 1));
+  const RunId run = gW.activeRun();
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOn(100, 1, 60, 100));
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap(kLoop));
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap(2 * kLoop));
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.noteOff(2 * kLoop + 50, 1, 60, 0));  // into the originating run
+  gW.stop(3 * kLoop);
+  TEST_ASSERT_EQUAL_UINT32(2 * kLoop + 50, gRuns.rowAt(run, 1, gPool).tick);
+  const uint32_t L = kLoop;
+  assertStream(&run, 1, 3, {{100, 1, 1}, {L + 50, 0, 1}, {L + 100, 1, 1}, {2 * L + 50, 0, 1}, {2 * L + 100, 1, 1}});
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_wrap_held_note_over_three_cycles);
@@ -390,5 +405,6 @@ int main(int, char**) {
   RUN_TEST(test_fixture_tick_zero_hides_wrap_held_note);
   RUN_TEST(test_fixture_successive_iterations_of_one_note);
   RUN_TEST(test_lookahead_work_is_bounded_on_dense_chords);
+  RUN_TEST(test_note_held_across_two_wraps_never_sticks);
   return UNITY_END();
 }
