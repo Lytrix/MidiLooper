@@ -47,8 +47,9 @@ struct CarryRef {
 
 template <uint16_t Capacity>
 struct SpanWindow {
-  uint32_t identity;  // the source the window was composed from
-  uint32_t start, end;
+  uint32_t identity;   // the source the window was composed from
+  uint32_t start, end;  // positions in the loop
+  uint32_t cycleBase;   // timeline tick of this cycle's position 0 (entry ticks are positions)
   uint16_t count;
   uint16_t startCount, terminalCount, refusedCount;
   uint8_t carryCount;
@@ -59,6 +60,7 @@ struct SpanWindow {
     identity = id;
     start = s;
     end = e;
+    cycleBase = 0;
     count = startCount = terminalCount = refusedCount = 0;
     carryCount = 0;
   }
@@ -80,6 +82,7 @@ class WindowPlayer {
   void init(Scheduler& s) {
     sched_ = &s;
     identity_ = 0;
+    base_ = 0;
     entries_ = nullptr;
     count_ = 0;
     next_ = 0;
@@ -94,30 +97,34 @@ class WindowPlayer {
       for (uint8_t i = 0; i < w.carryCount; ++i)
         carry[i] = {w.carry[i].noteId, runIdOf(w.carry[i].runKey), kOpenEnd};
       typename Scheduler::Out offs[T];
-      const uint8_t closed = sched_->transition(w.start, carry, w.carryCount, offs, static_cast<uint8_t>(T));
+      const uint8_t closed =
+          sched_->transition(w.cycleBase + w.start, carry, w.carryCount, offs, static_cast<uint8_t>(T));
       for (uint8_t i = 0; i < closed && n < max; ++i) out[n++] = fromOut(offs[i]);
     }
     identity_ = w.identity;
+    base_ = w.cycleBase;
     entries_ = w.entries;
     count_ = w.count;
     next_ = 0;
     return n;
   }
 
-  /// One tick: composed ends due now, NoteOffs, then this tick's STARTs (DEC-244: NoteOff before NoteOn).
+  /// One tick (timeline ticks): composed ends due now, NoteOffs, then this tick's STARTs (DEC-244: NoteOff before
+  /// NoteOn). Entry positions are offset by the window's cycle base.
   uint8_t tick(uint32_t t, Emit* out, uint8_t max) {
     uint8_t n = 0;
-    for (uint16_t i = next_; i < count_ && entries_[i].tick <= t; ++i)
-      if (entries_[i].terminal) sched_->composedEnd(entries_[i].noteId, runIdOf(entries_[i].runKey), entries_[i].tick);
+    for (uint16_t i = next_; i < count_ && base_ + entries_[i].tick <= t; ++i)
+      if (entries_[i].terminal)
+        sched_->composedEnd(entries_[i].noteId, runIdOf(entries_[i].runKey), base_ + entries_[i].tick);
     typename Scheduler::Out offs[T];
     const uint8_t d = sched_->due(t, offs, static_cast<uint8_t>(T));
     for (uint8_t i = 0; i < d && n < max; ++i) out[n++] = fromOut(offs[i]);
-    while (next_ < count_ && entries_[next_].tick <= t) {
+    while (next_ < count_ && base_ + entries_[next_].tick <= t) {
       const SpanEntry& e = entries_[next_++];
       if (e.terminal) continue;
       const uint8_t type = e.status & 0xF0;
       if (type == 0x90 && e.data2 != 0) {
-        const uint32_t end = e.length == kOpenLength ? kOpenEnd : e.tick + e.length;
+        const uint32_t end = e.length == kOpenLength ? kOpenEnd : base_ + e.tick + e.length;
         if (sched_->start(t, e.noteId, runIdOf(e.runKey), orderOf(e.runKey), static_cast<uint8_t>((e.status & 0x0F) + 1),
                           e.data1, end) == StartResult::Started &&
             n < max)
@@ -139,6 +146,7 @@ class WindowPlayer {
 
   Scheduler* sched_;
   uint32_t identity_;
+  uint32_t base_;
   const SpanEntry* entries_;
   uint16_t count_;
   uint16_t next_;

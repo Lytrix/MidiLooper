@@ -72,8 +72,10 @@ inline std::vector<Effective> effective(const std::vector<Note>& notes, uint32_t
         e.fate = Fate::Hidden;  // OVL-3
       }
     }
-    if (e.fate == Fate::Shortened && e.note.off >= e.note.on && e.note.off - e.note.on < kMinLengthTicks)
-      e.fate = Fate::Hidden;  // OVL-6
+    if (e.fate == Fate::Shortened) {  // OVL-6, wrap-aware: a wrap-held remnant's length runs across the loop end
+      const uint32_t len = e.note.off >= e.note.on ? e.note.off - e.note.on : e.note.off + loopLength - e.note.on;
+      if (len < kMinLengthTicks) e.fate = Fate::Hidden;
+    }
     out.push_back(e);
   }
   return out;
