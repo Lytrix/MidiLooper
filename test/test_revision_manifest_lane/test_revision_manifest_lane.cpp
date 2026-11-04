@@ -861,6 +861,226 @@ void test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.captureAfterRoot, "a frozen view served again after the root handoff");
 }
 
+/// DEC-136 option (a) ownership witness (owner ruling on `f871b67d`), sampled every tick after the Record stop.
+struct RecordReturnOwnershipWitness {
+  uint32_t gapTicks = 0;              // no complete, published `current` contains the playhead
+  uint32_t generationMismatch = 0;    // the served view's source generation is not the slot's
+  bool rootBesideFrozen = false;      // RED 1: frozen current + frozen ready + root building/complete in `build`
+  // RED 2: the root parked complete in `build` behind the frozen ready, then published and adopted from that view.
+  bool parked = false;
+  uint8_t parkedView = 0xFF;
+  uint64_t parkedStorage = 0;
+  uint8_t frozenReadyView = 0xFF;
+  uint64_t frozenReadyStorage = 0;
+  uint32_t readyOverwritten = 0;      // the frozen ready's view was rewritten while the root was parked
+  bool publishedFromPark = false;
+  bool adoptedFromPark = false;
+  // RED 4: frozen (Capture) builds begun after the root became current, and any that vanished before completing.
+  uint8_t frozenBuildView = 0xFF;
+  uint64_t frozenBuildStorage = 0;
+  uint32_t frozenBuildStart = 0;
+  uint32_t frozenBuildsStarted = 0;
+  uint32_t frozenBuildsCompleted = 0;
+  uint32_t frozenBuildsKilled = 0;
+  // RED 6: a root build observed while a valid retained view holds the third physical view.
+  uint32_t rootBuiltWhileRetained = 0;
+};
+
+void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnershipWitness& w) {
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (set == nullptr) return;
+  const Loop& loop = t.getLoop(0);
+  const auto& lc = set->lifecycle;
+  const size_t n = set->views.size();
+  const uint32_t phase = tick % kLength;
+  const uint32_t generation = TrackCaptureStopTestAccess::playbackGenerationOf(t);
+  const auto* cur = lc.current < n ? &set->views[lc.current] : nullptr;
+  const auto* rdy = lc.ready < n ? &set->views[lc.ready] : nullptr;
+  const auto* bld = lc.build < n ? &set->views[lc.build] : nullptr;
+  const bool served = cur != nullptr && cur->complete && cur->published && cur->coverage.contains(phase);
+  if (!served) ++w.gapTicks;
+  if (cur != nullptr && cur->published && cur->source.sourceGeneration != generation) ++w.generationMismatch;
+  const bool rootCurrent = loop.playbackRevision != 0;
+  const bool frozenCur = served && cur->source.origin == PlaybackWindowOrigin::Capture;
+  const bool frozenRdy = rdy != nullptr && rdy->complete && !rdy->published &&
+      rdy->source.origin == PlaybackWindowOrigin::Capture;
+  const bool rootInBuild = bld != nullptr && bld->source.origin == PlaybackWindowOrigin::Committed &&
+      bld->coverage.lengthTicks != 0 && (bld->complete || runtime.coverageBuildNeedsService());
+  if (rootCurrent && frozenCur && frozenRdy && rootInBuild) w.rootBesideFrozen = true;
+  if (lc.retained < n && set->views[lc.retained].complete && rootInBuild) ++w.rootBuiltWhileRetained;
+  // RED 2
+  if (!w.parked && frozenRdy && bld != nullptr && bld->complete && !bld->published &&
+      bld->source.origin == PlaybackWindowOrigin::Committed) {
+    w.parked = true;
+    w.parkedView = lc.build;
+    w.parkedStorage = bld->storageGeneration;
+    w.frozenReadyView = lc.ready;
+    w.frozenReadyStorage = rdy->storageGeneration;
+  }
+  if (w.parked && !w.publishedFromPark && lc.ready == w.frozenReadyView && rdy != nullptr &&
+      rdy->storageGeneration != w.frozenReadyStorage && lc.ready != w.parkedView)
+    ++w.readyOverwritten;
+  if (w.parked && lc.ready == w.parkedView && rdy != nullptr && rdy->storageGeneration == w.parkedStorage)
+    w.publishedFromPark = true;
+  if (w.parked && lc.current == w.parkedView && cur != nullptr && cur->storageGeneration == w.parkedStorage)
+    w.adoptedFromPark = true;
+  // RED 4
+  if (w.frozenBuildView != 0xFF) {
+    const auto& v = set->views[w.frozenBuildView];
+    if (v.storageGeneration != w.frozenBuildStorage || v.coverage.startPhase != w.frozenBuildStart ||
+        v.source.origin != PlaybackWindowOrigin::Capture) {
+      ++w.frozenBuildsKilled;  // the view was reset or reused before it completed
+      w.frozenBuildView = 0xFF;
+    } else if (v.complete) {
+      ++w.frozenBuildsCompleted;
+      w.frozenBuildView = 0xFF;
+    }
+  }
+  if (rootCurrent && w.frozenBuildView == 0xFF && runtime.frozenWindowBuildActive() && bld != nullptr &&
+      !bld->complete && bld->source.origin == PlaybackWindowOrigin::Capture) {
+    w.frozenBuildView = lc.build;
+    w.frozenBuildStorage = bld->storageGeneration;
+    w.frozenBuildStart = bld->coverage.startPhase;
+    ++w.frozenBuildsStarted;
+  }
+}
+
+/// Withhold the root's qualification turns (the deliberately delayed root) until `releaseTick`.
+void delayRootQualificationUntil(Track& t, uint32_t releaseTick, uint32_t& withheld) {
+  gWithholdLaneTurn = [&t, releaseTick, &withheld](uint32_t tick) {
+    if (tick >= releaseTick || tick < kLength) return false;
+    const bool counting = TrackCaptureStopTestAccess::runtimeFor(t, 0).coveragePreparation ==
+        LoopPlaybackRuntime::CoveragePreparation::Counting;
+    if (counting) ++withheld;
+    return counting;
+  };
+}
+
+// RED 1: the committed root-return candidate prepares in the third physical view while the frozen reader owns both
+// `current` (serving the playhead) and `ready` (its next bar).
+void test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(w.rootBesideFrozen, "the root never prepared in build beside frozen current and ready");
+}
+
+// RED 2: the root completes before the handoff, parks in `build` without overwriting the frozen `ready`, is
+// published once `ready` frees, and is adopted from that same view.
+void test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  RootHandoffWitness h;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, h);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(w.parked, "the root never parked complete in build behind the frozen ready");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.readyOverwritten, "the parked root overwrote the frozen ready");
+  TEST_ASSERT_TRUE_MESSAGE(w.publishedFromPark, "the parked root was not published once ready was free");
+  TEST_ASSERT_TRUE_MESSAGE(w.adoptedFromPark, "the root adopted was not the parked view");
+  TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+}
+
+// RED 3 + 4: a deliberately delayed root yields the builder in time for the frozen reader to prepare its next bar,
+// across at least two further bars; frozen builds owned by the Record-return job are never killed as
+// `SourceSuperseded`; the Record-only stop has no gap and the root still replaces the frozen reader exactly once.
+void test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  RootHandoffWitness h;
+  uint32_t withheld = 0;
+  delayRootQualificationUntil(t, kLength + 3 * kBar, withheld);
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, h);
+  });
+  gWithholdLaneTurn = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, withheld, "no root qualification was delayed: vacuous");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(2u, w.frozenBuildsCompleted,
+                                              "the frozen reader did not prepare two further bars after the root");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.frozenBuildsKilled, "a Record-return frozen build was killed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "the Record-only stop had an audible gap");
+  TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+  assertTakeNotesPairedExactlyOnce(obs, 1, 6);
+}
+
+// RED 5: the root/frozen handoff happens exactly once; every served view carries the slot's source generation; the
+// stop is audible with no gap across every traversal, and every note is paired exactly once.
+void test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  RootHandoffWitness h;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, h);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+  TEST_ASSERT_EQUAL_UINT32(0u, h.captureAfterRoot);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.generationMismatch, "a served view carried a foreign source generation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "the Record-only stop had an audible gap");
+  assertTakeNotesPairedExactlyOnce(obs, 1, 6);
+}
+
+// RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
+// unaffected. The third view is made a complete retained window the moment the root becomes current.
+void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  bool retainedInstalled = false;
+  MidiEvent events[2] = {MidiEvent::NoteOn(12, 1, 90, 100), MidiEvent::NoteOff(96, 1, 90, 0)};
+  events[0].noteId = static_cast<NoteId>(900);
+  events[1].noteId = static_cast<NoteId>(900);
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    auto* set = runtime.viewSetIfPrewarmed();
+    if (!retainedInstalled && set != nullptr && t.getLoop(0).playbackRevision != 0 &&
+        set->lifecycle.build < set->views.size() && !runtime.viewBuild.active() &&
+        set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView) {
+      const uint8_t third = set->lifecycle.build;
+      RuntimePlaybackViewBuild build;
+      TEST_ASSERT_TRUE(build.begin(set->views[third], events, 2,
+                                   PlaybackViewSourceIdentity{0, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+                                                              nullptr, PlaybackWindowOrigin::Committed},
+                                   PlaybackCoverageInterval{0, kBar, kLength}, EmissionCursor{},
+                                   LedgerBoundarySummary{}));
+      for (unsigned g = 0; g < 64 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill; ++g) (void)build.stepFill(1);
+      for (unsigned g = 0; g < 64 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++g) (void)build.stepOrder(1);
+      set->lifecycle.build = RuntimePlaybackViewLifecycle::kNoView;
+      set->lifecycle.retained = third;
+      retainedInstalled = true;
+    }
+    observeRecordReturnOwnership(t, tick, w);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(retainedInstalled, "the retained third view was never installed: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.rootBuiltWhileRetained, "the root prepared over a retained third view");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "frozen playback was affected by the refused root");
+  assertEveryTakeNotePlayed(obs, 1, 3);
+}
+
 // Two-span requester, essential RED (owner ruling 2026-11-03; controlled eligibility: the probe image's successor
 // knobs, DEC-147 price waived). While N-1 serves and N waits complete in `ready`, N+1 must be prepared in `build`
 // (the depth-2 obligation): at some tick all three stages coexist -- current = the serving window, ready = its
@@ -1113,6 +1333,11 @@ int main(int, char**) {
   if (getenv("RECORD_RETURN_RED") != nullptr) {
     RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
     RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
+    RUN_TEST(test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready);
+    RUN_TEST(test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free);
+    RUN_TEST(test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive);
+    RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);
+    RUN_TEST(test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on);
   }
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);

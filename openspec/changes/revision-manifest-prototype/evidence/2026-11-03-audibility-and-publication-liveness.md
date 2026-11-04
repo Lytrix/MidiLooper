@@ -334,3 +334,79 @@ Without outcome 1 the root never takes over, and the Record-return job never rel
 
 The `ServingViewSourceStale` correction (authorized frozen predecessor) is independent and was not started. It touches
 the clock-path resolver, and the ruling sequences it with this repair.
+
+### DEC-136 option (a): admission analysis, ownership REDs and the proposed speculative rule (owner ruling on `f871b67d`)
+
+**The exact root candidate.** Measured on host with a temporary trace (reverted). The candidate is the committed
+root-return window targeted at the boundary after the frozen `ready`.
+
+| term | value |
+|---|---|
+| ownership authority | `rootReturnSuccessorIsOwedForSlot` (DEC-136 item 1): presentation `retirementActive`, qualified frozen source, current root identity, bar-shaped coverage, frozen return window served or owed. Owner: the Record-return job (`CaptureStopPresentation`). |
+| grant count G | host 4. The device's dense take is 7 (`max_grains`), so price = 768 + 7 x 8 x 64 + 128 slack = **4,480** ticks, the owner's figure. Host: 2,816 + 128. |
+| beside the frozen `ready` | qualification runs privately (`coverageRoleRefusal(true)` / `beginCoverageQualification(..., true)`, the `keepCaptureReady` exception) and reaches `AwaitAdmission`. No admission is evaluated while `ready` holds the frozen view. |
+| admission at the frozen handoff | `lead=767 required=2816 leadTooShort=1 privateRootOwed=1 waived=0` |
+| `beginQualifiedCoverageBuild` | refuses while `ready` is complete ("cannot discharge until the single successor role is free") |
+
+**No existing DEC-136 exception admits it.**
+- Item 2 (owed without a deadline) only bypasses the gate's epoch and deadline terms. The admission lead is still
+  judged.
+- Item 3 (`privateRootWaived`) applies only when `ordinaryAdmissionCannotServeDemand`, that is, no lead within the
+  whole loop could serve the cost. The device loop is 25,344 ticks, far above 4,480.
+- The `keepCaptureReady` exception permits qualification, not admission.
+
+So any lead available at a frozen handoff (≤ 768 to the next boundary, ≤ 1,536 to the one after) is below the
+4,480-tick price.
+
+**Ownership REDs** (`RECORD_RETURN_RED`; all FAIL on the unchanged production code):
+
+| RED | case | fails with |
+|---|---|---|
+| 1 | `..._red1_root_prepares_in_build_beside_frozen_current_and_ready` | never prepares beside frozen current+ready |
+| 2 | `..._red2_root_parks_then_publishes_once_ready_is_free` | never parks |
+| 3+4 | `..._red3_red4_delayed_root_yields_and_frozen_builds_survive` | 0 frozen bars prepared after the root (needs ≥ 2, 0 killed, 0 gap ticks) |
+| 5 | `..._red5_handoff_exactly_once_and_no_gap` | 6,150 gap ticks |
+| 6 | `..._red6_retained_third_view_refuses_root_and_frozen_plays_on` | the root prepared over the retained third view (18 ticks) |
+
+Notes on the cases:
+- RED 3+4 and 5 also gate one handoff, served-view source generation, and paired NoteOn/NoteOff.
+- On RED 4 (`SourceSuperseded`): a kill is only *reachable* once frozen continuation exists. On today's code no frozen
+  build starts after the root becomes current, so the RED fails on non-vacuity. The kill itself was observed in the
+  reverted trial (drop reason 6 on every other turn).
+
+**Proposed rule: DEC-136 item 4, speculative root preparation (Record-return only; owner decision).**
+
+The root-return candidate may be admitted **speculatively** into the third physical view, without the DEC-147 lead
+test, only while all of the following hold. They are evaluated in the deferred Record-return owner and never on the
+Clock.
+- **S1 (authority):** `rootReturnSuccessorIsOwedForSlot` holds for the request.
+- **S2 (frozen playback guaranteed):**
+  - `current` is the job's frozen view, published and containing the playhead. The view matches the qualified frozen
+    identity: Capture origin, source generation, capture content generation, loop length.
+  - `ready` is the job's frozen view, complete and unpublished, starting at the next boundary B+1.
+- **S3 (target):** the candidate covers the bar-shaped interval after the frozen ready, B+2.
+- **S4 (free third view):** `build` is distinct from current, ready and retained, and unpublished, and no valid retained
+  view holds it. The builder is free except for this candidate.
+
+Speculative means:
+- No admitted promise. The demand keeps deadline 0 and epoch 0 (the existing `PrivateRootReturnPreparation` reason),
+  so it never enters DEC-147's promise ledger.
+- Other tracks' admitted promises are still protected: `playbackViewAdmissionKeepsAdmittedDeadlines` stays a term.
+- Normal successor pricing is untouched; the rule cannot be reached by any non-Record-return request.
+
+Lifecycle, using existing transitions only:
+- **Park.** A candidate completing while S2's frozen `ready` holds the role stays complete and unpublished in `build`.
+- **Publish.** On the first owner turn after the frozen handoff at B+1 (`ready` free), a parked candidate whose start
+  equals the next unconsumed boundary (B+2) is published with `publishCompletedBuildAsReadySuccessor`. The existing
+  root-return adoption takes it at B+2, and the job releases (exactly once).
+- **Yield (a miss is never audible).** On that same turn, a candidate that is incomplete, or parked for any other
+  boundary, is discarded through `discardCoverageBuild` / `retireCoverageSource` / `resetMetadata`. The frozen reader
+  then prepares B+2 in that view exactly as it does today.
+  - Because S2 requires the frozen reader to already hold B+1 before the root may take the builder, and the builder
+    returns at the frozen handoff, the frozen reader always has its next bar, whatever the root's timing.
+- **Frozen builds.** The Record-return branch's `SourceSuperseded` discard exempts the job's own frozen build (the same
+  identity as S2).
+- **No new state.** "Parked" is read from the lifecycle (a complete, unpublished Committed `build`). No queue, buffer,
+  timeout or Clock work.
+
+The `ServingViewSourceStale` correction (explicit Record-return authorization) follows once these REDs are green.
